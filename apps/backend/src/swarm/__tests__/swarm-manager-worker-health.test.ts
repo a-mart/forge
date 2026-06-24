@@ -48,6 +48,14 @@ class TestSwarmManager extends TestSwarmManagerBase {
   }
 }
 
+function expectedWorkerReport(status: 'done' | 'blocked', body: string): string {
+  return [
+    `WORKER REPORT: status: ${status}`,
+    '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    body,
+  ].join('\n')
+}
+
 function appendSessionConversationMessage(sessionFile: string, agentId: string, text: string): void {
   const sessionManager = SessionManager.open(sessionFile)
   sessionManager.appendMessage({
@@ -154,8 +162,10 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls).toHaveLength(1)
     expect(managerRuntime?.sendCalls[0]).toMatchObject({
       delivery: 'auto',
-      message:
-        'WORKER REPORT: status: done\nsummary: Auto-generated report because worker summary-worker completed its turn without an explicit callback.\n\nLast assistant message:\nImplemented the completion hook and verified the flow.',
+      message: expectedWorkerReport(
+        'done',
+        'summary: Auto-generated report because worker summary-worker completed its turn without an explicit callback.\n\nLast assistant message:\nImplemented the completion hook and verified the flow.',
+      ),
     })
   })
 
@@ -199,8 +209,10 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls).toHaveLength(1)
     expect(managerRuntime?.sendCalls[0]).toMatchObject({
       delivery: 'auto',
-      message:
-        'WORKER REPORT: status: blocked\nsummary: Auto-generated report because worker errored-worker ended with an error without an explicit callback.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+      message: expectedWorkerReport(
+        'blocked',
+        'summary: Auto-generated report because worker errored-worker ended with an error without an explicit callback.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+      ),
     })
   })
   it('suppresses duplicate auto-reports when the latest summary was already reported', async () => {
@@ -272,8 +284,10 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls).toHaveLength(1)
     expect(managerRuntime?.sendCalls[0]).toMatchObject({
       delivery: 'auto',
-      message:
-        'WORKER REPORT: status: blocked\nsummary: Auto-generated report because worker duplicate-error-worker ended with an error without an explicit callback.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+      message: expectedWorkerReport(
+        'blocked',
+        'summary: Auto-generated report because worker duplicate-error-worker ended with an error without an explicit callback.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+      ),
     })
   })
 
@@ -376,8 +390,10 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls).toHaveLength(1)
     expect(managerRuntime?.sendCalls[0]).toMatchObject({
       delivery: 'auto',
-      message:
-        `WORKER REPORT: status: blocked\nsummary: Auto-generated report because worker worker-error-variant ended with an error without an explicit callback.\n\nLast system message:\n${expectedSummaryLine}`,
+      message: expectedWorkerReport(
+        'blocked',
+        `summary: Auto-generated report because worker worker-error-variant ended with an error without an explicit callback.\n\nLast system message:\n${expectedSummaryLine}`,
+      ),
     })
   })
   it('does not replay stale worker summaries when recreating an idle worker runtime', async () => {
@@ -435,7 +451,10 @@ describe('SwarmManager', () => {
 
     expect(managerRuntime).toBeDefined()
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      'WORKER REPORT: status: done\nsummary: Auto-generated report because worker worker-idle completed its turn without an explicit callback.'
+      expectedWorkerReport(
+        'done',
+        'summary: Auto-generated report because worker worker-idle completed its turn without an explicit callback.',
+      ),
     )
   })
 

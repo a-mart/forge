@@ -52,6 +52,7 @@ import type {
   SendMessageReceipt
 } from "../types.js";
 import { resizeImageIfNeeded } from "../image-utils.js";
+import { runtimeInputAllowsProjectedAssistantOutput } from "./manager-assistant-output-target-metadata.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -79,9 +80,9 @@ const TERMINAL_WORKER_REPORT_PATTERNS = [
 // Appended when re-delivering terminal worker reports after a manager turn with
 // no visible side effect. Exported for tests.
 export const TERMINAL_REPORT_REDELIVERY_DIRECTIVE =
-  "Plain assistant text is not visible here. Use speak_to_user, present_choices, delegate/follow up, or take an intentional non-user-visible coordination action now.";
+  "Worker/internal reports require an explicit user-visible, peer, or delegation action; do not rely on unscoped assistant text for this context. Use speak_to_user, present_choices, delegate/follow up, or take an intentional non-user-visible coordination action now.";
 export const DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE =
-  "Plain assistant text is not visible to the user. Call speak_to_user or present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
+  "This source requires explicit routed delivery. Use speak_to_user.target, present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
@@ -1813,9 +1814,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
   /**
    * gpt-5.x managers intermittently answer a worker's terminal report or a
    * direct user-visible input with a side-effect-free assistant turn (no tool
-   * calls, stopReason "stop"). That can be whitespace-only or non-empty plain
-   * text; both leave the user with no visible update because manager plain
-   * assistant text is hidden. Drop the trigger and unhandled assistant from
+   * calls, stopReason "stop"). Whitespace-only output is always invisible;
+   * non-empty direct web session-transcript text is projected only when the
+   * backend dispatch marker says assistant_output is allowed. Explicit-routed
+   * sources such as Cortex, collaboration, Telegram, and non-inherited worker
+   * reports still need a tool/side effect. Drop the trigger and unhandled assistant from
    * in-memory context, then re-dispatch the trigger with a bounded retry budget
    * keyed to the directive-stripped trigger text.
    */
@@ -1841,6 +1844,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     const trigger = classifyHiddenOutputTrigger(extractTextFromMessageRecord(triggerMessage));
     if (!trigger) {
+      return false;
+    }
+
+    if (trigger.allowsProjectedAssistantOutput && unhandledKind === "hidden_text") {
       return false;
     }
 
@@ -2271,6 +2278,7 @@ interface HiddenOutputTrigger {
   resampleStage: string;
   exhaustedMessage: string;
   userFacingExhaustedMessage: string;
+  allowsProjectedAssistantOutput?: boolean;
 }
 
 function classifyUnhandledAssistantMessage(
@@ -2325,12 +2333,14 @@ function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefi
       resampleStage: "terminal_report_resample",
       exhaustedMessage: "Manager produced no visible response to a worker's final report",
       userFacingExhaustedMessage:
-        "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+        "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome.",
+      allowsProjectedAssistantOutput: runtimeInputAllowsProjectedAssistantOutput(reportText)
     };
   }
 
   const directUserText = stripDirectUserInputRedeliveryDirective(text);
-  if (!isDirectUserVisibleSourceMessage(directUserText)) {
+  const sourceMetadata = parseDirectUserSourceMetadata(directUserText);
+  if (!sourceMetadata) {
     return undefined;
   }
 
@@ -2343,7 +2353,8 @@ function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefi
     resampleStage: "user_input_resample",
     exhaustedMessage: "Manager produced no visible response to a direct user message",
     userFacingExhaustedMessage:
-      "⚠️ The manager received your message but did not produce a visible response after automatic retries. Send a follow-up message to continue."
+      "⚠️ The manager received your message but did not produce a visible response after automatic retries. Send a follow-up message to continue.",
+    allowsProjectedAssistantOutput: runtimeInputAllowsProjectedAssistantOutput(directUserText)
   };
 }
 
@@ -2362,17 +2373,24 @@ function stripDirectUserInputRedeliveryDirective(text: string): string {
   return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
 }
 
-function isDirectUserVisibleSourceMessage(text: string): boolean {
+function parseDirectUserSourceMetadata(text: string): { channel: string } | undefined {
   const match = text.match(DIRECT_USER_SOURCE_CONTEXT_PATTERN);
   if (!match) {
-    return false;
+    return undefined;
   }
 
   try {
     const sourceContext = JSON.parse(match[1]) as { channel?: unknown };
-    return typeof sourceContext.channel === "string" && sourceContext.channel.trim().length > 0;
+    if (typeof sourceContext.channel !== "string") {
+      return undefined;
+    }
+    const channel = sourceContext.channel.trim();
+    if (channel.length === 0) {
+      return undefined;
+    }
+    return { channel };
   } catch {
-    return false;
+    return undefined;
   }
 }
 

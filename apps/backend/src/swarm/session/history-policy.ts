@@ -3,7 +3,8 @@ import { isCodexStreamDetailToolName } from "../codex-app-server/codex-app-serve
 import {
   collectKnownWorkerIds,
   inferManagerAliasIds,
-  isProtectedManagerContextEntry
+  isProtectedManagerContextEntry,
+  isUserVisibleAssistantConversationMessage
 } from "@forge/protocol";
 
 export const MAX_CONVERSATION_HISTORY = 2000;
@@ -53,7 +54,7 @@ export function isProtectedWebTranscriptEntry(entry: ConversationEntryEvent): bo
     return true;
   }
 
-  if (entry.source !== "user_input" && entry.source !== "speak_to_user") {
+  if (entry.source !== "user_input" && !isUserVisibleAssistantConversationMessage(entry)) {
     return false;
   }
 

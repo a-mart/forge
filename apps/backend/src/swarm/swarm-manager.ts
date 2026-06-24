@@ -138,6 +138,8 @@ import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
+import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
+import { formatAssistantOutputTargetMetadata } from "./runtime/manager-assistant-output-target-metadata.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import { reconcileInterruptedToolCallsForBoot } from "./interrupted-tool-reconciliation.js";
@@ -470,12 +472,17 @@ interface CodexPluginRetryAuthorizationContext {
   lastWorkerAgentId?: string;
 }
 
+type SessionTranscriptAssistantOutputTarget = Extract<AssistantOutputTarget, { kind: "session_transcript" }>;
+
 interface PendingInboundTurnContext {
   source: PreparedInboundConversationPayload["source"] | "agent_message";
   rootTurnId?: string;
   parentRootTurnId?: string;
   runtimeMessageText?: string;
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
+  sourceContext?: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
+  assistantOutputTarget?: AssistantOutputTarget;
   codexMcpToolGate?: CodexMcpToolGateEvaluation;
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
   codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext;
@@ -1286,6 +1293,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingProjectExecutableWorkerInvalidationByManagerId = new Map<string, string>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
+  private readonly inboundTurnContextActivatedByAgentId = new Set<string>();
+  private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
+  private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeCodexPluginDelegationByManagerId = new Map<string, CodexPluginDelegationTurnContext>();
   private readonly lastCodexPluginDelegationByManagerId = new Map<string, CodexPluginRetryContext>();
@@ -4631,6 +4641,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const preparedIdentity = this.prepareSessionIdentity(profileId, options);
+    const shouldApplyBaseSessionSystemPrompt =
+      options?.sessionPurpose !== "agent_creator" && base.sessionSystemPrompt !== undefined;
 
     const sessionDescriptor: AgentDescriptor = {
       agentId: preparedIdentity.sessionAgentId,
@@ -4653,9 +4665,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         preparedIdentity.sessionAgentId,
       ),
       ...(base.archetypeId !== undefined ? { archetypeId: base.archetypeId } : {}),
-      ...(base.sessionSystemPrompt !== undefined
-        ? { sessionSystemPrompt: base.sessionSystemPrompt }
-        : {})
+      ...(shouldApplyBaseSessionSystemPrompt ? { sessionSystemPrompt: base.sessionSystemPrompt } : {})
     };
 
     if (sessionDescriptor.sessionPurpose === "agent_creator") {
@@ -4907,6 +4917,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         toolCallId: string;
         toolName?: string;
       };
+      workerReportSourceAgentId?: string;
     }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
@@ -4991,6 +5002,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           "project_agent_input",
         ),
         projectAgentContext,
+        assistantOutputTarget: { kind: "peer_agent", fromAgentId: sender.agentId },
       });
 
       let deliveryResult;
@@ -5090,7 +5102,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const watchdogTurnSeqAtDispatch = this.workerHealthService.getWorkerReportDispatchTurnSeq(sender, target);
 
-    const modelMessage = await this.prepareModelInboundMessage(
+    let modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
       {
         text: message,
@@ -5098,6 +5110,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
       origin
     );
+    const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage({
+      sender,
+      target,
+      modelMessage,
+      workerReportSourceAgentId: options?.workerReportSourceAgentId,
+    });
+    if (target.role === "manager" && isWorkerReportRuntimeMessage(modelMessage)) {
+      modelMessage = appendAssistantOutputTargetMetadataToRuntimeMessage(modelMessage, assistantOutputTarget);
+    }
 
     this.workerHealthService.markPendingWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
@@ -5121,12 +5142,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         attachmentCount: attachments.length,
       },
     });
-    const rollbackObservabilityInboundContext = observabilityInput
+    const shouldEnqueueAgentMessageTurnContext =
+      target.role === "manager" && (Boolean(observabilityInput) || assistantOutputTarget.kind === "session_transcript" || isWorkerReportRuntimeMessage(modelMessage));
+    const rollbackObservabilityInboundContext = shouldEnqueueAgentMessageTurnContext
       ? this.enqueueInboundTurnContext(target.agentId, {
           source: "agent_message",
-          rootTurnId: observabilityInput.rootTurnId,
+          rootTurnId: observabilityInput?.rootTurnId,
           parentRootTurnId,
           runtimeMessageText: extractRuntimeMessageText(modelMessage),
+          assistantOutputTarget,
         })
       : undefined;
 
@@ -5141,6 +5165,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+    this.consumeWorkerAssistantOutputInheritanceAfterReportDispatch({
+      sender,
+      target,
+      modelMessage,
+      workerReportSourceAgentId: options?.workerReportSourceAgentId,
+    });
+    this.rememberWorkerAssistantOutputInheritanceAfterDispatch(sender, target);
     this.completeObservabilityRuntimeInput(observabilityInput, receipt, {
       fromAgentId,
       targetAgentId,
@@ -5364,6 +5395,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitConversationMessage(payload);
     if (source === "speak_to_user") {
+      this.runtimeController.markExplicitManagerAssistantOutput(agentId);
       this.markSessionActivity(agentId, payload.timestamp);
     }
 
@@ -6720,7 +6752,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw error;
     }
 
-    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext, collaborationAuthor);
+    const assistantOutputTarget = this.resolveAssistantOutputTargetForUserInput(target, sourceContext, collaborationAuthor);
+    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext, collaborationAuthor, assistantOutputTarget);
     const runtimeVisibleMessage = codexPluginDelegationContext
       ? this.appendCodexPluginManagerTurnGuidance(managerVisibleMessage, codexPluginDelegationContext)
       : codexPluginRetryAuthorizationContext
@@ -6776,6 +6809,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source: "user_input",
       rootTurnId: observabilityInput?.rootTurnId,
       runtimeMessageText: extractRuntimeMessageText(runtimeMessage),
+      sourceContext,
+      collaborationAuthor,
+      assistantOutputTarget,
       codexMcpToolGate,
       codexPluginDelegationContext,
       codexPluginRetryAuthorizationContext,
@@ -6875,9 +6911,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.observability;
   }
 
-  onAcceptedRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
-    this.applyInboundTurnContextRuntimeEvent(agentId, event);
+  beforeRuntimeEventProjection(agentId: string, _runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.applyInboundTurnContextRuntimeEvent(agentId, event, "before_projection");
+  }
+
+  afterRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.applyInboundTurnContextRuntimeEvent(agentId, event, "after_projection");
     this.recordObservabilityRuntimeSessionEvent(agentId, runtimeToken, event);
+  }
+
+  onAcceptedRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.afterRuntimeEventProjection(agentId, runtimeToken, event);
   }
 
   private recordObservabilityRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
@@ -7044,6 +7088,33 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.versioningService;
   }
 
+  private resolveAssistantOutputTargetForUserInput(
+    target: AgentDescriptor,
+    sourceContext: MessageSourceContext,
+    collaborationAuthor?: CollaborationAuthor,
+  ): AssistantOutputTarget {
+    if (collaborationAuthor) {
+      return { kind: "explicit_tool_required", reason: "collaboration_channel" };
+    }
+
+    if (target.sessionPurpose === "cortex_review" || normalizeArchetypeId(target.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+      return { kind: "explicit_tool_required", reason: "cortex_session" };
+    }
+
+    // Prompt migration is scoped to normal web session transcripts. Worker-report
+    // closeouts may inherit this target through the manager-local delegation handoff;
+    // collaboration, external channels, and secondary system archetypes remain explicit-tool-required.
+    if (sourceContext.channel === "web") {
+      return { kind: "session_transcript", channel: "web", sourceContext };
+    }
+
+    if (sourceContext.channel === "telegram") {
+      return { kind: "external_channel", sourceContext };
+    }
+
+    return { kind: "explicit_tool_required", reason: `unsupported_direct_${sourceContext.channel}_source` };
+  }
+
   private enqueueInboundTurnContext(agentId: string, context: PendingInboundTurnContext): () => void {
     const queue = this.pendingInboundTurnContextsByAgentId.get(agentId) ?? [];
     queue.push(context);
@@ -7076,99 +7147,206 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return undefined;
     }
 
-    if (nextContext.runtimeMessageText !== undefined) {
-      const messageText = extractMessageText(message);
-      if (!messageText || !runtimeMessageTextMatches(nextContext.runtimeMessageText, messageText)) {
-        return undefined;
+    const messageText = extractMessageText(message);
+    const contextIndex = queue.findIndex((context) => {
+      if (context.runtimeMessageText === undefined) {
+        return false;
       }
+      return Boolean(messageText && runtimeMessageTextMatches(context.runtimeMessageText, messageText));
+    });
+    if (contextIndex < 0) {
+      return undefined;
     }
 
-    queue.shift();
+    const [matchedContext] = queue.splice(contextIndex, 1);
     if (queue.length === 0) {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
     }
 
-    return nextContext;
+    return matchedContext;
   }
 
-  private applyInboundTurnContextRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
+  private activateInboundTurnContext(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    nextContext: PendingInboundTurnContext | undefined,
+  ): void {
+    if (nextContext?.rootTurnId) {
+      this.activeObservabilityRootByAgentId.set(agentId, {
+        rootTurnId: nextContext.rootTurnId,
+        parentRootTurnId: nextContext.parentRootTurnId,
+      });
+    } else if (nextContext) {
+      this.activeObservabilityRootByAgentId.delete(agentId);
+    }
+
+    const externalProjectAgentContext = nextContext?.source === "project_agent_input" && nextContext.projectAgentContext?.external
+      ? {
+          fromAgentId: nextContext.projectAgentContext.fromAgentId,
+          fromDisplayName: nextContext.projectAgentContext.fromDisplayName,
+          ...(nextContext.projectAgentContext.fromProfileId
+            ? { fromProfileId: nextContext.projectAgentContext.fromProfileId }
+            : {}),
+          ...(nextContext.projectAgentContext.fromProjectName
+            ? { fromProjectName: nextContext.projectAgentContext.fromProjectName }
+            : {}),
+        }
+      : undefined;
+
+    if (externalProjectAgentContext) {
+      this.activeExternalProjectAgentTurnByAgentId.set(agentId, externalProjectAgentContext);
+    } else {
+      this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+    }
+
+    const manager = descriptor ?? this.descriptors.get(agentId);
+    if (manager?.role !== "manager") {
+      return;
+    }
+
+    if (nextContext?.assistantOutputTarget) {
+      this.activeAssistantOutputTargetByManagerId.set(agentId, nextContext.assistantOutputTarget);
+      this.runtimeController.activateManagerAssistantOutputTurn(agentId, nextContext.assistantOutputTarget);
+    } else {
+      this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.runtimeController.clearManagerAssistantOutputTurn(agentId);
+    }
+
+    if (nextContext?.codexMcpToolGate) {
+      this.codexMcpToolTurnGateByManagerId.set(agentId, nextContext.codexMcpToolGate);
+    } else if (!this.hasActiveAuthorizedCodexMcpToolGate(agentId)) {
+      this.codexMcpToolTurnGateByManagerId.set(agentId, {
+        allowed: false,
+        reason: "Codex MCP tools are only available on turns with Codex tool mention tags.",
+      });
+    }
+
+    if (nextContext?.codexPluginDelegationContext) {
+      this.activeCodexPluginDelegationByManagerId.set(agentId, nextContext.codexPluginDelegationContext);
+      this.rememberCodexPluginRetryContext(nextContext.codexPluginDelegationContext);
+    } else {
+      this.activeCodexPluginDelegationByManagerId.delete(agentId);
+      this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
+    }
+
+    if (nextContext?.codexPluginRetryAuthorizationContext) {
+      this.activeCodexPluginRetryAuthorizationByManagerId.set(agentId, nextContext.codexPluginRetryAuthorizationContext);
+    } else {
+      this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
+    }
+  }
+
+  private applyInboundTurnContextRuntimeEvent(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    phase: "before_projection" | "after_projection",
+  ): void {
     const descriptor = this.descriptors.get(agentId);
-    if (isCodexPluginWorkerDescriptor(descriptor)) {
+    if (phase === "before_projection" && isCodexPluginWorkerDescriptor(descriptor)) {
       if (event.type === "message_start" && extractRole(event.message) === "user") {
         this.codexPluginScopeService.noteWorkerTurnStarted(agentId);
       }
     }
 
-    if (event.type === "message_start" && extractRole(event.message) === "user") {
+    if (phase === "before_projection" && event.type === "turn_start") {
+      return;
+    }
+
+    if (phase === "before_projection" && event.type === "message_start" && extractRole(event.message) === "user") {
+      // Providers that do not echo user messages emit a synthetic message_start with the
+      // selected runtime input; match by content instead of assuming queued turn FIFO.
       const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
-
-      if (nextContext?.rootTurnId) {
-        this.activeObservabilityRootByAgentId.set(agentId, {
-          rootTurnId: nextContext.rootTurnId,
-          parentRootTurnId: nextContext.parentRootTurnId,
-        });
-      } else if (nextContext) {
-        this.activeObservabilityRootByAgentId.delete(agentId);
-      }
-
-      const externalProjectAgentContext = nextContext?.source === "project_agent_input" && nextContext.projectAgentContext?.external
-        ? {
-            fromAgentId: nextContext.projectAgentContext.fromAgentId,
-            fromDisplayName: nextContext.projectAgentContext.fromDisplayName,
-            ...(nextContext.projectAgentContext.fromProfileId
-              ? { fromProfileId: nextContext.projectAgentContext.fromProfileId }
-              : {}),
-            ...(nextContext.projectAgentContext.fromProjectName
-              ? { fromProjectName: nextContext.projectAgentContext.fromProjectName }
-              : {}),
-          }
-        : undefined;
-
-      if (externalProjectAgentContext) {
-        this.activeExternalProjectAgentTurnByAgentId.set(agentId, externalProjectAgentContext);
-      } else {
-        this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
-      }
-
-      const manager = descriptor ?? this.descriptors.get(agentId);
-      if (manager?.role === "manager") {
-        if (nextContext?.codexMcpToolGate) {
-          this.codexMcpToolTurnGateByManagerId.set(agentId, nextContext.codexMcpToolGate);
-        } else if (!this.hasActiveAuthorizedCodexMcpToolGate(agentId)) {
-          this.codexMcpToolTurnGateByManagerId.set(agentId, {
-            allowed: false,
-            reason: "Codex MCP tools are only available on turns with Codex tool mention tags.",
-          });
-        }
-
-        if (nextContext?.codexPluginDelegationContext) {
-          this.activeCodexPluginDelegationByManagerId.set(agentId, nextContext.codexPluginDelegationContext);
-          this.rememberCodexPluginRetryContext(nextContext.codexPluginDelegationContext);
-        } else {
-          this.activeCodexPluginDelegationByManagerId.delete(agentId);
-          this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
-        }
-
-        if (nextContext?.codexPluginRetryAuthorizationContext) {
-          this.activeCodexPluginRetryAuthorizationByManagerId.set(agentId, nextContext.codexPluginRetryAuthorizationContext);
-        } else {
-          this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
-        }
+      if (nextContext) {
+        this.inboundTurnContextActivatedByAgentId.add(agentId);
+        this.activateInboundTurnContext(agentId, descriptor, nextContext);
+      } else if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
+        this.activateInboundTurnContext(agentId, descriptor, undefined);
       }
       return;
     }
 
-    if (event.type === "turn_end" || event.type === "agent_end") {
+    if (phase === "after_projection" && (event.type === "turn_end" || event.type === "agent_end")) {
+      this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+      this.activeAssistantOutputTargetByManagerId.delete(agentId);
       this.activeObservabilityRootByAgentId.delete(agentId);
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
+      // The tracker also self-clears on terminal turn events; keep this manager-level
+      // clear as lifecycle belt-and-suspenders for skipped/suppressed projections.
+      this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     }
   }
 
   private getActiveExternalProjectAgentTurn(agentId: string): ExternalProjectAgentTurnContext | undefined {
     return this.activeExternalProjectAgentTurnByAgentId.get(agentId);
+  }
+
+  private getEligibleActiveAssistantOutputTargetForDelegation(managerId: string): SessionTranscriptAssistantOutputTarget | undefined {
+    const target = this.activeAssistantOutputTargetByManagerId.get(managerId);
+    if (target?.kind !== "session_transcript" || target.channel !== "web") {
+      return undefined;
+    }
+    return cloneSessionTranscriptAssistantOutputTarget(target);
+  }
+
+  private resolveAssistantOutputTargetForAgentMessage(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    modelMessage: string | RuntimeUserMessage;
+    workerReportSourceAgentId?: string;
+  }): AssistantOutputTarget {
+    if (input.target.role !== "manager" || !isWorkerReportRuntimeMessage(input.modelMessage)) {
+      return { kind: "explicit_tool_required", reason: "agent_message" };
+    }
+
+    const sourceWorkerId = input.sender.role === "worker" && input.sender.managerId === input.target.agentId
+      ? input.sender.agentId
+      : input.workerReportSourceAgentId;
+    if (!sourceWorkerId) {
+      return { kind: "explicit_tool_required", reason: "agent_message" };
+    }
+
+    const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
+    return inheritedTarget ? cloneSessionTranscriptAssistantOutputTarget(inheritedTarget) : { kind: "explicit_tool_required", reason: "agent_message" };
+  }
+
+  private consumeWorkerAssistantOutputInheritanceAfterReportDispatch(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    modelMessage: string | RuntimeUserMessage;
+    workerReportSourceAgentId?: string;
+  }): void {
+    if (input.target.role !== "manager" || !isWorkerReportRuntimeMessage(input.modelMessage)) {
+      return;
+    }
+
+    const sourceWorkerId = input.sender.role === "worker" && input.sender.managerId === input.target.agentId
+      ? input.sender.agentId
+      : input.workerReportSourceAgentId;
+    if (sourceWorkerId) {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(sourceWorkerId);
+    }
+  }
+
+  private rememberWorkerAssistantOutputInheritanceAfterDispatch(
+    sender: AgentDescriptor,
+    target: AgentDescriptor,
+  ): void {
+    if (sender.role !== "manager" || target.role !== "worker" || target.managerId !== sender.agentId) {
+      return;
+    }
+
+    // Keep this as a single-hop reply-target handoff from the active manager turn to the
+    // delegated worker. A later worker report consumes the value exactly once; unrelated
+    // manager-to-worker messages with no eligible active web target clear any stale handoff.
+    const inheritedTarget = this.getEligibleActiveAssistantOutputTargetForDelegation(sender.agentId);
+    if (inheritedTarget) {
+      this.inheritedAssistantOutputTargetByWorkerId.set(target.agentId, inheritedTarget);
+    } else {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(target.agentId);
+    }
   }
 
   private getActiveObservabilityRootTurnId(agentId: string): string | undefined {
@@ -9249,6 +9427,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private discardPendingInboundTurnContexts(agentId: string): void {
     this.pendingInboundTurnContextsByAgentId.delete(agentId);
+    this.inboundTurnContextActivatedByAgentId.delete(agentId);
+    this.activeAssistantOutputTargetByManagerId.delete(agentId);
+    this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
     this.activeCodexPluginDelegationByManagerId.delete(agentId);
     this.clearCodexPluginRetryContextForManager(agentId);
@@ -9291,11 +9473,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const descriptor = this.descriptors.get(agentId);
     if (descriptor?.role === "manager") {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
+      this.inboundTurnContextActivatedByAgentId.delete(agentId);
+      this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.runtimeController.clearManagerAssistantOutputTurn(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.clearCodexPluginRetryContextForManager(agentId);
       this.codexPluginScopeService.closeScopesForManager(agentId);
-    } else if (isCodexPluginWorkerDescriptor(descriptor)) {
-      this.codexPluginScopeService.closeScopeForWorker(agentId);
+    } else {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+      if (isCodexPluginWorkerDescriptor(descriptor)) {
+        this.codexPluginScopeService.closeScopeForWorker(agentId);
+      }
     }
 
     await this.runtimeController.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
@@ -9958,6 +10146,47 @@ function normalizeRuntimeMessageTextForMatch(value: string): string {
 
 function runtimeMessageTextMatches(expected: string, actual: string): boolean {
   return normalizeRuntimeMessageTextForMatch(expected) === normalizeRuntimeMessageTextForMatch(actual);
+}
+
+function cloneSessionTranscriptAssistantOutputTarget(
+  target: SessionTranscriptAssistantOutputTarget,
+): SessionTranscriptAssistantOutputTarget {
+  return {
+    kind: "session_transcript",
+    channel: target.channel,
+    ...(target.sourceContext ? { sourceContext: { ...target.sourceContext } } : {}),
+  };
+}
+
+function isWorkerReportRuntimeMessage(message: string | RuntimeUserMessage): boolean {
+  return extractRuntimeMessageText(message).trimStart().startsWith(WORKER_REPORT_MESSAGE_PREFIX);
+}
+
+function appendAssistantOutputTargetMetadataToRuntimeMessage(
+  message: string | RuntimeUserMessage,
+  target: AssistantOutputTarget,
+): string | RuntimeUserMessage {
+  if (typeof message === "string") {
+    return appendAssistantOutputTargetMetadataToText(message, target);
+  }
+
+  return {
+    ...message,
+    text: appendAssistantOutputTargetMetadataToText(message.text, target),
+  };
+}
+
+function appendAssistantOutputTargetMetadataToText(
+  text: string,
+  target: AssistantOutputTarget,
+): string {
+  const marker = formatAssistantOutputTargetMetadata(target);
+  const firstLineEnd = text.indexOf("\n");
+  if (firstLineEnd < 0) {
+    return `${text}\n${marker}`;
+  }
+
+  return `${text.slice(0, firstLineEnd)}\n${marker}${text.slice(firstLineEnd)}`;
 }
 
 function hashDebugAgentId(agentId: string): string {

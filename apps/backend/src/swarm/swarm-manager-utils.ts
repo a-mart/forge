@@ -41,6 +41,8 @@ import type {
   MessageSourceContext,
   MessageTargetContext
 } from "./types.js";
+import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
+import { formatAssistantOutputTargetMetadata } from "./runtime/manager-assistant-output-target-metadata.js";
 import { validateCodexExternalThreadModelInvariant } from "./external-threads.js";
 
 const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
@@ -1474,6 +1476,7 @@ export function formatInboundUserMessageForManager(
   text: string,
   sourceContext: MessageSourceContext,
   collaborationAuthor?: CollaborationAuthor,
+  assistantOutputTarget?: AssistantOutputTarget,
 ): string {
   const metadataLines = [`[sourceContext] ${JSON.stringify(sourceContext)}`];
   if (collaborationAuthor) {
@@ -1481,6 +1484,9 @@ export function formatInboundUserMessageForManager(
       displayName: collaborationAuthor.displayName,
       role: collaborationAuthor.role,
     })}`);
+  }
+  if (assistantOutputTarget) {
+    metadataLines.push(formatAssistantOutputTargetMetadata(assistantOutputTarget));
   }
 
   const metadataBlock = metadataLines.join("\n");

@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
 import { normalizeOptionalString } from "../claude-utils.js";
 import type { ModelChangeContinuityModel } from "./model-change-continuity.js";
 import type {
@@ -184,7 +185,7 @@ function renderManagerRecoveryLine(
       return renderTranscriptLine("User:", entry.text, buildAttachmentPlaceholder(entry.attachments));
     }
 
-    if (entry.source === "speak_to_user") {
+    if (isUserVisibleAssistantConversationMessage(entry)) {
       return renderTranscriptLine("Assistant:", entry.text, buildAttachmentPlaceholder(entry.attachments));
     }
 

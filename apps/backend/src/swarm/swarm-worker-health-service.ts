@@ -95,7 +95,7 @@ export interface SwarmWorkerHealthServiceOptions {
     targetAgentId: string,
     message: string,
     delivery?: RequestedDeliveryMode,
-    options?: { origin?: "user" | "internal" }
+    options?: { origin?: "user" | "internal"; workerReportSourceAgentId?: string }
   ): Promise<unknown>;
   publishToUser(
     agentId: string,
@@ -1222,7 +1222,8 @@ export class SwarmWorkerHealthService {
 
     try {
       await this.options.sendMessage(managerId, managerId, message, "auto", {
-        origin: "internal"
+        origin: "internal",
+        workerReportSourceAgentId: descriptor.agentId,
       });
 
       if ((includeSummary || isDuplicateSummary) && typeof report.summaryTimestamp === "number") {

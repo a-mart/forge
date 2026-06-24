@@ -391,6 +391,10 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       }
 
       await this.emitPromptSessionEvents(active, this.eventMapper.beginPrompt());
+      await this.emitPromptSessionEvents(active, [{
+        type: "message_start",
+        message: { role: "user", content: message.text }
+      }]);
       if (this.shouldAbortPromptBeforeSend(active, token)) {
         return;
       }
@@ -922,7 +926,7 @@ function extractCursorSdkErrorDetails(
 }
 
 function isVisibleCursorPromptEvent(event: RuntimeSessionEvent): boolean {
-  return event.type === "message_start"
+  return (event.type === "message_start" && event.message.role !== "user")
     || event.type === "message_update"
     || event.type === "message_end"
     || event.type === "tool_execution_start"

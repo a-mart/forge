@@ -155,6 +155,45 @@ describe('deriveVisibleMessages', () => {
     expect(result.visibleMessages).toEqual(result.allMessages)
   })
 
+  it('shows assistant_output rows in web and all manager views while hiding runtime logs', () => {
+    const projected: ConversationEntry = {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'projected reply',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'assistant_output',
+      sourceContext: { channel: 'web' },
+    }
+    const runtimeLog: ConversationEntry = {
+      type: 'conversation_log',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'runtime_log',
+      kind: 'message_end',
+      role: 'assistant',
+      text: 'hidden runtime text',
+    }
+
+    const webResult = deriveVisibleMessages({
+      messages: [projected, runtimeLog],
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'web',
+    })
+    const allResult = deriveVisibleMessages({
+      messages: [projected, runtimeLog],
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(webResult.visibleMessages).toEqual([projected])
+    expect(allResult.visibleMessages).toEqual([projected])
+  })
+
   it('hides worker tool calls from manager all view', () => {
     const messages: ConversationEntry[] = [
       {

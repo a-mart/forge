@@ -40,6 +40,13 @@ afterEach(async () => {
   await Promise.all(tempHandles.splice(0).map((handle) => handle.cleanup()));
 });
 
+function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
+  expect(prompt).toContain("Worker reports require explicit same-turn handling.");
+  expect(prompt).toContain("inherited direct web/session-transcript user-facing closeouts");
+  expect(prompt).toContain("`speak_to_user` for protected/non-web/external/proactive/internal user-facing closeouts");
+  expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
+}
+
 async function makeConfig(): Promise<{ config: SwarmConfig; cleanup: () => Promise<void> }> {
   const handle = await createTempConfig({
     prefix: "swarm-prompt-service-",
@@ -181,6 +188,103 @@ function createPromptServiceForDescriptor(
 }
 
 describe("SwarmPromptService", () => {
+  it("appends current manager routing contract after copied stale session prompts", async () => {
+    const { config } = await makeConfig();
+    const staleSessionPrompt = `You are the manager agent in a multi-agent swarm.
+
+# User-facing output
+User-facing output is allowed only through:
+- \`speak_to_user\` for normal messages
+- \`present_choices\` for structured choice UI on channels that support it
+
+Never use plain assistant text for user communication.`;
+    const descriptor = createManagerDescriptor(config, config.paths.defaultCwd, {
+      sessionSystemPrompt: staleSessionPrompt,
+    });
+    const service = createPromptServiceForDescriptor(config, descriptor);
+
+    const prompt = await service.buildResolvedManagerPrompt(descriptor);
+
+    expect(prompt).toContain("Never use plain assistant text for user communication.");
+    expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
+    expect(prompt).toContain(
+      "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
+    );
+    expect(prompt).toContain(
+      "Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and unknown/protected worker-report closeouts. Do not use it for normal final web replies."
+    );
+    expect(prompt).not.toContain("other routed user-facing delivery");
+    expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
+      prompt.indexOf("Never use plain assistant text for user communication.")
+    );
+  });
+
+  it("preserves custom old-marker repo manager overrides while appending the current routing contract", async () => {
+    const customRepoRoot = await mkdtemp(join(tmpdir(), "custom-old-manager-prompt-repo-"));
+    const repoArchetypeDir = join(customRepoRoot, ".swarm", "archetypes");
+    await mkdir(repoArchetypeDir, { recursive: true });
+    await writeFile(
+      join(repoArchetypeDir, "manager.md"),
+      `You are the manager agent in a multi-agent swarm.
+
+# User-facing output
+User-facing output is allowed only through:
+- \`speak_to_user\` for normal messages
+- \`present_choices\` for structured choice UI on channels that support it
+
+Never use plain assistant text for user communication.
+
+Custom project instruction: always mention the release train when summarizing deploy work.`,
+      "utf8",
+    );
+
+    const handle = await createTempConfig({
+      prefix: "swarm-prompt-service-custom-old-manager-",
+      port: 0,
+      rootDir: customRepoRoot,
+      resourcesDir: repoRoot,
+      defaultCwd: customRepoRoot,
+      cwdAllowlistRoots: [customRepoRoot],
+      repoArchetypesDir: BUILTIN_ARCHETYPES,
+      repoMemorySkillFile: join(
+        repoRoot,
+        "apps",
+        "backend",
+        "src",
+        "swarm",
+        "skills",
+        "builtins",
+        "memory",
+        "SKILL.md"
+      ),
+      defaultModel: {
+        provider: "openai-codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "medium"
+      }
+    });
+    tempHandles.push(handle);
+
+    const descriptor = createManagerDescriptor(handle.config, customRepoRoot);
+    const service = createPromptServiceForDescriptor(handle.config, descriptor);
+
+    const prompt = await service.buildResolvedManagerPrompt(descriptor);
+
+    expect(prompt).toContain("Custom project instruction: always mention the release train");
+    expect(prompt).toContain("Never use plain assistant text for user communication.");
+    expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
+    expect(prompt).toContain(
+      "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
+    );
+    expect(prompt).toContain(
+      "Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and unknown/protected worker-report closeouts. Do not use it for normal final web replies."
+    );
+    expect(prompt).not.toContain("other routed user-facing delivery");
+    expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
+      prompt.indexOf("Never use plain assistant text for user communication.")
+    );
+  });
+
   it("previewManagerSystemPrompt assembles System Prompt, Memory Composite, AGENTS.md, and SWARM.md sections", async () => {
     const { config } = await makeConfig();
     const workRoot = join(config.paths.dataDir, "work-preview");
@@ -731,8 +835,9 @@ describe("SwarmPromptService", () => {
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("Forge Project Agent Operating Contract");
-    expect(resolved).toContain("Direct end-user requests to this Project Agent session");
-    expect(resolved.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
+    expect(resolved).toContain("Final/standalone direct web end-user replies in this Project Agent session");
+    expectCurrentProjectAgentRoutingFooter(resolved);
+    expect(resolved.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
 
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
     const systemSection = preview.sections.find((section) => section.label === "System Prompt");
@@ -972,7 +1077,8 @@ describe("SwarmPromptService", () => {
     expect(resolved).toContain("Repo prompt body");
     expect(resolved).toContain("Repo reference body");
     expect(resolved.indexOf("Repo reference body")).toBeLessThan(resolved.indexOf("# Non-Negotiable Forge Routing Contract"));
-    expect(resolved.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
+    expectCurrentProjectAgentRoutingFooter(resolved);
+    expect(resolved.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
     expect(resolved).not.toContain("Stale local prompt");
     expect(resolved).not.toContain("Stale local reference");
   });
@@ -1087,7 +1193,8 @@ describe("SwarmPromptService", () => {
     const finalPrompt = await service.buildResolvedManagerPrompt(descriptor);
     expect(finalPrompt).toContain("Local reference body");
     expect(finalPrompt.indexOf("Local reference body")).toBeLessThan(finalPrompt.indexOf("# Non-Negotiable Forge Routing Contract"));
-    expect(finalPrompt.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
+    expectCurrentProjectAgentRoutingFooter(finalPrompt);
+    expect(finalPrompt.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
   });
 
   it("getSwarmContextFiles walks parent directories and returns nearest-first ordering", async () => {

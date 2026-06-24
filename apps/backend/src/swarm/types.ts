@@ -3,6 +3,7 @@ import {
   type AgentCollaborationLink,
   type AgentCreatorResult,
   type CliSessionMetadata,
+  type ConversationMessageSource,
   type AgentModelOrigin,
   type AgentSessionSurface,
   type ChoiceRequestEvent,
@@ -278,7 +279,7 @@ export interface ConversationMessageEvent {
   text: string;
   attachments?: ConversationMessageAttachment[];
   timestamp: string;
-  source: "user_input" | "speak_to_user" | "system" | "project_agent_input";
+  source: ConversationMessageSource;
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
   projectAgentContext?: ProjectAgentMessageContext;

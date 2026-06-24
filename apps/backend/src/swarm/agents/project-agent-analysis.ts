@@ -1,4 +1,5 @@
 import { complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
 import { normalizeProjectAgentInlineText } from "../project-agents.js";
 import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.js";
 import { shouldExcludeConversationMessageFromModelContext } from "../external-threads.js";
@@ -32,7 +33,7 @@ export const PROJECT_AGENT_ANALYSIS_SYSTEM_PROMPT = [
   "",
   "Critical runtime facts:",
   "- The generated systemPrompt is layered with Forge's built-in Project Agent base prompt; it is not a full standalone manager prompt replacement.",
-  "- Forge's Project Agent base already supplies the generic operating contract: user-visible replies through speak_to_user, direct-user vs peer-message routing, delegation-first workflow, worker management, and manager coordination norms.",
+  "- Forge's Project Agent base already supplies the generic output/routing contract: direct-user vs peer-message routing, explicit routed delivery where needed, delegation-first workflow, worker management, and manager coordination norms.",
   "- The runtime WILL automatically append specialist roster, project-agent directory, integration context, and memory-derived context.",
   "- Do NOT include specialist roster content, project-agent directory content, integration context, or memory blocks in the generated systemPrompt.",
   "- Think of the output as writing the role/scope/quality layer that comes after Forge's Project Agent operating contract.",
@@ -195,7 +196,7 @@ function isTranscriptConversationMessage(entry: ConversationEntryEvent): entry i
   return (
     entry.type === "conversation_message" &&
     !shouldExcludeConversationMessageFromModelContext(entry) &&
-    (entry.source === "user_input" || entry.source === "speak_to_user" || entry.source === "project_agent_input")
+    (entry.source === "user_input" || isUserVisibleAssistantConversationMessage(entry) || entry.source === "project_agent_input")
   );
 }
 

@@ -1294,7 +1294,7 @@ describe('SwarmManager', () => {
     const reviewRuntime = manager.runtimeByAgentId.get(run.sessionAgentId!)
     expect(reviewRuntime?.sendCalls.at(-1)?.delivery).toBe('steer')
     expect(reviewRuntime?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"web"}\n\nReview session alpha/alpha--s1 (memory, feedback freshness)',
+      '[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"cortex_session"}\n\nReview session alpha/alpha--s1 (memory, feedback freshness)',
     )
 
     const storedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {

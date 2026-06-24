@@ -284,6 +284,33 @@ describe('SwarmManager', () => {
     expect(typeof history[0]?.renamedAt).toBe('string')
     expect(typeof history[1]?.renamedAt).toBe('string')
   })
+  it('does not clone stale default manager session prompts into agent creator sessions', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const staleSessionPrompt = `You are the manager agent in a multi-agent swarm.
+
+# User-facing output
+User-facing output is allowed only through:
+- \`speak_to_user\` for normal messages
+
+Never use plain assistant text for user communication.`
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    state.descriptors.get('manager')!.sessionSystemPrompt = staleSessionPrompt
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    expect(creator.sessionAgent.archetypeId).toBe('agent-architect')
+    expect(creator.sessionAgent.sessionSystemPrompt).toBeUndefined()
+    const creatorPrompt = manager.systemPromptByAgentId.get(creator.sessionAgent.agentId) ?? ''
+    expect(creatorPrompt).toContain('You are the Agent Architect')
+    expect(creatorPrompt).toContain('Final/standalone direct web user replies may use normal assistant final text')
+    expect(creatorPrompt).not.toContain('Never use plain assistant text for user communication.')
+  })
+
   it('rejects agent_creator sessions in the cortex profile', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

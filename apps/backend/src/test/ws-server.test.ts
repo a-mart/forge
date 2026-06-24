@@ -318,7 +318,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('broadcasts unread_notification for assistant speak_to_user messages to all subscriptions', async () => {
+  it('broadcasts unread_notification for user-visible assistant messages to all subscriptions', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
@@ -412,6 +412,29 @@ describe('SwarmWebSocketServer', () => {
         (event) => event.type === 'conversation_message' && event.agentId === 'manager' && event.text === 'assistant update',
       ),
     ).toBe(false)
+
+    const unreadBeforeProjected = workerEvents.filter((event) => event.type === 'unread_notification').length
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'assistant',
+        text: 'projected assistant update',
+        timestamp: new Date().toISOString(),
+        source: 'assistant_output',
+        sourceContext: { channel: 'web' },
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      workerEvents,
+      (event) =>
+        event.type === 'unread_notification' &&
+        event.agentId === 'manager' &&
+        workerEvents.filter((candidate) => candidate.type === 'unread_notification').length > unreadBeforeProjected,
+    )
 
     const unreadBefore = workerEvents.filter((event) => event.type === 'unread_notification').length
 
@@ -2677,7 +2700,7 @@ describe('SwarmWebSocketServer', () => {
       expect(message.sourceContext).toEqual({ channel: 'cli', messageId: 'send-1' })
     }
     expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"cli","messageId":"send-1"}\n\nhello from cli',
+      '[sourceContext] {"channel":"cli","messageId":"send-1"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nhello from cli',
     )
 
     client.send(JSON.stringify({
@@ -2706,7 +2729,7 @@ describe('SwarmWebSocketServer', () => {
       expect(runMessage.sourceContext).toEqual({ channel: 'cli', messageId: 'run-correlation-1' })
     }
     expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"cli","messageId":"run-correlation-1"}\n\nhello from cli run',
+      '[sourceContext] {"channel":"cli","messageId":"run-correlation-1"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nhello from cli run',
     )
 
     client.send(JSON.stringify({
@@ -2723,7 +2746,7 @@ describe('SwarmWebSocketServer', () => {
       sourceContext: { channel: 'cli', messageId: 'send-project-agent' },
     })
     expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"cli","messageId":"send-project-agent"}\n\nhello docs agent',
+      '[sourceContext] {"channel":"cli","messageId":"send-project-agent"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nhello docs agent',
     )
 
     client.send(JSON.stringify({
@@ -2746,7 +2769,7 @@ describe('SwarmWebSocketServer', () => {
       sourceContext: { channel: 'cli', messageId: 'run-docs-correlation' },
     })
     expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"cli","messageId":"run-docs-correlation"}\n\nrun docs agent',
+      '[sourceContext] {"channel":"cli","messageId":"run-docs-correlation"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nrun docs agent',
     )
 
     client.close()

@@ -189,6 +189,40 @@ describe("ClaudeQuerySession", () => {
     }
   });
 
+  it("emits a synthetic user message_start for runtime-input correlation", async () => {
+    const callbacks = createCallbacks();
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(args.prompt, { type: "system:init" }, undefined, {
+          onPrompt: async (_message, pushEvent) => {
+            pushEvent({ type: "result", subtype: "result" });
+          }
+        });
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("correlate this turn");
+    await session.waitForIdle();
+
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith({
+      type: "message_start",
+      message: { role: "user", content: "correlate this turn" }
+    });
+
+    await session.stop();
+  });
+
   it("passes auto-compaction settings into query options and proxies SDK control methods", async () => {
     const callbacks = createCallbacks();
     const getContextUsage = vi.fn().mockResolvedValue({

@@ -22,6 +22,7 @@ import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
 import { RuntimeEventProjector } from "./runtime/runtime-event-projector.js";
+import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type {
   WorkerActivityStateLike,
@@ -140,6 +141,8 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     source: "agent_end" | "status_idle" | "deferred"
   ): Promise<void>;
   isRuntimeRecoveryActive(agentId: string): boolean;
+  beforeRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
+  afterRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   onAcceptedRuntimeSessionEvent?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   incrementSessionCompactionCount(
     profileId: string,
@@ -151,6 +154,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     patch: Partial<AgentDescriptor>
   ): Promise<AgentDescriptor | undefined>;
   emitConversationMessage(event: ConversationMessageEvent): void;
+  markSessionActivity(agentId: string, timestamp?: string): void;
   emitStatus(
     agentId: string,
     status: AgentStatus,
@@ -288,6 +292,18 @@ export class SwarmRuntimeController {
 
   clearTrackedToolPaths(agentId: string): void {
     this.getRuntimeEventProjector().clearTrackedToolPaths(agentId);
+  }
+
+  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget): void {
+    this.getRuntimeEventProjector().activateManagerAssistantOutputTurn(agentId, target);
+  }
+
+  clearManagerAssistantOutputTurn(agentId: string): void {
+    this.getRuntimeEventProjector().clearManagerAssistantOutputTurn(agentId);
+  }
+
+  markExplicitManagerAssistantOutput(agentId: string): void {
+    this.getRuntimeEventProjector().markExplicitManagerAssistantOutput(agentId);
   }
 
   suppressIntentionalStopRuntimeCallbacks(agentId: string, runtimeToken?: number): void {
@@ -507,6 +523,7 @@ export class SwarmRuntimeController {
         runtimeRecoveryState: this.host.runtimeRecoveryState,
         now: () => this.now(),
         conversationProjector: this.host.conversationProjector,
+        markSessionActivity: (agentId, timestamp) => this.host.markSessionActivity(agentId, timestamp),
         maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
           this.host.maybeRecordModelCapacityBlock(agentId, descriptor, error),
         maybeRecoverWorkerWithSpecialistFallback: (agentId, errorMessage, sourcePhase, runtimeToken) =>
@@ -570,8 +587,13 @@ export class SwarmRuntimeController {
       return false;
     }
 
+    this.host.beforeRuntimeEventProjection?.(agentId, runtimeToken, event);
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
-    this.host.onAcceptedRuntimeSessionEvent?.(agentId, runtimeToken, event);
+    if (this.host.afterRuntimeEventProjection) {
+      this.host.afterRuntimeEventProjection(agentId, runtimeToken, event);
+    } else {
+      this.host.onAcceptedRuntimeSessionEvent?.(agentId, runtimeToken, event);
+    }
     return true;
   }
 
@@ -595,6 +617,7 @@ export class SwarmRuntimeController {
       return;
     }
 
+    this.clearManagerAssistantOutputTurn(agentId);
     this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
   }

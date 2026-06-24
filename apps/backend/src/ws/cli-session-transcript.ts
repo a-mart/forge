@@ -1,3 +1,4 @@
+import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
 import type {
   CliSessionTranscriptAttachment,
   CliSessionTranscriptMessage,
@@ -126,14 +127,14 @@ function mapUserFacingTranscriptMessage(
     };
   }
 
-  if (entry.role === "assistant" && entry.source === "speak_to_user") {
+  if (isUserVisibleAssistantConversationMessage(entry)) {
     const attachments = sanitizeTranscriptAttachments(entry.attachments);
     return {
       ...(entry.id !== undefined ? { id: entry.id } : {}),
       timestamp: entry.timestamp,
       kind: "assistant",
       role: "assistant",
-      source: "speak_to_user",
+      source: entry.source,
       text: entry.text,
       agentId: entry.agentId,
       ...(attachments.length > 0 ? { attachments } : {}),

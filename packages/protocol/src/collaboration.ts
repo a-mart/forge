@@ -1,6 +1,6 @@
 import type { ConversationAttachment, ConversationMessageAttachment } from './attachments.js'
 import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus, ManagerReasoningLevel } from './agents.js'
-import type { AgentMessageEvent, AgentToolCallEvent, ProjectAgentMessageContext } from './conversation-events.js'
+import type { AgentMessageEvent, AgentToolCallEvent, ConversationMessageSource, ProjectAgentMessageContext } from './conversation-events.js'
 import type { MessageSourceContext } from './messaging.js'
 import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestStatus } from './shared-types.js'
 
@@ -234,7 +234,7 @@ export interface CollaborationTranscriptMessage {
   text: string
   attachments?: ConversationMessageAttachment[]
   timestamp: string
-  source: 'user_input' | 'speak_to_user' | 'system' | 'project_agent_input'
+  source: ConversationMessageSource
   sourceContext?: MessageSourceContext
   projectAgentContext?: ProjectAgentMessageContext
   pinned?: boolean
