@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildPdfRawUrl,
   clampPageNumber,
   computeFitWidthScale,
   computePdfRenderScale,
@@ -10,6 +11,21 @@ import {
   PDF_PREVIEW_MAX_RENDER_SCALE,
   PdfPreviewRenderSizeError,
 } from './pdf-preview-utils'
+
+describe('buildPdfRawUrl', () => {
+  it('includes agentId, path, and optional worktreeId', () => {
+    const url = buildPdfRawUrl('ws://127.0.0.1:47187', 'docs/spec.pdf', 'session-a', 'feature-linked')
+    expect(url).toContain('/api/files/raw?')
+    expect(url).toContain('agentId=session-a')
+    expect(url).toContain('path=docs%2Fspec.pdf')
+    expect(url).toContain('worktreeId=feature-linked')
+  })
+
+  it('omits worktreeId for session browsing', () => {
+    const url = buildPdfRawUrl('ws://127.0.0.1:47187', 'docs/spec.pdf', 'session-a', null)
+    expect(url).not.toContain('worktreeId=')
+  })
+})
 
 describe('formatPdfPreviewError', () => {
   it('maps password-protected PDFs to a specific message', () => {

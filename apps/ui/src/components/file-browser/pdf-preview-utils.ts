@@ -1,7 +1,22 @@
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
+
 export const PDF_PREVIEW_MAX_RENDER_SCALE = 4
 export const PDF_PREVIEW_MAX_CANVAS_DIMENSION = 8192
 export const PDF_PREVIEW_MAX_CANVAS_PIXELS = 16_777_216
 export const PDF_PREVIEW_MIN_OUTPUT_SCALE = 0.25
+
+export function buildPdfRawUrl(
+  wsUrl: string,
+  filePath: string,
+  agentId: string,
+  worktreeId?: string | null,
+): string {
+  const params = new URLSearchParams({ path: filePath, agentId })
+  if (worktreeId) {
+    params.set('worktreeId', worktreeId)
+  }
+  return resolveApiEndpoint(wsUrl, `/api/files/raw?${params.toString()}`)
+}
 
 export const PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE =
   'This PDF page is too large to preview at the current zoom. Use Fit or zoom out below, or open the raw file instead.'

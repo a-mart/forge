@@ -8,12 +8,12 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import '@/styles/file-browser.css'
 import { pdfjsLib, type PDFDocumentProxy } from './pdfjs-preview-lib'
 import {
+  buildPdfRawUrl,
   clampPageNumber,
   computePdfRenderScale,
   computeSafeCanvasOutput,
@@ -22,19 +22,6 @@ import {
   PDF_PREVIEW_MAX_RENDER_SCALE,
   PdfPreviewRenderSizeError,
 } from './pdf-preview-utils'
-
-export function buildPdfRawUrl(
-  wsUrl: string,
-  filePath: string,
-  agentId: string,
-  worktreeId?: string | null,
-): string {
-  const params = new URLSearchParams({ path: filePath, agentId })
-  if (worktreeId) {
-    params.set('worktreeId', worktreeId)
-  }
-  return resolveApiEndpoint(wsUrl, `/api/files/raw?${params.toString()}`)
-}
 
 interface PdfPreviewProps {
   wsUrl: string
