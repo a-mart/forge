@@ -4,6 +4,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { searchKeymap } from '@codemirror/search'
 import { bracketMatching, foldGutter, indentOnInput } from '@codemirror/language'
 import { useEffect, useMemo, useRef } from 'react'
+import '@/styles/file-browser.css'
 import { codeMirrorLanguageExtension } from './codemirror-language'
 import { codeMirrorDarkThemeFacet, codeMirrorThemeExtensions, isForgeDarkModeActive } from './codemirror-theme'
 
@@ -278,5 +279,5 @@ export function CodeMirrorFileEditor({
     })
   }, [ariaLabel, contentAttributesCompartment])
 
-  return <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden" data-testid="codemirror-file-editor" />
+  return <div ref={containerRef} className="file-browser-code-editor h-full min-h-0 w-full overflow-hidden" data-testid="codemirror-file-editor" />
 }

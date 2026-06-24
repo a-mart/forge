@@ -3,35 +3,46 @@
  * Thin, subtle scrollbars matching the project's dark/light theme system.
  */
 
+:root {
+  --file-browser-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --file-browser-scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+  --file-browser-scrollbar-track: transparent;
+}
+
+:root:not(.dark) {
+  --file-browser-scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --file-browser-scrollbar-thumb-hover: rgba(0, 0, 0, 0.22);
+}
+
 /* ── Webkit (Chrome, Edge, Safari) ──────────────────── */
-.file-browser-scroll::-webkit-scrollbar {
+.file-browser-scroll::-webkit-scrollbar,
+.file-browser-code-editor .cm-scroller::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-.file-browser-scroll::-webkit-scrollbar-track {
-  background: transparent;
+.file-browser-scroll::-webkit-scrollbar-track,
+.file-browser-code-editor .cm-scroller::-webkit-scrollbar-track {
+  background: var(--file-browser-scrollbar-track);
 }
-.file-browser-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+.file-browser-scroll::-webkit-scrollbar-thumb,
+.file-browser-code-editor .cm-scroller::-webkit-scrollbar-thumb {
+  background: var(--file-browser-scrollbar-thumb);
   border-radius: 4px;
 }
-.file-browser-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+.file-browser-scroll::-webkit-scrollbar-thumb:hover,
+.file-browser-code-editor .cm-scroller::-webkit-scrollbar-thumb:hover {
+  background: var(--file-browser-scrollbar-thumb-hover);
 }
 
-/* ── Firefox ────────────────────────────────────────── */
-.file-browser-scroll {
+/* ── Firefox and native scrollbar color-scheme ──────── */
+.file-browser-scroll,
+.file-browser-code-editor .cm-scroller {
+  color-scheme: dark;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  scrollbar-color: var(--file-browser-scrollbar-thumb) var(--file-browser-scrollbar-track);
 }
 
-/* ── Light theme ────────────────────────────────────── */
-:root:not(.dark) .file-browser-scroll::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
-}
-:root:not(.dark) .file-browser-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.22);
-}
-:root:not(.dark) .file-browser-scroll {
-  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+:root:not(.dark) .file-browser-scroll,
+:root:not(.dark) .file-browser-code-editor .cm-scroller {
+  color-scheme: light;
 }
