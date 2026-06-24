@@ -18,7 +18,9 @@ import {
   computePdfRenderScale,
   computeSafeCanvasOutput,
   formatPdfPreviewError,
+  isPdfPreviewRenderSizeError,
   PDF_PREVIEW_MAX_RENDER_SCALE,
+  PdfPreviewRenderSizeError,
 } from './pdf-preview-utils'
 
 export function buildPdfRawUrl(
@@ -55,6 +57,7 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
 
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [renderErrorMessage, setRenderErrorMessage] = useState<string | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [manualScale, setManualScale] = useState(1)
@@ -78,6 +81,7 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
 
     setLoadState('loading')
     setErrorMessage(null)
+    setRenderErrorMessage(null)
     setNumPages(0)
     setCurrentPage(1)
     setFitWidth(true)
@@ -154,6 +158,7 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
 
     void (async () => {
       try {
+        setRenderErrorMessage(null)
         renderTaskRef.current?.cancel()
         renderTaskRef.current = null
 
@@ -187,7 +192,7 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
           window.devicePixelRatio || 1,
         )
         if (!safeCanvas.ok) {
-          throw new Error(safeCanvas.message)
+          throw new PdfPreviewRenderSizeError(safeCanvas.message)
         }
 
         canvas.width = safeCanvas.canvasWidth
@@ -206,6 +211,11 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         await renderTask.promise
       } catch (error) {
         if (cancelled || (error instanceof Error && error.name === 'RenderingCancelledException')) {
+          return
+        }
+
+        if (isPdfPreviewRenderSizeError(error)) {
+          setRenderErrorMessage(error.message)
           return
         }
 
@@ -276,6 +286,8 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
           </Button>
           <a
             href={pdfUrl}
+            target="_blank"
+            rel="noreferrer"
             className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
             data-testid="pdf-preview-open-raw"
           >
@@ -298,8 +310,24 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         className="file-browser-scroll min-h-0 flex-1 overflow-auto p-4"
         data-testid="pdf-preview-viewport"
       >
-        <div className="flex min-h-full justify-center">
-          <canvas ref={canvasRef} className="rounded border border-border/50 bg-white shadow-sm" />
+        <div className="relative flex min-h-full justify-center">
+          <canvas
+            ref={canvasRef}
+            className={cn(
+              'rounded border border-border/50 bg-white shadow-sm',
+              renderErrorMessage && 'invisible absolute',
+            )}
+          />
+          {renderErrorMessage ? (
+            <div
+              className="flex max-w-md flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground"
+              data-testid="pdf-preview-render-error"
+              role="alert"
+            >
+              <p className="text-sm text-destructive/80">Unable to render this page</p>
+              <p className="text-xs opacity-70">{renderErrorMessage}</p>
+            </div>
+          ) : null}
         </div>
       </div>
 

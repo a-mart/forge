@@ -5,8 +5,10 @@ import {
   computePdfRenderScale,
   computeSafeCanvasOutput,
   formatPdfPreviewError,
+  isPdfPreviewRenderSizeError,
   PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
   PDF_PREVIEW_MAX_RENDER_SCALE,
+  PdfPreviewRenderSizeError,
 } from './pdf-preview-utils'
 
 describe('formatPdfPreviewError', () => {
@@ -34,6 +36,14 @@ describe('computePdfRenderScale', () => {
 
   it('uses manual scale when fit width is disabled', () => {
     expect(computePdfRenderScale(400, 432, 2, false)).toBe(2)
+  })
+})
+
+describe('PdfPreviewRenderSizeError', () => {
+  it('is recognized by isPdfPreviewRenderSizeError', () => {
+    const error = new PdfPreviewRenderSizeError()
+    expect(isPdfPreviewRenderSizeError(error)).toBe(true)
+    expect(error.message).toBe(PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE)
   })
 })
 

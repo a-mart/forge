@@ -211,20 +211,41 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(container.textContent).toContain('Network failure')
     const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLAnchorElement
     expect(openRaw.href).toContain('/api/files/raw?')
-    expect(openRaw.getAttribute('target')).toBeNull()
+    expect(openRaw.getAttribute('target')).toBe('_blank')
+    expect(openRaw.getAttribute('rel')).toBe('noreferrer')
   })
 
-  it('shows a friendly error when canvas output exceeds safe limits', async () => {
-    vi.spyOn(pdfPreviewUtils, 'computeSafeCanvasOutput').mockReturnValueOnce({
-      ok: false,
-      message: PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
-    })
+  it('keeps zoom controls available when canvas output exceeds safe limits', async () => {
+    vi.spyOn(pdfPreviewUtils, 'computeSafeCanvasOutput')
+      .mockReturnValueOnce({
+        ok: false,
+        message: PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
+      })
+      .mockReturnValue({
+        ok: true,
+        outputScale: 1,
+        canvasWidth: 200,
+        canvasHeight: 280,
+      })
 
     await renderPreview()
 
-    expect(container.textContent).toContain('Failed to load PDF')
+    expect(container.querySelector('[data-testid="pdf-preview-controls"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="pdf-preview-render-error"]')).not.toBeNull()
+    expect(container.textContent).toContain('Unable to render this page')
     expect(container.textContent).toContain(PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE)
+    expect(container.textContent).not.toContain('Failed to load PDF')
     expect(mockRender).not.toHaveBeenCalled()
+
+    const zoomOutButton = container.querySelector('[aria-label="Zoom out"]') as HTMLButtonElement
+    await act(async () => {
+      zoomOutButton.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="pdf-preview-render-error"]')).toBeNull()
+    expect(mockRender).toHaveBeenCalled()
   })
 
   it('cancels render tasks on unmount', async () => {

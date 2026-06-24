@@ -4,7 +4,18 @@ export const PDF_PREVIEW_MAX_CANVAS_PIXELS = 16_777_216
 export const PDF_PREVIEW_MIN_OUTPUT_SCALE = 0.25
 
 export const PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE =
-  'This PDF page is too large to preview safely. Try zooming out or open the raw file instead.'
+  'This PDF page is too large to preview at the current zoom. Use Fit or zoom out below, or open the raw file instead.'
+
+export class PdfPreviewRenderSizeError extends Error {
+  constructor(message = PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE) {
+    super(message)
+    this.name = 'PdfPreviewRenderSizeError'
+  }
+}
+
+export function isPdfPreviewRenderSizeError(error: unknown): error is PdfPreviewRenderSizeError {
+  return error instanceof PdfPreviewRenderSizeError
+}
 
 export function formatPdfPreviewError(error: unknown): string {
   if (error instanceof Error && error.name === 'PasswordException') {
