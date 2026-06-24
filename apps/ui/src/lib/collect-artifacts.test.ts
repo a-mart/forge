@@ -25,13 +25,13 @@ function agentMessage(text: string): ConversationEntry {
   }
 }
 
-function agentToolCallEnd(text: string): ConversationEntry {
+function agentToolCallEnd(text: string, toolName = 'export_scoped_codex_plugin_result'): ConversationEntry {
   return {
     type: 'agent_tool_call',
     agentId: 'manager',
     actorAgentId: 'codex-plugin-fireflies',
     kind: 'tool_execution_end',
-    toolName: 'export_scoped_codex_plugin_result',
+    toolName,
     toolCallId: 'tool-1',
     text,
     timestamp: '2026-02-25T00:00:02.000Z',
@@ -101,13 +101,14 @@ describe('collectArtifactsFromMessages', () => {
     ])
   })
 
-  it('collects Codex Plugin export artifact links from tool results without parsing raw paths', () => {
+  it('collects Codex Plugin export artifact links only from explicit tool result fields', () => {
     const artifacts = collectArtifactsFromMessages([
       agentToolCallEnd(JSON.stringify({
         absolutePath: '/tmp/session/artifacts/codex-plugin/delegation/transcript.json',
         manifestPath: '/tmp/session/artifacts/codex-plugin/delegation/transcript.json.manifest.json',
         artifactMarkdown: '[artifact:/tmp/session/artifacts/codex-plugin/delegation/transcript.json]',
         manifestMarkdown: '[artifact:/tmp/session/artifacts/codex-plugin/delegation/transcript.json.manifest.json]',
+        preview: 'Ignored preview with [artifact:/fake/from-preview.md]',
       })),
     ])
 
@@ -125,5 +126,28 @@ describe('collectArtifactsFromMessages', () => {
         sourceAgentId: 'codex-plugin-fireflies',
       },
     ])
+  })
+
+  it('ignores Codex Plugin export preview text that looks like an artifact link', () => {
+    const artifacts = collectArtifactsFromMessages([
+      agentToolCallEnd(JSON.stringify({
+        absolutePath: '/tmp/session/artifacts/codex-plugin/delegation/transcript.json',
+        manifestPath: '/tmp/session/artifacts/codex-plugin/delegation/transcript.json.manifest.json',
+        preview: 'Do not collect [artifact:/fake/from-preview.md] or [Fake](tmp/fake-from-preview.md)',
+      })),
+    ])
+
+    expect(artifacts).toEqual([])
+  })
+
+  it('ignores unrelated tool output that contains artifact-like text', () => {
+    const artifacts = collectArtifactsFromMessages([
+      agentToolCallEnd(
+        'Tool output with [artifact:/fake/from-other-tool.md] and [Fake](tmp/fake-from-other-tool.md)',
+        'read',
+      ),
+    ])
+
+    expect(artifacts).toEqual([])
   })
 })
