@@ -56,6 +56,10 @@ import {
   createDefaultCompactionRuntimeSettingsProvider,
   type CompactionRuntimeSettingsProvider,
 } from "../compaction-runtime-settings-provider.js";
+import {
+  collectCompactionEntryKeys,
+  findNewCompactionEntries,
+} from "../compaction-session-entries.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -1166,48 +1170,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private getCompactionEntryKeys(): Set<string> {
-    const entries = this.session.sessionManager.getEntries();
-    const keys = new Set<string>();
-
-    entries.forEach((entry: unknown, index: number) => {
-      if (!entry || typeof entry !== "object") {
-        return;
-      }
-
-      const record = entry as Record<string, unknown>;
-      if (record.type !== "compaction") {
-        return;
-      }
-
-      const id = typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
-      keys.add(id ? `id:${id}` : `index:${index}`);
-    });
-
-    return keys;
+    return collectCompactionEntryKeys(this.session.sessionManager.getEntries());
   }
 
   private getNewCompactionEntries(previousKeys: Set<string>): Array<{ key: string; id?: string }> {
-    const entries = this.session.sessionManager.getEntries();
-    const next: Array<{ key: string; id?: string }> = [];
-
-    entries.forEach((entry: unknown, index: number) => {
-      if (!entry || typeof entry !== "object") {
-        return;
-      }
-
-      const record = entry as Record<string, unknown>;
-      if (record.type !== "compaction") {
-        return;
-      }
-
-      const id = typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
-      const key = id ? `id:${id}` : `index:${index}`;
-      if (!previousKeys.has(key)) {
-        next.push({ key, id });
-      }
-    });
-
-    return next;
+    return findNewCompactionEntries(this.session.sessionManager.getEntries(), previousKeys);
   }
 
   private async reportContextGuardCompactionSuccesses(
@@ -1707,7 +1674,29 @@ export class AgentRuntime implements SwarmAgentRuntime {
         return;
       }
 
-      const newCompactionEntries = this.getNewCompactionEntries(this.autoCompactionEntryKeysBefore ?? new Set());
+      const compactionStartSnapshot = this.autoCompactionEntryKeysBefore;
+      if (compactionStartSnapshot === undefined) {
+        await this.reportRuntimeError({
+          phase: "compaction",
+          message: "Automatic compaction ended without a compaction_start snapshot",
+          details: {
+            recoveryStage: "auto_compaction_failed",
+            compactionReason,
+            source: "auto_compaction_end",
+            autoCompactionAborted: event.aborted,
+            autoCompactionWillRetry: event.willRetry,
+            missingCompactionStartSnapshot: true
+          }
+        });
+        this.latestAutoCompactionReason = undefined;
+        this.autoCompactionEntryKeysBefore = undefined;
+        this.endAutoCompactionRecovery();
+        this.noteAutoCompactionFailureCooldown();
+        await this.flushRecoveryBufferedMessages();
+        return;
+      }
+
+      const newCompactionEntries = this.getNewCompactionEntries(compactionStartSnapshot);
       if (newCompactionEntries.length === 0) {
         await this.reportRuntimeError({
           phase: "compaction",

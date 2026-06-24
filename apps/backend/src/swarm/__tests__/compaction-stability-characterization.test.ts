@@ -149,6 +149,44 @@ describe("compaction stability characterization", () => {
       expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_aborted")).toBe(true);
     });
 
+    it("blocks mid-turn context guard for 60s after failed automatic compaction", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      const { runtime, session } = createCompactionGuardRuntime();
+      session.isStreaming = true;
+      session.contextUsage = {
+        tokens: 176_000,
+        contextWindow: 200_000,
+        percent: 88,
+      };
+
+      const runGuardSpy = vi
+        .spyOn(runtime as never as { runContextGuard: (usage: unknown) => Promise<void> }, "runContextGuard")
+        .mockResolvedValue(undefined);
+
+      await (runtime as never as {
+        handleAutoCompactionEndEvent: (event: unknown) => Promise<void>;
+      }).handleAutoCompactionEndEvent({
+        type: "compaction_end",
+        reason: "overflow",
+        result: undefined,
+        aborted: true,
+        willRetry: false,
+      });
+
+      vi.setSystemTime(1_003_000);
+      (runtime as never as { checkContextBudget: () => void }).checkContextBudget();
+      expect(runGuardSpy).not.toHaveBeenCalled();
+
+      vi.setSystemTime(1_050_000);
+      (runtime as never as { checkContextBudget: () => void }).checkContextBudget();
+      expect(runGuardSpy).not.toHaveBeenCalled();
+
+      vi.setSystemTime(1_060_001);
+      (runtime as never as { checkContextBudget: () => void }).checkContextBudget();
+      expect(runGuardSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("failed context guard must retain handoff artifact instead of deleting it", async () => {
       vi.useFakeTimers();
       const { runtime, session } = createCompactionGuardRuntime();
@@ -175,8 +213,9 @@ describe("compaction stability characterization", () => {
       expect(rmMock).not.toHaveBeenCalledWith(handoffPath, { force: true });
     });
 
-    it("handleAutoCompactionEndEvent success path requires a compaction record when not aborted", async () => {
+    it("handleAutoCompactionEndEvent success path requires compaction_start snapshot and a new record", async () => {
       const { runtime, session, runtimeErrors } = createCompactionGuardRuntime();
+      session.entries.push({ type: "compaction", id: "historical-compaction" });
 
       await (runtime as never as {
         handleAutoCompactionEndEvent: (event: unknown) => Promise<void>;
@@ -188,9 +227,8 @@ describe("compaction stability characterization", () => {
         willRetry: false,
       });
 
-      expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
       expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_succeeded")).toBe(false);
-      expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_failed")).toBe(true);
+      expect(runtimeErrors.some((entry) => entry.details?.missingCompactionStartSnapshot === true)).toBe(true);
     });
   });
 });

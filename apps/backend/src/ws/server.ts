@@ -50,7 +50,6 @@ import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
-import { getManagedModelProviderCredentialAvailability } from "../swarm/secrets-env-service.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -429,18 +428,8 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       cortexEnabled,
     });
-    const runtimeTarget = this.swarmManager.getConfig().runtimeTarget;
     this.compactionSettingsService =
-      options.compactionSettingsService ??
-      (isBuilderRuntimeTarget(runtimeTarget)
-        ? new CompactionSettingsService({
-            dataDir: this.swarmManager.getConfig().paths.dataDir,
-            getProviderAvailability: () =>
-              getManagedModelProviderCredentialAvailability(this.swarmManager.getConfig(), {
-                credentialPoolService: this.swarmManager.getCredentialPoolService(),
-              }),
-          })
-        : null);
+      options.compactionSettingsService ?? this.swarmManager.getCompactionSettingsService();
     this.cliAccessService = options.cliAccessService ?? new CliAccessService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       envApiKey: readCliApiKeyEnv(),

@@ -103,9 +103,11 @@ import type {
 } from "../stats/sidebar-perf-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import {
-  createDefaultCompactionRuntimeSettingsProvider,
+  createLiveCompactionRuntimeSettingsProvider,
+  LiveCompactionRuntimeSettingsProvider,
   type CompactionRuntimeSettingsProvider,
 } from "./compaction-runtime-settings-provider.js";
+import { CompactionSettingsService } from "./compaction-settings-service.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import { ArchiveService } from "./archive/archive-service.js";
 import { ArchiveLastUsedHydrator, type ArchiveLastUsedHydrationResult } from "./archive/archive-last-used-hydrator.js";
@@ -267,7 +269,7 @@ import {
 } from "./agent-state-machine.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { parseCollaborationSpecialistHandlesJson } from "../collaboration/specialist-selection.js";
-import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
+import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type {
   RuntimeCodexTransportDebugDiagnostics,
   RuntimeImageAttachment,
@@ -1347,7 +1349,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
   private workPlansEnabled = false;
   private modelCacheVisualizationEnabled = false;
+  private readonly liveCompactionRuntimeSettingsProvider: LiveCompactionRuntimeSettingsProvider;
   private compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
+  private compactionSettingsService: CompactionSettingsService | null = null;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -1361,8 +1365,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.now = options?.now ?? nowIso;
     this.versioningService = options?.versioningService;
     this.observability = options?.observability;
+    this.liveCompactionRuntimeSettingsProvider = createLiveCompactionRuntimeSettingsProvider();
     this.compactionRuntimeSettingsProvider =
-      options?.compactionRuntimeSettingsProvider ?? createDefaultCompactionRuntimeSettingsProvider();
+      options?.compactionRuntimeSettingsProvider ?? this.liveCompactionRuntimeSettingsProvider;
     const resourcesDir = this.config.paths.resourcesDir ?? this.config.paths.rootDir;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
@@ -2031,6 +2036,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await ensureCanonicalAuthFilePath(this.config);
     await this.reloadModelCatalogOverridesAndProjection();
     await this.loadSecretsStore();
+    await this.ensureCompactionSettingsLoadedForRuntime();
     await this.reloadSkillMetadata();
 
     try {
@@ -9681,8 +9687,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.compactionRuntimeSettingsProvider;
   }
 
-  setCompactionRuntimeSettingsProvider(provider: CompactionRuntimeSettingsProvider): void {
-    this.compactionRuntimeSettingsProvider = provider;
+  getCompactionSettingsService(): CompactionSettingsService | null {
+    return this.compactionSettingsService;
+  }
+
+  private async ensureCompactionSettingsLoadedForRuntime(): Promise<void> {
+    if (!isBuilderRuntimeTarget(this.config.runtimeTarget)) {
+      return;
+    }
+
+    if (this.compactionSettingsService) {
+      return;
+    }
+
+    const service = new CompactionSettingsService({
+      dataDir: this.config.paths.dataDir,
+      getProviderAvailability: () =>
+        getManagedModelProviderCredentialAvailability(this.config, {
+          credentialPoolService: this.getCredentialPoolService(),
+        }),
+    });
+    await service.load();
+    this.compactionSettingsService = service;
+
+    if (this.compactionRuntimeSettingsProvider === this.liveCompactionRuntimeSettingsProvider) {
+      this.liveCompactionRuntimeSettingsProvider.attachSettingsService(service);
+    }
   }
 
   private async refreshPiModelsJsonProjection(): Promise<void> {
