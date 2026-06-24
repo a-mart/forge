@@ -88,19 +88,19 @@ describe("file browser raw route", () => {
 
   it("returns 206 with exact bytes and headers for valid ranges", async () => {
     const harness = await createHarness();
-    const fileBytes = Buffer.from("0123456789abcdef");
-    await writeFile(join(harness.workspaceDir, "range.bin"), fileBytes);
+    const fileBytes = Buffer.from("%PDF-1.4\n0123456789abcdef");
+    await writeFile(join(harness.workspaceDir, "range.pdf"), fileBytes);
 
     const response = await fetch(
-      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range.bin")}`,
-      { headers: { Range: "bytes=3-7" } },
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range.pdf")}`,
+      { headers: { Range: "bytes=8-12" } },
     );
 
     expect(response.status).toBe(206);
-    expect(response.headers.get("content-type")).toBe("application/octet-stream");
-    expect(response.headers.get("content-range")).toBe("bytes 3-7/16");
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    expect(response.headers.get("content-range")).toBe("bytes 8-12/25");
     expect(response.headers.get("content-length")).toBe("5");
-    await expect(response.arrayBuffer()).resolves.toEqual(fileBytes.subarray(3, 8).buffer);
+    await expect(response.arrayBuffer()).resolves.toEqual(fileBytes.subarray(8, 13).buffer);
   });
 
   it("returns 416 for unsatisfiable ranges", async () => {
@@ -118,21 +118,63 @@ describe("file browser raw route", () => {
 
   it("returns 416 for malformed and multi-range headers", async () => {
     const harness = await createHarness();
-    await writeFile(join(harness.workspaceDir, "range-target.bin"), Buffer.from("0123456789abcdef"));
+    await writeFile(join(harness.workspaceDir, "range-target.pdf"), Buffer.from("%PDF-1.4\n0123456789abcdef"));
 
     const malformedResponse = await fetch(
-      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range-target.bin")}`,
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range-target.pdf")}`,
       { headers: { Range: "bytes=0-9junk" } },
     );
     expect(malformedResponse.status).toBe(416);
-    expect(malformedResponse.headers.get("content-range")).toBe("bytes */16");
+    expect(malformedResponse.headers.get("content-range")).toBe("bytes */25");
 
     const multiRangeResponse = await fetch(
-      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range-target.bin")}`,
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range-target.pdf")}`,
       { headers: { Range: "bytes=0-3,8-11" } },
     );
     expect(multiRangeResponse.status).toBe(416);
-    expect(multiRangeResponse.headers.get("content-range")).toBe("bytes */16");
+    expect(multiRangeResponse.headers.get("content-range")).toBe("bytes */25");
+  });
+
+  it("returns 415 for non-PDF paths on GET and HEAD after path confinement", async () => {
+    const harness = await createHarness();
+    await writeFile(join(harness.workspaceDir, "notes.txt"), "plain text\n", "utf8");
+    await writeFile(join(harness.workspaceDir, "image.png"), Buffer.from("png-bytes"));
+
+    const getTextResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("notes.txt")}`,
+    );
+    expect(getTextResponse.status).toBe(415);
+    expect(getTextResponse.headers.get("content-type")).toContain("application/json");
+    await expect(getTextResponse.json()).resolves.toEqual({
+      error: "Raw file preview only supports PDF files.",
+    });
+
+    const headTextResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("notes.txt")}`,
+      { method: "HEAD" },
+    );
+    expect(headTextResponse.status).toBe(415);
+    expect(headTextResponse.headers.get("content-type")).toContain("application/json");
+    await expect(headTextResponse.arrayBuffer()).resolves.toEqual(new ArrayBuffer(0));
+
+    const getImageResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("image.png")}`,
+    );
+    expect(getImageResponse.status).toBe(415);
+  });
+
+  it("accepts case-insensitive .pdf extensions on the requested path", async () => {
+    const harness = await createHarness();
+    const pdfBytes = Buffer.from("%PDF-1.4\nuppercase-extension\n");
+    await writeFile(join(harness.workspaceDir, "Report.PDF"), pdfBytes);
+
+    const response = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("Report.PDF")}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    await expect(response.arrayBuffer()).resolves.toEqual(pdfBytes.buffer);
   });
 
   it("returns 404 for unknown agents and missing files", async () => {

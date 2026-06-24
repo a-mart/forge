@@ -499,6 +499,10 @@ function resolveHttpStatusCode(message: string): number {
     return 400;
   }
 
+  if (normalized.includes("only supports pdf")) {
+    return 415;
+  }
+
   if (normalized.includes("too large") || normalized.includes("exceeds")) {
     return 413;
   }

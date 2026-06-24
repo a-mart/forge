@@ -22,6 +22,10 @@ export const MAX_EDITABLE_FILE_BYTES = 1 * 1024 * 1024;
 export const MAX_FILE_SAVE_BYTES = 1 * 1024 * 1024;
 export const MAX_FILE_SAVE_BODY_BYTES = Math.ceil(MAX_FILE_SAVE_BYTES * 2.25) + 64 * 1024;
 
+export function isPdfRawFilePath(relativePath: string): boolean {
+  return extname(relativePath).toLowerCase() === ".pdf";
+}
+
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 const NON_GIT_EXCLUDED_NAMES = new Set([
@@ -182,6 +186,10 @@ export class FileBrowserService {
     }
 
     const resolvedPath = await this.resolvePathWithinCwd(normalizedCwd, normalizedRelativePath);
+
+    if (!isPdfRawFilePath(normalizedRelativePath)) {
+      throw new Error("Raw file preview only supports PDF files.");
+    }
 
     let fileStats;
     try {
