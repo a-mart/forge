@@ -371,6 +371,10 @@ export function getCortexAutoReviewSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "cortex-auto-review.json");
 }
 
+export function getCompactionSettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "compaction-settings.json");
+}
+
 export function getWorkPlansSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "work-plans.json");
 }

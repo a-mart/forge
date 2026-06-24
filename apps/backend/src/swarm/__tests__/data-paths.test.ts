@@ -52,6 +52,7 @@ import {
   getSessionsDir,
   getCommonKnowledgePath,
   getCortexAutoReviewSettingsPath,
+  getCompactionSettingsPath,
   getCortexNotesPath,
   getCortexPromotionManifestsDir,
   getCortexReviewLockPath,
@@ -190,6 +191,7 @@ describe("data-paths", () => {
     expect(getLegacyCliAccessFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "cli-access.json"));
     expect(getSharedSecretsFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "secrets.json"));
     expect(getCortexAutoReviewSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "cortex-auto-review.json"));
+    expect(getCompactionSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "compaction-settings.json"));
     expect(getSharedCacheGeneratedDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "generated"));
     expect(getSharedStatsCachePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "stats-cache.json"));
     expect(getTelemetryConfigPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "telemetry.json"));

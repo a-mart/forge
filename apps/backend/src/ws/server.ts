@@ -36,6 +36,7 @@ import {
 import {
   CortexAutoReviewSettingsService
 } from "../swarm/cortex-auto-review-settings.js";
+import { CompactionSettingsService } from "../swarm/compaction-settings-service.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
 import {
   NotificationSettingsService,
@@ -49,6 +50,7 @@ import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
+import { getManagedModelProviderCredentialAvailability } from "../swarm/secrets-env-service.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -63,6 +65,7 @@ import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings
 import { createCliRoutes } from "./http/routes/cli-routes.js";
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
+import { createCompactionSettingsRoutes } from "./http/routes/compaction-settings-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
 import { createDebugRoutes } from "./http/routes/debug-routes.js";
 import { createExtensionRoutes } from "./http/routes/extension-routes.js";
@@ -113,6 +116,7 @@ export class SwarmWebSocketServer {
   private actualPort: number | null = null;
   private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly cortexAutoReviewSettingsService: CortexAutoReviewSettingsService;
+  private readonly compactionSettingsService: CompactionSettingsService | null;
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
   private readonly terminalSettingsService: TerminalSettingsService;
@@ -412,6 +416,7 @@ export class SwarmWebSocketServer {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
     notificationSettingsService?: NotificationSettingsService;
+    compactionSettingsService?: CompactionSettingsService;
     observabilityService?: ObservabilityFacade;
     feedbackService?: FeedbackService;
   }) {
@@ -424,6 +429,18 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       cortexEnabled,
     });
+    const runtimeTarget = this.swarmManager.getConfig().runtimeTarget;
+    this.compactionSettingsService =
+      options.compactionSettingsService ??
+      (isBuilderRuntimeTarget(runtimeTarget)
+        ? new CompactionSettingsService({
+            dataDir: this.swarmManager.getConfig().paths.dataDir,
+            getProviderAvailability: () =>
+              getManagedModelProviderCredentialAvailability(this.swarmManager.getConfig(), {
+                credentialPoolService: this.swarmManager.getCredentialPoolService(),
+              }),
+          })
+        : null);
     this.cliAccessService = options.cliAccessService ?? new CliAccessService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       envApiKey: readCliApiKeyEnv(),
@@ -561,6 +578,12 @@ export class SwarmWebSocketServer {
         settingsService: this.cortexAutoReviewSettingsService,
         cortexEnabled,
       }),
+      ...(this.compactionSettingsService
+        ? createCompactionSettingsRoutes({
+            settingsService: this.compactionSettingsService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
+        : []),
       ...createDebugRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({
@@ -631,6 +654,9 @@ export class SwarmWebSocketServer {
     }
 
     await this.cortexAutoReviewSettingsService.load();
+    if (this.compactionSettingsService) {
+      await this.compactionSettingsService.load();
+    }
     await this.notificationSettingsService.load();
     await this.unreadTracker.load();
     await this.swarmManager.loadWorkPlansSettings?.();
