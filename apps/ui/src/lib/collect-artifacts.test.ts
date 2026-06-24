@@ -101,6 +101,50 @@ describe('collectArtifactsFromMessages', () => {
     ])
   })
 
+  it('ignores placeholder artifact examples in prose', () => {
+    const artifacts = collectArtifactsFromMessages([
+      assistantMessage([
+        'Examples should not populate artifacts:',
+        '[artifact:<path>]',
+        '[artifact:/...]',
+        'swarm-file://...',
+        'vscode://file/...',
+        'Use `/...` only as a placeholder.',
+      ].join('\n')),
+    ])
+
+    expect(artifacts).toEqual([])
+  })
+
+  it('ignores artifact examples inside inline and fenced code', () => {
+    const artifacts = collectArtifactsFromMessages([
+      agentMessage([
+        'Inline example: `[artifact:/tmp/session/artifacts/example.json]`.',
+        '```md',
+        '[artifact:/tmp/session/artifacts/fenced.json]',
+        'swarm-file:///tmp/session/artifacts/fenced.json',
+        '```',
+      ].join('\n')),
+    ])
+
+    expect(artifacts).toEqual([])
+  })
+
+  it('keeps real absolute artifact shortcodes in normal assistant text', () => {
+    const artifacts = collectArtifactsFromMessages([
+      assistantMessage('Exported [artifact:/tmp/session/artifacts/real-report.json]'),
+    ])
+
+    expect(artifacts).toEqual([
+      {
+        path: '/tmp/session/artifacts/real-report.json',
+        fileName: 'real-report.json',
+        href: 'swarm-file:///tmp/session/artifacts/real-report.json',
+        sourceAgentId: 'manager',
+      },
+    ])
+  })
+
   it('collects Codex Plugin export artifact links only from explicit tool result fields', () => {
     const artifacts = collectArtifactsFromMessages([
       agentToolCallEnd(JSON.stringify({

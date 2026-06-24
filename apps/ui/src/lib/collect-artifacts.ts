@@ -61,34 +61,38 @@ function collectArtifactReferencesFromText(
   sourceAgentId: string | undefined,
   seen: Map<string, ArtifactReference>,
 ): void {
+  const codeRanges = findMarkdownCodeRanges(artifactText)
+
   // Extract from [artifact:path] shortcodes
   for (const match of artifactText.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
+    if (isMatchInCodeRange(match, codeRanges)) continue
+
     const rawPath = match[1]?.trim()
-    if (!rawPath) continue
+    if (!isValidArtifactCandidate(rawPath)) continue
     const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId })
-    if (ref && !seen.has(ref.path)) {
-      seen.set(ref.path, ref)
-    }
+    addArtifactReference(ref, seen)
   }
 
   // Extract swarm-file:// links
   for (const match of artifactText.matchAll(SWARM_FILE_PATTERN)) {
+    if (isMatchInCodeRange(match, codeRanges)) continue
+
     const ref = parseArtifactReference(match[0], { sourceAgentId })
-    if (ref && !seen.has(ref.path)) {
-      seen.set(ref.path, ref)
-    }
+    addArtifactReference(ref, seen)
   }
 
   // Extract vscode:// / vscode-insiders:// links
   for (const match of artifactText.matchAll(VSCODE_FILE_PATTERN)) {
+    if (isMatchInCodeRange(match, codeRanges)) continue
+
     const ref = parseArtifactReference(match[0], { sourceAgentId })
-    if (ref && !seen.has(ref.path)) {
-      seen.set(ref.path, ref)
-    }
+    addArtifactReference(ref, seen)
   }
 
   // Extract from markdown links [text](href)
   for (const match of artifactText.matchAll(MARKDOWN_LINK_PATTERN)) {
+    if (isMatchInCodeRange(match, codeRanges)) continue
+
     const matchIndex = match.index ?? 0
     if (matchIndex > 0 && artifactText[matchIndex - 1] === '!') {
       continue
@@ -96,12 +100,77 @@ function collectArtifactReferencesFromText(
 
     const linkText = match[1]?.trim()
     const href = parseMarkdownLinkHref(match[2] ?? '')
-    if (!href) continue
+    if (!isValidArtifactCandidate(href)) continue
     const ref = parseArtifactReference(href, { title: linkText, sourceAgentId })
-    if (ref && !seen.has(ref.path)) {
-      seen.set(ref.path, ref)
+    addArtifactReference(ref, seen)
+  }
+}
+
+function addArtifactReference(
+  ref: ArtifactReference | null,
+  seen: Map<string, ArtifactReference>,
+): void {
+  if (!ref || !isValidArtifactCandidate(ref.path) || seen.has(ref.path)) {
+    return
+  }
+
+  seen.set(ref.path, ref)
+}
+
+function isValidArtifactCandidate(value: string | undefined): value is string {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return false
+  }
+
+  if (/[`<>]/.test(trimmed)) {
+    return false
+  }
+
+  if (trimmed.includes('…') || trimmed.includes('...')) {
+    return false
+  }
+
+  if (/\{\{[^}]+\}\}|\$\{[^}]+\}/.test(trimmed)) {
+    return false
+  }
+
+  const withoutQuery = trimmed.split(/[?#]/, 1)[0]?.trim() ?? ''
+  const fileName = withoutQuery.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.trim() ?? ''
+  if (!fileName || fileName === '.' || fileName === '..') {
+    return false
+  }
+
+  return true
+}
+
+interface TextRange {
+  start: number
+  end: number
+}
+
+function findMarkdownCodeRanges(text: string): TextRange[] {
+  const ranges: TextRange[] = []
+  const fencedCodePattern = /```[\s\S]*?```|~~~[\s\S]*?~~~/g
+  for (const match of text.matchAll(fencedCodePattern)) {
+    ranges.push({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length })
+  }
+
+  const inlineCodePattern = /`[^`\n]+`/g
+  for (const match of text.matchAll(inlineCodePattern)) {
+    const start = match.index ?? 0
+    const end = start + match[0].length
+    if (!ranges.some((range) => start >= range.start && end <= range.end)) {
+      ranges.push({ start, end })
     }
   }
+
+  return ranges
+}
+
+function isMatchInCodeRange(match: RegExpMatchArray, ranges: TextRange[]): boolean {
+  const start = match.index ?? 0
+  return ranges.some((range) => start >= range.start && start < range.end)
 }
 
 function getArtifactCandidateTexts(message: ConversationEntry): string[] {
