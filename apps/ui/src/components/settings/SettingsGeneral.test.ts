@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent } from '@testing-library/dom'
+import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -144,6 +144,12 @@ beforeEach(() => {
       value: () => {},
     })
   }
+  if (!Element.prototype.scrollIntoView) {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: () => {},
+    })
+  }
 
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -227,6 +233,14 @@ beforeEach(() => {
       defaultReasoningLevel: 'high',
       supportedReasoningLevels: ['low', 'medium', 'high'],
     },
+    {
+      presetId: 'pi-grok',
+      displayName: 'Grok 4',
+      provider: 'xai',
+      modelId: 'grok-4',
+      defaultReasoningLevel: 'low',
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+    },
   ])
 })
 
@@ -287,7 +301,7 @@ describe('SettingsGeneral', () => {
       expect(container.textContent).toContain('5 minutes')
     })
 
-    it('filters native SDK models out of compaction model choices', async () => {
+    it('shows xAI compaction models while filtering native SDK models out of compaction model choices', async () => {
       renderGeneral()
       await flush()
       await flush()
@@ -296,12 +310,12 @@ describe('SettingsGeneral', () => {
       expect(trigger).toBeTruthy()
 
       flushSync(() => {
-        fireEvent.pointerDown(trigger!)
+        fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
       })
-      await flush()
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.5' })).toBeTruthy())
 
-      expect(document.body.textContent).toContain('GPT-5.5')
-      expect(document.body.textContent).not.toContain('Claude SDK Sonnet')
+      expect(getByRole(document.body, 'option', { name: 'Grok 4' })).toBeTruthy()
+      expect(queryByRole(document.body, 'option', { name: 'Claude SDK Sonnet' })).toBeNull()
     })
 
     it('shows a warning when the configured compaction provider is unavailable', async () => {

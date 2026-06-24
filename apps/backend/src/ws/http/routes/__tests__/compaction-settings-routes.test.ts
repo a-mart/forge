@@ -101,6 +101,29 @@ describe("createCompactionSettingsRoutes", () => {
     expect(highBody.settings.timeoutMs).toBe(900_000);
   });
 
+  it("accepts xAI compaction models on PUT", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-xai-model-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => new Map([["openai-codex", true], ["xai", true]]),
+    });
+    await service.load();
+    const server = await createRouteServer(
+      createCompactionSettingsRoutes({ settingsService: service, runtimeTarget: "builder" }),
+    );
+
+    const response = await fetch(`${server.baseUrl}/api/settings/compaction`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: { provider: "xai", modelId: "grok-4" }, reasoningLevel: "medium" }),
+    });
+    const body = (await response.json()) as UpdateCompactionSettingsResponse;
+
+    expect(response.status).toBe(200);
+    expect(body.settings.model).toEqual({ provider: "xai", modelId: "grok-4" });
+    expect(body.settings.reasoningLevel).toBe("medium");
+  });
+
   it("returns 400 for native SDK compaction models", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-sdk-model-"));
     const service = new CompactionSettingsService({

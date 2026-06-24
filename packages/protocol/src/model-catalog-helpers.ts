@@ -152,13 +152,21 @@ export function isCompactionProviderSupported(providerId: string): boolean {
 
 /** Whether this catalog model can be selected for Forge Pi compaction. */
 export function isCatalogModelCompactionSupported(model: ForgeModelDefinition): boolean {
-  return isCompactionProviderSupported(model.provider) && isCatalogModelManagerSupported(model, 'change')
+  return isCompactionProviderSupported(model.provider)
 }
 
 /** Whether a provider/model selection can be selected for Forge Pi compaction. */
 export function isCompactionModelSelectionSupported(modelId: string, provider?: string): boolean {
   const model = getCatalogModel(modelId, provider)
   return model ? isCatalogModelCompactionSupported(model) : false
+}
+
+/** Compute the effective compaction-enabled state for a catalog model. */
+export function getEffectiveCompactionEnabled(
+  model: ForgeModelDefinition,
+  override: ModelOverrideEntry | undefined,
+): boolean {
+  return isCatalogModelGloballyEnabled(model, override) && isCatalogModelCompactionSupported(model)
 }
 
 /** Compute the default manager-enabled state for a catalog model on the requested surface. */

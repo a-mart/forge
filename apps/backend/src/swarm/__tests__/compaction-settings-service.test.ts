@@ -18,6 +18,7 @@ function createAvailabilityMap(overrides: Record<string, boolean> = {}): Map<str
     ["openai-codex", true],
     ["anthropic", true],
     ["claude-sdk", true],
+    ["xai", true],
     ...Object.entries(overrides),
   ]);
 }
@@ -222,6 +223,30 @@ describe("CompactionSettingsService", () => {
     });
   });
 
+  it("allows xAI compaction models even though they are hidden from manager change selectors", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-xai-update-"));
+    const now = new Date("2026-06-24T12:00:00.000Z");
+    const service = new CompactionSettingsService({
+      dataDir,
+      now: () => now,
+      getProviderAvailability: async () => createAvailabilityMap(),
+    });
+
+    await service.load();
+    const result = await service.update({
+      model: { provider: "xai", modelId: "grok-4" },
+      reasoningLevel: "medium",
+    });
+
+    expect(result.settings.model).toEqual({ provider: "xai", modelId: "grok-4" });
+    expect(result.settings.reasoningLevel).toBe("medium");
+    expect(result.availability).toEqual({
+      providerConfigured: true,
+      modelValid: true,
+      reasoningSupported: true,
+    });
+  });
+
   it("persists validated updates and merges partial patches", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-update-"));
     const now = new Date("2026-06-24T12:00:00.000Z");
@@ -335,7 +360,7 @@ describe("CompactionSettingsService", () => {
 
     await expect(
       service.update({ model: { provider: "openai-codex", modelId: "gpt-5.5" } }),
-    ).rejects.toThrow("Provider openai-codex is not configured for manager model selection");
+    ).rejects.toThrow("Provider openai-codex is not configured for compaction model selection");
   });
 });
 

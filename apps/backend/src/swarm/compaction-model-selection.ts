@@ -1,12 +1,11 @@
 import type { ManagerExactModelSelection, ManagerReasoningLevel } from "@forge/protocol";
 import {
   getCatalogModel,
-  getEffectiveManagerEnabled,
+  getEffectiveCompactionEnabled,
   isCatalogModelCompactionSupported,
   isCompactionProviderSupported,
 } from "@forge/protocol";
 import { modelCatalogService } from "./catalog/model-catalog-service.js";
-import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
 
 const COMPACTION_PROVIDER_ERROR =
@@ -23,24 +22,42 @@ export function validateCompactionModelSelection(
   },
 ): void {
   const provider = model.provider.trim().toLowerCase();
+  const modelId = model.modelId.trim();
+
+  if (!provider) {
+    throw new CompactionSettingsValidationError("model.provider must be a non-empty string");
+  }
+
+  if (!modelId) {
+    throw new CompactionSettingsValidationError("model.modelId must be a non-empty string");
+  }
+
   if (!isCompactionProviderSupported(provider)) {
     throw new CompactionSettingsValidationError(COMPACTION_PROVIDER_ERROR);
   }
 
-  try {
-    resolveExactManagerModelSelection(model, {
-      surface: "change",
-      providerAvailability: options.providerAvailability,
-      reasoningLevel: options.reasoningLevel,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new CompactionSettingsValidationError(message);
+  const catalogModel = getCatalogModel(modelId, provider);
+  if (!catalogModel || catalogModel.provider !== provider || !isCatalogModelCompactionSupported(catalogModel)) {
+    throw new CompactionSettingsValidationError(`Unknown compaction model selection: ${provider}/${modelId}`);
   }
 
-  const catalogModel = getCatalogModel(model.modelId.trim(), provider);
-  if (!catalogModel || !isCatalogModelCompactionSupported(catalogModel)) {
-    throw new CompactionSettingsValidationError(COMPACTION_PROVIDER_ERROR);
+  const override = modelCatalogService.getOverride(catalogModel.modelId, catalogModel.provider);
+  if (!getEffectiveCompactionEnabled(catalogModel, override)) {
+    throw new CompactionSettingsValidationError(`Model ${catalogModel.displayName} is disabled for compaction`);
+  }
+
+  const providerAvailable = options.providerAvailability.get(catalogModel.provider);
+  if (providerAvailable === false) {
+    throw new CompactionSettingsValidationError(
+      `Provider ${catalogModel.provider} is not configured for compaction model selection`,
+    );
+  }
+
+  const reasoningLevel = options.reasoningLevel ?? catalogModel.defaultReasoningLevel;
+  if (!catalogModel.supportedReasoningLevels.includes(reasoningLevel)) {
+    throw new CompactionSettingsValidationError(
+      `Reasoning level ${reasoningLevel} is not supported by ${catalogModel.displayName}; supported levels: ${catalogModel.supportedReasoningLevels.join(", ")}`,
+    );
   }
 }
 
@@ -52,16 +69,8 @@ export function isCompactionModelCatalogValid(model: ManagerExactModelSelection)
     return false;
   }
 
-  if (!modelCatalogService.isModelEnabled(catalogModel.modelId, catalogModel.provider)) {
-    return false;
-  }
-
-  if (!isCatalogModelCompactionSupported(catalogModel)) {
-    return false;
-  }
-
   const override = modelCatalogService.getOverride(catalogModel.modelId, catalogModel.provider);
-  return getEffectiveManagerEnabled(catalogModel, override, "change");
+  return getEffectiveCompactionEnabled(catalogModel, override);
 }
 
 export function isCompactionReasoningSupported(

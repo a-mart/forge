@@ -10,13 +10,16 @@ import {
   getChangeManagerFamilies,
   getCreateManagerFamilies,
   getDefaultManagerEnabled,
+  getEffectiveCompactionEnabled,
   getEffectiveManagerEnabled,
   getSpawnPresetFamilies,
   getSpecialistFamilies,
   inferCatalogFamily,
   inferCatalogProvider,
+  isCatalogModelCompactionSupported,
   isCatalogModelId,
   isCatalogModelManagerSupported,
+  isCompactionModelSelectionSupported,
 } from '../model-catalog.js'
 
 const VALID_REASONING_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh'])
@@ -460,6 +463,28 @@ describe('model-catalog', () => {
     expect(isCatalogModelManagerSupported(grok, 'create')).toBe(false)
     expect(getDefaultManagerEnabled(grok, 'create')).toBe(false)
     expect(getEffectiveManagerEnabled(grok, { managerEnabled: true }, 'create')).toBe(false)
+  })
+
+  it('derives compaction eligibility independently from manager change visibility', () => {
+    const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
+    const sdkSonnet = getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')
+    const grok = getCatalogModel('grok-4', 'xai')
+
+    expect(anthropicOpus47).toBeDefined()
+    expect(sdkSonnet).toBeDefined()
+    expect(grok).toBeDefined()
+
+    if (!anthropicOpus47 || !sdkSonnet || !grok) {
+      throw new Error('Expected compaction model helper fixtures to exist in the catalog')
+    }
+
+    expect(isCatalogModelCompactionSupported(anthropicOpus47)).toBe(true)
+    expect(isCatalogModelCompactionSupported(grok)).toBe(true)
+    expect(isCatalogModelCompactionSupported(sdkSonnet)).toBe(false)
+    expect(isCompactionModelSelectionSupported('grok-4', 'xai')).toBe(true)
+    expect(isCompactionModelSelectionSupported('claude-sonnet-4-5-20250929', 'claude-sdk')).toBe(false)
+    expect(getEffectiveCompactionEnabled(grok, undefined)).toBe(true)
+    expect(getEffectiveCompactionEnabled(grok, { enabled: false })).toBe(false)
   })
 
   it('returns the expected visibility subsets', () => {
