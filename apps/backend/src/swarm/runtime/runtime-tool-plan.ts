@@ -1,23 +1,18 @@
 import { getCatalogProvider } from "@forge/protocol";
 import type { ExtensionFactory, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
-import {
-  ForgePiCompactionError,
-  runForgePiCompaction,
-} from "../compaction/forge-pi-compaction.js";
+import { createForgePiCompactionExtensionFactory } from "../compaction/forge-pi-compaction-extension.js";
 import { buildCreateProjectAgentTool } from "../agent-creator-tool.js";
 import { buildCreateSessionTool } from "../agents/create-session-tool.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
 import type { ForgePreparedRuntimeBindings } from "../forge-extension-types.js";
 import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js";
 import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
-import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { normalizeArchetypeId } from "../prompt-registry.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { buildSwarmTools } from "../swarm-tools.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
-import { getSessionDir } from "../data-paths.js";
 
 interface PlanRuntimeToolsOptions {
   host: SwarmToolHost;
@@ -99,53 +94,12 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
   const factories: ExtensionFactory[] = [];
 
   if (descriptor.role === "manager" && descriptor.profileId) {
-    factories.push((pi) => {
-      pi.on("session_before_compact", async (event, ctx) => {
-        try {
-          const sessionDir = getSessionDir(
-            options.config.paths.dataDir,
-            descriptor.profileId ?? descriptor.agentId,
-            descriptor.agentId
-          );
-          const registry = await loadPins(sessionDir);
-          const existingInstructions = event.customInstructions?.trim() || undefined;
-          const combinedInstructions = combineCompactionCustomInstructions(existingInstructions, registry);
-          const pinnedInstructionsMerged = Boolean(
-            combinedInstructions &&
-              combinedInstructions !== existingInstructions &&
-              Object.keys(registry.pins).length > 0,
-          );
-
-          const compactionSettings = options.getCompactionRuntimeSettingsProvider().getCompactionRuntimeSettings();
-          const compaction = await runForgePiCompaction({
-            event,
-            ctx,
-            descriptor,
-            compactionSettings,
-            combinedInstructions,
-            pinnedInstructionsMerged,
-            logDebug: options.logDebug,
-          });
-
-          return { compaction };
-        } catch (error) {
-          const message = error instanceof ForgePiCompactionError
-            ? error.message
-            : `Forge compaction failed for ${descriptor.agentId}: ${error instanceof Error ? error.message : String(error)}`;
-          const details = error instanceof ForgePiCompactionError
-            ? error.details
-            : { recoveryStage: "forge_compaction_hook_failed" };
-
-          console.warn(`[swarm] Forge compaction cancelled for ${descriptor.agentId}: ${message}`, details);
-          ctx.ui.notify(message, "error");
-
-          // Pi's ExtensionRunner intentionally swallows thrown handler errors. Returning the
-          // supported cancel result is the only fail-closed boundary that prevents AgentSession
-          // from falling through to default active-model compaction after a Forge-owned failure.
-          return { cancel: true };
-        }
-      });
-    });
+    factories.push(createForgePiCompactionExtensionFactory({
+      descriptor,
+      config: options.config,
+      logDebug: options.logDebug,
+      getCompactionRuntimeSettingsProvider: options.getCompactionRuntimeSettingsProvider,
+    }));
   }
 
   if (process.env.FORGE_DEBUG === "true") {

@@ -94,6 +94,8 @@ export class RuntimeErrorProjector {
     const extensionEvent = readStringDetail(error.details, "event");
     const extensionBaseName = extensionPath ? basename(extensionPath) : undefined;
     const userFacingMessage = readStringDetail(error.details, "userFacingMessage");
+    const compactionRecoveryTerminal = readBooleanDetail(error.details, "compactionRecoveryTerminal")
+      || error.details?.compactionRetryPlanned === false;
 
     const isSuccessfulCompactionStage = isCompactionSuccessRecoveryStage(recoveryStage);
 
@@ -116,7 +118,9 @@ export class RuntimeErrorProjector {
             ? `📋 ${message}.`
             : recoveryStage === "recovery_failed"
               ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
-              : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
+              : compactionRecoveryTerminal
+                ? `⚠️ Compaction error${retryLabel}: ${message}.`
+                : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
           : error.phase === "context_guard"
             ? recoveryStage === "guard_started"
               ? `📋 ${message}.`
@@ -141,6 +145,10 @@ export class RuntimeErrorProjector {
       source: "system"
     });
   }
+}
+
+function readBooleanDetail(details: Record<string, unknown> | undefined, key: string): boolean {
+  return details?.[key] === true;
 }
 
 function appendRuntimeErrorClassificationDetails(message: string, details: Record<string, unknown> | undefined): string {

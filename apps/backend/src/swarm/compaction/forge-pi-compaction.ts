@@ -4,6 +4,10 @@ import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { compact as runPiCompaction, type CompactionResult } from "@mariozechner/pi-coding-agent";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
 import { normalizeThinkingLevelForProvider, resolveExactModel } from "../swarm-manager-utils.js";
+import {
+  boundCompactionPreparation,
+  type CompactionBoundingStats,
+} from "./forge-pi-compaction-bounds.js";
 import type { AgentDescriptor } from "../types.js";
 
 type PiCompactionThinkingLevel = NonNullable<Parameters<typeof runPiCompaction>[6]>;
@@ -55,6 +59,7 @@ export interface ForgeCompactionStartInstrumentation {
   customInstructionsPresent: boolean;
   pinnedInstructionsMerged: boolean;
   providerOptions: ForgeCompactionProviderOptionsPresence;
+  bounding: CompactionBoundingStats;
   /**
    * Deferred parity gaps (not passed through Pi compact helper today):
    * - Cross-provider canonical auth resolver outside the active Pi runtime registry
@@ -71,6 +76,7 @@ export function buildForgeCompactionStartInstrumentation(options: {
   customInstructions: string | undefined;
   pinnedInstructionsMerged: boolean;
   providerOptions: ForgeCompactionProviderOptionsPresence;
+  bounding: CompactionBoundingStats;
 }): ForgeCompactionStartInstrumentation {
   return {
     sourcePath: "forge_session_before_compact",
@@ -83,6 +89,7 @@ export function buildForgeCompactionStartInstrumentation(options: {
     customInstructionsPresent: Boolean(options.customInstructions?.trim()),
     pinnedInstructionsMerged: options.pinnedInstructionsMerged,
     providerOptions: options.providerOptions,
+    bounding: options.bounding,
     deferredProviderParity: [
       "cross_provider_canonical_auth_resolver",
       "catalog_before_provider_request_behaviors",
@@ -188,6 +195,10 @@ export async function runForgePiCompaction(options: {
     options.compactionSettings.reasoningLevel,
   );
 
+  const bounded = boundCompactionPreparation(options.event.preparation, {
+    customInstructions: options.combinedInstructions,
+  });
+
   options.logDebug(
     "compaction:forge:start",
     buildForgeCompactionStartInstrumentation({
@@ -196,11 +207,12 @@ export async function runForgePiCompaction(options: {
       customInstructions: options.combinedInstructions,
       pinnedInstructionsMerged: options.pinnedInstructionsMerged,
       providerOptions,
+      bounding: bounded.stats,
     }) as unknown as Record<string, unknown>,
   );
 
-  return runPiCompaction(
-    options.event.preparation,
+  const result = await runPiCompaction(
+    bounded.preparation,
     compactionModel,
     auth.apiKey,
     auth.headers,
@@ -208,4 +220,19 @@ export async function runForgePiCompaction(options: {
     options.event.signal,
     thinkingLevel,
   );
+
+  return {
+    ...result,
+    details: {
+      ...(isRecord(result.details) ? result.details : { piCompactionDetails: result.details }),
+      forgeCompaction: {
+        sourcePath: "forge_session_before_compact",
+        bounding: bounded.stats,
+      },
+    },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

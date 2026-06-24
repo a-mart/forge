@@ -9,6 +9,7 @@ import {
   resolveForgeCompactionModel,
   runForgePiCompaction,
 } from "../compaction/forge-pi-compaction.js";
+import { boundCompactionPreparation } from "../compaction/forge-pi-compaction-bounds.js";
 import { createDefaultCompactionSettings } from "../compaction-settings-service.js";
 import { createStaticCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { makeCompactionGuardDescriptor } from "../../test-support/compaction-guard-harness.js";
@@ -75,7 +76,7 @@ describe("forge pi compaction", () => {
           turnPrefixMessages: [],
           isSplitTurn: false,
           tokensBefore: 100,
-          fileOps: { read: new Set(), edited: new Set() },
+          fileOps: { read: new Set(), written: new Set(), edited: new Set() },
           settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
         },
         customInstructions: "Focus on deployment details.",
@@ -102,6 +103,82 @@ describe("forge pi compaction", () => {
     expect(runPiCompactionMock.mock.calls[0]?.[1]).not.toEqual(sessionModel);
   });
 
+  it("passes bounded preparation to Pi compaction while preserving combined pin instructions", async () => {
+    const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+    const modelRegistry = {
+      find: vi.fn(() => compactionModel),
+      getApiKeyAndHeaders: vi.fn(async () => ({
+        ok: true as const,
+        apiKey: "compaction-key",
+        headers: {},
+      })),
+    } as unknown as ModelRegistry;
+    const logDebug = vi.fn();
+    const secretInToolArgs = `${"x".repeat(10_000)}RAW_SECRET_TOOL_ARG${"y".repeat(10_000)}`;
+    const combinedInstructions = "Keep this pinned instruction verbatim.";
+
+    const result = await runForgePiCompaction({
+      event: {
+        preparation: {
+          firstKeptEntryId: "entry-1",
+          messagesToSummarize: [
+            {
+              role: "assistant",
+              api: "openai-codex-responses",
+              provider: "openai-codex",
+              model: "gpt-5.5",
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+              stopReason: "toolUse",
+              content: [
+                { type: "toolCall", id: "tool-1", name: "write", arguments: { path: "src/file.ts", content: secretInToolArgs } },
+              ],
+              timestamp: 1,
+            },
+          ],
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 100,
+          previousSummary: "Prior summary is preserved.",
+          fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+          settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+        },
+      },
+      ctx: { model: { provider: "openai-codex", id: "gpt-5.4" } as never, modelRegistry },
+      descriptor: makeCompactionGuardDescriptor(),
+      compactionSettings: createStaticCompactionRuntimeSettingsProvider({ timeoutMs: 300_000 }).getCompactionRuntimeSettings(),
+      combinedInstructions,
+      pinnedInstructionsMerged: true,
+      logDebug,
+    });
+
+    const boundedPreparation = runPiCompactionMock.mock.calls[0]?.[0];
+    expect(JSON.stringify(boundedPreparation)).not.toContain("RAW_SECRET_TOOL_ARG");
+    expect(JSON.stringify(boundedPreparation)).toContain("forge compaction truncated tool_call_args");
+    expect(boundedPreparation?.previousSummary).toBe("Prior summary is preserved.");
+    expect(runPiCompactionMock.mock.calls[0]?.[4]).toBe(combinedInstructions);
+    expect(JSON.stringify(logDebug.mock.calls)).not.toContain("RAW_SECRET_TOOL_ARG");
+    expect(JSON.stringify(result.details)).not.toContain("RAW_SECRET_TOOL_ARG");
+    expect(result.details).toMatchObject({
+      readFiles: [],
+      modifiedFiles: [],
+      forgeCompaction: expect.objectContaining({
+        sourcePath: "forge_session_before_compact",
+        bounding: expect.any(Object),
+      }),
+    });
+    expect(logDebug).toHaveBeenCalledWith("compaction:forge:start", expect.objectContaining({
+      bounding: expect.objectContaining({
+        promptChars: expect.objectContaining({
+          maxOriginal: expect.any(Number),
+          maxBounded: expect.any(Number),
+        }),
+        categories: expect.objectContaining({
+          tool_call_args: expect.objectContaining({ truncatedItems: expect.any(Number) }),
+        }),
+      }),
+    }));
+  });
+
   it("merges pinned instructions into the compaction request", async () => {
     const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
     const modelRegistry = {
@@ -124,7 +201,7 @@ describe("forge pi compaction", () => {
           turnPrefixMessages: [],
           isSplitTurn: false,
           tokensBefore: 100,
-          fileOps: { read: new Set(), edited: new Set() },
+          fileOps: { read: new Set(), written: new Set(), edited: new Set() },
           settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
         },
         signal: undefined,
@@ -166,7 +243,7 @@ describe("forge pi compaction", () => {
             turnPrefixMessages: [],
             isSplitTurn: false,
             tokensBefore: 100,
-            fileOps: { read: new Set(), edited: new Set() },
+            fileOps: { read: new Set(), written: new Set(), edited: new Set() },
             settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
           },
         },
@@ -215,7 +292,7 @@ describe("forge pi compaction", () => {
             turnPrefixMessages: [],
             isSplitTurn: false,
             tokensBefore: 100,
-            fileOps: { read: new Set(), edited: new Set() },
+            fileOps: { read: new Set(), written: new Set(), edited: new Set() },
             settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
           },
         },
@@ -260,7 +337,7 @@ describe("forge pi compaction", () => {
             turnPrefixMessages: [],
             isSplitTurn: false,
             tokensBefore: 100,
-            fileOps: { read: new Set(), edited: new Set() },
+            fileOps: { read: new Set(), written: new Set(), edited: new Set() },
             settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
           },
         },
@@ -304,6 +381,15 @@ describe("forge pi compaction", () => {
       customInstructions: "Focus",
       pinnedInstructionsMerged: true,
       providerOptions: detectCompactionProviderOptionsPresence({ "x-session-id": "sess-1" }),
+      bounding: boundCompactionPreparation({
+        firstKeptEntryId: "entry-1",
+        messagesToSummarize: [],
+        turnPrefixMessages: [],
+        isSplitTurn: false,
+        tokensBefore: 100,
+        fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+        settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+      }).stats,
     });
 
     expect(instrumentation).toMatchObject({
@@ -316,6 +402,13 @@ describe("forge pi compaction", () => {
       customInstructionsPresent: true,
       pinnedInstructionsMerged: true,
       providerOptions: expect.objectContaining({ hasSessionId: true }),
+      bounding: expect.objectContaining({
+        promptChars: expect.objectContaining({
+          maxOriginal: expect.any(Number),
+          maxBounded: expect.any(Number),
+        }),
+        categories: expect.any(Object),
+      }),
     });
     expect(JSON.stringify(instrumentation)).not.toContain("secret");
     expect(instrumentation.deferredProviderParity.length).toBeGreaterThan(0);

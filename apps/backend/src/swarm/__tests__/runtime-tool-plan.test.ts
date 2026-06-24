@@ -389,7 +389,7 @@ describe("runtime Pi extension factory plan", () => {
         turnPrefixMessages: [],
         isSplitTurn: false,
         tokensBefore: 100,
-        fileOps: { read: new Set(), edited: new Set() },
+        fileOps: { read: new Set(), written: new Set(), edited: new Set() },
         settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
       },
       branchEntries: [],

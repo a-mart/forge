@@ -67,62 +67,66 @@ vi.mock("@mariozechner/pi-ai", () => ({
   getModels: (provider: unknown) => piAiMockState.getModels(provider),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-  AuthStorage: {
-    create: (...args: unknown[]) => piCodingAgentMockState.authStorageCreate(...args),
-    inMemory: (...args: unknown[]) => piCodingAgentMockState.authStorageInMemory(...args),
-  },
-  DefaultResourceLoader: class {
-    readonly options: unknown
+vi.mock("@mariozechner/pi-coding-agent", async () => {
+  const actual = await vi.importActual<typeof import("@mariozechner/pi-coding-agent")>("@mariozechner/pi-coding-agent")
+  return {
+    ...actual,
+    AuthStorage: {
+      create: (...args: unknown[]) => piCodingAgentMockState.authStorageCreate(...args),
+      inMemory: (...args: unknown[]) => piCodingAgentMockState.authStorageInMemory(...args),
+    },
+    DefaultResourceLoader: class {
+      readonly options: unknown
 
-    constructor(options: unknown) {
-      this.options = options
-      piCodingAgentMockState.defaultResourceLoaderCtor(options)
-    }
+      constructor(options: unknown) {
+        this.options = options
+        piCodingAgentMockState.defaultResourceLoaderCtor(options)
+      }
 
-    async reload(): Promise<void> {
-      await piCodingAgentMockState.defaultResourceLoaderReload()
-    }
+      async reload(): Promise<void> {
+        await piCodingAgentMockState.defaultResourceLoaderReload()
+      }
 
-    getPathMetadata(): Map<string, unknown> {
-      return new Map();
-    }
-  },
-  createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
-  compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
-  SettingsManager: {
-    create: (...args: unknown[]) => {
-      piCodingAgentMockState.settingsManagerCreate(...args)
-      return {
-        applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+      getPathMetadata(): Map<string, unknown> {
+        return new Map();
       }
     },
-    fromStorage: (...args: unknown[]) => {
-      piCodingAgentMockState.settingsManagerFromStorage(...args)
-      return {
-        applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
-      }
+    createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
+    compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
+    SettingsManager: {
+      create: (...args: unknown[]) => {
+        piCodingAgentMockState.settingsManagerCreate(...args)
+        return {
+          applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+        }
+      },
+      fromStorage: (...args: unknown[]) => {
+        piCodingAgentMockState.settingsManagerFromStorage(...args)
+        return {
+          applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+        }
+      },
     },
-  },
-  ModelRegistry: {
-    create: (...args: unknown[]) => {
-      piCodingAgentMockState.modelRegistryCreateArgs(...args)
-      return {
-        getError(): undefined {
-          return undefined
-        },
+    ModelRegistry: {
+      create: (...args: unknown[]) => {
+        piCodingAgentMockState.modelRegistryCreateArgs(...args)
+        return {
+          getError(): undefined {
+            return undefined
+          },
 
-        find(provider: string, modelId: string): unknown {
-          return piCodingAgentMockState.modelRegistryFind(provider, modelId)
-        },
+          find(provider: string, modelId: string): unknown {
+            return piCodingAgentMockState.modelRegistryFind(provider, modelId)
+          },
 
-        getAll(): unknown[] {
-          return piCodingAgentMockState.modelRegistryGetAll()
-        },
-      }
+          getAll(): unknown[] {
+            return piCodingAgentMockState.modelRegistryGetAll()
+          },
+        }
+      },
     },
-  },
-}));
+  }
+});
 
 vi.mock("../session-file-guard.js", () => ({
   openSessionManagerWithSizeGuard: (...args: unknown[]) => sessionFileGuardMockState.openSessionManagerWithSizeGuard(...args),
@@ -1439,7 +1443,7 @@ describe("RuntimeFactory", () => {
         turnPrefixMessages: [],
         isSplitTurn: false,
         tokensBefore: 123,
-        fileOps: { readFiles: [], modifiedFiles: [] },
+        fileOps: { read: new Set(), written: new Set(), edited: new Set() },
         settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
       },
       compactionModel,
@@ -1450,11 +1454,17 @@ describe("RuntimeFactory", () => {
       "low",
     );
     expect(result).toEqual({
-      compaction: {
+      compaction: expect.objectContaining({
         summary: "summary",
         firstKeptEntryId: "entry-1",
         tokensBefore: 123,
-      },
+      }),
+    });
+    expect(result?.compaction?.details).toMatchObject({
+      forgeCompaction: expect.objectContaining({
+        sourcePath: "forge_session_before_compact",
+        bounding: expect.any(Object),
+      }),
     });
   });
 

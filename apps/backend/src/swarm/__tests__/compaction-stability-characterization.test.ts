@@ -9,6 +9,7 @@ import {
 } from "../../test-support/compaction-guard-harness.js";
 import { createStaticCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { DEFAULT_COMPACTION_TIMEOUT_MS } from "../compaction-settings-service.js";
+import { rememberForgePiCompactionFailure } from "../compaction/forge-pi-compaction-extension.js";
 
 const resizeImageIfNeededMock = vi.hoisted(() =>
   vi.fn(async (data: string, mimeType: string) => ({
@@ -146,6 +147,44 @@ describe("compaction stability characterization", () => {
 
       expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_succeeded")).toBe(false);
       expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_aborted")).toBe(true);
+    });
+
+    it("projects Forge compaction failure details when Pi reports a cancel result", async () => {
+      const { runtime, runtimeErrors } = createCompactionGuardRuntime();
+      rememberForgePiCompactionFailure(runtime.descriptor.agentId, {
+        kind: "configured_auth_unavailable",
+        message: "Compaction auth unavailable in the active runtime registry for configured model on guard-worker: provider unavailable",
+        userFacingMessage: "Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.",
+        cancelledByUser: false,
+        details: {
+          recoveryStage: "forge_compaction_auth_unavailable",
+          compactionCancelled: true,
+          compactionRetryPlanned: false,
+          cancelKind: "configured_auth_unavailable",
+          userFacingMessage: "Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.",
+        },
+      });
+
+      await (runtime as never as {
+        handleAutoCompactionEndEvent: (event: unknown) => Promise<void>;
+      }).handleAutoCompactionEndEvent({
+        type: "compaction_end",
+        reason: "overflow",
+        result: undefined,
+        aborted: true,
+        willRetry: false,
+      });
+
+      expect(runtimeErrors).toContainEqual(expect.objectContaining({
+        phase: "compaction",
+        message: expect.stringContaining("Compaction auth unavailable"),
+        details: expect.objectContaining({
+          recoveryStage: "forge_compaction_failed",
+          cancelKind: "configured_auth_unavailable",
+          compactionRetryPlanned: false,
+          userCancelled: false,
+        }),
+      }));
     });
 
     it("blocks mid-turn context guard for 60s after failed automatic compaction", async () => {

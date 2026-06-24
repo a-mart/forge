@@ -60,6 +60,7 @@ import {
   collectCompactionEntryKeys,
   findNewCompactionEntries,
 } from "../compaction-session-entries.js";
+import { consumeForgePiCompactionFailure } from "../compaction/forge-pi-compaction-extension.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -602,7 +603,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
           reason = normalized.message;
           await this.reportContextGuardError(error, {
             stage: "smart_compact_compaction_failed",
-            handoffWritten: handoffContent !== undefined
+            handoffWritten: handoffContent !== undefined,
+            ...getForgeCompactionFailureDetails(error)
           });
         }
         // Continue through cleanup even if compaction failed or was skipped.
@@ -645,14 +647,33 @@ export class AgentRuntime implements SwarmAgentRuntime {
       await this.emitCompactionStatusSafely("compact_complete_status_emit");
       return result;
     } catch (error) {
-      this.logRuntimeError("compaction", error, {
-        customInstructionsPreview: previewForLog(customInstructions ?? "")
+      const enhancedError = this.enhanceCompactionCancellationError(error);
+      this.logRuntimeError("compaction", enhancedError, {
+        customInstructionsPreview: previewForLog(customInstructions ?? ""),
+        ...getForgeCompactionFailureDetails(enhancedError)
       });
-      throw error;
+      throw enhancedError;
     } finally {
       this.manualCompactionInProgress = false;
       await this.emitCompactionStatusSafely("compact_end_status_emit");
     }
+  }
+
+  private enhanceCompactionCancellationError(error: unknown): unknown {
+    const normalized = normalizeRuntimeError(error);
+    if (normalized.message !== "Compaction cancelled") {
+      return error;
+    }
+
+    const failure = consumeForgePiCompactionFailure(this.descriptor.agentId);
+    if (!failure) {
+      return error;
+    }
+
+    const enhanced = new Error(failure.message);
+    enhanced.name = "ForgePiCompactionFailure";
+    (enhanced as Error & { details?: Record<string, unknown> }).details = failure.details;
+    return enhanced;
   }
 
   private shouldResumeAfterManualSmartCompact(): boolean {
@@ -1280,12 +1301,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   private async reportContextGuardError(error: unknown, details?: Record<string, unknown>): Promise<void> {
     const normalized = normalizeRuntimeError(error);
-    this.logRuntimeError("context_guard", error, details);
+    const mergedDetails = {
+      ...details,
+      ...getForgeCompactionFailureDetails(error),
+    };
+    this.logRuntimeError("context_guard", error, mergedDetails);
     await this.reportRuntimeError({
       phase: "context_guard",
       message: normalized.message,
       stack: normalized.stack,
-      details
+      details: mergedDetails
     });
   }
 
@@ -1656,14 +1681,19 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (!autoCompactionError) {
       if (event.aborted) {
+        const forgeFailure = consumeForgePiCompactionFailure(this.descriptor.agentId);
         await this.reportRuntimeError({
           phase: "compaction",
-          message: "Automatic compaction was aborted",
+          message: forgeFailure?.message ?? "Automatic compaction was cancelled",
           details: {
-            recoveryStage: "auto_compaction_aborted",
+            ...(forgeFailure?.details ?? {}),
+            recoveryStage: forgeFailure ? "forge_compaction_failed" : "auto_compaction_aborted",
             compactionReason,
             autoCompactionAborted: true,
-            autoCompactionWillRetry: event.willRetry
+            autoCompactionWillRetry: event.willRetry,
+            compactionRetryPlanned: false,
+            userCancelled: !forgeFailure,
+            userFacingMessage: forgeFailure?.userFacingMessage ?? "Automatic compaction was cancelled."
           }
         });
         this.latestAutoCompactionReason = undefined;
@@ -2178,6 +2208,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
       ...details
     });
   }
+}
+
+function getForgeCompactionFailureDetails(error: unknown): Record<string, unknown> {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return {};
+  }
+  const details = (error as { details?: unknown }).details;
+  if (typeof details !== "object" || details === null || Array.isArray(details)) {
+    return {};
+  }
+  return details as Record<string, unknown>;
 }
 
 type TimeoutOptions = {
