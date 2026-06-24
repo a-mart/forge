@@ -57,6 +57,7 @@ export interface ForgeCompactionStartInstrumentation {
   providerOptions: ForgeCompactionProviderOptionsPresence;
   /**
    * Deferred parity gaps (not passed through Pi compact helper today):
+   * - Cross-provider canonical auth resolver outside the active Pi runtime registry
    * - Catalog before_provider_request behaviors (xAI search/reasoning strip)
    * - Forge OpenAI Codex transport env override
    * - Explicit service-tier fields outside auth headers
@@ -83,6 +84,7 @@ export function buildForgeCompactionStartInstrumentation(options: {
     pinnedInstructionsMerged: options.pinnedInstructionsMerged,
     providerOptions: options.providerOptions,
     deferredProviderParity: [
+      "cross_provider_canonical_auth_resolver",
       "catalog_before_provider_request_behaviors",
       "openai_codex_transport_env_override",
       "explicit_service_tier_field_outside_headers",
@@ -136,9 +138,11 @@ export async function runForgePiCompaction(options: {
 
   if (!compactionModel) {
     throw new ForgePiCompactionError(
-      `Configured compaction model is unavailable for ${options.descriptor.agentId}`,
+      `Configured compaction model is unavailable in the active runtime registry for ${options.descriptor.agentId}`,
       {
         recoveryStage: "forge_compaction_model_unavailable",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
         configuredProvider: options.compactionSettings.model.provider,
         configuredModelId: options.compactionSettings.model.modelId,
         runtimeSessionProvider: sessionModel?.provider,
@@ -150,9 +154,11 @@ export async function runForgePiCompaction(options: {
   const auth = await options.ctx.modelRegistry.getApiKeyAndHeaders(compactionModel);
   if (!auth.ok) {
     throw new ForgePiCompactionError(
-      `Compaction auth unavailable for configured model on ${options.descriptor.agentId}: ${auth.error}`,
+      `Compaction auth unavailable in the active runtime registry for configured model on ${options.descriptor.agentId}: ${auth.error}`,
       {
         recoveryStage: "forge_compaction_auth_unavailable",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
         configuredProvider: options.compactionSettings.model.provider,
         configuredModelId: options.compactionSettings.model.modelId,
         runtimeSessionProvider: sessionModel?.provider,
@@ -166,6 +172,8 @@ export async function runForgePiCompaction(options: {
       `Compaction auth for ${options.descriptor.agentId} does not expose a raw API key for the configured compaction model`,
       {
         recoveryStage: "forge_compaction_auth_mode_unsupported",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
         configuredProvider: options.compactionSettings.model.provider,
         configuredModelId: options.compactionSettings.model.modelId,
         runtimeSessionProvider: sessionModel?.provider,

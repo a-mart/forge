@@ -101,21 +101,21 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
   if (descriptor.role === "manager" && descriptor.profileId) {
     factories.push((pi) => {
       pi.on("session_before_compact", async (event, ctx) => {
-        const sessionDir = getSessionDir(
-          options.config.paths.dataDir,
-          descriptor.profileId ?? descriptor.agentId,
-          descriptor.agentId
-        );
-        const registry = await loadPins(sessionDir);
-        const existingInstructions = event.customInstructions?.trim() || undefined;
-        const combinedInstructions = combineCompactionCustomInstructions(existingInstructions, registry);
-        const pinnedInstructionsMerged = Boolean(
-          combinedInstructions &&
-            combinedInstructions !== existingInstructions &&
-            Object.keys(registry.pins).length > 0,
-        );
-
         try {
+          const sessionDir = getSessionDir(
+            options.config.paths.dataDir,
+            descriptor.profileId ?? descriptor.agentId,
+            descriptor.agentId
+          );
+          const registry = await loadPins(sessionDir);
+          const existingInstructions = event.customInstructions?.trim() || undefined;
+          const combinedInstructions = combineCompactionCustomInstructions(existingInstructions, registry);
+          const pinnedInstructionsMerged = Boolean(
+            combinedInstructions &&
+              combinedInstructions !== existingInstructions &&
+              Object.keys(registry.pins).length > 0,
+          );
+
           const compactionSettings = options.getCompactionRuntimeSettingsProvider().getCompactionRuntimeSettings();
           const compaction = await runForgePiCompaction({
             event,
@@ -129,13 +129,20 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
 
           return { compaction };
         } catch (error) {
-          if (error instanceof ForgePiCompactionError) {
-            const message = `[swarm] Forge compaction failed for ${descriptor.agentId}: ${error.message}`;
-            console.warn(message, error.details);
-            ctx.ui.notify(error.message, "error");
-          }
+          const message = error instanceof ForgePiCompactionError
+            ? error.message
+            : `Forge compaction failed for ${descriptor.agentId}: ${error instanceof Error ? error.message : String(error)}`;
+          const details = error instanceof ForgePiCompactionError
+            ? error.details
+            : { recoveryStage: "forge_compaction_hook_failed" };
 
-          throw error;
+          console.warn(`[swarm] Forge compaction cancelled for ${descriptor.agentId}: ${message}`, details);
+          ctx.ui.notify(message, "error");
+
+          // Pi's ExtensionRunner intentionally swallows thrown handler errors. Returning the
+          // supported cancel result is the only fail-closed boundary that prevents AgentSession
+          // from falling through to default active-model compaction after a Forge-owned failure.
+          return { cancel: true };
         }
       });
     });

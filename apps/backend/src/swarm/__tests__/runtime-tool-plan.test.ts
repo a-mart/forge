@@ -2,7 +2,11 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
+import { ExtensionRunner, type Extension, type ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import {
+  createDefaultCompactionRuntimeSettingsProvider,
+  createStaticCompactionRuntimeSettingsProvider,
+} from "../compaction-runtime-settings-provider.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import {
   buildBaseRuntimeTools,
@@ -128,6 +132,29 @@ function createManagerDescriptor(rootDir: string, overrides: Partial<AgentDescri
 
 function toolNames(descriptor: AgentDescriptor): string[] {
   return buildBaseRuntimeTools(createHost(), descriptor).map((tool) => tool.name);
+}
+
+function extensionFromFactory(factory: ExtensionFactory): Extension {
+  const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
+  factory({
+    on: (event: string, handler: (...args: any[]) => unknown) => {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+  } as any);
+
+  return {
+    path: "forge://runtime-tool-plan-test",
+    resolvedPath: "forge://runtime-tool-plan-test",
+    sourceInfo: {} as any,
+    handlers,
+    tools: new Map(),
+    messageRenderers: new Map(),
+    commands: new Map(),
+    flags: new Map(),
+    shortcuts: new Map(),
+  } as Extension;
 }
 
 afterEach(() => {
@@ -280,5 +307,111 @@ describe("runtime Pi extension factory plan", () => {
       "forge_bridge",
       "before_provider_request",
     ]);
+  });
+
+  it("returns Pi's supported cancel result at the real extension-runner boundary when Forge compaction auth fails", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
+    await mkdir(rootDir, { recursive: true });
+    const descriptor = createManagerDescriptor(rootDir);
+    const configuredCompactionModel = { provider: "anthropic", id: "claude-opus-4-5", reasoning: true };
+    const activeSessionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+    const modelRegistry = {
+      find: vi.fn((provider: string, modelId: string) => {
+        if (provider === "anthropic" && modelId === "claude-opus-4-5") {
+          return configuredCompactionModel;
+        }
+        if (provider === "openai-codex" && modelId === "gpt-5.5") {
+          return activeSessionModel;
+        }
+        return undefined;
+      }),
+      getApiKeyAndHeaders: vi.fn(async (model: { provider: string }) => {
+        if (model.provider === "anthropic") {
+          return { ok: false as const, error: "provider unavailable in active runtime registry" };
+        }
+        return { ok: true as const, apiKey: "active-session-key", headers: { Authorization: "Bearer active" } };
+      }),
+    };
+
+    const [forgeCompactionFactory] = planPiExtensionFactories({
+      descriptor,
+      config: createConfig(rootDir),
+      logDebug: vi.fn(),
+      getCompactionRuntimeSettingsProvider: () => createStaticCompactionRuntimeSettingsProvider({
+        timeoutMs: 300_000,
+        model: { provider: "anthropic", modelId: "claude-opus-4-5" },
+        reasoningLevel: "low",
+      }),
+    });
+    const runner = new ExtensionRunner(
+      [extensionFromFactory(forgeCompactionFactory!)],
+      { pendingProviderRegistrations: [], flagValues: new Map() } as any,
+      rootDir,
+      {} as any,
+      modelRegistry as any,
+    );
+    runner.bindCore(
+      {
+        sendMessage: vi.fn(),
+        sendUserMessage: vi.fn(),
+        appendEntry: vi.fn(),
+        setSessionName: vi.fn(),
+        getSessionName: vi.fn(),
+        setLabel: vi.fn(),
+        getActiveTools: vi.fn(),
+        getAllTools: vi.fn(),
+        setActiveTools: vi.fn(),
+        refreshTools: vi.fn(),
+        getCommands: vi.fn(),
+        setModel: vi.fn(),
+        getThinkingLevel: vi.fn(),
+        setThinkingLevel: vi.fn(),
+      } as any,
+      {
+        getModel: () => activeSessionModel as any,
+        isIdle: () => true,
+        getSignal: () => undefined,
+        abort: vi.fn(),
+        hasPendingMessages: () => false,
+        shutdown: vi.fn(),
+        getContextUsage: () => undefined,
+        compact: vi.fn(),
+        getSystemPrompt: () => "",
+      },
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await runner.emit({
+      type: "session_before_compact",
+      preparation: {
+        firstKeptEntryId: "entry-1",
+        messagesToSummarize: [],
+        turnPrefixMessages: [],
+        isSplitTurn: false,
+        tokensBefore: 100,
+        fileOps: { read: new Set(), edited: new Set() },
+        settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+      },
+      branchEntries: [],
+      customInstructions: "Preserve user pins.",
+      signal: new AbortController().signal,
+    });
+
+    const defaultActiveModelCompaction = vi.fn(async () => undefined);
+    if (!result?.cancel && !result?.compaction) {
+      await defaultActiveModelCompaction();
+    }
+
+    expect(result).toEqual({ cancel: true });
+    expect(defaultActiveModelCompaction).not.toHaveBeenCalled();
+    expect(modelRegistry.getApiKeyAndHeaders).toHaveBeenCalledWith(configuredCompactionModel);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Forge compaction cancelled"),
+      expect.objectContaining({
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+        runtimeSessionProvider: "openai-codex",
+      }),
+    );
   });
 });

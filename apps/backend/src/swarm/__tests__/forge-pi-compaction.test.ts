@@ -185,6 +185,65 @@ describe("forge pi compaction", () => {
     expect(runPiCompactionMock).not.toHaveBeenCalled();
   });
 
+  it("rejects cross-provider compaction when the active runtime registry cannot authenticate that provider", async () => {
+    const anthropicModel = { provider: "anthropic", id: "claude-opus-4-5", reasoning: true };
+    const activeModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+    const modelRegistry = {
+      find: vi.fn((provider: string, modelId: string) => {
+        if (provider === "anthropic" && modelId === "claude-opus-4-5") {
+          return anthropicModel;
+        }
+        if (provider === "openai-codex" && modelId === "gpt-5.5") {
+          return activeModel;
+        }
+        return undefined;
+      }),
+      getApiKeyAndHeaders: vi.fn(async (model: { provider: string }) => {
+        if (model.provider === "anthropic") {
+          return { ok: false as const, error: "provider missing from active runtime registry" };
+        }
+        return { ok: true as const, apiKey: "active-broker-lease", headers: { Authorization: "Bearer active" } };
+      }),
+    } as unknown as ModelRegistry;
+
+    await expect(
+      runForgePiCompaction({
+        event: {
+          preparation: {
+            firstKeptEntryId: "entry-1",
+            messagesToSummarize: [],
+            turnPrefixMessages: [],
+            isSplitTurn: false,
+            tokensBefore: 100,
+            fileOps: { read: new Set(), edited: new Set() },
+            settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+          },
+        },
+        ctx: { model: activeModel as never, modelRegistry },
+        descriptor: makeCompactionGuardDescriptor(),
+        compactionSettings: createStaticCompactionRuntimeSettingsProvider({
+          timeoutMs: 300_000,
+          model: { provider: "anthropic", modelId: "claude-opus-4-5" },
+          reasoningLevel: "low",
+        }).getCompactionRuntimeSettings(),
+        combinedInstructions: "Keep pinned instructions.",
+        pinnedInstructionsMerged: true,
+        logDebug: vi.fn(),
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        recoveryStage: "forge_compaction_auth_unavailable",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+        configuredProvider: "anthropic",
+        runtimeSessionProvider: "openai-codex",
+      }),
+    });
+
+    expect(modelRegistry.getApiKeyAndHeaders).toHaveBeenCalledWith(anthropicModel);
+    expect(runPiCompactionMock).not.toHaveBeenCalled();
+  });
+
   it("throws when configured compaction model cannot be resolved", async () => {
     const modelRegistry = {
       find: vi.fn(() => undefined),
