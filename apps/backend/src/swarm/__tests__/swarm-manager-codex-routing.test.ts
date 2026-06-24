@@ -1270,6 +1270,8 @@ describe("SwarmManager Codex mention routing", () => {
     expect(exported.absolutePath).toContain(join("artifacts", "codex-plugin"));
     expect(exported.absolutePath).toContain("meeting-transcript.json");
     expect(exported.manifestPath).toBe(`${exported.absolutePath}.manifest.json`);
+    expect(exported.artifactMarkdown).toBe(`[artifact:${exported.absolutePath}]`);
+    expect(exported.manifestMarkdown).toBe(`[artifact:${exported.manifestPath}]`);
     expect(manifest).toMatchObject({
       schemaVersion: 1,
       managerAgentId: "manager",
