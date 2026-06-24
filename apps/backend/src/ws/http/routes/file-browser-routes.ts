@@ -167,7 +167,7 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
           const filePath = requireNonEmptyPathQuery(requestUrl.searchParams, "path");
           const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
           const rawFile = await service.resolveRawFile(cwd, filePath);
-          const contentType = resolveRawFileContentType(rawFile.resolvedPath);
+          const contentType = resolveRawFileContentType(filePath);
           const rangeHeader = typeof request.headers.range === "string" ? request.headers.range : undefined;
           const parsedRange = parseBytesRangeHeader(rangeHeader, rawFile.size);
 
@@ -195,16 +195,7 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
               return;
             }
 
-            createReadStream(rawFile.resolvedPath, { start, end })
-              .on("error", (error) => {
-                if (!response.headersSent) {
-                  sendJson(response, 500, { error: error instanceof Error ? error.message : "Unable to read file." });
-                  return;
-                }
-
-                response.destroy(error instanceof Error ? error : undefined);
-              })
-              .pipe(response);
+            pipeRawFileStream(response, rawFile.resolvedPath, { start, end });
             return;
           }
 
@@ -216,16 +207,7 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
             return;
           }
 
-          createReadStream(rawFile.resolvedPath)
-            .on("error", (error) => {
-              if (!response.headersSent) {
-                sendJson(response, 500, { error: error instanceof Error ? error.message : "Unable to read file." });
-                return;
-              }
-
-              response.destroy(error instanceof Error ? error : undefined);
-            })
-            .pipe(response);
+          pipeRawFileStream(response, rawFile.resolvedPath);
         } catch (error) {
           const message = error instanceof Error ? error.message : "File browser request failed.";
           sendJson(response, resolveHttpStatusCode(message), { error: message });
@@ -555,7 +537,52 @@ function resolveRawFileContentType(filePath: string): string {
   return "application/octet-stream";
 }
 
+function sendRawFileJsonError(
+  response: ServerResponse,
+  statusCode: number,
+  body: Record<string, unknown>
+): void {
+  response.removeHeader("Content-Length");
+  response.removeHeader("Content-Range");
+  sendJson(response, statusCode, body);
+}
+
+function pipeRawFileStream(
+  response: ServerResponse,
+  resolvedPath: string,
+  range?: { start: number; end: number }
+): void {
+  const stream = range
+    ? createReadStream(resolvedPath, { start: range.start, end: range.end })
+    : createReadStream(resolvedPath);
+
+  stream.on("error", (error) => {
+    if (!response.headersSent) {
+      sendRawFileJsonError(response, 500, {
+        error: error instanceof Error ? error.message : "Unable to read file."
+      });
+      return;
+    }
+
+    response.destroy(error instanceof Error ? error : undefined);
+  });
+  stream.pipe(response);
+}
+
 export type ParsedBytesRange = { start: number; end: number };
+
+function parseStrictUnsignedDecimal(value: string): number | null {
+  if (!/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    return null;
+  }
+
+  return parsed;
+}
 
 export function parseBytesRangeHeader(
   rangeHeader: string | undefined,
@@ -570,7 +597,12 @@ export function parseBytesRangeHeader(
     return "unsatisfiable";
   }
 
-  const rangeSpec = normalized.slice("bytes=".length).split(",")[0]?.trim();
+  const rangeValue = normalized.slice("bytes=".length);
+  if (rangeValue.includes(",")) {
+    return "unsatisfiable";
+  }
+
+  const rangeSpec = rangeValue.trim();
   if (!rangeSpec) {
     return "unsatisfiable";
   }
@@ -580,8 +612,8 @@ export function parseBytesRangeHeader(
     return "unsatisfiable";
   }
 
-  const rawStart = rangeSpec.slice(0, separatorIndex).trim();
-  const rawEnd = rangeSpec.slice(separatorIndex + 1).trim();
+  const rawStart = rangeSpec.slice(0, separatorIndex);
+  const rawEnd = rangeSpec.slice(separatorIndex + 1);
 
   if (fileSize === 0) {
     return "unsatisfiable";
@@ -592,8 +624,8 @@ export function parseBytesRangeHeader(
       return "unsatisfiable";
     }
 
-    const suffixLength = Number.parseInt(rawEnd, 10);
-    if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+    const suffixLength = parseStrictUnsignedDecimal(rawEnd);
+    if (suffixLength === null || suffixLength <= 0) {
       return "unsatisfiable";
     }
 
@@ -601,8 +633,8 @@ export function parseBytesRangeHeader(
     return { start, end: fileSize - 1 };
   }
 
-  const start = Number.parseInt(rawStart, 10);
-  if (!Number.isFinite(start) || start < 0) {
+  const start = parseStrictUnsignedDecimal(rawStart);
+  if (start === null) {
     return "unsatisfiable";
   }
 
@@ -612,8 +644,8 @@ export function parseBytesRangeHeader(
 
   let end = fileSize - 1;
   if (rawEnd.length > 0) {
-    const parsedEnd = Number.parseInt(rawEnd, 10);
-    if (!Number.isFinite(parsedEnd) || parsedEnd < start) {
+    const parsedEnd = parseStrictUnsignedDecimal(rawEnd);
+    if (parsedEnd === null || parsedEnd < start) {
       return "unsatisfiable";
     }
 

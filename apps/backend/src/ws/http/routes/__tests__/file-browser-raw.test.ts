@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +38,13 @@ describe("parseBytesRangeHeader", () => {
     expect(parseBytesRangeHeader("bytes=100-", 100)).toBe("unsatisfiable");
     expect(parseBytesRangeHeader("bytes=0-1", 0)).toBe("unsatisfiable");
     expect(parseBytesRangeHeader("invalid", 100)).toBe("unsatisfiable");
+  });
+
+  it("rejects malformed decimals and multi-range headers", () => {
+    expect(parseBytesRangeHeader("bytes=0-9junk", 100)).toBe("unsatisfiable");
+    expect(parseBytesRangeHeader("bytes=0-9,20-29", 100)).toBe("unsatisfiable");
+    expect(parseBytesRangeHeader("bytes=0x10-20", 100)).toBe("unsatisfiable");
+    expect(parseBytesRangeHeader("bytes=01-09", 100)).toEqual({ start: 1, end: 9 });
   });
 });
 
@@ -105,6 +112,25 @@ describe("file browser raw route", () => {
 
     expect(response.status).toBe(416);
     expect(response.headers.get("content-range")).toBe("bytes */9");
+  });
+
+  it("returns 416 for malformed and multi-range headers", async () => {
+    const harness = await createHarness();
+    await writeFile(join(harness.workspaceDir, "range-target.bin"), Buffer.from("0123456789abcdef"));
+
+    const malformedResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range-target.bin")}`,
+      { headers: { Range: "bytes=0-9junk" } },
+    );
+    expect(malformedResponse.status).toBe(416);
+    expect(malformedResponse.headers.get("content-range")).toBe("bytes */16");
+
+    const multiRangeResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("range-target.bin")}`,
+      { headers: { Range: "bytes=0-3,8-11" } },
+    );
+    expect(multiRangeResponse.status).toBe(416);
+    expect(multiRangeResponse.headers.get("content-range")).toBe("bytes */16");
   });
 
   it("returns 404 for unknown agents and missing files", async () => {
@@ -204,8 +230,47 @@ describe("file browser raw route", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
     await expect(response.arrayBuffer()).resolves.toEqual(pdfBytes.buffer);
     await expect(access(targetPath)).resolves.toBeUndefined();
+  });
+
+  it("uses requested path extension for symlink content type", async () => {
+    const harness = await createHarness();
+    const targetPath = join(harness.workspaceDir, "actual-data");
+    const linkPath = join(harness.workspaceDir, "link.pdf");
+    const pdfBytes = Buffer.from("%PDF-via-symlink");
+    await writeFile(targetPath, pdfBytes);
+    await symlink(targetPath, linkPath);
+
+    const response = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("link.pdf")}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    await expect(response.arrayBuffer()).resolves.toEqual(pdfBytes.buffer);
+  });
+
+  it("returns JSON without stale entity headers when streaming fails before headers are sent", async () => {
+    const harness = await createHarness();
+    const filePath = join(harness.workspaceDir, "stream.pdf");
+    await writeFile(filePath, Buffer.from("%PDF"));
+    await chmod(filePath, 0o000);
+
+    try {
+      const response = await fetch(
+        `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("stream.pdf")}`,
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("content-range")).toBeNull();
+      const payload = (await response.json()) as { error: string };
+      expect(payload.error.length).toBeGreaterThan(0);
+    } finally {
+      await chmod(filePath, 0o644);
+    }
   });
 });
 
