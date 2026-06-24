@@ -13,9 +13,13 @@ describe("compaction runtime settings provider", () => {
     expect(provider.getCompactionRuntimeSettings().timeoutMs).toBe(420_000);
   });
 
-  it("defaults to persisted compaction timeout", () => {
+  it("defaults to persisted compaction timeout and model settings", () => {
     const provider = createLiveCompactionRuntimeSettingsProvider();
-    expect(provider.getCompactionRuntimeSettings().timeoutMs).toBe(DEFAULT_COMPACTION_TIMEOUT_MS);
+    expect(provider.getCompactionRuntimeSettings()).toEqual({
+      timeoutMs: DEFAULT_COMPACTION_TIMEOUT_MS,
+      model: { provider: "openai-codex", modelId: "gpt-5.5" },
+      reasoningLevel: "low",
+    });
   });
 
   it("reads live timeout from compaction settings service after attach", async () => {
@@ -29,6 +33,7 @@ describe("compaction runtime settings provider", () => {
     provider.attachSettingsService(service);
 
     expect(provider.getCompactionRuntimeSettings().timeoutMs).toBe(240_000);
+    expect(provider.getCompactionRuntimeSettings().model.modelId).toBe("gpt-5.5");
   });
 
   it("service-backed factory returns a live provider", async () => {

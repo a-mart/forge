@@ -378,6 +378,7 @@ function buildExtensionFactories(rootDir: string, descriptor: AgentDescriptor) {
     descriptor,
     config: createConfig(rootDir),
     logDebug: () => {},
+    getCompactionRuntimeSettingsProvider: () => createDefaultCompactionRuntimeSettingsProvider(),
   });
 }
 
@@ -1396,6 +1397,7 @@ describe("RuntimeFactory", () => {
     });
 
     const signal = new AbortController().signal;
+    const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
     const result = await beforeCompact?.(
       {
         preparation: {
@@ -1414,6 +1416,12 @@ describe("RuntimeFactory", () => {
       {
         model: { provider: "openai-codex", id: "gpt-5.4" },
         modelRegistry: {
+          find: vi.fn((provider: string, modelId: string) => {
+            if (provider === "openai-codex" && modelId === "gpt-5.5") {
+              return compactionModel;
+            }
+            return undefined;
+          }),
           getApiKeyAndHeaders: vi.fn().mockResolvedValue({
             ok: true,
             apiKey: "oauth-access-token",
@@ -1434,11 +1442,12 @@ describe("RuntimeFactory", () => {
         fileOps: { readFiles: [], modifiedFiles: [] },
         settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
       },
-      { provider: "openai-codex", id: "gpt-5.4" },
+      compactionModel,
       "oauth-access-token",
       { Authorization: "Bearer oauth-access-token", "x-test": "1" },
       expect.stringContaining("Focus on deployment details."),
       signal,
+      "low",
     );
     expect(result).toEqual({
       compaction: {

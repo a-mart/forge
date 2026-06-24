@@ -2,6 +2,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import {
   buildBaseRuntimeTools,
@@ -260,6 +261,7 @@ describe("runtime Pi extension factory plan", () => {
       }),
       config: createConfig(rootDir),
       logDebug: vi.fn(),
+      getCompactionRuntimeSettingsProvider: () => createDefaultCompactionRuntimeSettingsProvider(),
       forgePiToolBridgeFactory: bridgeFactory,
     });
     const registeredEvents: string[] = [];

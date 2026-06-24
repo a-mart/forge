@@ -206,6 +206,7 @@ export class PiRuntimeCreator {
       descriptor,
       config: this.deps.config,
       logDebug: this.deps.logDebug,
+      getCompactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider,
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
         preparedForgeBindings,
