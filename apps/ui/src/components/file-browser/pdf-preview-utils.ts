@@ -135,3 +135,44 @@ export function clampPageNumber(page: number, numPages: number): number {
 
   return Math.min(Math.max(page, 1), numPages)
 }
+
+export type PdfPreviewPageLayout = {
+  pageNumber: number
+  offsetTop: number
+  height: number
+}
+
+export function isPdfPageWithinRenderRange(
+  pageTop: number,
+  pageHeight: number,
+  scrollTop: number,
+  viewportHeight: number,
+  prefetchMargin = 200,
+): boolean {
+  const scrollBottom = scrollTop + viewportHeight
+  const pageBottom = pageTop + pageHeight
+  return pageBottom >= scrollTop - prefetchMargin && pageTop <= scrollBottom + prefetchMargin
+}
+
+export function computeCurrentPageFromScroll(
+  scrollTop: number,
+  viewportHeight: number,
+  pages: readonly PdfPreviewPageLayout[],
+): number {
+  if (pages.length === 0) {
+    return 1
+  }
+
+  const anchor = scrollTop + Math.min(72, Math.max(viewportHeight * 0.15, 1))
+  let currentPage = pages[0]?.pageNumber ?? 1
+
+  for (const page of pages) {
+    if (page.offsetTop <= anchor) {
+      currentPage = page.pageNumber
+      continue
+    }
+    break
+  }
+
+  return currentPage
+}
