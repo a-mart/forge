@@ -11,7 +11,6 @@ import type {
 } from "@forge/protocol";
 import { createReadStream, type ReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { extname } from "node:path";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
 import {
@@ -167,13 +166,12 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
           const filePath = requireNonEmptyPathQuery(requestUrl.searchParams, "path");
           const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
           const rawFile = await service.resolveRawFile(cwd, filePath);
-          const contentType = resolveRawFileContentType(filePath);
           const rangeHeader = typeof request.headers.range === "string" ? request.headers.range : undefined;
           const parsedRange = parseBytesRangeHeader(rangeHeader, rawFile.size);
 
           response.setHeader("Accept-Ranges", "bytes");
           response.setHeader("Cache-Control", "no-store");
-          response.setHeader("Content-Type", contentType);
+          response.setHeader("Content-Type", "application/pdf");
           response.setHeader("X-Content-Type-Options", "nosniff");
 
           if (parsedRange === "unsatisfiable") {
@@ -529,16 +527,6 @@ function resolveSaveHttpStatusCode(message: string): number {
 function applyRawFileCorsHeaders(request: IncomingMessage, response: ServerResponse): void {
   applyCorsHeaders(request, response, FILE_RAW_METHODS, FILE_RAW_CORS_ALLOWED_HEADERS);
   response.setHeader("Access-Control-Expose-Headers", FILE_RAW_CORS_EXPOSE_HEADERS);
-}
-
-function resolveRawFileContentType(filePath: string): string {
-  const extension = extname(filePath).toLowerCase();
-
-  if (extension === ".pdf") {
-    return "application/pdf";
-  }
-
-  return "application/octet-stream";
 }
 
 function sendRawFileJsonError(
