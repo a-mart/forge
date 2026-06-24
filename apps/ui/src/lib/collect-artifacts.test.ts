@@ -130,6 +130,18 @@ describe('collectArtifactsFromMessages', () => {
     expect(artifacts).toEqual([])
   })
 
+  it('ignores artifact examples inside unclosed fenced code through EOF', () => {
+    const artifacts = collectArtifactsFromMessages([
+      agentMessage([
+        'Here is an example:',
+        '```md',
+        '[artifact:/tmp/fenced.json]',
+      ].join('\n')),
+    ])
+
+    expect(artifacts).toEqual([])
+  })
+
   it('keeps real absolute artifact shortcodes in normal assistant text', () => {
     const artifacts = collectArtifactsFromMessages([
       assistantMessage('Exported [artifact:/tmp/session/artifacts/real-report.json]'),

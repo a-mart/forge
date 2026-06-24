@@ -150,11 +150,7 @@ interface TextRange {
 }
 
 function findMarkdownCodeRanges(text: string): TextRange[] {
-  const ranges: TextRange[] = []
-  const fencedCodePattern = /```[\s\S]*?```|~~~[\s\S]*?~~~/g
-  for (const match of text.matchAll(fencedCodePattern)) {
-    ranges.push({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length })
-  }
+  const ranges = findFencedCodeRanges(text)
 
   const inlineCodePattern = /`[^`\n]+`/g
   for (const match of text.matchAll(inlineCodePattern)) {
@@ -166,6 +162,60 @@ function findMarkdownCodeRanges(text: string): TextRange[] {
   }
 
   return ranges
+}
+
+interface OpenFence {
+  char: '`' | '~'
+  length: number
+  start: number
+}
+
+function findFencedCodeRanges(text: string): TextRange[] {
+  const ranges: TextRange[] = []
+  let openFence: OpenFence | undefined
+  let lineStart = 0
+
+  while (lineStart < text.length) {
+    const newlineIndex = text.indexOf('\n', lineStart)
+    const lineEnd = newlineIndex >= 0 ? newlineIndex + 1 : text.length
+    const line = text.slice(lineStart, newlineIndex >= 0 ? newlineIndex : lineEnd)
+
+    if (openFence) {
+      if (isClosingFenceLine(line, openFence)) {
+        ranges.push({ start: openFence.start, end: lineEnd })
+        openFence = undefined
+      }
+    } else {
+      const openingFence = getOpeningFence(line)
+      if (openingFence) {
+        openFence = { ...openingFence, start: lineStart }
+      }
+    }
+
+    lineStart = lineEnd
+  }
+
+  if (openFence) {
+    ranges.push({ start: openFence.start, end: text.length })
+  }
+
+  return ranges
+}
+
+function getOpeningFence(line: string): Pick<OpenFence, 'char' | 'length'> | undefined {
+  const match = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line)
+  if (!match) {
+    return undefined
+  }
+
+  const fence = match[1]
+  return { char: fence[0] as '`' | '~', length: fence.length }
+}
+
+function isClosingFenceLine(line: string, openFence: OpenFence): boolean {
+  const escapedChar = openFence.char === '`' ? '`' : '~'
+  const pattern = new RegExp(`^[ \\t]{0,3}${escapedChar}{${openFence.length},}[ \\t]*$`)
+  return pattern.test(line)
 }
 
 function isMatchInCodeRange(match: RegExpMatchArray, ranges: TextRange[]): boolean {
