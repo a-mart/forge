@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildHandoffFilePath,
   buildHandoffPrompt,
-  buildResumePrompt,
   COMPACTION_GUARD_TEST_TIMEOUT_MS,
   createCompactionGuardRuntime,
   hasCompactionRecord,
