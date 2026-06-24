@@ -465,7 +465,7 @@ describe('model-catalog', () => {
     expect(getEffectiveManagerEnabled(grok, { managerEnabled: true }, 'create')).toBe(false)
   })
 
-  it('derives compaction eligibility independently from manager change visibility', () => {
+  it('derives compaction eligibility from the dedicated provider allowlist instead of manager visibility', () => {
     const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
     const sdkSonnet = getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')
     const grok = getCatalogModel('grok-4', 'xai')
@@ -479,12 +479,13 @@ describe('model-catalog', () => {
     }
 
     expect(isCatalogModelCompactionSupported(anthropicOpus47)).toBe(true)
-    expect(isCatalogModelCompactionSupported(grok)).toBe(true)
     expect(isCatalogModelCompactionSupported(sdkSonnet)).toBe(false)
-    expect(isCompactionModelSelectionSupported('grok-4', 'xai')).toBe(true)
+    expect(isCatalogModelCompactionSupported(grok)).toBe(false)
+    expect(isCompactionModelSelectionSupported('claude-opus-4-7', 'anthropic')).toBe(true)
+    expect(isCompactionModelSelectionSupported('grok-4', 'xai')).toBe(false)
     expect(isCompactionModelSelectionSupported('claude-sonnet-4-5-20250929', 'claude-sdk')).toBe(false)
-    expect(getEffectiveCompactionEnabled(grok, undefined)).toBe(true)
-    expect(getEffectiveCompactionEnabled(grok, { enabled: false })).toBe(false)
+    expect(getEffectiveCompactionEnabled(anthropicOpus47, undefined)).toBe(true)
+    expect(getEffectiveCompactionEnabled(grok, undefined)).toBe(false)
   })
 
   it('returns the expected visibility subsets', () => {

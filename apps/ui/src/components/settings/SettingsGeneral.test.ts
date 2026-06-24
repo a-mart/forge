@@ -301,7 +301,7 @@ describe('SettingsGeneral', () => {
       expect(container.textContent).toContain('5 minutes')
     })
 
-    it('shows xAI compaction models while filtering native SDK models out of compaction model choices', async () => {
+    it('filters unsupported xAI and native SDK models out of compaction model choices', async () => {
       renderGeneral()
       await flush()
       await flush()
@@ -314,7 +314,7 @@ describe('SettingsGeneral', () => {
       })
       await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.5' })).toBeTruthy())
 
-      expect(getByRole(document.body, 'option', { name: 'Grok 4' })).toBeTruthy()
+      expect(queryByRole(document.body, 'option', { name: 'Grok 4' })).toBeNull()
       expect(queryByRole(document.body, 'option', { name: 'Claude SDK Sonnet' })).toBeNull()
     })
 

@@ -123,7 +123,7 @@ export function getCatalogContextWindow(modelId: string, provider?: string): num
 
 export type ManagerModelSurface = 'create' | 'change'
 
-const COMPACTION_ELIGIBLE_PROVIDER_IDS = new Set(['openai-codex', 'anthropic', 'xai'])
+const COMPACTION_ELIGIBLE_PROVIDER_IDS = new Set(['openai-codex', 'anthropic'])
 
 function isCatalogModelGloballyEnabled(
   model: ForgeModelDefinition,

@@ -101,7 +101,7 @@ describe("createCompactionSettingsRoutes", () => {
     expect(highBody.settings.timeoutMs).toBe(900_000);
   });
 
-  it("accepts xAI compaction models on PUT", async () => {
+  it("returns 400 for xAI compaction models", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-xai-model-"));
     const service = new CompactionSettingsService({
       dataDir,
@@ -117,11 +117,10 @@ describe("createCompactionSettingsRoutes", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: { provider: "xai", modelId: "grok-4" }, reasoningLevel: "medium" }),
     });
-    const body = (await response.json()) as UpdateCompactionSettingsResponse;
+    const body = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(200);
-    expect(body.settings.model).toEqual({ provider: "xai", modelId: "grok-4" });
-    expect(body.settings.reasoningLevel).toBe("medium");
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("Pi-compatible provider with raw API-key auth");
   });
 
   it("returns 400 for native SDK compaction models", async () => {

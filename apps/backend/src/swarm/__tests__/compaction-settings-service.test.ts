@@ -223,28 +223,21 @@ describe("CompactionSettingsService", () => {
     });
   });
 
-  it("allows xAI compaction models even though they are hidden from manager change selectors", async () => {
+  it("rejects xAI compaction models even if they exist elsewhere in the catalog", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-xai-update-"));
-    const now = new Date("2026-06-24T12:00:00.000Z");
     const service = new CompactionSettingsService({
       dataDir,
-      now: () => now,
       getProviderAvailability: async () => createAvailabilityMap(),
     });
 
     await service.load();
-    const result = await service.update({
-      model: { provider: "xai", modelId: "grok-4" },
-      reasoningLevel: "medium",
-    });
 
-    expect(result.settings.model).toEqual({ provider: "xai", modelId: "grok-4" });
-    expect(result.settings.reasoningLevel).toBe("medium");
-    expect(result.availability).toEqual({
-      providerConfigured: true,
-      modelValid: true,
-      reasoningSupported: true,
-    });
+    await expect(
+      service.update({
+        model: { provider: "xai", modelId: "grok-4" },
+        reasoningLevel: "medium",
+      }),
+    ).rejects.toThrow("Pi-compatible provider with raw API-key auth");
   });
 
   it("persists validated updates and merges partial patches", async () => {
