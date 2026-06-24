@@ -1,0 +1,115 @@
+import { describe, expect, it } from 'vitest'
+import {
+  buildPdfRawUrl,
+  clampPageNumber,
+  computeFitWidthScale,
+  computePdfRenderScale,
+  computeSafeCanvasOutput,
+  formatPdfPreviewError,
+  isPdfPreviewRenderSizeError,
+  PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
+  PDF_PREVIEW_MAX_RENDER_SCALE,
+  PdfPreviewRenderSizeError,
+} from './pdf-preview-utils'
+
+describe('buildPdfRawUrl', () => {
+  it('includes agentId, path, and optional worktreeId', () => {
+    const url = buildPdfRawUrl('ws://127.0.0.1:47187', 'docs/spec.pdf', 'session-a', 'feature-linked')
+    expect(url).toContain('/api/files/raw?')
+    expect(url).toContain('agentId=session-a')
+    expect(url).toContain('path=docs%2Fspec.pdf')
+    expect(url).toContain('worktreeId=feature-linked')
+  })
+
+  it('omits worktreeId for session browsing', () => {
+    const url = buildPdfRawUrl('ws://127.0.0.1:47187', 'docs/spec.pdf', 'session-a', null)
+    expect(url).not.toContain('worktreeId=')
+  })
+})
+
+describe('formatPdfPreviewError', () => {
+  it('maps password-protected PDFs to a specific message', () => {
+    const error = new Error('No password given')
+    error.name = 'PasswordException'
+    expect(formatPdfPreviewError(error)).toBe('This PDF is password-protected and cannot be previewed.')
+  })
+
+  it('truncates long generic errors', () => {
+    expect(formatPdfPreviewError(new Error('x'.repeat(130))).endsWith('…')).toBe(true)
+  })
+})
+
+describe('computeFitWidthScale', () => {
+  it('fits page width into the available container width', () => {
+    expect(computeFitWidthScale(400, 432, 32)).toBe(1)
+  })
+})
+
+describe('computePdfRenderScale', () => {
+  it('caps fit-width scale to the manual zoom maximum', () => {
+    expect(computePdfRenderScale(10, 1000, 1, true, PDF_PREVIEW_MAX_RENDER_SCALE)).toBe(4)
+  })
+
+  it('uses manual scale when fit width is disabled', () => {
+    expect(computePdfRenderScale(400, 432, 2, false)).toBe(2)
+  })
+})
+
+describe('PdfPreviewRenderSizeError', () => {
+  it('is recognized by isPdfPreviewRenderSizeError', () => {
+    const error = new PdfPreviewRenderSizeError()
+    expect(isPdfPreviewRenderSizeError(error)).toBe(true)
+    expect(error.message).toBe(PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE)
+  })
+})
+
+describe('computeSafeCanvasOutput', () => {
+  it('preserves device pixel ratio for normal page sizes', () => {
+    expect(
+      computeSafeCanvasOutput(800, 1100, 2, {
+        maxDimension: 8192,
+        maxPixels: 16_777_216,
+      }),
+    ).toEqual({
+      ok: true,
+      outputScale: 2,
+      canvasWidth: 1600,
+      canvasHeight: 2200,
+    })
+  })
+
+  it('reduces output scale when canvas dimensions exceed limits', () => {
+    const result = computeSafeCanvasOutput(5000, 7000, 2, {
+      maxDimension: 8192,
+      maxPixels: 16_777_216,
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.canvasWidth).toBeLessThanOrEqual(8192)
+      expect(result.canvasHeight).toBeLessThanOrEqual(8192)
+      expect(result.outputScale).toBeLessThan(2)
+    }
+  })
+
+  it('returns a friendly error when the page cannot be rendered safely', () => {
+    expect(
+      computeSafeCanvasOutput(20_000, 30_000, 4, {
+        maxDimension: 8192,
+        maxPixels: 16_777_216,
+        minOutputScale: 0.25,
+      }),
+    ).toEqual({
+      ok: false,
+      message: PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
+    })
+  })
+})
+
+describe('clampPageNumber', () => {
+  it('keeps page numbers within bounds', () => {
+    expect(clampPageNumber(0, 5)).toBe(1)
+    expect(clampPageNumber(3, 5)).toBe(3)
+    expect(clampPageNumber(9, 5)).toBe(5)
+  })
+})

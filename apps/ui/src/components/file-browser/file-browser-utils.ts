@@ -15,9 +15,16 @@ export const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
 ])
 
+export const PDF_EXTENSIONS = new Set(['pdf'])
+
 export function isImageFile(filePath: string): boolean {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
   return IMAGE_EXTENSIONS.has(ext)
+}
+
+export function isPdfFile(filePath: string): boolean {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
+  return PDF_EXTENSIONS.has(ext)
 }
 
 export function doesDeleteAffectOpenFile(

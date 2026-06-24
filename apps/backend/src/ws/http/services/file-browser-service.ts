@@ -22,6 +22,10 @@ export const MAX_EDITABLE_FILE_BYTES = 1 * 1024 * 1024;
 export const MAX_FILE_SAVE_BYTES = 1 * 1024 * 1024;
 export const MAX_FILE_SAVE_BODY_BYTES = Math.ceil(MAX_FILE_SAVE_BYTES * 2.25) + 64 * 1024;
 
+export function isPdfRawFilePath(relativePath: string): boolean {
+  return extname(relativePath).toLowerCase() === ".pdf";
+}
+
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 const NON_GIT_EXCLUDED_NAMES = new Set([
@@ -56,6 +60,11 @@ interface CurrentTextFileState {
   stats: Awaited<ReturnType<typeof stat>>;
   version: FileVersionToken;
   editability: FileEditability;
+}
+
+export interface RawFileDescriptor {
+  resolvedPath: string;
+  size: number;
 }
 
 export class FileBrowserService {
@@ -166,6 +175,40 @@ export class FileBrowserService {
     return {
       results: matches.slice(0, limit).map((pathValue) => ({ path: pathValue, type: "file" })),
       totalMatches: matches.length
+    };
+  }
+
+  async resolveRawFile(cwd: string, relativePath: string): Promise<RawFileDescriptor> {
+    const normalizedCwd = resolve(cwd);
+    const normalizedRelativePath = normalizeRelativePath(relativePath);
+    if (!normalizedRelativePath) {
+      throw new Error("path must be a non-empty string.");
+    }
+
+    const resolvedPath = await this.resolvePathWithinCwd(normalizedCwd, normalizedRelativePath);
+
+    if (!isPdfRawFilePath(normalizedRelativePath)) {
+      throw new Error("Raw file preview only supports PDF files.");
+    }
+
+    let fileStats;
+    try {
+      fileStats = await stat(resolvedPath);
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) {
+        throw new Error("File not found.");
+      }
+
+      rethrowPermissionDenied(error, "read");
+    }
+
+    if (!fileStats.isFile()) {
+      throw new Error("Requested path must point to a file.");
+    }
+
+    return {
+      resolvedPath,
+      size: Number(fileStats.size)
     };
   }
 

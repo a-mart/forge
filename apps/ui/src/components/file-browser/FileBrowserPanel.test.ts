@@ -19,8 +19,13 @@ const cachedFileContent = {
   editability: { editable: true, maxEditableBytes: 1024 },
 }
 
-const useFileContentMock = vi.fn(() => ({
-  data: cachedFileContent,
+const useFileContentMock = vi.fn((
+  _wsUrl: string,
+  _agentId: string | null,
+  filePath: string | null,
+  _worktreeId?: string | null,
+) => ({
+  data: filePath ? cachedFileContent : null,
   isLoading: false,
   error: null,
 }))
@@ -31,7 +36,12 @@ vi.mock('./use-file-browser-queries', () => ({
     isLoading: false,
     error: null,
   }),
-  useFileContent: () => useFileContentMock(),
+  useFileContent: (
+    wsUrl: string,
+    agentId: string | null,
+    filePath: string | null,
+    worktreeId?: string | null,
+  ) => useFileContentMock(wsUrl, agentId, filePath, worktreeId),
 }))
 
 vi.mock('./FileContentViewer', () => ({
@@ -179,5 +189,17 @@ describe('FileBrowserPanel resize handle placement', () => {
 
     expect(onContentLoaded).toHaveBeenCalledWith(editorSessionKey, cachedFileContent)
     expect(onContentLoaded).not.toHaveBeenCalledWith(editorSessionKey, null)
+  })
+
+  it('does not fetch JSON content for PDF files', () => {
+    useFileContentMock.mockClear()
+    renderPanel({ filePath: 'docs/spec.pdf' })
+
+    expect(useFileContentMock).toHaveBeenCalledWith(
+      'ws://127.0.0.1:47187',
+      'session-a',
+      null,
+      null,
+    )
   })
 })

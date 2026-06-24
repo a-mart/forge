@@ -9,6 +9,7 @@ import type {
   FileSearchResult,
   FileVersionToken,
 } from "@forge/protocol";
+import { createReadStream, type ReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
@@ -25,6 +26,9 @@ import {
 
 const FILE_BROWSER_GET_METHODS = "GET, OPTIONS";
 const FILE_CONTENT_METHODS = "GET, PUT, DELETE, OPTIONS";
+const FILE_RAW_METHODS = "GET, HEAD, OPTIONS";
+const FILE_RAW_CORS_ALLOWED_HEADERS = "content-type, range";
+const FILE_RAW_CORS_EXPOSE_HEADERS = "Accept-Ranges, Content-Length, Content-Range, Content-Type";
 const DEFAULT_SEARCH_LIMIT = 50;
 const MAX_SEARCH_LIMIT = 200;
 
@@ -135,6 +139,77 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
         applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
         response.setHeader("Allow", FILE_CONTENT_METHODS);
         sendJson(response, 405, { error: "Method Not Allowed" });
+      }
+    },
+    {
+      methods: FILE_RAW_METHODS,
+      matches: (pathname) => pathname === "/api/files/raw",
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyRawFileCorsHeaders(request, response);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          applyRawFileCorsHeaders(request, response);
+          response.setHeader("Allow", FILE_RAW_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyRawFileCorsHeaders(request, response);
+
+        try {
+          const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+          const filePath = requireNonEmptyPathQuery(requestUrl.searchParams, "path");
+          const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
+          const rawFile = await service.resolveRawFile(cwd, filePath);
+          const rangeHeader = typeof request.headers.range === "string" ? request.headers.range : undefined;
+          const parsedRange = parseBytesRangeHeader(rangeHeader, rawFile.size);
+
+          response.setHeader("Accept-Ranges", "bytes");
+          response.setHeader("Cache-Control", "no-store");
+          response.setHeader("Content-Type", "application/pdf");
+          response.setHeader("X-Content-Type-Options", "nosniff");
+
+          if (parsedRange === "unsatisfiable") {
+            response.statusCode = 416;
+            response.setHeader("Content-Range", `bytes */${rawFile.size}`);
+            response.end();
+            return;
+          }
+
+          if (parsedRange) {
+            const { start, end } = parsedRange;
+            const contentLength = end - start + 1;
+            response.statusCode = 206;
+            response.setHeader("Content-Range", `bytes ${start}-${end}/${rawFile.size}`);
+            response.setHeader("Content-Length", String(contentLength));
+
+            if (request.method === "HEAD") {
+              response.end();
+              return;
+            }
+
+            pipeRawFileStream(response, rawFile.resolvedPath, { start, end });
+            return;
+          }
+
+          response.statusCode = 200;
+          response.setHeader("Content-Length", String(rawFile.size));
+
+          if (request.method === "HEAD") {
+            response.end();
+            return;
+          }
+
+          pipeRawFileStream(response, rawFile.resolvedPath);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "File browser request failed.";
+          sendJson(response, resolveHttpStatusCode(message), { error: message });
+        }
       }
     }
   ];
@@ -422,6 +497,10 @@ function resolveHttpStatusCode(message: string): number {
     return 400;
   }
 
+  if (normalized.includes("only supports pdf")) {
+    return 415;
+  }
+
   if (normalized.includes("too large") || normalized.includes("exceeds")) {
     return 413;
   }
@@ -443,4 +522,138 @@ function resolveSaveHttpStatusCode(message: string): number {
   }
 
   return resolveHttpStatusCode(message);
+}
+
+function applyRawFileCorsHeaders(request: IncomingMessage, response: ServerResponse): void {
+  applyCorsHeaders(request, response, FILE_RAW_METHODS, FILE_RAW_CORS_ALLOWED_HEADERS);
+  response.setHeader("Access-Control-Expose-Headers", FILE_RAW_CORS_EXPOSE_HEADERS);
+}
+
+function sendRawFileJsonError(
+  response: ServerResponse,
+  statusCode: number,
+  body: Record<string, unknown>
+): void {
+  response.removeHeader("Content-Length");
+  response.removeHeader("Content-Range");
+  sendJson(response, statusCode, body);
+}
+
+type RawFileReadStreamFactory = (
+  path: string,
+  options?: { start: number; end: number }
+) => ReadStream;
+
+let rawFileReadStreamFactory: RawFileReadStreamFactory = createReadStream;
+
+export function setRawFileReadStreamFactoryForTest(factory: RawFileReadStreamFactory | null): void {
+  rawFileReadStreamFactory = factory ?? createReadStream;
+}
+
+function pipeRawFileStream(
+  response: ServerResponse,
+  resolvedPath: string,
+  range?: { start: number; end: number }
+): void {
+  const stream = range
+    ? rawFileReadStreamFactory(resolvedPath, { start: range.start, end: range.end })
+    : rawFileReadStreamFactory(resolvedPath);
+
+  stream.on("error", (error) => {
+    if (!response.headersSent) {
+      sendRawFileJsonError(response, 500, {
+        error: error instanceof Error ? error.message : "Unable to read file."
+      });
+      return;
+    }
+
+    response.destroy(error instanceof Error ? error : undefined);
+  });
+  stream.pipe(response);
+}
+
+export type ParsedBytesRange = { start: number; end: number };
+
+function parseStrictUnsignedDecimal(value: string): number | null {
+  if (!/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    return null;
+  }
+
+  return parsed;
+}
+
+export function parseBytesRangeHeader(
+  rangeHeader: string | undefined,
+  fileSize: number
+): ParsedBytesRange | null | "unsatisfiable" {
+  if (!rangeHeader || rangeHeader.trim().length === 0) {
+    return null;
+  }
+
+  const normalized = rangeHeader.trim();
+  if (!normalized.startsWith("bytes=")) {
+    return "unsatisfiable";
+  }
+
+  const rangeValue = normalized.slice("bytes=".length);
+  if (rangeValue.includes(",")) {
+    return "unsatisfiable";
+  }
+
+  const rangeSpec = rangeValue.trim();
+  if (!rangeSpec) {
+    return "unsatisfiable";
+  }
+
+  const separatorIndex = rangeSpec.indexOf("-");
+  if (separatorIndex === -1) {
+    return "unsatisfiable";
+  }
+
+  const rawStart = rangeSpec.slice(0, separatorIndex);
+  const rawEnd = rangeSpec.slice(separatorIndex + 1);
+
+  if (fileSize === 0) {
+    return "unsatisfiable";
+  }
+
+  if (rawStart.length === 0) {
+    if (rawEnd.length === 0) {
+      return "unsatisfiable";
+    }
+
+    const suffixLength = parseStrictUnsignedDecimal(rawEnd);
+    if (suffixLength === null || suffixLength <= 0) {
+      return "unsatisfiable";
+    }
+
+    const start = Math.max(fileSize - suffixLength, 0);
+    return { start, end: fileSize - 1 };
+  }
+
+  const start = parseStrictUnsignedDecimal(rawStart);
+  if (start === null) {
+    return "unsatisfiable";
+  }
+
+  if (start >= fileSize) {
+    return "unsatisfiable";
+  }
+
+  let end = fileSize - 1;
+  if (rawEnd.length > 0) {
+    const parsedEnd = parseStrictUnsignedDecimal(rawEnd);
+    if (parsedEnd === null || parsedEnd < start) {
+      return "unsatisfiable";
+    }
+
+    end = Math.min(parsedEnd, fileSize - 1);
+  }
+
+  return { start, end };
 }
