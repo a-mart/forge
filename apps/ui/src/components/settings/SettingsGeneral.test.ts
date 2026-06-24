@@ -126,6 +126,25 @@ let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  if (!Element.prototype.hasPointerCapture) {
+    Object.defineProperty(Element.prototype, 'hasPointerCapture', {
+      configurable: true,
+      value: () => false,
+    })
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Object.defineProperty(Element.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: () => {},
+    })
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Object.defineProperty(Element.prototype, 'releasePointerCapture', {
+      configurable: true,
+      value: () => {},
+    })
+  }
+
   container = document.createElement('div')
   document.body.appendChild(container)
 
@@ -200,6 +219,14 @@ beforeEach(() => {
       defaultReasoningLevel: 'low',
       supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
     },
+    {
+      presetId: 'sdk-sonnet',
+      displayName: 'Claude SDK Sonnet',
+      provider: 'claude-sdk',
+      modelId: 'claude-sonnet-4-5-20250929',
+      defaultReasoningLevel: 'high',
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+    },
   ])
 })
 
@@ -258,6 +285,23 @@ describe('SettingsGeneral', () => {
       expect(container.textContent).toContain('GPT-5.5')
       expect(container.textContent).toContain('Low')
       expect(container.textContent).toContain('5 minutes')
+    })
+
+    it('filters native SDK models out of compaction model choices', async () => {
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const trigger = container.querySelector('[aria-label="Compaction model"]')
+      expect(trigger).toBeTruthy()
+
+      flushSync(() => {
+        fireEvent.pointerDown(trigger!)
+      })
+      await flush()
+
+      expect(document.body.textContent).toContain('GPT-5.5')
+      expect(document.body.textContent).not.toContain('Claude SDK Sonnet')
     })
 
     it('shows a warning when the configured compaction provider is unavailable', async () => {

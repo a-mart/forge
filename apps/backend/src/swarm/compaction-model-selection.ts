@@ -1,12 +1,19 @@
 import type { ManagerExactModelSelection, ManagerReasoningLevel } from "@forge/protocol";
-import { getCatalogModel, getEffectiveManagerEnabled, isCatalogModelManagerSupported } from "@forge/protocol";
+import {
+  getCatalogModel,
+  getEffectiveManagerEnabled,
+  isCatalogModelCompactionSupported,
+  isCompactionProviderSupported,
+} from "@forge/protocol";
 import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
 
+const COMPACTION_PROVIDER_ERROR =
+  "Compaction model must use a Pi-compatible provider with raw API-key auth. Native SDK providers are not supported for compaction.";
+
 /**
- * Compaction-specific model validation seam. Delegates to manager catalog rules for now so
- * runtime/UI phases are not hard-coupled to manager-selector policy at call sites.
+ * Compaction-specific model validation seam.
  */
 export function validateCompactionModelSelection(
   model: ManagerExactModelSelection,
@@ -15,6 +22,11 @@ export function validateCompactionModelSelection(
     reasoningLevel?: ManagerReasoningLevel;
   },
 ): void {
+  const provider = model.provider.trim().toLowerCase();
+  if (!isCompactionProviderSupported(provider)) {
+    throw new CompactionSettingsValidationError(COMPACTION_PROVIDER_ERROR);
+  }
+
   try {
     resolveExactManagerModelSelection(model, {
       surface: "change",
@@ -24,6 +36,11 @@ export function validateCompactionModelSelection(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new CompactionSettingsValidationError(message);
+  }
+
+  const catalogModel = getCatalogModel(model.modelId.trim(), provider);
+  if (!catalogModel || !isCatalogModelCompactionSupported(catalogModel)) {
+    throw new CompactionSettingsValidationError(COMPACTION_PROVIDER_ERROR);
   }
 }
 
@@ -39,7 +56,7 @@ export function isCompactionModelCatalogValid(model: ManagerExactModelSelection)
     return false;
   }
 
-  if (!isCatalogModelManagerSupported(catalogModel, "change")) {
+  if (!isCatalogModelCompactionSupported(catalogModel)) {
     return false;
   }
 

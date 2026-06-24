@@ -165,6 +165,44 @@ describe("CompactionSettingsService", () => {
     });
   });
 
+  it("marks native SDK providers as invalid for compaction availability", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-sdk-invalid-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => createAvailabilityMap(),
+    });
+
+    await service.load();
+
+    const settingsPath = getCompactionSettingsPath(dataDir);
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await writeFile(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          model: { provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" },
+          reasoningLevel: "high",
+          timeoutMs: 300_000,
+          updatedAt: "2026-06-24T12:00:00.000Z",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    await service.load();
+    const view = await service.getSettingsView();
+
+    expect(view.settings.model).toEqual({ provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" });
+    expect(view.availability).toEqual({
+      providerConfigured: true,
+      modelValid: false,
+      reasoningSupported: true,
+    });
+  });
+
   it("returns availability status without rewriting settings when provider credentials are unavailable", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-availability-"));
     const service = new CompactionSettingsService({
@@ -234,6 +272,20 @@ describe("CompactionSettingsService", () => {
 
     const highResult = await service.update({ timeoutMs: 1_000_000 });
     expect(highResult.settings.timeoutMs).toBe(MAX_COMPACTION_TIMEOUT_MS);
+  });
+
+  it("rejects native SDK providers for compaction updates", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-sdk-reject-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => createAvailabilityMap(),
+    });
+
+    await service.load();
+
+    await expect(
+      service.update({ model: { provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" } }),
+    ).rejects.toThrow("Native SDK providers are not supported for compaction");
   });
 
   it("rejects unknown models, unsupported reasoning, and non-finite timeouts", async () => {

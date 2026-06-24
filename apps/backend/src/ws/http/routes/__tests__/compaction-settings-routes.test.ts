@@ -101,6 +101,28 @@ describe("createCompactionSettingsRoutes", () => {
     expect(highBody.settings.timeoutMs).toBe(900_000);
   });
 
+  it("returns 400 for native SDK compaction models", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-sdk-model-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => new Map([["openai-codex", true], ["claude-sdk", true]]),
+    });
+    await service.load();
+    const server = await createRouteServer(
+      createCompactionSettingsRoutes({ settingsService: service, runtimeTarget: "builder" }),
+    );
+
+    const response = await fetch(`${server.baseUrl}/api/settings/compaction`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: { provider: "claude-sdk", modelId: "claude-sonnet-4-5-20250929" } }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("Native SDK providers are not supported for compaction");
+  });
+
   it("returns 400 for non-finite timeout values", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-invalid-"));
     const service = new CompactionSettingsService({
