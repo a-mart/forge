@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { doesDeleteAffectOpenFile } from './file-browser-utils'
+import { doesDeleteAffectOpenFile, isPdfFile } from './file-browser-utils'
+
+describe('isPdfFile', () => {
+  it('detects pdf extensions case-insensitively', () => {
+    expect(isPdfFile('docs/spec.pdf')).toBe(true)
+    expect(isPdfFile('docs/spec.PDF')).toBe(true)
+    expect(isPdfFile('readme.md')).toBe(false)
+    expect(isPdfFile('archive.pdfx')).toBe(false)
+  })
+})
 
 describe('doesDeleteAffectOpenFile', () => {
   it('matches exact files and ancestor folders', () => {

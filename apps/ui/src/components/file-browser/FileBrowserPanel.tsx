@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { FileCode2, FileImage, FileText, X } from 'lucide-react'
+import { FileCode2, FileImage, FileText, FileType, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
@@ -9,7 +9,7 @@ import { useDirectoryListing, useFileContent } from './use-file-browser-queries'
 import type { FileContentResult } from './use-file-browser-queries'
 import type { FileEditSessionController } from './use-file-edit-session'
 import type { FileEditorSessionKey } from './use-file-editor-coordinator'
-import { isImageFile } from './file-browser-utils'
+import { isImageFile, isPdfFile } from './file-browser-utils'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 
 const IMAGE_FILE_PATTERN = /\.(png|jpg|jpeg|gif|webp|svg)$/i
@@ -52,9 +52,9 @@ export function FileBrowserPanel({
   const rootList = useDirectoryListing(wsUrl, gatedAgentId, '', worktreeId)
   const cwd = rootList.data?.cwd ?? ''
 
-  // Only fetch file content for non-image files
+  // Only fetch file content for non-image, non-PDF files
   const shouldFetchContent = useMemo(
-    () => filePath && !isImageFile(filePath),
+    () => filePath && !isImageFile(filePath) && !isPdfFile(filePath),
     [filePath],
   )
   const fileContent = useFileContent(
@@ -84,8 +84,9 @@ export function FileBrowserPanel({
 
   const fileName = filePath?.split('/').pop() ?? ''
   const isImage = IMAGE_FILE_PATTERN.test(fileName)
+  const isPdf = isPdfFile(fileName)
   const isMarkdown = MARKDOWN_FILE_PATTERN.test(fileName)
-  const FileIcon = isImage ? FileImage : isMarkdown ? FileText : FileCode2
+  const FileIcon = isImage ? FileImage : isPdf ? FileType : isMarkdown ? FileText : FileCode2
 
   if (!filePath) {
     return null

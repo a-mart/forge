@@ -10,6 +10,14 @@ import type { FileEditSessionController, FileEditSessionState } from './use-file
 
 const codeMirrorProps: Array<Record<string, unknown>> = []
 const headerProps: Array<Record<string, unknown>> = []
+const pdfPreviewProps: Array<Record<string, unknown>> = []
+
+vi.mock('./PdfPreview', () => ({
+  PdfPreview: (props: Record<string, unknown>) => {
+    pdfPreviewProps.push(props)
+    return createElement('div', { 'data-testid': 'pdf-preview' })
+  },
+}))
 
 vi.mock('./CodeMirrorFileEditor', () => ({
   CodeMirrorFileEditor: (props: Record<string, unknown>) => {
@@ -43,6 +51,7 @@ beforeEach(() => {
   document.body.appendChild(container)
   codeMirrorProps.length = 0
   headerProps.length = 0
+  pdfPreviewProps.length = 0
 })
 
 afterEach(() => {
@@ -289,5 +298,39 @@ describe('FileContentViewer in-flight editor lock', () => {
     onSaveShortcut?.()
 
     expect(editSession.save).not.toHaveBeenCalled()
+  })
+})
+
+describe('FileContentViewer PDF preview routing', () => {
+  it('renders PdfPreview instead of the binary fallback for pdf files', () => {
+    root ??= createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(FileContentViewer, {
+        wsUrl: 'ws://127.0.0.1:47187',
+        agentId: 'agent-a',
+        cwd: '/repo',
+        filePath: 'docs/spec.pdf',
+        content: {
+          content: null,
+          binary: true,
+          size: 4096,
+          editability: { editable: false, reason: 'binary', maxEditableBytes: 1024 },
+        },
+        isLoading: false,
+        error: null,
+        onNavigateToDirectory: vi.fn(),
+        inlineEditingEnabled: true,
+        editSession: createEditSession(),
+      }))
+    })
+
+    expect(container.querySelector('[data-testid="pdf-preview"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="codemirror-file-editor"]')).toBeNull()
+    expect(pdfPreviewProps.at(-1)).toMatchObject({
+      wsUrl: 'ws://127.0.0.1:47187',
+      agentId: 'agent-a',
+      filePath: 'docs/spec.pdf',
+      worktreeId: null,
+    })
   })
 })

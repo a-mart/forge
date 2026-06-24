@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorktreeId } from "../../../../versioning/git-source-control-helpers.js";
-import { createFileBrowserRoutes, parseBytesRangeHeader } from "../../../routes/file-browser-routes.js";
+import { createFileBrowserRoutes, parseBytesRangeHeader, setRawFileReadStreamFactoryForTest } from "../../../routes/file-browser-routes.js";
+import { Readable } from "node:stream";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +22,7 @@ const tempRoots: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  setRawFileReadStreamFactoryForTest(null);
   await Promise.all(activeServers.splice(0).map((server) => server.close()));
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -254,23 +256,27 @@ describe("file browser raw route", () => {
 
   it("returns JSON without stale entity headers when streaming fails before headers are sent", async () => {
     const harness = await createHarness();
-    const filePath = join(harness.workspaceDir, "stream.pdf");
-    await writeFile(filePath, Buffer.from("%PDF"));
-    await chmod(filePath, 0o000);
+    await writeFile(join(harness.workspaceDir, "stream.pdf"), Buffer.from("%PDF"));
 
-    try {
-      const response = await fetch(
-        `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("stream.pdf")}`,
-      );
+    setRawFileReadStreamFactoryForTest(() => {
+      const failingStream = new Readable({
+        read() {
+          this.destroy(new Error("Simulated read failure"));
+        },
+      });
+      return failingStream as ReturnType<typeof import("node:fs").createReadStream>;
+    });
 
-      expect(response.status).toBe(500);
-      expect(response.headers.get("content-type")).toContain("application/json");
-      expect(response.headers.get("content-range")).toBeNull();
-      const payload = (await response.json()) as { error: string };
-      expect(payload.error.length).toBeGreaterThan(0);
-    } finally {
-      await chmod(filePath, 0o644);
-    }
+    const response = await fetch(
+      `${harness.server.baseUrl}/api/files/raw?agentId=manager-1&path=${encodeURIComponent("stream.pdf")}`,
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(response.headers.get("content-range")).toBeNull();
+    const payload = (await response.json()) as { error: string };
+    expect(payload.error).toContain("Simulated read failure");
   });
 });
 

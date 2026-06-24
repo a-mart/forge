@@ -9,7 +9,7 @@ import type {
   FileSearchResult,
   FileVersionToken,
 } from "@forge/protocol";
-import { createReadStream } from "node:fs";
+import { createReadStream, type ReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname } from "node:path";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
@@ -547,14 +547,25 @@ function sendRawFileJsonError(
   sendJson(response, statusCode, body);
 }
 
+type RawFileReadStreamFactory = (
+  path: string,
+  options?: { start: number; end: number }
+) => ReadStream;
+
+let rawFileReadStreamFactory: RawFileReadStreamFactory = createReadStream;
+
+export function setRawFileReadStreamFactoryForTest(factory: RawFileReadStreamFactory | null): void {
+  rawFileReadStreamFactory = factory ?? createReadStream;
+}
+
 function pipeRawFileStream(
   response: ServerResponse,
   resolvedPath: string,
   range?: { start: number; end: number }
 ): void {
   const stream = range
-    ? createReadStream(resolvedPath, { start: range.start, end: range.end })
-    : createReadStream(resolvedPath);
+    ? rawFileReadStreamFactory(resolvedPath, { start: range.start, end: range.end })
+    : rawFileReadStreamFactory(resolvedPath);
 
   stream.on("error", (error) => {
     if (!response.headersSent) {

@@ -18,8 +18,9 @@ import '@/styles/syntax-highlight.css'
 import '@/styles/file-browser.css'
 import { FileContentHeader } from './FileContentHeader'
 import type { FileEditSessionController } from './use-file-edit-session'
-import { formatFileSize, isImageFile } from './file-browser-utils'
+import { formatFileSize, isImageFile, isPdfFile } from './file-browser-utils'
 import { ImagePreview } from './ImagePreview'
+import { PdfPreview } from './PdfPreview'
 import { MarkdownPreview } from './MarkdownPreview'
 import type { FileContentResult } from './use-file-browser-queries'
 import {
@@ -153,6 +154,11 @@ export function FileContentViewer({
     [filePath],
   )
 
+  const isPdf = useMemo(
+    () => (filePath ? isPdfFile(filePath) : false),
+    [filePath],
+  )
+
   const isMarkdown = useMemo(
     () => (filePath ? isMarkdownFile(filePath) : false),
     [filePath],
@@ -230,6 +236,28 @@ export function FileContentViewer({
           onNavigateToDirectory={onNavigateToDirectory}
         />
         <ImagePreview
+          key={`${agentId}:${worktreeId ?? 'session'}:${filePath}`}
+          wsUrl={wsUrl}
+          filePath={filePath}
+          agentId={agentId}
+          worktreeId={worktreeId}
+        />
+      </div>
+    )
+  }
+
+  // --- PDF files: streamed via /api/files/raw, no JSON content fetch needed ---
+  if (isPdf) {
+    return (
+      <div className="flex flex-1 flex-col" role="region" aria-label={`File content: ${fileName}`}>
+        <FileContentHeader
+          filePath={filePath}
+          cwd={cwd}
+          wordWrap={wordWrap}
+          onToggleWordWrap={handleToggleWordWrap}
+          onNavigateToDirectory={onNavigateToDirectory}
+        />
+        <PdfPreview
           key={`${agentId}:${worktreeId ?? 'session'}:${filePath}`}
           wsUrl={wsUrl}
           filePath={filePath}
