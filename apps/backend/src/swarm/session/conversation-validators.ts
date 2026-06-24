@@ -72,6 +72,7 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
   if (typeof maybe.text !== "string") return false;
   if (typeof maybe.timestamp !== "string") return false;
   if (!isConversationMessageSource(maybe.source)) return false;
+  if (!isConversationMessageRoleSourcePair(maybe.role, maybe.source)) return false;
 
   if (maybe.attachments !== undefined) {
     if (!Array.isArray(maybe.attachments)) {
@@ -102,6 +103,24 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
   }
 
   return true;
+}
+
+function isConversationMessageRoleSourcePair(
+  role: ConversationMessageEvent["role"],
+  source: ConversationMessageEvent["source"],
+): boolean {
+  switch (source) {
+    case "speak_to_user":
+    case "assistant_output":
+      return role === "assistant";
+    case "user_input":
+    case "project_agent_input":
+      return role === "user";
+    case "system":
+      return role === "system" || role === "assistant";
+    default:
+      return false;
+  }
 }
 
 function isMessageSourceContext(value: unknown): value is MessageSourceContext {

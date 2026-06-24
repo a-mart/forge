@@ -26,6 +26,7 @@ import type {
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolDefinition,
   ObservabilityToolSideEffectInput,
+  ObservabilityUserVisibleMessageInput,
   ObservabilityAgentDeliveryInput,
 } from "./observability-types.js";
 import {
@@ -59,6 +60,12 @@ export interface RuntimeSessionEventRecordResult {
 }
 
 export interface ToolSideEffectRecordResult {
+  started: number;
+  ended: number;
+  correlationMisses: number;
+}
+
+export interface UserVisibleMessageRecordResult {
   started: number;
   ended: number;
   correlationMisses: number;
@@ -692,6 +699,69 @@ export class PhoenixOtlpExporter {
       }
     } catch {
       // Observability must never affect tool execution.
+    }
+    return result;
+  }
+
+  recordUserVisibleMessage(input: ObservabilityUserVisibleMessageInput): UserVisibleMessageRecordResult {
+    const result: UserVisibleMessageRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
+    try {
+      const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
+      const rootLookup = !turn && input.rootTurnId ? this.findRootSpanByRootTurnId(input.rootTurnId) : undefined;
+      const evictedRoot = !turn && input.rootTurnId ? this.evictedRootIdsByRootTurnId.get(input.rootTurnId) : undefined;
+      const parentSpan = turn?.turnSpan ?? rootLookup?.rootSpan;
+      const rootTurnId = turn?.rootTurnId ?? rootLookup?.rootTurnId ?? input.rootTurnId;
+      const correlationStatus = turn
+        ? "resolved_turn"
+        : parentSpan
+          ? (rootLookup?.ended ? "resolved_retained_root" : "resolved_root")
+          : evictedRoot
+            ? "evicted_parent_root"
+            : "unresolved";
+      const capturedOutput = this.captureOutput(input.text);
+      const attributes = buildCommonOpenInferenceAttributes({
+        spanKind: "CHAIN",
+        output: capturedOutput,
+        sessionId: input.managerId ?? input.agentId,
+        userId: input.profileId,
+        metadata: {
+          event: "user_visible_message",
+          rootTurnId,
+          runtimeToken: input.runtimeToken,
+          runtimeType: input.runtimeType,
+          role: input.role,
+          source: input.source,
+          messageId: input.messageId,
+          sourceContext: input.sourceContext,
+          correlationStatus,
+          evictedRootReason: evictedRoot?.reason,
+          ...input.metadata,
+        },
+        tags: ["forge", "phoenix", "user_output", input.source],
+        agentName: input.agentName ?? input.agentId,
+        graphNodeId: input.agentId,
+        graphNodeParentId: input.managerId,
+      }, this.redactor);
+      attributes["forge.user_visible"] = true;
+      attributes["forge.conversation_source"] = this.redactor.sanitizeLabel(input.source);
+      if (input.messageId) {
+        attributes["forge.message_id"] = this.redactor.redactIdentifier(input.messageId);
+      }
+      assertOtelPrimitiveAttributes(attributes);
+      const span = this.provider.getTracer("forge-phoenix").startSpan(
+        "forge.user.output",
+        { kind: SpanKind.INTERNAL, attributes },
+        parentSpan ? trace.setSpan(ROOT_CONTEXT, parentSpan) : ROOT_CONTEXT,
+      );
+      span.setStatus(parentSpan ? { code: SpanStatusCode.OK } : { code: SpanStatusCode.ERROR, message: evictedRoot ? "evicted_parent_root" : "unresolved_parent_root" });
+      span.end();
+      result.started += 1;
+      result.ended += 1;
+      if (!parentSpan) {
+        result.correlationMisses += 1;
+      }
+    } catch {
+      // Observability must never affect user-visible output projection.
     }
     return result;
   }

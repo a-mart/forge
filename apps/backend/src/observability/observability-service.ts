@@ -26,6 +26,7 @@ import type {
   ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
   ObservabilityToolSideEffectInput,
+  ObservabilityUserVisibleMessageInput,
   ObservabilityAgentDeliveryInput,
 } from "./observability-types.js";
 
@@ -287,6 +288,19 @@ export class ObservabilityService implements ObservabilityFacade {
 
     try {
       const result = this.exporter.recordToolSideEffect(input);
+      this.applySpanRecordResult(result);
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  recordUserVisibleMessage(input: ObservabilityUserVisibleMessageInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const result = this.exporter.recordUserVisibleMessage(input);
       this.applySpanRecordResult(result);
     } catch (error) {
       this.recordError(error);

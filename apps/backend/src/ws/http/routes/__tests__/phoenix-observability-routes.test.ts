@@ -152,7 +152,9 @@ class FakeObservabilityService implements ObservabilityFacade {
   cancelRuntimeInput(): void {}
   recordRuntimeInput(): undefined { return undefined }
   recordRuntimeSessionEvent(): void {}
+  recordRuntimeError(): void {}
   recordToolSideEffect(): void {}
+  recordUserVisibleMessage(): void {}
   recordAgentDelivery(): void {}
   recordFeedback(): void {}
   async shutdown(): Promise<void> {}

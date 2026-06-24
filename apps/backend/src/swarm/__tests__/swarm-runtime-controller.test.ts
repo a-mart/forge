@@ -237,6 +237,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     queueVersionedToolMutation: vi.fn(),
     logDebug: vi.fn(),
     getRuntime: vi.fn(() => undefined),
+    markSessionActivity: vi.fn(),
     isModelCacheVisualizationEnabled: vi.fn(() => false),
     emitModelCacheObservation: vi.fn()
   };
@@ -277,6 +278,50 @@ describe("SwarmRuntimeController", () => {
 
     controller.clearRuntimeToken("agent-a", second);
     expect(controller.getRuntimeToken("agent-a")).toBeUndefined();
+  });
+
+  it("flushes pending manager assistant output from the agent-end callback when no terminal event arrives", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitConversationMessage } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "manager-agent-end-output",
+      role: "manager",
+      managerId: "manager-agent-end-output",
+      status: "streaming",
+      profileId: "profile-1",
+    });
+    descriptors.set(manager.agentId, { ...manager });
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    controller.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "session_transcript",
+      channel: "web",
+      sourceContext: { channel: "web", messageId: "user-message-1" },
+    });
+
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, {
+      type: "message_end",
+      message: { role: "assistant", content: "Callback-only final", stopReason: "stop" },
+    });
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+
+    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_output",
+      sourceContext: { channel: "web", messageId: "user-message-1" },
+      text: "Callback-only final",
+    }));
+
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
   });
 
   it("detachRuntime ignores stale runtime tokens but still clears bindings for that token", async () => {

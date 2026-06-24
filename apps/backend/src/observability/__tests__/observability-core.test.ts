@@ -439,6 +439,61 @@ describe('PhoenixOtlpExporter', () => {
     expect(serializedTools).not.toContain('DUPLICATE_HOOK')
   })
 
+  it('records normal assistant output as a user-visible message span', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeCreated({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      status: 'ready',
+    })
+    const rootTurnId = exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      rootSource: 'user_input',
+      runtimeInput: 'answer normally',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      event: { type: 'message_start', message: { role: 'user', content: 'answer normally' } },
+    })
+
+    const result = exporter.recordUserVisibleMessage({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      rootTurnId,
+      source: 'assistant_output',
+      sourceContext: { channel: 'web', messageId: 'user-message-1' },
+      messageId: 'assistant-message-1',
+      text: 'Normal final answer',
+    })
+
+    expect(result).toMatchObject({ started: 1, ended: 1, correlationMisses: 0 })
+
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    const userOutput = spans.find((entry) => entry.name === 'forge.user.output')
+    expect(userOutput).toBeDefined()
+    expect(userOutput?.parentSpanContext?.spanId).toBeTruthy()
+    expect(userOutput?.attributes['forge.user_visible']).toBe(true)
+    expect(userOutput?.attributes['forge.conversation_source']).toBe('assistant_output')
+    expect(userOutput?.attributes['forge.message_id']).toBeTruthy()
+    expect(JSON.stringify(userOutput?.attributes)).toContain('Normal final answer')
+  })
+
   it('correlates manager turns when runtime callback tokens drift from the pending input token', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }

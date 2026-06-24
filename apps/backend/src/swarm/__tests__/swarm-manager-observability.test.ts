@@ -10,6 +10,7 @@ import type {
   ObservabilityRuntimeErrorInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolSideEffectInput,
+  ObservabilityUserVisibleMessageInput,
   ObservabilityAgentDeliveryInput,
 } from '../../observability/observability-types.js'
 import { createDefaultPhoenixObservabilitySettings } from '../../observability/observability-settings.js'
@@ -29,6 +30,7 @@ class RecordingObservability implements ObservabilityFacade {
   readonly completions: ObservabilityRuntimeInputCompletion[] = []
   readonly sessionEvents: ObservabilityRuntimeSessionEventInput[] = []
   readonly deliveries: ObservabilityAgentDeliveryInput[] = []
+  readonly userVisibleMessages: ObservabilityUserVisibleMessageInput[] = []
   private nextRoot = 0
 
   async initialize(): Promise<void> {}
@@ -88,6 +90,10 @@ class RecordingObservability implements ObservabilityFacade {
   }
   recordRuntimeError(_input: ObservabilityRuntimeErrorInput): void {}
   recordToolSideEffect(_input: ObservabilityToolSideEffectInput): void {}
+  recordUserVisibleMessage(input: ObservabilityUserVisibleMessageInput): void {
+    this.calls.push('recordUserVisibleMessage')
+    this.userVisibleMessages.push(input)
+  }
   recordAgentDelivery(input: ObservabilityAgentDeliveryInput): void {
     this.calls.push('recordAgentDelivery')
     this.deliveries.push(input)
@@ -130,6 +136,62 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       expect(observability.sessionEvents[0]?.runtimeToken).toBe(observability.runtimeInputs[0]?.runtimeToken)
       expect(observability.sessionEvents[0]?.runtimeToken).toBeTypeOf('number')
       expect(observability.completions[0]).toMatchObject({ acceptedMode: 'prompt', deliveryId: 'delivery-1' })
+    } finally {
+      await handle.cleanup()
+    }
+  })
+
+  it('records assistant_output as a user-visible observability message on the active root turn', async () => {
+    const handle = await createTempConfig({ prefix: 'forge-observability-assistant-output-' })
+    try {
+      const observability = new RecordingObservability()
+      const manager = new TestSwarmManager(handle.config, { observability })
+      const descriptor = await bootWithDefaultManager(manager, handle.config)
+      observability.calls.length = 0
+      observability.runtimeInputs.length = 0
+      observability.completions.length = 0
+      observability.sessionEvents.length = 0
+      observability.deliveries.length = 0
+      observability.userVisibleMessages.length = 0
+
+      await manager.dispatchRuntimeUserMessage({
+        targetAgentId: descriptor.agentId,
+        text: 'normal final response please',
+        sourceContext: { channel: 'web', messageId: 'user-message-1' },
+      })
+
+      const runtime = manager.runtimeByAgentId.get(descriptor.agentId)
+      const runtimeMessage = runtime?.sendCalls.at(-1)?.message
+      expect(typeof runtimeMessage).toBe('string')
+
+      await (manager as unknown as {
+        handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void>
+      }).handleRuntimeSessionEvent(descriptor.agentId, {
+        type: 'message_start',
+        message: { role: 'user', content: runtimeMessage },
+      })
+      await (manager as unknown as {
+        handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void>
+      }).handleRuntimeSessionEvent(descriptor.agentId, {
+        type: 'message_end',
+        message: { role: 'assistant', content: 'Normal final response', stopReason: 'stop' },
+      })
+      await (manager as unknown as {
+        handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void>
+      }).handleRuntimeSessionEvent(descriptor.agentId, { type: 'turn_end', toolResults: [] })
+
+      expect(observability.userVisibleMessages).toHaveLength(1)
+      expect(observability.userVisibleMessages[0]).toMatchObject({
+        agentId: descriptor.agentId,
+        managerId: descriptor.agentId,
+        role: 'manager',
+        runtimeToken: observability.runtimeInputs[0]?.runtimeToken,
+        rootTurnId: observability.runtimeInputs[0]?.rootTurnId,
+        source: 'assistant_output',
+        sourceContext: { channel: 'web', messageId: 'user-message-1' },
+        text: 'Normal final response',
+      })
+      expect(observability.userVisibleMessages[0]?.messageId).toBeTypeOf('string')
     } finally {
       await handle.cleanup()
     }

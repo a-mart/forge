@@ -1356,6 +1356,26 @@ describe('SwarmManager', () => {
     ])
   })
 
+  it('clears inherited worker-report assistant targets when the manager runtime errors before the report', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('delegate then manager fails')
+    await startRuntimeUserTurn(manager)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Stale Inheritance Worker', initialMessage: 'Do work before failure.' })
+    await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'runtime failed before worker report' })
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: finished after failure', 'auto')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof reportRuntimeMessage).toBe('string')
+    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}')
+
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Stale output must not project')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
   it('suppresses inherited worker-report assistant_output after speak_to_user', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

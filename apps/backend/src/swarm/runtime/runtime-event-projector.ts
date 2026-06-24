@@ -97,6 +97,10 @@ export class RuntimeEventProjector {
     this.managerAssistantOutputTracker.clearTurn(agentId);
   }
 
+  flushManagerAssistantOutputTurn(agentId: string): void {
+    this.managerAssistantOutputTracker.flushTurn(agentId);
+  }
+
   markExplicitManagerAssistantOutput(agentId: string): void {
     this.managerAssistantOutputTracker.markExplicitAssistantOutput(agentId);
   }

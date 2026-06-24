@@ -45,7 +45,7 @@ describe("audit replay history cache characterization (Phase 0 → Phase 1)", ()
       id,
       text,
       timestamp: FIXED_NOW,
-      source: "user_input"
+      source: "assistant_output"
     };
   }
 

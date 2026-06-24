@@ -57,6 +57,16 @@ export class ManagerAssistantOutputTracker {
     this.activeTurnsByAgentId.delete(agentId);
   }
 
+  flushTurn(agentId: string): void {
+    const activeTurn = this.activeTurnsByAgentId.get(agentId);
+    if (!activeTurn) {
+      return;
+    }
+
+    this.emitCandidateIfEligible(agentId, activeTurn);
+    this.clearTurn(agentId);
+  }
+
   markExplicitAssistantOutput(agentId: string): void {
     const activeTurn = this.activeTurnsByAgentId.get(agentId);
     if (!activeTurn) {
@@ -94,8 +104,7 @@ export class ManagerAssistantOutputTracker {
 
       case "turn_end":
       case "agent_end":
-        this.emitCandidateIfEligible(agentId, activeTurn);
-        this.clearTurn(agentId);
+        this.flushTurn(agentId);
         break;
 
       default:

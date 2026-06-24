@@ -1,5 +1,7 @@
 import type {
+  ConversationMessageSource,
   FeedbackSubmitEvent,
+  MessageSourceContext,
   PhoenixObservabilitySettings,
   PhoenixObservabilitySettingsPatch,
   PhoenixObservabilityStatus,
@@ -22,6 +24,7 @@ export interface ObservabilityFacade {
   recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void;
   recordRuntimeError(input: ObservabilityRuntimeErrorInput): void;
   recordToolSideEffect(input: ObservabilityToolSideEffectInput): void;
+  recordUserVisibleMessage(input: ObservabilityUserVisibleMessageInput): void;
   recordAgentDelivery(input: ObservabilityAgentDeliveryInput): void;
   recordFeedback(event: FeedbackSubmitEvent): void;
   shutdown(options?: { timeoutMs?: number }): Promise<void>;
@@ -159,6 +162,22 @@ export interface ObservabilityToolSideEffectInput {
   output?: unknown;
   isError?: boolean;
   userVisible?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ObservabilityUserVisibleMessageInput {
+  agentId: string;
+  managerId?: string;
+  profileId?: string;
+  role?: string;
+  runtimeType?: ObservabilityRuntimeType;
+  runtimeToken?: number;
+  agentName?: string;
+  rootTurnId?: string;
+  messageId?: string;
+  source: ConversationMessageSource;
+  sourceContext?: MessageSourceContext;
+  text: string;
   metadata?: Record<string, unknown>;
 }
 

@@ -302,6 +302,10 @@ export class SwarmRuntimeController {
     this.getRuntimeEventProjector().clearManagerAssistantOutputTurn(agentId);
   }
 
+  flushManagerAssistantOutputTurn(agentId: string): void {
+    this.getRuntimeEventProjector().flushManagerAssistantOutputTurn(agentId);
+  }
+
   markExplicitManagerAssistantOutput(agentId: string): void {
     this.getRuntimeEventProjector().markExplicitManagerAssistantOutput(agentId);
   }
@@ -522,7 +526,11 @@ export class SwarmRuntimeController {
         workerActivityState: this.host.workerActivityState,
         runtimeRecoveryState: this.host.runtimeRecoveryState,
         now: () => this.now(),
-        conversationProjector: this.host.conversationProjector,
+        conversationProjector: {
+          captureConversationEventFromRuntime: (agentId, event) =>
+            this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event),
+          emitConversationMessage: (event) => this.host.emitConversationMessage(event),
+        },
         markSessionActivity: (agentId, timestamp) => this.host.markSessionActivity(agentId, timestamp),
         maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
           this.host.maybeRecordModelCapacityBlock(agentId, descriptor, error),
@@ -639,6 +647,9 @@ export class SwarmRuntimeController {
     }
     this.clearTrackedToolPaths(agentId);
     const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "manager") {
+      this.flushManagerAssistantOutputTurn(agentId);
+    }
     if (!descriptor || descriptor.role !== "worker") {
       return;
     }

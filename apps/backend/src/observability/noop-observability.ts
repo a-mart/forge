@@ -16,6 +16,7 @@ import type {
   ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
   ObservabilityToolSideEffectInput,
+  ObservabilityUserVisibleMessageInput,
   ObservabilityAgentDeliveryInput,
 } from "./observability-types.js";
 import { createDefaultPhoenixObservabilitySettings } from "./observability-settings.js";
@@ -51,6 +52,7 @@ export function createNoopObservabilityFacade(runtimeTarget: ObservabilityRuntim
     recordRuntimeSessionEvent(_input: ObservabilityRuntimeSessionEventInput): void {},
     recordRuntimeError(_input: ObservabilityRuntimeErrorInput): void {},
     recordToolSideEffect(_input: ObservabilityToolSideEffectInput): void {},
+    recordUserVisibleMessage(_input: ObservabilityUserVisibleMessageInput): void {},
     recordAgentDelivery(_input: ObservabilityAgentDeliveryInput): void {},
     recordFeedback(_event: FeedbackSubmitEvent): void {},
     async shutdown(): Promise<void> {},

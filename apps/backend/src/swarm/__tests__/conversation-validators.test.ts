@@ -112,6 +112,63 @@ describe("conversation validators", () => {
     ).toBe(false);
   });
 
+  it("rejects conversation message role/source pairs that cannot be produced by the runtime contract", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "assistant",
+        text: "impossible",
+        timestamp: FIXED_NOW,
+        source: "user_input",
+      })
+    ).toBe(false);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "user",
+        text: "impossible",
+        timestamp: FIXED_NOW,
+        source: "assistant_output",
+      })
+    ).toBe(false);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "assistant",
+        text: "valid",
+        timestamp: FIXED_NOW,
+        source: "speak_to_user",
+      })
+    ).toBe(true);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "system",
+        text: "valid",
+        timestamp: FIXED_NOW,
+        source: "system",
+      })
+    ).toBe(true);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "assistant",
+        text: "legacy-compatible",
+        timestamp: FIXED_NOW,
+        source: "system",
+      })
+    ).toBe(true);
+  });
+
   it("accepts CLI source context on persisted conversation messages", () => {
     expect(
       isConversationEntryEvent({

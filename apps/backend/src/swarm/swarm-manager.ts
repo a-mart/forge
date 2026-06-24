@@ -7675,6 +7675,38 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitConversationMessage(event: ConversationMessageEvent): void {
     this.conversationProjector.emitConversationMessage(event);
+    this.recordObservabilityUserVisibleMessage(event);
+  }
+
+  private recordObservabilityUserVisibleMessage(event: ConversationMessageEvent): void {
+    if (!this.observability || event.role !== "assistant" || event.source !== "assistant_output") {
+      return;
+    }
+
+    const descriptor = this.descriptors.get(event.agentId);
+    if (!descriptor) {
+      return;
+    }
+
+    this.observability.recordUserVisibleMessage({
+      agentId: descriptor.agentId,
+      managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+      profileId: descriptor.profileId,
+      role: descriptor.role,
+      runtimeType: this.getObservabilityRuntimeType(descriptor),
+      runtimeToken: this.runtimeController.getRuntimeToken(descriptor.agentId),
+      agentName: descriptor.displayName,
+      rootTurnId: this.getActiveObservabilityRootTurnId(descriptor.agentId),
+      messageId: event.id,
+      source: event.source,
+      sourceContext: event.sourceContext,
+      text: event.text,
+      metadata: {
+        modelProvider: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        status: descriptor.status,
+      },
+    });
   }
 
   private emitAgentMessage(event: AgentMessageEvent): void {
@@ -9466,6 +9498,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.inboundTurnContextActivatedByAgentId.delete(agentId);
     this.activeAssistantOutputTargetByManagerId.delete(agentId);
     this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    this.clearInheritedAssistantOutputTargetsForManager(agentId);
     this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
     this.activeCodexPluginDelegationByManagerId.delete(agentId);
@@ -9511,6 +9544,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.clearInheritedAssistantOutputTargetsForManager(agentId);
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.clearCodexPluginRetryContextForManager(agentId);
@@ -9523,6 +9557,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.runtimeController.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
+  }
+
+  private clearInheritedAssistantOutputTargetsForManager(managerId: string): void {
+    this.inheritedAssistantOutputTargetByWorkerId.delete(managerId);
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role === "worker" && descriptor.managerId === managerId) {
+        this.inheritedAssistantOutputTargetByWorkerId.delete(descriptor.agentId);
+      }
+    }
   }
 
   private async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
@@ -10409,4 +10452,3 @@ function hasUnsupportedTaskRefFields(value: Record<string, unknown>): boolean {
 
   return false;
 }
-
