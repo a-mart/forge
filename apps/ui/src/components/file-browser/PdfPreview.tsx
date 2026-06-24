@@ -326,6 +326,15 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
             >
               <p className="text-sm text-destructive/80">Unable to render this page</p>
               <p className="text-xs opacity-70">{renderErrorMessage}</p>
+              <a
+                href={pdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
+                data-testid="pdf-preview-open-raw"
+              >
+                Open PDF
+              </a>
             </div>
           ) : null}
         </div>

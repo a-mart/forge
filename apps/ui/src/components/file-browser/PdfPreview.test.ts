@@ -237,6 +237,11 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(container.textContent).not.toContain('Failed to load PDF')
     expect(mockRender).not.toHaveBeenCalled()
 
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLAnchorElement
+    expect(openRaw.href).toContain('/api/files/raw?')
+    expect(openRaw.getAttribute('target')).toBe('_blank')
+    expect(openRaw.getAttribute('rel')).toBe('noreferrer')
+
     const zoomOutButton = container.querySelector('[aria-label="Zoom out"]') as HTMLButtonElement
     await act(async () => {
       zoomOutButton.click()
