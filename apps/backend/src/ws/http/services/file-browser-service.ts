@@ -58,6 +58,11 @@ interface CurrentTextFileState {
   editability: FileEditability;
 }
 
+export interface RawFileDescriptor {
+  resolvedPath: string;
+  size: number;
+}
+
 export class FileBrowserService {
   private readonly saveQueues = new Map<string, Promise<void>>();
 
@@ -166,6 +171,36 @@ export class FileBrowserService {
     return {
       results: matches.slice(0, limit).map((pathValue) => ({ path: pathValue, type: "file" })),
       totalMatches: matches.length
+    };
+  }
+
+  async resolveRawFile(cwd: string, relativePath: string): Promise<RawFileDescriptor> {
+    const normalizedCwd = resolve(cwd);
+    const normalizedRelativePath = normalizeRelativePath(relativePath);
+    if (!normalizedRelativePath) {
+      throw new Error("path must be a non-empty string.");
+    }
+
+    const resolvedPath = await this.resolvePathWithinCwd(normalizedCwd, normalizedRelativePath);
+
+    let fileStats;
+    try {
+      fileStats = await stat(resolvedPath);
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) {
+        throw new Error("File not found.");
+      }
+
+      rethrowPermissionDenied(error, "read");
+    }
+
+    if (!fileStats.isFile()) {
+      throw new Error("Requested path must point to a file.");
+    }
+
+    return {
+      resolvedPath,
+      size: Number(fileStats.size)
     };
   }
 
