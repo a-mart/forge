@@ -1,8 +1,43 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 import type { compact as runPiCompaction } from "@mariozechner/pi-coding-agent";
 
 type CompactionPreparation = Parameters<typeof runPiCompaction>[0];
 type AgentMessage = CompactionPreparation["messagesToSummarize"][number];
+
+type ConvertToLlmFn = (messages: AgentMessage[]) => unknown[];
+type SerializeConversationFn = (messages: unknown[]) => string;
+
+const require = createRequire(import.meta.url);
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const piCodingAgentDistDir = findPiCodingAgentDistDir(currentDir);
+const { convertToLlm } = require(join(piCodingAgentDistDir, "core/messages.js")) as {
+  convertToLlm: ConvertToLlmFn;
+};
+const { serializeConversation: serializePiConversation } = require(join(
+  piCodingAgentDistDir,
+  "core/compaction/utils.js",
+)) as {
+  serializeConversation: SerializeConversationFn;
+};
+
+function findPiCodingAgentDistDir(startDir: string): string {
+  let current = startDir;
+  for (;;) {
+    const candidate = join(current, "node_modules", "@mariozechner", "pi-coding-agent", "dist");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      throw new Error("Unable to locate @mariozechner/pi-coding-agent/dist for compaction measurement");
+    }
+    current = parent;
+  }
+}
 
 type BoundsCategory =
   | "user_message"
@@ -823,56 +858,12 @@ function measurePreparationPrompts(
   };
 }
 
-function serializeMessages(messages: AgentMessage[]): string {
-  const parts: string[] = [];
-  for (const message of messages) {
-    switch (message.role) {
-      case "user": {
-        const content = stringifyContent(message.content);
-        if (content) parts.push(`[User]: ${content}`);
-        break;
-      }
-      case "assistant": {
-        const thinking: string[] = [];
-        const text: string[] = [];
-        const toolCalls: string[] = [];
-        for (const block of message.content) {
-          if (block.type === "thinking") thinking.push(block.thinking);
-          if (block.type === "text") text.push(block.text);
-          if (block.type === "toolCall") toolCalls.push(`${block.name}(${safeStableStringify(block.arguments)})`);
-        }
-        if (thinking.length > 0) parts.push(`[Assistant thinking]: ${thinking.join("\n")}`);
-        if (text.length > 0) parts.push(`[Assistant]: ${text.join("\n")}`);
-        if (toolCalls.length > 0) parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
-        break;
-      }
-      case "toolResult": {
-        const content = stringifyContent(message.content);
-        if (content) parts.push(`[Tool result]: ${content}`);
-        break;
-      }
-      case "custom": {
-        const content = stringifyContent(message.content);
-        if (content) parts.push(`[Custom ${message.customType}]: ${content}`);
-        break;
-      }
-      case "bashExecution":
-        parts.push(`[Bash]: ${message.command}\n${message.output}`);
-        break;
-      case "branchSummary":
-      case "compactionSummary":
-        parts.push(`[Summary]: ${message.summary}`);
-        break;
-    }
-  }
-  return parts.join("\n\n");
+export function serializeMessagesForCompactionMeasurement(messages: AgentMessage[]): string {
+  return serializePiConversation(convertToLlm(messages));
 }
 
-function stringifyContent(content: string | (TextContent | ImageContent)[]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  return content.map((block) => block.type === "text" ? block.text : `[image:${block.mimeType}; chars=${block.data.length}]`).join("");
+function serializeMessages(messages: AgentMessage[]): string {
+  return serializeMessagesForCompactionMeasurement(messages);
 }
 
 function buildHistoryPromptText(options: {

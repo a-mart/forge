@@ -9,7 +9,10 @@ import {
   resolveForgeCompactionModel,
   runForgePiCompaction,
 } from "../compaction/forge-pi-compaction.js";
-import { boundCompactionPreparation } from "../compaction/forge-pi-compaction-bounds.js";
+import {
+  boundCompactionPreparation,
+  serializeMessagesForCompactionMeasurement,
+} from "../compaction/forge-pi-compaction-bounds.js";
 import { createDefaultCompactionSettings } from "../compaction-settings-service.js";
 import { createStaticCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { makeCompactionGuardDescriptor } from "../../test-support/compaction-guard-harness.js";
@@ -30,6 +33,46 @@ vi.mock("@mariozechner/pi-coding-agent", async () => {
 });
 
 const runPiCompactionMock = vi.mocked(runPiCompaction);
+
+function buildActualHistoryPromptText(messages: any[], customInstructions?: string): string {
+  let basePrompt = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+
+Use this EXACT format:
+
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+  if (customInstructions) {
+    basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
+  }
+  const conversationText = serializeMessagesForCompactionMeasurement(messages);
+  return `<conversation>\n${conversationText}\n</conversation>\n\n${basePrompt}`;
+}
 
 describe("forge pi compaction", () => {
   beforeEach(() => {
@@ -406,6 +449,50 @@ describe("forge pi compaction", () => {
 
     expect(runPiCompactionMock).not.toHaveBeenCalled();
   });
+
+  it("keeps many short bashExecution messages within the cap using Pi-compatible measurement", async () => {
+    const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+    const modelRegistry = {
+      find: vi.fn(() => compactionModel),
+      getApiKeyAndHeaders: vi.fn(async () => ({
+        ok: true as const,
+        apiKey: "compaction-key",
+        headers: {},
+      })),
+    } as unknown as ModelRegistry;
+
+    await runForgePiCompaction({
+      event: {
+        preparation: {
+          firstKeptEntryId: "entry-1",
+          messagesToSummarize: Array.from({ length: 6_000 }, (_, index) => ({
+            role: "bashExecution" as const,
+            command: `echo ${index}`,
+            output: "ok",
+            exitCode: 0,
+            cancelled: false,
+            truncated: false,
+            timestamp: index + 1,
+          })),
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 100,
+          fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+          settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+        },
+      },
+      ctx: { model: { provider: "openai-codex", id: "gpt-5.4" } as never, modelRegistry },
+      descriptor: makeCompactionGuardDescriptor(),
+      compactionSettings: createStaticCompactionRuntimeSettingsProvider({ timeoutMs: 300_000 }).getCompactionRuntimeSettings(),
+      combinedInstructions: undefined,
+      pinnedInstructionsMerged: false,
+      logDebug: vi.fn(),
+    });
+
+    const boundedPreparation = runPiCompactionMock.mock.calls.at(-1)?.[0];
+    const actualPrompt = buildActualHistoryPromptText(boundedPreparation.messagesToSummarize);
+    expect(actualPrompt.length).toBeLessThanOrEqual(180_000);
+  }, 10_000);
 
   it("records redacted provider option presence flags for instrumentation", () => {
     expect(

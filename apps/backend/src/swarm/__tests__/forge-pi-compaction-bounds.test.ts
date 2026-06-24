@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { boundCompactionPreparation } from "../compaction/forge-pi-compaction-bounds.js";
+import {
+  boundCompactionPreparation,
+  serializeMessagesForCompactionMeasurement,
+} from "../compaction/forge-pi-compaction-bounds.js";
 
 function createPreparation() {
   return {
@@ -73,6 +76,46 @@ function createPreparation() {
     fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
     settings: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 2_000 },
   };
+}
+
+function buildActualHistoryPromptText(messages: Parameters<typeof boundCompactionPreparation>[0]["messagesToSummarize"], customInstructions?: string): string {
+  let basePrompt = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+
+Use this EXACT format:
+
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+  if (customInstructions) {
+    basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
+  }
+  const conversationText = serializeMessagesForCompactionMeasurement(messages);
+  return `<conversation>\n${conversationText}\n</conversation>\n\n${basePrompt}`;
 }
 
 describe("forge pi compaction bounds", () => {
@@ -155,6 +198,35 @@ describe("forge pi compaction bounds", () => {
     expect(JSON.stringify(result.preparation.messagesToSummarize.at(-1))).toContain("message-499-end");
     expect(JSON.stringify(result.preparation.messagesToSummarize[0])).toContain("message-0-start");
   });
+
+  it("matches Pi serialization for many short bashExecution messages under the cap", () => {
+    const preparation = {
+      firstKeptEntryId: "entry-keep",
+      messagesToSummarize: Array.from({ length: 6_000 }, (_, index) => ({
+        role: "bashExecution" as const,
+        command: `echo ${index}`,
+        output: "ok",
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+        timestamp: index + 1,
+      })),
+      turnPrefixMessages: [],
+      isSplitTurn: false,
+      tokensBefore: 100,
+      fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
+      settings: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 2_000 },
+    };
+
+    const result = boundCompactionPreparation(preparation, {
+      maxPromptChars: 180_000,
+    });
+
+    const actualPrompt = buildActualHistoryPromptText(result.preparation.messagesToSummarize);
+    expect(actualPrompt.length).toBeLessThanOrEqual(180_000);
+    expect(result.stats.promptChars.maxBounded).toBe(actualPrompt.length);
+    expect(result.stats.truncationCounts.overBudgetAfterBounding).toBe(false);
+  }, 10_000);
 
   it("keeps instrumentation/details redacted with no raw prompt payloads", () => {
     const secret = "VERY_SECRET_BOUNDING_VALUE";
