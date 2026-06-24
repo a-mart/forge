@@ -935,6 +935,76 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('flushes preserved present_choices assistant text only after opening the choice request', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const runtimeController = (manager as any).runtimeController
+    const originalFlush = runtimeController.flushPreservedManagerAssistantOutputForTool.bind(runtimeController)
+    const flushOrderChecks: boolean[] = []
+    vi.spyOn(runtimeController, 'flushPreservedManagerAssistantOutputForTool').mockImplementation(
+      (agentId: string, toolName: string) => {
+        flushOrderChecks.push(
+          manager.getConversationHistory('manager').some(
+            (entry: any) => entry.type === 'choice_request' && entry.status === 'pending',
+          ),
+        )
+        return originalFlush(agentId, toolName)
+      },
+    )
+
+    runtimeController.activateManagerAssistantOutputTurn('manager', { kind: 'session_transcript', channel: 'web' })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [
+          { type: 'text', text: 'Pick one option.' },
+          { type: 'toolCall', name: 'present_choices', id: 'choice-1', arguments: { questions: [] } },
+        ],
+      },
+    })
+
+    const pending = manager.requestUserChoice('manager', [
+      {
+        id: 'q1',
+        question: 'Choose one.',
+        options: [
+          { id: 'alpha', label: 'Alpha' },
+          { id: 'beta', label: 'Beta' },
+        ],
+      },
+    ])
+
+    const choiceRequest = manager.getConversationHistory('manager').find(
+      (entry: any) => entry.type === 'choice_request' && entry.status === 'pending',
+    ) as any
+    expect(choiceRequest).toBeDefined()
+    expect(flushOrderChecks).toEqual([true])
+    expect(assistantOutputsFor(manager, 'manager')).toMatchObject([
+      { text: 'Pick one option.', source: 'assistant_output' },
+    ])
+
+    manager.resolveChoiceRequest(choiceRequest.choiceId, [{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
+    await expect(pending).resolves.toEqual([{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
+  })
+
+  it('does not flush preserved present_choices assistant text when choice creation fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const runtimeController = (manager as any).runtimeController
+    const flushSpy = vi.spyOn(runtimeController, 'flushPreservedManagerAssistantOutputForTool')
+
+    await expect(manager.requestUserChoice('missing-agent', [
+      { id: 'q1', question: 'Choose one.' },
+    ])).rejects.toThrow('Agent not found: missing-agent')
+
+    expect(flushSpy).not.toHaveBeenCalled()
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
   it('projects direct web manager assistant final text when no-echo provider emits synthetic user message_start', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

@@ -144,6 +144,65 @@ describe("ManagerAssistantOutputTracker", () => {
     expect(emitted[0]).toMatchObject({ text: "Pick the next step.", source: "assistant_output" });
   });
 
+  it("can emit text that accompanies a pending present_choices card before turn end", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Pick the next step.", {
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Pick the next step." },
+        { type: "toolCall", name: "present_choices", id: "choice-1", arguments: { questions: [] } },
+      ],
+    }));
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} });
+
+    expect(tracker.flushPreservedCandidateForTool("manager-1", "present_choices")).toBe(true);
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ text: "Pick the next step.", source: "assistant_output" });
+
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_end", toolName: "present_choices", toolCallId: "choice-1", isError: false });
+    tracker.handleRuntimeEvent("manager-1", { type: "turn_end", toolResults: [] });
+
+    expect(emitted).toHaveLength(1);
+  });
+
+  it("preserves pending present_choices text when the tool start event arrives before message_end", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} });
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Pick the next step.", {
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Pick the next step." },
+        { type: "toolCall", name: "present_choices", id: "choice-1", arguments: { questions: [] } },
+      ],
+    }));
+
+    expect(tracker.flushPreservedCandidateForTool("manager-1", "present_choices")).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ text: "Pick the next step.", source: "assistant_output" });
+  });
+
+  it("does not emit preserved candidates for the wrong tool", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Pick the next step.", {
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Pick the next step." },
+        { type: "toolCall", name: "present_choices", id: "choice-1", arguments: { questions: [] } },
+      ],
+    }));
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} });
+
+    expect(tracker.flushPreservedCandidateForTool("manager-1", "shell")).toBe(false);
+    expect(emitted).toEqual([]);
+  });
+
   it("does not project text that accompanies a failed present_choices tool call", () => {
     const { tracker, emitted } = createTracker();
     tracker.activateTurn("manager-1", WEB_TARGET);

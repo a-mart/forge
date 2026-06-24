@@ -139,6 +139,42 @@ describe("RuntimeEventProjector", () => {
     expect(deps.markSessionActivity).toHaveBeenCalledWith(manager.agentId, "2026-05-06T00:00:01.000Z");
   });
 
+  it("can project preserved manager assistant output when a present_choices card is opened", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [
+            { type: "text", text: "Pick an option." },
+            { type: "toolCall", name: "present_choices", id: "choice-1", arguments: { questions: [] } },
+          ],
+        },
+      },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} },
+    });
+
+    expect(projector.flushPreservedManagerAssistantOutputForTool(manager.agentId, "present_choices")).toBe(true);
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_output",
+      text: "Pick an option.",
+    }));
+  });
+
   it("does not project manager assistant output after post-projection cleanup clears the turn", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });

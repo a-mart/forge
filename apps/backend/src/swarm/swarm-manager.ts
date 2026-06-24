@@ -2885,7 +2885,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
     this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "present_choices");
-    return this.choiceService.requestUserChoice(agentId, questions);
+    const pending = this.choiceService.requestUserChoice(agentId, questions);
+    this.runtimeController.flushPreservedManagerAssistantOutputForTool(agentId, "present_choices");
+    return pending;
   }
 
   private scheduleProjectExecutableTrustPromptsForAllManagers(): void {

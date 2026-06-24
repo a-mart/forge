@@ -67,6 +67,15 @@ export class ManagerAssistantOutputTracker {
     this.clearTurn(agentId);
   }
 
+  flushPreservedCandidateForTool(agentId: string, toolName: string): boolean {
+    const activeTurn = this.activeTurnsByAgentId.get(agentId);
+    if (!activeTurn || activeTurn.candidate?.preserveThroughToolName !== toolName) {
+      return false;
+    }
+
+    return this.emitCandidateIfEligible(agentId, activeTurn, { allowOpenToolCalls: true });
+  }
+
   markExplicitAssistantOutput(agentId: string): void {
     const activeTurn = this.activeTurnsByAgentId.get(agentId);
     if (!activeTurn) {
@@ -122,7 +131,7 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    if (activeTurn.explicitAssistantDelivered || activeTurn.openToolCallIds.size > 0) {
+    if (activeTurn.explicitAssistantDelivered) {
       return;
     }
 
@@ -141,6 +150,10 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
+    if (activeTurn.openToolCallIds.size > 0 && !onlyPresentChoicesToolBlocks) {
+      return;
+    }
+
     const text = extractMessageText(event.message)?.trim();
     if (!text) {
       return;
@@ -153,26 +166,38 @@ export class ManagerAssistantOutputTracker {
     };
   }
 
-  private emitCandidateIfEligible(agentId: string, activeTurn: ActiveManagerAssistantOutputTurn): void {
+  private emitCandidateIfEligible(
+    agentId: string,
+    activeTurn: ActiveManagerAssistantOutputTurn,
+    options?: { allowOpenToolCalls?: boolean },
+  ): boolean {
     if (activeTurn.target.kind !== "session_transcript") {
-      return;
+      return false;
     }
 
-    if (activeTurn.explicitAssistantDelivered || activeTurn.openToolCallIds.size > 0 || !activeTurn.candidate) {
-      return;
+    if (
+      activeTurn.explicitAssistantDelivered ||
+      (!options?.allowOpenToolCalls && activeTurn.openToolCallIds.size > 0) ||
+      !activeTurn.candidate
+    ) {
+      return false;
     }
+
+    const candidate = activeTurn.candidate;
+    activeTurn.candidate = undefined;
 
     const timestamp = this.options.now();
     this.options.emitConversationMessage({
       type: "conversation_message",
       agentId,
       role: "assistant",
-      text: activeTurn.candidate.text,
+      text: candidate.text,
       timestamp,
       source: "assistant_output",
-      sourceContext: activeTurn.candidate.sourceContext,
+      sourceContext: candidate.sourceContext,
     });
     this.options.markSessionActivity(agentId, timestamp);
+    return true;
   }
 }
 

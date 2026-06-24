@@ -31,7 +31,7 @@ export class SwarmChoiceService {
 
   constructor(private readonly options: SwarmChoiceServiceOptions) {}
 
-  async requestUserChoice(agentId: string, questions: ChoiceQuestion[]): Promise<ChoiceAnswer[]> {
+  requestUserChoice(agentId: string, questions: ChoiceQuestion[]): Promise<ChoiceAnswer[]> {
     const descriptor = this.options.getDescriptor(agentId);
     if (!descriptor) {
       throw new Error(`Agent not found: ${agentId}`);

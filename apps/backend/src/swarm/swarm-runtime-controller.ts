@@ -306,6 +306,10 @@ export class SwarmRuntimeController {
     this.getRuntimeEventProjector().flushManagerAssistantOutputTurn(agentId);
   }
 
+  flushPreservedManagerAssistantOutputForTool(agentId: string, toolName: string): boolean {
+    return this.getRuntimeEventProjector().flushPreservedManagerAssistantOutputForTool(agentId, toolName);
+  }
+
   markExplicitManagerAssistantOutput(agentId: string): void {
     this.getRuntimeEventProjector().markExplicitManagerAssistantOutput(agentId);
   }
