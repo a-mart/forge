@@ -179,14 +179,15 @@ function findFencedCodeRanges(text: string): TextRange[] {
     const newlineIndex = text.indexOf('\n', lineStart)
     const lineEnd = newlineIndex >= 0 ? newlineIndex + 1 : text.length
     const line = text.slice(lineStart, newlineIndex >= 0 ? newlineIndex : lineEnd)
+    const lineForFenceDetection = line.endsWith('\r') ? line.slice(0, -1) : line
 
     if (openFence) {
-      if (isClosingFenceLine(line, openFence)) {
+      if (isClosingFenceLine(lineForFenceDetection, openFence)) {
         ranges.push({ start: openFence.start, end: lineEnd })
         openFence = undefined
       }
     } else {
-      const openingFence = getOpeningFence(line)
+      const openingFence = getOpeningFence(lineForFenceDetection)
       if (openingFence) {
         openFence = { ...openingFence, start: lineStart }
       }

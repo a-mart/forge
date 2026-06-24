@@ -142,6 +142,21 @@ describe('collectArtifactsFromMessages', () => {
     expect(artifacts).toEqual([])
   })
 
+  it('handles CRLF closed fences without dropping artifacts after the fence', () => {
+    const artifacts = collectArtifactsFromMessages([
+      agentMessage('```md\r\n[artifact:/tmp/inside.json]\r\n```\r\nExported [artifact:/tmp/outside.json]'),
+    ])
+
+    expect(artifacts).toEqual([
+      {
+        path: '/tmp/outside.json',
+        fileName: 'outside.json',
+        href: 'swarm-file:///tmp/outside.json',
+        sourceAgentId: 'worker-1',
+      },
+    ])
+  })
+
   it('keeps real absolute artifact shortcodes in normal assistant text', () => {
     const artifacts = collectArtifactsFromMessages([
       assistantMessage('Exported [artifact:/tmp/session/artifacts/real-report.json]'),
