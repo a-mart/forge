@@ -90,7 +90,7 @@ async function handleCompactionSettingsRequest(
 }
 
 function isBadRequestBodyError(message: string): boolean {
-  return message === "Request body must be valid JSON" || message === "Request body is too large";
+  return message === "Request body must be valid JSON" || message.startsWith("Request body too large");
 }
 
 function parseSettingsPatch(value: unknown): UpdateCompactionSettingsRequest {

@@ -257,6 +257,21 @@ describe("CompactionSettingsService", () => {
     );
   });
 
+  it("allows timeout-only updates when saved provider credentials are unavailable", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-timeout-only-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => createAvailabilityMap({ "openai-codex": false }),
+    });
+
+    await service.load();
+    const result = await service.update({ timeoutMs: 420_000 });
+
+    expect(result.settings.timeoutMs).toBe(420_000);
+    expect(result.settings.model).toEqual({ provider: "openai-codex", modelId: "gpt-5.5" });
+    expect(result.availability.providerConfigured).toBe(false);
+  });
+
   it("rejects updates when the selected provider is not configured", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-provider-"));
     const service = new CompactionSettingsService({

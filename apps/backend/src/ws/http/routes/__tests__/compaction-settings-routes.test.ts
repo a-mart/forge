@@ -145,6 +145,28 @@ describe("createCompactionSettingsRoutes", () => {
     expect(body.error).toBe("Request body must be valid JSON");
   });
 
+  it("returns 400 for oversized JSON bodies", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-oversized-body-"));
+    const service = new CompactionSettingsService({
+      dataDir,
+      getProviderAvailability: async () => new Map([["openai-codex", true]]),
+    });
+    await service.load();
+    const server = await createRouteServer(
+      createCompactionSettingsRoutes({ settingsService: service, runtimeTarget: "builder" }),
+    );
+
+    const response = await fetch(`${server.baseUrl}/api/settings/compaction`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(65_536) }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/^Request body too large\./);
+  });
+
   it("returns 404 for collaboration runtime", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-compaction-routes-collab-"));
     const service = new CompactionSettingsService({ dataDir });

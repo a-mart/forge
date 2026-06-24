@@ -115,10 +115,12 @@ export class CompactionSettingsService {
       const nextTimeoutMs =
         patch.timeoutMs === undefined ? this.settings.timeoutMs : normalizeTimeoutMs(patch.timeoutMs);
 
-      validateCompactionModelSelection(nextModel, {
-        providerAvailability,
-        reasoningLevel: nextReasoningLevel,
-      });
+      if (patch.model !== undefined || patch.reasoningLevel !== undefined) {
+        validateCompactionModelSelection(nextModel, {
+          providerAvailability,
+          reasoningLevel: nextReasoningLevel,
+        });
+      }
 
       const next: CompactionSettings = {
         model: nextModel,
