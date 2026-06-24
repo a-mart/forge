@@ -60,7 +60,10 @@ import {
   collectCompactionEntryKeys,
   findNewCompactionEntries,
 } from "../compaction-session-entries.js";
-import { consumeForgePiCompactionFailure } from "../compaction/forge-pi-compaction-extension.js";
+import {
+  clearForgePiCompactionFailure,
+  consumeForgePiCompactionFailure,
+} from "../compaction/forge-pi-compaction-extension.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -184,6 +187,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly now: () => string;
   private readonly systemPrompt: string;
   private readonly compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
+  private readonly compactionFailureScopeKey: string;
   private pendingDeliveries: PendingDelivery[] = [];
   private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
   private status: AgentStatus;
@@ -216,6 +220,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     now?: () => string;
     systemPrompt?: string;
     compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
+    compactionFailureScopeKey?: string;
   }) {
     this.descriptor = options.descriptor;
     this.session = options.session;
@@ -224,8 +229,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.systemPrompt = options.systemPrompt ?? options.session.systemPrompt ?? "";
     this.compactionRuntimeSettingsProvider =
       options.compactionRuntimeSettingsProvider ?? createDefaultCompactionRuntimeSettingsProvider();
+    this.compactionFailureScopeKey = options.compactionFailureScopeKey ?? options.descriptor.agentId;
     this.status = options.descriptor.status;
 
+    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.unsubscribe = this.session.subscribe((event) => {
       void this.handleEvent(event);
     });
@@ -474,6 +481,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
+    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.pendingDeliveries = [];
     this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
@@ -519,6 +527,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       });
     }
 
+    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.closeStaleOpenAICodexWebSocketSession("dispose_session_resources");
     await this.openAIAuthBrokerController?.release(shutdown.reason);
     this.unsubscribe?.();
@@ -643,6 +652,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.manualCompactionInProgress = true;
     try {
       await this.emitCompactionStatusSafely("compact_start_status_emit");
+      clearForgePiCompactionFailure(this.compactionFailureScopeKey);
       const result = await this.session.compact(customInstructions);
       await this.emitCompactionStatusSafely("compact_complete_status_emit");
       return result;
@@ -665,7 +675,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return error;
     }
 
-    const failure = consumeForgePiCompactionFailure(this.descriptor.agentId);
+    const failure = consumeForgePiCompactionFailure(this.compactionFailureScopeKey);
     if (!failure) {
       return error;
     }
@@ -969,6 +979,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "compaction_start" && event.reason !== "manual") {
+      clearForgePiCompactionFailure(this.compactionFailureScopeKey);
       this.latestAutoCompactionReason = event.reason;
       this.autoCompactionEntryKeysBefore = this.getCompactionEntryKeys();
       if (!this.isContextRecoveryActive()) {
@@ -1681,7 +1692,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (!autoCompactionError) {
       if (event.aborted) {
-        const forgeFailure = consumeForgePiCompactionFailure(this.descriptor.agentId);
+        const forgeFailure = consumeForgePiCompactionFailure(this.compactionFailureScopeKey);
         await this.reportRuntimeError({
           phase: "compaction",
           message: forgeFailure?.message ?? "Automatic compaction was cancelled",

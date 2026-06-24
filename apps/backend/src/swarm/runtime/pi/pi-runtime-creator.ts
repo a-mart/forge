@@ -53,6 +53,7 @@ import type {
 import { planPiRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planPiResourceLoaderOptions, planRuntimeResourcePaths } from "../runtime-resource-plan.js";
 import type { CompactionRuntimeSettingsProvider } from "../../compaction-runtime-settings-provider.js";
+import { buildForgePiCompactionFailureScopeKey } from "../../compaction/forge-pi-compaction-extension.js";
 import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
 
@@ -166,6 +167,7 @@ export class PiRuntimeCreator {
     });
 
     const provider = descriptor.model.provider.trim().toLowerCase();
+    const compactionFailureScopeKey = buildForgePiCompactionFailureScopeKey(descriptor.agentId, runtimeToken);
     const brokerRuntimeService = this.deps.getOpenAIAuthBrokerRuntimeService?.();
     const useBrokerAuth = provider === "openai-codex"
       && brokerRuntimeService
@@ -213,7 +215,8 @@ export class PiRuntimeCreator {
         baseSwarmTools,
         host: this.deps.host,
         descriptor
-      })
+      }),
+      compactionFailureScopeKey,
     });
     const resourcePlan = planPiResourceLoaderOptions({
       descriptor,
@@ -382,6 +385,7 @@ export class PiRuntimeCreator {
       session: session as AgentSession,
       systemPrompt,
       compactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider(),
+      compactionFailureScopeKey,
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
           await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);

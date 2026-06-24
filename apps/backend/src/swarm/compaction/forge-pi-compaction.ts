@@ -199,6 +199,25 @@ export async function runForgePiCompaction(options: {
     customInstructions: options.combinedInstructions,
   });
 
+  if (bounded.stats.promptChars.maxBounded > bounded.stats.maxPromptChars) {
+    throw new ForgePiCompactionError(
+      `Configured compaction prompt could not be reduced to the safe size budget for ${options.descriptor.agentId}`,
+      {
+        recoveryStage: "forge_compaction_prompt_over_budget",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+        configuredProvider: options.compactionSettings.model.provider,
+        configuredModelId: options.compactionSettings.model.modelId,
+        runtimeSessionProvider: sessionModel?.provider,
+        runtimeSessionModelId: sessionModel?.id,
+        maxPromptChars: bounded.stats.maxPromptChars,
+        boundedPromptChars: bounded.stats.promptChars.maxBounded,
+        previousSummaryPresent: bounded.stats.previousSummaryPresent,
+        customInstructionsPresent: bounded.stats.customInstructionsPresent,
+        truncationCounts: bounded.stats.truncationCounts,
+      },
+    );
+  }
+
   options.logDebug(
     "compaction:forge:start",
     buildForgeCompactionStartInstrumentation({

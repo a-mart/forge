@@ -228,6 +228,20 @@ export function boundCompactionPreparation(
     }
   }
 
+  const aggregatePreparation = applyAggregatePromptBudget(chosenPreparation, options.customInstructions, maxPromptChars);
+  const aggregateMetrics = measurePreparationPrompts(aggregatePreparation, options.customInstructions);
+  chosenPreparation = aggregatePreparation;
+  chosenStats = createStats({
+    originalPreparation: preparation,
+    boundedPreparation: chosenPreparation,
+    customInstructions: options.customInstructions,
+    maxPromptChars,
+    originalMetrics,
+    boundedMetrics: aggregateMetrics,
+    finalTier: chosenStats.truncationCounts.finalTier,
+    tiersApplied: chosenStats.truncationCounts.tiersApplied,
+  });
+
   chosenStats.truncationCounts.overBudgetAfterBounding = chosenStats.promptChars.maxBounded > maxPromptChars;
   return { preparation: chosenPreparation, stats: chosenStats };
 }
@@ -238,6 +252,254 @@ interface PromptMetrics {
   turnPrefixConversationChars: number;
   turnPrefixPromptChars: number;
   maxPromptChars: number;
+}
+
+interface AggregateProtectionPlan {
+  tailCount: number;
+  recentUserCount: number;
+  preserveFirstUser: boolean;
+  preserveLatestSummary: boolean;
+}
+
+const HISTORY_AGGREGATE_PROTECTION_PLANS: readonly AggregateProtectionPlan[] = [
+  { tailCount: 12, recentUserCount: 3, preserveFirstUser: true, preserveLatestSummary: true },
+  { tailCount: 8, recentUserCount: 2, preserveFirstUser: true, preserveLatestSummary: true },
+  { tailCount: 4, recentUserCount: 1, preserveFirstUser: true, preserveLatestSummary: true },
+  { tailCount: 2, recentUserCount: 1, preserveFirstUser: true, preserveLatestSummary: false },
+  { tailCount: 1, recentUserCount: 1, preserveFirstUser: true, preserveLatestSummary: false },
+] as const;
+
+const TURN_PREFIX_AGGREGATE_PROTECTION_PLANS: readonly AggregateProtectionPlan[] = [
+  { tailCount: 8, recentUserCount: 2, preserveFirstUser: true, preserveLatestSummary: true },
+  { tailCount: 4, recentUserCount: 1, preserveFirstUser: true, preserveLatestSummary: false },
+  { tailCount: 2, recentUserCount: 1, preserveFirstUser: true, preserveLatestSummary: false },
+  { tailCount: 1, recentUserCount: 1, preserveFirstUser: true, preserveLatestSummary: false },
+] as const;
+
+function applyAggregatePromptBudget(
+  preparation: CompactionPreparation,
+  customInstructions: string | undefined,
+  maxPromptChars: number,
+): CompactionPreparation {
+  const historyConversationBudget = Math.max(
+    0,
+    maxPromptChars
+      - buildHistoryPromptText({
+          conversationText: "",
+          previousSummary: preparation.previousSummary,
+          customInstructions,
+        }).length,
+  );
+  const turnPrefixConversationBudget = Math.max(0, maxPromptChars - buildTurnPrefixPromptText("").length);
+
+  return {
+    ...preparation,
+    fileOps: cloneFileOps(preparation.fileOps),
+    settings: { ...preparation.settings },
+    messagesToSummarize: reduceMessageCollectionToConversationBudget({
+      messages: preparation.messagesToSummarize,
+      conversationBudgetChars: historyConversationBudget,
+      collectionLabel: "messagesToSummarize",
+      protectionPlans: HISTORY_AGGREGATE_PROTECTION_PLANS,
+    }),
+    turnPrefixMessages: preparation.isSplitTurn
+      ? reduceMessageCollectionToConversationBudget({
+          messages: preparation.turnPrefixMessages,
+          conversationBudgetChars: turnPrefixConversationBudget,
+          collectionLabel: "turnPrefixMessages",
+          protectionPlans: TURN_PREFIX_AGGREGATE_PROTECTION_PLANS,
+        })
+      : preparation.turnPrefixMessages.slice(),
+  };
+}
+
+function reduceMessageCollectionToConversationBudget(options: {
+  messages: AgentMessage[];
+  conversationBudgetChars: number;
+  collectionLabel: "messagesToSummarize" | "turnPrefixMessages";
+  protectionPlans: readonly AggregateProtectionPlan[];
+}): AgentMessage[] {
+  if (options.messages.length === 0) {
+    return [];
+  }
+
+  if (options.conversationBudgetChars <= 0) {
+    return [];
+  }
+
+  if (serializeMessages(options.messages).length <= options.conversationBudgetChars) {
+    return options.messages.slice();
+  }
+
+  let best = options.messages.slice();
+  for (const plan of options.protectionPlans) {
+    const protectedIndexes = buildAggregateProtectedIndexes(options.messages, plan);
+    const removalCandidates = buildAggregateRemovalCandidates(options.messages, protectedIndexes);
+    const removedIndexes = new Set<number>();
+
+    for (const removalIndex of removalCandidates) {
+      removedIndexes.add(removalIndex);
+      const reduced = materializeAggregateReducedMessages(options.messages, removedIndexes, options.collectionLabel);
+      best = reduced;
+      if (serializeMessages(reduced).length <= options.conversationBudgetChars) {
+        return reduced;
+      }
+    }
+
+    const fullyReduced = materializeAggregateReducedMessages(options.messages, removedIndexes, options.collectionLabel);
+    best = fullyReduced;
+    if (serializeMessages(fullyReduced).length <= options.conversationBudgetChars) {
+      return fullyReduced;
+    }
+  }
+
+  return best;
+}
+
+function buildAggregateProtectedIndexes(
+  messages: AgentMessage[],
+  plan: AggregateProtectionPlan,
+): Set<number> {
+  const protectedIndexes = new Set<number>();
+  const tailStart = Math.max(0, messages.length - plan.tailCount);
+  for (let index = tailStart; index < messages.length; index += 1) {
+    protectedIndexes.add(index);
+  }
+
+  if (plan.preserveFirstUser) {
+    const firstUserIndex = messages.findIndex((message) => message.role === "user");
+    if (firstUserIndex >= 0) {
+      protectedIndexes.add(firstUserIndex);
+    }
+  }
+
+  if (plan.recentUserCount > 0) {
+    let preserved = 0;
+    for (let index = messages.length - 1; index >= 0 && preserved < plan.recentUserCount; index -= 1) {
+      if (messages[index]?.role === "user") {
+        protectedIndexes.add(index);
+        preserved += 1;
+      }
+    }
+  }
+
+  if (plan.preserveLatestSummary) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "branchSummary" || messages[index]?.role === "compactionSummary") {
+        protectedIndexes.add(index);
+        break;
+      }
+    }
+  }
+
+  return protectedIndexes;
+}
+
+function buildAggregateRemovalCandidates(messages: AgentMessage[], protectedIndexes: Set<number>): number[] {
+  const candidates: Array<{ index: number; priority: number }> = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    if (protectedIndexes.has(index)) {
+      continue;
+    }
+    candidates.push({ index, priority: aggregateRemovalPriority(messages[index]!) });
+  }
+
+  candidates.sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.index - right.index;
+  });
+  return candidates.map((candidate) => candidate.index);
+}
+
+function aggregateRemovalPriority(message: AgentMessage): number {
+  switch (message.role) {
+    case "toolResult":
+    case "custom":
+    case "bashExecution":
+      return 0;
+    case "assistant":
+      return 1;
+    case "branchSummary":
+    case "compactionSummary":
+      return 2;
+    case "user":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function materializeAggregateReducedMessages(
+  messages: AgentMessage[],
+  removedIndexes: Set<number>,
+  collectionLabel: "messagesToSummarize" | "turnPrefixMessages",
+): AgentMessage[] {
+  if (removedIndexes.size === 0) {
+    return messages.slice();
+  }
+
+  const reduced: AgentMessage[] = [];
+  let index = 0;
+
+  while (index < messages.length) {
+    if (!removedIndexes.has(index)) {
+      reduced.push(messages[index]!);
+      index += 1;
+      continue;
+    }
+
+    const omitted: AgentMessage[] = [];
+    while (index < messages.length && removedIndexes.has(index)) {
+      omitted.push(messages[index]!);
+      index += 1;
+    }
+
+    if (omitted.length > 0) {
+      reduced.push(buildAggregateOmissionMessage(omitted, collectionLabel));
+    }
+  }
+
+  return reduced;
+}
+
+function buildAggregateOmissionMessage(
+  omittedMessages: AgentMessage[],
+  collectionLabel: "messagesToSummarize" | "turnPrefixMessages",
+): AgentMessage {
+  const roleCounts = new Map<string, number>();
+  for (const message of omittedMessages) {
+    roleCounts.set(message.role, (roleCounts.get(message.role) ?? 0) + 1);
+  }
+
+  const roleSummary = Array.from(roleCounts.entries())
+    .map(([role, count]) => `${role}:${count}`)
+    .join(", ");
+  const firstTimestamp = readMessageTimestamp(omittedMessages[0]);
+  const lastTimestamp = readMessageTimestamp(omittedMessages[omittedMessages.length - 1]);
+  const text = [
+    `[forge compaction omitted ${omittedMessages.length} ${collectionLabel} message${omittedMessages.length === 1 ? "" : "s"} to stay within the prompt budget]`,
+    roleSummary ? `roles=${roleSummary}` : undefined,
+    firstTimestamp !== undefined || lastTimestamp !== undefined
+      ? `timestamps=${firstTimestamp ?? "unknown"}..${lastTimestamp ?? "unknown"}`
+      : undefined,
+  ].filter((part): part is string => Boolean(part)).join("; ");
+
+  return {
+    role: "custom",
+    customType: "forge_compaction_aggregate_omission",
+    content: [{ type: "text", text: text.length <= 240 ? text : `${text.slice(0, 237)}...` }],
+    display: false,
+    timestamp: lastTimestamp ?? firstTimestamp ?? 0,
+  } as AgentMessage;
+}
+
+function readMessageTimestamp(message: AgentMessage | undefined): number | undefined {
+  if (!message) {
+    return undefined;
+  }
+  return typeof message.timestamp === "number" && Number.isFinite(message.timestamp) ? message.timestamp : undefined;
 }
 
 function applyBoundingTier(
@@ -540,7 +802,7 @@ function measurePreparationPrompts(
   const historyConversation = serializeMessages(preparation.messagesToSummarize);
   const turnPrefixConversation = serializeMessages(preparation.turnPrefixMessages);
 
-  const historyPromptChars = historyConversation.length > 0
+  const historyPromptChars = historyConversation.length > 0 || Boolean(preparation.previousSummary) || Boolean(customInstructions?.trim())
     ? buildHistoryPromptText({
         conversationText: historyConversation,
         previousSummary: preparation.previousSummary,

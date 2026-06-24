@@ -13,6 +13,7 @@ export type ForgePiCompactionFailureKind =
   | "configured_model_unavailable"
   | "configured_auth_unavailable"
   | "configured_auth_mode_unsupported"
+  | "prompt_over_budget"
   | "provider_failure";
 
 export interface ForgePiCompactionFailureRecord {
@@ -25,18 +26,22 @@ export interface ForgePiCompactionFailureRecord {
 
 const pendingForgePiCompactionFailures = new Map<string, ForgePiCompactionFailureRecord>();
 
-export function rememberForgePiCompactionFailure(agentId: string, failure: ForgePiCompactionFailureRecord): void {
-  pendingForgePiCompactionFailures.set(agentId, failure);
+export function buildForgePiCompactionFailureScopeKey(agentId: string, runtimeScope: string | number): string {
+  return `${agentId}::${String(runtimeScope)}`;
 }
 
-export function consumeForgePiCompactionFailure(agentId: string): ForgePiCompactionFailureRecord | undefined {
-  const failure = pendingForgePiCompactionFailures.get(agentId);
-  pendingForgePiCompactionFailures.delete(agentId);
+export function rememberForgePiCompactionFailure(scopeKey: string, failure: ForgePiCompactionFailureRecord): void {
+  pendingForgePiCompactionFailures.set(scopeKey, failure);
+}
+
+export function consumeForgePiCompactionFailure(scopeKey: string): ForgePiCompactionFailureRecord | undefined {
+  const failure = pendingForgePiCompactionFailures.get(scopeKey);
+  pendingForgePiCompactionFailures.delete(scopeKey);
   return failure;
 }
 
-export function clearForgePiCompactionFailure(agentId: string): void {
-  pendingForgePiCompactionFailures.delete(agentId);
+export function clearForgePiCompactionFailure(scopeKey: string): void {
+  pendingForgePiCompactionFailures.delete(scopeKey);
 }
 
 export function createForgePiCompactionExtensionFactory(options: {
@@ -44,8 +49,10 @@ export function createForgePiCompactionExtensionFactory(options: {
   config: SwarmConfig;
   logDebug: (message: string, details?: unknown) => void;
   getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
+  failureScopeKey?: string;
 }): ExtensionFactory {
   const { descriptor } = options;
+  const failureScopeKey = options.failureScopeKey ?? descriptor.agentId;
 
   return (pi) => {
     pi.on("session_before_compact", async (event, ctx) => {
@@ -75,17 +82,17 @@ export function createForgePiCompactionExtensionFactory(options: {
           logDebug: options.logDebug,
         });
 
-        clearForgePiCompactionFailure(descriptor.agentId);
+        clearForgePiCompactionFailure(failureScopeKey);
         return { compaction };
       } catch (error) {
         const failure = buildForgePiCompactionFailureRecord(descriptor, error, event.signal);
 
         if (failure.cancelledByUser) {
-          clearForgePiCompactionFailure(descriptor.agentId);
+          clearForgePiCompactionFailure(failureScopeKey);
           return { cancel: true };
         }
 
-        rememberForgePiCompactionFailure(descriptor.agentId, failure);
+        rememberForgePiCompactionFailure(failureScopeKey, failure);
         console.warn(`[swarm] Forge compaction cancelled for ${descriptor.agentId}: ${failure.message}`, failure.details);
         ctx.ui.notify(failure.userFacingMessage, "error");
 
@@ -124,9 +131,9 @@ export function buildForgePiCompactionFailureRecord(
     return buildForgeFailureRecord(error);
   }
 
-  const rawMessage = error instanceof Error ? error.message : String(error);
+  const rawMessage = sanitizeCompactionFailureMessage(error instanceof Error ? error.message : String(error));
   const message = `Configured compaction request failed for ${descriptor.agentId}: ${rawMessage}`;
-  const userFacingMessage = `Configured compaction failed: ${rawMessage}`;
+  const userFacingMessage = "Configured compaction failed. Check the configured provider/model authentication and try again.";
   return {
     kind: "provider_failure",
     message,
@@ -145,7 +152,7 @@ export function buildForgePiCompactionFailureRecord(
 
 function buildForgeFailureRecord(error: ForgePiCompactionError): ForgePiCompactionFailureRecord {
   const recoveryStage = String(error.details.recoveryStage ?? "forge_compaction_failed");
-  const rawMessage = error.message;
+  const rawMessage = sanitizeCompactionFailureMessage(error.message);
 
   switch (recoveryStage) {
     case "forge_compaction_model_unavailable": {
@@ -202,8 +209,26 @@ function buildForgeFailureRecord(error: ForgePiCompactionError): ForgePiCompacti
       };
     }
 
+    case "forge_compaction_prompt_over_budget": {
+      const userFacingMessage = "Configured compaction could not fit within the safe prompt-size budget after redaction and reduction. Trim older context or pinned instructions, then retry.";
+      return {
+        kind: "prompt_over_budget",
+        message: rawMessage,
+        userFacingMessage,
+        cancelledByUser: false,
+        details: {
+          ...error.details,
+          compactionCancelled: true,
+          compactionRetryPlanned: false,
+          cancelKind: "prompt_over_budget",
+          rawCauseMessage: rawMessage,
+          userFacingMessage,
+        },
+      };
+    }
+
     default: {
-      const userFacingMessage = `Configured compaction failed: ${rawMessage}`;
+      const userFacingMessage = "Configured compaction failed. Check the configured provider/model authentication and try again.";
       return {
         kind: "provider_failure",
         message: rawMessage,
@@ -220,6 +245,15 @@ function buildForgeFailureRecord(error: ForgePiCompactionError): ForgePiCompacti
       };
     }
   }
+}
+
+function sanitizeCompactionFailureMessage(message: string): string {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  const redactedSecrets = normalized
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9]+/g, "sk-[redacted]")
+    .replace(/[A-Za-z0-9+/=]{80,}/g, "[redacted-long-token]");
+  return redactedSecrets.length <= 240 ? redactedSecrets : `${redactedSecrets.slice(0, 237)}...`;
 }
 
 export function isUserCancelledCompaction(error: unknown, signal?: AbortSignal): boolean {

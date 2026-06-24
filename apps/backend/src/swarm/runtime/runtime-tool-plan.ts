@@ -87,6 +87,7 @@ interface PlanPiExtensionFactoriesOptions {
   logDebug: (message: string, details?: unknown) => void;
   getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
   forgePiToolBridgeFactory?: ExtensionFactory;
+  compactionFailureScopeKey?: string;
 }
 
 export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOptions): ExtensionFactory[] {
@@ -99,6 +100,7 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
       config: options.config,
       logDebug: options.logDebug,
       getCompactionRuntimeSettingsProvider: options.getCompactionRuntimeSettingsProvider,
+      failureScopeKey: options.compactionFailureScopeKey,
     }));
   }
 

@@ -149,6 +149,9 @@ describe('AgentRuntime', () => {
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
     openAICodexResponsesMockState.getOpenAICodexWebSocketDebugStats.mockReset()
     clearForgePiCompactionFailure('worker')
+    clearForgePiCompactionFailure('worker::stale')
+    clearForgePiCompactionFailure('worker::fresh')
+    clearForgePiCompactionFailure('worker::shared')
   })
 
   it('does not replay broker capacity failures when the broker returns the same exhausted lease', async () => {
@@ -1137,21 +1140,20 @@ describe('AgentRuntime', () => {
   it('surfaces configured Forge compaction failures when Pi returns a cancelled manual compaction result', async () => {
     const session = new FakeSession()
     session.compact = async (): Promise<never> => {
+      rememberForgePiCompactionFailure('worker', {
+        kind: 'configured_auth_unavailable',
+        message: 'Compaction auth unavailable in the active runtime registry for configured model on worker: provider unavailable',
+        userFacingMessage: 'Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.',
+        cancelledByUser: false,
+        details: {
+          cancelKind: 'configured_auth_unavailable',
+          compactionCancelled: true,
+          compactionRetryPlanned: false,
+          userFacingMessage: 'Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.',
+        },
+      })
       throw new Error('Compaction cancelled')
     }
-
-    rememberForgePiCompactionFailure('worker', {
-      kind: 'configured_auth_unavailable',
-      message: 'Compaction auth unavailable in the active runtime registry for configured model on worker: provider unavailable',
-      userFacingMessage: 'Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.',
-      cancelledByUser: false,
-      details: {
-        cancelKind: 'configured_auth_unavailable',
-        compactionCancelled: true,
-        compactionRetryPlanned: false,
-        userFacingMessage: 'Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.',
-      },
-    })
 
     const runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
@@ -1185,6 +1187,7 @@ describe('AgentRuntime', () => {
       },
     })
 
+    session.emit({ type: 'compaction_start', reason: 'threshold' })
     rememberForgePiCompactionFailure('worker', {
       kind: 'configured_model_unavailable',
       message: 'Configured compaction model is unavailable in the active runtime registry for worker',
@@ -1197,8 +1200,6 @@ describe('AgentRuntime', () => {
         userFacingMessage: 'Configured compaction model is unavailable in the active runtime. Choose a different compaction model or authenticate that provider.',
       },
     })
-
-    session.emit({ type: 'compaction_start', reason: 'threshold' })
     session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
     await waitForCondition(() => runtimeErrors.length === 1)
 
@@ -1224,6 +1225,80 @@ describe('AgentRuntime', () => {
         userCancelled: true,
         compactionRetryPlanned: false,
         userFacingMessage: 'Automatic compaction was cancelled.',
+      }),
+    })
+  })
+
+  it('does not inherit stale Forge compaction failures from an earlier runtime scope', async () => {
+    const session = new FakeSession()
+    session.compact = async (): Promise<never> => {
+      throw new Error('Compaction cancelled')
+    }
+
+    rememberForgePiCompactionFailure('worker::stale', {
+      kind: 'configured_auth_unavailable',
+      message: 'stale configured compaction auth failure',
+      userFacingMessage: 'Configured compaction auth is unavailable in the active runtime.',
+      cancelledByUser: false,
+      details: {
+        cancelKind: 'configured_auth_unavailable',
+        compactionCancelled: true,
+        compactionRetryPlanned: false,
+      },
+    })
+
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      compactionFailureScopeKey: 'worker::fresh',
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    await expect(runtime.compact('trim older turns')).rejects.toMatchObject({
+      name: 'Error',
+      message: 'Compaction cancelled',
+    })
+  })
+
+  it('clears stale Forge compaction failures at auto-compaction start before an unrelated abort result', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: Array<Record<string, any>> = []
+    new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      compactionFailureScopeKey: 'worker::shared',
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => {
+          runtimeErrors.push(error as Record<string, any>)
+        },
+      },
+    })
+
+    rememberForgePiCompactionFailure('worker::shared', {
+      kind: 'configured_model_unavailable',
+      message: 'stale configured compaction model failure',
+      userFacingMessage: 'Configured compaction model is unavailable in the active runtime.',
+      cancelledByUser: false,
+      details: {
+        cancelKind: 'configured_model_unavailable',
+        compactionCancelled: true,
+        compactionRetryPlanned: false,
+      },
+    })
+
+    session.emit({ type: 'compaction_start', reason: 'threshold' })
+    session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
+    await waitForCondition(() => runtimeErrors.length === 1)
+
+    expect(runtimeErrors[0]).toMatchObject({
+      phase: 'compaction',
+      message: 'Automatic compaction was cancelled',
+      details: expect.objectContaining({
+        userCancelled: true,
+        compactionRetryPlanned: false,
       }),
     })
   })

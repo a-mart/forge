@@ -91,21 +91,20 @@ describe("forge pi compaction bounds", () => {
 
     const serialized = JSON.stringify(result.preparation);
     expect(serialized).not.toContain("RAW_TOOL_SECRET");
-    expect(serialized).toContain("forge compaction truncated tool_call_args");
     expect(serialized).toContain("forge compaction omitted image payload");
+    expect(
+      serialized.includes("forge compaction truncated tool_call_args")
+        || serialized.includes("forge_compaction_aggregate_omission"),
+    ).toBe(true);
 
     const boundedUser = JSON.stringify(result.preparation.messagesToSummarize[0]);
     expect(boundedUser).toContain("User request start");
     expect(boundedUser).toContain("User request end");
 
     expect(result.stats.categories.user_message.truncatedItems).toBeGreaterThan(0);
-    expect(result.stats.categories.assistant_text.truncatedItems).toBeGreaterThan(0);
-    expect(result.stats.categories.assistant_thinking.truncatedItems).toBeGreaterThan(0);
-    expect(result.stats.categories.tool_call_args.truncatedItems).toBeGreaterThan(0);
-    expect(result.stats.categories.tool_result.truncatedItems).toBeGreaterThan(0);
     expect(result.stats.categories.custom_message.truncatedItems).toBeGreaterThan(0);
-    expect(result.stats.categories.image_payload.truncatedItems).toBeGreaterThan(0);
-    expect(result.stats.categories.base64_payload.truncatedItems).toBeGreaterThan(0);
+    expect(result.stats.truncationCounts.total).toBeGreaterThan(0);
+    expect(result.stats.truncationCounts.messagesToSummarize).toBeGreaterThan(0);
   });
 
   it("enforces the aggregate serialized prompt cap and reports split-turn counters", () => {
@@ -127,6 +126,34 @@ describe("forge pi compaction bounds", () => {
     expect(result.stats.truncationCounts.total).toBeGreaterThan(0);
     expect(result.stats.truncationCounts.tiersApplied).toBeGreaterThan(0);
     expect(result.stats.truncationCounts.overBudgetAfterBounding).toBe(false);
+  });
+
+  it("reduces many-message histories to a real aggregate prompt cap", () => {
+    const preparation = {
+      firstKeptEntryId: "entry-keep",
+      messagesToSummarize: Array.from({ length: 500 }, (_, index) => ({
+        role: "user" as const,
+        content: `message-${index}-start ${"U".repeat(2_000)} message-${index}-end`,
+        timestamp: index + 1,
+      })),
+      turnPrefixMessages: [],
+      isSplitTurn: false,
+      tokensBefore: 100,
+      previousSummary: "Keep the original goal in mind.",
+      fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
+      settings: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 2_000 },
+    };
+
+    const result = boundCompactionPreparation(preparation, {
+      customInstructions: "Preserve the latest user intent and the recent tail.",
+      maxPromptChars: 180_000,
+    });
+
+    expect(result.stats.promptChars.maxBounded).toBeLessThanOrEqual(180_000);
+    expect(result.stats.truncationCounts.overBudgetAfterBounding).toBe(false);
+    expect(JSON.stringify(result.preparation.messagesToSummarize)).toContain("forge_compaction_aggregate_omission");
+    expect(JSON.stringify(result.preparation.messagesToSummarize.at(-1))).toContain("message-499-end");
+    expect(JSON.stringify(result.preparation.messagesToSummarize[0])).toContain("message-0-start");
   });
 
   it("keeps instrumentation/details redacted with no raw prompt payloads", () => {

@@ -360,6 +360,53 @@ describe("forge pi compaction", () => {
     });
   });
 
+  it("fails closed before calling Pi when the prompt is still over budget after aggregate reduction", async () => {
+    const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+    const modelRegistry = {
+      find: vi.fn(() => compactionModel),
+      getApiKeyAndHeaders: vi.fn(async () => ({
+        ok: true as const,
+        apiKey: "compaction-key",
+        headers: {},
+      })),
+    } as unknown as ModelRegistry;
+
+    await expect(
+      runForgePiCompaction({
+        event: {
+          preparation: {
+            firstKeptEntryId: "entry-1",
+            messagesToSummarize: [
+              {
+                role: "user",
+                content: "keep a small visible request",
+                timestamp: 1,
+              },
+            ],
+            turnPrefixMessages: [],
+            isSplitTurn: false,
+            tokensBefore: 100,
+            fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+            settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+          },
+        },
+        ctx: { model: { provider: "openai-codex", id: "gpt-5.4" } as never, modelRegistry },
+        descriptor: makeCompactionGuardDescriptor(),
+        compactionSettings: createStaticCompactionRuntimeSettingsProvider({ timeoutMs: 300_000 }).getCompactionRuntimeSettings(),
+        combinedInstructions: "I".repeat(220_000),
+        pinnedInstructionsMerged: false,
+        logDebug: vi.fn(),
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        recoveryStage: "forge_compaction_prompt_over_budget",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+      }),
+    });
+
+    expect(runPiCompactionMock).not.toHaveBeenCalled();
+  });
+
   it("records redacted provider option presence flags for instrumentation", () => {
     expect(
       detectCompactionProviderOptionsPresence({
