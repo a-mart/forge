@@ -15,49 +15,48 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
 
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
-    if (message.type !== 'conversation_message') continue
-    if (message.role === 'user') continue
+    const artifactText = getArtifactCandidateText(message)
+    if (!artifactText) continue
 
-    const text = message.text
-    if (!text) continue
+    const sourceAgentId = getArtifactSourceAgentId(message)
 
     // Extract from [artifact:path] shortcodes
-    for (const match of text.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
+    for (const match of artifactText.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
       const rawPath = match[1]?.trim()
       if (!rawPath) continue
-      const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId: message.agentId })
+      const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
     }
 
     // Extract swarm-file:// links
-    for (const match of text.matchAll(SWARM_FILE_PATTERN)) {
-      const ref = parseArtifactReference(match[0], { sourceAgentId: message.agentId })
+    for (const match of artifactText.matchAll(SWARM_FILE_PATTERN)) {
+      const ref = parseArtifactReference(match[0], { sourceAgentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
     }
 
     // Extract vscode:// / vscode-insiders:// links
-    for (const match of text.matchAll(VSCODE_FILE_PATTERN)) {
-      const ref = parseArtifactReference(match[0], { sourceAgentId: message.agentId })
+    for (const match of artifactText.matchAll(VSCODE_FILE_PATTERN)) {
+      const ref = parseArtifactReference(match[0], { sourceAgentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
     }
 
     // Extract from markdown links [text](href)
-    for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
+    for (const match of artifactText.matchAll(MARKDOWN_LINK_PATTERN)) {
       const matchIndex = match.index ?? 0
-      if (matchIndex > 0 && text[matchIndex - 1] === '!') {
+      if (matchIndex > 0 && artifactText[matchIndex - 1] === '!') {
         continue
       }
 
       const linkText = match[1]?.trim()
       const href = parseMarkdownLinkHref(match[2] ?? '')
       if (!href) continue
-      const ref = parseArtifactReference(href, { title: linkText, sourceAgentId: message.agentId })
+      const ref = parseArtifactReference(href, { title: linkText, sourceAgentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
@@ -89,6 +88,32 @@ export function categorizeArtifact(fileName: string): ArtifactCategory {
   if (DATA_EXTENSIONS.has(ext)) return 'data'
   if (CODE_EXTENSIONS.has(ext)) return 'code'
   return 'other'
+}
+
+function getArtifactCandidateText(message: ConversationEntry): string | null {
+  switch (message.type) {
+    case 'conversation_message':
+      return message.role === 'user' ? null : message.text
+    case 'agent_message':
+      return message.text
+    case 'agent_tool_call':
+      return message.kind === 'tool_execution_end' ? message.text : null
+    default:
+      return null
+  }
+}
+
+function getArtifactSourceAgentId(message: ConversationEntry): string | undefined {
+  switch (message.type) {
+    case 'conversation_message':
+      return message.agentId
+    case 'agent_message':
+      return message.fromAgentId ?? message.agentId
+    case 'agent_tool_call':
+      return message.actorAgentId
+    default:
+      return undefined
+  }
 }
 
 function parseMarkdownLinkHref(rawHref: string): string {

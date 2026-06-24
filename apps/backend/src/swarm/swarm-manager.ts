@@ -6364,6 +6364,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ok: true,
       absolutePath,
       manifestPath,
+      artifactMarkdown: formatArtifactShortcode(absolutePath),
+      manifestMarkdown: formatArtifactShortcode(manifestPath),
       bytes,
       selector: result.selector,
       serverName: result.serverName,
@@ -10021,6 +10023,10 @@ function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeEx
     resolution.repoRootResources.piSettingsPath,
     ...resolution.legacyExecutableSurfaces.filter((surface) => surface.activeToday).map((surface) => surface.path)
   ].some((pathValue) => Boolean(pathValue && existsSync(pathValue)));
+}
+
+function formatArtifactShortcode(artifactPath: string): string {
+  return `[artifact:${artifactPath}]`;
 }
 
 async function writeUniqueArtifactFile(
