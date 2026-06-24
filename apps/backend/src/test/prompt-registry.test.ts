@@ -45,6 +45,35 @@ describe("FileBackedPromptRegistry", () => {
     );
   });
 
+  it("prefers module-local built-ins over stale resources-dir built-ins", async () => {
+    const root = await mkdtemp(join(tmpdir(), "prompt-registry-test-"));
+    const dataDir = join(root, "data");
+    const repoDir = join(root, "repo");
+    const staleArchetypesDir = join(root, "stale-resources", "apps", "backend", "src", "swarm", "archetypes", "builtins");
+    const staleOperationalDir = join(root, "stale-resources", "apps", "backend", "src", "swarm", "operational", "builtins");
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(repoDir, { recursive: true });
+    await mkdir(staleArchetypesDir, { recursive: true });
+    await mkdir(staleOperationalDir, { recursive: true });
+    await writeFile(join(staleArchetypesDir, "manager.md"), "stale manager prompt\n", "utf8");
+    await writeFile(join(staleOperationalDir, "memory-merge.md"), "stale memory prompt\n", "utf8");
+
+    const registry = new FileBackedPromptRegistry({
+      dataDir,
+      repoDir,
+      builtinArchetypesDir: staleArchetypesDir,
+      builtinOperationalDir: staleOperationalDir
+    });
+
+    await expect(registry.resolve("archetype", "manager")).resolves.toContain(
+      "Normal web/session chat does not need a tool for final replies: just answer normally."
+    );
+    await expect(registry.resolve("archetype", "manager")).resolves.not.toBe("stale manager prompt\n");
+    await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(
+      "You are a memory file editor."
+    );
+  });
+
   it("uses repo archetype overrides over built-ins", async () => {
     const { registry, repoDir } = await createRegistryFixture();
     const repoOverridesDir = join(repoDir, ".swarm", "archetypes");
@@ -56,6 +85,36 @@ describe("FileBackedPromptRegistry", () => {
     await expect(registry.resolve("archetype", "manager")).resolves.toBe("repo manager override");
     await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(
       "You are a memory file editor."
+    );
+  });
+
+  it("preserves custom repo manager overrides even when they were based on the old speak_to_user-only contract", async () => {
+    const { registry, repoDir } = await createRegistryFixture();
+    const repoOverridesDir = join(repoDir, ".swarm", "archetypes");
+    await mkdir(repoOverridesDir, { recursive: true });
+    await writeFile(
+      join(repoOverridesDir, "manager.md"),
+      `You are the manager agent in a multi-agent swarm.
+
+# User-facing output
+User-facing output is allowed only through:
+- \`speak_to_user\` for normal messages
+
+End users only see messages you publish via \`speak_to_user\`.
+Never use plain assistant text for user communication.
+
+Custom project routing instruction must survive.
+`,
+      "utf8",
+    );
+
+    registry.invalidate();
+
+    await expect(registry.resolve("archetype", "manager")).resolves.toContain(
+      "Custom project routing instruction must survive."
+    );
+    await expect(registry.resolve("archetype", "manager")).resolves.toContain(
+      "Never use plain assistant text for user communication."
     );
   });
 

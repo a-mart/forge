@@ -101,6 +101,12 @@ const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
 - Worker reports require explicit same-turn handling. Use normal assistant final text only for inherited direct web/session-transcript user-facing closeouts; use routed delivery (\`speak_to_user\` for protected/non-web/external/proactive/internal user-facing closeouts, \`send_message_to_agent\` for peer/context replies), or delegate follow-up work.
 - Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply.`;
+const MANAGER_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
+- Normal direct web/session-transcript final replies: just answer normally with final assistant text. Do not use \`speak_to_user\` for normal final web replies.
+- Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and unknown/protected worker-report closeouts. Do not use it for normal final web replies.
+- Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender unless explicitly reporting to the end user.
+- Worker reports require explicit same-turn handling. For inherited direct web/session-transcript closeouts, just answer normally; otherwise use routed delivery or delegate follow-up work.
+- Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply.`;
 
 export type ProjectAgentPromptSource =
   | { kind: "project_agent_base"; sourcePath?: string; fallback?: boolean }
@@ -346,6 +352,8 @@ export class SwarmPromptService {
 
     if (projectAgentComposition) {
       prompt = `${prompt.trimEnd()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`;
+    } else if (managerArchetypeId === MANAGER_ARCHETYPE_ID) {
+      prompt = `${prompt.trimEnd()}\n\n${MANAGER_ROUTING_FOOTER}`;
     }
 
     return prompt;

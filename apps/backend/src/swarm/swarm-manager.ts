@@ -4641,6 +4641,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const preparedIdentity = this.prepareSessionIdentity(profileId, options);
+    const shouldApplyBaseSessionSystemPrompt =
+      options?.sessionPurpose !== "agent_creator" && base.sessionSystemPrompt !== undefined;
 
     const sessionDescriptor: AgentDescriptor = {
       agentId: preparedIdentity.sessionAgentId,
@@ -4663,9 +4665,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         preparedIdentity.sessionAgentId,
       ),
       ...(base.archetypeId !== undefined ? { archetypeId: base.archetypeId } : {}),
-      ...(base.sessionSystemPrompt !== undefined
-        ? { sessionSystemPrompt: base.sessionSystemPrompt }
-        : {})
+      ...(shouldApplyBaseSessionSystemPrompt ? { sessionSystemPrompt: base.sessionSystemPrompt } : {})
     };
 
     if (sessionDescriptor.sessionPurpose === "agent_creator") {

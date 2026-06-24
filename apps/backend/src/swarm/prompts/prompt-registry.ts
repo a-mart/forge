@@ -326,18 +326,20 @@ export class BuiltinPromptResolver implements PromptResolver {
   private readonly operationalDirs: string[];
 
   constructor(options: PromptRegistryOptions) {
+    // Prefer module-local builtins because they are colocated with the running backend module.
+    // resourcesDir is a packaged/staged fallback and can point at a stale checkout in worktree runs.
     this.archetypeDirs = dedupePaths([
-      options.builtinArchetypesDir,
       join(SWARM_DIR, "archetypes", "builtins"),
-      join(BACKEND_PACKAGE_DIR, "src", "swarm", "archetypes", "builtins")
+      join(BACKEND_PACKAGE_DIR, "src", "swarm", "archetypes", "builtins"),
+      options.builtinArchetypesDir
     ]);
 
     this.operationalDirs = dedupePaths([
-      options.builtinOperationalDir,
       join(SWARM_DIR, "operational", "builtins"),
       join(BACKEND_PACKAGE_DIR, "src", "swarm", "operational", "builtins"),
       join(SWARM_DIR, "operational"),
-      join(BACKEND_PACKAGE_DIR, "src", "swarm", "operational")
+      join(BACKEND_PACKAGE_DIR, "src", "swarm", "operational"),
+      options.builtinOperationalDir
     ]);
   }
 
