@@ -1817,8 +1817,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
    * calls, stopReason "stop"). Whitespace-only output is always invisible;
    * non-empty direct web session-transcript text is projected only when the
    * backend dispatch marker says assistant_output is allowed. Explicit-routed
-   * sources such as Cortex, collaboration, Telegram, and worker reports still
-   * need a tool/side effect. Drop the trigger and unhandled assistant from
+   * sources such as Cortex, collaboration, Telegram, and non-inherited worker
+   * reports still need a tool/side effect. Drop the trigger and unhandled assistant from
    * in-memory context, then re-dispatch the trigger with a bounded retry budget
    * keyed to the directive-stripped trigger text.
    */

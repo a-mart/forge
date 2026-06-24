@@ -210,6 +210,10 @@ describe("CursorSdkAgentRuntime", () => {
       mcpServers: { forge: { type: "http", url: "http://127.0.0.1:1/mcp" } },
     });
     expect(typeof sendOptions?.onDelta).toBe("function");
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", {
+      type: "message_start",
+      message: { role: "user", content: "hello" },
+    });
     expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_update" }));
     expect(runtime.getCustomEntries(CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE)).toEqual([
       expect.objectContaining({ sdkAgentId: "sdk-agent-1", stateRoot: join(rootDir, "cursor-sdk-state", "worker-1") }),

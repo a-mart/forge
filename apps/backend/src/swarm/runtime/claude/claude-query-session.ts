@@ -586,6 +586,10 @@ export class ClaudeQuerySession {
 
       await this.emitSessionEvent({ type: "agent_start" });
       await this.emitSessionEvent({ type: "turn_start" });
+      await this.emitSessionEvent({
+        type: "message_start",
+        message: { role: "user", content: input.message.text }
+      });
       await this.setInternalStatus("busy");
       this.pushInput(toClaudeUserMessage(input.message, this.sdkSessionId));
     } catch (error) {
