@@ -61,6 +61,27 @@ export function computePdfRenderScale(
   return manualScale
 }
 
+export function computeFitWidthScaleForPages(
+  pageWidths: readonly number[],
+  containerWidth: number,
+  maxScale = PDF_PREVIEW_MAX_RENDER_SCALE,
+  padding = 32,
+): number {
+  const widestPageWidth = pageWidths.reduce((maxWidth, width) => Math.max(maxWidth, width), 0)
+  return computePdfRenderScale(widestPageWidth, containerWidth, 1, true, maxScale, padding)
+}
+
+export function releasePdfPreviewCanvasMemory(canvas: HTMLCanvasElement | null): void {
+  if (!canvas) {
+    return
+  }
+
+  canvas.width = 0
+  canvas.height = 0
+  canvas.style.removeProperty('width')
+  canvas.style.removeProperty('height')
+}
+
 export type SafeCanvasOutput =
   | {
       ok: true
@@ -142,16 +163,9 @@ export type PdfPreviewPageLayout = {
   height: number
 }
 
-export function isPdfPageWithinRenderRange(
-  pageTop: number,
-  pageHeight: number,
-  scrollTop: number,
-  viewportHeight: number,
-  prefetchMargin = 200,
-): boolean {
-  const scrollBottom = scrollTop + viewportHeight
-  const pageBottom = pageTop + pageHeight
-  return pageBottom >= scrollTop - prefetchMargin && pageTop <= scrollBottom + prefetchMargin
+export type PdfPreviewPageMetrics = {
+  width: number
+  height: number
 }
 
 export function computeCurrentPageFromScroll(

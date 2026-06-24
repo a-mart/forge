@@ -23,9 +23,9 @@ const {
     promise: Promise.resolve(),
     cancel: mockRenderCancel,
   }))
-  const mockGetPage = vi.fn(async () => ({
+  const mockGetPage = vi.fn(async (pageNumber: number) => ({
     getViewport: ({ scale }: { scale: number }) => ({
-      width: 200 * scale,
+      width: (pageNumber === 2 ? 400 : 200) * scale,
       height: 280 * scale,
     }),
     render: mockRender,
@@ -64,11 +64,21 @@ import { PdfPreview } from './PdfPreview'
 
 let container: HTMLDivElement
 let root: Root | null = null
-let intersectionObserverCallback: IntersectionObserverCallback | null = null
+const intersectionState = new Map<Element, boolean>()
+const observerCallbacks = new Map<Element, IntersectionObserverCallback>()
+
+function notifyIntersection(element: Element) {
+  observerCallbacks.get(element)?.(
+    [{ isIntersecting: intersectionState.get(element) ?? false, target: element } as IntersectionObserverEntry],
+    {} as IntersectionObserver,
+  )
+}
 
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  intersectionState.clear()
+  observerCallbacks.clear()
   class ResizeObserverMock {
     constructor(private callback: ResizeObserverCallback) {}
 
@@ -91,19 +101,28 @@ beforeEach(() => {
   }
   vi.stubGlobal('ResizeObserver', ResizeObserverMock)
   class IntersectionObserverMock {
-    constructor(callback: IntersectionObserverCallback) {
-      intersectionObserverCallback = callback
-    }
+    constructor(private callback: IntersectionObserverCallback) {}
 
     observe(element: Element) {
-      intersectionObserverCallback?.(
-        [{ isIntersecting: true, target: element } as IntersectionObserverEntry],
-        this as unknown as IntersectionObserver,
-      )
+      observerCallbacks.set(element, this.callback)
+      const pageNumber = (element as HTMLElement).dataset.pageNumber
+      if (!intersectionState.has(element)) {
+        intersectionState.set(element, pageNumber === '1')
+      }
+      notifyIntersection(element)
     }
 
-    disconnect() {}
-    unobserve() {}
+    disconnect() {
+      for (const [element, callback] of observerCallbacks.entries()) {
+        if (callback === this.callback) {
+          observerCallbacks.delete(element)
+        }
+      }
+    }
+    unobserve(element: Element) {
+      intersectionState.delete(element)
+      observerCallbacks.delete(element)
+    }
   }
   vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
@@ -117,9 +136,9 @@ beforeEach(() => {
   mockGetDocument.mockClear()
   mockPdfDestroy.mockClear()
   mockLoadingDestroy.mockClear()
-  mockGetPage.mockImplementation(async () => ({
+  mockGetPage.mockImplementation(async (pageNumber: number) => ({
     getViewport: ({ scale }: { scale: number }) => ({
-      width: 200 * scale,
+      width: (pageNumber === 2 ? 400 : 200) * scale,
       height: 280 * scale,
     }),
     render: mockRender,
@@ -142,7 +161,8 @@ afterEach(async () => {
   }
   root = null
   container.remove()
-  intersectionObserverCallback = null
+  intersectionState.clear()
+  observerCallbacks.clear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -161,6 +181,20 @@ async function renderPreview(worktreeId?: string | null) {
       )
     })
     await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+async function setPageIntersection(pageNumber: number, intersecting: boolean) {
+  const page = container.querySelector(`[data-page-number="${pageNumber}"]`)
+  if (!page) {
+    throw new Error(`Missing page wrapper for page ${pageNumber}`)
+  }
+
+  intersectionState.set(page, intersecting)
+  await act(async () => {
+    notifyIntersection(page)
     await Promise.resolve()
     await Promise.resolve()
   })
@@ -203,7 +237,7 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(container.querySelector('[data-testid="pdf-preview-pages"]')).not.toBeNull()
     expect(container.querySelectorAll('[data-page-number]')).toHaveLength(3)
     expect(container.querySelector('[data-testid="pdf-preview-viewport"]')).not.toBeNull()
-    expect(mockRender).toHaveBeenCalled()
+    expect(mockRender).toHaveBeenCalledTimes(1)
   })
 
   it('keeps controls visible with sticky layout classes', async () => {
@@ -217,6 +251,56 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(preview?.className).toContain('min-h-0')
     expect(controls?.className).toContain('shrink-0')
     expect(viewport?.className).toContain('overflow-y-auto')
+    expect(viewport?.className).toContain('overflow-x-hidden')
+  })
+
+  it('enables horizontal scrolling during manual zoom', async () => {
+    await renderPreview()
+
+    const zoomInButton = container.querySelector('[aria-label="Zoom in"]') as HTMLButtonElement
+    await act(async () => {
+      zoomInButton.click()
+      await Promise.resolve()
+    })
+
+    const viewport = container.querySelector('[data-testid="pdf-preview-viewport"]')
+    expect(viewport?.className).toContain('overflow-x-auto')
+    expect(viewport?.className).not.toContain('overflow-x-hidden')
+  })
+
+  it('does not render offscreen pages until they intersect', async () => {
+    await renderPreview()
+
+    expect(mockRender).toHaveBeenCalledTimes(1)
+
+    await setPageIntersection(2, true)
+    expect(mockRender).toHaveBeenCalledTimes(2)
+    expect(mockGetPage).toHaveBeenCalledWith(2)
+  })
+
+  it('releases canvas memory when a page leaves the render range', async () => {
+    await renderPreview()
+
+    const canvas = container.querySelector(
+      '[data-testid="pdf-preview-page-canvas-1"]',
+    ) as HTMLCanvasElement
+    expect(canvas.width).toBeGreaterThan(0)
+
+    await setPageIntersection(1, false)
+
+    expect(canvas.width).toBe(0)
+    expect(canvas.height).toBe(0)
+    expect(canvas.style.width).toBe('')
+  })
+
+  it('re-renders a page after it re-enters the render range', async () => {
+    await renderPreview()
+    expect(mockRender).toHaveBeenCalledTimes(1)
+
+    await setPageIntersection(1, false)
+    await setPageIntersection(1, true)
+
+    expect(mockRender).toHaveBeenCalledTimes(2)
   })
 
   it('scrolls to adjacent pages when using page navigation buttons', async () => {

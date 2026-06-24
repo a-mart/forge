@@ -1,17 +1,20 @@
+/** @vitest-environment jsdom */
+
 import { describe, expect, it } from 'vitest'
 import {
   buildPdfRawUrl,
   clampPageNumber,
   computeCurrentPageFromScroll,
   computeFitWidthScale,
+  computeFitWidthScaleForPages,
   computePdfRenderScale,
   computeSafeCanvasOutput,
   formatPdfPreviewError,
   isPdfPreviewRenderSizeError,
-  isPdfPageWithinRenderRange,
   PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
   PDF_PREVIEW_MAX_RENDER_SCALE,
   PdfPreviewRenderSizeError,
+  releasePdfPreviewCanvasMemory,
 } from './pdf-preview-utils'
 
 describe('buildPdfRawUrl', () => {
@@ -54,6 +57,15 @@ describe('computePdfRenderScale', () => {
 
   it('uses manual scale when fit width is disabled', () => {
     expect(computePdfRenderScale(400, 432, 2, false)).toBe(2)
+  })
+})
+
+describe('computeFitWidthScaleForPages', () => {
+  it('uses the widest page width when computing fit-width scale', () => {
+    expect(computeFitWidthScaleForPages([400, 800, 500], 832, PDF_PREVIEW_MAX_RENDER_SCALE)).toBe(1)
+    expect(computeFitWidthScaleForPages([400, 1200, 500], 832, PDF_PREVIEW_MAX_RENDER_SCALE)).toBeCloseTo(
+      800 / 1200,
+    )
   })
 })
 
@@ -116,10 +128,20 @@ describe('clampPageNumber', () => {
   })
 })
 
-describe('isPdfPageWithinRenderRange', () => {
-  it('includes pages near the visible viewport with prefetch margin', () => {
-    expect(isPdfPageWithinRenderRange(500, 280, 0, 600, 200)).toBe(true)
-    expect(isPdfPageWithinRenderRange(900, 280, 0, 600, 50)).toBe(false)
+describe('releasePdfPreviewCanvasMemory', () => {
+  it('clears canvas bitmap memory and inline dimensions', () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 800
+    canvas.height = 1100
+    canvas.style.width = '800px'
+    canvas.style.height = '1100px'
+
+    releasePdfPreviewCanvasMemory(canvas)
+
+    expect(canvas.width).toBe(0)
+    expect(canvas.height).toBe(0)
+    expect(canvas.style.width).toBe('')
+    expect(canvas.style.height).toBe('')
   })
 })
 
