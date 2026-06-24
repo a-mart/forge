@@ -4,6 +4,10 @@ import { createElement, act } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE } from './pdf-preview-utils'
+import * as pdfPreviewUtils from './pdf-preview-utils'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const {
   mockRenderCancel,
@@ -65,7 +69,19 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   class ResizeObserverMock {
-    observe() {}
+    constructor(private callback: ResizeObserverCallback) {}
+
+    observe(element: Element) {
+      Object.defineProperty(element, 'clientWidth', {
+        configurable: true,
+        value: 800,
+      })
+      this.callback(
+        [{ target: element } as ResizeObserverEntry],
+        this as unknown as ResizeObserver,
+      )
+    }
+
     disconnect() {}
   }
   vi.stubGlobal('ResizeObserver', ResizeObserverMock)
@@ -98,26 +114,29 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (root) {
-    flushSync(() => root?.unmount())
+    await act(async () => {
+      flushSync(() => root?.unmount())
+    })
   }
   root = null
   container.remove()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
 async function renderPreview(worktreeId?: string | null) {
   root ??= createRoot(container)
-  flushSync(() => {
-    root?.render(
-      createElement(PdfPreview, {
-        wsUrl: 'ws://127.0.0.1:47187',
-        filePath: 'docs/spec.pdf',
-        agentId: 'session-a',
-        worktreeId,
-      }),
-    )
-  })
   await act(async () => {
+    flushSync(() => {
+      root?.render(
+        createElement(PdfPreview, {
+          wsUrl: 'ws://127.0.0.1:47187',
+          filePath: 'docs/spec.pdf',
+          agentId: 'session-a',
+          worktreeId,
+        }),
+      )
+    })
     await Promise.resolve()
     await Promise.resolve()
     await Promise.resolve()
@@ -190,15 +209,33 @@ describe('PdfPreview PDF.js rendering', () => {
 
     expect(container.textContent).toContain('Failed to load PDF')
     expect(container.textContent).toContain('Network failure')
+    const openRaw = container.querySelector('[data-testid="pdf-preview-open-raw"]') as HTMLAnchorElement
+    expect(openRaw.href).toContain('/api/files/raw?')
+    expect(openRaw.getAttribute('target')).toBeNull()
+  })
+
+  it('shows a friendly error when canvas output exceeds safe limits', async () => {
+    vi.spyOn(pdfPreviewUtils, 'computeSafeCanvasOutput').mockReturnValueOnce({
+      ok: false,
+      message: PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
+    })
+
+    await renderPreview()
+
+    expect(container.textContent).toContain('Failed to load PDF')
+    expect(container.textContent).toContain(PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE)
+    expect(mockRender).not.toHaveBeenCalled()
   })
 
   it('cancels render tasks on unmount', async () => {
     await renderPreview()
     expect(mockRender).toHaveBeenCalled()
 
-    flushSync(() => root?.unmount())
-    root = null
-    await Promise.resolve()
+    await act(async () => {
+      flushSync(() => root?.unmount())
+      root = null
+      await Promise.resolve()
+    })
 
     expect(mockRenderCancel).toHaveBeenCalled()
     expect(mockPdfDestroy).toHaveBeenCalled()

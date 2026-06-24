@@ -9,13 +9,16 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import '@/styles/file-browser.css'
 import { pdfjsLib, type PDFDocumentProxy } from './pdfjs-preview-lib'
 import {
   clampPageNumber,
-  computeFitWidthScale,
+  computePdfRenderScale,
+  computeSafeCanvasOutput,
   formatPdfPreviewError,
+  PDF_PREVIEW_MAX_RENDER_SCALE,
 } from './pdf-preview-utils'
 
 export function buildPdfRawUrl(
@@ -40,7 +43,7 @@ interface PdfPreviewProps {
 
 const ZOOM_STEP = 1.25
 const MIN_MANUAL_SCALE = 0.25
-const MAX_MANUAL_SCALE = 4
+const MAX_MANUAL_SCALE = PDF_PREVIEW_MAX_RENDER_SCALE
 
 export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfPreviewProps) {
   const pdfUrl = useMemo(
@@ -160,9 +163,13 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         }
 
         const baseViewport = page.getViewport({ scale: 1 })
-        const renderScale = fitWidth
-          ? computeFitWidthScale(baseViewport.width, viewportWidth)
-          : manualScale
+        const renderScale = computePdfRenderScale(
+          baseViewport.width,
+          viewportWidth,
+          manualScale,
+          fitWidth,
+          MAX_MANUAL_SCALE,
+        )
         const viewport = page.getViewport({ scale: renderScale })
         const canvas = canvasRef.current
         if (!canvas || cancelled) {
@@ -174,13 +181,21 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
           throw new Error('Canvas rendering is unavailable.')
         }
 
-        const outputScale = window.devicePixelRatio || 1
-        canvas.width = Math.floor(viewport.width * outputScale)
-        canvas.height = Math.floor(viewport.height * outputScale)
+        const safeCanvas = computeSafeCanvasOutput(
+          viewport.width,
+          viewport.height,
+          window.devicePixelRatio || 1,
+        )
+        if (!safeCanvas.ok) {
+          throw new Error(safeCanvas.message)
+        }
+
+        canvas.width = safeCanvas.canvasWidth
+        canvas.height = safeCanvas.canvasHeight
         canvas.style.width = `${viewport.width}px`
         canvas.style.height = `${viewport.height}px`
 
-        context.setTransform(outputScale, 0, 0, outputScale, 0, 0)
+        context.setTransform(safeCanvas.outputScale, 0, 0, safeCanvas.outputScale, 0, 0)
         context.clearRect(0, 0, viewport.width, viewport.height)
 
         const renderTask = page.render({
@@ -254,10 +269,19 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
       >
         <p className="text-sm text-destructive/80">Failed to load PDF</p>
         <p className="max-w-md text-center text-xs opacity-70">{errorMessage}</p>
-        <Button type="button" size="sm" variant="outline" onClick={handleReload}>
-          <RotateCw className="size-3.5" aria-hidden="true" />
-          Reload
-        </Button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={handleReload}>
+            <RotateCw className="size-3.5" aria-hidden="true" />
+            Reload
+          </Button>
+          <a
+            href={pdfUrl}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
+            data-testid="pdf-preview-open-raw"
+          >
+            Open PDF
+          </a>
+        </div>
       </div>
     )
   }

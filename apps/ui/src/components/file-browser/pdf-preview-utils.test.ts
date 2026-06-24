@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   clampPageNumber,
   computeFitWidthScale,
+  computePdfRenderScale,
+  computeSafeCanvasOutput,
   formatPdfPreviewError,
+  PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
+  PDF_PREVIEW_MAX_RENDER_SCALE,
 } from './pdf-preview-utils'
 
 describe('formatPdfPreviewError', () => {
@@ -20,6 +24,59 @@ describe('formatPdfPreviewError', () => {
 describe('computeFitWidthScale', () => {
   it('fits page width into the available container width', () => {
     expect(computeFitWidthScale(400, 432, 32)).toBe(1)
+  })
+})
+
+describe('computePdfRenderScale', () => {
+  it('caps fit-width scale to the manual zoom maximum', () => {
+    expect(computePdfRenderScale(10, 1000, 1, true, PDF_PREVIEW_MAX_RENDER_SCALE)).toBe(4)
+  })
+
+  it('uses manual scale when fit width is disabled', () => {
+    expect(computePdfRenderScale(400, 432, 2, false)).toBe(2)
+  })
+})
+
+describe('computeSafeCanvasOutput', () => {
+  it('preserves device pixel ratio for normal page sizes', () => {
+    expect(
+      computeSafeCanvasOutput(800, 1100, 2, {
+        maxDimension: 8192,
+        maxPixels: 16_777_216,
+      }),
+    ).toEqual({
+      ok: true,
+      outputScale: 2,
+      canvasWidth: 1600,
+      canvasHeight: 2200,
+    })
+  })
+
+  it('reduces output scale when canvas dimensions exceed limits', () => {
+    const result = computeSafeCanvasOutput(5000, 7000, 2, {
+      maxDimension: 8192,
+      maxPixels: 16_777_216,
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.canvasWidth).toBeLessThanOrEqual(8192)
+      expect(result.canvasHeight).toBeLessThanOrEqual(8192)
+      expect(result.outputScale).toBeLessThan(2)
+    }
+  })
+
+  it('returns a friendly error when the page cannot be rendered safely', () => {
+    expect(
+      computeSafeCanvasOutput(20_000, 30_000, 4, {
+        maxDimension: 8192,
+        maxPixels: 16_777_216,
+        minOutputScale: 0.25,
+      }),
+    ).toEqual({
+      ok: false,
+      message: PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
+    })
   })
 })
 
