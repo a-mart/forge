@@ -5,6 +5,10 @@ const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
 const SWARM_FILE_PATTERN = /swarm-file:\/\/[^\s)>\]"']+/gi
 const VSCODE_FILE_PATTERN = /vscode(?:-insiders)?:\/\/file\/[^\s)>\]"']+/gi
 const MARKDOWN_LINK_PATTERN = /\[([^\]\n]+)\]\(([^)]+)\)/g
+const CODEX_PLUGIN_EXPORT_TOOL_NAME = 'export_scoped_codex_plugin_result'
+const EXPLICIT_EXPORT_ARTIFACT_FIELDS = ['artifactMarkdown', 'manifestMarkdown'] as const
+const EXPLICIT_EXPORT_ARTIFACT_ARRAY_FIELDS = ['artifactLinks'] as const
+const EXPLICIT_EXPORT_ARTIFACT_LINK_FIELDS = ['artifactMarkdown', 'manifestMarkdown', 'markdown', 'href'] as const
 
 /**
  * Collect all unique artifact references from a list of conversation entries.
@@ -15,51 +19,13 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
 
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
-    const artifactText = getArtifactCandidateText(message)
-    if (!artifactText) continue
+    const artifactTexts = getArtifactCandidateTexts(message)
+    if (artifactTexts.length === 0) continue
 
     const sourceAgentId = getArtifactSourceAgentId(message)
 
-    // Extract from [artifact:path] shortcodes
-    for (const match of artifactText.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
-      const rawPath = match[1]?.trim()
-      if (!rawPath) continue
-      const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId })
-      if (ref && !seen.has(ref.path)) {
-        seen.set(ref.path, ref)
-      }
-    }
-
-    // Extract swarm-file:// links
-    for (const match of artifactText.matchAll(SWARM_FILE_PATTERN)) {
-      const ref = parseArtifactReference(match[0], { sourceAgentId })
-      if (ref && !seen.has(ref.path)) {
-        seen.set(ref.path, ref)
-      }
-    }
-
-    // Extract vscode:// / vscode-insiders:// links
-    for (const match of artifactText.matchAll(VSCODE_FILE_PATTERN)) {
-      const ref = parseArtifactReference(match[0], { sourceAgentId })
-      if (ref && !seen.has(ref.path)) {
-        seen.set(ref.path, ref)
-      }
-    }
-
-    // Extract from markdown links [text](href)
-    for (const match of artifactText.matchAll(MARKDOWN_LINK_PATTERN)) {
-      const matchIndex = match.index ?? 0
-      if (matchIndex > 0 && artifactText[matchIndex - 1] === '!') {
-        continue
-      }
-
-      const linkText = match[1]?.trim()
-      const href = parseMarkdownLinkHref(match[2] ?? '')
-      if (!href) continue
-      const ref = parseArtifactReference(href, { title: linkText, sourceAgentId })
-      if (ref && !seen.has(ref.path)) {
-        seen.set(ref.path, ref)
-      }
+    for (const artifactText of artifactTexts) {
+      collectArtifactReferencesFromText(artifactText, sourceAgentId, seen)
     }
   }
 
@@ -90,17 +56,124 @@ export function categorizeArtifact(fileName: string): ArtifactCategory {
   return 'other'
 }
 
-function getArtifactCandidateText(message: ConversationEntry): string | null {
+function collectArtifactReferencesFromText(
+  artifactText: string,
+  sourceAgentId: string | undefined,
+  seen: Map<string, ArtifactReference>,
+): void {
+  // Extract from [artifact:path] shortcodes
+  for (const match of artifactText.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
+    const rawPath = match[1]?.trim()
+    if (!rawPath) continue
+    const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId })
+    if (ref && !seen.has(ref.path)) {
+      seen.set(ref.path, ref)
+    }
+  }
+
+  // Extract swarm-file:// links
+  for (const match of artifactText.matchAll(SWARM_FILE_PATTERN)) {
+    const ref = parseArtifactReference(match[0], { sourceAgentId })
+    if (ref && !seen.has(ref.path)) {
+      seen.set(ref.path, ref)
+    }
+  }
+
+  // Extract vscode:// / vscode-insiders:// links
+  for (const match of artifactText.matchAll(VSCODE_FILE_PATTERN)) {
+    const ref = parseArtifactReference(match[0], { sourceAgentId })
+    if (ref && !seen.has(ref.path)) {
+      seen.set(ref.path, ref)
+    }
+  }
+
+  // Extract from markdown links [text](href)
+  for (const match of artifactText.matchAll(MARKDOWN_LINK_PATTERN)) {
+    const matchIndex = match.index ?? 0
+    if (matchIndex > 0 && artifactText[matchIndex - 1] === '!') {
+      continue
+    }
+
+    const linkText = match[1]?.trim()
+    const href = parseMarkdownLinkHref(match[2] ?? '')
+    if (!href) continue
+    const ref = parseArtifactReference(href, { title: linkText, sourceAgentId })
+    if (ref && !seen.has(ref.path)) {
+      seen.set(ref.path, ref)
+    }
+  }
+}
+
+function getArtifactCandidateTexts(message: ConversationEntry): string[] {
   switch (message.type) {
     case 'conversation_message':
-      return message.role === 'user' ? null : message.text
+      return message.role === 'user' || !message.text ? [] : [message.text]
     case 'agent_message':
-      return message.text
+      return message.text ? [message.text] : []
     case 'agent_tool_call':
-      return message.kind === 'tool_execution_end' ? message.text : null
+      return getArtifactCandidateTextsFromToolCall(message)
     default:
-      return null
+      return []
   }
+}
+
+function getArtifactCandidateTextsFromToolCall(
+  message: Extract<ConversationEntry, { type: 'agent_tool_call' }>,
+): string[] {
+  if (message.kind !== 'tool_execution_end' || message.toolName !== CODEX_PLUGIN_EXPORT_TOOL_NAME) {
+    return []
+  }
+
+  return extractExplicitArtifactTextsFromExportResult(message.text)
+}
+
+function extractExplicitArtifactTextsFromExportResult(text: string): string[] {
+  const parsed = parseJsonObject(text)
+  if (!parsed) {
+    return []
+  }
+
+  const artifactTexts: string[] = []
+  for (const field of EXPLICIT_EXPORT_ARTIFACT_FIELDS) {
+    const value = parsed[field]
+    if (typeof value === 'string' && value.trim()) {
+      artifactTexts.push(value)
+    }
+  }
+
+  for (const field of EXPLICIT_EXPORT_ARTIFACT_ARRAY_FIELDS) {
+    const value = parsed[field]
+    if (!Array.isArray(value)) {
+      continue
+    }
+
+    artifactTexts.push(...extractExplicitArtifactTextsFromArray(value))
+  }
+
+  return artifactTexts
+}
+
+function extractExplicitArtifactTextsFromArray(values: unknown[]): string[] {
+  const artifactTexts: string[] = []
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      artifactTexts.push(value)
+      continue
+    }
+
+    if (!isRecord(value)) {
+      continue
+    }
+
+    for (const field of EXPLICIT_EXPORT_ARTIFACT_LINK_FIELDS) {
+      const linkValue = value[field]
+      if (typeof linkValue === 'string' && linkValue.trim()) {
+        artifactTexts.push(linkValue)
+      }
+    }
+  }
+
+  return artifactTexts
 }
 
 function getArtifactSourceAgentId(message: ConversationEntry): string | undefined {
@@ -132,4 +205,17 @@ function parseMarkdownLinkHref(rawHref: string): string {
   }
 
   return trimmedHref
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isRecord(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
