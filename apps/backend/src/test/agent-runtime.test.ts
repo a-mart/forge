@@ -1201,9 +1201,17 @@ describe('AgentRuntime', () => {
       },
     })
     session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
-    await waitForCondition(() => runtimeErrors.length === 1)
+    await waitForCondition(() => runtimeErrors.length === 2)
 
     expect(runtimeErrors[0]).toMatchObject({
+      phase: 'compaction',
+      message: 'Automatic compaction started',
+      details: expect.objectContaining({
+        recoveryStage: 'auto_compaction_started',
+        userFacingMessage: 'Context is getting full — compacting automatically.',
+      }),
+    })
+    expect(runtimeErrors[1]).toMatchObject({
       phase: 'compaction',
       message: 'Configured compaction model is unavailable in the active runtime registry for worker',
       details: expect.objectContaining({
@@ -1216,9 +1224,17 @@ describe('AgentRuntime', () => {
     runtimeErrors.length = 0
     session.emit({ type: 'compaction_start', reason: 'threshold' })
     session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
-    await waitForCondition(() => runtimeErrors.length === 1)
+    await waitForCondition(() => runtimeErrors.length === 2)
 
     expect(runtimeErrors[0]).toMatchObject({
+      phase: 'compaction',
+      message: 'Automatic compaction started',
+      details: expect.objectContaining({
+        recoveryStage: 'auto_compaction_started',
+        userFacingMessage: 'Context is getting full — compacting automatically.',
+      }),
+    })
+    expect(runtimeErrors[1]).toMatchObject({
       phase: 'compaction',
       message: 'Automatic compaction was cancelled',
       details: expect.objectContaining({
@@ -1227,6 +1243,50 @@ describe('AgentRuntime', () => {
         userFacingMessage: 'Automatic compaction was cancelled.',
       }),
     })
+  })
+
+  it('uses timeout-specific automatic compaction copy when the runtime reports an auto-compaction timeout', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: Array<Record<string, any>> = []
+    session.compact = async (): Promise<never> => {
+      throw new Error('retry compaction failed')
+    }
+
+    new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => {
+          runtimeErrors.push(error as Record<string, any>)
+        },
+      },
+    })
+
+    session.emit({ type: 'compaction_start', reason: 'threshold' })
+    session.emit({
+      type: 'compaction_end',
+      reason: 'threshold',
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: 'threshold compaction timed out after 300000ms',
+    })
+
+    await waitForCondition(() => runtimeErrors.some(
+      (entry) => entry.details?.userFacingMessage === 'Automatic compaction timed out; context was not reduced.',
+    ))
+
+    expect(runtimeErrors).toContainEqual(
+      expect.objectContaining({
+        phase: 'compaction',
+        message: 'threshold compaction timed out after 300000ms',
+        details: expect.objectContaining({
+          recoveryStage: 'auto_compaction_failed',
+          userFacingMessage: 'Automatic compaction timed out; context was not reduced.',
+        }),
+      }),
+    )
   })
 
   it('does not inherit stale Forge compaction failures from an earlier runtime scope', async () => {
@@ -1291,9 +1351,17 @@ describe('AgentRuntime', () => {
 
     session.emit({ type: 'compaction_start', reason: 'threshold' })
     session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
-    await waitForCondition(() => runtimeErrors.length === 1)
+    await waitForCondition(() => runtimeErrors.length === 2)
 
     expect(runtimeErrors[0]).toMatchObject({
+      phase: 'compaction',
+      message: 'Automatic compaction started',
+      details: expect.objectContaining({
+        recoveryStage: 'auto_compaction_started',
+        userFacingMessage: 'Context is getting full — compacting automatically.',
+      }),
+    })
+    expect(runtimeErrors[1]).toMatchObject({
       phase: 'compaction',
       message: 'Automatic compaction was cancelled',
       details: expect.objectContaining({

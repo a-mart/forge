@@ -985,6 +985,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
       if (!this.isContextRecoveryActive()) {
         this.beginAutoCompactionRecovery();
       }
+      await this.reportRuntimeError({
+        phase: "compaction",
+        message: "Automatic compaction started",
+        details: {
+          recoveryStage: "auto_compaction_started",
+          compactionReason: event.reason,
+          userFacingMessage: "Context is getting full — compacting automatically."
+        }
+      });
       return;
     }
 
@@ -1083,6 +1092,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
       handoffFilePath
     });
 
+    const willPrepareHandoff = triggeringUsage.tokens < hardThresholdTokens;
+
     await this.reportRuntimeError({
       phase: "context_guard",
       message: "Context limit approaching — running intelligent handoff before compaction",
@@ -1090,7 +1101,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
         recoveryStage: "guard_started",
         contextTokens: triggeringUsage.tokens,
         contextWindow: triggeringUsage.contextWindow,
-        contextPercent: triggeringUsage.percent
+        contextPercent: triggeringUsage.percent,
+        userFacingMessage: willPrepareHandoff
+          ? "Context is getting full — preparing handoff before automatic compaction."
+          : "Context limit reached — recovering now."
       }
     });
 
@@ -1228,7 +1242,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
           handoffWritten: details.handoffWritten,
           contextTokens: details.contextTokens,
           contextWindow: details.contextWindow,
-          compactionEntryId: entry.id ?? entry.key
+          compactionEntryId: entry.id ?? entry.key,
+          userFacingMessage: "Context recovered and compacted."
         }
       });
     }
@@ -1321,7 +1336,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
       phase: "context_guard",
       message: normalized.message,
       stack: normalized.stack,
-      details: mergedDetails
+      details: {
+        ...mergedDetails,
+        userFacingMessage:
+          typeof mergedDetails.userFacingMessage === "string"
+            ? mergedDetails.userFacingMessage
+            : buildAutomaticCompactionFailureMessage(normalized.message)
+      }
     });
   }
 
@@ -1763,7 +1784,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         message: "Context automatically compacted",
         details: {
           recoveryStage: "auto_compaction_succeeded",
-          compactionReason
+          compactionReason,
+          userFacingMessage: "Automatic compaction completed."
         }
       });
       this.latestAutoCompactionReason = undefined;
@@ -1806,7 +1828,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         message: autoCompactionError,
         details: {
           ...baseDetails,
-          recoveryStage: "auto_compaction_failed"
+          recoveryStage: "auto_compaction_failed",
+          userFacingMessage: buildAutomaticCompactionFailureMessage(autoCompactionError)
         }
       });
 
@@ -2230,6 +2253,12 @@ function getForgeCompactionFailureDetails(error: unknown): Record<string, unknow
     return {};
   }
   return details as Record<string, unknown>;
+}
+
+function buildAutomaticCompactionFailureMessage(message: string): string {
+  return /\btimeout\b|\btimed out\b/i.test(message)
+    ? "Automatic compaction timed out; context was not reduced."
+    : `Automatic compaction failed: ${message}`;
 }
 
 type TimeoutOptions = {

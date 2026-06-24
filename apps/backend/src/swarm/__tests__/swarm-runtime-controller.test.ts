@@ -942,7 +942,10 @@ describe("SwarmRuntimeController", () => {
     await controller.handleRuntimeError(token, manager.agentId, {
       phase: "compaction",
       message: "Context compacted by context guard",
-      details: { recoveryStage: "context_guard_compaction_succeeded" }
+      details: {
+        recoveryStage: "context_guard_compaction_succeeded",
+        userFacingMessage: "Context recovered and compacted."
+      }
     });
 
     expect(host.incrementSessionCompactionCount).toHaveBeenCalledWith(
@@ -954,7 +957,7 @@ describe("SwarmRuntimeController", () => {
     expect(emitConversationMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         role: "system",
-        text: "📋 Context compacted by context guard."
+        text: "Context recovered and compacted."
       })
     );
   });

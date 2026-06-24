@@ -5580,7 +5580,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         const text =
           runtime.runtimeType === "claude" && result.reason === "claude_runtime_below_compaction_threshold"
             ? "Smart compaction skipped because context is already below the Claude compaction threshold."
-            : `Smart compaction finished but context was not reduced (${result.reason}).`;
+            : "Smart compaction finished, but context was not reduced.";
         this.emitConversationMessage({
           type: "conversation_message",
           agentId,
@@ -5607,7 +5607,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         type: "conversation_message",
         agentId,
         role: "system",
-        text: `Smart compaction failed: ${message}`,
+        text: /\btimeout\b|\btimed out\b/i.test(message)
+          ? "Smart compaction timed out."
+          : `Smart compaction failed: ${message}`,
         timestamp: this.now(),
         source: "system",
         sourceContext
