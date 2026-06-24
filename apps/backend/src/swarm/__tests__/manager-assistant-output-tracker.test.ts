@@ -125,7 +125,26 @@ describe("ManagerAssistantOutputTracker", () => {
     expect(emitted[0].source).toBe("assistant_output");
   });
 
-  it("rejects empty, error, aborted, open-tool, and tool-block assistant messages", () => {
+  it("projects text that accompanies a present_choices tool call", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Pick the next step.", {
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Pick the next step." },
+        { type: "toolCall", name: "present_choices", id: "choice-1", arguments: { questions: [] } },
+      ],
+    }));
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} });
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_end", toolName: "present_choices", toolCallId: "choice-1", isError: false });
+    tracker.handleRuntimeEvent("manager-1", { type: "turn_end", toolResults: [] });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ text: "Pick the next step.", source: "assistant_output" });
+  });
+
+  it("rejects empty, error, aborted, open-tool, and non-choice tool-block assistant messages", () => {
     const cases = [
       assistantMessageEnd("   "),
       assistantMessageEnd("failed", { stopReason: "error" }),

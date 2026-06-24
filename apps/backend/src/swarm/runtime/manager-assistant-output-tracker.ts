@@ -24,6 +24,7 @@ export type AssistantOutputTarget =
 interface AssistantOutputCandidate {
   text: string;
   sourceContext: MessageSourceContext;
+  preserveThroughToolName?: string;
 }
 
 interface ActiveManagerAssistantOutputTurn {
@@ -75,7 +76,9 @@ export class ManagerAssistantOutputTracker {
     switch (event.type) {
       case "tool_execution_start":
         activeTurn.openToolCallIds.add(event.toolCallId);
-        activeTurn.candidate = undefined;
+        if (activeTurn.candidate?.preserveThroughToolName !== event.toolName) {
+          activeTurn.candidate = undefined;
+        }
         break;
 
       case "tool_execution_end":
@@ -119,7 +122,10 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    if (messageContainsToolBlocks(event.message)) {
+    const toolBlocks = getToolLikeMessageBlocks(event.message);
+    const onlyPresentChoicesToolBlocks =
+      toolBlocks.length > 0 && toolBlocks.every((block) => readToolBlockName(block) === "present_choices");
+    if (toolBlocks.length > 0 && !onlyPresentChoicesToolBlocks) {
       return;
     }
 
@@ -131,6 +137,7 @@ export class ManagerAssistantOutputTracker {
     activeTurn.candidate = {
       text,
       sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
+      ...(onlyPresentChoicesToolBlocks ? { preserveThroughToolName: "present_choices" } : {}),
     };
   }
 
@@ -168,17 +175,17 @@ function messageHasIneligibleStopOrError(message: unknown): boolean {
   );
 }
 
-function messageContainsToolBlocks(message: unknown): boolean {
+function getToolLikeMessageBlocks(message: unknown): Array<Record<string, unknown>> {
   if (!message || typeof message !== "object") {
-    return false;
+    return [];
   }
 
   const content = (message as { content?: unknown }).content;
   if (!Array.isArray(content)) {
-    return false;
+    return [];
   }
 
-  return content.some((block) => {
+  return content.filter((block): block is Record<string, unknown> => {
     if (!block || typeof block !== "object") {
       return false;
     }
@@ -193,4 +200,9 @@ function messageContainsToolBlocks(message: unknown): boolean {
       (typeof maybeBlock.toolCallId === "string" && maybeBlock.toolCallId.trim().length > 0)
     );
   });
+}
+
+function readToolBlockName(block: Record<string, unknown>): string | undefined {
+  const name = block.name ?? block.toolName;
+  return typeof name === "string" ? name : undefined;
 }

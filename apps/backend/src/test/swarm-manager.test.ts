@@ -1023,6 +1023,43 @@ describe('SwarmManager', () => {
     ])
   })
 
+  it('projects inherited status-completed worker closeout when provider emits only user message_end for the report turn', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('continue after restart')
+    const delegationRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof delegationRuntimeMessage).toBe('string')
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_start' })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'user', content: delegationRuntimeMessage },
+    })
+    const worker = await manager.spawnAgent('manager', { agentId: 'Message End Worker', initialMessage: 'Continue delegated work.' })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: completed\nsummary: delegated work finished', 'followUp')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(reportRuntimeMessage).toContain('WORKER REPORT: status: completed')
+    expect(reportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_start' })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'user', content: reportRuntimeMessage },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Clean reset is done.', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Clean reset is done.',
+    ])
+  })
+
   it('matches provider-selected queued turns by runtime message instead of FIFO order', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

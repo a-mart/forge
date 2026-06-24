@@ -559,7 +559,7 @@ const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 // model that `SYSTEM:` messages are non-actionable context, which is the wrong
 // frame for a final report that requires closing the loop with the user.
 const WORKER_REPORT_MESSAGE_PREFIX = "WORKER REPORT: ";
-const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked)\b/i;
+const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked|completed)\b/i;
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this specific project/profile.
 
 Cortex may already have captured durable cross-project user defaults such as preferred name, technical level, and response preferences.
@@ -5110,13 +5110,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
       origin
     );
-    const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage({
+    const assistantOutputInput = {
       sender,
       target,
       modelMessage,
+      rawMessage: message,
       workerReportSourceAgentId: options?.workerReportSourceAgentId,
-    });
-    if (target.role === "manager" && isWorkerReportRuntimeMessage(modelMessage)) {
+    };
+    const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage(assistantOutputInput);
+    const isAssistantOutputEligibleWorkerReport = this.isAssistantOutputEligibleWorkerReportMessage(assistantOutputInput);
+    if (target.role === "manager" && isAssistantOutputEligibleWorkerReport) {
       modelMessage = appendAssistantOutputTargetMetadataToRuntimeMessage(modelMessage, assistantOutputTarget);
     }
 
@@ -5143,7 +5146,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
     });
     const shouldEnqueueAgentMessageTurnContext =
-      target.role === "manager" && (Boolean(observabilityInput) || assistantOutputTarget.kind === "session_transcript" || isWorkerReportRuntimeMessage(modelMessage));
+      target.role === "manager" && (Boolean(observabilityInput) || assistantOutputTarget.kind === "session_transcript" || isAssistantOutputEligibleWorkerReport);
     const rollbackObservabilityInboundContext = shouldEnqueueAgentMessageTurnContext
       ? this.enqueueInboundTurnContext(target.agentId, {
           source: "agent_message",
@@ -5169,6 +5172,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sender,
       target,
       modelMessage,
+      rawMessage: message,
       workerReportSourceAgentId: options?.workerReportSourceAgentId,
     });
     this.rememberWorkerAssistantOutputInheritanceAfterDispatch(sender, target);
@@ -7252,14 +7256,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (phase === "before_projection" && event.type === "message_start" && extractRole(event.message) === "user") {
-      // Providers that do not echo user messages emit a synthetic message_start with the
-      // selected runtime input; match by content instead of assuming queued turn FIFO.
+    if (
+      phase === "before_projection" &&
+      (event.type === "message_start" || event.type === "message_end") &&
+      extractRole(event.message) === "user"
+    ) {
+      // Providers that do not echo user messages may emit either a synthetic message_start
+      // or only the completed user message for the selected runtime input; match by content
+      // instead of assuming queued turn FIFO.
+      if (this.inboundTurnContextActivatedByAgentId.has(agentId)) {
+        return;
+      }
+
       const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
       if (nextContext) {
         this.inboundTurnContextActivatedByAgentId.add(agentId);
         this.activateInboundTurnContext(agentId, descriptor, nextContext);
-      } else if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
+      } else {
         this.activateInboundTurnContext(agentId, descriptor, undefined);
       }
       return;
@@ -7295,15 +7308,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sender: AgentDescriptor;
     target: AgentDescriptor;
     modelMessage: string | RuntimeUserMessage;
+    rawMessage?: string;
     workerReportSourceAgentId?: string;
   }): AssistantOutputTarget {
-    if (input.target.role !== "manager" || !isWorkerReportRuntimeMessage(input.modelMessage)) {
+    if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
       return { kind: "explicit_tool_required", reason: "agent_message" };
     }
 
-    const sourceWorkerId = input.sender.role === "worker" && input.sender.managerId === input.target.agentId
-      ? input.sender.agentId
-      : input.workerReportSourceAgentId;
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
     if (!sourceWorkerId) {
       return { kind: "explicit_tool_required", reason: "agent_message" };
     }
@@ -7316,18 +7328,46 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sender: AgentDescriptor;
     target: AgentDescriptor;
     modelMessage: string | RuntimeUserMessage;
+    rawMessage?: string;
     workerReportSourceAgentId?: string;
   }): void {
-    if (input.target.role !== "manager" || !isWorkerReportRuntimeMessage(input.modelMessage)) {
+    if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
       return;
     }
 
-    const sourceWorkerId = input.sender.role === "worker" && input.sender.managerId === input.target.agentId
-      ? input.sender.agentId
-      : input.workerReportSourceAgentId;
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
     if (sourceWorkerId) {
       this.inheritedAssistantOutputTargetByWorkerId.delete(sourceWorkerId);
     }
+  }
+
+  private isAssistantOutputEligibleWorkerReportMessage(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    modelMessage: string | RuntimeUserMessage;
+    rawMessage?: string;
+    workerReportSourceAgentId?: string;
+  }): boolean {
+    if (input.target.role !== "manager") {
+      return false;
+    }
+
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
+    if (!sourceWorkerId) {
+      return false;
+    }
+
+    return isWorkerReportRuntimeMessage(input.modelMessage) || isWorkerStatusCloseoutMessage(input.rawMessage);
+  }
+
+  private resolveAssistantOutputWorkerReportSourceId(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    workerReportSourceAgentId?: string;
+  }): string | undefined {
+    return input.sender.role === "worker" && input.sender.managerId === input.target.agentId
+      ? input.sender.agentId
+      : input.workerReportSourceAgentId;
   }
 
   private rememberWorkerAssistantOutputInheritanceAfterDispatch(
@@ -10160,6 +10200,10 @@ function cloneSessionTranscriptAssistantOutputTarget(
 
 function isWorkerReportRuntimeMessage(message: string | RuntimeUserMessage): boolean {
   return extractRuntimeMessageText(message).trimStart().startsWith(WORKER_REPORT_MESSAGE_PREFIX);
+}
+
+function isWorkerStatusCloseoutMessage(message: string | undefined): boolean {
+  return typeof message === "string" && TERMINAL_WORKER_REPORT_BODY_PATTERN.test(message.trimStart());
 }
 
 function appendAssistantOutputTargetMetadataToRuntimeMessage(
