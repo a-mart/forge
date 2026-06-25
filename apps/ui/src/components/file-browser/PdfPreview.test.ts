@@ -297,24 +297,26 @@ describe('PdfPreview PDF.js rendering', () => {
 
     await setPageIntersection(2, true)
     expect(mockGetPage).toHaveBeenCalledWith(2)
-    expect(mockRender.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(mockRender).toHaveBeenCalledTimes(2)
   })
 
-  it('uses discovered page metrics for fit-width rendering on wider pages', async () => {
+  it('uses discovered page metrics on the first render of an unmeasured wider page', async () => {
     await renderPreview()
+    mockRender.mockClear()
 
     await setPageIntersection(2, true)
     await act(async () => {
       await Promise.resolve()
       await Promise.resolve()
-      await Promise.resolve()
     })
 
-    const expectedHeight = 280 * (768 / 400)
+    expect(mockRender).toHaveBeenCalledTimes(1)
     type RenderCall = { viewport: { height: number } }
-    const renderedHeights = (mockRender.mock.calls as unknown as Array<[RenderCall]>)
-      .map(([args]) => args.viewport.height)
-    expect(renderedHeights.some((height) => Math.abs(height - expectedHeight) < 1)).toBe(true)
+    const firstRender = (mockRender.mock.calls[0] as unknown as [RenderCall])[0]
+    const expectedHeight = 280 * (768 / 400)
+    const oversizedDefaultHeight = 280 * (768 / 200)
+    expect(firstRender.viewport.height).toBeCloseTo(expectedHeight, 1)
+    expect(firstRender.viewport.height).not.toBeCloseTo(oversizedDefaultHeight, 1)
   })
 
   it('releases canvas memory when a page leaves the render range', async () => {

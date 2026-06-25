@@ -46,7 +46,6 @@ type PageRenderTask = { cancel: () => void; promise: Promise<void> }
 interface PdfPreviewPageProps {
   pageNumber: number
   pdf: PDFDocumentProxy
-  pageMetrics: PdfPreviewPageMetrics
   fitWidth: boolean
   manualScale: number
   viewportWidth: number
@@ -60,7 +59,6 @@ interface PdfPreviewPageProps {
 function PdfPreviewPage({
   pageNumber,
   pdf,
-  pageMetrics,
   fitWidth,
   manualScale,
   viewportWidth,
@@ -77,18 +75,6 @@ function PdfPreviewPage({
   const [shouldRender, setShouldRender] = useState(false)
   const [renderErrorMessage, setRenderErrorMessage] = useState<string | null>(null)
   const [renderedHeight, setRenderedHeight] = useState<number | null>(null)
-
-  const renderScale = useMemo(
-    () =>
-      computePdfRenderScale(
-        pageMetrics.width,
-        viewportWidth,
-        manualScale,
-        fitWidth,
-        MAX_MANUAL_SCALE,
-      ),
-    [pageMetrics.width, viewportWidth, manualScale, fitWidth],
-  )
 
   useEffect(() => {
     shouldRenderRef.current = shouldRender
@@ -149,12 +135,20 @@ function PdfPreviewPage({
         }
 
         const baseViewport = page.getViewport({ scale: 1 })
-        onPageMetricsDiscovered(pageNumber, {
+        const discoveredMetrics = {
           width: baseViewport.width,
           height: baseViewport.height,
-        })
+        }
+        onPageMetricsDiscovered(pageNumber, discoveredMetrics)
 
-        const viewport = page.getViewport({ scale: renderScale })
+        const effectiveRenderScale = computePdfRenderScale(
+          discoveredMetrics.width,
+          viewportWidth,
+          manualScale,
+          fitWidth,
+          MAX_MANUAL_SCALE,
+        )
+        const viewport = page.getViewport({ scale: effectiveRenderScale })
         const context = canvas.getContext('2d')
         if (!context || cancelled || !shouldRenderRef.current) {
           return
@@ -214,7 +208,7 @@ function PdfPreviewPage({
       renderTaskRef.current?.cancel()
       renderTaskRef.current = null
     }
-  }, [shouldRender, pageNumber, pdf, renderScale, layoutEpoch, onLayoutChange, onPageMetricsDiscovered])
+  }, [shouldRender, pageNumber, pdf, fitWidth, manualScale, viewportWidth, layoutEpoch, onLayoutChange, onPageMetricsDiscovered])
 
   const placeholderHeight = renderedHeight ?? estimatedHeight
 
@@ -563,7 +557,6 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
                   key={`${pageNumber}-${layoutEpoch}`}
                   pageNumber={pageNumber}
                   pdf={pdfDoc}
-                  pageMetrics={pageMetrics[pageNumber] ?? DEFAULT_PAGE_METRICS}
                   fitWidth={fitWidth}
                   manualScale={manualScale}
                   viewportWidth={viewportWidth}
