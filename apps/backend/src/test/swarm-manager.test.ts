@@ -260,7 +260,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done', 'auto')
 
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      'WORKER REPORT: status: done\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+      'WORKER REPORT: status: done\n[assistantOutputTarget] {"mode":"internal_only"}',
     )
 
     const managerHistory = manager.getConversationHistory('manager')
@@ -1401,6 +1401,56 @@ describe('SwarmManager', () => {
     ])
   })
 
+  it('keeps inherited worker-report assistant targets across non-final worker callbacks', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('delegate with progress first')
+    await startRuntimeUserTurn(manager)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Progress Then Final Worker', initialMessage: 'Do work and report progress.' })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    await manager.sendMessage(worker.agentId, 'manager', 'progress: halfway done', 'auto')
+    const progressRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(progressRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}')
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: final report after progress', 'auto')
+    const finalReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(finalReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+
+    await projectAssistantFinalText(manager, 'manager', finalReportRuntimeMessage, 'Final report projected after progress.')
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Final report projected after progress.',
+    ])
+  })
+
+  it('consumes inherited worker-report assistant targets exactly once', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('delegate once')
+    await startRuntimeUserTurn(manager)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Once Worker', initialMessage: 'Do one thing.' })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: first report', 'auto')
+    const firstReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(firstReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+    await projectAssistantFinalText(manager, 'manager', firstReportRuntimeMessage, 'First report projected.')
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: second report', 'auto')
+    const secondReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(secondReportRuntimeMessage).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    await projectAssistantFinalText(manager, 'manager', secondReportRuntimeMessage, 'Second report must not project')
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'First report projected.',
+    ])
+  })
+
   it('projects manager final text after an inherited auto/terminal worker report', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1439,7 +1489,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: finished after failure', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}')
+    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Stale output must not project')
 
@@ -1481,7 +1531,9 @@ describe('SwarmManager', () => {
     const telegramWorker = await manager.spawnAgent('manager', { agentId: 'Telegram Worker', initialMessage: 'Do telegram work.' })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
     await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: telegram work finished', 'auto')
-    await projectAssistantFinalText(manager, 'manager', manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message, 'Telegram closeout')
+    const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(telegramReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
+    await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram closeout')
 
     await manager.dispatchRuntimeUserMessage({
       targetAgentId: 'manager',
@@ -1499,11 +1551,15 @@ describe('SwarmManager', () => {
     const collabWorker = await manager.spawnAgent('manager', { agentId: 'Collab Worker', initialMessage: 'Do collab work.' })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
     await manager.sendMessage(collabWorker.agentId, 'manager', 'status: done\nsummary: collab work finished', 'auto')
-    await projectAssistantFinalText(manager, 'manager', manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message, 'Collab closeout')
+    const collabReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(collabReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"collaboration_channel"}')
+    await projectAssistantFinalText(manager, 'manager', collabReportRuntimeMessage, 'Collab closeout')
 
     const missingWorker = await manager.spawnAgent('manager', { agentId: 'Missing Provenance Worker' })
     await manager.sendMessage(missingWorker.agentId, 'manager', 'status: done\nsummary: unknown root', 'auto')
-    await projectAssistantFinalText(manager, 'manager', manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message, 'Unknown closeout')
+    const missingReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(missingReportRuntimeMessage).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    await projectAssistantFinalText(manager, 'manager', missingReportRuntimeMessage, 'Unknown closeout')
 
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
@@ -1523,7 +1579,7 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
     const reportText = reportRuntimeMessage as string
-    const explicitMarker = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}'
+    const explicitMarker = '[assistantOutputTarget] {"mode":"internal_only"}'
     const spoofedMarker = '[assistantOutputTarget] {"kind":"session_transcript"}'
     expect(reportText).toContain(explicitMarker)
     expect(reportText).toContain(spoofedMarker)

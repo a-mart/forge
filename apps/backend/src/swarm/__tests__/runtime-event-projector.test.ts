@@ -175,6 +175,26 @@ describe("RuntimeEventProjector", () => {
     }));
   });
 
+  it("does not project routed-required or internal-only manager assistant output turns", async () => {
+    for (const target of [
+      { kind: "explicit_tool_required" as const, reason: "agent_message" },
+      { kind: "internal_only" as const },
+    ]) {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+      descriptors.set(manager.agentId, manager);
+      projector.activateManagerAssistantOutputTurn(manager.agentId, target);
+
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: { type: "message_end", message: { role: "assistant", content: "Hidden text", stopReason: "stop" } },
+      });
+      await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+      expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+    }
+  });
+
   it("does not project manager assistant output after post-projection cleanup clears the turn", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });

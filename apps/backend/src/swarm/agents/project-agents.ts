@@ -119,6 +119,7 @@ interface DeliverProjectAgentMessageOptions {
   external?: boolean;
   sourceProfileId?: string;
   sourceProjectName?: string;
+  runtimeMessageText?: string;
 }
 
 export interface ProjectAgentDeliveryResult {
@@ -169,7 +170,7 @@ export async function deliverProjectAgentMessage(
     ...(options.sourceProjectName ? { fromProjectName: options.sourceProjectName } : {})
   };
 
-  const runtimeText = formatProjectAgentRuntimeMessage(projectAgentContext, options.message);
+  const runtimeText = options.runtimeMessageText ?? formatProjectAgentRuntimeMessage(projectAgentContext, options.message);
   const runtime = await deps.getOrCreateRuntimeForDescriptor(target);
   const receipt = await runtime.sendMessage(runtimeText, options.delivery);
 

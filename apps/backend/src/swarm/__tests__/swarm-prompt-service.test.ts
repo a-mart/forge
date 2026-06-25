@@ -42,8 +42,8 @@ afterEach(async () => {
 
 function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
   expect(prompt).toContain("Worker reports require explicit same-turn handling.");
-  expect(prompt).toContain("inherited direct web/session-transcript user-facing closeouts");
-  expect(prompt).toContain("`speak_to_user` for protected/non-web/external/proactive/internal user-facing closeouts");
+  expect(prompt).toContain("server metadata indicates direct web/session-transcript user-facing closeout");
+  expect(prompt).toContain("`speak_to_user` for protected/non-web/external/proactive user-facing closeouts");
   expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
 }
 
@@ -211,7 +211,7 @@ Never use plain assistant text for user communication.`;
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and unknown/protected worker-report closeouts. Do not use it for normal final web replies."
+      "Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and routed/protected worker-report closeouts. Do not use it for normal final web replies."
     );
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
@@ -277,7 +277,7 @@ Custom project instruction: always mention the release train when summarizing de
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and unknown/protected worker-report closeouts. Do not use it for normal final web replies."
+      "Use speak_to_user only for explicit routed delivery: non-web/external targets, rare proactive or mid-turn updates before continuing work, and routed/protected worker-report closeouts. Do not use it for normal final web replies."
     );
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(

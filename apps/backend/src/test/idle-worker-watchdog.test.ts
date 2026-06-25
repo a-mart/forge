@@ -176,7 +176,7 @@ async function finishWorkerTurnViaIdleStatus(manager: TestSwarmManager, worker: 
 function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
   return [
     'WORKER REPORT: status: done',
-    '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    '[assistantOutputTarget] {"mode":"internal_only"}',
     `summary: Auto-generated report because worker ${worker.agentId} completed its turn without an explicit callback.`,
   ].join('\n')
 }
@@ -184,7 +184,7 @@ function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
 function buildExpectedDetailedCompletionMessage(worker: AgentDescriptor, text: string): string {
   return [
     'WORKER REPORT: status: done',
-    '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    '[assistantOutputTarget] {"mode":"internal_only"}',
     `summary: Auto-generated report because worker ${worker.agentId} completed its turn without an explicit callback.`,
     '',
     'Last assistant message:',
@@ -954,7 +954,9 @@ describe('idle worker watchdog', () => {
 
     expect(receipt.targetAgentId).toBe('manager')
     expect(managerRuntime?.sendCalls).toHaveLength(1)
-    expect(managerRuntime?.sendCalls[0]?.message).toBe('SYSTEM: turn complete')
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(
+      'SYSTEM: turn complete\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    )
     expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
     expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
     expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)

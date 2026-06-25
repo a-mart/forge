@@ -1627,7 +1627,9 @@ describe('SwarmManager', () => {
     expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
 
     const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
-    expect(sessionRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: closeout reminder')
+    expect(sessionRuntime?.sendCalls.at(-1)?.message).toBe(
+      'SYSTEM: closeout reminder\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    )
 
     const sessionHistory = manager.getConversationHistory(sessionAgent.agentId)
     expect(

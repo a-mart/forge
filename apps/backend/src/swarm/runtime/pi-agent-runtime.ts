@@ -64,7 +64,7 @@ import {
   clearForgePiCompactionFailure,
   consumeForgePiCompactionFailure,
 } from "../compaction/forge-pi-compaction-extension.js";
-import { runtimeInputAllowsProjectedAssistantOutput } from "./manager-assistant-output-target-metadata.js";
+import { runtimeInputAssistantOutputPolicyFacts, type AssistantOutputPolicyFacts } from "./manager-assistant-output-target-metadata.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -2014,7 +2014,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    if (trigger.allowsProjectedAssistantOutput && unhandledKind === "hidden_text") {
+    if (!trigger.policyFacts.requiresVisibleCompletion) {
+      return false;
+    }
+
+    if (trigger.policyFacts.allowsProjection && unhandledKind === "hidden_text") {
       return false;
     }
 
@@ -2462,7 +2466,7 @@ interface HiddenOutputTrigger {
   resampleStage: string;
   exhaustedMessage: string;
   userFacingExhaustedMessage: string;
-  allowsProjectedAssistantOutput?: boolean;
+  policyFacts: AssistantOutputPolicyFacts;
 }
 
 function classifyUnhandledAssistantMessage(
@@ -2518,7 +2522,7 @@ function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefi
       exhaustedMessage: "Manager produced no visible response to a worker's final report",
       userFacingExhaustedMessage:
         "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome.",
-      allowsProjectedAssistantOutput: runtimeInputAllowsProjectedAssistantOutput(reportText)
+      policyFacts: runtimeInputAssistantOutputPolicyFacts(reportText)
     };
   }
 
@@ -2538,7 +2542,7 @@ function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefi
     exhaustedMessage: "Manager produced no visible response to a direct user message",
     userFacingExhaustedMessage:
       "⚠️ The manager received your message but did not produce a visible response after automatic retries. Send a follow-up message to continue.",
-    allowsProjectedAssistantOutput: runtimeInputAllowsProjectedAssistantOutput(directUserText)
+    policyFacts: runtimeInputAssistantOutputPolicyFacts(directUserText)
   };
 }
 
