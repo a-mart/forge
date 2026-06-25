@@ -1545,6 +1545,45 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
+  it('does not default-project protected worker-report closeouts after runtime error clears defaultable handoffs', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('telegram delegated work before runtime error', {
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    await startRuntimeUserTurn(manager)
+    const telegramWorker = await manager.spawnAgent('manager', { agentId: 'Cleared Telegram Worker', initialMessage: 'Do telegram work.' })
+    await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'runtime failed before telegram report' })
+    await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: telegram work finished after error', 'auto')
+    const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(telegramReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
+    await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram closeout after cleared handoff')
+
+    await manager.dispatchRuntimeUserMessage({
+      targetAgentId: 'manager',
+      text: 'collab delegated work before runtime error',
+      sourceContext: { channel: 'web', channelId: 'collab-channel', userId: 'user-1' },
+      collaborationAuthor: {
+        userId: 'user-1',
+        displayName: 'Adam',
+        role: 'admin',
+        workspaceId: 'workspace-1',
+        channelId: 'collab-channel',
+      },
+    })
+    await startRuntimeUserTurn(manager)
+    const collabWorker = await manager.spawnAgent('manager', { agentId: 'Cleared Collab Worker', initialMessage: 'Do collab work.' })
+    await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'runtime failed before collab report' })
+    await manager.sendMessage(collabWorker.agentId, 'manager', 'status: done\nsummary: collab work finished after error', 'auto')
+    const collabReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(collabReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"collaboration_channel"}')
+    await projectAssistantFinalText(manager, 'manager', collabReportRuntimeMessage, 'Collab closeout after cleared handoff')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
   it('does not project worker-report closeouts from protected roots but defaults normal web missing handoff to visible', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

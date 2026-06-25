@@ -9653,11 +9653,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private clearInheritedAssistantOutputTargetsForManager(managerId: string): void {
-    this.inheritedAssistantOutputTargetByWorkerId.delete(managerId);
+    this.clearDefaultableInheritedAssistantOutputTarget(managerId);
     for (const descriptor of this.descriptors.values()) {
       if (descriptor.role === "worker" && descriptor.managerId === managerId) {
-        this.inheritedAssistantOutputTargetByWorkerId.delete(descriptor.agentId);
+        this.clearDefaultableInheritedAssistantOutputTarget(descriptor.agentId);
       }
+    }
+  }
+
+  private clearDefaultableInheritedAssistantOutputTarget(agentId: string): void {
+    const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
+    if (!target || target.kind === "session_transcript" || target.kind === "internal_only") {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
     }
   }
 
