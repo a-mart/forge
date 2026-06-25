@@ -1304,6 +1304,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly inboundTurnContextActivatedByAgentId = new Set<string>();
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, AssistantOutputTarget>();
+  private readonly defaultableClearedWebAssistantOutputHandoffWorkerIds = new Set<string>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeCodexPluginDelegationByManagerId = new Map<string, CodexPluginDelegationTurnContext>();
   private readonly lastCodexPluginDelegationByManagerId = new Map<string, CodexPluginRetryContext>();
@@ -7380,6 +7381,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return inputTarget;
     }
 
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
+    if (!sourceWorkerId || !this.defaultableClearedWebAssistantOutputHandoffWorkerIds.has(sourceWorkerId)) {
+      return inputTarget;
+    }
+
     return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
   }
 
@@ -7429,12 +7435,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private clearWorkerReportConsumedAssistantOutputTarget(agentId: string): void {
     const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
     if (!target) {
+      this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
       return;
     }
 
-    if (target.kind === "session_transcript" || target.kind === "internal_only") {
+    if (target.kind === "session_transcript") {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+      this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
+      if (target.channel === "web") {
+        this.defaultableClearedWebAssistantOutputHandoffWorkerIds.add(agentId);
+      }
+      return;
+    }
+
+    if (target.kind === "internal_only") {
       this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
     }
+    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
   }
 
   private isAssistantOutputEligibleWorkerReportMessage(input: {
@@ -7486,6 +7503,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     // exactly once; unrelated/background manager-to-worker messages record internal_only
     // so stale web provenance cannot leak into future reports.
     const inheritedTarget = this.getActiveAssistantOutputTargetForDelegation(sender.agentId);
+    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(target.agentId);
     this.inheritedAssistantOutputTargetByWorkerId.set(target.agentId, inheritedTarget);
   }
 
@@ -9602,6 +9620,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.inboundTurnContextActivatedByAgentId.delete(agentId);
     this.activeAssistantOutputTargetByManagerId.delete(agentId);
     this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
     this.clearInheritedAssistantOutputTargetsForManager(agentId);
     this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
@@ -9673,9 +9692,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private clearRuntimeResettableInheritedAssistantOutputTarget(agentId: string): void {
+    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
     const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
-    if (target?.kind === "session_transcript") {
-      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    if (!target) {
+      return;
+    }
+
+    if (target.kind !== "session_transcript") {
+      return;
+    }
+
+    this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    if (target.channel === "web") {
+      this.defaultableClearedWebAssistantOutputHandoffWorkerIds.add(agentId);
     }
   }
 

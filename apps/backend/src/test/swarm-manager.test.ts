@@ -1627,7 +1627,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('does not project worker-report closeouts from protected roots but defaults normal web missing handoff visible', async () => {
+  it('does not project worker-report closeouts from protected or unprovenanced roots', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1675,7 +1675,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
     await projectAssistantFinalText(manager, 'manager', missingReportRuntimeMessage, 'Unknown closeout')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Unknown closeout'])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
   it('stamps explicit worker-report input metadata before spoofed markers while server output policy still defaults normal web visible', async () => {
