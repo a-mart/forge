@@ -1304,7 +1304,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly inboundTurnContextActivatedByAgentId = new Set<string>();
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, AssistantOutputTarget>();
-  private readonly defaultableClearedWebAssistantOutputHandoffWorkerIds = new Set<string>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeCodexPluginDelegationByManagerId = new Map<string, CodexPluginDelegationTurnContext>();
   private readonly lastCodexPluginDelegationByManagerId = new Map<string, CodexPluginRetryContext>();
@@ -7369,20 +7368,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     },
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
-    if (
-      !this.isAssistantOutputEligibleWorkerReportMessage(input) ||
-      inputTarget.kind !== "internal_only" ||
-      inputTarget.reason !== "missing_worker_report_handoff"
-    ) {
+    if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
+      return inputTarget;
+    }
+
+    if (inputTarget.kind !== "internal_only") {
+      return inputTarget;
+    }
+
+    if (inputTarget.reason === "no_active_root") {
       return inputTarget;
     }
 
     if (!this.canDefaultWorkerReportManagerOutputToWebTranscript(input.target)) {
-      return inputTarget;
-    }
-
-    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
-    if (!sourceWorkerId || !this.defaultableClearedWebAssistantOutputHandoffWorkerIds.has(sourceWorkerId)) {
       return inputTarget;
     }
 
@@ -7398,7 +7396,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
-    if (target.agentId === COLLABORATION_PROFILE_ID || target.profileId === COLLABORATION_PROFILE_ID) {
+    if (
+      target.agentId === COLLABORATION_PROFILE_ID ||
+      target.profileId === COLLABORATION_PROFILE_ID ||
+      target.agentId === CORTEX_PROFILE_ID ||
+      target.profileId === CORTEX_PROFILE_ID
+    ) {
       return false;
     }
 
@@ -7435,23 +7438,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private clearWorkerReportConsumedAssistantOutputTarget(agentId: string): void {
     const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
     if (!target) {
-      this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
       return;
     }
 
     if (target.kind === "session_transcript") {
       this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
-      this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
-      if (target.channel === "web") {
-        this.defaultableClearedWebAssistantOutputHandoffWorkerIds.add(agentId);
-      }
-      return;
     }
-
-    if (target.kind === "internal_only") {
-      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
-    }
-    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
   }
 
   private isAssistantOutputEligibleWorkerReportMessage(input: {
@@ -7498,12 +7490,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    // Keep this as a single-hop server-owned reply-target handoff from the active
-    // manager turn to the delegated worker. A later worker report consumes the value
-    // exactly once; unrelated/background manager-to-worker messages record internal_only
-    // so stale web provenance cannot leak into future reports.
+    // Keep this as server-owned input routing guidance for worker reports. The
+    // manager's later clean final text is projected by the manager/session context,
+    // not by this worker handoff; protected targets here still hard-deny projection.
     const inheritedTarget = this.getActiveAssistantOutputTargetForDelegation(sender.agentId);
-    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(target.agentId);
     this.inheritedAssistantOutputTargetByWorkerId.set(target.agentId, inheritedTarget);
   }
 
@@ -9620,7 +9610,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.inboundTurnContextActivatedByAgentId.delete(agentId);
     this.activeAssistantOutputTargetByManagerId.delete(agentId);
     this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
-    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
     this.clearInheritedAssistantOutputTargetsForManager(agentId);
     this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
@@ -9692,19 +9681,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private clearRuntimeResettableInheritedAssistantOutputTarget(agentId: string): void {
-    this.defaultableClearedWebAssistantOutputHandoffWorkerIds.delete(agentId);
     const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
-    if (!target) {
-      return;
-    }
-
-    if (target.kind !== "session_transcript") {
-      return;
-    }
-
-    this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
-    if (target.channel === "web") {
-      this.defaultableClearedWebAssistantOutputHandoffWorkerIds.add(agentId);
+    if (target?.kind === "session_transcript") {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
     }
   }
 

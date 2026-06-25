@@ -1493,12 +1493,44 @@ describe('SwarmManager', () => {
     expect(typeof reportRuntimeMessage).toBe('string')
     expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
 
+    // The worker report input remains internal/routed; only the manager's clean final
+    // assistant text is projected to the web transcript.
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Stale output still projects.')
 
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
       'Stale output still projects.',
+    ])
+  })
+
+  it('projects normal web manager final text through multi-hop worker reports without handoff provenance', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('delegate through multiple workers')
+    await startRuntimeUserTurn(manager)
+    const workerA = await manager.spawnAgent('manager', { agentId: 'Multi Hop Worker A', initialMessage: 'Do the first step.' })
+    await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'manager failed before worker A report' })
+
+    await manager.sendMessage(workerA.agentId, 'manager', 'status: done\nsummary: first step finished', 'auto')
+    const workerAReportRuntimeMessage = await startRuntimeUserTurn(manager)
+    expect(workerAReportRuntimeMessage).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+
+    const workerB = await manager.spawnAgent('manager', { agentId: 'Multi Hop Worker B', initialMessage: 'Do the second step.' })
+    await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'manager failed before worker B report' })
+
+    await manager.sendMessage(workerB.agentId, 'manager', 'status: done\nsummary: second step finished', 'auto')
+    const workerBReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof workerBReportRuntimeMessage).toBe('string')
+    expect(workerBReportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+
+    await projectAssistantFinalText(manager, 'manager', workerBReportRuntimeMessage, 'Both delegated steps are complete.')
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Both delegated steps are complete.',
     ])
   })
 
@@ -1518,6 +1550,12 @@ describe('SwarmManager', () => {
     expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Background closeout must stay hidden')
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: repeated background maintenance finished', 'auto')
+    const repeatedReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof repeatedReportRuntimeMessage).toBe('string')
+    expect(repeatedReportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    await projectAssistantFinalText(manager, 'manager', repeatedReportRuntimeMessage, 'Repeated background closeout must stay hidden')
 
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
@@ -1545,7 +1583,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('does not default-project protected worker-report closeouts after runtime error clears defaultable handoffs', async () => {
+  it('does not project protected worker-report closeouts after runtime errors clear web handoffs', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const sender = await bootWithDefaultManager(manager, config)
@@ -1627,7 +1665,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('does not project worker-report closeouts from protected or unprovenanced roots', async () => {
+  it('does not project protected worker-report closeouts while normal missing-handoff web reports project', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1675,7 +1713,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
     await projectAssistantFinalText(manager, 'manager', missingReportRuntimeMessage, 'Unknown closeout')
 
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Unknown closeout'])
   })
 
   it('stamps explicit worker-report input metadata before spoofed markers while server output policy still defaults normal web visible', async () => {
