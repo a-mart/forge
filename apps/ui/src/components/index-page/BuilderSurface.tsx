@@ -1557,9 +1557,9 @@ export function BuilderSurface({
   }, [handleOpenStickyFileBrowserFile])
 
   const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory'): Promise<boolean> => {
-    const runDelete = async (): Promise<boolean> => {
-      if (!activeAgentId) return false
+    if (!activeAgentId) return Promise.resolve(false)
 
+    const runDelete = async (): Promise<boolean> => {
       await deleteFilePath(wsUrl, {
         agentId: activeAgentId,
         path,
@@ -1585,7 +1585,13 @@ export function BuilderSurface({
 
     return new Promise<boolean>((resolve, reject) => {
       fileEditorCoordinator.requestFileEditorTransition(
-        { type: 'delete-entry', path, entryType },
+        {
+          type: 'delete-entry',
+          path,
+          entryType,
+          agentId: activeAgentId,
+          worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        },
         () => {
           void runDelete().then(resolve, reject)
         },

@@ -20,7 +20,7 @@ export interface FileEditorGuardApi {
 }
 
 export type FileEditorTransitionAction =
-  | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory' }
+  | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory'; agentId: string; worktreeId: string | null }
   | { type: 'select-file'; nextPath: string }
   | { type: 'close-viewer' }
   | { type: 'close-tab'; key: FileEditorSessionKey }
@@ -73,6 +73,8 @@ function doesDeleteAffectSnapshot(
   snapshot: FileEditorDirtySnapshot,
   action: Extract<FileEditorTransitionAction, { type: 'delete-entry' }>,
 ): boolean {
+  if (snapshot.key.agentId !== action.agentId || (snapshot.key.worktreeId ?? null) !== (action.worktreeId ?? null)) return false
+
   const deletePath = action.path.replace(/^\/+|\/+$/g, '')
   const filePath = snapshot.key.filePath.replace(/^\/+|\/+$/g, '')
   if (!deletePath) return false

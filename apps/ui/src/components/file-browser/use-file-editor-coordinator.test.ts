@@ -190,7 +190,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run, onCancel)
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.cancel()
@@ -240,7 +240,7 @@ describe('useFileEditorCoordinator', () => {
     const deleteSettled = new Promise<boolean>((resolve) => {
       flushSync(() => {
         captured.current?.requestFileEditorTransition(
-          { type: 'delete-entry', path: 'src', entryType: 'directory' },
+          { type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null },
           run,
           () => resolve(false),
         )
@@ -269,7 +269,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run, onCancel)
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.save()
@@ -320,7 +320,7 @@ describe('useFileEditorCoordinator', () => {
         save: vi.fn().mockResolvedValue(true),
         discard: secondDiscard,
       })
-      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run)
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null }, run)
     })
 
     expect(run).not.toHaveBeenCalled()
@@ -334,6 +334,40 @@ describe('useFileEditorCoordinator', () => {
 
     flushSync(() => captured.current?.discard())
     expect(secondDiscard).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards delete transitions only for dirty files in the requested scope', () => {
+    const otherScopeKey = { agentId: 'agent-2', worktreeId: 'other-worktree', filePath: 'src/App.tsx' }
+    const matchingDiscard = vi.fn()
+    const otherDiscard = vi.fn()
+    const run = vi.fn()
+    renderHarness(null)
+
+    flushSync(() => {
+      captured.current?.registerWritableEditor(otherScopeKey, {
+        getSnapshot: () => dirtySnapshot(otherScopeKey),
+        save: vi.fn().mockResolvedValue(true),
+        discard: otherDiscard,
+      })
+      captured.current?.registerWritableEditor(linkedWorktreeKey, {
+        getSnapshot: () => dirtySnapshot(linkedWorktreeKey),
+        save: vi.fn().mockResolvedValue(true),
+        discard: matchingDiscard,
+      })
+      captured.current?.requestFileEditorTransition(
+        { type: 'delete-entry', path: 'src/App.tsx', entryType: 'file', agentId: 'agent-1', worktreeId: 'linked-1' },
+        run,
+      )
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogSnapshot?.key).toEqual(linkedWorktreeKey)
+
+    flushSync(() => captured.current?.discard())
+    expect(matchingDiscard).toHaveBeenCalledTimes(1)
+    expect(otherDiscard).not.toHaveBeenCalled()
     expect(run).toHaveBeenCalledTimes(1)
     expect(captured.current?.dialogOpen).toBe(false)
   })
