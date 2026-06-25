@@ -91,6 +91,26 @@ describe('reduceAgentsSnapshot', () => {
     expect(result.patch.agents?.some((agent) => agent.agentId === 'archived-worker')).toBe(false)
   })
 
+  it('clears stale context recovery state from agents_snapshot status rebuilds', () => {
+    const manager = makeManager()
+    const state = {
+      ...createInitialManagerWsState('manager-1'),
+      agents: [manager],
+      statuses: {
+        'manager-1': { status: 'streaming' as const, pendingCount: 0, contextRecoveryInProgress: true },
+      },
+    }
+
+    const result = reduceAgentsSnapshot({
+      state,
+      desiredAgentId: 'manager-1',
+      explicitAgentSelectionAgentId: null,
+      agents: [makeManager({ status: 'streaming' })],
+    })
+
+    expect(result.patch.statuses!['manager-1']?.contextRecoveryInProgress).toBeUndefined()
+  })
+
   it('clears modelCacheObservations when agents_snapshot changes the target session', () => {
     const managerA = makeManager({ agentId: 'manager-a' })
     const managerB = makeManager({ agentId: 'manager-b' })
@@ -261,6 +281,27 @@ describe('reduceSessionWorkersSnapshot', () => {
     expect(workerIds).toContain('w-mgr2')
   })
 
+  it('clears stale context recovery state from session worker snapshots', () => {
+    const manager = makeManager({ workerCount: 1 })
+    const worker = makeWorker('w-1', 'manager-1', { status: 'streaming' })
+    const state = {
+      ...createInitialManagerWsState('manager-1'),
+      agents: [manager, worker],
+      statuses: {
+        'manager-1': { status: 'idle' as const, pendingCount: 0 },
+        'w-1': { status: 'streaming' as const, pendingCount: 0, contextRecoveryInProgress: true },
+      },
+    }
+
+    const result = reduceSessionWorkersSnapshot({
+      state,
+      sessionAgentId: 'manager-1',
+      workers: [makeWorker('w-1', 'manager-1', { status: 'streaming' })],
+    })
+
+    expect(result.patch.statuses!['w-1']?.contextRecoveryInProgress).toBeUndefined()
+  })
+
   it('sets workerCount to 0 and activeWorkerCount to 0 when snapshot is empty', () => {
     const manager = makeManager({ workerCount: 3, activeWorkerCount: 1 })
     const oldWorker = makeWorker('w-old', 'manager-1', { status: 'streaming' })
@@ -373,6 +414,29 @@ describe('reduceAgentStatus', () => {
 
     // When status is truly unchanged, the statuses object should be the same reference
     expect(result.patch.statuses).toBeUndefined()
+  })
+
+  it('clears context recovery state when agent_status omits the recovery flag', () => {
+    const manager = makeManager({ status: 'streaming' })
+    const state = {
+      ...createInitialManagerWsState('manager-1'),
+      agents: [manager],
+      statuses: {
+        'manager-1': { status: 'streaming' as const, pendingCount: 0, contextRecoveryInProgress: true },
+      },
+    }
+
+    const result = reduceAgentStatus({
+      state,
+      event: {
+        type: 'agent_status',
+        agentId: 'manager-1',
+        status: 'streaming',
+        pendingCount: 0,
+      },
+    })
+
+    expect(result.patch.statuses!['manager-1']?.contextRecoveryInProgress).toBeUndefined()
   })
 
   it('updates activeWorkerCount on manager when worker transitions to streaming', () => {
