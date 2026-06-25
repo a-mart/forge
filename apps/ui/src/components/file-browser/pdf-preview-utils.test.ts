@@ -6,7 +6,6 @@ import {
   clampPageNumber,
   computeCurrentPageFromScroll,
   computeFitWidthScale,
-  computeFitWidthScaleForPages,
   computePdfRenderScale,
   computeSafeCanvasOutput,
   formatPdfPreviewError,
@@ -57,15 +56,6 @@ describe('computePdfRenderScale', () => {
 
   it('uses manual scale when fit width is disabled', () => {
     expect(computePdfRenderScale(400, 432, 2, false)).toBe(2)
-  })
-})
-
-describe('computeFitWidthScaleForPages', () => {
-  it('uses the widest page width when computing fit-width scale', () => {
-    expect(computeFitWidthScaleForPages([400, 800, 500], 832, PDF_PREVIEW_MAX_RENDER_SCALE)).toBe(1)
-    expect(computeFitWidthScaleForPages([400, 1200, 500], 832, PDF_PREVIEW_MAX_RENDER_SCALE)).toBeCloseTo(
-      800 / 1200,
-    )
   })
 })
 

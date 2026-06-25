@@ -54,6 +54,7 @@ interface PdfPreviewPageProps {
   estimatedHeight: number
   scrollRoot: HTMLDivElement | null
   onLayoutChange: (pageNumber: number, height: number) => void
+  onPageMetricsDiscovered: (pageNumber: number, metrics: PdfPreviewPageMetrics) => void
 }
 
 function PdfPreviewPage({
@@ -67,6 +68,7 @@ function PdfPreviewPage({
   estimatedHeight,
   scrollRoot,
   onLayoutChange,
+  onPageMetricsDiscovered,
 }: PdfPreviewPageProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -146,6 +148,12 @@ function PdfPreviewPage({
           return
         }
 
+        const baseViewport = page.getViewport({ scale: 1 })
+        onPageMetricsDiscovered(pageNumber, {
+          width: baseViewport.width,
+          height: baseViewport.height,
+        })
+
         const viewport = page.getViewport({ scale: renderScale })
         const context = canvas.getContext('2d')
         if (!context || cancelled || !shouldRenderRef.current) {
@@ -206,7 +214,7 @@ function PdfPreviewPage({
       renderTaskRef.current?.cancel()
       renderTaskRef.current = null
     }
-  }, [shouldRender, pageNumber, pdf, renderScale, layoutEpoch, onLayoutChange])
+  }, [shouldRender, pageNumber, pdf, renderScale, layoutEpoch, onLayoutChange, onPageMetricsDiscovered])
 
   const placeholderHeight = renderedHeight ?? estimatedHeight
 
@@ -239,25 +247,6 @@ function PdfPreviewPage({
       ) : null}
     </div>
   )
-}
-
-async function loadPdfPageMetrics(pdf: PDFDocumentProxy): Promise<Record<number, PdfPreviewPageMetrics>> {
-  const metrics: Record<number, PdfPreviewPageMetrics> = {}
-
-  await Promise.all(
-    Array.from({ length: pdf.numPages }, (_, index) => {
-      const pageNumber = index + 1
-      return pdf.getPage(pageNumber).then((page) => {
-        const viewport = page.getViewport({ scale: 1 })
-        metrics[pageNumber] = {
-          width: viewport.width,
-          height: viewport.height,
-        }
-      })
-    }),
-  )
-
-  return metrics
 }
 
 export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfPreviewProps) {
@@ -304,6 +293,16 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
     },
     [pageMetrics, viewportWidth, manualScale, fitWidth],
   )
+
+  const handlePageMetricsDiscovered = useCallback((pageNumber: number, metrics: PdfPreviewPageMetrics) => {
+    setPageMetrics((previous) => {
+      const existing = previous[pageNumber]
+      if (existing?.width === metrics.width && existing?.height === metrics.height) {
+        return previous
+      }
+      return { ...previous, [pageNumber]: metrics }
+    })
+  }, [])
 
   const handlePageLayoutChange = useCallback((pageNumber: number, height: number) => {
     setPageHeights((previous) => {
@@ -406,17 +405,6 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         setPdfDoc(pdf)
         setNumPages(pdf.numPages)
         setCurrentPage(1)
-
-        try {
-          const metrics = await loadPdfPageMetrics(pdf)
-          if (cancelled || epoch !== loadEpochRef.current) {
-            return
-          }
-          setPageMetrics(metrics)
-        } catch {
-          // Fall back to generic placeholder sizing if page metadata fails.
-        }
-
         setLoadState('ready')
       })
       .catch((error) => {
@@ -583,6 +571,7 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
                   estimatedHeight={pageHeights[pageNumber] ?? estimatePageHeight(pageNumber)}
                   scrollRoot={scrollRoot}
                   onLayoutChange={handlePageLayoutChange}
+                  onPageMetricsDiscovered={handlePageMetricsDiscovered}
                 />
               ))
             : null}

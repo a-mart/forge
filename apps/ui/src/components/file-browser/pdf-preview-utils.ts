@@ -61,16 +61,6 @@ export function computePdfRenderScale(
   return manualScale
 }
 
-export function computeFitWidthScaleForPages(
-  pageWidths: readonly number[],
-  containerWidth: number,
-  maxScale = PDF_PREVIEW_MAX_RENDER_SCALE,
-  padding = 32,
-): number {
-  const widestPageWidth = pageWidths.reduce((maxWidth, width) => Math.max(maxWidth, width), 0)
-  return computePdfRenderScale(widestPageWidth, containerWidth, 1, true, maxScale, padding)
-}
-
 export function releasePdfPreviewCanvasMemory(canvas: HTMLCanvasElement | null): void {
   if (!canvas) {
     return

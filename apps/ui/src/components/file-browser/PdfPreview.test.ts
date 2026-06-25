@@ -238,6 +238,28 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(container.querySelectorAll('[data-page-number]')).toHaveLength(3)
     expect(container.querySelector('[data-testid="pdf-preview-viewport"]')).not.toBeNull()
     expect(mockRender).toHaveBeenCalledTimes(1)
+    expect(mockGetPage).toHaveBeenCalledWith(1)
+    expect(mockGetPage).not.toHaveBeenCalledWith(2)
+    expect(mockGetPage).not.toHaveBeenCalledWith(3)
+  })
+
+  it('becomes ready without eagerly fetching metrics for every page', async () => {
+    mockPdf.numPages = 25
+    mockGetPage.mockClear()
+
+    await renderPreview()
+
+    expect(container.querySelector('[data-testid="pdf-preview-controls"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="pdf-preview-page-indicator"]')?.textContent).toBe(
+      'Page 1 / 25',
+    )
+    expect(mockGetPage).toHaveBeenCalledTimes(1)
+    expect(mockGetPage).toHaveBeenCalledWith(1)
+    for (let pageNumber = 2; pageNumber <= 25; pageNumber += 1) {
+      expect(mockGetPage).not.toHaveBeenCalledWith(pageNumber)
+    }
+
+    mockPdf.numPages = 3
   })
 
   it('keeps controls visible with sticky layout classes', async () => {
@@ -274,8 +296,25 @@ describe('PdfPreview PDF.js rendering', () => {
     expect(mockRender).toHaveBeenCalledTimes(1)
 
     await setPageIntersection(2, true)
-    expect(mockRender).toHaveBeenCalledTimes(2)
     expect(mockGetPage).toHaveBeenCalledWith(2)
+    expect(mockRender.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('uses discovered page metrics for fit-width rendering on wider pages', async () => {
+    await renderPreview()
+
+    await setPageIntersection(2, true)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const expectedHeight = 280 * (768 / 400)
+    type RenderCall = { viewport: { height: number } }
+    const renderedHeights = (mockRender.mock.calls as unknown as Array<[RenderCall]>)
+      .map(([args]) => args.viewport.height)
+    expect(renderedHeights.some((height) => Math.abs(height - expectedHeight) < 1)).toBe(true)
   })
 
   it('releases canvas memory when a page leaves the render range', async () => {
