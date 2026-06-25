@@ -238,7 +238,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
     });
     expect(targetRuntime?.sendCalls).toHaveLength(1);
     expect(targetRuntime?.sendCalls[0]).toEqual({
-      message: "SYSTEM: Cross-profile ping",
+      message: 'SYSTEM: Cross-profile ping\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
       delivery: "auto"
     });
 
@@ -273,7 +273,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
       acceptedMode: "prompt"
     });
     expect(targetRuntime?.sendCalls[0]).toEqual({
-      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":true,"fromProfileId":"manager","fromProjectName":"manager"}\n\nShared cross-profile ping`,
+      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":true,"fromProfileId":"manager","fromProjectName":"manager"}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nShared cross-profile ping`,
       delivery: "auto"
     });
 
@@ -325,6 +325,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
     if (typeof targetRuntimeText !== "string") {
       throw new Error("Expected project-agent runtime message text");
     }
+    expect(targetRuntimeText).toBe(`[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":true,"fromProfileId":"manager","fromProjectName":"manager"}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nShared cross-profile ping`);
 
     await manager.handleRuntimeSessionEvent(target.agentId, {
       type: "message_start",
@@ -341,7 +342,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
       acceptedMode: "prompt"
     });
     expect(senderRuntime?.sendCalls.at(-1)).toEqual({
-      message: `[projectAgentContext] {"fromAgentId":"beta","fromDisplayName":"beta","external":true,"fromProfileId":"beta","fromProjectName":"beta"}\n\nReply back`,
+      message: `[projectAgentContext] {"fromAgentId":"beta","fromDisplayName":"beta","external":true,"fromProfileId":"beta","fromProjectName":"beta"}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nReply back`,
       delivery: "auto"
     });
 
@@ -445,7 +446,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
 
     const secondBootTargetRuntime = secondBoot.runtimeByAgentId.get(target.agentId);
     expect(secondBootTargetRuntime?.sendCalls[0]).toEqual({
-      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":false,"fromProfileId":"manager","fromProjectName":"manager"}\n\nNeed a release summary`,
+      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":false,"fromProfileId":"manager","fromProjectName":"manager"}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nNeed a release summary`,
       delivery: "auto"
     });
 

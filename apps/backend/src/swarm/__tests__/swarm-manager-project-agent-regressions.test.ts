@@ -345,28 +345,28 @@ describe("SwarmManager project-agent regressions", () => {
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nnote-1`,
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-1`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
         fromDisplayName: "manager",
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nnote-3`,
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-3`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
         fromDisplayName: "manager",
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nnote-5`,
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-5`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: secondSender.agentId,
         fromDisplayName: "Ops",
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nops-follow-up`
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nops-follow-up`
     ]);
     expect(qaRuntime?.sendCalls.map((call) => call.message)).toEqual([
       `[projectAgentContext] ${JSON.stringify({
@@ -375,21 +375,21 @@ describe("SwarmManager project-agent regressions", () => {
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nnote-2`,
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-2`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
         fromDisplayName: "manager",
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nnote-4`,
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-4`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
         fromDisplayName: "manager",
         external: false,
         fromProfileId: "manager",
         fromProjectName: "manager"
-      })}\n\nnote-6`
+      })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-6`
     ]);
   });
 

@@ -56,6 +56,7 @@ describe("ManagerAssistantOutputTracker", () => {
       { kind: "peer_agent", fromAgentId: "agent-2" },
       { kind: "explicit_tool_required", reason: "collaboration_channel" },
       { kind: "external_channel", sourceContext: { channel: "telegram", channelId: "c1" } },
+      { kind: "internal_only" },
     ];
 
     for (const target of targets) {

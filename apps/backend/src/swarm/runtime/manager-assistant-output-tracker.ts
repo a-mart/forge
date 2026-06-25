@@ -19,7 +19,8 @@ export type AssistantOutputTarget =
   | SessionTranscriptAssistantOutputTarget
   | { kind: "explicit_tool_required"; reason: string }
   | { kind: "peer_agent"; fromAgentId: string }
-  | { kind: "external_channel"; sourceContext: MessageSourceContext };
+  | { kind: "external_channel"; sourceContext: MessageSourceContext }
+  | { kind: "internal_only"; reason?: string };
 
 interface AssistantOutputCandidate {
   text: string;

@@ -1585,11 +1585,12 @@ describe('AgentRuntime', () => {
 })
 
 describe('manager empty-turn retry after worker terminal report', () => {
-  const TERMINAL_CALLBACK = 'WORKER REPORT: status: blocked\nsummary: rerun failed before a Graph response.'
-  const COMPLETED_TERMINAL_CALLBACK = 'WORKER REPORT: status: completed\nsummary: clean reset finished.'
-  const LEGACY_SYSTEM_STATUS_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
-  const LEGACY_WORKER_COMPLETED_CALLBACK = 'SYSTEM: Worker w-1 completed its turn.\n\nLast assistant message:\nDone.'
-  const LEGACY_WORKER_ERROR_CALLBACK = 'SYSTEM: Worker w-1 ended its turn with an error.\n\nLast system message:\n⚠️ Agent error: failed.'
+  const ROUTED_REPORT_MARKER = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}'
+  const TERMINAL_CALLBACK = `WORKER REPORT: status: blocked\n${ROUTED_REPORT_MARKER}\nsummary: rerun failed before a Graph response.`
+  const COMPLETED_TERMINAL_CALLBACK = `WORKER REPORT: status: completed\n${ROUTED_REPORT_MARKER}\nsummary: clean reset finished.`
+  const LEGACY_SYSTEM_STATUS_CALLBACK = `SYSTEM: status: done\n${ROUTED_REPORT_MARKER}\nsummary: executed the guarded pilot once.`
+  const LEGACY_WORKER_COMPLETED_CALLBACK = `SYSTEM: Worker w-1 completed its turn.\n${ROUTED_REPORT_MARKER}\n\nLast assistant message:\nDone.`
+  const LEGACY_WORKER_ERROR_CALLBACK = `SYSTEM: Worker w-1 ended its turn with an error.\n${ROUTED_REPORT_MARKER}\n\nLast system message:\n⚠️ Agent error: failed.`
   const DIRECT_WEB_INPUT = '[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"session_transcript"}\n\nPlease summarize the latest result.'
   const DIRECT_CORTEX_WEB_INPUT = '[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"cortex_session"}\n\nPlease summarize the latest result.'
   const DIRECT_COLLAB_WEB_INPUT = '[sourceContext] {"channel":"web","channelId":"collab-channel","userId":"user-1"}\n[collaborationAuthor] {"displayName":"Adam","role":"admin"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"collaboration_channel"}\n\nPlease summarize the latest result.'
@@ -1839,6 +1840,37 @@ describe('manager empty-turn retry after worker terminal report', () => {
     session.state.messages = [
       userMessage(DIRECT_WEB_INPUT),
       { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not resample internal-only non-empty or empty assistant turns', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    const internalInput = '[assistantOutputTarget] {"mode":"internal_only"}\n\nSYSTEM: background notification'
+
+    session.state.messages = [
+      userMessage(internalInput),
+      { role: 'assistant', content: [{ type: 'text', text: 'Not visible and not required.' }], stopReason: 'stop' },
+    ]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    session.state.messages = [userMessage(internalInput), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(2)
+  })
+
+  it('suppresses unmarked terminal reports quietly because provenance is unknown', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    const unmarkedReport = 'WORKER REPORT: status: done\nsummary: unmarked worker report'
+    session.state.messages = [
+      userMessage(unmarkedReport),
+      { role: 'assistant', content: [{ type: 'text', text: 'plain closeout' }], stopReason: 'stop' },
     ]
 
     await (runtime as any).handleEvent({ type: 'agent_end' })
