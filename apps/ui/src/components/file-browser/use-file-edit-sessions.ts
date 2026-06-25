@@ -71,6 +71,38 @@ function stateForContent(key: FileEditorSessionKey, content: FileContentResult):
   }
 }
 
+function contentVersionEquals(a: FileVersionToken | null | undefined, b: FileVersionToken | null | undefined): boolean {
+  if (!a || !b) return (a ?? null) === (b ?? null)
+  return a.kind === b.kind &&
+    a.sha256 === b.sha256 &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs
+}
+
+function fileContentEquals(a: FileContentResult | null | undefined, b: FileContentResult | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return (a ?? null) === b
+  return a.content === b.content &&
+    a.binary === b.binary &&
+    a.size === b.size &&
+    a.lines === b.lines &&
+    a.encoding === b.encoding &&
+    contentVersionEquals(a.version, b.version) &&
+    a.editability?.editable === b.editability?.editable &&
+    a.editability?.reason === b.editability?.reason &&
+    a.editability?.maxEditableBytes === b.editability?.maxEditableBytes
+}
+
+function stateMatchesContent(state: FileEditSessionState | undefined, content: FileContentResult): boolean {
+  if (!state?.key || state.mode !== 'edit') return false
+  const text = content.content ?? ''
+  return !state.dirty &&
+    state.saveState === 'idle' &&
+    state.draft === text &&
+    state.baseContent === text &&
+    contentVersionEquals(state.baseVersion, content.version)
+}
+
 export interface FileEditSessionsController {
   active: FileEditSessionController
   getControllerForKey: (key: FileEditorSessionKey) => FileEditorGuardApi
@@ -126,11 +158,12 @@ export function useFileEditSessions({
 
   const handleContentLoaded = useCallback((key: FileEditorSessionKey, content: FileContentResult | null) => {
     const serialized = serializeKey(key)
-    setContents((previous) => ({ ...previous, [serialized]: content }))
+    setContents((previous) => fileContentEquals(previous[serialized], content) ? previous : { ...previous, [serialized]: content })
     if (content && canEdit(key, content, editingEnabled)) {
       setStates((previous) => {
         const existing = previous[serialized]
         if (existing?.dirty || existing?.saveState === 'saving' || existing?.saveState === 'reloading') return previous
+        if (stateMatchesContent(existing, content)) return previous
         return { ...previous, [serialized]: stateForContent(key, content) }
       })
     }

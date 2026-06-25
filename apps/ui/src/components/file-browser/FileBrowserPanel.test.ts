@@ -1,11 +1,14 @@
 /** @vitest-environment jsdom */
 
-import { createElement } from 'react'
+import { createElement, useCallback } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FileBrowserPanel } from './FileBrowserPanel'
+import type { FileContentResult } from './use-file-browser-queries'
 import type { FileEditSessionController } from './use-file-edit-session'
+import { useFileEditSessions } from './use-file-edit-sessions'
+import type { FileEditorSessionKey } from './use-file-editor-coordinator'
 
 const capturedViewerProps: Array<Record<string, unknown>> = []
 
@@ -191,6 +194,45 @@ describe('FileBrowserPanel resize handle placement', () => {
 
     expect(onContentLoaded).toHaveBeenCalledWith(editorSessionKey, cachedFileContent)
     expect(onContentLoaded).not.toHaveBeenCalledWith(editorSessionKey, null)
+  })
+
+  it('does not loop when panel content loading updates edit sessions with cached content', () => {
+    const editorSessionKey: FileEditorSessionKey = {
+      agentId: 'session-a',
+      worktreeId: null,
+      filePath: '/repo/src/file.ts',
+    }
+    const onContentLoadedObserved = vi.fn()
+
+    function PanelWithEditSessions() {
+      const sessions = useFileEditSessions({
+        wsUrl: 'ws://127.0.0.1:47187',
+        activeKey: editorSessionKey,
+        editingEnabled: true,
+      })
+      const handleContentLoaded = useCallback((key: FileEditorSessionKey, content: FileContentResult | null) => {
+        onContentLoadedObserved(key, content)
+        sessions.handleContentLoaded(key, content)
+      }, [sessions])
+
+      return createElement(FileBrowserPanel, {
+        wsUrl: 'ws://127.0.0.1:47187',
+        agentId: 'session-a',
+        filePath: '/repo/src/file.ts',
+        onClose: vi.fn(),
+        onNavigateToDirectory: vi.fn(),
+        editorSessionKey,
+        onContentLoaded: handleContentLoaded,
+      })
+    }
+
+    root ??= createRoot(container)
+    expect(() => {
+      flushSync(() => root?.render(createElement(PanelWithEditSessions)))
+    }).not.toThrow()
+
+    expect(onContentLoadedObserved.mock.calls.length).toBeGreaterThan(0)
+    expect(onContentLoadedObserved.mock.calls.length).toBeLessThanOrEqual(2)
   })
 
   it('does not fetch JSON content for PDF files', () => {

@@ -70,6 +70,17 @@ describe('useFileEditSessions', () => {
     expect(captured.current!.active.state.baseVersion).toMatchObject({ sha256: 'v2' })
   })
 
+  it('does not churn controller state when identical content and version are reported repeatedly', () => {
+    act(() => captured.current!.handleContentLoaded(key, content('one', 'v1')))
+    const controllerAfterFirstLoad = captured.current
+    const stateAfterFirstLoad = captured.current!.active.state
+
+    act(() => captured.current!.handleContentLoaded(key, content('one', 'v1')))
+
+    expect(captured.current).toBe(controllerAfterFirstLoad)
+    expect(captured.current!.active.state).toBe(stateAfterFirstLoad)
+  })
+
   it('does not overwrite dirty sessions with newly loaded content', () => {
     act(() => captured.current!.handleContentLoaded(key, content('one', 'v1')))
     act(() => captured.current!.active.updateDraft('dirty'))
