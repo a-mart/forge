@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- component and its companion hook are tightly coupled */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FileText,
   FileWarning,
@@ -23,6 +23,7 @@ import { ImagePreview } from './ImagePreview'
 import { PdfPreview } from './PdfPreview'
 import { MarkdownPreview } from './MarkdownPreview'
 import type { FileContentResult } from './use-file-browser-queries'
+import type { FileContentScrollSnapshot } from './use-file-browser-workspace-state'
 import {
   Tooltip,
   TooltipContent,
@@ -111,6 +112,8 @@ interface FileContentViewerProps {
   worktreeId?: string | null
   inlineEditingEnabled?: boolean
   editSession?: FileEditSessionController | null
+  contentScrollSnapshot?: FileContentScrollSnapshot | null
+  onContentScrollSnapshotChange?: (snapshot: FileContentScrollSnapshot) => void
 }
 
 interface FileViewerInfo {
@@ -137,6 +140,8 @@ export function FileContentViewer({
   worktreeId = null,
   inlineEditingEnabled = false,
   editSession = null,
+  contentScrollSnapshot = null,
+  onContentScrollSnapshotChange,
 }: FileContentViewerProps) {
   const [wordWrap, setWordWrap] = useState(readWordWrapPreference)
   const [markdownRaw, setMarkdownRaw] = useState(readMarkdownRawPreference)
@@ -445,6 +450,14 @@ export function FileContentViewer({
                   void editSession?.save()
                 }
               }}
+              initialScroll={contentScrollSnapshot?.kind === 'editor'
+                ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
+                : undefined}
+              onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
+                kind: 'editor',
+                scrollTop: snapshot.top,
+                scrollLeft: snapshot.left,
+              })}
             />
           </Suspense>
         </div>
@@ -478,7 +491,19 @@ export function FileContentViewer({
           </TooltipProvider>
         </div>
 
-        <CodeView content={text} language={language} wordWrap={wordWrap} />
+        <CodeView
+          content={text}
+          language={language}
+          wordWrap={wordWrap}
+          initialScroll={contentScrollSnapshot?.kind === 'code'
+            ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
+            : undefined}
+          onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
+            kind: 'code',
+            scrollTop: snapshot.top,
+            scrollLeft: snapshot.left,
+          })}
+        />
       </div>
       )}
 
@@ -555,11 +580,16 @@ function CodeView({
   content,
   language,
   wordWrap,
+  initialScroll,
+  onScrollSnapshotChange,
 }: {
   content: string
   language: string | undefined
   wordWrap: boolean
+  initialScroll?: { top: number; left?: number }
+  onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
   const lines = useMemo(() => content.split('\n'), [content])
 
   const highlightedLines = useMemo(() => {
@@ -573,8 +603,29 @@ function CodeView({
     return Math.max(digits * 8 + 24, 48)
   }, [lines.length])
 
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    if (initialScroll) {
+      requestAnimationFrame(() => {
+        node.scrollTop = initialScroll.top
+        node.scrollLeft = initialScroll.left ?? 0
+      })
+    }
+    const handleScroll = () => onScrollSnapshotChange?.({
+      top: node.scrollTop,
+      left: node.scrollLeft,
+    })
+    node.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      handleScroll()
+      node.removeEventListener('scroll', handleScroll)
+    }
+  }, [initialScroll, onScrollSnapshotChange])
+
   return (
     <div
+      ref={scrollRef}
       className={cn(
         'syntax-highlight file-browser-scroll h-full overflow-auto font-mono text-[13px] leading-[21px]',
       )}

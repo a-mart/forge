@@ -252,7 +252,9 @@ export function BuilderSurface({
     stickifyFileBrowserTab,
     closeFileBrowserTab,
     fileBrowserTreeSnapshot,
+    activeFileBrowserContentScrollSnapshot,
     updateFileBrowserTreeSnapshot,
+    updateActiveFileBrowserContentScrollSnapshot,
     removeFileBrowserTabsAffectedByDelete,
     navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
     fileBrowserWorktreeContext,
@@ -2017,6 +2019,8 @@ export function BuilderSurface({
               activeTabId={activeFileBrowserTabId}
               previewTabId={previewFileBrowserTabId}
               dirtyTabIds={dirtyFileBrowserTabIds}
+              contentScrollSnapshot={activeFileBrowserContentScrollSnapshot}
+              onContentScrollSnapshotChange={updateActiveFileBrowserContentScrollSnapshot}
               onActivateTab={activateFileBrowserTab}
               onCloseTab={(tab) => handleRequestCloseFileBrowserTab(tab.id)}
               onStickifyTab={stickifyFileBrowserTab}
@@ -2332,6 +2336,8 @@ export function BuilderSurface({
                       activeTabId: activeFileBrowserTabId,
                       previewTabId: previewFileBrowserTabId,
                       dirtyTabIds: dirtyFileBrowserTabIds,
+                      contentScrollSnapshot: activeFileBrowserContentScrollSnapshot,
+                      onContentScrollSnapshotChange: updateActiveFileBrowserContentScrollSnapshot,
                       onActivateTab: activateFileBrowserTab,
                       onCloseTab: (tab) => handleRequestCloseFileBrowserTab(tab.id),
                       onStickifyTab: stickifyFileBrowserTab,

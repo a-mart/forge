@@ -17,6 +17,8 @@ export interface CodeMirrorFileEditorProps {
   onChange: (next: string) => void
   onFocusedChange?: (focused: boolean) => void
   onSaveShortcut?: () => void
+  initialScroll?: { top: number; left?: number }
+  onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }
 
 const editorTheme = EditorView.theme({
@@ -90,6 +92,8 @@ export function CodeMirrorFileEditor({
   onChange,
   onFocusedChange,
   onSaveShortcut,
+  initialScroll,
+  onScrollSnapshotChange,
 }: CodeMirrorFileEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -101,9 +105,10 @@ export function CodeMirrorFileEditor({
   const onChangeRef = useRef(onChange)
   const onFocusedChangeRef = useRef(onFocusedChange)
   const onSaveShortcutRef = useRef(onSaveShortcut)
+  const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
   const readOnlyRef = useRef(readOnly === true)
   const syncingExternalValueRef = useRef(false)
-  const initialConfigRef = useRef({ value, language, readOnly, wordWrap, ariaLabel })
+  const initialConfigRef = useRef({ value, language, readOnly, wordWrap, ariaLabel, initialScroll })
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -116,6 +121,10 @@ export function CodeMirrorFileEditor({
   useEffect(() => {
     onSaveShortcutRef.current = onSaveShortcut
   }, [onSaveShortcut])
+
+  useEffect(() => {
+    onScrollSnapshotChangeRef.current = onScrollSnapshotChange
+  }, [onScrollSnapshotChange])
 
   useEffect(() => {
     readOnlyRef.current = readOnly === true
@@ -180,8 +189,21 @@ export function CodeMirrorFileEditor({
 
     const view = new EditorView({ state, parent })
     viewRef.current = view
+    if (initialConfig.initialScroll) {
+      requestAnimationFrame(() => {
+        view.scrollDOM.scrollTop = initialConfig.initialScroll?.top ?? 0
+        view.scrollDOM.scrollLeft = initialConfig.initialScroll?.left ?? 0
+      })
+    }
+    const handleScroll = () => onScrollSnapshotChangeRef.current?.({
+      top: view.scrollDOM.scrollTop,
+      left: view.scrollDOM.scrollLeft,
+    })
+    view.scrollDOM.addEventListener('scroll', handleScroll, { passive: true })
 
     return () => {
+      handleScroll()
+      view.scrollDOM.removeEventListener('scroll', handleScroll)
       view.destroy()
       if (viewRef.current === view) {
         viewRef.current = null

@@ -126,6 +126,26 @@ describe('useFileBrowserWorkspaceState', () => {
     expect(captured.current!.state.treeSnapshot?.filterText).toBe('app')
   })
 
+  it('stores content scroll snapshots for the active tab', () => {
+    render()
+
+    act(() => captured.current!.state.openStickyFile('src/A.ts'))
+    act(() => captured.current!.state.updateActiveContentScrollSnapshot({
+      kind: 'code',
+      scrollTop: 120,
+      scrollLeft: 8,
+    }))
+
+    expect(captured.current!.state.activeContentScrollSnapshot).toEqual({
+      kind: 'code',
+      scrollTop: 120,
+      scrollLeft: 8,
+    })
+
+    act(() => captured.current!.state.openStickyFile('src/B.ts'))
+    expect(captured.current!.state.activeContentScrollSnapshot).toBeNull()
+  })
+
   it('keeps session and worktree scopes separate in memory', () => {
     render()
 

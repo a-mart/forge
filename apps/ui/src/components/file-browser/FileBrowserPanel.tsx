@@ -10,7 +10,7 @@ import { useDirectoryListing, useFileContent } from './use-file-browser-queries'
 import type { FileContentResult } from './use-file-browser-queries'
 import type { FileEditSessionController } from './use-file-edit-session'
 import type { FileEditorSessionKey } from './use-file-editor-coordinator'
-import type { FileBrowserTab } from './use-file-browser-workspace-state'
+import type { FileBrowserTab, FileContentScrollSnapshot } from './use-file-browser-workspace-state'
 import { isImageFile, isPdfFile } from './file-browser-utils'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 
@@ -27,6 +27,8 @@ interface FileBrowserPanelProps {
   activeTabId?: string | null
   previewTabId?: string | null
   dirtyTabIds?: Set<string>
+  contentScrollSnapshot?: FileContentScrollSnapshot | null
+  onContentScrollSnapshotChange?: (snapshot: FileContentScrollSnapshot) => void
   onActivateTab?: (tabId: string) => void
   onCloseTab?: (tab: FileBrowserTab) => void
   onStickifyTab?: (tabId: string) => void
@@ -50,6 +52,8 @@ export function FileBrowserPanel({
   activeTabId = null,
   previewTabId = null,
   dirtyTabIds,
+  contentScrollSnapshot,
+  onContentScrollSnapshotChange,
   onActivateTab,
   onCloseTab,
   onStickifyTab,
@@ -191,6 +195,8 @@ export function FileBrowserPanel({
               worktreeId={worktreeId}
               inlineEditingEnabled={inlineEditingEnabled && !mobileOnly}
               editSession={editSession}
+              contentScrollSnapshot={contentScrollSnapshot}
+              onContentScrollSnapshotChange={onContentScrollSnapshotChange}
             />
           ) : null}
         </div>
