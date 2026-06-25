@@ -1763,6 +1763,10 @@ export function BuilderSurface({
     }, run)
   }, [fileEditorCoordinator])
 
+  const handleSourceControlMutationComplete = useCallback(() => {
+    setFileBrowserRefreshNonce((previous) => previous + 1)
+  }, [])
+
   const handleBrowseWorktreeFromSourceControl = useCallback(
     (worktree: GitWorktreeSummary) => {
       fileEditorCoordinator.requestFileEditorTransition({ type: 'select-file', nextPath: '' }, () => {
@@ -2052,6 +2056,7 @@ export function BuilderSurface({
               inlineEditingEnabled={FILE_BROWSER_INLINE_EDITING_ENABLED}
               editSession={fileEditSession}
               editorSessionKey={activeFileEditorKey}
+              refreshNonce={fileBrowserRefreshNonce}
               onContentLoaded={handleFileEditorContentLoaded}
             />
           ) : null}
@@ -2067,6 +2072,7 @@ export function BuilderSurface({
                   onClose={handleCloseDiffViewer}
                   onBrowseWorktreeFiles={handleBrowseWorktreeFromSourceControl}
                   onRequestSourceControlMutation={handleRequestSourceControlMutation}
+                  onSourceControlMutationComplete={handleSourceControlMutationComplete}
                   externalRefreshNonce={sourceControlRefreshNonce}
                   initialRepoTarget={diffViewerInitialState?.initialRepoTarget}
                   initialTab={diffViewerInitialState?.initialTab}
@@ -2452,6 +2458,7 @@ export function BuilderSurface({
           isCortex: isDiffViewerCortexSession,
           onBrowseWorktreeFiles: handleBrowseWorktreeFromSourceControl,
           onRequestSourceControlMutation: handleRequestSourceControlMutation,
+          onSourceControlMutationComplete: handleSourceControlMutationComplete,
           externalRefreshNonce: sourceControlRefreshNonce,
           initialRepoTarget: diffViewerInitialState?.initialRepoTarget,
           initialTab: diffViewerInitialState?.initialTab,

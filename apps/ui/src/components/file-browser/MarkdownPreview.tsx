@@ -7,6 +7,7 @@ import '@/styles/file-browser.css'
 interface MarkdownPreviewProps {
   content: string
   initialScroll?: { top: number; left?: number }
+  restoreKey?: string
   onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }
 
@@ -23,32 +24,48 @@ interface MarkdownPreviewProps {
  * relative to the Forge app URL rather than the repo directory. This is
  * documented and accepted for v1.
  */
-export function MarkdownPreview({ content, initialScroll, onScrollSnapshotChange }: MarkdownPreviewProps) {
+export function MarkdownPreview({ content, initialScroll, restoreKey, onScrollSnapshotChange }: MarkdownPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const applyingScrollRef = useRef(false)
+  const initialScrollRef = useRef(initialScroll)
+  const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
   const parsed = useMemo(() => parseFrontMatter(content), [content])
+
+  useEffect(() => {
+    initialScrollRef.current = initialScroll
+  }, [initialScroll])
+
+  useEffect(() => {
+    onScrollSnapshotChangeRef.current = onScrollSnapshotChange
+  }, [onScrollSnapshotChange])
 
   useEffect(() => {
     const node = scrollRef.current
     if (!node) return undefined
-    applyingScrollRef.current = true
-    requestAnimationFrame(() => {
-      node.scrollTop = initialScroll?.top ?? 0
-      node.scrollLeft = initialScroll?.left ?? 0
-      requestAnimationFrame(() => {
-        applyingScrollRef.current = false
-      })
-    })
     const handleScroll = () => {
       if (applyingScrollRef.current) return
-      onScrollSnapshotChange?.({ top: node.scrollTop, left: node.scrollLeft })
+      onScrollSnapshotChangeRef.current?.({ top: node.scrollTop, left: node.scrollLeft })
     }
     node.addEventListener('scroll', handleScroll, { passive: true })
     return () => {
       handleScroll()
       node.removeEventListener('scroll', handleScroll)
     }
-  }, [content, initialScroll?.left, initialScroll?.top, onScrollSnapshotChange])
+  }, [])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    applyingScrollRef.current = true
+    requestAnimationFrame(() => {
+      const scroll = initialScrollRef.current
+      node.scrollTop = scroll?.top ?? 0
+      node.scrollLeft = scroll?.left ?? 0
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    })
+  }, [restoreKey])
 
   const body = parsed ? parsed.body : content
 

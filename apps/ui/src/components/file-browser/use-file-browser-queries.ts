@@ -524,8 +524,9 @@ export function useFileContent(
   agentId: string | null,
   filePath: string | null,
   worktreeId?: string | null,
+  refreshNonce = 0,
 ) {
-  const queryKey = buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath ?? '')
+  const queryKey = `${buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath ?? '')}:refresh:${refreshNonce}`
   const fetchFn = useCallback(
     () => fetchFileContent(wsUrl, agentId!, filePath!, worktreeId),
     [wsUrl, agentId, filePath, worktreeId],

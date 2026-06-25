@@ -40,7 +40,8 @@ interface RegisteredGuard {
 interface PendingTransition {
   action: FileEditorTransitionAction
   run: () => void
-  snapshot: FileEditorDirtySnapshot
+  snapshots: FileEditorDirtySnapshot[]
+  currentIndex: number
   onCancel?: () => void
 }
 
@@ -171,19 +172,19 @@ export function useFileEditorCoordinator(
       return
     }
 
-    const snapshot = getDirtySnapshots().find((candidate) => {
+    const snapshots = getDirtySnapshots().filter((candidate) => {
       if (action.type === 'source-control-mutation') return snapshotsMatchSourceControlMutation(candidate, action)
       if (action.type === 'delete-entry') return doesDeleteAffectSnapshot(candidate, action)
       if (action.type === 'close-tab') return keysEqual(candidate.key, action.key)
       return true
-    }) ?? null
+    })
 
-    if (!snapshot) {
+    if (snapshots.length === 0) {
       run()
       return
     }
 
-    setPendingTransition({ action, run, snapshot, onCancel })
+    setPendingTransition({ action, run, snapshots, currentIndex: 0, onCancel })
   }, [getDirtySnapshots])
 
   const abortPendingTransition = useCallback((transition: PendingTransition | null) => {
@@ -197,6 +198,13 @@ export function useFileEditorCoordinator(
   }, [abortPendingTransition, pendingTransition])
 
   const continuePendingTransition = useCallback((transition: PendingTransition) => {
+    const nextIndex = transition.currentIndex + 1
+    if (nextIndex < transition.snapshots.length) {
+      setPendingTransition({ ...transition, currentIndex: nextIndex })
+      setIsSavingPendingTransition(false)
+      return
+    }
+
     setPendingTransition(null)
     setIsSavingPendingTransition(false)
     transition.run()
@@ -206,7 +214,8 @@ export function useFileEditorCoordinator(
     const transition = pendingTransition
     if (!transition || isSavingPendingTransition) return
 
-    const guard = findGuardForSnapshot(transition.snapshot)
+    const snapshot = transition.snapshots[transition.currentIndex]
+    const guard = snapshot ? findGuardForSnapshot(snapshot) : null
     if (!guard) {
       continuePendingTransition(transition)
       return
@@ -230,19 +239,23 @@ export function useFileEditorCoordinator(
     const transition = pendingTransition
     if (!transition || isSavingPendingTransition) return
 
-    const guard = findGuardForSnapshot(transition.snapshot)
+    const snapshot = transition.snapshots[transition.currentIndex]
+    const guard = snapshot ? findGuardForSnapshot(snapshot) : null
     guard?.discard()
     continuePendingTransition(transition)
   }, [continuePendingTransition, findGuardForSnapshot, isSavingPendingTransition, pendingTransition])
 
-  const dialogState = useMemo<FileDirtyConfirmDialogState>(() => ({
-    open: Boolean(pendingTransition),
-    snapshot: pendingTransition?.snapshot ?? null,
-    isSaving: isSavingPendingTransition || pendingTransition?.snapshot.isSaving === true,
-    onSave: saveAndContinue,
-    onDiscard: discardAndContinue,
-    onCancel: cancelPendingTransition,
-  }), [cancelPendingTransition, discardAndContinue, isSavingPendingTransition, pendingTransition, saveAndContinue])
+  const dialogState = useMemo<FileDirtyConfirmDialogState>(() => {
+    const snapshot = pendingTransition?.snapshots[pendingTransition.currentIndex] ?? null
+    return {
+      open: Boolean(pendingTransition),
+      snapshot,
+      isSaving: isSavingPendingTransition || snapshot?.isSaving === true,
+      onSave: saveAndContinue,
+      onDiscard: discardAndContinue,
+      onCancel: cancelPendingTransition,
+    }
+  }, [cancelPendingTransition, discardAndContinue, isSavingPendingTransition, pendingTransition, saveAndContinue])
 
   return {
     registerWritableEditor,

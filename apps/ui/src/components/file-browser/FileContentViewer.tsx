@@ -96,6 +96,10 @@ function storeWordWrapPreference(value: boolean): void {
   }
 }
 
+function versionRestoreKey(version: FileContentResult['version'] | null | undefined): string {
+  return version ? JSON.stringify(version) : ''
+}
+
 /* ------------------------------------------------------------------ */
 /*  Public interface                                                    */
 /* ------------------------------------------------------------------ */
@@ -192,6 +196,7 @@ export function FileContentViewer({
   const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
   const conflictActionsDisabled = editorLocked
   const effectiveMarkdownRaw = markdownRaw || (isMarkdown && isEditing)
+  const contentRestoreKey = `${worktreeId ?? ''}:${filePath ?? ''}:${versionRestoreKey(content?.version)}`
 
   useEffect(() => {
     if (isEditing && isMarkdown && !markdownRaw) {
@@ -376,6 +381,7 @@ export function FileContentViewer({
           initialScroll={contentScrollSnapshot?.kind === 'markdown'
             ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
             : undefined}
+          restoreKey={`${contentRestoreKey}:markdown`}
           onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
             kind: 'markdown',
             scrollTop: snapshot.top,
@@ -464,6 +470,7 @@ export function FileContentViewer({
               initialScroll={contentScrollSnapshot?.kind === 'editor'
                 ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
                 : undefined}
+              restoreKey={`${contentRestoreKey}:editor`}
               onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
                 kind: 'editor',
                 scrollTop: snapshot.top,
@@ -510,6 +517,7 @@ export function FileContentViewer({
           initialScroll={contentScrollSnapshot?.kind === 'code'
             ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
             : undefined}
+          restoreKey={`${contentRestoreKey}:code`}
           onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
             kind: 'code',
             scrollTop: snapshot.top,
@@ -593,16 +601,29 @@ function CodeView({
   language,
   wordWrap,
   initialScroll,
+  restoreKey,
   onScrollSnapshotChange,
 }: {
   content: string
   language: string | undefined
   wordWrap: boolean
   initialScroll?: { top: number; left?: number }
+  restoreKey?: string
   onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const initialScrollRef = useRef(initialScroll)
+  const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
+  const applyingScrollRef = useRef(false)
   const lines = useMemo(() => content.split('\n'), [content])
+
+  useEffect(() => {
+    initialScrollRef.current = initialScroll
+  }, [initialScroll])
+
+  useEffect(() => {
+    onScrollSnapshotChangeRef.current = onScrollSnapshotChange
+  }, [onScrollSnapshotChange])
 
   const highlightedLines = useMemo(() => {
     return lines.map((line) => highlightCode(line, language))
@@ -618,17 +639,9 @@ function CodeView({
   useEffect(() => {
     const node = scrollRef.current
     if (!node) return undefined
-    let applyingScroll = true
-    requestAnimationFrame(() => {
-      node.scrollTop = initialScroll?.top ?? 0
-      node.scrollLeft = initialScroll?.left ?? 0
-      requestAnimationFrame(() => {
-        applyingScroll = false
-      })
-    })
     const handleScroll = () => {
-      if (applyingScroll) return
-      onScrollSnapshotChange?.({
+      if (applyingScrollRef.current) return
+      onScrollSnapshotChangeRef.current?.({
         top: node.scrollTop,
         left: node.scrollLeft,
       })
@@ -638,7 +651,21 @@ function CodeView({
       handleScroll()
       node.removeEventListener('scroll', handleScroll)
     }
-  }, [content, initialScroll?.left, initialScroll?.top, onScrollSnapshotChange])
+  }, [])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    applyingScrollRef.current = true
+    requestAnimationFrame(() => {
+      const scroll = initialScrollRef.current
+      node.scrollTop = scroll?.top ?? 0
+      node.scrollLeft = scroll?.left ?? 0
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    })
+  }, [restoreKey])
 
   return (
     <div

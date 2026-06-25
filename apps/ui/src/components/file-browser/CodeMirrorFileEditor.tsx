@@ -18,6 +18,7 @@ export interface CodeMirrorFileEditorProps {
   onFocusedChange?: (focused: boolean) => void
   onSaveShortcut?: () => void
   initialScroll?: { top: number; left?: number }
+  restoreKey?: string
   onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }
 
@@ -93,6 +94,7 @@ export function CodeMirrorFileEditor({
   onFocusedChange,
   onSaveShortcut,
   initialScroll,
+  restoreKey,
   onScrollSnapshotChange,
 }: CodeMirrorFileEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -106,10 +108,15 @@ export function CodeMirrorFileEditor({
   const onFocusedChangeRef = useRef(onFocusedChange)
   const onSaveShortcutRef = useRef(onSaveShortcut)
   const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
+  const initialScrollRef = useRef(initialScroll)
   const readOnlyRef = useRef(readOnly === true)
   const syncingExternalValueRef = useRef(false)
   const applyingScrollRef = useRef(false)
   const initialConfigRef = useRef({ value, language, readOnly, wordWrap, ariaLabel, initialScroll })
+
+  useEffect(() => {
+    initialScrollRef.current = initialScroll
+  }, [initialScroll])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -315,13 +322,14 @@ export function CodeMirrorFileEditor({
     if (!view) return
     applyingScrollRef.current = true
     requestAnimationFrame(() => {
-      view.scrollDOM.scrollTop = initialScroll?.top ?? 0
-      view.scrollDOM.scrollLeft = initialScroll?.left ?? 0
+      const scroll = initialScrollRef.current
+      view.scrollDOM.scrollTop = scroll?.top ?? 0
+      view.scrollDOM.scrollLeft = scroll?.left ?? 0
       requestAnimationFrame(() => {
         applyingScrollRef.current = false
       })
     })
-  }, [initialScroll?.left, initialScroll?.top, value])
+  }, [restoreKey])
 
   return <div ref={containerRef} className="file-browser-code-editor h-full min-h-0 w-full overflow-hidden" data-testid="codemirror-file-editor" />
 }

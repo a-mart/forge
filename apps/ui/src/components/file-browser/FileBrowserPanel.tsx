@@ -39,6 +39,7 @@ interface FileBrowserPanelProps {
   inlineEditingEnabled?: boolean
   editSession?: FileEditSessionController | null
   editorSessionKey?: FileEditorSessionKey | null
+  refreshNonce?: number
   onContentLoaded?: (key: FileEditorSessionKey, content: FileContentResult | null) => void
 }
 
@@ -64,6 +65,7 @@ export function FileBrowserPanel({
   inlineEditingEnabled = false,
   editSession = null,
   editorSessionKey = null,
+  refreshNonce = 0,
   onContentLoaded,
 }: FileBrowserPanelProps) {
   const gatedAgentId = filePath ? agentId : null
@@ -82,6 +84,7 @@ export function FileBrowserPanel({
     gatedAgentId,
     shouldFetchContent ? filePath : null,
     worktreeId,
+    refreshNonce,
   )
 
   const viewerInfo = useFileViewerInfo(filePath, fileContent.data)

@@ -41,6 +41,7 @@ interface DiffViewerDialogProps extends DiffViewerInitialState {
   isCortex: boolean
   onBrowseWorktreeFiles?: (worktree: GitWorktreeSummary) => void
   onRequestSourceControlMutation?: SourceControlMutationGuard
+  onSourceControlMutationComplete?: () => void
   externalRefreshNonce?: number
 }
 
@@ -52,6 +53,7 @@ interface DiffViewerContentProps extends DiffViewerInitialState {
   onClose: () => void
   onBrowseWorktreeFiles?: (worktree: GitWorktreeSummary) => void
   onRequestSourceControlMutation?: SourceControlMutationGuard
+  onSourceControlMutationComplete?: () => void
   externalRefreshNonce?: number
 }
 
@@ -76,6 +78,7 @@ export function DiffViewerContent({
   initialQuickFilter,
   onBrowseWorktreeFiles,
   onRequestSourceControlMutation,
+  onSourceControlMutationComplete,
   externalRefreshNonce = 0,
 }: DiffViewerContentProps) {
   const defaultTab = useMemo(() => initialTab ?? getDefaultTab(isCortex), [initialTab, isCortex])
@@ -151,6 +154,11 @@ export function DiffViewerContent({
       pullRequestsQuery.refetch()
     }
   }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, statusQuery, worktreesQuery])
+
+  const handleSourceControlMutationComplete = useCallback(() => {
+    handleRefresh()
+    onSourceControlMutationComplete?.()
+  }, [handleRefresh, onSourceControlMutationComplete])
 
   useEffect(() => {
     if (!active || externalRefreshNonce === 0 || externalRefreshNonce === lastExternalRefreshNonceRef.current) return
@@ -231,7 +239,7 @@ export function DiffViewerContent({
               branchesQuery={branchesQuery}
               isDirty={(statusQuery.data?.summary.filesChanged ?? 0) > 0}
               sourceControlActive={active}
-              onMutationComplete={handleRefresh}
+              onMutationComplete={handleSourceControlMutationComplete}
               onRequestMutation={onRequestSourceControlMutation}
             />
           ) : null
@@ -375,6 +383,7 @@ export function DiffViewerDialog({
   initialQuickFilter,
   onBrowseWorktreeFiles,
   onRequestSourceControlMutation,
+  onSourceControlMutationComplete,
   externalRefreshNonce,
 }: DiffViewerDialogProps) {
   const handleClose = useCallback(() => {
@@ -414,6 +423,7 @@ export function DiffViewerDialog({
             onClose={handleClose}
             onBrowseWorktreeFiles={onBrowseWorktreeFiles}
             onRequestSourceControlMutation={onRequestSourceControlMutation}
+            onSourceControlMutationComplete={onSourceControlMutationComplete}
             externalRefreshNonce={externalRefreshNonce}
             initialRepoTarget={initialRepoTarget}
             initialTab={initialTab}
