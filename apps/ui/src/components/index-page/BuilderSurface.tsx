@@ -25,6 +25,7 @@ import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar
 import { FileDirtyConfirmDialog } from '@/components/file-browser/FileDirtyConfirmDialog'
 import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/file-editor-feature-gates'
 import { useFileEditSessions } from '@/components/file-browser/use-file-edit-sessions'
+import { fileBrowserTabId } from '@/components/file-browser/use-file-browser-workspace-state'
 import { useFileEditorCoordinator, type FileEditorSessionKey } from '@/components/file-browser/use-file-editor-coordinator'
 import {
   applySuccessfulFileDeleteToCaches,
@@ -246,6 +247,7 @@ export function BuilderSurface({
     selectFileBrowserFile: handleFileBrowserSelectFile,
     openStickyFileBrowserFile: handleOpenStickyFileBrowserFile,
     fileBrowserTabs,
+    allFileBrowserTabs,
     activeFileBrowserTabId,
     previewFileBrowserTabId,
     activateFileBrowserTab,
@@ -294,7 +296,11 @@ export function BuilderSurface({
     },
   })
   const fileEditSession = fileEditSessions.active
-  const fileEditorCoordinator = useFileEditorCoordinator(null)
+  const fileEditorCoordinatorOptions = useMemo(() => ({
+    getDirtySnapshots: fileEditSessions.getDirtySnapshots,
+    getGuardForKey: fileEditSessions.getControllerForKey,
+  }), [fileEditSessions.getControllerForKey, fileEditSessions.getDirtySnapshots])
+  const fileEditorCoordinator = useFileEditorCoordinator(null, fileEditorCoordinatorOptions)
   const fileEditorCoordinatorRef = useRef(fileEditorCoordinator)
   useEffect(() => {
     fileEditorCoordinatorRef.current = fileEditorCoordinator
@@ -308,6 +314,15 @@ export function BuilderSurface({
       unregister.forEach((dispose) => dispose())
     }
   }, [fileBrowserTabs, fileEditSessions, fileEditorCoordinator])
+
+  useEffect(() => {
+    const retainedTabKeys = new Set(allFileBrowserTabs.map((tab) => tab.id))
+    for (const key of fileEditSessions.getSessionKeys()) {
+      if (!retainedTabKeys.has(fileBrowserTabId(key))) {
+        fileEditSessions.removeSession(key)
+      }
+    }
+  }, [allFileBrowserTabs, fileEditSessions])
 
   const dirtyFileBrowserTabIds = useMemo(() => new Set(
     fileBrowserTabs
@@ -1557,6 +1572,12 @@ export function BuilderSurface({
         entryType,
       })
       removeFileBrowserTabsAffectedByDelete(path, entryType)
+      fileEditSessions.removeSessionsAffectedByDelete({
+        agentId: activeAgentId,
+        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        path,
+        entryType,
+      })
       setFileBrowserRefreshNonce((previous) => previous + 1)
       setSourceControlRefreshNonce((previous) => previous + 1)
       return true
@@ -1575,6 +1596,7 @@ export function BuilderSurface({
     activeAgentId,
     fileBrowserWorktreeContext?.worktreeId,
     fileEditorCoordinator,
+    fileEditSessions,
     removeFileBrowserTabsAffectedByDelete,
     wsUrl,
   ])

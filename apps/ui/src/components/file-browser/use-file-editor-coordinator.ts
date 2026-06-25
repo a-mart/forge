@@ -84,10 +84,23 @@ function keysEqual(a: FileEditorSessionKey, b: FileEditorSessionKey): boolean {
 }
 
 function actionPreservesDirtyDrafts(action: FileEditorTransitionAction): boolean {
-  return action.type === 'select-file' || action.type === 'open-workspace-panel' || action.type === 'close-file-browser'
+  return action.type === 'select-file' ||
+    action.type === 'open-workspace-panel' ||
+    action.type === 'close-file-browser' ||
+    action.type === 'open-source-control-inline'
 }
 
-export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null) {
+export interface FileEditorCoordinatorOptions {
+  getDirtySnapshots?: () => FileEditorDirtySnapshot[]
+  getGuardForKey?: (key: FileEditorSessionKey) => FileEditorGuardApi | null
+}
+
+const DEFAULT_COORDINATOR_OPTIONS: FileEditorCoordinatorOptions = {}
+
+export function useFileEditorCoordinator(
+  activeGuard?: FileEditorGuardApi | null,
+  options: FileEditorCoordinatorOptions = DEFAULT_COORDINATOR_OPTIONS,
+) {
   const guardsRef = useRef<Map<string, RegisteredGuard>>(new Map())
   const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null)
   const [isSavingPendingTransition, setIsSavingPendingTransition] = useState(false)
@@ -113,26 +126,31 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     }
   }, [])
 
-  const getDirtySnapshot = useCallback((): FileEditorDirtySnapshot | null => {
-    const activeSnapshot = activeGuard?.getSnapshot() ?? null
-    if (activeSnapshot?.isDirty) {
-      return {
-        ...activeSnapshot,
-        fileName: activeSnapshot.fileName || fileNameFromPath(activeSnapshot.key.filePath),
-      }
+  const getDirtySnapshots = useCallback((): FileEditorDirtySnapshot[] => {
+    const snapshots: FileEditorDirtySnapshot[] = []
+    const addSnapshot = (snapshot: FileEditorDirtySnapshot | null | undefined) => {
+      if (!snapshot?.isDirty) return
+      const serialized = serializeFileEditorKey(snapshot.key)
+      if (snapshots.some((existing) => serializeFileEditorKey(existing.key) === serialized)) return
+      snapshots.push({
+        ...snapshot,
+        fileName: snapshot.fileName || fileNameFromPath(snapshot.key.filePath),
+      })
     }
 
+    addSnapshot(activeGuard?.getSnapshot() ?? null)
     for (const registered of guardsRef.current.values()) {
-      const snapshot = registered.api.getSnapshot()
-      if (snapshot?.isDirty) {
-        return {
-          ...snapshot,
-          fileName: snapshot.fileName || fileNameFromPath(snapshot.key.filePath),
-        }
-      }
+      addSnapshot(registered.api.getSnapshot())
     }
-    return null
-  }, [activeGuard])
+    for (const snapshot of options.getDirtySnapshots?.() ?? []) {
+      addSnapshot(snapshot)
+    }
+    return snapshots
+  }, [activeGuard, options])
+
+  const getDirtySnapshot = useCallback((): FileEditorDirtySnapshot | null => {
+    return getDirtySnapshots()[0] ?? null
+  }, [getDirtySnapshots])
 
   const findGuardForSnapshot = useCallback((snapshot: FileEditorDirtySnapshot): FileEditorGuardApi | null => {
     const activeSnapshot = activeGuard?.getSnapshot() ?? null
@@ -140,8 +158,8 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
       return activeGuard ?? null
     }
 
-    return guardsRef.current.get(serializeFileEditorKey(snapshot.key))?.api ?? null
-  }, [activeGuard])
+    return guardsRef.current.get(serializeFileEditorKey(snapshot.key))?.api ?? options.getGuardForKey?.(snapshot.key) ?? null
+  }, [activeGuard, options])
 
   const requestFileEditorTransition = useCallback((
     action: FileEditorTransitionAction,
@@ -153,17 +171,7 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
       return
     }
 
-    const snapshots: FileEditorDirtySnapshot[] = []
-    const activeSnapshot = activeGuard?.getSnapshot() ?? null
-    if (activeSnapshot?.isDirty) snapshots.push(activeSnapshot)
-    for (const registered of guardsRef.current.values()) {
-      const snapshot = registered.api.getSnapshot()
-      if (snapshot?.isDirty && !snapshots.some((existing) => serializeFileEditorKey(existing.key) === serializeFileEditorKey(snapshot.key))) {
-        snapshots.push(snapshot)
-      }
-    }
-
-    const snapshot = snapshots.find((candidate) => {
+    const snapshot = getDirtySnapshots().find((candidate) => {
       if (action.type === 'source-control-mutation') return snapshotsMatchSourceControlMutation(candidate, action)
       if (action.type === 'delete-entry') return doesDeleteAffectSnapshot(candidate, action)
       if (action.type === 'close-tab') return keysEqual(candidate.key, action.key)
@@ -176,7 +184,7 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     }
 
     setPendingTransition({ action, run, snapshot, onCancel })
-  }, [activeGuard])
+  }, [getDirtySnapshots])
 
   const abortPendingTransition = useCallback((transition: PendingTransition | null) => {
     transition?.onCancel?.()

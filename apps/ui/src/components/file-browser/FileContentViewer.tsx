@@ -371,7 +371,17 @@ export function FileContentViewer({
           onSave={() => void editSession?.save()}
           onRevert={editSession?.revert}
         />
-        <MarkdownPreview content={text} />
+        <MarkdownPreview
+          content={text}
+          initialScroll={contentScrollSnapshot?.kind === 'markdown'
+            ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
+            : undefined}
+          onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
+            kind: 'markdown',
+            scrollTop: snapshot.top,
+            scrollLeft: snapshot.left,
+          })}
+        />
       </div>
     )
   }
@@ -438,6 +448,7 @@ export function FileContentViewer({
             )}
           >
             <CodeMirrorFileEditorLazy
+              key={`${worktreeId ?? ''}:${filePath ?? ''}:editor`}
               value={editState?.mode === 'edit' ? editState.draft : text}
               language={language}
               wordWrap={wordWrap}
@@ -492,6 +503,7 @@ export function FileContentViewer({
         </div>
 
         <CodeView
+          key={`${worktreeId ?? ''}:${filePath ?? ''}:code`}
           content={text}
           language={language}
           wordWrap={wordWrap}
@@ -605,23 +617,28 @@ function CodeView({
 
   useEffect(() => {
     const node = scrollRef.current
-    if (!node) return
-    if (initialScroll) {
+    if (!node) return undefined
+    let applyingScroll = true
+    requestAnimationFrame(() => {
+      node.scrollTop = initialScroll?.top ?? 0
+      node.scrollLeft = initialScroll?.left ?? 0
       requestAnimationFrame(() => {
-        node.scrollTop = initialScroll.top
-        node.scrollLeft = initialScroll.left ?? 0
+        applyingScroll = false
+      })
+    })
+    const handleScroll = () => {
+      if (applyingScroll) return
+      onScrollSnapshotChange?.({
+        top: node.scrollTop,
+        left: node.scrollLeft,
       })
     }
-    const handleScroll = () => onScrollSnapshotChange?.({
-      top: node.scrollTop,
-      left: node.scrollLeft,
-    })
     node.addEventListener('scroll', handleScroll, { passive: true })
     return () => {
       handleScroll()
       node.removeEventListener('scroll', handleScroll)
     }
-  }, [initialScroll, onScrollSnapshotChange])
+  }, [content, initialScroll?.left, initialScroll?.top, onScrollSnapshotChange])
 
   return (
     <div

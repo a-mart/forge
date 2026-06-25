@@ -264,6 +264,7 @@ export function usePanelState({
     selectFileBrowserFile,
     openStickyFileBrowserFile,
     fileBrowserTabs: fileBrowserWorkspace.tabs,
+    allFileBrowserTabs: fileBrowserWorkspace.allTabs,
     activeFileBrowserTabId: fileBrowserWorkspace.activeTabId,
     previewFileBrowserTabId: fileBrowserWorkspace.previewTabId,
     activateFileBrowserTab: fileBrowserWorkspace.activateTab,

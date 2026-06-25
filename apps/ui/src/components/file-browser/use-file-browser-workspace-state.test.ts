@@ -126,7 +126,7 @@ describe('useFileBrowserWorkspaceState', () => {
     expect(captured.current!.state.treeSnapshot?.filterText).toBe('app')
   })
 
-  it('stores content scroll snapshots for the active tab', () => {
+  it('stores content scroll snapshots for the active tab and resets tabs without snapshots', () => {
     render()
 
     act(() => captured.current!.state.openStickyFile('src/A.ts'))
@@ -143,6 +143,24 @@ describe('useFileBrowserWorkspaceState', () => {
     })
 
     act(() => captured.current!.state.openStickyFile('src/B.ts'))
+    expect(captured.current!.state.activeContentScrollSnapshot).toBeNull()
+
+    act(() => captured.current!.state.activateTab(captured.current!.state.tabs[0].id))
+    expect(captured.current!.state.activeContentScrollSnapshot?.scrollTop).toBe(120)
+  })
+
+  it('prunes replaced preview tab content scroll state and exposes all retained tabs', () => {
+    render()
+
+    act(() => captured.current!.state.openPreviewFile('src/A.ts'))
+    act(() => captured.current!.state.updateActiveContentScrollSnapshot({
+      kind: 'code',
+      scrollTop: 99,
+    }))
+    act(() => captured.current!.state.openPreviewFile('src/B.ts'))
+
+    expect(captured.current!.state.tabs.map((tab) => tab.filePath)).toEqual(['src/B.ts'])
+    expect(captured.current!.state.allTabs.map((tab) => tab.filePath)).toEqual(['src/B.ts'])
     expect(captured.current!.state.activeContentScrollSnapshot).toBeNull()
   })
 

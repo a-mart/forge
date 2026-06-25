@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import { FrontMatterBlock } from '@/components/ui/FrontMatterBlock'
 import { parseFrontMatter } from '@/lib/parse-front-matter'
@@ -6,6 +6,8 @@ import '@/styles/file-browser.css'
 
 interface MarkdownPreviewProps {
   content: string
+  initialScroll?: { top: number; left?: number }
+  onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }
 
 /**
@@ -21,13 +23,37 @@ interface MarkdownPreviewProps {
  * relative to the Forge app URL rather than the repo directory. This is
  * documented and accepted for v1.
  */
-export function MarkdownPreview({ content }: MarkdownPreviewProps) {
+export function MarkdownPreview({ content, initialScroll, onScrollSnapshotChange }: MarkdownPreviewProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const applyingScrollRef = useRef(false)
   const parsed = useMemo(() => parseFrontMatter(content), [content])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return undefined
+    applyingScrollRef.current = true
+    requestAnimationFrame(() => {
+      node.scrollTop = initialScroll?.top ?? 0
+      node.scrollLeft = initialScroll?.left ?? 0
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    })
+    const handleScroll = () => {
+      if (applyingScrollRef.current) return
+      onScrollSnapshotChange?.({ top: node.scrollTop, left: node.scrollLeft })
+    }
+    node.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      handleScroll()
+      node.removeEventListener('scroll', handleScroll)
+    }
+  }, [content, initialScroll?.left, initialScroll?.top, onScrollSnapshotChange])
 
   const body = parsed ? parsed.body : content
 
   return (
-    <div className="file-browser-scroll h-full overflow-auto">
+    <div ref={scrollRef} className="file-browser-scroll h-full overflow-auto">
       <div className="mx-auto max-w-3xl px-8 py-6">
         {parsed && parsed.entries.length > 0 && <FrontMatterBlock entries={parsed.entries} />}
         <MarkdownMessage

@@ -188,6 +188,21 @@ describe('FileContentViewer direct inline editing', () => {
     expect(codeMirrorProps).toHaveLength(0)
     expect(container.querySelector('.syntax-highlight')).not.toBeNull()
   })
+
+  it('passes the active tab editor scroll snapshot through file changes', () => {
+    const editSession = createEditSession({ state: editState({ dirty: false }) })
+    renderViewer(editSession, {
+      filePath: 'src/one.ts',
+      contentScrollSnapshot: { kind: 'editor', scrollTop: 140, scrollLeft: 3 },
+    })
+    expect(codeMirrorProps.at(-1)?.initialScroll).toEqual({ top: 140, left: 3 })
+
+    renderViewer(editSession, {
+      filePath: 'src/two.ts',
+      contentScrollSnapshot: null,
+    })
+    expect(codeMirrorProps.at(-1)?.initialScroll).toBeUndefined()
+  })
 })
 
 describe('FileContentViewer conflict recovery', () => {

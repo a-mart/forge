@@ -36,6 +36,14 @@ function fileNameFromPath(filePath: string): string {
   return filePath.split('/').filter(Boolean).pop() ?? filePath
 }
 
+function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
+  const normalizedDeletePath = deletePath.replace(/^\/+|\/+$/g, '')
+  const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
+  if (!normalizedDeletePath) return false
+  if (entryType === 'file') return normalizedFilePath === normalizedDeletePath
+  return normalizedFilePath === normalizedDeletePath || normalizedFilePath.startsWith(`${normalizedDeletePath}/`)
+}
+
 function canEdit(key: FileEditorSessionKey | null, content: FileContentResult | null, editingEnabled: boolean): boolean {
   return Boolean(
     editingEnabled &&
@@ -68,7 +76,9 @@ export interface FileEditSessionsController {
   getControllerForKey: (key: FileEditorSessionKey) => FileEditorGuardApi
   getDirtySnapshotForKey: (key: FileEditorSessionKey) => FileEditorDirtySnapshot | null
   getDirtySnapshots: () => FileEditorDirtySnapshot[]
+  getSessionKeys: () => FileEditorSessionKey[]
   removeSession: (key: FileEditorSessionKey) => void
+  removeSessionsAffectedByDelete: (scope: { agentId: string; worktreeId: string | null; path: string; entryType: 'file' | 'directory' }) => void
   handleContentLoaded: (key: FileEditorSessionKey, content: FileContentResult | null) => void
   handleSavedContent: (saved: KeyedFileEditorContent) => void
 }
@@ -120,7 +130,7 @@ export function useFileEditSessions({
     if (content && canEdit(key, content, editingEnabled)) {
       setStates((previous) => {
         const existing = previous[serialized]
-        if (existing?.dirty || existing?.mode === 'edit') return previous
+        if (existing?.dirty || existing?.saveState === 'saving' || existing?.saveState === 'reloading') return previous
         return { ...previous, [serialized]: stateForContent(key, content) }
       })
     }
@@ -146,6 +156,10 @@ export function useFileEditSessions({
       return snapshot ? [snapshot] : []
     })
   }, [makeDirtySnapshot])
+
+  const getSessionKeys = useCallback((): FileEditorSessionKey[] => {
+    return Object.values(statesRef.current).flatMap((state) => state.key ? [state.key] : [])
+  }, [])
 
   const saveKey = useCallback(async (key: FileEditorSessionKey, options: { overwrite?: boolean } = {}): Promise<boolean> => {
     const serialized = serializeKey(key)
@@ -255,7 +269,7 @@ export function useFileEditSessions({
   const discardKey = useCallback((key: FileEditorSessionKey) => {
     updateState(key, (previous) => {
       if (previous.saveState === 'saving' || previous.saveState === 'reloading') return previous
-      return { ...previous, draft: previous.baseContent, dirty: false, mode: 'preview', saveState: 'idle', error: null, conflict: null }
+      return { ...previous, draft: previous.baseContent, dirty: false, mode: 'edit', saveState: 'idle', error: null, conflict: null }
     })
   }, [updateState])
 
@@ -277,6 +291,18 @@ export function useFileEditSessions({
       delete next[serialized]
       return next
     })
+  }, [])
+
+  const removeSessionsAffectedByDelete = useCallback(({ agentId, worktreeId, path, entryType }: { agentId: string; worktreeId: string | null; path: string; entryType: 'file' | 'directory' }) => {
+    const shouldRemove = (state: FileEditSessionState | undefined) => Boolean(
+      state?.key &&
+      state.key.agentId === agentId &&
+      state.key.worktreeId === worktreeId &&
+      doesDeleteAffectFile(path, entryType, state.key.filePath),
+    )
+
+    setStates((previous) => Object.fromEntries(Object.entries(previous).filter(([, state]) => !shouldRemove(state))))
+    setContents((previous) => Object.fromEntries(Object.entries(previous).filter(([serialized]) => !shouldRemove(statesRef.current[serialized]))))
   }, [])
 
   const handleSavedContent = useCallback((saved: KeyedFileEditorContent) => {
@@ -326,7 +352,9 @@ export function useFileEditSessions({
     getControllerForKey,
     getDirtySnapshotForKey,
     getDirtySnapshots,
+    getSessionKeys,
     removeSession,
+    removeSessionsAffectedByDelete,
     handleContentLoaded,
     handleSavedContent,
   }

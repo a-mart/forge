@@ -61,6 +61,19 @@ function emptyScopeState(): FileBrowserScopeState {
   return { activeTabId: null, previewTabId: null, tabs: [], treeSnapshot: null, contentScrollByTabId: {} }
 }
 
+function treeSnapshotsEqual(a: FileBrowserTreeStateSnapshot | null, b: FileBrowserTreeStateSnapshot): boolean {
+  return a?.filterText === b.filterText &&
+    a.searchMode === b.searchMode &&
+    a.searchQuery === b.searchQuery &&
+    a.treeScrollTop === b.treeScrollTop &&
+    a.searchScrollTop === b.searchScrollTop &&
+    a.treeState === b.treeState
+}
+
+function contentScrollSnapshotsEqual(a: FileContentScrollSnapshot | undefined, b: FileContentScrollSnapshot): boolean {
+  return a?.kind === b.kind && a.scrollTop === b.scrollTop && (a.scrollLeft ?? 0) === (b.scrollLeft ?? 0)
+}
+
 function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
   const normalizedDeletePath = deletePath.replace(/^\/+|\/+$/g, '')
   const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
@@ -84,6 +97,7 @@ export function useFileBrowserWorkspaceState({
   const activeScopeId = activeScope ? scopeId(activeScope) : null
   const activeState = activeScopeId ? (scopes[activeScopeId] ?? emptyScopeState()) : emptyScopeState()
   const activeTab = activeState.tabs.find((tab) => tab.id === activeState.activeTabId) ?? null
+  const allTabs = useMemo(() => Object.values(scopes).flatMap((scope) => scope.tabs), [scopes])
 
   const updateActiveScope = useCallback((updater: (previous: FileBrowserScopeState, scope: FileBrowserScopeKey) => FileBrowserScopeState) => {
     if (!activeScope) return
@@ -113,7 +127,15 @@ export function useFileBrowserWorkspaceState({
       const tabs = canReplace
         ? previous.tabs.map((tab) => tab.id === replaceId ? nextTab : tab)
         : [...previous.tabs, nextTab]
-      return { ...previous, tabs, activeTabId: nextTab.id, previewTabId: nextTab.id }
+      return {
+        ...previous,
+        tabs,
+        activeTabId: nextTab.id,
+        previewTabId: nextTab.id,
+        contentScrollByTabId: canReplace && replaceId
+          ? Object.fromEntries(Object.entries(previous.contentScrollByTabId).filter(([id]) => id !== replaceId))
+          : previous.contentScrollByTabId,
+      }
     })
   }, [updateActiveScope])
 
@@ -193,7 +215,7 @@ export function useFileBrowserWorkspaceState({
 
   const updateTreeSnapshot = useCallback((snapshot: FileBrowserTreeStateSnapshot) => {
     updateActiveScope((previous) => {
-      if (JSON.stringify(previous.treeSnapshot) === JSON.stringify(snapshot)) return previous
+      if (treeSnapshotsEqual(previous.treeSnapshot, snapshot)) return previous
       return { ...previous, treeSnapshot: snapshot }
     })
   }, [updateActiveScope])
@@ -202,7 +224,7 @@ export function useFileBrowserWorkspaceState({
     updateActiveScope((previous) => {
       if (!previous.activeTabId) return previous
       const current = previous.contentScrollByTabId[previous.activeTabId]
-      if (JSON.stringify(current) === JSON.stringify(snapshot)) return previous
+      if (contentScrollSnapshotsEqual(current, snapshot)) return previous
       return {
         ...previous,
         contentScrollByTabId: {
@@ -216,6 +238,7 @@ export function useFileBrowserWorkspaceState({
   return {
     activeScope,
     tabs: activeState.tabs,
+    allTabs,
     activeTabId: activeState.activeTabId,
     previewTabId: activeState.previewTabId,
     activeTab,

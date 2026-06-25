@@ -108,6 +108,7 @@ export function CodeMirrorFileEditor({
   const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
   const readOnlyRef = useRef(readOnly === true)
   const syncingExternalValueRef = useRef(false)
+  const applyingScrollRef = useRef(false)
   const initialConfigRef = useRef({ value, language, readOnly, wordWrap, ariaLabel, initialScroll })
 
   useEffect(() => {
@@ -189,16 +190,24 @@ export function CodeMirrorFileEditor({
 
     const view = new EditorView({ state, parent })
     viewRef.current = view
-    if (initialConfig.initialScroll) {
+    const applyScroll = (top: number, left: number) => {
+      applyingScrollRef.current = true
+      view.scrollDOM.scrollTop = top
+      view.scrollDOM.scrollLeft = left
       requestAnimationFrame(() => {
-        view.scrollDOM.scrollTop = initialConfig.initialScroll?.top ?? 0
-        view.scrollDOM.scrollLeft = initialConfig.initialScroll?.left ?? 0
+        applyingScrollRef.current = false
       })
     }
-    const handleScroll = () => onScrollSnapshotChangeRef.current?.({
-      top: view.scrollDOM.scrollTop,
-      left: view.scrollDOM.scrollLeft,
+    requestAnimationFrame(() => {
+      applyScroll(initialConfig.initialScroll?.top ?? 0, initialConfig.initialScroll?.left ?? 0)
     })
+    const handleScroll = () => {
+      if (applyingScrollRef.current) return
+      onScrollSnapshotChangeRef.current?.({
+        top: view.scrollDOM.scrollTop,
+        left: view.scrollDOM.scrollLeft,
+      })
+    }
     view.scrollDOM.addEventListener('scroll', handleScroll, { passive: true })
 
     return () => {
@@ -300,6 +309,19 @@ export function CodeMirrorFileEditor({
       effects: contentAttributesCompartment.reconfigure(contentAttributes(ariaLabel)),
     })
   }, [ariaLabel, contentAttributesCompartment])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    applyingScrollRef.current = true
+    requestAnimationFrame(() => {
+      view.scrollDOM.scrollTop = initialScroll?.top ?? 0
+      view.scrollDOM.scrollLeft = initialScroll?.left ?? 0
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    })
+  }, [initialScroll?.left, initialScroll?.top, value])
 
   return <div ref={containerRef} className="file-browser-code-editor h-full min-h-0 w-full overflow-hidden" data-testid="codemirror-file-editor" />
 }

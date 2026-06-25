@@ -52,8 +52,19 @@ interface CapturedCoordinator {
 
 const captured: { current: CapturedCoordinator | null } = { current: null }
 
-function Harness({ activeGuard }: { activeGuard: FileEditorGuardApi | null }) {
-  const coordinator = useFileEditorCoordinator(activeGuard)
+function Harness({
+  activeGuard,
+  hiddenDirtySnapshots,
+  hiddenGuard,
+}: {
+  activeGuard: FileEditorGuardApi | null
+  hiddenDirtySnapshots?: FileEditorDirtySnapshot[]
+  hiddenGuard?: FileEditorGuardApi | null
+}) {
+  const coordinator = useFileEditorCoordinator(activeGuard, {
+    getDirtySnapshots: hiddenDirtySnapshots ? () => hiddenDirtySnapshots : undefined,
+    getGuardForKey: hiddenGuard ? () => hiddenGuard : undefined,
+  })
 
   useLayoutEffect(() => {
     captured.current = {
@@ -86,10 +97,13 @@ afterEach(() => {
   captured.current = null
 })
 
-function renderHarness(activeGuard: FileEditorGuardApi | null) {
+function renderHarness(
+  activeGuard: FileEditorGuardApi | null,
+  options: { hiddenDirtySnapshots?: FileEditorDirtySnapshot[]; hiddenGuard?: FileEditorGuardApi | null } = {},
+) {
   flushSync(() => {
     root = createRoot(container)
-    root.render(createElement(Harness, { activeGuard }))
+    root.render(createElement(Harness, { activeGuard, ...options }))
   })
 }
 
@@ -269,6 +283,46 @@ describe('useFileEditorCoordinator', () => {
       expect(onCancel).toHaveBeenCalledTimes(1)
       expect(captured.current?.dialogOpen).toBe(false)
     })
+  })
+
+  it('does not guard opening Source Control because dirty drafts are preserved', () => {
+    const run = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save: vi.fn(),
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'open-source-control-inline' }, run)
+    })
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards Source Control mutations for hidden dirty sessions in the same worktree', () => {
+    const run = vi.fn()
+    const save = vi.fn().mockResolvedValue(true)
+    renderHarness(null, {
+      hiddenDirtySnapshots: [dirtySnapshot(linkedWorktreeKey)],
+      hiddenGuard: {
+        getSnapshot: () => dirtySnapshot(linkedWorktreeKey),
+        save,
+        discard: vi.fn(),
+      },
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition(
+        { type: 'source-control-mutation', mutation: 'switch-branch', agentId: 'agent-1', worktreeId: 'linked-1' },
+        run,
+      )
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogOpen).toBe(true)
+    expect(captured.current?.dialogSnapshot?.key).toEqual(linkedWorktreeKey)
   })
 
   it('guards Source Control mutations only for the same workspace or linked worktree', () => {
