@@ -13,6 +13,8 @@ Open the **⋮ menu** in the chat header. You'll see two options:
 
 If you run Smart compact manually while a Pi-backed manager is already idle, it stays idle afterward. If the manager is active, interrupted, or waiting on dispatch, it resumes after compaction.
 
+Settings for the compaction model, reasoning level, and timeout live in **Settings > General > Compaction**. They apply only to supported Pi-backed manager compaction runtimes, currently OpenAI/Codex and Anthropic. Claude SDK/native runtimes and xAI/Grok are not controlled by these settings; they may compact independently through their own runtime behavior where applicable.
+
 ## Auto-compaction
 
 When the context window fills up during an active conversation, Forge triggers compaction automatically. You'll see a spinning indicator on the ⋮ menu button and a violet pulsing `C` badge on the session row while compaction or context recovery is active. This prevents the agent from failing mid-response due to context limits.

@@ -14,7 +14,7 @@ Use **Enable Active Work Plans** to turn the session coordination UI on or off. 
 
 ## Compaction
 
-Use **Settings > General > Compaction** to choose the model, reasoning level, and timeout Forge uses for automatic compaction and manual Smart compact runs in Pi-backed manager sessions. The default is **GPT-5.5**, **Low** reasoning, and a **5 minute** timeout. If the configured provider or model is unavailable, Forge shows a warning here so you can fix auth or pick a different model before automatic compaction needs it.
+Use **Settings > General > Compaction** to choose the model, reasoning level, and timeout Forge uses for automatic compaction and manual Smart compact runs. These controls apply only to supported Pi-backed manager compaction runtimes: OpenAI/Codex and Anthropic. Claude SDK/native runtimes and xAI/Grok are not eligible here; those runtimes may handle compaction through their own behavior where applicable. The default is **GPT-5.5**, **Low** reasoning, and a **5 minute** timeout. If the configured provider or model is unavailable, Forge shows a warning here so you can fix auth or pick a different model before automatic compaction needs it.
 
 ## Prompt Cache Visualization
 
