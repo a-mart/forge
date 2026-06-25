@@ -251,6 +251,8 @@ export function BuilderSurface({
     activateFileBrowserTab,
     stickifyFileBrowserTab,
     closeFileBrowserTab,
+    fileBrowserTreeSnapshot,
+    updateFileBrowserTreeSnapshot,
     removeFileBrowserTabsAffectedByDelete,
     navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
     fileBrowserWorktreeContext,
@@ -1991,6 +1993,8 @@ export function BuilderSurface({
               onSelectFile={handleGuardedFileBrowserSelectFile}
               onOpenStickyFile={handleFileBrowserOpenStickyFile}
               selectedFile={selectedFileBrowserFile}
+              treeSnapshot={fileBrowserTreeSnapshot}
+              onTreeSnapshotChange={updateFileBrowserTreeSnapshot}
               worktreeContext={fileBrowserWorktreeContext}
               onClearWorktreeContext={handleGuardedClearFileBrowserWorktreeContext}
               projectResourceProfileId={activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null}
@@ -2344,6 +2348,8 @@ export function BuilderSurface({
                 onSelectFile: handleGuardedFileBrowserSelectFile,
                 onOpenStickyFile: handleFileBrowserOpenStickyFile,
                 selectedFile: selectedFileBrowserFile,
+                treeSnapshot: fileBrowserTreeSnapshot,
+                onTreeSnapshotChange: updateFileBrowserTreeSnapshot,
                 worktreeContext: fileBrowserWorktreeContext,
                 onClearWorktreeContext: handleGuardedClearFileBrowserWorktreeContext,
                 projectResourceProfileId: activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null,

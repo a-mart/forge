@@ -98,6 +98,34 @@ describe('useFileBrowserWorkspaceState', () => {
     expect(captured.current!.state.activeFilePath).toBe('src/B.ts')
   })
 
+  it('stores tree snapshots per scope', () => {
+    render()
+
+    act(() => captured.current!.state.updateTreeSnapshot({
+      filterText: 'app',
+      searchMode: false,
+      searchQuery: '',
+      treeScrollTop: 42,
+      searchScrollTop: 0,
+      treeState: { expandedItems: ['src'] },
+    }))
+
+    expect(captured.current!.state.treeSnapshot?.filterText).toBe('app')
+    expect(captured.current!.state.treeSnapshot?.treeScrollTop).toBe(42)
+    expect(captured.current!.state.treeSnapshot?.treeState).toEqual({ expandedItems: ['src'] })
+
+    act(() => captured.current!.setWorktreeContext({
+      worktreeId: 'wt-1',
+      worktreePath: '/repo/wt',
+      branch: 'feature/x',
+      repoRoot: '/repo/main',
+    }))
+    expect(captured.current!.state.treeSnapshot).toBeNull()
+
+    act(() => captured.current!.setWorktreeContext(null))
+    expect(captured.current!.state.treeSnapshot?.filterText).toBe('app')
+  })
+
   it('keeps session and worktree scopes separate in memory', () => {
     render()
 

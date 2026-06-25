@@ -269,6 +269,8 @@ export function usePanelState({
     activateFileBrowserTab: fileBrowserWorkspace.activateTab,
     stickifyFileBrowserTab: fileBrowserWorkspace.stickifyTab,
     closeFileBrowserTab: fileBrowserWorkspace.closeTab,
+    fileBrowserTreeSnapshot: fileBrowserWorkspace.treeSnapshot,
+    updateFileBrowserTreeSnapshot: fileBrowserWorkspace.updateTreeSnapshot,
     removeFileBrowserTabsAffectedByDelete: fileBrowserWorkspace.removeTabsAffectedByDelete,
     closeFileBrowserPanel,
     navigateFileBrowserToDirectory,

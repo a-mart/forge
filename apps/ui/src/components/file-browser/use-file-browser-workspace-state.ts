@@ -15,10 +15,20 @@ export interface FileBrowserTab {
   lastActivatedAt: number
 }
 
+export interface FileBrowserTreeStateSnapshot {
+  filterText: string
+  searchMode: boolean
+  searchQuery: string
+  treeScrollTop: number
+  searchScrollTop: number
+  treeState: Record<string, unknown> | null
+}
+
 interface FileBrowserScopeState {
   activeTabId: string | null
   previewTabId: string | null
   tabs: FileBrowserTab[]
+  treeSnapshot: FileBrowserTreeStateSnapshot | null
 }
 
 function scopeId(scope: FileBrowserScopeKey): string {
@@ -41,7 +51,7 @@ function createTab(scope: FileBrowserScopeKey, filePath: string, sticky: boolean
 }
 
 function emptyScopeState(): FileBrowserScopeState {
-  return { activeTabId: null, previewTabId: null, tabs: [] }
+  return { activeTabId: null, previewTabId: null, tabs: [], treeSnapshot: null }
 }
 
 function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
@@ -96,7 +106,7 @@ export function useFileBrowserWorkspaceState({
       const tabs = canReplace
         ? previous.tabs.map((tab) => tab.id === replaceId ? nextTab : tab)
         : [...previous.tabs, nextTab]
-      return { tabs, activeTabId: nextTab.id, previewTabId: nextTab.id }
+      return { ...previous, tabs, activeTabId: nextTab.id, previewTabId: nextTab.id }
     })
   }, [updateActiveScope])
 
@@ -141,6 +151,7 @@ export function useFileBrowserWorkspaceState({
         ? (tabs[index] ?? tabs[index - 1] ?? null)
         : (tabs.find((tab) => tab.id === previous.activeTabId) ?? null)
       return {
+        ...previous,
         tabs,
         activeTabId: nextActiveTab?.id ?? null,
         previewTabId: previous.previewTabId === tabId ? null : previous.previewTabId,
@@ -159,10 +170,18 @@ export function useFileBrowserWorkspaceState({
         ? previous.activeTabId
         : (tabs[0]?.id ?? null)
       return {
+        ...previous,
         tabs,
         activeTabId,
         previewTabId: tabs.some((tab) => tab.id === previous.previewTabId) ? previous.previewTabId : null,
       }
+    })
+  }, [updateActiveScope])
+
+  const updateTreeSnapshot = useCallback((snapshot: FileBrowserTreeStateSnapshot) => {
+    updateActiveScope((previous) => {
+      if (JSON.stringify(previous.treeSnapshot) === JSON.stringify(snapshot)) return previous
+      return { ...previous, treeSnapshot: snapshot }
     })
   }, [updateActiveScope])
 
@@ -173,6 +192,8 @@ export function useFileBrowserWorkspaceState({
     previewTabId: activeState.previewTabId,
     activeTab,
     activeFilePath: activeTab?.filePath ?? null,
+    treeSnapshot: activeState.treeSnapshot,
+    updateTreeSnapshot,
     openPreviewFile,
     openStickyFile,
     activateTab,
