@@ -23,6 +23,7 @@ export type FileEditorTransitionAction =
   | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory' }
   | { type: 'select-file'; nextPath: string }
   | { type: 'close-viewer' }
+  | { type: 'close-tab'; key: FileEditorSessionKey }
   | { type: 'close-file-browser' }
   | { type: 'open-source-control-inline' }
   | { type: 'source-control-mutation'; mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only'; agentId: string; worktreeId: string | null }
@@ -65,6 +66,25 @@ function snapshotsMatchSourceControlMutation(
   action: Extract<FileEditorTransitionAction, { type: 'source-control-mutation' }>,
 ): boolean {
   return snapshot.key.agentId === action.agentId && snapshot.key.worktreeId === action.worktreeId
+}
+
+function doesDeleteAffectSnapshot(
+  snapshot: FileEditorDirtySnapshot,
+  action: Extract<FileEditorTransitionAction, { type: 'delete-entry' }>,
+): boolean {
+  const deletePath = action.path.replace(/^\/+|\/+$/g, '')
+  const filePath = snapshot.key.filePath.replace(/^\/+|\/+$/g, '')
+  if (!deletePath) return false
+  if (action.entryType === 'file') return filePath === deletePath
+  return filePath === deletePath || filePath.startsWith(`${deletePath}/`)
+}
+
+function keysEqual(a: FileEditorSessionKey, b: FileEditorSessionKey): boolean {
+  return a.agentId === b.agentId && a.worktreeId === b.worktreeId && a.filePath === b.filePath
+}
+
+function actionPreservesDirtyDrafts(action: FileEditorTransitionAction): boolean {
+  return action.type === 'select-file' || action.type === 'open-workspace-panel' || action.type === 'close-file-browser'
 }
 
 export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null) {
@@ -128,19 +148,35 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     run: () => void,
     onCancel?: () => void,
   ) => {
-    const snapshot = getDirtySnapshot()
+    if (actionPreservesDirtyDrafts(action)) {
+      run()
+      return
+    }
+
+    const snapshots: FileEditorDirtySnapshot[] = []
+    const activeSnapshot = activeGuard?.getSnapshot() ?? null
+    if (activeSnapshot?.isDirty) snapshots.push(activeSnapshot)
+    for (const registered of guardsRef.current.values()) {
+      const snapshot = registered.api.getSnapshot()
+      if (snapshot?.isDirty && !snapshots.some((existing) => serializeFileEditorKey(existing.key) === serializeFileEditorKey(snapshot.key))) {
+        snapshots.push(snapshot)
+      }
+    }
+
+    const snapshot = snapshots.find((candidate) => {
+      if (action.type === 'source-control-mutation') return snapshotsMatchSourceControlMutation(candidate, action)
+      if (action.type === 'delete-entry') return doesDeleteAffectSnapshot(candidate, action)
+      if (action.type === 'close-tab') return keysEqual(candidate.key, action.key)
+      return true
+    }) ?? null
+
     if (!snapshot) {
       run()
       return
     }
 
-    if (action.type === 'source-control-mutation' && !snapshotsMatchSourceControlMutation(snapshot, action)) {
-      run()
-      return
-    }
-
     setPendingTransition({ action, run, snapshot, onCancel })
-  }, [getDirtySnapshot])
+  }, [activeGuard])
 
   const abortPendingTransition = useCallback((transition: PendingTransition | null) => {
     transition?.onCancel?.()

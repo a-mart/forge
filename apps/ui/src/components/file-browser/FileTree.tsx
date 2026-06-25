@@ -90,6 +90,7 @@ interface FileTreeProps {
   cwd: string
   selectedFile: string | null
   onSelectFile: (path: string) => void
+  onOpenStickyFile?: (path: string) => void
   fileCount: number | null
   fileCountMethod: string | null
   worktreeId?: string | null
@@ -132,7 +133,7 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, onOpenStickyFile, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
     ref,
   ) {
     const [filterText, setFilterText] = useState('')
@@ -545,6 +546,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                         onClick={() =>
                           handleItemClick(itemId, isFolder)
                         }
+                        onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
                         onRequestDelete={onRequestDelete
                           ? () => onRequestDelete(itemId, itemData.type)
                           : undefined}

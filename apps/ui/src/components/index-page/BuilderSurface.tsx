@@ -24,9 +24,8 @@ import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
 import { FileDirtyConfirmDialog } from '@/components/file-browser/FileDirtyConfirmDialog'
 import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/file-editor-feature-gates'
-import { useFileEditSession, type KeyedFileEditorContent } from '@/components/file-browser/use-file-edit-session'
+import { useFileEditSessions } from '@/components/file-browser/use-file-edit-sessions'
 import { useFileEditorCoordinator, type FileEditorSessionKey } from '@/components/file-browser/use-file-editor-coordinator'
-import { doesDeleteAffectOpenFile } from '@/components/file-browser/file-browser-utils'
 import {
   applySuccessfulFileDeleteToCaches,
   deleteFilePath,
@@ -245,7 +244,14 @@ export function BuilderSurface({
     toggleFileBrowser: handleToggleFileBrowser,
     selectedFileBrowserFile,
     selectFileBrowserFile: handleFileBrowserSelectFile,
-    closeFileBrowserPanel: handleFileBrowserClosePanel,
+    openStickyFileBrowserFile: handleOpenStickyFileBrowserFile,
+    fileBrowserTabs,
+    activeFileBrowserTabId,
+    previewFileBrowserTabId,
+    activateFileBrowserTab,
+    stickifyFileBrowserTab,
+    closeFileBrowserTab,
+    removeFileBrowserTabsAffectedByDelete,
     navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
     fileBrowserWorktreeContext,
     browseWorktreeFiles: handleBrowseWorktreeFiles,
@@ -256,7 +262,6 @@ export function BuilderSurface({
     enableKeyboardShortcuts: false,
   })
 
-  const [fileEditorContent, setFileEditorContent] = useState<KeyedFileEditorContent | null>(null)
   const [fileBrowserRefreshNonce, setFileBrowserRefreshNonce] = useState(0)
   const [sourceControlRefreshNonce, setSourceControlRefreshNonce] = useState(0)
   const activeFileEditorKey = useMemo<FileEditorSessionKey | null>(() => {
@@ -267,42 +272,48 @@ export function BuilderSurface({
       filePath: selectedFileBrowserFile,
     }
   }, [activeAgentId, fileBrowserWorktreeContext?.worktreeId, selectedFileBrowserFile])
-  const fileEditSession = useFileEditSession({
+  const fileEditSessions = useFileEditSessions({
     wsUrl,
-    key: activeFileEditorKey,
-    content: fileEditorContent,
+    activeKey: activeFileEditorKey,
     editingEnabled: FILE_BROWSER_INLINE_EDITING_ENABLED,
-    onSavedContent: (saved) => {
-      setFileEditorContent(saved)
+    onDirtyChange: (key) => {
+      const tab = fileBrowserTabs.find((candidate) =>
+        candidate.key.agentId === key.agentId &&
+        candidate.key.worktreeId === key.worktreeId &&
+        candidate.key.filePath === key.filePath,
+      )
+      if (tab) stickifyFileBrowserTab(tab.id)
+    },
+    onSavedContent: () => {
       setFileBrowserRefreshNonce((previous) => previous + 1)
       setSourceControlRefreshNonce((previous) => previous + 1)
     },
   })
-  const fileEditorCoordinator = useFileEditorCoordinator({
-    getSnapshot: fileEditSession.getDirtySnapshot,
-    save: fileEditSession.save,
-    discard: fileEditSession.discard,
-  })
+  const fileEditSession = fileEditSessions.active
+  const fileEditorCoordinator = useFileEditorCoordinator(null)
   const fileEditorCoordinatorRef = useRef(fileEditorCoordinator)
   useEffect(() => {
     fileEditorCoordinatorRef.current = fileEditorCoordinator
   }, [fileEditorCoordinator])
 
   useEffect(() => {
-    setFileEditorContent((previous) => {
-      if (!activeFileEditorKey) return null
-      if (previous && previous.key.agentId === activeFileEditorKey.agentId && previous.key.worktreeId === activeFileEditorKey.worktreeId && previous.key.filePath === activeFileEditorKey.filePath) {
-        return previous
-      }
-      return null
-    })
-  }, [activeFileEditorKey])
+    const unregister = fileBrowserTabs.map((tab) =>
+      fileEditorCoordinator.registerWritableEditor(tab.key, fileEditSessions.getControllerForKey(tab.key)),
+    )
+    return () => {
+      unregister.forEach((dispose) => dispose())
+    }
+  }, [fileBrowserTabs, fileEditSessions, fileEditorCoordinator])
+
+  const dirtyFileBrowserTabIds = useMemo(() => new Set(
+    fileBrowserTabs
+      .filter((tab) => fileEditSessions.getDirtySnapshotForKey(tab.key)?.isDirty)
+      .map((tab) => tab.id),
+  ), [fileBrowserTabs, fileEditSessions])
 
   const handleFileEditorContentLoaded = useCallback((key: FileEditorSessionKey, content: FileContentResult | null) => {
-    if (activeFileEditorKey && key.agentId === activeFileEditorKey.agentId && key.worktreeId === activeFileEditorKey.worktreeId && key.filePath === activeFileEditorKey.filePath) {
-      setFileEditorContent({ key, content })
-    }
-  }, [activeFileEditorKey])
+    fileEditSessions.handleContentLoaded(key, content)
+  }, [fileEditSessions])
 
   const { slashCommands } = useSlashCommands({ wsUrl, activeView })
 
@@ -1519,14 +1530,12 @@ export function BuilderSurface({
   const isInlineDiffViewerOpen = isDiffViewerOpen && diffViewerPresentation === 'inline'
 
   const handleGuardedFileBrowserSelectFile = useCallback((path: string) => {
-    if (path === selectedFileBrowserFile) {
-      handleFileBrowserSelectFile(path)
-      return
-    }
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'select-file', nextPath: path }, () => {
-      handleFileBrowserSelectFile(path)
-    })
-  }, [fileEditorCoordinator, handleFileBrowserSelectFile, selectedFileBrowserFile])
+    handleFileBrowserSelectFile(path)
+  }, [handleFileBrowserSelectFile])
+
+  const handleFileBrowserOpenStickyFile = useCallback((path: string) => {
+    handleOpenStickyFileBrowserFile(path)
+  }, [handleOpenStickyFileBrowserFile])
 
   const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory'): Promise<boolean> => {
     const runDelete = async (): Promise<boolean> => {
@@ -1543,44 +1552,43 @@ export function BuilderSurface({
         path,
         entryType,
       })
-      if (doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile)) {
-        handleFileBrowserClosePanel()
-      }
+      removeFileBrowserTabsAffectedByDelete(path, entryType)
       setFileBrowserRefreshNonce((previous) => previous + 1)
       setSourceControlRefreshNonce((previous) => previous + 1)
       return true
     }
 
-    if (
-      doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile) &&
-      fileEditorCoordinator.getDirtySnapshot()?.isDirty
-    ) {
-      return new Promise<boolean>((resolve, reject) => {
-        fileEditorCoordinator.requestFileEditorTransition(
-          { type: 'delete-entry', path, entryType },
-          () => {
-            void runDelete().then(resolve, reject)
-          },
-          () => resolve(false),
-        )
-      })
-    }
-
-    return runDelete()
+    return new Promise<boolean>((resolve, reject) => {
+      fileEditorCoordinator.requestFileEditorTransition(
+        { type: 'delete-entry', path, entryType },
+        () => {
+          void runDelete().then(resolve, reject)
+        },
+        () => resolve(false),
+      )
+    })
   }, [
     activeAgentId,
     fileBrowserWorktreeContext?.worktreeId,
     fileEditorCoordinator,
-    handleFileBrowserClosePanel,
-    selectedFileBrowserFile,
+    removeFileBrowserTabsAffectedByDelete,
     wsUrl,
   ])
 
-  const handleGuardedFileBrowserClosePanel = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'close-viewer' }, () => {
-      handleFileBrowserClosePanel()
+  const handleRequestCloseFileBrowserTab = useCallback((tabId: string) => {
+    const tab = fileBrowserTabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    fileEditorCoordinator.requestFileEditorTransition({ type: 'close-tab', key: tab.key }, () => {
+      closeFileBrowserTab(tab.id)
+      fileEditSessions.removeSession(tab.key)
     })
-  }, [fileEditorCoordinator, handleFileBrowserClosePanel])
+  }, [closeFileBrowserTab, fileBrowserTabs, fileEditSessions, fileEditorCoordinator])
+
+  const handleGuardedFileBrowserClosePanel = useCallback(() => {
+    if (activeFileBrowserTabId) {
+      handleRequestCloseFileBrowserTab(activeFileBrowserTabId)
+    }
+  }, [activeFileBrowserTabId, handleRequestCloseFileBrowserTab])
 
   const handleGuardedFileBrowserNavigateToDirectory = useCallback((dirPath: string) => {
     fileEditorCoordinator.requestFileEditorTransition({ type: 'select-file', nextPath: dirPath }, () => {
@@ -1981,6 +1989,7 @@ export function BuilderSurface({
               isOpen={isFileBrowserOpen}
               onClose={handleGuardedToggleFileBrowser}
               onSelectFile={handleGuardedFileBrowserSelectFile}
+              onOpenStickyFile={handleFileBrowserOpenStickyFile}
               selectedFile={selectedFileBrowserFile}
               worktreeContext={fileBrowserWorktreeContext}
               onClearWorktreeContext={handleGuardedClearFileBrowserWorktreeContext}
@@ -2000,6 +2009,13 @@ export function BuilderSurface({
               filePath={selectedFileBrowserFile}
               onClose={handleGuardedFileBrowserClosePanel}
               onNavigateToDirectory={handleGuardedFileBrowserNavigateToDirectory}
+              tabs={fileBrowserTabs}
+              activeTabId={activeFileBrowserTabId}
+              previewTabId={previewFileBrowserTabId}
+              dirtyTabIds={dirtyFileBrowserTabIds}
+              onActivateTab={activateFileBrowserTab}
+              onCloseTab={(tab) => handleRequestCloseFileBrowserTab(tab.id)}
+              onStickifyTab={stickifyFileBrowserTab}
               worktreeId={fileBrowserWorktreeContext?.worktreeId ?? null}
               desktopOnly
               resizeHandlePlacement="right"
@@ -2308,6 +2324,13 @@ export function BuilderSurface({
                       filePath: selectedFileBrowserFile,
                       onClose: handleGuardedFileBrowserClosePanel,
                       onNavigateToDirectory: handleGuardedFileBrowserNavigateToDirectory,
+                      tabs: fileBrowserTabs,
+                      activeTabId: activeFileBrowserTabId,
+                      previewTabId: previewFileBrowserTabId,
+                      dirtyTabIds: dirtyFileBrowserTabIds,
+                      onActivateTab: activateFileBrowserTab,
+                      onCloseTab: (tab) => handleRequestCloseFileBrowserTab(tab.id),
+                      onStickifyTab: stickifyFileBrowserTab,
                       worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
                       mobileOnly: true,
                     }
@@ -2319,6 +2342,7 @@ export function BuilderSurface({
                 isOpen: isFileBrowserOpen,
                 onClose: handleGuardedToggleFileBrowser,
                 onSelectFile: handleGuardedFileBrowserSelectFile,
+                onOpenStickyFile: handleFileBrowserOpenStickyFile,
                 selectedFile: selectedFileBrowserFile,
                 worktreeContext: fileBrowserWorktreeContext,
                 onClearWorktreeContext: handleGuardedClearFileBrowserWorktreeContext,

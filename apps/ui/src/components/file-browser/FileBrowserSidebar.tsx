@@ -26,6 +26,7 @@ interface FileBrowserSidebarProps {
   isOpen: boolean
   onClose: () => void
   onSelectFile: (path: string) => void
+  onOpenStickyFile?: (path: string) => void
   selectedFile: string | null
   worktreeContext?: FileBrowserWorktreeSelection | null
   onClearWorktreeContext?: () => void
@@ -44,6 +45,7 @@ export function FileBrowserSidebar({
   isOpen,
   onClose,
   onSelectFile,
+  onOpenStickyFile,
   selectedFile,
   worktreeContext = null,
   onClearWorktreeContext,
@@ -337,6 +339,7 @@ export function FileBrowserSidebar({
             cwd={rootList.data?.cwd ?? ''}
             selectedFile={selectedFile}
             onSelectFile={onSelectFile}
+            onOpenStickyFile={onOpenStickyFile}
             fileCount={fileCount.data?.count ?? null}
             fileCountMethod={fileCount.data?.method ?? null}
             worktreeId={worktreeId}

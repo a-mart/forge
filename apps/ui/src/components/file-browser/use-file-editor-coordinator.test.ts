@@ -110,7 +110,23 @@ describe('useFileEditorCoordinator', () => {
     expect(captured.current?.dialogOpen).toBe(false)
   })
 
-  it('guards file switch and close transitions until discard or save succeeds', async () => {
+  it('does not guard file switch transitions because tab state preserves drafts', () => {
+    const run = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save: vi.fn(),
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'select-file', nextPath: 'src/Other.tsx' }, run)
+    })
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards dirty tab close transitions until discard or save succeeds', async () => {
     const save = vi.fn().mockResolvedValue(true)
     const discard = vi.fn()
     const run = vi.fn()
@@ -121,7 +137,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'select-file', nextPath: 'src/Other.tsx' }, run)
+      captured.current?.requestFileEditorTransition({ type: 'close-tab', key: workspaceKey }, run)
     })
 
     expect(run).not.toHaveBeenCalled()
@@ -182,7 +198,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'close-file-browser' }, run, onCancel)
+      captured.current?.requestFileEditorTransition({ type: 'close-tab', key: workspaceKey }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.save()

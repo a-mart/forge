@@ -20,6 +20,7 @@ interface FileTreeNodeProps {
   isFocused: boolean
   isLoading: boolean
   onClick: () => void
+  onDoubleClick?: () => void
   onRequestDelete?: () => void
 }
 
@@ -34,6 +35,7 @@ export function FileTreeNode({
   isFocused,
   isLoading,
   onClick,
+  onDoubleClick,
   onRequestDelete,
 }: FileTreeNodeProps) {
   const handleCopyPath = useCallback(() => {
@@ -52,6 +54,7 @@ export function FileTreeNode({
           )}
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={onClick}
+          onDoubleClick={onDoubleClick}
           title={name}
         >
       {type === 'directory' ? (
