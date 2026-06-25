@@ -1548,7 +1548,7 @@ describe('SwarmManager', () => {
   it('does not default-project protected worker-report closeouts after runtime error clears defaultable handoffs', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
+    const sender = await bootWithDefaultManager(manager, config)
 
     await manager.handleUserMessage('telegram delegated work before runtime error', {
       sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
@@ -1581,10 +1581,53 @@ describe('SwarmManager', () => {
     expect(collabReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"collaboration_channel"}')
     await projectAssistantFinalText(manager, 'manager', collabReportRuntimeMessage, 'Collab closeout after cleared handoff')
 
+    const peerTarget = await manager.createManager(sender.agentId, {
+      name: 'Cleared Peer Target',
+      cwd: config.defaultCwd,
+    })
+    await manager.setSessionProjectAgent(peerTarget.agentId, { whenToUse: 'Use for cleared peer messages.' })
+    await manager.sendMessage(sender.agentId, peerTarget.agentId, 'peer delegated work before runtime error', 'auto')
+    await startRuntimeUserTurn(manager, peerTarget.agentId)
+    const peerWorker = await manager.spawnAgent(peerTarget.agentId, { agentId: 'Cleared Peer Worker' })
+    ;(manager as any).activeAssistantOutputTargetByManagerId.set(peerTarget.agentId, {
+      kind: 'peer_agent',
+      fromAgentId: sender.agentId,
+    })
+    await manager.sendMessage(peerTarget.agentId, peerWorker.agentId, 'Do peer work.', 'auto')
+    await (manager as any).handleRuntimeError(peerTarget.agentId, { phase: 'prompt_start', message: 'runtime failed before peer report' })
+    await manager.sendMessage(peerWorker.agentId, peerTarget.agentId, 'status: done\nsummary: peer work finished after error', 'auto')
+    const peerReportRuntimeMessage = manager.runtimeByAgentId.get(peerTarget.agentId)?.sendCalls.at(-1)?.message
+    expect(peerReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"peer_agent"}')
+    await projectAssistantFinalText(manager, peerTarget.agentId, peerReportRuntimeMessage, 'Peer closeout after cleared handoff')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, peerTarget.agentId)).toEqual([])
+  })
+
+  it('does not default-project protected worker-error auto-reports to web', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('telegram delegated work before worker error', {
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    await startRuntimeUserTurn(manager)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Errored Telegram Worker', initialMessage: 'Do telegram work.' })
+    await (manager as any).handleRuntimeError(worker.agentId, { phase: 'prompt_dispatch', message: 'worker failed before reporting' })
+
+    await manager.sendMessage('manager', 'manager', 'WORKER REPORT: status: blocked\nsummary: worker failed before reporting', 'auto', {
+      origin: 'internal',
+      workerReportSourceAgentId: worker.agentId,
+    } as any)
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(reportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Worker error closeout must stay routed')
+
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('does not project worker-report closeouts from protected roots but defaults normal web missing handoff to visible', async () => {
+  it('does not project worker-report closeouts from protected or unprovenanced roots', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1599,6 +1642,11 @@ describe('SwarmManager', () => {
     const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(telegramReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
     await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram closeout')
+
+    await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: duplicate telegram closeout', 'auto')
+    const duplicateTelegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(duplicateTelegramReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
+    await projectAssistantFinalText(manager, 'manager', duplicateTelegramReportRuntimeMessage, 'Duplicate telegram closeout')
 
     await manager.dispatchRuntimeUserMessage({
       targetAgentId: 'manager',
@@ -1627,7 +1675,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
     await projectAssistantFinalText(manager, 'manager', missingReportRuntimeMessage, 'Unknown closeout')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Unknown closeout'])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
   it('stamps explicit worker-report input metadata before spoofed markers while server output policy still defaults normal web visible', async () => {
@@ -1635,7 +1683,11 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const worker = await manager.spawnAgent('manager', { agentId: 'Spoof Marker Worker' })
+    await manager.handleUserMessage('delegate before spoofed report')
+    await startRuntimeUserTurn(manager)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Spoof Marker Worker', initialMessage: 'Do work before spoofed report.' })
+    await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'runtime failed before spoofed report' })
+
     await manager.sendMessage(
       worker.agentId,
       'manager',
