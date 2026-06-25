@@ -52,6 +52,18 @@ import type {
   SendMessageReceipt
 } from "../types.js";
 import { resizeImageIfNeeded } from "../image-utils.js";
+import {
+  createDefaultCompactionRuntimeSettingsProvider,
+  type CompactionRuntimeSettingsProvider,
+} from "../compaction-runtime-settings-provider.js";
+import {
+  collectCompactionEntryKeys,
+  findNewCompactionEntries,
+} from "../compaction-session-entries.js";
+import {
+  clearForgePiCompactionFailure,
+  consumeForgePiCompactionFailure,
+} from "../compaction/forge-pi-compaction-extension.js";
 import { runtimeInputAllowsProjectedAssistantOutput } from "./manager-assistant-output-target-metadata.js";
 
 interface PendingDelivery {
@@ -91,7 +103,7 @@ const ESTIMATION_ERROR_MARGIN_MIN_TOKENS = 4_096;
 const COMPACTION_RESERVE_TOKENS = 16_384;
 const CONTEXT_BUDGET_CHECK_THROTTLE_MS = 3_000;
 const CONTEXT_GUARD_ABORT_TIMEOUT_MS = 15_000;
-const CONTEXT_GUARD_COMPACT_TIMEOUT_MS = 180_000;
+const AUTO_COMPACTION_FAILURE_COOLDOWN_MS = 60_000;
 const CONTEXT_RECOVERY_GRACE_MS = 2_000;
 const HANDOFF_TURN_TIMEOUT_MS = 45_000;
 const MAX_HANDOFF_CONTENT_CHARS = 3_000;
@@ -175,6 +187,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;
   private readonly systemPrompt: string;
+  private readonly compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
+  private readonly compactionFailureScopeKey: string;
   private pendingDeliveries: PendingDelivery[] = [];
   private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
   private status: AgentStatus;
@@ -193,6 +207,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
+  private autoCompactionEntryKeysBefore: Set<string> | undefined;
+  private autoCompactionFailureCooldownUntilMs = 0;
   private suppressSessionEventsUntilIdle = false;
   private lastActivityAtMs = Date.now();
   private hiddenOutputResampleState: { triggerKey: string; attempts: number } | undefined;
@@ -204,14 +220,20 @@ export class AgentRuntime implements SwarmAgentRuntime {
     callbacks: SwarmRuntimeCallbacks;
     now?: () => string;
     systemPrompt?: string;
+    compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
+    compactionFailureScopeKey?: string;
   }) {
     this.descriptor = options.descriptor;
     this.session = options.session;
     this.callbacks = options.callbacks;
     this.now = options.now ?? (() => new Date().toISOString());
     this.systemPrompt = options.systemPrompt ?? options.session.systemPrompt ?? "";
+    this.compactionRuntimeSettingsProvider =
+      options.compactionRuntimeSettingsProvider ?? createDefaultCompactionRuntimeSettingsProvider();
+    this.compactionFailureScopeKey = options.compactionFailureScopeKey ?? options.descriptor.agentId;
     this.status = options.descriptor.status;
 
+    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.unsubscribe = this.session.subscribe((event) => {
       void this.handleEvent(event);
     });
@@ -460,6 +482,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
+    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.pendingDeliveries = [];
     this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
@@ -505,6 +528,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       });
     }
 
+    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.closeStaleOpenAICodexWebSocketSession("dispose_session_resources");
     await this.openAIAuthBrokerController?.release(shutdown.reason);
     this.unsubscribe?.();
@@ -569,10 +593,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       // Compact
       try {
-        await withTimeout(this.compact(customInstructions), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "smart_compact_compact", {
+        const beforeCompactionEntries = this.getCompactionEntryKeys();
+        await withTimeout(this.compact(customInstructions), this.getCompactionTimeoutMs(), "smart_compact_compact", {
           onTimeout: () => this.abortCompactionSafely("smart_compact_compact_timeout_abort")
         });
-        compacted = true;
+        compacted = this.getNewCompactionEntries(beforeCompactionEntries).length > 0;
+        if (!compacted) {
+          reason = "Compaction completed without writing a compaction record";
+          await this.reportContextGuardError(new Error(reason), {
+            stage: "smart_compact_compaction_failed",
+            handoffWritten: handoffContent !== undefined
+          });
+        }
       } catch (error) {
         const normalized = normalizeRuntimeError(error);
         if (isAlreadyCompactedError(normalized.message)) {
@@ -581,7 +613,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
           reason = normalized.message;
           await this.reportContextGuardError(error, {
             stage: "smart_compact_compaction_failed",
-            handoffWritten: handoffContent !== undefined
+            handoffWritten: handoffContent !== undefined,
+            ...getForgeCompactionFailureDetails(error)
           });
         }
         // Continue through cleanup even if compaction failed or was skipped.
@@ -589,7 +622,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       if (signal.aborted) return { compacted: false, reason: "Aborted" };
 
-      if (resumeAfterCompaction) {
+      if (resumeAfterCompaction && compacted) {
         try {
           const resumePrompt = buildResumePrompt(handoffContent);
           await this.session.prompt(resumePrompt);
@@ -600,7 +633,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       completed = true;
     } finally {
-      await this.cleanupGuard(handoffFilePath);
+      await this.cleanupGuard(handoffFilePath, {
+        retainHandoff: handoffContent !== undefined && !compacted
+      });
       if (completed) {
         this.logContextGuard("smart_compact_completed", {
           compacted,
@@ -618,18 +653,38 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.manualCompactionInProgress = true;
     try {
       await this.emitCompactionStatusSafely("compact_start_status_emit");
+      clearForgePiCompactionFailure(this.compactionFailureScopeKey);
       const result = await this.session.compact(customInstructions);
       await this.emitCompactionStatusSafely("compact_complete_status_emit");
       return result;
     } catch (error) {
-      this.logRuntimeError("compaction", error, {
-        customInstructionsPreview: previewForLog(customInstructions ?? "")
+      const enhancedError = this.enhanceCompactionCancellationError(error);
+      this.logRuntimeError("compaction", enhancedError, {
+        customInstructionsPreview: previewForLog(customInstructions ?? ""),
+        ...getForgeCompactionFailureDetails(enhancedError)
       });
-      throw error;
+      throw enhancedError;
     } finally {
       this.manualCompactionInProgress = false;
       await this.emitCompactionStatusSafely("compact_end_status_emit");
     }
+  }
+
+  private enhanceCompactionCancellationError(error: unknown): unknown {
+    const normalized = normalizeRuntimeError(error);
+    if (normalized.message !== "Compaction cancelled") {
+      return error;
+    }
+
+    const failure = consumeForgePiCompactionFailure(this.compactionFailureScopeKey);
+    if (!failure) {
+      return error;
+    }
+
+    const enhanced = new Error(failure.message);
+    enhanced.name = "ForgePiCompactionFailure";
+    (enhanced as Error & { details?: Record<string, unknown> }).details = failure.details;
+    return enhanced;
   }
 
   private shouldResumeAfterManualSmartCompact(): boolean {
@@ -653,6 +708,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   isContextRecoveryActive(): boolean {
     return this.contextRecoveryInProgress || Date.now() < this.contextRecoveryGraceUntilMs;
+  }
+
+  private getCompactionTimeoutMs(): number {
+    return this.compactionRuntimeSettingsProvider.getCompactionRuntimeSettings().timeoutMs;
+  }
+
+  private isAutoCompactionCooldownActive(): boolean {
+    return Date.now() < this.autoCompactionFailureCooldownUntilMs;
+  }
+
+  private noteAutoCompactionFailureCooldown(): void {
+    this.autoCompactionFailureCooldownUntilMs = Date.now() + AUTO_COMPACTION_FAILURE_COOLDOWN_MS;
   }
 
   private beginContextRecovery(): void {
@@ -913,10 +980,21 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "compaction_start" && event.reason !== "manual") {
+      clearForgePiCompactionFailure(this.compactionFailureScopeKey);
       this.latestAutoCompactionReason = event.reason;
+      this.autoCompactionEntryKeysBefore = this.getCompactionEntryKeys();
       if (!this.isContextRecoveryActive()) {
         this.beginAutoCompactionRecovery();
       }
+      await this.reportRuntimeError({
+        phase: "compaction",
+        message: "Automatic compaction started",
+        details: {
+          recoveryStage: "auto_compaction_started",
+          compactionReason: event.reason,
+          userFacingMessage: "Context is getting full — compacting automatically."
+        }
+      });
       return;
     }
 
@@ -959,6 +1037,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (this.isContextRecoveryActive() || this.status === "terminated" || !this.session.isStreaming) {
+      return;
+    }
+
+    if (this.isAutoCompactionCooldownActive()) {
       return;
     }
 
@@ -1011,6 +1093,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
       handoffFilePath
     });
 
+    const willPrepareHandoff = triggeringUsage.tokens < hardThresholdTokens;
+
     await this.reportRuntimeError({
       phase: "context_guard",
       message: "Context limit approaching — running intelligent handoff before compaction",
@@ -1018,12 +1102,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
         recoveryStage: "guard_started",
         contextTokens: triggeringUsage.tokens,
         contextWindow: triggeringUsage.contextWindow,
-        contextPercent: triggeringUsage.percent
+        contextPercent: triggeringUsage.percent,
+        userFacingMessage: willPrepareHandoff
+          ? "Context is getting full — preparing handoff before automatic compaction."
+          : "Context limit reached — recovering now."
       }
     });
 
     let handoffContent: string | undefined;
     let completed = false;
+    let compactionAttempted = false;
+    let compactionSucceeded = false;
 
     try {
       try {
@@ -1058,19 +1147,34 @@ export class AgentRuntime implements SwarmAgentRuntime {
         postHandoffUsage.tokens >= softThresholdTokens;
 
       if (needsCompaction) {
+        compactionAttempted = true;
         try {
           const beforeCompactionEntries = this.getCompactionEntryKeys();
-          await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "context_guard_compact", {
+          await withTimeout(this.compact(), this.getCompactionTimeoutMs(), "context_guard_compact", {
             onTimeout: () => this.abortCompactionSafely("context_guard_compact_timeout_abort")
           });
-          await this.reportContextGuardCompactionSuccesses(beforeCompactionEntries, {
-            handoffWritten: handoffContent !== undefined,
-            contextTokens: postHandoffUsage.tokens,
-            contextWindow: postHandoffUsage.contextWindow
-          });
+          const newCompactionEntries = this.getNewCompactionEntries(beforeCompactionEntries);
+          if (newCompactionEntries.length > 0) {
+            await this.reportContextGuardCompactionSuccesses(beforeCompactionEntries, {
+              handoffWritten: handoffContent !== undefined,
+              contextTokens: postHandoffUsage.tokens,
+              contextWindow: postHandoffUsage.contextWindow
+            });
+            compactionSucceeded = true;
+          } else {
+            await this.reportContextGuardError(
+              new Error("Compaction completed without writing a compaction record"),
+              {
+                stage: "compaction_failed",
+                handoffWritten: handoffContent !== undefined
+              }
+            );
+          }
         } catch (error) {
           const normalized = normalizeRuntimeError(error);
-          if (!isAlreadyCompactedError(normalized.message)) {
+          if (isAlreadyCompactedError(normalized.message)) {
+            compactionSucceeded = true;
+          } else {
             await this.reportContextGuardError(error, {
               stage: "compaction_failed",
               handoffWritten: handoffContent !== undefined
@@ -1088,16 +1192,21 @@ export class AgentRuntime implements SwarmAgentRuntime {
         return;
       }
 
-      try {
-        const resumePrompt = buildResumePrompt(handoffContent);
-        await this.session.prompt(resumePrompt);
-      } catch (error) {
-        await this.reportContextGuardError(error, { stage: "resume_prompt_failed" });
+      const shouldResume = !compactionAttempted || compactionSucceeded;
+      if (shouldResume) {
+        try {
+          const resumePrompt = buildResumePrompt(handoffContent);
+          await this.session.prompt(resumePrompt);
+        } catch (error) {
+          await this.reportContextGuardError(error, { stage: "resume_prompt_failed" });
+        }
       }
 
       completed = true;
     } finally {
-      await this.cleanupGuard(handoffFilePath);
+      await this.cleanupGuard(handoffFilePath, {
+        retainHandoff: compactionAttempted && !compactionSucceeded && handoffContent !== undefined
+      });
       if (completed) {
         this.logContextGuard("completed", {
           handoffWritten: handoffContent !== undefined,
@@ -1108,48 +1217,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private getCompactionEntryKeys(): Set<string> {
-    const entries = this.session.sessionManager.getEntries();
-    const keys = new Set<string>();
-
-    entries.forEach((entry: unknown, index: number) => {
-      if (!entry || typeof entry !== "object") {
-        return;
-      }
-
-      const record = entry as Record<string, unknown>;
-      if (record.type !== "compaction") {
-        return;
-      }
-
-      const id = typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
-      keys.add(id ? `id:${id}` : `index:${index}`);
-    });
-
-    return keys;
+    return collectCompactionEntryKeys(this.session.sessionManager.getEntries());
   }
 
   private getNewCompactionEntries(previousKeys: Set<string>): Array<{ key: string; id?: string }> {
-    const entries = this.session.sessionManager.getEntries();
-    const next: Array<{ key: string; id?: string }> = [];
-
-    entries.forEach((entry: unknown, index: number) => {
-      if (!entry || typeof entry !== "object") {
-        return;
-      }
-
-      const record = entry as Record<string, unknown>;
-      if (record.type !== "compaction") {
-        return;
-      }
-
-      const id = typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
-      const key = id ? `id:${id}` : `index:${index}`;
-      if (!previousKeys.has(key)) {
-        next.push({ key, id });
-      }
-    });
-
-    return next;
+    return findNewCompactionEntries(this.session.sessionManager.getEntries(), previousKeys);
   }
 
   private async reportContextGuardCompactionSuccesses(
@@ -1171,7 +1243,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
           handoffWritten: details.handoffWritten,
           contextTokens: details.contextTokens,
           contextWindow: details.contextWindow,
-          compactionEntryId: entry.id ?? entry.key
+          compactionEntryId: entry.id ?? entry.key,
+          userFacingMessage: "Context recovered and compacted."
         }
       });
     }
@@ -1232,11 +1305,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  private async cleanupGuard(handoffFilePath?: string): Promise<void> {
+  private async cleanupGuard(
+    handoffFilePath?: string,
+    options?: { retainHandoff?: boolean }
+  ): Promise<void> {
     this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
     this.guardAbortController = undefined;
 
-    if (handoffFilePath) {
+    if (handoffFilePath && !options?.retainHandoff) {
       await rm(handoffFilePath, { force: true }).catch(() => {});
     }
 
@@ -1252,12 +1328,22 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   private async reportContextGuardError(error: unknown, details?: Record<string, unknown>): Promise<void> {
     const normalized = normalizeRuntimeError(error);
-    this.logRuntimeError("context_guard", error, details);
+    const mergedDetails = {
+      ...details,
+      ...getForgeCompactionFailureDetails(error),
+    };
+    this.logRuntimeError("context_guard", error, mergedDetails);
     await this.reportRuntimeError({
       phase: "context_guard",
       message: normalized.message,
       stack: normalized.stack,
-      details
+      details: {
+        ...mergedDetails,
+        userFacingMessage:
+          typeof mergedDetails.userFacingMessage === "string"
+            ? mergedDetails.userFacingMessage
+            : buildAutomaticCompactionFailureMessage(normalized.message)
+      }
     });
   }
 
@@ -1627,15 +1713,84 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (!autoCompactionError) {
+      if (event.aborted) {
+        const forgeFailure = consumeForgePiCompactionFailure(this.compactionFailureScopeKey);
+        await this.reportRuntimeError({
+          phase: "compaction",
+          message: forgeFailure?.message ?? "Automatic compaction was cancelled",
+          details: {
+            ...(forgeFailure?.details ?? {}),
+            recoveryStage: forgeFailure ? "forge_compaction_failed" : "auto_compaction_aborted",
+            compactionReason,
+            autoCompactionAborted: true,
+            autoCompactionWillRetry: event.willRetry,
+            compactionRetryPlanned: false,
+            userCancelled: !forgeFailure,
+            userFacingMessage: forgeFailure?.userFacingMessage ?? "Automatic compaction was cancelled."
+          }
+        });
+        this.latestAutoCompactionReason = undefined;
+        this.autoCompactionEntryKeysBefore = undefined;
+        this.endAutoCompactionRecovery();
+        this.noteAutoCompactionFailureCooldown();
+        await this.flushRecoveryBufferedMessages();
+        return;
+      }
+
+      const compactionStartSnapshot = this.autoCompactionEntryKeysBefore;
+      if (compactionStartSnapshot === undefined) {
+        await this.reportRuntimeError({
+          phase: "compaction",
+          message: "Automatic compaction ended without a compaction_start snapshot",
+          details: {
+            recoveryStage: "auto_compaction_failed",
+            compactionReason,
+            source: "auto_compaction_end",
+            autoCompactionAborted: event.aborted,
+            autoCompactionWillRetry: event.willRetry,
+            missingCompactionStartSnapshot: true
+          }
+        });
+        this.latestAutoCompactionReason = undefined;
+        this.autoCompactionEntryKeysBefore = undefined;
+        this.endAutoCompactionRecovery();
+        this.noteAutoCompactionFailureCooldown();
+        await this.flushRecoveryBufferedMessages();
+        return;
+      }
+
+      const newCompactionEntries = this.getNewCompactionEntries(compactionStartSnapshot);
+      if (newCompactionEntries.length === 0) {
+        await this.reportRuntimeError({
+          phase: "compaction",
+          message: "Automatic compaction ended without writing a compaction record",
+          details: {
+            recoveryStage: "auto_compaction_failed",
+            compactionReason,
+            source: "auto_compaction_end",
+            autoCompactionAborted: event.aborted,
+            autoCompactionWillRetry: event.willRetry
+          }
+        });
+        this.latestAutoCompactionReason = undefined;
+        this.autoCompactionEntryKeysBefore = undefined;
+        this.endAutoCompactionRecovery();
+        this.noteAutoCompactionFailureCooldown();
+        await this.flushRecoveryBufferedMessages();
+        return;
+      }
+
       await this.reportRuntimeError({
         phase: "compaction",
         message: "Context automatically compacted",
         details: {
           recoveryStage: "auto_compaction_succeeded",
-          compactionReason
+          compactionReason,
+          userFacingMessage: "Automatic compaction completed."
         }
       });
       this.latestAutoCompactionReason = undefined;
+      this.autoCompactionEntryKeysBefore = undefined;
       this.endAutoCompactionRecovery();
       await this.flushRecoveryBufferedMessages();
       return;
@@ -1674,7 +1829,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         message: autoCompactionError,
         details: {
           ...baseDetails,
-          recoveryStage: "auto_compaction_failed"
+          recoveryStage: "auto_compaction_failed",
+          userFacingMessage: buildAutomaticCompactionFailureMessage(autoCompactionError)
         }
       });
 
@@ -1705,7 +1861,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
           emergencyTrimError: emergencyTrim.errorMessage
         }
       });
+      this.noteAutoCompactionFailureCooldown();
     } finally {
+      this.latestAutoCompactionReason = undefined;
+      this.autoCompactionEntryKeysBefore = undefined;
       this.endAutoCompactionRecovery();
       await this.flushRecoveryBufferedMessages();
     }
@@ -1716,9 +1875,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
     details: Record<string, unknown>
   ): Promise<{ recovered: boolean; errorMessage?: string }> {
     try {
-      await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "reactive_compaction_retry", {
+      const beforeCompactionEntries = this.getCompactionEntryKeys();
+      await withTimeout(this.compact(), this.getCompactionTimeoutMs(), "reactive_compaction_retry", {
         onTimeout: () => this.abortCompactionSafely("reactive_compaction_retry_timeout_abort")
       });
+      const recovered = this.getNewCompactionEntries(beforeCompactionEntries).length > 0;
+      if (!recovered) {
+        return {
+          recovered: false,
+          errorMessage: "Reactive compaction retry completed without writing a compaction record"
+        };
+      }
       return { recovered: true };
     } catch (error) {
       const normalized = normalizeRuntimeError(error);
@@ -2082,6 +2249,23 @@ export class AgentRuntime implements SwarmAgentRuntime {
       ...details
     });
   }
+}
+
+function getForgeCompactionFailureDetails(error: unknown): Record<string, unknown> {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return {};
+  }
+  const details = (error as { details?: unknown }).details;
+  if (typeof details !== "object" || details === null || Array.isArray(details)) {
+    return {};
+  }
+  return details as Record<string, unknown>;
+}
+
+function buildAutomaticCompactionFailureMessage(message: string): string {
+  return /\btimeout\b|\btimed out\b/i.test(message)
+    ? "Automatic compaction timed out; context was not reduced."
+    : `Automatic compaction failed: ${message}`;
 }
 
 type TimeoutOptions = {

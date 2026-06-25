@@ -405,7 +405,8 @@ describe("Claude session lifecycle", () => {
       details: {
         recoveryStage: "auto_compaction_succeeded",
         source: "claude_sdk_auto_compaction",
-        trigger: "auto"
+        trigger: "auto",
+        userFacingMessage: "Automatic compaction completed."
       }
     });
 
@@ -415,7 +416,7 @@ describe("Claude session lifecycle", () => {
     expect(conversationMessages.at(-1)).toMatchObject({
       type: "conversation_message",
       agentId: session.agentId,
-      text: "📋 Context automatically compacted."
+      text: "Automatic compaction completed."
     });
 
     await manager.smartCompactAgentContext(session.agentId);

@@ -1286,7 +1286,19 @@ describe("ClaudeAgentRuntime", () => {
     expect(runtimeErrors).toEqual([
       expect.objectContaining({
         phase: "compaction",
-        message: "Context automatically compacted"
+        message: "Automatic compaction started",
+        details: expect.objectContaining({
+          recoveryStage: "auto_compaction_started",
+          userFacingMessage: "Context is getting full — compacting automatically."
+        })
+      }),
+      expect.objectContaining({
+        phase: "compaction",
+        message: "Context automatically compacted",
+        details: expect.objectContaining({
+          recoveryStage: "auto_compaction_succeeded",
+          userFacingMessage: "Automatic compaction completed."
+        })
       })
     ]);
     expect(getContextUsage.mock.calls.length).toBeGreaterThanOrEqual(2);

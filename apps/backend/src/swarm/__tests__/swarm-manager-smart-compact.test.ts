@@ -68,7 +68,7 @@ describe("SwarmManager smart compact", () => {
 
     await manager.smartCompactAgentContext(session.agentId);
 
-    expect(messages.at(-1)).toBe("Smart compaction finished but context was not reduced (runtime_aborted).");
+    expect(messages.at(-1)).toBe("Smart compaction finished, but context was not reduced.");
   });
 
   it("passes the same runtime-level idle check option even when manager status is already streaming", async () => {

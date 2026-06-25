@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { HelpTooltip } from '@/components/help/HelpTooltip'
 import { Check, Code, RotateCcw, Terminal } from 'lucide-react'
@@ -7,7 +7,9 @@ import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -52,10 +54,19 @@ import {
   type AvailableShellsResponse,
   type TerminalShellSettings,
 } from '@/components/settings/terminal-shell-api'
-import type {
-  CortexAutoReviewSettings,
+import {
+  MANAGER_REASONING_LEVELS,
+  isCompactionModelSelectionSupported,
+  type CompactionSettings,
+  type CortexAutoReviewSettings,
+  type GetCompactionSettingsResponse,
+  type ManagerReasoningLevel,
+  type ModelPresetInfo,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { fetchModelPresets } from '@/lib/model-preset'
+import { fetchCompactionSettings, updateCompactionSettings } from '@/components/settings/compaction-settings-api'
+import { PROVIDER_LABELS, REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
 import type { SettingsBackendTarget } from './settings-target'
 import type { SettingsApiClient } from './settings-api-client'
 
@@ -65,6 +76,102 @@ interface SettingsGeneralProps {
   target?: SettingsBackendTarget
   /** When provided, used for all backend requests instead of raw wsUrl. */
   apiClient?: SettingsApiClient
+}
+
+interface CompactionModelOption {
+  key: string
+  provider: string
+  providerLabel: string
+  modelId: string
+  label: string
+  defaultReasoningLevel: ManagerReasoningLevel
+  supportedReasoningLevels: ManagerReasoningLevel[]
+  isCurrentUnavailable?: boolean
+}
+
+function getCompactionModelKey(model: { provider: string; modelId: string }): string {
+  return `${model.provider}::${model.modelId}`
+}
+
+function parseCompactionModelKey(value: string): { provider: string; modelId: string } | null {
+  const splitIndex = value.indexOf('::')
+  if (splitIndex <= 0 || splitIndex === value.length - 2) {
+    return null
+  }
+
+  return {
+    provider: value.slice(0, splitIndex),
+    modelId: value.slice(splitIndex + 2),
+  }
+}
+
+function buildCompactionModelOptions(presets: ModelPresetInfo[]): CompactionModelOption[] {
+  const options: CompactionModelOption[] = []
+  for (const preset of presets) {
+    const providerLabel = PROVIDER_LABELS[preset.provider] ?? preset.provider
+    if (isCompactionModelSelectionSupported(preset.modelId, preset.provider)) {
+      options.push({
+        key: getCompactionModelKey({ provider: preset.provider, modelId: preset.modelId }),
+        provider: preset.provider,
+        providerLabel,
+        modelId: preset.modelId,
+        label: preset.displayName,
+        defaultReasoningLevel: preset.defaultReasoningLevel,
+        supportedReasoningLevels: preset.supportedReasoningLevels,
+      })
+    }
+
+    for (const variant of preset.variants ?? []) {
+      if (!isCompactionModelSelectionSupported(variant.modelId, preset.provider)) {
+        continue
+      }
+      options.push({
+        key: getCompactionModelKey({ provider: preset.provider, modelId: variant.modelId }),
+        provider: preset.provider,
+        providerLabel,
+        modelId: variant.modelId,
+        label: variant.label,
+        defaultReasoningLevel: preset.defaultReasoningLevel,
+        supportedReasoningLevels: preset.supportedReasoningLevels,
+      })
+    }
+  }
+  return options
+}
+
+function buildCurrentCompactionOption(settings: CompactionSettings): CompactionModelOption {
+  return {
+    key: getCompactionModelKey(settings.model),
+    provider: settings.model.provider,
+    providerLabel: PROVIDER_LABELS[settings.model.provider] ?? settings.model.provider,
+    modelId: settings.model.modelId,
+    label: settings.model.modelId,
+    defaultReasoningLevel: settings.reasoningLevel,
+    supportedReasoningLevels: [...MANAGER_REASONING_LEVELS],
+    isCurrentUnavailable: true,
+  }
+}
+
+function formatCompactionTimeoutLabel(minutes: number): string {
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`
+}
+
+function buildCompactionAvailabilityWarning(view: GetCompactionSettingsResponse | null): string | null {
+  if (!view) return null
+
+  if (!view.availability.providerConfigured) {
+    return 'The configured compaction provider is not available right now. Automatic compaction will fail until you authenticate that provider or choose another model.'
+  }
+
+  if (!view.availability.modelValid) {
+    return 'The configured compaction model is not currently available. Choose another model to keep automatic compaction working.'
+  }
+
+  if (!view.availability.reasoningSupported) {
+    return 'The configured reasoning level is not supported by this compaction model. Choose a different reasoning level or model.'
+  }
+
+  return null
 }
 
 export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralProps) {
@@ -105,6 +212,15 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [terminalLoadFailed, setTerminalLoadFailed] = useState(false)
   const [terminalUpdating, setTerminalUpdating] = useState(false)
   const [terminalSuccess, setTerminalSuccess] = useState(false)
+
+  // Compaction settings — Builder-only
+  const [compactionView, setCompactionView] = useState<GetCompactionSettingsResponse | null>(null)
+  const [compactionDraft, setCompactionDraft] = useState<CompactionSettings | null>(null)
+  const [compactionModelPresets, setCompactionModelPresets] = useState<ModelPresetInfo[]>([])
+  const [compactionError, setCompactionError] = useState<string | null>(null)
+  const [compactionLoadFailed, setCompactionLoadFailed] = useState(false)
+  const [compactionUpdating, setCompactionUpdating] = useState(false)
+  const [compactionSuccess, setCompactionSuccess] = useState(false)
 
   // Sleep blocker state (Electron-only)
   const bridge = window.electronBridge
@@ -194,6 +310,172 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
     },
     [wsUrl, terminalUpdating],
   )
+
+  const compactionSource = apiClient ?? wsUrl
+
+  const loadCompactionSettings = useCallback(async () => {
+    if (!isBuilder) return
+
+    setCompactionLoadFailed(false)
+    setCompactionError(null)
+    const [view, presets] = await Promise.all([
+      fetchCompactionSettings(compactionSource),
+      fetchModelPresets(compactionSource).catch(() => [] as ModelPresetInfo[]),
+    ])
+    setCompactionView(view)
+    setCompactionDraft(view.settings)
+    setCompactionModelPresets(presets)
+    setCompactionLoadFailed(false)
+  }, [compactionSource, isBuilder])
+
+  useEffect(() => {
+    if (!isBuilder) return
+    void loadCompactionSettings().catch((err) => {
+      setCompactionLoadFailed(true)
+      setCompactionError(err instanceof Error ? err.message : 'Could not load compaction settings')
+    })
+  }, [isBuilder, loadCompactionSettings])
+
+  const compactionModelOptions = useMemo(() => {
+    const options = buildCompactionModelOptions(compactionModelPresets)
+    if (compactionDraft && !options.some((option) => option.key === getCompactionModelKey(compactionDraft.model))) {
+      options.unshift(buildCurrentCompactionOption(compactionDraft))
+    }
+    return options
+  }, [compactionDraft, compactionModelPresets])
+
+  const compactionModelGroups = useMemo(() => {
+    const groups = new Map<string, { provider: string; providerLabel: string; options: CompactionModelOption[] }>()
+    for (const option of compactionModelOptions) {
+      const existing = groups.get(option.provider)
+      if (existing) {
+        existing.options.push(option)
+      } else {
+        groups.set(option.provider, {
+          provider: option.provider,
+          providerLabel: option.providerLabel,
+          options: [option],
+        })
+      }
+    }
+    return Array.from(groups.values())
+  }, [compactionModelOptions])
+
+  const selectedCompactionModel = useMemo(
+    () => compactionDraft
+      ? compactionModelOptions.find((option) => option.key === getCompactionModelKey(compactionDraft.model))
+      : undefined,
+    [compactionDraft, compactionModelOptions],
+  )
+
+  const availableCompactionReasoningLevels = useMemo(
+    () => selectedCompactionModel?.supportedReasoningLevels ?? [...MANAGER_REASONING_LEVELS],
+    [selectedCompactionModel],
+  )
+
+  useEffect(() => {
+    if (!compactionDraft) return
+    if (availableCompactionReasoningLevels.includes(compactionDraft.reasoningLevel)) return
+    setCompactionDraft({
+      ...compactionDraft,
+      reasoningLevel: selectedCompactionModel?.defaultReasoningLevel ?? availableCompactionReasoningLevels[0] ?? 'low',
+    })
+  }, [availableCompactionReasoningLevels, compactionDraft, selectedCompactionModel])
+
+  const compactionTimeoutMinuteOptions = useMemo(() => {
+    const values = new Set<number>()
+    if (compactionView) {
+      const minMinutes = Math.max(1, Math.round(compactionView.constraints.timeoutMs.min / 60_000))
+      const maxMinutes = Math.max(minMinutes, Math.round(compactionView.constraints.timeoutMs.max / 60_000))
+      for (let minutes = minMinutes; minutes <= maxMinutes; minutes += 1) {
+        values.add(minutes)
+      }
+    }
+    if (compactionDraft) {
+      values.add(Math.max(1, Math.round(compactionDraft.timeoutMs / 60_000)))
+    }
+    return Array.from(values).sort((a, b) => a - b)
+  }, [compactionDraft, compactionView])
+
+  const compactionWarning = useMemo(
+    () => buildCompactionAvailabilityWarning(compactionView),
+    [compactionView],
+  )
+
+  const hasCompactionChanges = useMemo(() => {
+    if (!compactionView || !compactionDraft) return false
+    return (
+      compactionDraft.model.provider !== compactionView.settings.model.provider
+      || compactionDraft.model.modelId !== compactionView.settings.model.modelId
+      || compactionDraft.reasoningLevel !== compactionView.settings.reasoningLevel
+      || compactionDraft.timeoutMs !== compactionView.settings.timeoutMs
+    )
+  }, [compactionDraft, compactionView])
+
+  const handleCompactionModelChange = useCallback((value: string) => {
+    const nextModel = parseCompactionModelKey(value)
+    if (!nextModel) return
+    const selectedOption = compactionModelOptions.find((option) => option.key === value)
+    setCompactionDraft((current) => current
+      ? {
+          ...current,
+          model: nextModel,
+          reasoningLevel: selectedOption?.defaultReasoningLevel ?? current.reasoningLevel,
+        }
+      : current)
+  }, [compactionModelOptions])
+
+  const handleCompactionReasoningChange = useCallback((value: string) => {
+    setCompactionDraft((current) => current
+      ? { ...current, reasoningLevel: value as ManagerReasoningLevel }
+      : current)
+  }, [])
+
+  const handleCompactionTimeoutChange = useCallback((value: string) => {
+    const minutes = Number.parseInt(value, 10)
+    if (Number.isNaN(minutes)) return
+    setCompactionDraft((current) => current
+      ? { ...current, timeoutMs: minutes * 60_000 }
+      : current)
+  }, [])
+
+  const handleCompactionReset = useCallback(() => {
+    if (!compactionView) return
+    setCompactionDraft(compactionView.settings)
+    setCompactionError(null)
+    setCompactionSuccess(false)
+  }, [compactionView])
+
+  const handleCompactionSave = useCallback(() => {
+    if (!compactionDraft) return
+    setCompactionUpdating(true)
+    setCompactionError(null)
+    setCompactionSuccess(false)
+
+    void updateCompactionSettings(compactionSource, {
+      model: compactionDraft.model,
+      reasoningLevel: compactionDraft.reasoningLevel,
+      timeoutMs: compactionDraft.timeoutMs,
+    })
+      .then((response) => {
+        setCompactionView((current) => current
+          ? {
+              ...current,
+              settings: response.settings,
+              availability: response.availability,
+            }
+          : current)
+        setCompactionDraft(response.settings)
+        setCompactionSuccess(true)
+        setTimeout(() => setCompactionSuccess(false), 2000)
+      })
+      .catch((err) => {
+        setCompactionError(err instanceof Error ? err.message : 'Failed to update compaction settings')
+      })
+      .finally(() => {
+        setCompactionUpdating(false)
+      })
+  }, [compactionDraft, compactionSource])
 
   // Use apiClient or wsUrl for Cortex auto-review settings
   const cortexSource = apiClient ?? wsUrl
@@ -406,6 +688,159 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
       )}
 
       {/* Sleep Prevention — Electron-only, Builder-only */}
+      {isBuilder && (
+        <SettingsSection
+          label="Compaction"
+          description="Choose the model, reasoning level, and timeout Forge uses for automatic and smart Pi compaction."
+        >
+          {!compactionView || !compactionDraft ? (
+            <div className="text-sm text-muted-foreground">
+              {compactionError ?? 'Loading compaction settings…'}
+              {compactionLoadFailed ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void loadCompactionSettings().catch((err) => {
+                      setCompactionLoadFailed(true)
+                      setCompactionError(err instanceof Error ? err.message : 'Could not load compaction settings')
+                    })
+                  }}
+                  className="ml-2 text-primary underline hover:no-underline"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <SettingsWithCTA
+                label="Compaction model"
+                description="Model used for Forge-owned automatic compaction and Smart compact summaries."
+              >
+                <div className="flex flex-col items-end gap-1.5">
+                  <div className="flex items-center gap-2">
+                    {compactionSuccess ? (
+                      <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                        <Check className="size-3" />
+                        Saved
+                      </span>
+                    ) : null}
+                    <Select
+                      value={getCompactionModelKey(compactionDraft.model)}
+                      onValueChange={handleCompactionModelChange}
+                      disabled={compactionUpdating}
+                    >
+                      <SelectTrigger className="w-full sm:w-72" aria-label="Compaction model">
+                        <SelectValue placeholder="Select model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {compactionModelGroups.map((group) => (
+                          <SelectGroup key={group.provider}>
+                            <SelectLabel className="text-xs text-muted-foreground">{group.providerLabel}</SelectLabel>
+                            {group.options.map((option) => (
+                              <SelectItem key={option.key} value={option.key}>
+                                {option.label}{option.isCurrentUnavailable ? ' (current setting)' : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {selectedCompactionModel?.isCurrentUnavailable ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      Current setting is preserved here so you can switch away from it.
+                    </span>
+                  ) : null}
+                </div>
+              </SettingsWithCTA>
+
+              <SettingsWithCTA
+                label="Compaction reasoning"
+                description="Reasoning level used when Forge asks the compaction model to summarize older context."
+              >
+                <Select
+                  value={compactionDraft.reasoningLevel}
+                  onValueChange={handleCompactionReasoningChange}
+                  disabled={compactionUpdating}
+                >
+                  <SelectTrigger className="w-full sm:w-48" aria-label="Compaction reasoning level">
+                    <SelectValue placeholder="Select reasoning level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCompactionReasoningLevels.map((level) => (
+                      <SelectItem key={level} value={level}>
+                        {REASONING_LEVEL_LABELS[level] ?? level}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingsWithCTA>
+
+              <SettingsWithCTA
+                label="Compaction timeout"
+                description="How long Forge waits before automatic compaction is treated as timed out."
+              >
+                <Select
+                  value={String(Math.max(1, Math.round(compactionDraft.timeoutMs / 60_000)))}
+                  onValueChange={handleCompactionTimeoutChange}
+                  disabled={compactionUpdating}
+                >
+                  <SelectTrigger className="w-full sm:w-48" aria-label="Compaction timeout">
+                    <SelectValue placeholder="Select timeout" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {compactionTimeoutMinuteOptions.map((minutes) => (
+                      <SelectItem key={minutes} value={String(minutes)}>
+                        {formatCompactionTimeoutLabel(minutes)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingsWithCTA>
+
+              {compactionWarning ? (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  {compactionWarning}
+                </div>
+              ) : null}
+
+              {compactionError && !compactionLoadFailed ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {compactionError}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-3">
+                <p className="text-xs text-muted-foreground">
+                  Defaults: {compactionView.defaults.model.modelId} · {REASONING_LEVEL_LABELS[compactionView.defaults.reasoningLevel] ?? compactionView.defaults.reasoningLevel} · {formatCompactionTimeoutLabel(Math.round(compactionView.defaults.timeoutMs / 60_000))}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCompactionReset}
+                    disabled={!hasCompactionChanges || compactionUpdating}
+                  >
+                    <RotateCcw className="size-4" />
+                    Reset
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleCompactionSave}
+                    disabled={!hasCompactionChanges || compactionUpdating}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </SettingsSection>
+      )}
+
       {isBuilder && inElectron && (
         <SettingsSection
           label="Sleep Prevention"

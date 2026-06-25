@@ -18,6 +18,7 @@ import {
   type RuntimeCallbackFallbackHandoffSnapshot
 } from "./runtime/runtime-callback-gate.js";
 import { RuntimeBinding } from "./runtime/runtime-binding.js";
+import type { CompactionRuntimeSettingsProvider } from "./compaction-runtime-settings-provider.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
@@ -88,6 +89,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     ): void | Promise<void>;
   };
   getPiModelsJsonPathOrThrow(): string;
+  getCompactionRuntimeSettingsProvider(): CompactionRuntimeSettingsProvider;
   getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
@@ -214,6 +216,7 @@ export class SwarmRuntimeController {
       getCredentialPoolService: () => this.host.secretsEnvService.getCredentialPoolService(),
       getOpenAIAuthBrokerRuntimeService: () => this.host.secretsEnvService.getOpenAIAuthBrokerRuntimeService(),
       observability: this.host.getObservabilityService?.(),
+      getCompactionRuntimeSettingsProvider: () => this.host.getCompactionRuntimeSettingsProvider(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId, sessionFile);

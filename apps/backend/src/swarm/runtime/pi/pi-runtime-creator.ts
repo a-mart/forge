@@ -52,6 +52,8 @@ import type {
 } from "../../types.js";
 import { planPiRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planPiResourceLoaderOptions, planRuntimeResourcePaths } from "../runtime-resource-plan.js";
+import type { CompactionRuntimeSettingsProvider } from "../../compaction-runtime-settings-provider.js";
+import { buildForgePiCompactionFailureScopeKey } from "../../compaction/forge-pi-compaction-extension.js";
 import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
 
@@ -65,6 +67,7 @@ interface PiRuntimeCreatorDependencies {
   getCredentialPoolService?: () => CredentialPoolService;
   getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   observability?: ObservabilityFacade;
+  getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
@@ -164,6 +167,7 @@ export class PiRuntimeCreator {
     });
 
     const provider = descriptor.model.provider.trim().toLowerCase();
+    const compactionFailureScopeKey = buildForgePiCompactionFailureScopeKey(descriptor.agentId, runtimeToken);
     const brokerRuntimeService = this.deps.getOpenAIAuthBrokerRuntimeService?.();
     const useBrokerAuth = provider === "openai-codex"
       && brokerRuntimeService
@@ -204,13 +208,15 @@ export class PiRuntimeCreator {
       descriptor,
       config: this.deps.config,
       logDebug: this.deps.logDebug,
+      getCompactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider,
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
         preparedForgeBindings,
         baseSwarmTools,
         host: this.deps.host,
         descriptor
-      })
+      }),
+      compactionFailureScopeKey,
     });
     const resourcePlan = planPiResourceLoaderOptions({
       descriptor,
@@ -378,6 +384,8 @@ export class PiRuntimeCreator {
       descriptor: cloneRuntimeDescriptor(descriptor),
       session: session as AgentSession,
       systemPrompt,
+      compactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider(),
+      compactionFailureScopeKey,
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
           await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);

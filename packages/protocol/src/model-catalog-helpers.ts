@@ -123,6 +123,8 @@ export function getCatalogContextWindow(modelId: string, provider?: string): num
 
 export type ManagerModelSurface = 'create' | 'change'
 
+const COMPACTION_ELIGIBLE_PROVIDER_IDS = new Set(['openai-codex', 'anthropic'])
+
 function isCatalogModelGloballyEnabled(
   model: ForgeModelDefinition,
   override: ModelOverrideEntry | undefined,
@@ -141,6 +143,30 @@ export function isCatalogModelManagerSupported(
   }
 
   return surface === 'create' ? family.visibleInCreateManager : family.visibleInChangeManager
+}
+
+/** Whether the provider can execute Forge Pi compaction with raw API-key auth today. */
+export function isCompactionProviderSupported(providerId: string): boolean {
+  return COMPACTION_ELIGIBLE_PROVIDER_IDS.has(providerId.trim().toLowerCase())
+}
+
+/** Whether this catalog model can be selected for Forge Pi compaction. */
+export function isCatalogModelCompactionSupported(model: ForgeModelDefinition): boolean {
+  return isCompactionProviderSupported(model.provider)
+}
+
+/** Whether a provider/model selection can be selected for Forge Pi compaction. */
+export function isCompactionModelSelectionSupported(modelId: string, provider?: string): boolean {
+  const model = getCatalogModel(modelId, provider)
+  return model ? isCatalogModelCompactionSupported(model) : false
+}
+
+/** Compute the effective compaction-enabled state for a catalog model. */
+export function getEffectiveCompactionEnabled(
+  model: ForgeModelDefinition,
+  override: ModelOverrideEntry | undefined,
+): boolean {
+  return isCatalogModelGloballyEnabled(model, override) && isCatalogModelCompactionSupported(model)
 }
 
 /** Compute the default manager-enabled state for a catalog model on the requested surface. */

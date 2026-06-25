@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
+import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { planPiExtensionFactories } from "../runtime/runtime-tool-plan.js";
 
 const piAiMockState = vi.hoisted(() => ({
@@ -66,62 +67,66 @@ vi.mock("@mariozechner/pi-ai", () => ({
   getModels: (provider: unknown) => piAiMockState.getModels(provider),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-  AuthStorage: {
-    create: (...args: unknown[]) => piCodingAgentMockState.authStorageCreate(...args),
-    inMemory: (...args: unknown[]) => piCodingAgentMockState.authStorageInMemory(...args),
-  },
-  DefaultResourceLoader: class {
-    readonly options: unknown
+vi.mock("@mariozechner/pi-coding-agent", async () => {
+  const actual = await vi.importActual<typeof import("@mariozechner/pi-coding-agent")>("@mariozechner/pi-coding-agent")
+  return {
+    ...actual,
+    AuthStorage: {
+      create: (...args: unknown[]) => piCodingAgentMockState.authStorageCreate(...args),
+      inMemory: (...args: unknown[]) => piCodingAgentMockState.authStorageInMemory(...args),
+    },
+    DefaultResourceLoader: class {
+      readonly options: unknown
 
-    constructor(options: unknown) {
-      this.options = options
-      piCodingAgentMockState.defaultResourceLoaderCtor(options)
-    }
+      constructor(options: unknown) {
+        this.options = options
+        piCodingAgentMockState.defaultResourceLoaderCtor(options)
+      }
 
-    async reload(): Promise<void> {
-      await piCodingAgentMockState.defaultResourceLoaderReload()
-    }
+      async reload(): Promise<void> {
+        await piCodingAgentMockState.defaultResourceLoaderReload()
+      }
 
-    getPathMetadata(): Map<string, unknown> {
-      return new Map();
-    }
-  },
-  createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
-  compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
-  SettingsManager: {
-    create: (...args: unknown[]) => {
-      piCodingAgentMockState.settingsManagerCreate(...args)
-      return {
-        applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+      getPathMetadata(): Map<string, unknown> {
+        return new Map();
       }
     },
-    fromStorage: (...args: unknown[]) => {
-      piCodingAgentMockState.settingsManagerFromStorage(...args)
-      return {
-        applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
-      }
+    createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
+    compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
+    SettingsManager: {
+      create: (...args: unknown[]) => {
+        piCodingAgentMockState.settingsManagerCreate(...args)
+        return {
+          applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+        }
+      },
+      fromStorage: (...args: unknown[]) => {
+        piCodingAgentMockState.settingsManagerFromStorage(...args)
+        return {
+          applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+        }
+      },
     },
-  },
-  ModelRegistry: {
-    create: (...args: unknown[]) => {
-      piCodingAgentMockState.modelRegistryCreateArgs(...args)
-      return {
-        getError(): undefined {
-          return undefined
-        },
+    ModelRegistry: {
+      create: (...args: unknown[]) => {
+        piCodingAgentMockState.modelRegistryCreateArgs(...args)
+        return {
+          getError(): undefined {
+            return undefined
+          },
 
-        find(provider: string, modelId: string): unknown {
-          return piCodingAgentMockState.modelRegistryFind(provider, modelId)
-        },
+          find(provider: string, modelId: string): unknown {
+            return piCodingAgentMockState.modelRegistryFind(provider, modelId)
+          },
 
-        getAll(): unknown[] {
-          return piCodingAgentMockState.modelRegistryGetAll()
-        },
-      }
+          getAll(): unknown[] {
+            return piCodingAgentMockState.modelRegistryGetAll()
+          },
+        }
+      },
     },
-  },
-}));
+  }
+});
 
 vi.mock("../session-file-guard.js", () => ({
   openSessionManagerWithSizeGuard: (...args: unknown[]) => sessionFileGuardMockState.openSessionManagerWithSizeGuard(...args),
@@ -323,6 +328,9 @@ function createFactory(
     getCredentialPoolService: overrides.getCredentialPoolService,
     getOpenAIAuthBrokerRuntimeService: overrides.getOpenAIAuthBrokerRuntimeService,
     observability: overrides.observability,
+    getCompactionRuntimeSettingsProvider:
+      overrides.getCompactionRuntimeSettingsProvider ??
+      (() => createDefaultCompactionRuntimeSettingsProvider()),
     getMemoryRuntimeResources: overrides.getMemoryRuntimeResources ?? (async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
@@ -374,6 +382,7 @@ function buildExtensionFactories(rootDir: string, descriptor: AgentDescriptor) {
     descriptor,
     config: createConfig(rootDir),
     logDebug: () => {},
+    getCompactionRuntimeSettingsProvider: () => createDefaultCompactionRuntimeSettingsProvider(),
   });
 }
 
@@ -1392,6 +1401,7 @@ describe("RuntimeFactory", () => {
     });
 
     const signal = new AbortController().signal;
+    const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
     const result = await beforeCompact?.(
       {
         preparation: {
@@ -1410,6 +1420,12 @@ describe("RuntimeFactory", () => {
       {
         model: { provider: "openai-codex", id: "gpt-5.4" },
         modelRegistry: {
+          find: vi.fn((provider: string, modelId: string) => {
+            if (provider === "openai-codex" && modelId === "gpt-5.5") {
+              return compactionModel;
+            }
+            return undefined;
+          }),
           getApiKeyAndHeaders: vi.fn().mockResolvedValue({
             ok: true,
             apiKey: "oauth-access-token",
@@ -1427,21 +1443,28 @@ describe("RuntimeFactory", () => {
         turnPrefixMessages: [],
         isSplitTurn: false,
         tokensBefore: 123,
-        fileOps: { readFiles: [], modifiedFiles: [] },
+        fileOps: { read: new Set(), written: new Set(), edited: new Set() },
         settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
       },
-      { provider: "openai-codex", id: "gpt-5.4" },
+      compactionModel,
       "oauth-access-token",
       { Authorization: "Bearer oauth-access-token", "x-test": "1" },
       expect.stringContaining("Focus on deployment details."),
       signal,
+      "low",
     );
     expect(result).toEqual({
-      compaction: {
+      compaction: expect.objectContaining({
         summary: "summary",
         firstKeptEntryId: "entry-1",
         tokensBefore: 123,
-      },
+      }),
+    });
+    expect(result?.compaction?.details).toMatchObject({
+      forgeCompaction: expect.objectContaining({
+        sourcePath: "forge_session_before_compact",
+        bounding: expect.any(Object),
+      }),
     });
   });
 

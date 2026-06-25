@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent } from '@testing-library/dom'
+import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -100,6 +100,24 @@ vi.mock('@/components/settings/terminal-shell-api', () => ({
   updateTerminalShellSettings: (...args: unknown[]) => terminalApiMock.updateTerminalShellSettings(...args),
 }))
 
+const compactionApiMock = vi.hoisted(() => ({
+  fetchCompactionSettings: vi.fn(),
+  updateCompactionSettings: vi.fn(),
+}))
+
+vi.mock('@/components/settings/compaction-settings-api', () => ({
+  fetchCompactionSettings: (...args: unknown[]) => compactionApiMock.fetchCompactionSettings(...args),
+  updateCompactionSettings: (...args: unknown[]) => compactionApiMock.updateCompactionSettings(...args),
+}))
+
+const modelPresetMock = vi.hoisted(() => ({
+  fetchModelPresets: vi.fn(),
+}))
+
+vi.mock('@/lib/model-preset', () => ({
+  fetchModelPresets: (...args: unknown[]) => modelPresetMock.fetchModelPresets(...args),
+}))
+
 /* ------------------------------------------------------------------ */
 /*  Setup                                                             */
 /* ------------------------------------------------------------------ */
@@ -108,6 +126,31 @@ let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  if (!Element.prototype.hasPointerCapture) {
+    Object.defineProperty(Element.prototype, 'hasPointerCapture', {
+      configurable: true,
+      value: () => false,
+    })
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Object.defineProperty(Element.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: () => {},
+    })
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Object.defineProperty(Element.prototype, 'releasePointerCapture', {
+      configurable: true,
+      value: () => {},
+    })
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: () => {},
+    })
+  }
+
   container = document.createElement('div')
   document.body.appendChild(container)
 
@@ -137,6 +180,68 @@ beforeEach(() => {
       source: 'auto',
     },
   })
+  compactionApiMock.fetchCompactionSettings.mockResolvedValue({
+    settings: {
+      model: { provider: 'openai-codex', modelId: 'gpt-5.5' },
+      reasoningLevel: 'low',
+      timeoutMs: 300_000,
+      updatedAt: null,
+    },
+    availability: {
+      providerConfigured: true,
+      modelValid: true,
+      reasoningSupported: true,
+    },
+    defaults: {
+      model: { provider: 'openai-codex', modelId: 'gpt-5.5' },
+      reasoningLevel: 'low',
+      timeoutMs: 300_000,
+      updatedAt: null,
+    },
+    constraints: {
+      timeoutMs: { min: 60_000, max: 900_000, default: 300_000 },
+    },
+  })
+  compactionApiMock.updateCompactionSettings.mockResolvedValue({
+    ok: true,
+    settings: {
+      model: { provider: 'openai-codex', modelId: 'gpt-5.5' },
+      reasoningLevel: 'low',
+      timeoutMs: 300_000,
+      updatedAt: '2026-06-24T00:00:00.000Z',
+    },
+    availability: {
+      providerConfigured: true,
+      modelValid: true,
+      reasoningSupported: true,
+    },
+  })
+  modelPresetMock.fetchModelPresets.mockResolvedValue([
+    {
+      presetId: 'gpt-5.5',
+      displayName: 'GPT-5.5',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      defaultReasoningLevel: 'low',
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+    },
+    {
+      presetId: 'sdk-sonnet',
+      displayName: 'Claude SDK Sonnet',
+      provider: 'claude-sdk',
+      modelId: 'claude-sonnet-4-5-20250929',
+      defaultReasoningLevel: 'high',
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+    },
+    {
+      presetId: 'pi-grok',
+      displayName: 'Grok 4',
+      provider: 'xai',
+      modelId: 'grok-4',
+      defaultReasoningLevel: 'low',
+      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+    },
+  ])
 })
 
 afterEach(() => {
@@ -176,6 +281,72 @@ describe('SettingsGeneral', () => {
 
       expect(container.textContent).toContain('Editor')
       expect(container.textContent).toContain('Preferred Editor')
+    })
+  })
+
+  /* ---- Compaction ---- */
+
+  describe('compaction settings', () => {
+    it('renders compaction settings with server defaults', async () => {
+      renderGeneral()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Compaction')
+      expect(container.textContent).toContain('Compaction model')
+      expect(container.textContent).toContain('Compaction reasoning')
+      expect(container.textContent).toContain('Compaction timeout')
+      expect(container.textContent).toContain('GPT-5.5')
+      expect(container.textContent).toContain('Low')
+      expect(container.textContent).toContain('5 minutes')
+    })
+
+    it('filters unsupported xAI and native SDK models out of compaction model choices', async () => {
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const trigger = container.querySelector('[aria-label="Compaction model"]')
+      expect(trigger).toBeTruthy()
+
+      flushSync(() => {
+        fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.5' })).toBeTruthy())
+
+      expect(queryByRole(document.body, 'option', { name: 'Grok 4' })).toBeNull()
+      expect(queryByRole(document.body, 'option', { name: 'Claude SDK Sonnet' })).toBeNull()
+    })
+
+    it('shows a warning when the configured compaction provider is unavailable', async () => {
+      compactionApiMock.fetchCompactionSettings.mockResolvedValueOnce({
+        settings: {
+          model: { provider: 'openai-codex', modelId: 'gpt-5.5' },
+          reasoningLevel: 'low',
+          timeoutMs: 300_000,
+          updatedAt: null,
+        },
+        availability: {
+          providerConfigured: false,
+          modelValid: true,
+          reasoningSupported: true,
+        },
+        defaults: {
+          model: { provider: 'openai-codex', modelId: 'gpt-5.5' },
+          reasoningLevel: 'low',
+          timeoutMs: 300_000,
+          updatedAt: null,
+        },
+        constraints: {
+          timeoutMs: { min: 60_000, max: 900_000, default: 300_000 },
+        },
+      })
+
+      renderGeneral()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('The configured compaction provider is not available right now.')
     })
   })
 
@@ -376,6 +547,17 @@ describe('SettingsGeneral — collab target', () => {
     expect(container.textContent).not.toContain('Enable prompt cache visualization')
     expect(modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled).not.toHaveBeenCalled()
     expect(modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi).not.toHaveBeenCalled()
+  })
+
+  it('hides compaction settings and does not load builder-only compaction APIs in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(container.textContent).not.toContain('Compaction model')
+    expect(container.textContent).not.toContain('Compaction timeout')
+    expect(compactionApiMock.fetchCompactionSettings).not.toHaveBeenCalled()
+    expect(modelPresetMock.fetchModelPresets).not.toHaveBeenCalled()
   })
 
   it('still renders Cortex settings in collab mode', async () => {

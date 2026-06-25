@@ -921,6 +921,15 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
 
       this.sdkAutoCompactionInProgress = true;
       await this.emitStatus();
+      await this.callbacks.onRuntimeError?.(this.descriptor.agentId, {
+        phase: "compaction",
+        message: "Automatic compaction started",
+        details: {
+          recoveryStage: "auto_compaction_started",
+          source: "claude_sdk_auto_compaction",
+          userFacingMessage: "Context is getting full — compacting automatically."
+        }
+      });
       return;
     }
 
@@ -940,6 +949,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         details: {
           recoveryStage: "auto_compaction_succeeded",
           source: "claude_sdk_auto_compaction",
+          userFacingMessage: "Automatic compaction completed.",
           ...(trigger ? { trigger } : {})
         }
       });
