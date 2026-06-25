@@ -24,6 +24,7 @@ const useFileContentMock = vi.fn((
   _agentId: string | null,
   filePath: string | null,
   _worktreeId?: string | null,
+  _refreshNonce?: number,
 ) => ({
   data: filePath ? cachedFileContent : null,
   isLoading: false,
@@ -41,7 +42,8 @@ vi.mock('./use-file-browser-queries', () => ({
     agentId: string | null,
     filePath: string | null,
     worktreeId?: string | null,
-  ) => useFileContentMock(wsUrl, agentId, filePath, worktreeId),
+    refreshNonce?: number,
+  ) => useFileContentMock(wsUrl, agentId, filePath, worktreeId, refreshNonce),
 }))
 
 vi.mock('./FileContentViewer', () => ({
@@ -200,6 +202,7 @@ describe('FileBrowserPanel resize handle placement', () => {
       'session-a',
       null,
       null,
+      0,
     )
   })
 })

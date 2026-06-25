@@ -60,7 +60,7 @@ function renderHarness(guard: FileEditorGuardApi) {
 }
 
 describe('builder file-editor guarded actions', () => {
-  it('guards the chat header artifacts/dashboard toggle until dirty edits are discarded', () => {
+  it('opens the chat header artifacts/dashboard toggle without guarding preserved dirty edits', () => {
     const run = vi.fn()
     const discard = vi.fn()
     renderHarness({
@@ -73,15 +73,9 @@ describe('builder file-editor guarded actions', () => {
       captured.current?.requestArtifactsToggle(run)
     })
 
-    expect(run).not.toHaveBeenCalled()
-    expect(captured.current?.dialogOpen).toBe(true)
-
-    flushSync(() => {
-      captured.current?.discardDialog()
-    })
-
-    expect(discard).toHaveBeenCalledTimes(1)
     expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+    expect(discard).not.toHaveBeenCalled()
   })
 
   it('guards create/session route transitions until dirty edits are saved', async () => {

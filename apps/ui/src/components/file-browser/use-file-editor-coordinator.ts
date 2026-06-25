@@ -20,9 +20,10 @@ export interface FileEditorGuardApi {
 }
 
 export type FileEditorTransitionAction =
-  | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory' }
+  | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory'; agentId: string; worktreeId: string | null }
   | { type: 'select-file'; nextPath: string }
   | { type: 'close-viewer' }
+  | { type: 'close-tab'; key: FileEditorSessionKey }
   | { type: 'close-file-browser' }
   | { type: 'open-source-control-inline' }
   | { type: 'source-control-mutation'; mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only'; agentId: string; worktreeId: string | null }
@@ -39,7 +40,8 @@ interface RegisteredGuard {
 interface PendingTransition {
   action: FileEditorTransitionAction
   run: () => void
-  snapshot: FileEditorDirtySnapshot
+  snapshots: FileEditorDirtySnapshot[]
+  currentIndex: number
   onCancel?: () => void
 }
 
@@ -67,7 +69,41 @@ function snapshotsMatchSourceControlMutation(
   return snapshot.key.agentId === action.agentId && snapshot.key.worktreeId === action.worktreeId
 }
 
-export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null) {
+function doesDeleteAffectSnapshot(
+  snapshot: FileEditorDirtySnapshot,
+  action: Extract<FileEditorTransitionAction, { type: 'delete-entry' }>,
+): boolean {
+  if (snapshot.key.agentId !== action.agentId || (snapshot.key.worktreeId ?? null) !== (action.worktreeId ?? null)) return false
+
+  const deletePath = action.path.replace(/^\/+|\/+$/g, '')
+  const filePath = snapshot.key.filePath.replace(/^\/+|\/+$/g, '')
+  if (!deletePath) return false
+  if (action.entryType === 'file') return filePath === deletePath
+  return filePath === deletePath || filePath.startsWith(`${deletePath}/`)
+}
+
+function keysEqual(a: FileEditorSessionKey, b: FileEditorSessionKey): boolean {
+  return a.agentId === b.agentId && a.worktreeId === b.worktreeId && a.filePath === b.filePath
+}
+
+function actionPreservesDirtyDrafts(action: FileEditorTransitionAction): boolean {
+  return action.type === 'select-file' ||
+    action.type === 'open-workspace-panel' ||
+    action.type === 'close-file-browser' ||
+    action.type === 'open-source-control-inline'
+}
+
+export interface FileEditorCoordinatorOptions {
+  getDirtySnapshots?: () => FileEditorDirtySnapshot[]
+  getGuardForKey?: (key: FileEditorSessionKey) => FileEditorGuardApi | null
+}
+
+const DEFAULT_COORDINATOR_OPTIONS: FileEditorCoordinatorOptions = {}
+
+export function useFileEditorCoordinator(
+  activeGuard?: FileEditorGuardApi | null,
+  options: FileEditorCoordinatorOptions = DEFAULT_COORDINATOR_OPTIONS,
+) {
   const guardsRef = useRef<Map<string, RegisteredGuard>>(new Map())
   const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null)
   const [isSavingPendingTransition, setIsSavingPendingTransition] = useState(false)
@@ -93,26 +129,31 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     }
   }, [])
 
-  const getDirtySnapshot = useCallback((): FileEditorDirtySnapshot | null => {
-    const activeSnapshot = activeGuard?.getSnapshot() ?? null
-    if (activeSnapshot?.isDirty) {
-      return {
-        ...activeSnapshot,
-        fileName: activeSnapshot.fileName || fileNameFromPath(activeSnapshot.key.filePath),
-      }
+  const getDirtySnapshots = useCallback((): FileEditorDirtySnapshot[] => {
+    const snapshots: FileEditorDirtySnapshot[] = []
+    const addSnapshot = (snapshot: FileEditorDirtySnapshot | null | undefined) => {
+      if (!snapshot?.isDirty) return
+      const serialized = serializeFileEditorKey(snapshot.key)
+      if (snapshots.some((existing) => serializeFileEditorKey(existing.key) === serialized)) return
+      snapshots.push({
+        ...snapshot,
+        fileName: snapshot.fileName || fileNameFromPath(snapshot.key.filePath),
+      })
     }
 
+    addSnapshot(activeGuard?.getSnapshot() ?? null)
     for (const registered of guardsRef.current.values()) {
-      const snapshot = registered.api.getSnapshot()
-      if (snapshot?.isDirty) {
-        return {
-          ...snapshot,
-          fileName: snapshot.fileName || fileNameFromPath(snapshot.key.filePath),
-        }
-      }
+      addSnapshot(registered.api.getSnapshot())
     }
-    return null
-  }, [activeGuard])
+    for (const snapshot of options.getDirtySnapshots?.() ?? []) {
+      addSnapshot(snapshot)
+    }
+    return snapshots
+  }, [activeGuard, options])
+
+  const getDirtySnapshot = useCallback((): FileEditorDirtySnapshot | null => {
+    return getDirtySnapshots()[0] ?? null
+  }, [getDirtySnapshots])
 
   const findGuardForSnapshot = useCallback((snapshot: FileEditorDirtySnapshot): FileEditorGuardApi | null => {
     const activeSnapshot = activeGuard?.getSnapshot() ?? null
@@ -120,27 +161,33 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
       return activeGuard ?? null
     }
 
-    return guardsRef.current.get(serializeFileEditorKey(snapshot.key))?.api ?? null
-  }, [activeGuard])
+    return guardsRef.current.get(serializeFileEditorKey(snapshot.key))?.api ?? options.getGuardForKey?.(snapshot.key) ?? null
+  }, [activeGuard, options])
 
   const requestFileEditorTransition = useCallback((
     action: FileEditorTransitionAction,
     run: () => void,
     onCancel?: () => void,
   ) => {
-    const snapshot = getDirtySnapshot()
-    if (!snapshot) {
+    if (actionPreservesDirtyDrafts(action)) {
       run()
       return
     }
 
-    if (action.type === 'source-control-mutation' && !snapshotsMatchSourceControlMutation(snapshot, action)) {
+    const snapshots = getDirtySnapshots().filter((candidate) => {
+      if (action.type === 'source-control-mutation') return snapshotsMatchSourceControlMutation(candidate, action)
+      if (action.type === 'delete-entry') return doesDeleteAffectSnapshot(candidate, action)
+      if (action.type === 'close-tab') return keysEqual(candidate.key, action.key)
+      return true
+    })
+
+    if (snapshots.length === 0) {
       run()
       return
     }
 
-    setPendingTransition({ action, run, snapshot, onCancel })
-  }, [getDirtySnapshot])
+    setPendingTransition({ action, run, snapshots, currentIndex: 0, onCancel })
+  }, [getDirtySnapshots])
 
   const abortPendingTransition = useCallback((transition: PendingTransition | null) => {
     transition?.onCancel?.()
@@ -153,6 +200,13 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
   }, [abortPendingTransition, pendingTransition])
 
   const continuePendingTransition = useCallback((transition: PendingTransition) => {
+    const nextIndex = transition.currentIndex + 1
+    if (nextIndex < transition.snapshots.length) {
+      setPendingTransition({ ...transition, currentIndex: nextIndex })
+      setIsSavingPendingTransition(false)
+      return
+    }
+
     setPendingTransition(null)
     setIsSavingPendingTransition(false)
     transition.run()
@@ -162,7 +216,8 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     const transition = pendingTransition
     if (!transition || isSavingPendingTransition) return
 
-    const guard = findGuardForSnapshot(transition.snapshot)
+    const snapshot = transition.snapshots[transition.currentIndex]
+    const guard = snapshot ? findGuardForSnapshot(snapshot) : null
     if (!guard) {
       continuePendingTransition(transition)
       return
@@ -186,19 +241,23 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     const transition = pendingTransition
     if (!transition || isSavingPendingTransition) return
 
-    const guard = findGuardForSnapshot(transition.snapshot)
+    const snapshot = transition.snapshots[transition.currentIndex]
+    const guard = snapshot ? findGuardForSnapshot(snapshot) : null
     guard?.discard()
     continuePendingTransition(transition)
   }, [continuePendingTransition, findGuardForSnapshot, isSavingPendingTransition, pendingTransition])
 
-  const dialogState = useMemo<FileDirtyConfirmDialogState>(() => ({
-    open: Boolean(pendingTransition),
-    snapshot: pendingTransition?.snapshot ?? null,
-    isSaving: isSavingPendingTransition || pendingTransition?.snapshot.isSaving === true,
-    onSave: saveAndContinue,
-    onDiscard: discardAndContinue,
-    onCancel: cancelPendingTransition,
-  }), [cancelPendingTransition, discardAndContinue, isSavingPendingTransition, pendingTransition, saveAndContinue])
+  const dialogState = useMemo<FileDirtyConfirmDialogState>(() => {
+    const snapshot = pendingTransition?.snapshots[pendingTransition.currentIndex] ?? null
+    return {
+      open: Boolean(pendingTransition),
+      snapshot,
+      isSaving: isSavingPendingTransition || snapshot?.isSaving === true,
+      onSave: saveAndContinue,
+      onDiscard: discardAndContinue,
+      onCancel: cancelPendingTransition,
+    }
+  }, [cancelPendingTransition, discardAndContinue, isSavingPendingTransition, pendingTransition, saveAndContinue])
 
   return {
     registerWritableEditor,

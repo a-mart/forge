@@ -189,7 +189,7 @@ describe('usePanelState', () => {
       expect(typeof capturedRef.current!.panelState.cortexDashboardTabRequest!.nonce).toBe('number')
     })
 
-    it('requesting cortex dashboard tab closes file browser', () => {
+    it('requesting cortex dashboard tab hides file browser and preserves selected file', () => {
       render()
 
       act(() => {
@@ -209,7 +209,7 @@ describe('usePanelState', () => {
       })
 
       expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
-      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBe('/tmp/example.ts')
       expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
     })
 
@@ -465,7 +465,7 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
     })
 
-    it('closing file browser clears selected file', () => {
+    it('closing file browser hides it and preserves selected file', () => {
       render()
 
       act(() => {
@@ -480,7 +480,7 @@ describe('usePanelState', () => {
         capturedRef.current!.panelState.toggleFileBrowser()
       })
       expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
-      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBe('/path/to/file.ts')
     })
   })
 
@@ -547,7 +547,7 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
     })
 
-    it('clearFileBrowserWorktreeContext clears selected file and worktree context', () => {
+    it('clearFileBrowserWorktreeContext switches back to session file scope', () => {
       render()
 
       act(() => {
@@ -557,6 +557,8 @@ describe('usePanelState', () => {
           branch: 'feature/worktree-test',
           repoRoot: '/repo/middleman',
         })
+      })
+      act(() => {
         capturedRef.current!.panelState.selectFileBrowserFile('linked-only.txt')
       })
       expect(capturedRef.current!.panelState.fileBrowserWorktreeContext?.worktreeId).toBe('feature-linked')

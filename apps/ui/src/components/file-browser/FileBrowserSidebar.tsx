@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
 import { useLatestRef } from '@/hooks/useLatestRef'
 import { FileTree } from './FileTree'
-import type { FileTreeHandle } from './FileTree'
+import type { FileTreeHandle, FileTreeStateSnapshot } from './FileTree'
 import { FileDeleteConfirmDialog } from './FileDeleteConfirmDialog'
 import {
   useDirectoryListing,
@@ -26,7 +26,10 @@ interface FileBrowserSidebarProps {
   isOpen: boolean
   onClose: () => void
   onSelectFile: (path: string) => void
+  onOpenStickyFile?: (path: string) => void
   selectedFile: string | null
+  treeSnapshot?: FileTreeStateSnapshot | null
+  onTreeSnapshotChange?: (snapshot: FileTreeStateSnapshot) => void
   worktreeContext?: FileBrowserWorktreeSelection | null
   onClearWorktreeContext?: () => void
   projectResourceProfileId?: string | null
@@ -44,7 +47,10 @@ export function FileBrowserSidebar({
   isOpen,
   onClose,
   onSelectFile,
+  onOpenStickyFile,
   selectedFile,
+  treeSnapshot,
+  onTreeSnapshotChange,
   worktreeContext = null,
   onClearWorktreeContext,
   projectResourceProfileId,
@@ -337,6 +343,9 @@ export function FileBrowserSidebar({
             cwd={rootList.data?.cwd ?? ''}
             selectedFile={selectedFile}
             onSelectFile={onSelectFile}
+            onOpenStickyFile={onOpenStickyFile}
+            treeSnapshot={treeSnapshot}
+            onTreeSnapshotChange={onTreeSnapshotChange}
             fileCount={fileCount.data?.count ?? null}
             fileCountMethod={fileCount.data?.method ?? null}
             worktreeId={worktreeId}

@@ -78,6 +78,15 @@ interface FileTreeItem {
   size?: number
 }
 
+export interface FileTreeStateSnapshot {
+  filterText: string
+  searchMode: boolean
+  searchQuery: string
+  treeScrollTop: number
+  searchScrollTop: number
+  treeState: Record<string, unknown> | null
+}
+
 export interface FileTreeHandle {
   refresh: () => void
   expandToPath: (dirPath: string) => void
@@ -90,6 +99,9 @@ interface FileTreeProps {
   cwd: string
   selectedFile: string | null
   onSelectFile: (path: string) => void
+  onOpenStickyFile?: (path: string) => void
+  treeSnapshot?: FileTreeStateSnapshot | null
+  onTreeSnapshotChange?: (snapshot: FileTreeStateSnapshot) => void
   fileCount: number | null
   fileCountMethod: string | null
   worktreeId?: string | null
@@ -132,12 +144,12 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, onOpenStickyFile, treeSnapshot, onTreeSnapshotChange, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
     ref,
   ) {
-    const [filterText, setFilterText] = useState('')
-    const [searchQuery, setSearchQuery] = useState('')
-    const [searchMode, setSearchMode] = useState(false)
+    const [filterText, setFilterText] = useState(treeSnapshot?.filterText ?? '')
+    const [searchQuery, setSearchQuery] = useState(treeSnapshot?.searchQuery ?? '')
+    const [searchMode, setSearchMode] = useState(treeSnapshot?.searchMode ?? false)
     // Use useState (not useRef) for the scroll container so that when the
     // DOM element mounts via the callback ref, the re-render lets the
     // virtualizer pick up the real element from getScrollElement().
@@ -215,6 +227,17 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       [loadAndCacheChildren],
     )
 
+    const emitTreeSnapshot = useCallback((nextTreeState?: Record<string, unknown> | null) => {
+      onTreeSnapshotChange?.({
+        filterText,
+        searchMode,
+        searchQuery,
+        treeScrollTop: scrollEl?.scrollTop ?? treeSnapshot?.treeScrollTop ?? 0,
+        searchScrollTop: searchScrollRef.current?.scrollTop ?? treeSnapshot?.searchScrollTop ?? 0,
+        treeState: nextTreeState ?? treeSnapshot?.treeState ?? null,
+      })
+    }, [filterText, onTreeSnapshotChange, scrollEl, searchMode, searchQuery, treeSnapshot?.searchScrollTop, treeSnapshot?.treeScrollTop, treeSnapshot?.treeState])
+
     const tree = useStableTree<FileTreeItem>({
       rootItemId: ROOT_ID,
       getItemName: (item) => item.getItemData().name,
@@ -231,7 +254,38 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
         name: 'Loading…',
         type: 'file' as const,
       }),
+      state: treeSnapshot?.treeState as Partial<TreeState<FileTreeItem>> | undefined,
+      setState: (nextState) => emitTreeSnapshot(nextState as Record<string, unknown>),
     })
+
+    useEffect(() => {
+      emitTreeSnapshot()
+    }, [emitTreeSnapshot])
+
+    useEffect(() => {
+      if (!scrollEl) return
+      if (treeSnapshot?.treeScrollTop) {
+        requestAnimationFrame(() => {
+          scrollEl.scrollTop = treeSnapshot.treeScrollTop
+        })
+      }
+      const handleScroll = () => emitTreeSnapshot()
+      scrollEl.addEventListener('scroll', handleScroll, { passive: true })
+      return () => scrollEl.removeEventListener('scroll', handleScroll)
+    }, [emitTreeSnapshot, scrollEl, treeSnapshot?.treeScrollTop])
+
+    useEffect(() => {
+      const searchEl = searchScrollRef.current
+      if (!searchEl) return
+      if (treeSnapshot?.searchScrollTop) {
+        requestAnimationFrame(() => {
+          searchEl.scrollTop = treeSnapshot.searchScrollTop
+        })
+      }
+      const handleScroll = () => emitTreeSnapshot()
+      searchEl.addEventListener('scroll', handleScroll, { passive: true })
+      return () => searchEl.removeEventListener('scroll', handleScroll)
+    }, [emitTreeSnapshot, treeSnapshot?.searchScrollTop])
 
     // Wire search feature to filter input (only when NOT in deep search mode)
     useEffect(() => {
@@ -545,6 +599,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                         onClick={() =>
                           handleItemClick(itemId, isFolder)
                         }
+                        onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
                         onRequestDelete={onRequestDelete
                           ? () => onRequestDelete(itemId, itemData.type)
                           : undefined}

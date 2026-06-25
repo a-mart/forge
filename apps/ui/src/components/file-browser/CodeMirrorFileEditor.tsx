@@ -17,6 +17,9 @@ export interface CodeMirrorFileEditorProps {
   onChange: (next: string) => void
   onFocusedChange?: (focused: boolean) => void
   onSaveShortcut?: () => void
+  initialScroll?: { top: number; left?: number }
+  restoreKey?: string
+  onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }
 
 const editorTheme = EditorView.theme({
@@ -90,6 +93,9 @@ export function CodeMirrorFileEditor({
   onChange,
   onFocusedChange,
   onSaveShortcut,
+  initialScroll,
+  restoreKey,
+  onScrollSnapshotChange,
 }: CodeMirrorFileEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -101,9 +107,16 @@ export function CodeMirrorFileEditor({
   const onChangeRef = useRef(onChange)
   const onFocusedChangeRef = useRef(onFocusedChange)
   const onSaveShortcutRef = useRef(onSaveShortcut)
+  const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
+  const initialScrollRef = useRef(initialScroll)
   const readOnlyRef = useRef(readOnly === true)
   const syncingExternalValueRef = useRef(false)
-  const initialConfigRef = useRef({ value, language, readOnly, wordWrap, ariaLabel })
+  const applyingScrollRef = useRef(false)
+  const initialConfigRef = useRef({ value, language, readOnly, wordWrap, ariaLabel, initialScroll })
+
+  useEffect(() => {
+    initialScrollRef.current = initialScroll
+  }, [initialScroll])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -116,6 +129,10 @@ export function CodeMirrorFileEditor({
   useEffect(() => {
     onSaveShortcutRef.current = onSaveShortcut
   }, [onSaveShortcut])
+
+  useEffect(() => {
+    onScrollSnapshotChangeRef.current = onScrollSnapshotChange
+  }, [onScrollSnapshotChange])
 
   useEffect(() => {
     readOnlyRef.current = readOnly === true
@@ -180,8 +197,29 @@ export function CodeMirrorFileEditor({
 
     const view = new EditorView({ state, parent })
     viewRef.current = view
+    const applyScroll = (top: number, left: number) => {
+      applyingScrollRef.current = true
+      view.scrollDOM.scrollTop = top
+      view.scrollDOM.scrollLeft = left
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    }
+    requestAnimationFrame(() => {
+      applyScroll(initialConfig.initialScroll?.top ?? 0, initialConfig.initialScroll?.left ?? 0)
+    })
+    const handleScroll = () => {
+      if (applyingScrollRef.current) return
+      onScrollSnapshotChangeRef.current?.({
+        top: view.scrollDOM.scrollTop,
+        left: view.scrollDOM.scrollLeft,
+      })
+    }
+    view.scrollDOM.addEventListener('scroll', handleScroll, { passive: true })
 
     return () => {
+      handleScroll()
+      view.scrollDOM.removeEventListener('scroll', handleScroll)
       view.destroy()
       if (viewRef.current === view) {
         viewRef.current = null
@@ -278,6 +316,20 @@ export function CodeMirrorFileEditor({
       effects: contentAttributesCompartment.reconfigure(contentAttributes(ariaLabel)),
     })
   }, [ariaLabel, contentAttributesCompartment])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    applyingScrollRef.current = true
+    requestAnimationFrame(() => {
+      const scroll = initialScrollRef.current
+      view.scrollDOM.scrollTop = scroll?.top ?? 0
+      view.scrollDOM.scrollLeft = scroll?.left ?? 0
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    })
+  }, [restoreKey])
 
   return <div ref={containerRef} className="file-browser-code-editor h-full min-h-0 w-full overflow-hidden" data-testid="codemirror-file-editor" />
 }

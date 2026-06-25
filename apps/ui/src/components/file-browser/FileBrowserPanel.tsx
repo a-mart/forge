@@ -3,12 +3,14 @@ import { FileCode2, FileImage, FileText, FileType, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
+import { FileBrowserTabStrip } from './FileBrowserTabStrip'
 import { FileContentViewer, useFileViewerInfo } from './FileContentViewer'
 import { FileStatusBar } from './FileStatusBar'
 import { useDirectoryListing, useFileContent } from './use-file-browser-queries'
 import type { FileContentResult } from './use-file-browser-queries'
 import type { FileEditSessionController } from './use-file-edit-session'
 import type { FileEditorSessionKey } from './use-file-editor-coordinator'
+import type { FileBrowserTab, FileContentScrollSnapshot } from './use-file-browser-workspace-state'
 import { isImageFile, isPdfFile } from './file-browser-utils'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 
@@ -21,6 +23,15 @@ interface FileBrowserPanelProps {
   filePath: string | null
   onClose: () => void
   onNavigateToDirectory: (dirPath: string) => void
+  tabs?: FileBrowserTab[]
+  activeTabId?: string | null
+  previewTabId?: string | null
+  dirtyTabIds?: Set<string>
+  contentScrollSnapshot?: FileContentScrollSnapshot | null
+  onContentScrollSnapshotChange?: (snapshot: FileContentScrollSnapshot) => void
+  onActivateTab?: (tabId: string) => void
+  onCloseTab?: (tab: FileBrowserTab) => void
+  onStickifyTab?: (tabId: string) => void
   worktreeId?: string | null
   desktopOnly?: boolean
   mobileOnly?: boolean
@@ -28,6 +39,7 @@ interface FileBrowserPanelProps {
   inlineEditingEnabled?: boolean
   editSession?: FileEditSessionController | null
   editorSessionKey?: FileEditorSessionKey | null
+  refreshNonce?: number
   onContentLoaded?: (key: FileEditorSessionKey, content: FileContentResult | null) => void
 }
 
@@ -37,6 +49,15 @@ export function FileBrowserPanel({
   filePath,
   onClose,
   onNavigateToDirectory,
+  tabs = [],
+  activeTabId = null,
+  previewTabId = null,
+  dirtyTabIds,
+  contentScrollSnapshot,
+  onContentScrollSnapshotChange,
+  onActivateTab,
+  onCloseTab,
+  onStickifyTab,
   worktreeId = null,
   desktopOnly = false,
   mobileOnly = false,
@@ -44,6 +65,7 @@ export function FileBrowserPanel({
   inlineEditingEnabled = false,
   editSession = null,
   editorSessionKey = null,
+  refreshNonce = 0,
   onContentLoaded,
 }: FileBrowserPanelProps) {
   const gatedAgentId = filePath ? agentId : null
@@ -62,6 +84,7 @@ export function FileBrowserPanel({
     gatedAgentId,
     shouldFetchContent ? filePath : null,
     worktreeId,
+    refreshNonce,
   )
 
   const viewerInfo = useFileViewerInfo(filePath, fileContent.data)
@@ -115,6 +138,16 @@ export function FileBrowserPanel({
         )}
         style={{ width }}
       >
+        <FileBrowserTabStrip
+          tabs={tabs}
+          activeTabId={activeTabId}
+          previewTabId={previewTabId}
+          dirtyTabIds={dirtyTabIds}
+          onActivateTab={onActivateTab ?? (() => {})}
+          onCloseTab={onCloseTab ?? (() => {})}
+          onStickifyTab={onStickifyTab ?? (() => {})}
+        />
+
         {/* Header */}
         <header className="flex h-[62px] shrink-0 items-center justify-between gap-3 border-b border-border/80 bg-card/80 px-5">
           <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -165,6 +198,8 @@ export function FileBrowserPanel({
               worktreeId={worktreeId}
               inlineEditingEnabled={inlineEditingEnabled && !mobileOnly}
               editSession={editSession}
+              contentScrollSnapshot={contentScrollSnapshot}
+              onContentScrollSnapshotChange={onContentScrollSnapshotChange}
             />
           ) : null}
         </div>

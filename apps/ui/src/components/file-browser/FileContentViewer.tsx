@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- component and its companion hook are tightly coupled */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FileText,
   FileWarning,
@@ -23,6 +23,7 @@ import { ImagePreview } from './ImagePreview'
 import { PdfPreview } from './PdfPreview'
 import { MarkdownPreview } from './MarkdownPreview'
 import type { FileContentResult } from './use-file-browser-queries'
+import type { FileContentScrollSnapshot } from './use-file-browser-workspace-state'
 import {
   Tooltip,
   TooltipContent,
@@ -95,6 +96,10 @@ function storeWordWrapPreference(value: boolean): void {
   }
 }
 
+function versionRestoreKey(version: FileContentResult['version'] | null | undefined): string {
+  return version ? JSON.stringify(version) : ''
+}
+
 /* ------------------------------------------------------------------ */
 /*  Public interface                                                    */
 /* ------------------------------------------------------------------ */
@@ -111,6 +116,8 @@ interface FileContentViewerProps {
   worktreeId?: string | null
   inlineEditingEnabled?: boolean
   editSession?: FileEditSessionController | null
+  contentScrollSnapshot?: FileContentScrollSnapshot | null
+  onContentScrollSnapshotChange?: (snapshot: FileContentScrollSnapshot) => void
 }
 
 interface FileViewerInfo {
@@ -137,6 +144,8 @@ export function FileContentViewer({
   worktreeId = null,
   inlineEditingEnabled = false,
   editSession = null,
+  contentScrollSnapshot = null,
+  onContentScrollSnapshotChange,
 }: FileContentViewerProps) {
   const [wordWrap, setWordWrap] = useState(readWordWrapPreference)
   const [markdownRaw, setMarkdownRaw] = useState(readMarkdownRawPreference)
@@ -187,6 +196,7 @@ export function FileContentViewer({
   const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
   const conflictActionsDisabled = editorLocked
   const effectiveMarkdownRaw = markdownRaw || (isMarkdown && isEditing)
+  const contentRestoreKey = `${worktreeId ?? ''}:${filePath ?? ''}:${versionRestoreKey(content?.version)}`
 
   useEffect(() => {
     if (isEditing && isMarkdown && !markdownRaw) {
@@ -366,7 +376,18 @@ export function FileContentViewer({
           onSave={() => void editSession?.save()}
           onRevert={editSession?.revert}
         />
-        <MarkdownPreview content={text} />
+        <MarkdownPreview
+          content={text}
+          initialScroll={contentScrollSnapshot?.kind === 'markdown'
+            ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
+            : undefined}
+          restoreKey={`${contentRestoreKey}:markdown`}
+          onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
+            kind: 'markdown',
+            scrollTop: snapshot.top,
+            scrollLeft: snapshot.left,
+          })}
+        />
       </div>
     )
   }
@@ -433,6 +454,7 @@ export function FileContentViewer({
             )}
           >
             <CodeMirrorFileEditorLazy
+              key={`${worktreeId ?? ''}:${filePath ?? ''}:editor`}
               value={editState?.mode === 'edit' ? editState.draft : text}
               language={language}
               wordWrap={wordWrap}
@@ -445,6 +467,15 @@ export function FileContentViewer({
                   void editSession?.save()
                 }
               }}
+              initialScroll={contentScrollSnapshot?.kind === 'editor'
+                ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
+                : undefined}
+              restoreKey={`${contentRestoreKey}:editor`}
+              onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
+                kind: 'editor',
+                scrollTop: snapshot.top,
+                scrollLeft: snapshot.left,
+              })}
             />
           </Suspense>
         </div>
@@ -478,7 +509,21 @@ export function FileContentViewer({
           </TooltipProvider>
         </div>
 
-        <CodeView content={text} language={language} wordWrap={wordWrap} />
+        <CodeView
+          key={`${worktreeId ?? ''}:${filePath ?? ''}:code`}
+          content={text}
+          language={language}
+          wordWrap={wordWrap}
+          initialScroll={contentScrollSnapshot?.kind === 'code'
+            ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
+            : undefined}
+          restoreKey={`${contentRestoreKey}:code`}
+          onScrollSnapshotChange={(snapshot) => onContentScrollSnapshotChange?.({
+            kind: 'code',
+            scrollTop: snapshot.top,
+            scrollLeft: snapshot.left,
+          })}
+        />
       </div>
       )}
 
@@ -555,12 +600,30 @@ function CodeView({
   content,
   language,
   wordWrap,
+  initialScroll,
+  restoreKey,
+  onScrollSnapshotChange,
 }: {
   content: string
   language: string | undefined
   wordWrap: boolean
+  initialScroll?: { top: number; left?: number }
+  restoreKey?: string
+  onScrollSnapshotChange?: (snapshot: { top: number; left: number }) => void
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const initialScrollRef = useRef(initialScroll)
+  const onScrollSnapshotChangeRef = useRef(onScrollSnapshotChange)
+  const applyingScrollRef = useRef(false)
   const lines = useMemo(() => content.split('\n'), [content])
+
+  useEffect(() => {
+    initialScrollRef.current = initialScroll
+  }, [initialScroll])
+
+  useEffect(() => {
+    onScrollSnapshotChangeRef.current = onScrollSnapshotChange
+  }, [onScrollSnapshotChange])
 
   const highlightedLines = useMemo(() => {
     return lines.map((line) => highlightCode(line, language))
@@ -573,8 +636,40 @@ function CodeView({
     return Math.max(digits * 8 + 24, 48)
   }, [lines.length])
 
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return undefined
+    const handleScroll = () => {
+      if (applyingScrollRef.current) return
+      onScrollSnapshotChangeRef.current?.({
+        top: node.scrollTop,
+        left: node.scrollLeft,
+      })
+    }
+    node.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      handleScroll()
+      node.removeEventListener('scroll', handleScroll)
+    }
+  }, [])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    applyingScrollRef.current = true
+    requestAnimationFrame(() => {
+      const scroll = initialScrollRef.current
+      node.scrollTop = scroll?.top ?? 0
+      node.scrollLeft = scroll?.left ?? 0
+      requestAnimationFrame(() => {
+        applyingScrollRef.current = false
+      })
+    })
+  }, [restoreKey])
+
   return (
     <div
+      ref={scrollRef}
       className={cn(
         'syntax-highlight file-browser-scroll h-full overflow-auto font-mono text-[13px] leading-[21px]',
       )}

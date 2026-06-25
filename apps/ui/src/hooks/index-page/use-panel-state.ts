@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DashboardTab as CortexDashboardTab } from '@/components/chat/cortex/CortexDashboardPanel'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
+import { useFileBrowserWorkspaceState } from '@/components/file-browser/use-file-browser-workspace-state'
 import { invalidateFileBrowserCaches } from '@/components/file-browser/use-file-browser-queries'
 import type { ArtifactReference } from '@/lib/artifacts'
 
@@ -57,9 +58,13 @@ export function usePanelState({
   const [diffViewerInitialState, setDiffViewerInitialState] =
     useState<DiffViewerInitialState | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false)
-  const [selectedFileBrowserFile, setSelectedFileBrowserFile] = useState<string | null>(null)
   const [fileBrowserWorktreeContext, setFileBrowserWorktreeContext] =
     useState<FileBrowserWorktreeSelection | null>(null)
+  const fileBrowserWorkspace = useFileBrowserWorkspaceState({
+    activeAgentId,
+    worktreeContext: fileBrowserWorktreeContext,
+  })
+  const selectedFileBrowserFile = fileBrowserWorkspace.activeFilePath
 
   useEffect(() => {
     setActiveArtifact(null)
@@ -67,15 +72,11 @@ export function usePanelState({
     setArtifactsPanelTab('artifacts')
     setCortexDashboardTab('knowledge')
     setIsFileBrowserOpen(false)
-    setSelectedFileBrowserFile(null)
-    setFileBrowserWorktreeContext(null)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
 
   const closeFileBrowserForWorkspacePanel = useCallback(() => {
     setIsFileBrowserOpen(false)
-    setSelectedFileBrowserFile(null)
-    setFileBrowserWorktreeContext(null)
   }, [])
 
   const closeWorkspacePanels = useCallback(() => {
@@ -145,9 +146,6 @@ export function usePanelState({
       if (!previous) {
         setIsArtifactsPanelOpen(false)
         setFileBrowserWorktreeContext(null)
-      } else {
-        setSelectedFileBrowserFile(null)
-        setFileBrowserWorktreeContext(null)
       }
       return !previous
     })
@@ -155,14 +153,12 @@ export function usePanelState({
 
   const browseWorktreeFiles = useCallback((context: FileBrowserWorktreeSelection) => {
     setFileBrowserWorktreeContext(context)
-    setSelectedFileBrowserFile(null)
     setIsArtifactsPanelOpen(false)
     setIsFileBrowserOpen(true)
   }, [])
 
   const clearFileBrowserWorktreeContext = useCallback(() => {
     setFileBrowserWorktreeContext(null)
-    setSelectedFileBrowserFile(null)
     invalidateFileBrowserCaches()
   }, [])
 
@@ -216,16 +212,20 @@ export function usePanelState({
   }, [])
 
   const selectFileBrowserFile = useCallback((path: string) => {
-    setSelectedFileBrowserFile(path)
-  }, [])
+    fileBrowserWorkspace.openPreviewFile(path)
+  }, [fileBrowserWorkspace])
+
+  const openStickyFileBrowserFile = useCallback((path: string) => {
+    fileBrowserWorkspace.openStickyFile(path)
+  }, [fileBrowserWorkspace])
 
   const closeFileBrowserPanel = useCallback(() => {
-    setSelectedFileBrowserFile(null)
-  }, [])
+    fileBrowserWorkspace.closeActiveTab()
+  }, [fileBrowserWorkspace])
 
   const navigateFileBrowserToDirectory = useCallback((_dirPath: string) => {
-    setSelectedFileBrowserFile(null)
-  }, [])
+    fileBrowserWorkspace.closeActiveTab()
+  }, [fileBrowserWorkspace])
 
   const openArtifact = useCallback((artifact: ArtifactReference) => {
     setActiveArtifact(artifact)
@@ -262,6 +262,19 @@ export function usePanelState({
     toggleFileBrowser,
     selectedFileBrowserFile,
     selectFileBrowserFile,
+    openStickyFileBrowserFile,
+    fileBrowserTabs: fileBrowserWorkspace.tabs,
+    allFileBrowserTabs: fileBrowserWorkspace.allTabs,
+    activeFileBrowserTabId: fileBrowserWorkspace.activeTabId,
+    previewFileBrowserTabId: fileBrowserWorkspace.previewTabId,
+    activateFileBrowserTab: fileBrowserWorkspace.activateTab,
+    stickifyFileBrowserTab: fileBrowserWorkspace.stickifyTab,
+    closeFileBrowserTab: fileBrowserWorkspace.closeTab,
+    fileBrowserTreeSnapshot: fileBrowserWorkspace.treeSnapshot,
+    activeFileBrowserContentScrollSnapshot: fileBrowserWorkspace.activeContentScrollSnapshot,
+    updateFileBrowserTreeSnapshot: fileBrowserWorkspace.updateTreeSnapshot,
+    updateActiveFileBrowserContentScrollSnapshot: fileBrowserWorkspace.updateActiveContentScrollSnapshot,
+    removeFileBrowserTabsAffectedByDelete: fileBrowserWorkspace.removeTabsAffectedByDelete,
     closeFileBrowserPanel,
     navigateFileBrowserToDirectory,
     fileBrowserWorktreeContext,

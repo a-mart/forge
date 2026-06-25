@@ -52,8 +52,19 @@ interface CapturedCoordinator {
 
 const captured: { current: CapturedCoordinator | null } = { current: null }
 
-function Harness({ activeGuard }: { activeGuard: FileEditorGuardApi | null }) {
-  const coordinator = useFileEditorCoordinator(activeGuard)
+function Harness({
+  activeGuard,
+  hiddenDirtySnapshots,
+  hiddenGuard,
+}: {
+  activeGuard: FileEditorGuardApi | null
+  hiddenDirtySnapshots?: FileEditorDirtySnapshot[]
+  hiddenGuard?: FileEditorGuardApi | null
+}) {
+  const coordinator = useFileEditorCoordinator(activeGuard, {
+    getDirtySnapshots: hiddenDirtySnapshots ? () => hiddenDirtySnapshots : undefined,
+    getGuardForKey: hiddenGuard ? () => hiddenGuard : undefined,
+  })
 
   useLayoutEffect(() => {
     captured.current = {
@@ -86,10 +97,13 @@ afterEach(() => {
   captured.current = null
 })
 
-function renderHarness(activeGuard: FileEditorGuardApi | null) {
+function renderHarness(
+  activeGuard: FileEditorGuardApi | null,
+  options: { hiddenDirtySnapshots?: FileEditorDirtySnapshot[]; hiddenGuard?: FileEditorGuardApi | null } = {},
+) {
   flushSync(() => {
     root = createRoot(container)
-    root.render(createElement(Harness, { activeGuard }))
+    root.render(createElement(Harness, { activeGuard, ...options }))
   })
 }
 
@@ -110,7 +124,23 @@ describe('useFileEditorCoordinator', () => {
     expect(captured.current?.dialogOpen).toBe(false)
   })
 
-  it('guards file switch and close transitions until discard or save succeeds', async () => {
+  it('does not guard file switch transitions because tab state preserves drafts', () => {
+    const run = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save: vi.fn(),
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'select-file', nextPath: 'src/Other.tsx' }, run)
+    })
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards dirty tab close transitions until discard or save succeeds', async () => {
     const save = vi.fn().mockResolvedValue(true)
     const discard = vi.fn()
     const run = vi.fn()
@@ -121,7 +151,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'select-file', nextPath: 'src/Other.tsx' }, run)
+      captured.current?.requestFileEditorTransition({ type: 'close-tab', key: workspaceKey }, run)
     })
 
     expect(run).not.toHaveBeenCalled()
@@ -160,7 +190,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run, onCancel)
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.cancel()
@@ -182,7 +212,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'close-file-browser' }, run, onCancel)
+      captured.current?.requestFileEditorTransition({ type: 'close-tab', key: workspaceKey }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.save()
@@ -210,7 +240,7 @@ describe('useFileEditorCoordinator', () => {
     const deleteSettled = new Promise<boolean>((resolve) => {
       flushSync(() => {
         captured.current?.requestFileEditorTransition(
-          { type: 'delete-entry', path: 'src', entryType: 'directory' },
+          { type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null },
           run,
           () => resolve(false),
         )
@@ -239,7 +269,7 @@ describe('useFileEditorCoordinator', () => {
     })
 
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run, onCancel)
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.save()
@@ -253,6 +283,156 @@ describe('useFileEditorCoordinator', () => {
       expect(onCancel).toHaveBeenCalledTimes(1)
       expect(captured.current?.dialogOpen).toBe(false)
     })
+  })
+
+  it('does not guard opening Source Control because dirty drafts are preserved', () => {
+    const run = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save: vi.fn(),
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'open-source-control-inline' }, run)
+    })
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards delete transitions for every matching dirty file before running', () => {
+    const firstKey = { ...workspaceKey, filePath: 'src/A.tsx' }
+    const secondKey = { ...workspaceKey, filePath: 'src/nested/B.tsx' }
+    const firstDiscard = vi.fn()
+    const secondDiscard = vi.fn()
+    const run = vi.fn()
+    renderHarness(null)
+
+    flushSync(() => {
+      captured.current?.registerWritableEditor(firstKey, {
+        getSnapshot: () => dirtySnapshot(firstKey),
+        save: vi.fn().mockResolvedValue(true),
+        discard: firstDiscard,
+      })
+      captured.current?.registerWritableEditor(secondKey, {
+        getSnapshot: () => dirtySnapshot(secondKey),
+        save: vi.fn().mockResolvedValue(true),
+        discard: secondDiscard,
+      })
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory', agentId: 'agent-1', worktreeId: null }, run)
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogSnapshot?.key).toEqual(firstKey)
+
+    flushSync(() => captured.current?.discard())
+    expect(firstDiscard).toHaveBeenCalledTimes(1)
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogOpen).toBe(true)
+    expect(captured.current?.dialogSnapshot?.key).toEqual(secondKey)
+
+    flushSync(() => captured.current?.discard())
+    expect(secondDiscard).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards delete transitions only for dirty files in the requested scope', () => {
+    const otherScopeKey = { agentId: 'agent-2', worktreeId: 'other-worktree', filePath: 'src/App.tsx' }
+    const matchingDiscard = vi.fn()
+    const otherDiscard = vi.fn()
+    const run = vi.fn()
+    renderHarness(null)
+
+    flushSync(() => {
+      captured.current?.registerWritableEditor(otherScopeKey, {
+        getSnapshot: () => dirtySnapshot(otherScopeKey),
+        save: vi.fn().mockResolvedValue(true),
+        discard: otherDiscard,
+      })
+      captured.current?.registerWritableEditor(linkedWorktreeKey, {
+        getSnapshot: () => dirtySnapshot(linkedWorktreeKey),
+        save: vi.fn().mockResolvedValue(true),
+        discard: matchingDiscard,
+      })
+      captured.current?.requestFileEditorTransition(
+        { type: 'delete-entry', path: 'src/App.tsx', entryType: 'file', agentId: 'agent-1', worktreeId: 'linked-1' },
+        run,
+      )
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogSnapshot?.key).toEqual(linkedWorktreeKey)
+
+    flushSync(() => captured.current?.discard())
+    expect(matchingDiscard).toHaveBeenCalledTimes(1)
+    expect(otherDiscard).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('guards Source Control mutations for every dirty tab in the same worktree before running', async () => {
+    const firstKey = { ...linkedWorktreeKey, filePath: 'src/A.tsx' }
+    const secondKey = { ...linkedWorktreeKey, filePath: 'src/B.tsx' }
+    const firstSave = vi.fn().mockResolvedValue(true)
+    const secondSave = vi.fn().mockResolvedValue(true)
+    const run = vi.fn()
+    renderHarness(null)
+
+    flushSync(() => {
+      captured.current?.registerWritableEditor(firstKey, {
+        getSnapshot: () => dirtySnapshot(firstKey),
+        save: firstSave,
+        discard: vi.fn(),
+      })
+      captured.current?.registerWritableEditor(secondKey, {
+        getSnapshot: () => dirtySnapshot(secondKey),
+        save: secondSave,
+        discard: vi.fn(),
+      })
+      captured.current?.requestFileEditorTransition(
+        { type: 'source-control-mutation', mutation: 'switch-branch', agentId: 'agent-1', worktreeId: 'linked-1' },
+        run,
+      )
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogSnapshot?.key).toEqual(firstKey)
+
+    flushSync(() => captured.current?.save())
+    await vi.waitFor(() => expect(firstSave).toHaveBeenCalledTimes(1))
+    expect(run).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(captured.current?.dialogSnapshot?.key).toEqual(secondKey))
+
+    flushSync(() => captured.current?.save())
+    await vi.waitFor(() => expect(secondSave).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(captured.current?.dialogOpen).toBe(false))
+  })
+
+  it('guards Source Control mutations for hidden dirty sessions in the same worktree', () => {
+    const run = vi.fn()
+    const save = vi.fn().mockResolvedValue(true)
+    renderHarness(null, {
+      hiddenDirtySnapshots: [dirtySnapshot(linkedWorktreeKey)],
+      hiddenGuard: {
+        getSnapshot: () => dirtySnapshot(linkedWorktreeKey),
+        save,
+        discard: vi.fn(),
+      },
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition(
+        { type: 'source-control-mutation', mutation: 'switch-branch', agentId: 'agent-1', worktreeId: 'linked-1' },
+        run,
+      )
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(captured.current?.dialogOpen).toBe(true)
+    expect(captured.current?.dialogSnapshot?.key).toEqual(linkedWorktreeKey)
   })
 
   it('guards Source Control mutations only for the same workspace or linked worktree', () => {
