@@ -489,6 +489,7 @@ interface PendingInboundTurnContext {
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
   assistantOutputTarget?: AssistantOutputTarget;
+  assistantOutputProjectionTarget?: AssistantOutputTarget;
   codexMcpToolGate?: CodexMcpToolGateEvaluation;
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
   codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext;
@@ -5139,6 +5140,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       workerReportSourceAgentId: options?.workerReportSourceAgentId,
     };
     const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage(assistantOutputInput);
+    // Keep the runtime input marker as routing guidance for the manager, but derive
+    // assistant_output visibility from the target manager/session context.
+    const assistantOutputProjectionTarget = this.resolveAssistantOutputProjectionTargetForAgentMessage(
+      assistantOutputInput,
+      assistantOutputTarget,
+    );
     const isAssistantOutputEligibleWorkerReport = this.isAssistantOutputEligibleWorkerReportMessage(assistantOutputInput);
     if (target.role === "manager") {
       modelMessage = appendAssistantOutputTargetMetadataToRuntimeMessage(modelMessage, assistantOutputTarget);
@@ -5167,7 +5174,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
     });
     const shouldEnqueueAgentMessageTurnContext =
-      target.role === "manager" && (Boolean(observabilityInput) || assistantOutputTarget.kind === "session_transcript" || isAssistantOutputEligibleWorkerReport);
+      target.role === "manager" &&
+      (Boolean(observabilityInput) ||
+        assistantOutputProjectionTarget.kind === "session_transcript" ||
+        assistantOutputTarget.kind === "session_transcript" ||
+        isAssistantOutputEligibleWorkerReport);
     const rollbackObservabilityInboundContext = shouldEnqueueAgentMessageTurnContext
       ? this.enqueueInboundTurnContext(target.agentId, {
           source: "agent_message",
@@ -5175,6 +5186,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           parentRootTurnId,
           runtimeMessageText: extractRuntimeMessageText(modelMessage),
           assistantOutputTarget,
+          assistantOutputProjectionTarget,
         })
       : undefined;
 
@@ -7231,9 +7243,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (nextContext?.assistantOutputTarget) {
-      this.activeAssistantOutputTargetByManagerId.set(agentId, nextContext.assistantOutputTarget);
-      this.runtimeController.activateManagerAssistantOutputTurn(agentId, nextContext.assistantOutputTarget);
+    const assistantOutputProjectionTarget = nextContext?.assistantOutputProjectionTarget ?? nextContext?.assistantOutputTarget;
+    if (assistantOutputProjectionTarget) {
+      this.activeAssistantOutputTargetByManagerId.set(agentId, assistantOutputProjectionTarget);
+      this.runtimeController.activateManagerAssistantOutputTurn(agentId, assistantOutputProjectionTarget);
     } else {
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
@@ -7343,6 +7356,57 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
     return inheritedTarget ? cloneAssistantOutputTarget(inheritedTarget) : { kind: "internal_only", reason: "missing_worker_report_handoff" };
+  }
+
+  private resolveAssistantOutputProjectionTargetForAgentMessage(
+    input: {
+      sender: AgentDescriptor;
+      target: AgentDescriptor;
+      modelMessage: string | RuntimeUserMessage;
+      rawMessage?: string;
+      workerReportSourceAgentId?: string;
+    },
+    inputTarget: AssistantOutputTarget,
+  ): AssistantOutputTarget {
+    if (
+      !this.isAssistantOutputEligibleWorkerReportMessage(input) ||
+      inputTarget.kind !== "internal_only" ||
+      inputTarget.reason !== "missing_worker_report_handoff"
+    ) {
+      return inputTarget;
+    }
+
+    if (!this.canDefaultWorkerReportManagerOutputToWebTranscript(input.target)) {
+      return inputTarget;
+    }
+
+    return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+  }
+
+  private canDefaultWorkerReportManagerOutputToWebTranscript(target: AgentDescriptor): boolean {
+    if (target.role !== "manager") {
+      return false;
+    }
+
+    if (target.sessionSurface === "collab" || target.collab) {
+      return false;
+    }
+
+    if (target.agentId === COLLABORATION_PROFILE_ID || target.profileId === COLLABORATION_PROFILE_ID) {
+      return false;
+    }
+
+    const profile = target.profileId ? this.profiles.get(target.profileId) : undefined;
+    if (profile && isSystemProfile(profile)) {
+      return false;
+    }
+
+    const archetypeId = normalizeArchetypeId(target.archetypeId ?? "");
+    if (target.sessionPurpose === "cortex_review" || archetypeId === CORTEX_ARCHETYPE_ID || archetypeId === "collaboration-channel") {
+      return false;
+    }
+
+    return true;
   }
 
   private consumeWorkerAssistantOutputInheritanceAfterReportDispatch(input: {
