@@ -61,6 +61,17 @@ export function computePdfRenderScale(
   return manualScale
 }
 
+export function releasePdfPreviewCanvasMemory(canvas: HTMLCanvasElement | null): void {
+  if (!canvas) {
+    return
+  }
+
+  canvas.width = 0
+  canvas.height = 0
+  canvas.style.removeProperty('width')
+  canvas.style.removeProperty('height')
+}
+
 export type SafeCanvasOutput =
   | {
       ok: true
@@ -134,4 +145,38 @@ export function clampPageNumber(page: number, numPages: number): number {
   }
 
   return Math.min(Math.max(page, 1), numPages)
+}
+
+export type PdfPreviewPageLayout = {
+  pageNumber: number
+  offsetTop: number
+  height: number
+}
+
+export type PdfPreviewPageMetrics = {
+  width: number
+  height: number
+}
+
+export function computeCurrentPageFromScroll(
+  scrollTop: number,
+  viewportHeight: number,
+  pages: readonly PdfPreviewPageLayout[],
+): number {
+  if (pages.length === 0) {
+    return 1
+  }
+
+  const anchor = scrollTop + Math.min(72, Math.max(viewportHeight * 0.15, 1))
+  let currentPage = pages[0]?.pageNumber ?? 1
+
+  for (const page of pages) {
+    if (page.offsetTop <= anchor) {
+      currentPage = page.pageNumber
+      continue
+    }
+    break
+  }
+
+  return currentPage
 }

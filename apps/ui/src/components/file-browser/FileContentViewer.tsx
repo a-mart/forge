@@ -249,7 +249,7 @@ export function FileContentViewer({
   // --- PDF files: streamed via /api/files/raw, no JSON content fetch needed ---
   if (isPdf) {
     return (
-      <div className="flex flex-1 flex-col" role="region" aria-label={`File content: ${fileName}`}>
+      <div className="flex min-h-0 flex-1 flex-col" role="region" aria-label={`File content: ${fileName}`}>
         <FileContentHeader
           filePath={filePath}
           cwd={cwd}
@@ -257,13 +257,15 @@ export function FileContentViewer({
           onToggleWordWrap={handleToggleWordWrap}
           onNavigateToDirectory={onNavigateToDirectory}
         />
-        <PdfPreview
-          key={`${agentId}:${worktreeId ?? 'session'}:${filePath}`}
-          wsUrl={wsUrl}
-          filePath={filePath}
-          agentId={agentId}
-          worktreeId={worktreeId}
-        />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <PdfPreview
+            key={`${agentId}:${worktreeId ?? 'session'}:${filePath}`}
+            wsUrl={wsUrl}
+            filePath={filePath}
+            agentId={agentId}
+            worktreeId={worktreeId}
+          />
+        </div>
       </div>
     )
   }

@@ -15,12 +15,16 @@ import { pdfjsLib, type PDFDocumentProxy } from './pdfjs-preview-lib'
 import {
   buildPdfRawUrl,
   clampPageNumber,
+  computeCurrentPageFromScroll,
   computePdfRenderScale,
   computeSafeCanvasOutput,
   formatPdfPreviewError,
   isPdfPreviewRenderSizeError,
   PDF_PREVIEW_MAX_RENDER_SCALE,
   PdfPreviewRenderSizeError,
+  releasePdfPreviewCanvasMemory,
+  type PdfPreviewPageLayout,
+  type PdfPreviewPageMetrics,
 } from './pdf-preview-utils'
 
 interface PdfPreviewProps {
@@ -33,115 +37,91 @@ interface PdfPreviewProps {
 const ZOOM_STEP = 1.25
 const MIN_MANUAL_SCALE = 0.25
 const MAX_MANUAL_SCALE = PDF_PREVIEW_MAX_RENDER_SCALE
+const PAGE_PREFETCH_MARGIN = 200
+const PAGE_GAP_PX = 16
+const DEFAULT_PAGE_METRICS: PdfPreviewPageMetrics = { width: 200, height: 280 }
 
-export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfPreviewProps) {
-  const pdfUrl = useMemo(
-    () => buildPdfRawUrl(wsUrl, filePath, agentId, worktreeId),
-    [wsUrl, filePath, agentId, worktreeId],
-  )
+type PageRenderTask = { cancel: () => void; promise: Promise<void> }
 
-  const fileName = filePath.split('/').pop() ?? 'Document.pdf'
+interface PdfPreviewPageProps {
+  pageNumber: number
+  pdf: PDFDocumentProxy
+  fitWidth: boolean
+  manualScale: number
+  viewportWidth: number
+  layoutEpoch: number
+  estimatedHeight: number
+  scrollRoot: HTMLDivElement | null
+  onLayoutChange: (pageNumber: number, height: number) => void
+  onPageMetricsDiscovered: (pageNumber: number, metrics: PdfPreviewPageMetrics) => void
+}
 
-  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [renderErrorMessage, setRenderErrorMessage] = useState<string | null>(null)
-  const [numPages, setNumPages] = useState(0)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [manualScale, setManualScale] = useState(1)
-  const [fitWidth, setFitWidth] = useState(true)
-  const [viewportWidth, setViewportWidth] = useState(0)
-  const [reloadToken, setReloadToken] = useState(0)
-
+function PdfPreviewPage({
+  pageNumber,
+  pdf,
+  fitWidth,
+  manualScale,
+  viewportWidth,
+  layoutEpoch,
+  estimatedHeight,
+  scrollRoot,
+  onLayoutChange,
+  onPageMetricsDiscovered,
+}: PdfPreviewPageProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const viewportRef = useRef<HTMLDivElement>(null)
-  const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
-  const renderTaskRef = useRef<{ cancel: () => void; promise: Promise<void> } | null>(null)
-  const loadEpochRef = useRef(0)
-
-  const handleReload = useCallback(() => {
-    setReloadToken((value) => value + 1)
-  }, [])
+  const renderTaskRef = useRef<PageRenderTask | null>(null)
+  const shouldRenderRef = useRef(false)
+  const [shouldRender, setShouldRender] = useState(false)
+  const [renderErrorMessage, setRenderErrorMessage] = useState<string | null>(null)
+  const [renderedHeight, setRenderedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    const epoch = ++loadEpochRef.current
-    let cancelled = false
+    shouldRenderRef.current = shouldRender
+  }, [shouldRender])
 
-    setLoadState('loading')
-    setErrorMessage(null)
+  useEffect(() => {
+    setRenderedHeight(null)
     setRenderErrorMessage(null)
-    setNumPages(0)
-    setCurrentPage(1)
-    setFitWidth(true)
-    setManualScale(1)
-
     renderTaskRef.current?.cancel()
-    pdfDocRef.current?.destroy()
-    pdfDocRef.current = null
-
-    const loadingTask = pdfjsLib.getDocument({
-      url: pdfUrl,
-      disableAutoFetch: false,
-      rangeChunkSize: 65536,
-    })
-
-    void loadingTask.promise
-      .then((pdf) => {
-        if (cancelled || epoch !== loadEpochRef.current) {
-          void pdf.destroy()
-          return
-        }
-
-        pdfDocRef.current = pdf
-        setNumPages(pdf.numPages)
-        setCurrentPage(1)
-        setLoadState('ready')
-      })
-      .catch((error) => {
-        if (cancelled || epoch !== loadEpochRef.current) {
-          return
-        }
-
-        setLoadState('error')
-        setErrorMessage(formatPdfPreviewError(error))
-      })
-
-    return () => {
-      cancelled = true
-      renderTaskRef.current?.cancel()
-      renderTaskRef.current = null
-      void loadingTask.destroy()
-      pdfDocRef.current?.destroy()
-      pdfDocRef.current = null
-    }
-  }, [pdfUrl, reloadToken])
+    renderTaskRef.current = null
+    releasePdfPreviewCanvasMemory(canvasRef.current)
+  }, [layoutEpoch])
 
   useEffect(() => {
-    if (loadState !== 'ready') {
+    const container = containerRef.current
+    if (!container || !scrollRoot) {
       return
     }
 
-    const viewport = viewportRef.current
-    if (!viewport) {
-      return
-    }
-
-    const observer = new ResizeObserver(() => {
-      setViewportWidth(viewport.clientWidth)
-    })
-    observer.observe(viewport)
-    setViewportWidth(viewport.clientWidth)
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setShouldRender(entry?.isIntersecting ?? false)
+      },
+      {
+        root: scrollRoot,
+        rootMargin: `${PAGE_PREFETCH_MARGIN}px 0px`,
+      },
+    )
+    observer.observe(container)
 
     return () => observer.disconnect()
-  }, [loadState, pdfUrl])
+  }, [scrollRoot, pageNumber, layoutEpoch])
 
   useEffect(() => {
-    if (loadState !== 'ready' || !pdfDocRef.current || !canvasRef.current) {
+    if (!shouldRender) {
+      renderTaskRef.current?.cancel()
+      renderTaskRef.current = null
+      releasePdfPreviewCanvasMemory(canvasRef.current)
+      return
+    }
+
+    const canvas = canvasRef.current
+    if (!canvas) {
       return
     }
 
     let cancelled = false
-    const pdf = pdfDocRef.current
-    const pageNumber = clampPageNumber(currentPage, numPages)
 
     void (async () => {
       try {
@@ -150,27 +130,28 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         renderTaskRef.current = null
 
         const page = await pdf.getPage(pageNumber)
-        if (cancelled) {
+        if (cancelled || !shouldRenderRef.current) {
           return
         }
 
         const baseViewport = page.getViewport({ scale: 1 })
-        const renderScale = computePdfRenderScale(
-          baseViewport.width,
+        const discoveredMetrics = {
+          width: baseViewport.width,
+          height: baseViewport.height,
+        }
+        onPageMetricsDiscovered(pageNumber, discoveredMetrics)
+
+        const effectiveRenderScale = computePdfRenderScale(
+          discoveredMetrics.width,
           viewportWidth,
           manualScale,
           fitWidth,
           MAX_MANUAL_SCALE,
         )
-        const viewport = page.getViewport({ scale: renderScale })
-        const canvas = canvasRef.current
-        if (!canvas || cancelled) {
-          return
-        }
-
+        const viewport = page.getViewport({ scale: effectiveRenderScale })
         const context = canvas.getContext('2d')
-        if (!context) {
-          throw new Error('Canvas rendering is unavailable.')
+        if (!context || cancelled || !shouldRenderRef.current) {
+          return
         }
 
         const safeCanvas = computeSafeCanvasOutput(
@@ -180,6 +161,10 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         )
         if (!safeCanvas.ok) {
           throw new PdfPreviewRenderSizeError(safeCanvas.message)
+        }
+
+        if (cancelled || !shouldRenderRef.current) {
+          return
         }
 
         canvas.width = safeCanvas.canvasWidth
@@ -196,6 +181,14 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         })
         renderTaskRef.current = renderTask
         await renderTask.promise
+
+        if (cancelled || !shouldRenderRef.current) {
+          releasePdfPreviewCanvasMemory(canvas)
+          return
+        }
+
+        setRenderedHeight(viewport.height)
+        onLayoutChange(pageNumber, viewport.height)
       } catch (error) {
         if (cancelled || (error instanceof Error && error.name === 'RenderingCancelledException')) {
           return
@@ -206,8 +199,7 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
           return
         }
 
-        setLoadState('error')
-        setErrorMessage(formatPdfPreviewError(error))
+        setRenderErrorMessage(formatPdfPreviewError(error))
       }
     })()
 
@@ -216,15 +208,257 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
       renderTaskRef.current?.cancel()
       renderTaskRef.current = null
     }
-  }, [loadState, currentPage, manualScale, fitWidth, viewportWidth, numPages, pdfUrl])
+  }, [shouldRender, pageNumber, pdf, fitWidth, manualScale, viewportWidth, layoutEpoch, onLayoutChange, onPageMetricsDiscovered])
+
+  const placeholderHeight = renderedHeight ?? estimatedHeight
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn('relative', fitWidth ? 'w-full' : 'w-max max-w-none')}
+      data-page-number={pageNumber}
+      data-testid={`pdf-preview-page-${pageNumber}`}
+      style={{ minHeight: placeholderHeight }}
+    >
+      <canvas
+        ref={canvasRef}
+        data-testid={`pdf-preview-page-canvas-${pageNumber}`}
+        className={cn(
+          'block rounded border border-border/50 bg-white shadow-sm',
+          fitWidth ? 'mx-auto' : '',
+          renderErrorMessage && 'invisible absolute',
+        )}
+      />
+      {renderErrorMessage ? (
+        <div
+          className="flex max-w-md flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground"
+          data-testid="pdf-preview-render-error"
+          role="alert"
+        >
+          <p className="text-sm text-destructive/80">Unable to render page {pageNumber}</p>
+          <p className="text-xs opacity-70">{renderErrorMessage}</p>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfPreviewProps) {
+  const pdfUrl = useMemo(
+    () => buildPdfRawUrl(wsUrl, filePath, agentId, worktreeId),
+    [wsUrl, filePath, agentId, worktreeId],
+  )
+
+  const fileName = filePath.split('/').pop() ?? 'Document.pdf'
+
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [numPages, setNumPages] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [manualScale, setManualScale] = useState(1)
+  const [fitWidth, setFitWidth] = useState(true)
+  const [viewportWidth, setViewportWidth] = useState(0)
+  const [reloadToken, setReloadToken] = useState(0)
+  const [layoutEpoch, setLayoutEpoch] = useState(0)
+  const [pageMetrics, setPageMetrics] = useState<Record<number, PdfPreviewPageMetrics>>({})
+  const [pageHeights, setPageHeights] = useState<Record<number, number>>({})
+
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
+  const loadEpochRef = useRef(0)
+
+  const handleReload = useCallback(() => {
+    setReloadToken((value) => value + 1)
+  }, [])
+
+  const estimatePageHeight = useCallback(
+    (pageNumber: number) => {
+      const metrics = pageMetrics[pageNumber] ?? DEFAULT_PAGE_METRICS
+      const scale = computePdfRenderScale(
+        metrics.width,
+        viewportWidth,
+        manualScale,
+        fitWidth,
+        MAX_MANUAL_SCALE,
+      )
+      return metrics.height * scale
+    },
+    [pageMetrics, viewportWidth, manualScale, fitWidth],
+  )
+
+  const handlePageMetricsDiscovered = useCallback((pageNumber: number, metrics: PdfPreviewPageMetrics) => {
+    setPageMetrics((previous) => {
+      const existing = previous[pageNumber]
+      if (existing?.width === metrics.width && existing?.height === metrics.height) {
+        return previous
+      }
+      return { ...previous, [pageNumber]: metrics }
+    })
+  }, [])
+
+  const handlePageLayoutChange = useCallback((pageNumber: number, height: number) => {
+    setPageHeights((previous) => {
+      if (previous[pageNumber] === height) {
+        return previous
+      }
+      return { ...previous, [pageNumber]: height }
+    })
+  }, [])
+
+  const collectPageLayouts = useCallback((): PdfPreviewPageLayout[] => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return []
+    }
+
+    const pagesContainer = viewport.querySelector<HTMLElement>('[data-testid="pdf-preview-pages"]')
+    const pageElements = pagesContainer?.querySelectorAll<HTMLElement>('[data-page-number]') ?? []
+    const layouts: PdfPreviewPageLayout[] = []
+    let runningOffset = pagesContainer?.offsetTop ?? 0
+
+    for (const element of pageElements) {
+      const pageNumber = Number(element.dataset.pageNumber)
+      if (!Number.isFinite(pageNumber)) {
+        continue
+      }
+
+      const height =
+        element.offsetHeight > 0
+          ? element.offsetHeight
+          : pageHeights[pageNumber] ?? estimatePageHeight(pageNumber)
+
+      layouts.push({
+        pageNumber,
+        offsetTop: runningOffset,
+        height,
+      })
+      runningOffset += height + PAGE_GAP_PX
+    }
+
+    return layouts
+  }, [estimatePageHeight, pageHeights])
+
+  const updateCurrentPageFromScroll = useCallback(() => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return
+    }
+
+    const nextPage = computeCurrentPageFromScroll(
+      viewport.scrollTop,
+      viewport.clientHeight,
+      collectPageLayouts(),
+    )
+    setCurrentPage((previous) => (previous === nextPage ? previous : nextPage))
+  }, [collectPageLayouts])
+
+  const scrollToPage = useCallback((pageNumber: number) => {
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return
+    }
+
+    const target = viewport.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  useEffect(() => {
+    const epoch = ++loadEpochRef.current
+    let cancelled = false
+
+    setLoadState('loading')
+    setErrorMessage(null)
+    setNumPages(0)
+    setCurrentPage(1)
+    setFitWidth(true)
+    setManualScale(1)
+    setPageMetrics({})
+    setPageHeights({})
+    setLayoutEpoch((value) => value + 1)
+
+    pdfDocRef.current?.destroy()
+    pdfDocRef.current = null
+    setPdfDoc(null)
+
+    const loadingTask = pdfjsLib.getDocument({
+      url: pdfUrl,
+      disableAutoFetch: false,
+      rangeChunkSize: 65536,
+    })
+
+    void loadingTask.promise
+      .then(async (pdf) => {
+        if (cancelled || epoch !== loadEpochRef.current) {
+          void pdf.destroy()
+          return
+        }
+
+        pdfDocRef.current = pdf
+        setPdfDoc(pdf)
+        setNumPages(pdf.numPages)
+        setCurrentPage(1)
+        setLoadState('ready')
+      })
+      .catch((error) => {
+        if (cancelled || epoch !== loadEpochRef.current) {
+          return
+        }
+
+        setLoadState('error')
+        setErrorMessage(formatPdfPreviewError(error))
+      })
+
+    return () => {
+      cancelled = true
+      void loadingTask.destroy()
+      pdfDocRef.current?.destroy()
+      pdfDocRef.current = null
+      setPdfDoc(null)
+    }
+  }, [pdfUrl, reloadToken])
+
+  useEffect(() => {
+    if (loadState !== 'ready') {
+      return
+    }
+
+    const viewport = viewportRef.current
+    if (!viewport) {
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      setViewportWidth(viewport.clientWidth)
+      updateCurrentPageFromScroll()
+    })
+    observer.observe(viewport)
+    setViewportWidth(viewport.clientWidth)
+
+    return () => observer.disconnect()
+  }, [loadState, pdfUrl, updateCurrentPageFromScroll])
+
+  useEffect(() => {
+    setPageHeights({})
+    setLayoutEpoch((value) => value + 1)
+  }, [fitWidth, manualScale, viewportWidth, pdfUrl, reloadToken])
+
+  useEffect(() => {
+    updateCurrentPageFromScroll()
+  }, [pageHeights, numPages, updateCurrentPageFromScroll])
 
   const goToPreviousPage = useCallback(() => {
-    setCurrentPage((page) => clampPageNumber(page - 1, numPages))
-  }, [numPages])
+    const targetPage = clampPageNumber(currentPage - 1, numPages)
+    setCurrentPage(targetPage)
+    scrollToPage(targetPage)
+  }, [currentPage, numPages, scrollToPage])
 
   const goToNextPage = useCallback(() => {
-    setCurrentPage((page) => clampPageNumber(page + 1, numPages))
-  }, [numPages])
+    const targetPage = clampPageNumber(currentPage + 1, numPages)
+    setCurrentPage(targetPage)
+    scrollToPage(targetPage)
+  }, [currentPage, numPages, scrollToPage])
 
   const zoomOut = useCallback(() => {
     setFitWidth(false)
@@ -239,6 +473,11 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
   const resetFitWidth = useCallback(() => {
     setFitWidth(true)
   }, [])
+
+  const pageNumbers = useMemo(
+    () => Array.from({ length: numPages }, (_, index) => index + 1),
+    [numPages],
+  )
 
   if (loadState === 'loading') {
     return (
@@ -287,48 +526,53 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
       data-testid="pdf-preview"
       data-pdf-url={pdfUrl}
       aria-label={`PDF preview for ${fileName}`}
     >
       <div
-        ref={viewportRef}
-        className="file-browser-scroll min-h-0 flex-1 overflow-auto p-4"
+        ref={(node) => {
+          viewportRef.current = node
+          setScrollRoot(node)
+        }}
+        className={cn(
+          'file-browser-scroll min-h-0 flex-1 overflow-y-auto p-4',
+          fitWidth ? 'overflow-x-hidden' : 'overflow-x-auto',
+        )}
         data-testid="pdf-preview-viewport"
+        onScroll={updateCurrentPageFromScroll}
       >
-        <div className="relative flex min-h-full justify-center">
-          <canvas
-            ref={canvasRef}
-            className={cn(
-              'rounded border border-border/50 bg-white shadow-sm',
-              renderErrorMessage && 'invisible absolute',
-            )}
-          />
-          {renderErrorMessage ? (
-            <div
-              className="flex max-w-md flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground"
-              data-testid="pdf-preview-render-error"
-              role="alert"
-            >
-              <p className="text-sm text-destructive/80">Unable to render this page</p>
-              <p className="text-xs opacity-70">{renderErrorMessage}</p>
-              <a
-                href={pdfUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
-                data-testid="pdf-preview-open-raw"
-              >
-                Open PDF
-              </a>
-            </div>
-          ) : null}
+        <div
+          className={cn(
+            'flex flex-col',
+            fitWidth ? 'mx-auto w-full max-w-full items-stretch' : 'w-max min-w-full items-start',
+          )}
+          style={{ gap: PAGE_GAP_PX }}
+          data-testid="pdf-preview-pages"
+        >
+          {pdfDoc
+            ? pageNumbers.map((pageNumber) => (
+                <PdfPreviewPage
+                  key={`${pageNumber}-${layoutEpoch}`}
+                  pageNumber={pageNumber}
+                  pdf={pdfDoc}
+                  fitWidth={fitWidth}
+                  manualScale={manualScale}
+                  viewportWidth={viewportWidth}
+                  layoutEpoch={layoutEpoch}
+                  estimatedHeight={pageHeights[pageNumber] ?? estimatePageHeight(pageNumber)}
+                  scrollRoot={scrollRoot}
+                  onLayoutChange={handlePageLayoutChange}
+                  onPageMetricsDiscovered={handlePageMetricsDiscovered}
+                />
+              ))
+            : null}
         </div>
       </div>
 
       <div
-        className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border/80 bg-card/80 px-3 py-2"
+        className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border/80 bg-card/95 px-3 py-2 backdrop-blur-sm"
         data-testid="pdf-preview-controls"
       >
         <Button
@@ -342,7 +586,10 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         >
           <ChevronLeft className="size-4" />
         </Button>
-        <span className="min-w-[88px] text-center text-xs text-muted-foreground">
+        <span
+          className="min-w-[88px] text-center text-xs text-muted-foreground"
+          data-testid="pdf-preview-page-indicator"
+        >
           Page {currentPage} / {numPages}
         </span>
         <Button
@@ -377,6 +624,15 @@ export function PdfPreview({ wsUrl, filePath, agentId, worktreeId = null }: PdfP
         <Button type="button" size="icon" variant="outline" className="size-8" aria-label="Reload PDF" onClick={handleReload}>
           <RotateCw className="size-4" />
         </Button>
+        <a
+          href={pdfUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-8 px-2')}
+          data-testid="pdf-preview-open-raw"
+        >
+          Open PDF
+        </a>
       </div>
     </div>
   )

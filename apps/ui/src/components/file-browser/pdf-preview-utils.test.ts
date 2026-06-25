@@ -1,7 +1,10 @@
+/** @vitest-environment jsdom */
+
 import { describe, expect, it } from 'vitest'
 import {
   buildPdfRawUrl,
   clampPageNumber,
+  computeCurrentPageFromScroll,
   computeFitWidthScale,
   computePdfRenderScale,
   computeSafeCanvasOutput,
@@ -10,6 +13,7 @@ import {
   PDF_PREVIEW_CANVAS_TOO_LARGE_MESSAGE,
   PDF_PREVIEW_MAX_RENDER_SCALE,
   PdfPreviewRenderSizeError,
+  releasePdfPreviewCanvasMemory,
 } from './pdf-preview-utils'
 
 describe('buildPdfRawUrl', () => {
@@ -111,5 +115,36 @@ describe('clampPageNumber', () => {
     expect(clampPageNumber(0, 5)).toBe(1)
     expect(clampPageNumber(3, 5)).toBe(3)
     expect(clampPageNumber(9, 5)).toBe(5)
+  })
+})
+
+describe('releasePdfPreviewCanvasMemory', () => {
+  it('clears canvas bitmap memory and inline dimensions', () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 800
+    canvas.height = 1100
+    canvas.style.width = '800px'
+    canvas.style.height = '1100px'
+
+    releasePdfPreviewCanvasMemory(canvas)
+
+    expect(canvas.width).toBe(0)
+    expect(canvas.height).toBe(0)
+    expect(canvas.style.width).toBe('')
+    expect(canvas.style.height).toBe('')
+  })
+})
+
+describe('computeCurrentPageFromScroll', () => {
+  const pages = [
+    { pageNumber: 1, offsetTop: 0, height: 280 },
+    { pageNumber: 2, offsetTop: 296, height: 280 },
+    { pageNumber: 3, offsetTop: 592, height: 280 },
+  ]
+
+  it('returns the page aligned with the top of the viewport', () => {
+    expect(computeCurrentPageFromScroll(0, 600, pages)).toBe(1)
+    expect(computeCurrentPageFromScroll(350, 600, pages)).toBe(2)
+    expect(computeCurrentPageFromScroll(650, 600, pages)).toBe(3)
   })
 })
