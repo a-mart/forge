@@ -253,6 +253,10 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
     return this.perf
   }
 
+  getCompactionSettingsService(): null {
+    return null
+  }
+
   readSidebarPerfSummary() {
     return this.perf.readSummary()
   }
