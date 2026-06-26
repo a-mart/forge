@@ -1398,6 +1398,80 @@ describe('SwarmManager', () => {
     ])
   })
 
+  it('projects normal web manager final text after explicit-tool-required agent completion input', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('delegate and summarize completion')
+    await startRuntimeUserTurn(manager)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Completion Report Worker', initialMessage: 'Do the cleanup.' })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    await manager.sendMessage(
+      worker.agentId,
+      'manager',
+      'SYSTEM: ## Completion Report: Cleanup + PR flow\nRemoved the mistaken copy and opened the PR.',
+      'auto',
+    )
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(reportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}')
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Done. Removed the mistaken copy and opened the PR.')
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Done. Removed the mistaken copy and opened the PR.',
+    ])
+    expect(
+      assistantOutputsFor(manager, 'manager').some((entry) => String(entry.text).includes('## Completion Report')),
+    ).toBe(false)
+  })
+
+  it('does not project explicit-tool-required completion inputs inherited from protected contexts', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const sender = await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('telegram delegated completion', {
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    await startRuntimeUserTurn(manager)
+    const telegramWorker = await manager.spawnAgent('manager', { agentId: 'Telegram Completion Worker', initialMessage: 'Do telegram work.' })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    await manager.sendMessage(
+      telegramWorker.agentId,
+      'manager',
+      'SYSTEM: ## Completion Report: Telegram work\nFinished protected work.',
+      'auto',
+    )
+    const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(telegramReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}')
+    await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram completion must stay hidden')
+
+    const peerTarget = await manager.createManager(sender.agentId, {
+      name: 'Peer Completion Target',
+      cwd: config.defaultCwd,
+    })
+    await manager.setSessionProjectAgent(peerTarget.agentId, { whenToUse: 'Use for peer completion tests.' })
+    await manager.sendMessage(sender.agentId, peerTarget.agentId, 'peer delegated completion', 'auto')
+    await startRuntimeUserTurn(manager, peerTarget.agentId)
+    const peerWorker = await manager.spawnAgent(peerTarget.agentId, { agentId: 'Peer Completion Worker', initialMessage: 'Do peer work.' })
+    await (manager as any).handleRuntimeSessionEvent(peerTarget.agentId, { type: 'turn_end', toolResults: [] })
+    await manager.sendMessage(
+      peerWorker.agentId,
+      peerTarget.agentId,
+      'SYSTEM: ## Completion Report: Peer work\nFinished peer work.',
+      'auto',
+    )
+    const peerReportRuntimeMessage = manager.runtimeByAgentId.get(peerTarget.agentId)?.sendCalls.at(-1)?.message
+    expect(peerReportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}')
+    await projectAssistantFinalText(manager, peerTarget.agentId, peerReportRuntimeMessage, 'Peer completion must stay hidden')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, peerTarget.agentId)).toEqual([])
+  })
+
   it('keeps inherited worker-report assistant targets across non-final worker callbacks', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

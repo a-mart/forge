@@ -7369,7 +7369,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
     if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
-      return inputTarget;
+      return this.resolveAssistantOutputProjectionTargetForInputRoutingAgentMessage(input, inputTarget);
     }
 
     if (inputTarget.kind !== "internal_only") {
@@ -7385,6 +7385,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+  }
+
+  private resolveAssistantOutputProjectionTargetForInputRoutingAgentMessage(
+    input: {
+      sender: AgentDescriptor;
+      target: AgentDescriptor;
+      workerReportSourceAgentId?: string;
+    },
+    inputTarget: AssistantOutputTarget,
+  ): AssistantOutputTarget {
+    if (inputTarget.kind !== "explicit_tool_required" || inputTarget.reason !== "agent_message") {
+      return inputTarget;
+    }
+
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
+    if (!sourceWorkerId) {
+      return inputTarget;
+    }
+
+    const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
+    return inheritedTarget?.kind === "session_transcript" ? cloneAssistantOutputTarget(inheritedTarget) : inputTarget;
   }
 
   private canDefaultWorkerReportManagerOutputToWebTranscript(target: AgentDescriptor): boolean {
