@@ -2,7 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import {
-  isUserVisibleAssistantConversationMessage,
+  isTerminalAssistantConversationMessage,
   type CollaborationStatus,
   type ServerEvent,
   type TerminalClosedEvent,
@@ -156,7 +156,7 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastCollaborationConversationMessage(event);
 
     const triggersUnread =
-      isUserVisibleAssistantConversationMessage(event) ||
+      isTerminalAssistantConversationMessage(event) ||
       event.source === "project_agent_input";
 
     if (triggersUnread) {

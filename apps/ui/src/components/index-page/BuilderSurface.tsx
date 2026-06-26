@@ -2476,6 +2476,3 @@ export function BuilderSurface({
     </>
   )
 }
-
-
-

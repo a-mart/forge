@@ -39,7 +39,7 @@ function PendingResponseHarness() {
   return null
 }
 
-function makeAssistantMessage(source: 'speak_to_user' | 'assistant_output' = 'speak_to_user'): ConversationEntry {
+function makeAssistantMessage(source: 'speak_to_user' | 'assistant_output' | 'assistant_progress' = 'speak_to_user'): ConversationEntry {
   return {
     type: 'conversation_message',
     agentId: 'agent-1',
@@ -223,6 +223,26 @@ describe('usePendingResponse', () => {
 
       act(() => {
         capturedRef.current!.setMessages([userMsg, makeAssistantMessage('assistant_output')])
+      })
+
+      expect(capturedRef.current!.result.pendingResponseStart).toBeNull()
+    })
+
+    it('clears when an assistant_progress conversation_message appears after the marked position', () => {
+      render()
+
+      const userMsg = makeUserMessage()
+
+      act(() => {
+        capturedRef.current!.setMessages([userMsg])
+      })
+      act(() => {
+        capturedRef.current!.result.markPendingResponse('agent-1', 1)
+      })
+      expect(capturedRef.current!.result.isAwaitingResponseStart).toBe(true)
+
+      act(() => {
+        capturedRef.current!.setMessages([userMsg, makeAssistantMessage('assistant_progress')])
       })
 
       expect(capturedRef.current!.result.pendingResponseStart).toBeNull()

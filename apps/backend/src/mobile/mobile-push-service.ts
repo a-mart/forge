@@ -1,4 +1,4 @@
-import { isUserVisibleAssistantConversationMessage, type ServerEvent } from "@forge/protocol";
+import { isTerminalAssistantConversationMessage, type ServerEvent } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
 import {
   NotificationSettingsService,
@@ -242,7 +242,7 @@ export class MobilePushService {
   private async handleConversationMessage(
     event: Extract<ServerEvent, { type: "conversation_message" }>
   ): Promise<void> {
-    if (!isUserVisibleAssistantConversationMessage(event)) {
+    if (!isTerminalAssistantConversationMessage(event)) {
       return;
     }
 

@@ -195,6 +195,21 @@ describe('ForgeClient', () => {
     expect(socket.sent.map((command) => command.type).slice(0, 2)).toEqual(['subscribe_headless', 'cli_run'])
   })
 
+  it('does not treat assistant_progress as the final run message', async () => {
+    const socket = new FakeWebSocket({ progressOnlyAfterRun: true })
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: statusFetch,
+      WebSocketImpl: fakeWebSocketImpl(socket),
+    })
+
+    await expect(client.run({ command: 'run', target: { kind: 'session', agentId: 'session-1' }, text: 'hello' })).resolves.toMatchObject({
+      status: 'success',
+      finalMessage: null,
+    })
+  })
+
   it('aborts run waits immediately when the CLI WebSocket disconnects', async () => {
     const socket = new FakeWebSocket({ closeAfterRunAck: true })
     const client = new ForgeClient({
@@ -279,7 +294,14 @@ class FakeWebSocket extends EventEmitter {
   readonly sent: CliWsCommand[] = []
   readyState = WebSocket.OPEN
 
-  constructor(private readonly options: { closeAfterRunAck?: boolean; closeBeforeHeadlessReady?: boolean; compactionUnsupported?: boolean } = {}) {
+  constructor(
+    private readonly options: {
+      closeAfterRunAck?: boolean
+      closeBeforeHeadlessReady?: boolean
+      compactionUnsupported?: boolean
+      progressOnlyAfterRun?: boolean
+    } = {},
+  ) {
     super()
   }
 
@@ -354,8 +376,24 @@ class FakeWebSocket extends EventEmitter {
       })
       if (this.options.closeAfterRunAck) {
         this.emit('close')
+      } else if (this.options.progressOnlyAfterRun) {
+        this.emitEvent({
+          type: 'conversation_message',
+          agentId: 'session-1',
+          role: 'assistant',
+          text: 'still working',
+          timestamp: 'now',
+          source: 'assistant_progress',
+        })
       } else {
-        this.emitEvent({ type: 'conversation_message', agentId: 'session-1', role: 'assistant', text: 'fast done', timestamp: 'now' })
+        this.emitEvent({
+          type: 'conversation_message',
+          agentId: 'session-1',
+          role: 'assistant',
+          text: 'fast done',
+          timestamp: 'now',
+          source: 'assistant_output',
+        })
       }
     }
   }

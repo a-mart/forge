@@ -139,6 +139,46 @@ describe("RuntimeEventProjector", () => {
     expect(deps.markSessionActivity).toHaveBeenCalledWith(manager.agentId, "2026-05-06T00:00:01.000Z");
   });
 
+  it("projects manager assistant progress before continued tool work", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "I'll inspect that now.", stopReason: "stop" } },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "read", toolCallId: "read-1", args: { path: "src/index.ts" } },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_end", toolName: "read", toolCallId: "read-1", result: { ok: true }, isError: false },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Done.", stopReason: "stop" } },
+    });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_progress",
+      text: "I'll inspect that now.",
+    }));
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_output",
+      text: "Done.",
+    }));
+  });
+
   it("can project preserved manager assistant output when a present_choices card is opened", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });

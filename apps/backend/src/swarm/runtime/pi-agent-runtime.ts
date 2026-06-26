@@ -92,9 +92,9 @@ const TERMINAL_WORKER_REPORT_PATTERNS = [
 // Appended when re-delivering terminal worker reports after a manager turn with
 // no visible side effect. Exported for tests.
 export const TERMINAL_REPORT_REDELIVERY_DIRECTIVE =
-  "Worker/internal reports require an explicit user-visible, peer, or delegation action; do not rely on unscoped assistant text for this context. Use speak_to_user, present_choices, delegate/follow up, or take an intentional non-user-visible coordination action now.";
+  "Worker/internal reports require explicit same-turn handling. For direct web/session-transcript closeouts, answer normally with final assistant text. Use speak_to_user only for routed/protected/non-web user delivery; otherwise use present_choices, peer reply, delegation/follow-up, or an intentional non-user-visible coordination action now.";
 export const DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE =
-  "This source requires explicit routed delivery. Use speak_to_user.target, present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
+  "Handle this user message with the appropriate output path now. For direct web/session-transcript replies, answer normally or continue with brief assistant progress followed by same-turn work. Use speak_to_user.target only for non-web/routed delivery; otherwise use present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;

@@ -87,7 +87,7 @@ function makeWorkPlanCreated(overrides: Record<string, unknown> = {}) {
 }
 
 describe("conversation validators", () => {
-  it("accepts assistant_output and rejects unknown conversation message sources", () => {
+  it("accepts assistant output sources and rejects unknown conversation message sources", () => {
     expect(
       isConversationEntryEvent({
         type: "conversation_message",
@@ -96,6 +96,18 @@ describe("conversation validators", () => {
         text: "projected",
         timestamp: FIXED_NOW,
         source: "assistant_output",
+        sourceContext: { channel: "web" }
+      })
+    ).toBe(true);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "assistant",
+        text: "still working",
+        timestamp: FIXED_NOW,
+        source: "assistant_progress",
         sourceContext: { channel: "web" }
       })
     ).toBe(true);
@@ -132,6 +144,17 @@ describe("conversation validators", () => {
         text: "impossible",
         timestamp: FIXED_NOW,
         source: "assistant_output",
+      })
+    ).toBe(false);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "user",
+        text: "impossible",
+        timestamp: FIXED_NOW,
+        source: "assistant_progress",
       })
     ).toBe(false);
 

@@ -804,6 +804,18 @@ describe("analyzeLatestCortexCloseoutNeed", () => {
     source: "speak_to_user"
   });
 
+  const assistant = (
+    ts: string,
+    source: "assistant_output" | "assistant_progress"
+  ): ConversationEntryEvent => ({
+    type: "conversation_message",
+    agentId: "m",
+    role: "assistant",
+    text: "assistant",
+    timestamp: ts,
+    source
+  });
+
   const agentToAgent = (ts: string): ConversationEntryEvent => ({
     type: "agent_message",
     agentId: "m",
@@ -829,6 +841,23 @@ describe("analyzeLatestCortexCloseoutNeed", () => {
       speak("2020-01-02T00:00:00.000Z")
     ]);
     expect(r.needsReminder).toBe(false);
+  });
+
+  it("does not remind when assistant_output follows user", () => {
+    const r = analyzeLatestCortexCloseoutNeed([
+      userMsg("2020-01-01T00:00:00.000Z"),
+      assistant("2020-01-02T00:00:00.000Z", "assistant_output")
+    ]);
+    expect(r.needsReminder).toBe(false);
+  });
+
+  it("does remind when only assistant_progress follows user", () => {
+    const r = analyzeLatestCortexCloseoutNeed([
+      userMsg("2020-01-01T00:00:00.000Z"),
+      assistant("2020-01-02T00:00:00.000Z", "assistant_progress")
+    ]);
+    expect(r.needsReminder).toBe(true);
+    expect(r.reason).toBe("missing_speak_to_user");
   });
 
   it("flags stale when worker progress after speak_to_user", () => {

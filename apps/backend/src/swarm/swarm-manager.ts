@@ -5785,7 +5785,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       target,
       trimmed,
       attachments,
-      sourceContext
+      sourceContext,
+      undefined
     );
 
     if (target.role === "manager") {

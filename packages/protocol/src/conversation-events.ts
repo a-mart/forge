@@ -63,15 +63,29 @@ export const CONVERSATION_MESSAGE_SOURCES = [
   'user_input',
   'speak_to_user',
   'assistant_output',
+  'assistant_progress',
   'system',
   'project_agent_input',
 ] as const
 
 export type ConversationMessageSource = (typeof CONVERSATION_MESSAGE_SOURCES)[number]
 
-export const USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES = [
+export const TERMINAL_ASSISTANT_MESSAGE_SOURCES = [
   'speak_to_user',
   'assistant_output',
+] as const satisfies readonly ConversationMessageSource[]
+
+export type TerminalAssistantMessageSource = (typeof TERMINAL_ASSISTANT_MESSAGE_SOURCES)[number]
+
+export const ASSISTANT_PROGRESS_MESSAGE_SOURCES = [
+  'assistant_progress',
+] as const satisfies readonly ConversationMessageSource[]
+
+export type AssistantProgressMessageSource = (typeof ASSISTANT_PROGRESS_MESSAGE_SOURCES)[number]
+
+export const USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES = [
+  ...TERMINAL_ASSISTANT_MESSAGE_SOURCES,
+  ...ASSISTANT_PROGRESS_MESSAGE_SOURCES,
 ] as const satisfies readonly ConversationMessageSource[]
 
 export type UserVisibleAssistantMessageSource = (typeof USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES)[number]
@@ -84,6 +98,18 @@ export function isUserVisibleAssistantConversationSource(
   source: unknown,
 ): source is UserVisibleAssistantMessageSource {
   return typeof source === 'string' && (USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES as readonly string[]).includes(source)
+}
+
+export function isTerminalAssistantConversationSource(
+  source: unknown,
+): source is TerminalAssistantMessageSource {
+  return typeof source === 'string' && (TERMINAL_ASSISTANT_MESSAGE_SOURCES as readonly string[]).includes(source)
+}
+
+export function isAssistantProgressConversationSource(
+  source: unknown,
+): source is AssistantProgressMessageSource {
+  return typeof source === 'string' && (ASSISTANT_PROGRESS_MESSAGE_SOURCES as readonly string[]).includes(source)
 }
 
 export interface ConversationMessageEvent {
@@ -199,6 +225,26 @@ export function isUserVisibleAssistantConversationMessage(
     entry.type === 'conversation_message' &&
     entry.role === 'assistant' &&
     isUserVisibleAssistantConversationSource(entry.source)
+  )
+}
+
+export function isTerminalAssistantConversationMessage(
+  entry: ConversationEntry,
+): entry is ConversationMessageEvent & { role: 'assistant'; source: TerminalAssistantMessageSource } {
+  return (
+    entry.type === 'conversation_message' &&
+    entry.role === 'assistant' &&
+    isTerminalAssistantConversationSource(entry.source)
+  )
+}
+
+export function isAssistantProgressConversationMessage(
+  entry: ConversationEntry,
+): entry is ConversationMessageEvent & { role: 'assistant'; source: AssistantProgressMessageSource } {
+  return (
+    entry.type === 'conversation_message' &&
+    entry.role === 'assistant' &&
+    isAssistantProgressConversationSource(entry.source)
   )
 }
 

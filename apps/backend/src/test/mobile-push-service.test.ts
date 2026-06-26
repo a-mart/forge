@@ -289,6 +289,45 @@ describe('MobilePushService', () => {
     expect(payload.data).toMatchObject({ type: 'unread', reason: 'message', agentId: 'manager' })
   })
 
+  it('does not send unread pushes for assistant_progress messages', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager([createManagerDescriptor('profile-a', 'manager', undefined)])
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-progress-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    })
+
+    await service.start()
+    manager.emit('conversation_message', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'projected progress',
+      timestamp: new Date().toISOString(),
+      source: 'assistant_progress',
+      sourceContext: { channel: 'web' },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await service.stop()
+
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
   it('suppresses pushes for CLI-originated sessions when notification settings mute them', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
     const manager = new FakeSwarmManager([

@@ -44,7 +44,7 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
       text: normalizedText,
       attachments: parsedAttachments.attachments.length > 0 ? parsedAttachments.attachments : undefined,
       agentId: maybe.agentId,
-      delivery: maybe.delivery
+      delivery: maybe.delivery,
     });
   }
 

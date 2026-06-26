@@ -154,7 +154,7 @@ export interface CliSessionTranscriptMessage {
   timestamp: string
   kind: CliSessionTranscriptMessageKind
   role: 'user' | 'assistant' | 'worker'
-  source: 'user_input' | 'speak_to_user' | 'assistant_output' | 'worker_update'
+  source: 'user_input' | 'speak_to_user' | 'assistant_output' | 'assistant_progress' | 'worker_update'
   text: string
   agentId: string
   fromAgentId?: string

@@ -39,6 +39,7 @@ import { CLI_PROTOCOL_VERSION, EXIT_CODES } from './version.js'
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1000
 const DEFAULT_DEBOUNCE_MS = 750
 const MIN_POST_DISPATCH_MS = 1000
+const TERMINAL_ASSISTANT_MESSAGE_SOURCES = new Set(['speak_to_user', 'assistant_output'])
 
 export interface ForgeClientOptions {
   url: string
@@ -855,7 +856,11 @@ class RunWaitTracker {
         return
 
       case 'conversation_message':
-        if (event.agentId === this.sessionAgentId && event.role === 'assistant') {
+        if (
+          event.agentId === this.sessionAgentId &&
+          event.role === 'assistant' &&
+          TERMINAL_ASSISTANT_MESSAGE_SOURCES.has(event.source)
+        ) {
           this.finalMessage = event.text
         }
         this.markActivity()

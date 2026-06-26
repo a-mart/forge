@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CONVERSATION_MESSAGE_SOURCES,
+  isAssistantProgressConversationMessage,
   isConversationMessageSource,
   isExplicitRoutedAssistantConversationMessage,
+  isTerminalAssistantConversationMessage,
   isUserVisibleAssistantConversationMessage,
   isUserVisibleConversationMessage,
   type ConversationEntry,
@@ -17,22 +19,34 @@ const base = {
 } as const
 
 describe('conversation source semantics', () => {
-  it('recognizes assistant_output as a first-class conversation message source', () => {
+  it('recognizes assistant output sources as first-class conversation message sources', () => {
     expect(CONVERSATION_MESSAGE_SOURCES).toContain('assistant_output')
+    expect(CONVERSATION_MESSAGE_SOURCES).toContain('assistant_progress')
     expect(isConversationMessageSource('assistant_output')).toBe(true)
+    expect(isConversationMessageSource('assistant_progress')).toBe(true)
     expect(isConversationMessageSource('not_real')).toBe(false)
   })
 
-  it('classifies speak_to_user and assistant_output as user-visible assistant messages', () => {
+  it('classifies terminal and progress assistant messages separately', () => {
     const oldPath = { ...base, role: 'assistant', source: 'speak_to_user' } satisfies ConversationEntry
     const projected = { ...base, role: 'assistant', source: 'assistant_output' } satisfies ConversationEntry
+    const progress = { ...base, role: 'assistant', source: 'assistant_progress' } satisfies ConversationEntry
 
     expect(isUserVisibleAssistantConversationMessage(oldPath)).toBe(true)
     expect(isUserVisibleAssistantConversationMessage(projected)).toBe(true)
+    expect(isUserVisibleAssistantConversationMessage(progress)).toBe(true)
     expect(isUserVisibleConversationMessage(oldPath)).toBe(true)
     expect(isUserVisibleConversationMessage(projected)).toBe(true)
+    expect(isUserVisibleConversationMessage(progress)).toBe(true)
+    expect(isTerminalAssistantConversationMessage(oldPath)).toBe(true)
+    expect(isTerminalAssistantConversationMessage(projected)).toBe(true)
+    expect(isTerminalAssistantConversationMessage(progress)).toBe(false)
+    expect(isAssistantProgressConversationMessage(oldPath)).toBe(false)
+    expect(isAssistantProgressConversationMessage(projected)).toBe(false)
+    expect(isAssistantProgressConversationMessage(progress)).toBe(true)
     expect(isExplicitRoutedAssistantConversationMessage(oldPath)).toBe(true)
     expect(isExplicitRoutedAssistantConversationMessage(projected)).toBe(false)
+    expect(isExplicitRoutedAssistantConversationMessage(progress)).toBe(false)
   })
 
   it('does not classify inbound, system, or runtime-log rows as assistant output', () => {

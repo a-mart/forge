@@ -1,5 +1,8 @@
 import { basename } from "node:path";
-import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
+import {
+  isAssistantProgressConversationMessage,
+  isUserVisibleAssistantConversationMessage,
+} from "@forge/protocol";
 import { normalizeOptionalString } from "../claude-utils.js";
 import type { ModelChangeContinuityModel } from "./model-change-continuity.js";
 import type {
@@ -183,6 +186,10 @@ function renderManagerRecoveryLine(
 
     if (entry.source === "user_input") {
       return renderTranscriptLine("User:", entry.text, buildAttachmentPlaceholder(entry.attachments));
+    }
+
+    if (isAssistantProgressConversationMessage(entry)) {
+      return renderTranscriptLine("Assistant progress:", entry.text, buildAttachmentPlaceholder(entry.attachments));
     }
 
     if (isUserVisibleAssistantConversationMessage(entry)) {

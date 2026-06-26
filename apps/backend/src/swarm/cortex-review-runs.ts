@@ -11,6 +11,7 @@ import type {
   CortexReviewRunTrigger,
   MessageSourceContext
 } from "@forge/protocol";
+import { isTerminalAssistantConversationMessage } from "@forge/protocol";
 import { getCortexReviewRunsPath } from "./data-paths.js";
 import type { ConversationEntryEvent } from "./types.js";
 import { readJsonFileIfExists, writeJsonFileAtomic } from "../utils/atomic-files.js";
@@ -267,7 +268,7 @@ function findLatestUserVisibleCloseout(history: ConversationEntryEvent[]): strin
     if (entry.type !== "conversation_message") {
       continue;
     }
-    if (entry.role !== "assistant" || entry.source !== "speak_to_user") {
+    if (!isTerminalAssistantConversationMessage(entry)) {
       continue;
     }
 
@@ -396,4 +397,3 @@ function isMessageSourceContext(value: unknown): value is MessageSourceContext {
   const candidate = value as Partial<MessageSourceContext>;
   return candidate.channel === "web" || candidate.channel === "telegram" || candidate.channel === "cli";
 }
-

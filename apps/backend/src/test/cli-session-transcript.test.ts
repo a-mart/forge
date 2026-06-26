@@ -36,11 +36,18 @@ describe("CLI session transcript filtering", () => {
         ordinal: 2,
         kind: "assistant",
         role: "assistant",
+        source: "assistant_progress",
+        text: "Manager progress",
+      }),
+      expect.objectContaining({
+        ordinal: 3,
+        kind: "assistant",
+        role: "assistant",
         source: "assistant_output",
         text: "Projected manager reply",
       }),
     ]);
-    expect(response.page).toMatchObject({ total: 3, returned: 3, hasMore: false });
+    expect(response.page).toMatchObject({ total: 4, returned: 4, hasMore: false });
     expect(JSON.stringify(response)).not.toContain("rawIndex");
     expect(JSON.stringify(response)).not.toContain("Hidden system");
     expect(JSON.stringify(response)).not.toContain("project agent input");
@@ -62,7 +69,8 @@ describe("CLI session transcript filtering", () => {
       [0, "user", "User asks"],
       [1, "worker_update", "Worker report"],
       [2, "assistant", "Manager replies"],
-      [3, "assistant", "Projected manager reply"],
+      [3, "assistant", "Manager progress"],
+      [4, "assistant", "Projected manager reply"],
     ]);
     expect(response.messages[1]).toMatchObject({
       role: "worker",
@@ -163,7 +171,7 @@ describe("CLI session transcript filtering", () => {
     });
 
     expect(response.messages).toEqual([expect.objectContaining({ ordinal: 1, text: "Worker report" })]);
-    expect(response.page).toEqual({ total: 4, returned: 1, offset: 1, limit: 1, hasMore: true, nextOffset: 2 });
+    expect(response.page).toEqual({ total: 5, returned: 1, offset: 1, limit: 1, hasMore: true, nextOffset: 2 });
   });
 
   it("normalizes and validates query options", () => {
@@ -318,8 +326,18 @@ function createMixedHistory(): ConversationEntryEvent[] {
       agentId: "session-a",
       id: "assistant-2",
       role: "assistant",
-      text: "Projected manager reply",
+      text: "Manager progress",
       timestamp: "2026-06-15T00:00:13.000Z",
+      source: "assistant_progress",
+      sourceContext: { channel: "web" },
+    },
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      id: "assistant-3",
+      role: "assistant",
+      text: "Projected manager reply",
+      timestamp: "2026-06-15T00:00:14.000Z",
       source: "assistant_output",
       sourceContext: { channel: "web" },
     },

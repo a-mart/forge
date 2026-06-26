@@ -444,6 +444,29 @@ describe('SwarmWebSocketServer', () => {
         type: 'conversation_message',
         agentId: 'manager',
         role: 'assistant',
+        text: 'projected assistant progress',
+        timestamp: new Date().toISOString(),
+        source: 'assistant_progress',
+        sourceContext: { channel: 'web' },
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      managerEvents,
+      (event) =>
+        event.type === 'conversation_message' &&
+        event.agentId === 'manager' &&
+        event.text === 'projected assistant progress',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(workerEvents.filter((event) => event.type === 'unread_notification')).toHaveLength(unreadBefore)
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'assistant',
         text: 'system note',
         timestamp: new Date().toISOString(),
         source: 'system',

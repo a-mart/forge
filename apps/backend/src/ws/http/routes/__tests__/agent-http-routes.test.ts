@@ -450,7 +450,7 @@ describe('SwarmWebSocketServer', () => {
         model: workerMeta?.model ?? `${worker.model.provider}/${worker.model.modelId}`,
         archetypeId: worker.archetypeId ?? null,
       })
-      expect(payload.systemPrompt).toContain('End users see only manager-owned user-visible outputs: final web replies, `speak_to_user` deliveries, and structured choice UI.')
+      expect(payload.systemPrompt).toContain('End users see only manager-owned user-visible outputs: final assistant replies, direct-web assistant progress updates, routed `speak_to_user` deliveries, and structured choice UI.')
     } finally {
       await server.stop()
     }

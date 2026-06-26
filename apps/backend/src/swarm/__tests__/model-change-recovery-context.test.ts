@@ -35,6 +35,14 @@ describe("buildModelChangeRecoveryContext", () => {
       {
         type: "conversation_message",
         agentId: "manager-1",
+        role: "assistant",
+        text: "I am checking the logs.",
+        timestamp: "2026-04-07T10:00:06.000Z",
+        source: "assistant_progress"
+      },
+      {
+        type: "conversation_message",
+        agentId: "manager-1",
         role: "user",
         text: "Please update the docs.",
         timestamp: "2026-04-07T10:00:10.000Z",
@@ -92,6 +100,7 @@ describe("buildModelChangeRecoveryContext", () => {
     expect(result.blockText).toContain("# Recovered Forge Conversation Context");
     expect(result.bodyText).toContain("User: What broke?");
     expect(result.bodyText).toContain("Assistant: The server crashed. [image attachment present]");
+    expect(result.bodyText).toContain("Assistant progress: I am checking the logs.");
     expect(result.bodyText).toContain("Project agent (Documentation): Please update the docs.");
     expect(result.bodyText).toContain(
       "Worker/Agent message (backend-specialist): I found the root cause. [2 attachments omitted]"

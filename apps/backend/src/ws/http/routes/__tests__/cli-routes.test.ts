@@ -269,7 +269,7 @@ describe("CLI routes and bearer auth", () => {
     expect(defaultTranscript.json).toMatchObject({
       session: { agentId: "session-a", profileId: "profile-a", displayName: "Session A" },
       options: { includeWorkerUpdates: false, limit: 200, offset: 0 },
-      page: { total: 2, returned: 2, hasMore: false },
+      page: { total: 3, returned: 3, hasMore: false },
       messages: [
         {
           ordinal: 0,
@@ -296,6 +296,14 @@ describe("CLI routes and bearer auth", () => {
           role: "assistant",
           source: "speak_to_user",
           text: "Manager replies",
+        },
+        {
+          ordinal: 2,
+          id: "assistant-2",
+          kind: "assistant",
+          role: "assistant",
+          source: "assistant_progress",
+          text: "Manager progress",
         },
       ],
     });
@@ -325,7 +333,7 @@ describe("CLI routes and bearer auth", () => {
     expect(workerTranscript.status).toBe(200);
     expect(workerTranscript.json).toMatchObject({
       options: { includeWorkerUpdates: true, limit: 2, offset: 1 },
-      page: { total: 3, returned: 2, offset: 1, limit: 2, hasMore: false },
+      page: { total: 4, returned: 2, offset: 1, limit: 2, hasMore: true, nextOffset: 3 },
       messages: [
         {
           ordinal: 1,
@@ -714,6 +722,15 @@ function createCliRouteState(): {
       text: "Manager replies",
       timestamp: "2026-06-15T00:00:11.000Z",
       source: "speak_to_user",
+    },
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      id: "assistant-2",
+      role: "assistant",
+      text: "Manager progress",
+      timestamp: "2026-06-15T00:00:12.000Z",
+      source: "assistant_progress",
     },
   ];
 

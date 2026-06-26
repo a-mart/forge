@@ -155,7 +155,7 @@ describe('deriveVisibleMessages', () => {
     expect(result.visibleMessages).toEqual(result.allMessages)
   })
 
-  it('shows assistant_output rows in web and all manager views while hiding runtime logs', () => {
+  it('shows assistant output and progress rows in web and all manager views while hiding runtime logs', () => {
     const projected: ConversationEntry = {
       type: 'conversation_message',
       agentId: 'manager',
@@ -163,6 +163,15 @@ describe('deriveVisibleMessages', () => {
       text: 'projected reply',
       timestamp: '2026-01-01T00:00:00.000Z',
       source: 'assistant_output',
+      sourceContext: { channel: 'web' },
+    }
+    const progress: ConversationEntry = {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'checking now',
+      timestamp: '2026-01-01T00:00:00.500Z',
+      source: 'assistant_progress',
       sourceContext: { channel: 'web' },
     }
     const runtimeLog: ConversationEntry = {
@@ -176,22 +185,22 @@ describe('deriveVisibleMessages', () => {
     }
 
     const webResult = deriveVisibleMessages({
-      messages: [projected, runtimeLog],
+      messages: [projected, progress, runtimeLog],
       activityMessages: [],
       agents: [manager, worker],
       activeAgent: manager,
       channelView: 'web',
     })
     const allResult = deriveVisibleMessages({
-      messages: [projected, runtimeLog],
+      messages: [projected, progress, runtimeLog],
       activityMessages: [],
       agents: [manager, worker],
       activeAgent: manager,
       channelView: 'all',
     })
 
-    expect(webResult.visibleMessages).toEqual([projected])
-    expect(allResult.visibleMessages).toEqual([projected])
+    expect(webResult.visibleMessages).toEqual([projected, progress])
+    expect(allResult.visibleMessages).toEqual([projected, progress])
   })
 
   it('hides worker tool calls from manager all view', () => {

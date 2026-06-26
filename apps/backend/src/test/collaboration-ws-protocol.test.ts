@@ -804,6 +804,27 @@ describe("collaboration websocket protocol", () => {
       (event) => event.channelId === channelA.channelId && event.message.text === runtimeAssistantMessage.text,
     );
 
+    const runtimeProgressMessage: ConversationMessageEvent = {
+      type: "conversation_message",
+      agentId: channelA.sessionAgentId,
+      id: "runtime-progress-message",
+      role: "assistant",
+      text: "Runtime assistant progress",
+      timestamp: new Date().toISOString(),
+      source: "assistant_progress",
+    };
+    swarmManager.conversationProjector.emitConversationMessage(runtimeProgressMessage);
+
+    await adminWs.waitForEvent(
+      "collab_channel_message",
+      (event) => event.channelId === channelA.channelId && event.message.text === runtimeProgressMessage.text,
+    );
+    await expectNoSocketEvent(
+      memberWs,
+      "collab_channel_activity_updated",
+      (event) => event.channelId === channelA.channelId && event.unreadCount > 2,
+    );
+
     const reconnectedMemberWs = await openAuthenticatedWs(baseUrl, memberCookie);
     reconnectedMemberWs.socket.send(JSON.stringify({ type: "collab_bootstrap" }));
     const reconnectedBootstrap = await reconnectedMemberWs.waitForEvent("collab_bootstrap") as CollaborationBootstrapEvent;

@@ -536,7 +536,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "speak_to_user",
       label: "Speak To User",
       description:
-        "Publish a user-visible manager message with explicit routing. Use for non-web targets, internal/worker/peer-triggered user updates, or when normal web final output is not the right delivery path. If target is omitted, delivery defaults to web. For Telegram delivery, set target.channel and target.channelId explicitly.",
+        "Publish a user-visible manager message with explicit routing. Use for non-web targets, routed/protected worker-report closeouts, proactive external delivery, or cases where server metadata requires explicit target delivery. Do not use for ordinary direct-web progress or final replies. If target is omitted, delivery defaults to web. For Telegram delivery, set target.channel and target.channelId explicitly.",
       parameters: Type.Object({
         text: Type.String({ description: "Message content to show to the user." }),
         target: Type.Optional(speakToUserTargetSchema)

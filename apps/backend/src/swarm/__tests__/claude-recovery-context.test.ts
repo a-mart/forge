@@ -29,6 +29,14 @@ describe("buildClaudeRecoveryContext", () => {
       {
         type: "conversation_message",
         agentId: "manager-1",
+        role: "assistant",
+        text: "I am checking the logs.",
+        timestamp: "2026-04-07T10:00:06.000Z",
+        source: "assistant_progress"
+      },
+      {
+        type: "conversation_message",
+        agentId: "manager-1",
         role: "user",
         text: "Please update the docs.",
         timestamp: "2026-04-07T10:00:10.000Z",
@@ -78,6 +86,7 @@ describe("buildClaudeRecoveryContext", () => {
     expect(result.blockText).toContain("historical conversation context reconstructed from Forge's durable session history");
     expect(result.transcriptText).toContain("User: What broke?");
     expect(result.transcriptText).toContain("Assistant: The server crashed.");
+    expect(result.transcriptText).toContain("Assistant progress: I am checking the logs.");
     expect(result.transcriptText).toContain("Project agent (Documentation): Please update the docs.");
     expect(result.transcriptText).toContain("Worker/Agent message (backend-specialist): I found the root cause.");
     expect(result.transcriptText).not.toContain("Thanks.");

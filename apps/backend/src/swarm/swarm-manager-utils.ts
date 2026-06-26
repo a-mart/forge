@@ -5,6 +5,7 @@ import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import {
   PROJECT_AGENT_CAPABILITIES,
+  isTerminalAssistantConversationMessage,
   type AgentRuntimeExtensionSnapshot,
   type CollaborationAuthor,
   type SessionMemoryMergeFailureStage
@@ -1052,20 +1053,20 @@ export function analyzeLatestCortexCloseoutNeed(
       ? parseTimestampToMillis(latestUserEntry.timestamp)
       : undefined;
 
-  let lastSpeakToUserTimestamp: number | undefined;
+  let lastCloseoutTimestamp: number | undefined;
   for (let index = latestUserIndex + 1; index < history.length; index += 1) {
     const entry = history[index];
-    if (entry.type !== "conversation_message" || entry.source !== "speak_to_user") {
+    if (!isTerminalAssistantConversationMessage(entry)) {
       continue;
     }
 
     const timestamp = parseTimestampToMillis(entry.timestamp);
     if (typeof timestamp === "number") {
-      lastSpeakToUserTimestamp = timestamp;
+      lastCloseoutTimestamp = timestamp;
     }
   }
 
-  if (typeof lastSpeakToUserTimestamp !== "number") {
+  if (typeof lastCloseoutTimestamp !== "number") {
     return {
       needsReminder: true,
       userTimestamp,
@@ -1080,7 +1081,7 @@ export function analyzeLatestCortexCloseoutNeed(
     }
 
     const timestamp = parseTimestampToMillis(entry.timestamp);
-    if (typeof timestamp === "number" && timestamp > lastSpeakToUserTimestamp) {
+    if (typeof timestamp === "number" && timestamp > lastCloseoutTimestamp) {
       return {
         needsReminder: true,
         userTimestamp,

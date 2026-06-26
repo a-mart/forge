@@ -1,5 +1,8 @@
 import { basename } from "node:path";
-import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
+import {
+  isAssistantProgressConversationMessage,
+  isUserVisibleAssistantConversationMessage,
+} from "@forge/protocol";
 import { normalizeOptionalString } from "../../claude-utils.js";
 import type {
   AgentDescriptor,
@@ -189,6 +192,10 @@ function renderManagerRecoveryLine(
 
     if (entry.source === "user_input") {
       return renderTranscriptLine("User:", entry.text, buildAttachmentPlaceholder(entry.attachments));
+    }
+
+    if (isAssistantProgressConversationMessage(entry)) {
+      return renderTranscriptLine("Assistant progress:", entry.text, buildAttachmentPlaceholder(entry.attachments));
     }
 
     if (isUserVisibleAssistantConversationMessage(entry)) {

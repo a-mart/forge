@@ -25,12 +25,18 @@ export type AssistantOutputTarget =
 interface AssistantOutputCandidate {
   text: string;
   sourceContext: MessageSourceContext;
+  kind: "final" | "progress";
   preserveThroughToolName?: string;
+  expectedToolCallIds?: string[];
+  expectedToolNames?: string[];
 }
 
 interface ActiveManagerAssistantOutputTurn {
   target: AssistantOutputTarget;
-  openToolCallIds: Set<string>;
+  openToolCalls: Map<string, string>;
+  completedToolCalls: Map<string, { toolName: string; isError: boolean }>;
+  progressEmitted: boolean;
+  lastProgressText?: string;
   candidate?: AssistantOutputCandidate;
 }
 
@@ -48,7 +54,9 @@ export class ManagerAssistantOutputTracker {
   activateTurn(agentId: string, target: AssistantOutputTarget): void {
     this.activeTurnsByAgentId.set(agentId, {
       target,
-      openToolCallIds: new Set<string>(),
+      openToolCalls: new Map<string, string>(),
+      completedToolCalls: new Map<string, { toolName: string; isError: boolean }>(),
+      progressEmitted: false,
     });
   }
 
@@ -89,21 +97,37 @@ export class ManagerAssistantOutputTracker {
 
     switch (event.type) {
       case "tool_execution_start":
-        activeTurn.openToolCallIds.add(event.toolCallId);
         if (activeTurn.candidate?.preserveThroughToolName !== event.toolName) {
-          activeTurn.candidate = undefined;
+          if (
+            !this.emitProgressCandidateIfEligible(agentId, activeTurn, {
+              startedToolCallId: event.toolCallId,
+              startedToolName: event.toolName,
+            }) &&
+            !candidateHasExpectedToolReference(activeTurn.candidate)
+          ) {
+            activeTurn.candidate = undefined;
+          }
         }
+        activeTurn.openToolCalls.set(event.toolCallId, event.toolName);
         break;
 
       case "tool_execution_end":
-        activeTurn.openToolCallIds.delete(event.toolCallId);
+        activeTurn.openToolCalls.delete(event.toolCallId);
+        activeTurn.completedToolCalls.set(event.toolCallId, {
+          toolName: event.toolName,
+          isError: event.isError,
+        });
         if (event.isError && activeTurn.candidate?.preserveThroughToolName === event.toolName) {
           activeTurn.candidate = undefined;
         }
         break;
 
+      case "message_update":
+        this.updateAssistantOutputCandidate(agentId, activeTurn, event, { provisional: true });
+        break;
+
       case "message_end":
-        this.updateAssistantOutputCandidate(activeTurn, event);
+        this.updateAssistantOutputCandidate(agentId, activeTurn, event);
         break;
 
       case "turn_end":
@@ -117,9 +141,15 @@ export class ManagerAssistantOutputTracker {
   }
 
   private updateAssistantOutputCandidate(
+    agentId: string,
     activeTurn: ActiveManagerAssistantOutputTurn,
-    event: Extract<RuntimeSessionEvent, { type: "message_end" }>,
+    event: Extract<RuntimeSessionEvent, { type: "message_end" | "message_update" }>,
+    options?: { provisional?: boolean },
   ): void {
+    if (options?.provisional && activeTurn.progressEmitted) {
+      return;
+    }
+
     activeTurn.candidate = undefined;
 
     if (activeTurn.target.kind !== "session_transcript") {
@@ -134,24 +164,57 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    const toolBlocks = getToolLikeMessageBlocks(event.message);
-    const onlyPresentChoicesToolBlocks =
-      toolBlocks.length > 0 && toolBlocks.every((block) => readToolBlockName(block) === "present_choices");
-    if (toolBlocks.length > 0 && !onlyPresentChoicesToolBlocks) {
-      return;
-    }
-
-    if (activeTurn.openToolCallIds.size > 0 && !onlyPresentChoicesToolBlocks) {
-      return;
-    }
-
-    const text = extractMessageText(event.message)?.trim();
+    let text = extractMessageText(event.message)?.trim();
     if (!text) {
       return;
     }
 
+    const toolBlocks = getToolLikeMessageBlocks(event.message);
+    const onlyPresentChoicesToolBlocks =
+      toolBlocks.length > 0 && toolBlocks.every((block) => readToolBlockName(block) === "present_choices");
+    if (toolBlocks.length > 0 && !onlyPresentChoicesToolBlocks) {
+      activeTurn.candidate = {
+        text,
+        kind: "progress",
+        sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
+        expectedToolCallIds: collectUniqueStrings(toolBlocks.map(readToolBlockId)),
+        expectedToolNames: collectUniqueStrings(toolBlocks.map(readToolBlockName)),
+      };
+      if (activeTurn.openToolCalls.size > 0) {
+        this.emitProgressCandidateIfEligible(agentId, activeTurn, { allowOpenToolCalls: true });
+      } else if (activeTurn.completedToolCalls.size > 0) {
+        this.emitProgressCandidateIfEligible(agentId, activeTurn, { allowCompletedToolCalls: true });
+      }
+      return;
+    }
+
+    if (activeTurn.openToolCalls.size > 0 && !onlyPresentChoicesToolBlocks) {
+      activeTurn.candidate = {
+        text,
+        kind: "progress",
+        sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
+      };
+      this.emitProgressCandidateIfEligible(agentId, activeTurn, { allowOpenToolCalls: true });
+      return;
+    }
+
+    if (
+      onlyPresentChoicesToolBlocks &&
+      completedToolBlocksHaveError(activeTurn.completedToolCalls, toolBlocks)
+    ) {
+      return;
+    }
+
+    if (!options?.provisional && activeTurn.progressEmitted && activeTurn.lastProgressText) {
+      text = removeAlreadyEmittedProgressPrefix(text, activeTurn.lastProgressText);
+      if (!text) {
+        return;
+      }
+    }
+
     activeTurn.candidate = {
       text,
+      kind: "final",
       sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
       ...(onlyPresentChoicesToolBlocks ? { preserveThroughToolName: "present_choices" } : {}),
     };
@@ -167,8 +230,9 @@ export class ManagerAssistantOutputTracker {
     }
 
     if (
-      (!options?.allowOpenToolCalls && activeTurn.openToolCallIds.size > 0) ||
-      !activeTurn.candidate
+      (!options?.allowOpenToolCalls && activeTurn.openToolCalls.size > 0) ||
+      !activeTurn.candidate ||
+      activeTurn.candidate.kind !== "final"
     ) {
       return false;
     }
@@ -187,6 +251,48 @@ export class ManagerAssistantOutputTracker {
       sourceContext: candidate.sourceContext,
     });
     this.options.markSessionActivity(agentId, timestamp);
+    return true;
+  }
+
+  private emitProgressCandidateIfEligible(
+    agentId: string,
+    activeTurn: ActiveManagerAssistantOutputTurn,
+    options?: {
+      allowOpenToolCalls?: boolean;
+      allowCompletedToolCalls?: boolean;
+      startedToolCallId?: string;
+      startedToolName?: string;
+    },
+  ): boolean {
+    if (activeTurn.target.kind !== "session_transcript") {
+      return false;
+    }
+
+    if (
+      (!options?.allowOpenToolCalls && activeTurn.openToolCalls.size > 0) ||
+      !activeTurn.candidate ||
+      activeTurn.candidate.preserveThroughToolName ||
+      !candidateMatchesToolWork(activeTurn.candidate, activeTurn.openToolCalls, activeTurn.completedToolCalls, options)
+    ) {
+      return false;
+    }
+
+    const candidate = activeTurn.candidate;
+    activeTurn.candidate = undefined;
+
+    const timestamp = this.options.now();
+    this.options.emitConversationMessage({
+      type: "conversation_message",
+      agentId,
+      role: "assistant",
+      text: candidate.text,
+      timestamp,
+      source: "assistant_progress",
+      sourceContext: candidate.sourceContext,
+    });
+    this.options.markSessionActivity(agentId, timestamp);
+    activeTurn.progressEmitted = true;
+    activeTurn.lastProgressText = candidate.text;
     return true;
   }
 }
@@ -232,4 +338,107 @@ function getToolLikeMessageBlocks(message: unknown): Array<Record<string, unknow
 function readToolBlockName(block: Record<string, unknown>): string | undefined {
   const name = block.name ?? block.toolName;
   return typeof name === "string" ? name : undefined;
+}
+
+function readToolBlockId(block: Record<string, unknown>): string | undefined {
+  const id = block.id ?? block.toolCallId ?? block.tool_call_id ?? block.callId;
+  return typeof id === "string" ? id : undefined;
+}
+
+function collectUniqueStrings(values: Array<string | undefined>): string[] | undefined {
+  const unique = [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+  return unique.length > 0 ? unique : undefined;
+}
+
+function candidateHasExpectedToolReference(candidate: AssistantOutputCandidate | undefined): boolean {
+  return Boolean(candidate?.expectedToolCallIds?.length || candidate?.expectedToolNames?.length);
+}
+
+function candidateMatchesToolWork(
+  candidate: AssistantOutputCandidate,
+  openToolCalls: Map<string, string>,
+  completedToolCalls: Map<string, { toolName: string; isError: boolean }>,
+  options:
+    | {
+        allowOpenToolCalls?: boolean;
+        allowCompletedToolCalls?: boolean;
+        startedToolCallId?: string;
+        startedToolName?: string;
+      }
+    | undefined,
+): boolean {
+  if (candidate.expectedToolCallIds?.length) {
+    if (options?.startedToolCallId) {
+      return candidate.expectedToolCallIds.includes(options.startedToolCallId);
+    }
+    return (
+      (options?.allowOpenToolCalls === true &&
+        candidate.expectedToolCallIds.some((toolCallId) => openToolCalls.has(toolCallId))) ||
+      (options?.allowCompletedToolCalls === true &&
+        candidate.expectedToolCallIds.some((toolCallId) => {
+          const completed = completedToolCalls.get(toolCallId);
+          return Boolean(completed && !completed.isError);
+        }))
+    );
+  }
+
+  if (candidate.expectedToolNames?.length) {
+    if (options?.startedToolName) {
+      return candidate.expectedToolNames.includes(options.startedToolName);
+    }
+    return (
+      (options?.allowOpenToolCalls === true &&
+        [...openToolCalls.values()].some((toolName) => candidate.expectedToolNames?.includes(toolName))) ||
+      (options?.allowCompletedToolCalls === true &&
+        [...completedToolCalls.values()].some(
+          (tool) => !tool.isError && candidate.expectedToolNames?.includes(tool.toolName),
+        ))
+    );
+  }
+
+  return true;
+}
+
+function completedToolBlocksHaveError(
+  completedToolCalls: Map<string, { toolName: string; isError: boolean }>,
+  toolBlocks: Array<Record<string, unknown>>,
+): boolean {
+  for (const block of toolBlocks) {
+    const id = readToolBlockId(block);
+    if (id) {
+      const completed = completedToolCalls.get(id);
+      if (completed?.isError) {
+        return true;
+      }
+      continue;
+    }
+
+    const name = readToolBlockName(block);
+    if (name && [...completedToolCalls.values()].some((tool) => tool.toolName === name && tool.isError)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function removeAlreadyEmittedProgressPrefix(text: string, progressText: string): string | undefined {
+  if (text === progressText) {
+    return undefined;
+  }
+
+  if (!text.startsWith(progressText)) {
+    return text;
+  }
+
+  const rawRemainder = text.slice(progressText.length);
+  const remainder = rawRemainder.trimStart();
+  if (!remainder) {
+    return undefined;
+  }
+
+  if (/^\s/.test(rawRemainder) && !/[.!?:;)\]]$/.test(progressText) && /^[a-z]/.test(remainder)) {
+    return text;
+  }
+
+  return remainder.replace(/^[.!?:;]+\s*/, "").trim() || undefined;
 }

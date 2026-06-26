@@ -112,6 +112,7 @@ function isConversationMessageRoleSourcePair(
   switch (source) {
     case "speak_to_user":
     case "assistant_output":
+    case "assistant_progress":
       return role === "assistant";
     case "user_input":
     case "project_agent_input":

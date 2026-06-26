@@ -66,7 +66,7 @@ describe("FileBackedPromptRegistry", () => {
     });
 
     await expect(registry.resolve("archetype", "manager")).resolves.toContain(
-      "Normal web/session chat does not need a tool for final replies: just answer normally."
+      "Normal web/session chat does not need a tool for final replies or same-turn progress updates."
     );
     await expect(registry.resolve("archetype", "manager")).resolves.not.toBe("stale manager prompt\n");
     await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(
