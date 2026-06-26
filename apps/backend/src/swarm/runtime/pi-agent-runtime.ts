@@ -1104,8 +1104,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         contextWindow: triggeringUsage.contextWindow,
         contextPercent: triggeringUsage.percent,
         userFacingMessage: willPrepareHandoff
-          ? "Context is getting full — preparing handoff before automatic compaction."
-          : "Context limit reached — recovering now."
+          ? "Context is getting full — preparing handoff for automatic smart compaction."
+          : "Context limit reached — running recovery compaction now."
       }
     });
 
@@ -1244,7 +1244,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
           contextTokens: details.contextTokens,
           contextWindow: details.contextWindow,
           compactionEntryId: entry.id ?? entry.key,
-          userFacingMessage: "Context recovered and compacted."
+          userFacingMessage: details.handoffWritten
+            ? "Automatic smart compaction complete."
+            : "Recovery compaction complete."
         }
       });
     }

@@ -697,12 +697,23 @@ describe("mid-turn context guard", () => {
     expect(session.compactCalls).toBe(1);
     expect(runtimeErrors).toContainEqual(
       expect.objectContaining({
+        phase: "context_guard",
+        message: "Context limit approaching — running intelligent handoff before compaction",
+        details: expect.objectContaining({
+          recoveryStage: "guard_started",
+          userFacingMessage: "Context is getting full — preparing handoff for automatic smart compaction."
+        })
+      })
+    );
+    expect(runtimeErrors).toContainEqual(
+      expect.objectContaining({
         phase: "compaction",
         message: "Context compacted by context guard",
         details: expect.objectContaining({
           recoveryStage: "context_guard_compaction_succeeded",
           source: "pi_context_guard",
-          compactionEntryId: "compact-1"
+          compactionEntryId: "compact-1",
+          userFacingMessage: "Automatic smart compaction complete."
         })
       })
     );
@@ -754,7 +765,7 @@ describe("mid-turn context guard", () => {
   });
 
   it("runContextGuard skips handoff when triggering usage is above hard threshold", async () => {
-    const { runtime, session } = createRuntime();
+    const { runtime, session, runtimeErrors } = createRuntime();
     session.contextUsage = {
       tokens: 190_000,
       contextWindow: 200_000,
@@ -770,6 +781,24 @@ describe("mid-turn context guard", () => {
     expect(session.promptCalls).toHaveLength(1);
     expect(session.compactCalls).toBe(1);
     expect(readFileMock).not.toHaveBeenCalled();
+    expect(runtimeErrors).toContainEqual(
+      expect.objectContaining({
+        phase: "context_guard",
+        details: expect.objectContaining({
+          recoveryStage: "guard_started",
+          userFacingMessage: "Context limit reached — running recovery compaction now."
+        })
+      })
+    );
+    expect(runtimeErrors).toContainEqual(
+      expect.objectContaining({
+        phase: "compaction",
+        details: expect.objectContaining({
+          recoveryStage: "context_guard_compaction_succeeded",
+          userFacingMessage: "Recovery compaction complete."
+        })
+      })
+    );
   });
 
   it("runContextGuard awaits handoff file cleanup before completing", async () => {

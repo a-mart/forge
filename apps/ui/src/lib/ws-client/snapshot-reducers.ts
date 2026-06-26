@@ -104,7 +104,6 @@ export function reduceAgentsSnapshot(input: {
             status,
             pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
             contextUsage: agent.contextUsage,
-            contextRecoveryInProgress: previous?.contextRecoveryInProgress,
             streamingStartedAt: resolveStreamingStartedAt(previous, status, agent.streamingStartedAt),
           },
         ]
@@ -222,7 +221,6 @@ export function reduceSessionWorkersSnapshot(input: {
       status: worker.status,
       pendingCount: previous && previous.status === worker.status ? previous.pendingCount : 0,
       contextUsage: worker.contextUsage,
-      contextRecoveryInProgress: previous?.contextRecoveryInProgress,
       streamingStartedAt: resolveStreamingStartedAt(previous, worker.status, worker.streamingStartedAt),
     }
   }
