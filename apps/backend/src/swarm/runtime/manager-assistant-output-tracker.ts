@@ -31,7 +31,6 @@ interface AssistantOutputCandidate {
 interface ActiveManagerAssistantOutputTurn {
   target: AssistantOutputTarget;
   openToolCallIds: Set<string>;
-  explicitAssistantDelivered: boolean;
   candidate?: AssistantOutputCandidate;
 }
 
@@ -50,7 +49,6 @@ export class ManagerAssistantOutputTracker {
     this.activeTurnsByAgentId.set(agentId, {
       target,
       openToolCallIds: new Set<string>(),
-      explicitAssistantDelivered: false,
     });
   }
 
@@ -77,14 +75,10 @@ export class ManagerAssistantOutputTracker {
     return this.emitCandidateIfEligible(agentId, activeTurn, { allowOpenToolCalls: true });
   }
 
-  markExplicitAssistantOutput(agentId: string): void {
-    const activeTurn = this.activeTurnsByAgentId.get(agentId);
-    if (!activeTurn) {
-      return;
-    }
-
-    activeTurn.explicitAssistantDelivered = true;
-    activeTurn.candidate = undefined;
+  markExplicitAssistantOutput(_agentId: string): void {
+    // Intentional no-op: manager-authored clean final text is projected based on
+    // the active output surface, even if speak_to_user already published similar
+    // text earlier in the same turn. Duplicate prevention must not hide output.
   }
 
   handleRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
@@ -132,10 +126,6 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    if (activeTurn.explicitAssistantDelivered) {
-      return;
-    }
-
     if (extractRole(event.message) !== "assistant") {
       return;
     }
@@ -177,7 +167,6 @@ export class ManagerAssistantOutputTracker {
     }
 
     if (
-      activeTurn.explicitAssistantDelivered ||
       (!options?.allowOpenToolCalls && activeTurn.openToolCallIds.size > 0) ||
       !activeTurn.candidate
     ) {

@@ -1344,7 +1344,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('does not project assistant_output for internal manager messages or project-agent peer context', async () => {
+  it('projects internal normal web manager messages but not project-agent peer context', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const sender = await bootWithDefaultManager(manager, config)
@@ -1372,8 +1372,93 @@ describe('SwarmManager', () => {
       'Peer direct text',
     )
 
-    expect(assistantOutputsFor(manager, sender.agentId)).toEqual([])
+    expect(assistantOutputsFor(manager, sender.agentId).map((entry) => entry.text)).toEqual(['Internal direct text'])
     expect(assistantOutputsFor(manager, target.agentId)).toEqual([])
+  })
+
+  it('projects normal web manager final text after non-worker agent reports without worker handoff', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const target = await bootWithDefaultManager(manager, config)
+    const reporter = await manager.createManager(target.agentId, {
+      name: 'Project-ish Reporter',
+      cwd: config.defaultCwd,
+    })
+
+    await manager.sendMessage(
+      reporter.agentId,
+      target.agentId,
+      'WORKER REPORT: status: done [assistantOutputTarget] {"mode":"internal_only"}\nsummary: design decisions updated',
+      'auto',
+    )
+    const workerReportRuntimeMessage = manager.runtimeByAgentId.get(target.agentId)?.sendCalls.at(-1)?.message
+    expect(typeof workerReportRuntimeMessage).toBe('string')
+    expect(workerReportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    expect(assistantOutputsFor(manager, target.agentId)).toEqual([])
+
+    await projectAssistantFinalText(
+      manager,
+      target.agentId,
+      workerReportRuntimeMessage,
+      'Updated. The central design doc now reflects these decisions.',
+    )
+
+    await manager.sendMessage(
+      reporter.agentId,
+      target.agentId,
+      'SYSTEM: ## Completion Report: Follow-up\nThe follow-up is complete.',
+      'auto',
+    )
+    const completionReportRuntimeMessage = manager.runtimeByAgentId.get(target.agentId)?.sendCalls.at(-1)?.message
+    expect(typeof completionReportRuntimeMessage).toBe('string')
+    expect(completionReportRuntimeMessage as string).toContain(
+      '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    )
+    expect(assistantOutputsFor(manager, target.agentId).map((entry) => entry.text)).toEqual([
+      'Updated. The central design doc now reflects these decisions.',
+    ])
+
+    await projectAssistantFinalText(
+      manager,
+      target.agentId,
+      completionReportRuntimeMessage,
+      'Done. The follow-up is complete.',
+    )
+
+    expect(assistantOutputsFor(manager, target.agentId).map((entry) => entry.text)).toEqual([
+      'Updated. The central design doc now reflects these decisions.',
+      'Done. The follow-up is complete.',
+    ])
+    expect(
+      assistantOutputsFor(manager, target.agentId).some((entry) => String(entry.text).includes('WORKER REPORT')),
+    ).toBe(false)
+    expect(
+      assistantOutputsFor(manager, target.agentId).some((entry) => String(entry.text).includes('Completion Report')),
+    ).toBe(false)
+  })
+
+  it('projects normal web manager final text even when inherited input marker is peer_agent', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Peer Marker Worker' })
+    ;(manager as any).inheritedAssistantOutputTargetByWorkerId.set(worker.agentId, {
+      kind: 'peer_agent',
+      fromAgentId: 'peer-source',
+    })
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: peer marker closeout', 'auto')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof reportRuntimeMessage).toBe('string')
+    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"kind":"peer_agent"}')
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Peer marker closeout projects.')
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Peer marker closeout projects.',
+    ])
   })
 
   it('projects manager final text after an inherited direct-web worker report', async () => {
@@ -1608,7 +1693,7 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('does not project worker-report closeouts for internal manager-to-worker dispatches without an active root', async () => {
+  it('projects normal web worker-report closeouts even without an active root', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1623,18 +1708,21 @@ describe('SwarmManager', () => {
     expect(typeof reportRuntimeMessage).toBe('string')
     expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
 
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Background closeout must stay hidden')
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Background closeout now projects')
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: repeated background maintenance finished', 'auto')
     const repeatedReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof repeatedReportRuntimeMessage).toBe('string')
     expect(repeatedReportRuntimeMessage as string).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
-    await projectAssistantFinalText(manager, 'manager', repeatedReportRuntimeMessage, 'Repeated background closeout must stay hidden')
+    await projectAssistantFinalText(manager, 'manager', repeatedReportRuntimeMessage, 'Repeated background closeout now projects')
 
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Background closeout now projects',
+      'Repeated background closeout now projects',
+    ])
   })
 
-  it('suppresses inherited worker-report assistant_output after speak_to_user', async () => {
+  it('still projects inherited worker-report assistant_output after speak_to_user', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1654,7 +1742,7 @@ describe('SwarmManager', () => {
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Duplicate closeout'])
   })
 
   it('does not project protected worker-report closeouts after runtime errors clear web handoffs', async () => {
@@ -1849,7 +1937,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('suppresses assistant_output after canonical speak_to_user publication regardless of tool result payload', async () => {
+  it('projects assistant_output after canonical speak_to_user publication even when duplicate', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1875,7 +1963,7 @@ describe('SwarmManager', () => {
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Duplicate direct final'])
   })
 
   it('includes full sourceContext annotation when forwarding telegram user messages to manager runtime', async () => {

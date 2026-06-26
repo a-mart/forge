@@ -7368,48 +7368,86 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     },
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
-    if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
-      return this.resolveAssistantOutputProjectionTargetForInputRoutingAgentMessage(input, inputTarget);
+    const inheritedRoutingTarget = this.resolveInheritedAssistantOutputRoutingTarget(input);
+    if (inheritedRoutingTarget) {
+      return inheritedRoutingTarget;
     }
 
-    if (inputTarget.kind !== "internal_only") {
-      return inputTarget;
+    const defaultWebTarget = this.resolveDefaultManagerFinalTextWebProjectionTarget(input, inputTarget);
+    if (defaultWebTarget) {
+      return defaultWebTarget;
     }
 
-    if (inputTarget.reason === "no_active_root") {
-      return inputTarget;
-    }
-
-    if (!this.canDefaultWorkerReportManagerOutputToWebTranscript(input.target)) {
-      return inputTarget;
-    }
-
-    return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+    return inputTarget;
   }
 
-  private resolveAssistantOutputProjectionTargetForInputRoutingAgentMessage(
+  private resolveDefaultManagerFinalTextWebProjectionTarget(
     input: {
       sender: AgentDescriptor;
       target: AgentDescriptor;
       workerReportSourceAgentId?: string;
     },
     inputTarget: AssistantOutputTarget,
-  ): AssistantOutputTarget {
-    if (inputTarget.kind !== "explicit_tool_required" || inputTarget.reason !== "agent_message") {
-      return inputTarget;
+  ): SessionTranscriptAssistantOutputTarget | undefined {
+    if (inputTarget.kind === "session_transcript") {
+      return cloneSessionTranscriptAssistantOutputTarget(inputTarget);
     }
 
+    if (!this.canProjectManagerFinalTextToWebByDefault(input, inputTarget)) {
+      return undefined;
+    }
+
+    return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+  }
+
+  private resolveInheritedAssistantOutputRoutingTarget(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    workerReportSourceAgentId?: string;
+  }): AssistantOutputTarget | undefined {
     const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
     if (!sourceWorkerId) {
-      return inputTarget;
+      return undefined;
     }
 
     const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
-    return inheritedTarget?.kind === "session_transcript" ? cloneAssistantOutputTarget(inheritedTarget) : inputTarget;
+    if (!inheritedTarget) {
+      return undefined;
+    }
+
+    if (inheritedTarget.kind === "session_transcript") {
+      return cloneAssistantOutputTarget(inheritedTarget);
+    }
+
+    if (this.isProtectedInheritedAssistantOutputRoutingTarget(input.target, inheritedTarget)) {
+      return cloneAssistantOutputTarget(inheritedTarget);
+    }
+
+    return undefined;
   }
 
-  private canDefaultWorkerReportManagerOutputToWebTranscript(target: AgentDescriptor): boolean {
+  private canProjectManagerFinalTextToWebByDefault(
+    input: {
+      sender: AgentDescriptor;
+      target: AgentDescriptor;
+      workerReportSourceAgentId?: string;
+    },
+    _inputTarget: AssistantOutputTarget,
+  ): boolean {
+    const { sender, target } = input;
     if (target.role !== "manager") {
+      return false;
+    }
+
+    if (
+      sender.role === "manager" &&
+      sender.agentId !== target.agentId &&
+      (target.projectAgent !== undefined || target.creatorAgentId === sender.agentId)
+    ) {
+      return false;
+    }
+
+    if (sender.role === "worker" && (target.projectAgent !== undefined || target.creatorAgentId !== undefined)) {
       return false;
     }
 
@@ -7437,6 +7475,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return true;
+  }
+
+  private isProtectedInheritedAssistantOutputRoutingTarget(
+    manager: AgentDescriptor,
+    target: AssistantOutputTarget,
+  ): boolean {
+    if (target.kind === "external_channel") {
+      return true;
+    }
+
+    if (target.kind === "peer_agent") {
+      return manager.projectAgent !== undefined || manager.creatorAgentId === target.fromAgentId;
+    }
+
+    if (target.kind === "internal_only") {
+      return false;
+    }
+
+    if (target.kind !== "explicit_tool_required") {
+      return false;
+    }
+
+    return manager.projectAgent !== undefined || manager.creatorAgentId !== undefined || target.reason !== "agent_message";
   }
 
   private consumeWorkerAssistantOutputInheritanceAfterReportDispatch(input: {

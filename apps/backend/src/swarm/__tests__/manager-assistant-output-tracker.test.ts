@@ -73,7 +73,7 @@ describe("ManagerAssistantOutputTracker", () => {
     expect(emitted).toEqual([]);
   });
 
-  it("suppresses duplicates after canonical successful speak_to_user publication", () => {
+  it("still projects clean final text after canonical successful speak_to_user publication", () => {
     const { tracker, emitted } = createTracker();
     tracker.activateTurn("manager-1", WEB_TARGET);
 
@@ -81,7 +81,8 @@ describe("ManagerAssistantOutputTracker", () => {
     tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Duplicate."));
     tracker.handleRuntimeEvent("manager-1", { type: "turn_end", toolResults: [] });
 
-    expect(emitted).toEqual([]);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ text: "Duplicate.", source: "assistant_output" });
   });
 
   it("does not suppress duplicates from provider-specific speak_to_user tool result payloads alone", () => {
