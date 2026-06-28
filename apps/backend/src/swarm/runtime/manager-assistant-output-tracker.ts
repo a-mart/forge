@@ -169,12 +169,20 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
+    const textAfterAlreadyEmittedProgress =
+      !options?.provisional && activeTurn.progressEmitted && activeTurn.lastProgressText
+        ? removeAlreadyEmittedProgressPrefix(text, activeTurn.lastProgressText)
+        : text;
+
     const toolBlocks = getToolLikeMessageBlocks(event.message);
     const onlyPresentChoicesToolBlocks =
       toolBlocks.length > 0 && toolBlocks.every((block) => readToolBlockName(block) === "present_choices");
     if (toolBlocks.length > 0 && !onlyPresentChoicesToolBlocks) {
+      if (!textAfterAlreadyEmittedProgress) {
+        return;
+      }
       activeTurn.candidate = {
-        text,
+        text: textAfterAlreadyEmittedProgress,
         kind: "progress",
         sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
         expectedToolCallIds: collectUniqueStrings(toolBlocks.map(readToolBlockId)),
@@ -189,8 +197,11 @@ export class ManagerAssistantOutputTracker {
     }
 
     if (activeTurn.openToolCalls.size > 0 && !onlyPresentChoicesToolBlocks) {
+      if (!textAfterAlreadyEmittedProgress) {
+        return;
+      }
       activeTurn.candidate = {
-        text,
+        text: textAfterAlreadyEmittedProgress,
         kind: "progress",
         sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
       };
@@ -205,8 +216,8 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    if (!options?.provisional && activeTurn.progressEmitted && activeTurn.lastProgressText) {
-      text = removeAlreadyEmittedProgressPrefix(text, activeTurn.lastProgressText);
+    if (textAfterAlreadyEmittedProgress !== text) {
+      text = textAfterAlreadyEmittedProgress;
       if (!text) {
         return;
       }

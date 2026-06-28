@@ -440,6 +440,23 @@ describe("ManagerAssistantOutputTracker", () => {
     expect(emitted[0]).toMatchObject({ text: "I'll inspect the files now.", source: "assistant_progress" });
   });
 
+  it("does not replay the same streamed progress text as progress when message_end arrives before tool completion", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+
+    tracker.handleRuntimeEvent("manager-1", assistantMessageUpdate("I'll inspect the files now."));
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "read", toolCallId: "read-1", args: {} });
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("I'll inspect the files now."));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ text: "I'll inspect the files now.", source: "assistant_progress" });
+
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_end", toolName: "read", toolCallId: "read-1", isError: false });
+    tracker.handleRuntimeEvent("manager-1", { type: "turn_end", toolResults: [] });
+
+    expect(emitted).toHaveLength(1);
+  });
+
   it("does not duplicate already emitted streamed progress when final text includes a closeout suffix", () => {
     const { tracker, emitted } = createTracker();
     tracker.activateTurn("manager-1", WEB_TARGET);
