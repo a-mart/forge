@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from 'react'
-import { Copy, Check, GitFork, Pin, MessageSquareReply } from 'lucide-react'
+import { Copy, Check, GitFork, Pin, Reply } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
@@ -59,15 +59,15 @@ function ReplyButton({ onClick, userTone = false }: { onClick: () => void; userT
       type="button"
       onClick={onClick}
       className={cn(
-        'inline-flex size-5 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'inline-flex size-6 items-center justify-center rounded-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         userTone
-          ? 'text-primary-foreground/50 hover:text-primary-foreground'
-          : 'text-muted-foreground/50 hover:text-muted-foreground',
+          ? 'text-primary-foreground/70 hover:bg-primary-foreground/10 hover:text-primary-foreground'
+          : 'text-muted-foreground/70 hover:text-foreground',
       )}
       aria-label="Reply to this message"
       title="Reply"
     >
-      <MessageSquareReply className="size-3" />
+      <Reply className="size-3.5" />
     </button>
   )
 }
