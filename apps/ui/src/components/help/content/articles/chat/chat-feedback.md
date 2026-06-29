@@ -2,10 +2,11 @@ Forge lets you rate both individual messages and entire sessions. Feedback is st
 
 ## Message feedback
 
-Hover over any agent message to see thumbs up and thumbs down buttons.
+Hover over an assistant message and open the feedback trigger. Copy, Reply, Pin, and Fork stay visible on assistant rows, while feedback lives in one popover.
 
-- **Thumbs up**: Click once to upvote. Click again to open a detail panel where you can select reason codes (like "Accuracy," "Great Outcome," "Instruction Following") and add an optional comment.
-- **Thumbs down**: Click to open a reason picker immediately. Select what went wrong (like "Verbosity," "Over-Engineered," "Poor Outcome") and optionally add a comment. Submit to record the downvote.
+- **Good response**: Record a positive vote. You can also select reason codes like "Accuracy," "Great Outcome," or "Instruction Following" and add an optional comment.
+- **Needs work**: Open the reason picker for what went wrong, such as "Verbosity," "Over-Engineered," or "Poor Outcome." Add an optional comment, then submit to record the negative vote.
+- **Add/update comment**: Add a standalone comment without voting, or update the existing comment for that message.
 
 ## Session feedback
 
@@ -13,7 +14,7 @@ Session-level feedback appears in the chat header, next to the status indicator.
 
 ## Comments
 
-The speech bubble button lets you add a standalone comment without voting. If a comment already exists (shown by a filled icon), you can update or remove it.
+Use **Add/update comment** in the feedback popover to add a standalone comment without voting. If a comment already exists, you can update or remove it.
 
 ## Reason codes
 

@@ -319,13 +319,13 @@ This approach has enabled one-shotting features with 20,000+ lines of code. It's
 
 ### The Feedback System
 
-Every message in Forge has three buttons: **👍**, **👎**, and **💬** (comment). These feed directly into Cortex's learning system.
+Message feedback in Forge sits behind one feedback trigger and popover. It offers **Good response**, **Needs work**, and **Add/update comment** actions, and feeds directly into Cortex's learning system.
 
-**Thumbs down** — When the manager or a worker does something wrong. You can optionally select a category or write a comment explaining what was bad. This is your most important feedback signal.
+**Needs work** — When the manager or a worker does something wrong. You can optionally select a category or write a comment explaining what was bad. This is your most important feedback signal.
 
-**Thumbs up** — When something is impressive. An innovative solution, a well-structured plan, a clean implementation. Don't overuse this. Save it for the moments that matter.
+**Good response** — When something is impressive. An innovative solution, a well-structured plan, a clean implementation. Don't overuse this. Save it for the moments that matter.
 
-**Comment** — For patterns you're noticing. "I'm seeing a tendency to over-engineer simple solutions" or "Always check for null before accessing nested properties in this codebase." Comments don't require a positive or negative rating.
+**Add/update comment** — For patterns you're noticing. "I'm seeing a tendency to over-engineer simple solutions" or "Always check for null before accessing nested properties in this codebase." Comments don't require a positive or negative rating.
 
 **Session-level ratings** — You can also rate entire sessions, which helps Cortex understand which conversations were productive.
 

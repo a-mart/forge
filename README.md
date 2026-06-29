@@ -177,7 +177,7 @@ You can also manually stop any agent from the UI, but you'll rarely need to.
 
 ### Feedback
 
-Every message has a thumbs up, thumbs down, and comment button. These aren't decorative. Your ratings feed into Cortex's review cycle to identify what's working and what isn't.
+Message feedback is collected through a single feedback trigger and popover with **Good response**, **Needs work**, and **Add/update comment** actions. These aren't decorative. Your ratings feed into Cortex's review cycle to identify what's working and what isn't.
 
 You don't need to rate every message. Focus on the meaningful moments: when the manager does something clever, when a worker produces garbage, when you notice a recurring pattern. Sessions can also be rated holistically.
 
