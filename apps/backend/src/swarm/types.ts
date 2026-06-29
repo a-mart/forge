@@ -8,6 +8,7 @@ import {
   type AgentSessionSurface,
   type ChoiceRequestEvent,
   type CollaborationAuthor,
+  type ConversationReplyTarget,
   type MessageChannel as ProtocolMessageChannel,
   type ManagerProfile,
   type ExternalThreadInfo,
@@ -285,6 +286,7 @@ export interface ConversationMessageEvent {
   projectAgentContext?: ProjectAgentMessageContext;
   externalThreadContext?: ExternalThreadMessageContext;
   pinned?: boolean;
+  replyTo?: ConversationReplyTarget;
 }
 
 export type ConversationLogKind =

@@ -267,6 +267,49 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('serializes reply target metadata on user_message commands', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    client.sendUserMessage('reply body', {
+      replyTo: {
+        messageId: 'original-1',
+        role: 'assistant',
+        timestamp: '2026-06-29T10:00:00.000Z',
+        text: 'Original assistant text',
+        source: 'speak_to_user',
+        attachmentCount: 1,
+      },
+    })
+
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
+      type: 'user_message',
+      text: 'reply body',
+      agentId: 'manager',
+      replyTo: {
+        messageId: 'original-1',
+        role: 'assistant',
+        timestamp: '2026-06-29T10:00:00.000Z',
+        text: 'Original assistant text',
+        source: 'speak_to_user',
+        attachmentCount: 1,
+      },
+    })
+
+    client.destroy()
+  })
+
   it('sends choice response and cancel commands', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

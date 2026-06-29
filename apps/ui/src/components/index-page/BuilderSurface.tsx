@@ -36,6 +36,7 @@ import { DiffViewerContent } from '@/components/diff-viewer/DiffViewerDialog'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
+import { isReplyTargetLoadedInMessages } from '@/components/index-page/reply-target-utils'
 import { requestGuardedAgentTransition, requestGuardedArtifactsPanelToggle } from '@/components/index-page/builder-file-editor-guard-actions'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import { chooseFallbackAgentId, filterAgentsAfterProfileArchive, filterAgentsAfterSessionArchive, isAgentEffectivelyArchived, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
@@ -79,6 +80,7 @@ import type {
   AgentDescriptor,
   ChoiceAnswer,
   ConversationAttachment,
+  ConversationReplyTargetInput,
   ManagerExactModelSelection,
   ManagerReasoningLevel,
   ProjectAgentExternalDirectoryEntry,
@@ -143,6 +145,7 @@ export function BuilderSurface({
     navigateToOuterRoute(nextRouteState, replace)
   }, [navigateToOuterRoute])
   const messageInputRef = useRef<MessageInputHandle | null>(null)
+  const [replyTarget, setReplyTarget] = useState<ConversationReplyTargetInput | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
   const archiveHydrationRequestedRef = useRef(false)
@@ -217,6 +220,21 @@ export function BuilderSurface({
 
     return state.agents.find((agent) => agent.agentId === activeAgentId) ?? null
   }, [activeAgentId, state.agents])
+
+  useEffect(() => {
+    setReplyTarget(null)
+  }, [activeAgentId])
+
+  useEffect(() => {
+    const targetId = replyTarget?.messageId.trim()
+    if (!targetId) {
+      return
+    }
+
+    if (!isReplyTargetLoadedInMessages(replyTarget, state.messages)) {
+      setReplyTarget(null)
+    }
+  }, [replyTarget, state.messages])
 
   const {
     activeArtifact,
@@ -906,9 +924,13 @@ export function BuilderSurface({
     )
   }, [state.agents])
 
-  const handleSend = (text: string, attachments?: ConversationAttachment[]) => {
+  const handleSend = (
+    text: string,
+    attachments?: ConversationAttachment[],
+    options?: { replyTo?: ConversationReplyTargetInput },
+  ) => {
     if (!activeAgentId) {
-      return
+      return false
     }
 
     const compactCommand =
@@ -918,7 +940,7 @@ export function BuilderSurface({
 
     if (compactCommand) {
       void handleCompactManager(compactCommand.customInstructions)
-      return
+      return true
     }
 
     markPendingResponse(activeAgentId, state.messages.length)
@@ -927,8 +949,15 @@ export function BuilderSurface({
       agentId: activeAgentId,
       delivery: isActiveManager ? 'steer' : isLoading ? 'steer' : 'auto',
       attachments,
+      replyTo: options?.replyTo,
     })
+    return true
   }
+
+  const handleReplyToMessage = useCallback((target: ConversationReplyTargetInput) => {
+    setReplyTarget(target)
+    requestAnimationFrame(() => messageInputRef.current?.focus())
+  }, [])
 
   const handleMessageInputSubmitted = useCallback(() => {
     messageListRef.current?.scrollToBottom('smooth')
@@ -957,11 +986,14 @@ export function BuilderSurface({
       return
     }
 
+    setReplyTarget(null)
+
     // Multi-session: clear current session conversation
     const profileId = activeAgent.profileId
     if (profileId && clientRef.current) {
       void (async () => {
         try {
+          setReplyTarget(null)
           await clientRef.current!.clearSession(activeAgentId)
         } catch (error) {
           setState((prev) => ({
@@ -974,6 +1006,7 @@ export function BuilderSurface({
     }
 
     // Legacy fallback: destructive /new
+    setReplyTarget(null)
     clientRef.current?.sendUserMessage('/new', {
       agentId: activeAgentId,
       delivery: 'steer',
@@ -2242,6 +2275,7 @@ export function BuilderSurface({
                   onForkFromMessage: activeAgentId ? handleForkFromMessage : undefined,
                   onPinMessage: isActiveManager && activeAgentId ? handlePinMessage : undefined,
                   onStopExternalThread: handleStopSession,
+                  onReplyToMessage: handleReplyToMessage,
                   getVote: feedbackProfileId ? getVote : undefined,
                   hasComment: feedbackProfileId ? hasComment : undefined,
                   onFeedbackVote: feedbackProfileId ? submitVote : undefined,
@@ -2327,6 +2361,8 @@ export function BuilderSurface({
                   projectAgents: projectAgentSuggestions,
                   enableCodexMention: shouldEnableCodexMention(activeAgent),
                   managerAgentId: activeAgentId ?? undefined,
+                  replyTarget,
+                  onClearReplyTarget: () => setReplyTarget(null),
                 }}
               />
             )}

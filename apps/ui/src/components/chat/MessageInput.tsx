@@ -16,6 +16,7 @@ import { useMentions } from './message-input/hooks/use-mentions'
 import { useVoiceInput } from './message-input/hooks/use-voice-input'
 import { useAttachments } from './message-input/hooks/use-attachments'
 import { useComposer } from './message-input/hooks/use-composer'
+import { ReplyPreview } from './message-list/ReplyPreview'
 
 // Re-export public types for external consumers
 export type { ProjectAgentSuggestion, MessageInputHandle, MessageInputProps } from './message-input/types'
@@ -37,6 +38,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     projectAgents,
     enableCodexMention = false,
     managerAgentId,
+    replyTarget,
+    onClearReplyTarget,
   },
   ref,
 ) {
@@ -108,6 +111,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     onSubmitted,
     setInputWithDraft,
     setAttachedFilesWithDraft,
+    replyTarget,
+    onAccepted: onClearReplyTarget,
   })
 
   // --- Slash commands ---
@@ -343,6 +348,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       ) : null}
 
       <div className="overflow-hidden rounded-2xl border border-border">
+        {replyTarget ? (
+          <div className="border-b border-border/50 p-2 pb-1.5">
+            <ReplyPreview target={replyTarget} onClear={onClearReplyTarget} />
+          </div>
+        ) : null}
         <AttachedFiles attachments={attachedFiles} onRemove={attachments.removeAttachment} />
 
         <div className="group flex flex-col">

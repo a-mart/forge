@@ -11,6 +11,7 @@ import {
   WORK_PLAN_LIFECYCLE_REASONS,
   WORK_PLAN_MODES,
   WORK_PLAN_STATUSES,
+  type ConversationReplyTarget,
   type ModelCacheObservationEvent,
   type WorkPlanCreatedEvent,
   type WorkPlanItemSnapshot,
@@ -99,6 +100,56 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
   }
 
   if (maybe.pinned !== undefined && typeof maybe.pinned !== "boolean") {
+    return false;
+  }
+
+  if (maybe.replyTo !== undefined && !isConversationReplyTarget(maybe.replyTo)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isConversationReplyTarget(value: unknown): value is ConversationReplyTarget {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as Partial<ConversationReplyTarget>;
+  if (typeof maybe.messageId !== "string" || maybe.messageId.trim().length === 0) {
+    return false;
+  }
+
+  if (maybe.role !== "user" && maybe.role !== "assistant" && maybe.role !== "system") {
+    return false;
+  }
+
+  if (typeof maybe.timestamp !== "string" || maybe.timestamp.trim().length === 0) {
+    return false;
+  }
+
+  if (typeof maybe.text !== "string") {
+    return false;
+  }
+
+  if (maybe.source !== undefined && !isConversationMessageSource(maybe.source)) {
+    return false;
+  }
+
+  if (maybe.source !== undefined && !isConversationMessageRoleSourcePair(maybe.role, maybe.source)) {
+    return false;
+  }
+
+  if (
+    maybe.attachmentCount !== undefined &&
+    (typeof maybe.attachmentCount !== "number" ||
+      !Number.isInteger(maybe.attachmentCount) ||
+      maybe.attachmentCount < 0)
+  ) {
+    return false;
+  }
+
+  if (maybe.truncated !== undefined && typeof maybe.truncated !== "boolean") {
     return false;
   }
 

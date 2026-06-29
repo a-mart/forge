@@ -86,6 +86,65 @@ describe('ConversationMessageRow', () => {
     expect(onStopExternalThread).toHaveBeenCalledWith('manager-1--codex')
   })
 
+  it('shows a reply action for normal assistant messages', () => {
+    const onReplyToMessage = vi.fn()
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message',
+      agentId: 'manager-1',
+      id: 'assistant-1',
+      role: 'assistant',
+      text: 'Assistant answer',
+      timestamp: '2026-05-30T10:31:00.000Z',
+      source: 'speak_to_user',
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message,
+          onReplyToMessage,
+        }),
+      )
+    })
+
+    const replyButton = container.querySelector('button[aria-label="Reply to this message"]') as HTMLButtonElement | null
+    expect(replyButton).toBeTruthy()
+    replyButton?.click()
+    expect(onReplyToMessage).toHaveBeenCalledWith(message)
+  })
+
+  it('renders sent reply previews as disabled when the original is not loaded', () => {
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message',
+      agentId: 'manager-1',
+      id: 'user-1',
+      role: 'user',
+      text: 'My follow up',
+      timestamp: '2026-05-30T10:32:00.000Z',
+      source: 'user_input',
+      replyTo: {
+        messageId: 'missing-original',
+        role: 'assistant',
+        timestamp: '2026-05-30T10:31:00.000Z',
+        text: 'Original text',
+      },
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message,
+          onReplyPreviewClick: vi.fn(),
+          isReplyTargetLoaded: () => false,
+        }),
+      )
+    })
+
+    expect(container.textContent).toContain('Replying to Assistant')
+    const preview = container.querySelector('button[aria-label="Replying to Assistant. Original message is not loaded."]') as HTMLButtonElement | null
+    expect(preview?.disabled).toBe(true)
+  })
+
   it('keeps stop hidden on stale historical sent cards', () => {
     const onStopExternalThread = vi.fn()
     const message = {

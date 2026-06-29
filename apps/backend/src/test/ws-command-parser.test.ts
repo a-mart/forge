@@ -646,6 +646,59 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses user_message with optional replyTo input', () => {
+    expect(parseJsonCommand({
+      type: 'user_message',
+      text: ' Follow-up ',
+      replyTo: {
+        messageId: ' msg-1 ',
+        role: 'assistant',
+        timestamp: '2026-06-29T12:00:00.000Z',
+        text: 'Earlier answer',
+        source: 'assistant_output',
+        attachmentCount: 1,
+      },
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'user_message',
+        text: 'Follow-up',
+        attachments: undefined,
+        agentId: undefined,
+        delivery: undefined,
+        replyTo: {
+          messageId: 'msg-1',
+          role: 'assistant',
+          timestamp: '2026-06-29T12:00:00.000Z',
+          text: 'Earlier answer',
+          source: 'assistant_output',
+          attachmentCount: 1,
+        },
+      },
+    })
+  })
+
+  it('omits invalid user_message replyTo instead of rejecting the send', () => {
+    expect(parseJsonCommand({
+      type: 'user_message',
+      text: 'Still sendable',
+      replyTo: {
+        messageId: 'msg-1',
+        role: 'invalid-role',
+      },
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'user_message',
+        text: 'Still sendable',
+        attachments: undefined,
+        agentId: undefined,
+        delivery: undefined,
+        replyTo: undefined,
+      },
+    })
+  })
+
   it('parses collaboration websocket commands', () => {
     expect(parseJsonCommand({ type: 'collab_bootstrap' })).toEqual({
       ok: true,

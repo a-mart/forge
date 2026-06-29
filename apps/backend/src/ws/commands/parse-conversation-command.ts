@@ -1,4 +1,5 @@
 import { parseConversationAttachments } from "../attachment-parser.js";
+import { parseConversationReplyTargetInput } from "../../swarm/conversation-reply.js";
 import {
   fail,
   isValidChoiceAnswer,
@@ -39,12 +40,15 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
       return fail("user_message.delivery must be one of auto|followUp|steer");
     }
 
+    const replyTo = parseConversationReplyTargetInput((maybe as { replyTo?: unknown }).replyTo);
+
     return ok({
       type: "user_message",
       text: normalizedText,
       attachments: parsedAttachments.attachments.length > 0 ? parsedAttachments.attachments : undefined,
       agentId: maybe.agentId,
       delivery: maybe.delivery,
+      replyTo,
     });
   }
 

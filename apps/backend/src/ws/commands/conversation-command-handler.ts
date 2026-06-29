@@ -227,6 +227,7 @@ export async function handleConversationCommand(context: ConversationCommandRout
       targetAgentId,
       delivery: command.delivery,
       attachments: command.attachments,
+      replyTo: command.replyTo,
       sourceContext: authContext
         ? { channel: "web", userId: authContext.userId }
         : { channel: "web" },

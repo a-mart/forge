@@ -5,6 +5,7 @@ import {
   type ChoiceAnswer,
   type ClientCommand,
   type ConversationAttachment,
+  type ConversationReplyTargetInput,
   type DeliveryMode,
   type ManagerExactModelSelection,
   type ManagerModelPreset,
@@ -67,11 +68,13 @@ export function buildUserMessageCommand(input: {
   agentId: string
   delivery?: DeliveryMode
   attachments?: ConversationAttachment[]
+  replyTo?: ConversationReplyTargetInput
 }): ClientCommand {
   return {
     type: 'user_message',
     text: input.text,
     attachments: input.attachments && input.attachments.length > 0 ? input.attachments : undefined,
+    replyTo: input.replyTo,
     agentId: input.agentId,
     delivery: input.delivery,
   }

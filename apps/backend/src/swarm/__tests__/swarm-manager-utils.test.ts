@@ -1023,6 +1023,27 @@ describe("extractRuntimeMessageText / formatInboundUserMessageForManager", () =>
     expect(out).toContain("[sourceContext]");
     expect(out).toContain("hi");
   });
+
+  it("formatInboundUserMessageForManager includes structured reply metadata", () => {
+    const out = formatInboundUserMessageForManager(
+      "follow up",
+      { channel: "web" },
+      undefined,
+      undefined,
+      {
+        messageId: "msg-1",
+        role: "assistant",
+        timestamp: "2026-06-29T12:00:00.000Z",
+        text: "Quoted text",
+        source: "assistant_output",
+      },
+    );
+
+    expect(out).toContain("[replyTo]");
+    expect(out).toContain('"text":"Quoted text"');
+    expect(out).not.toContain("[replyToText]");
+    expect(out).toContain("follow up");
+  });
 });
 
 describe("parseCompactSlashCommand", () => {

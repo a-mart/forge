@@ -8,9 +8,11 @@ import {
   isTerminalAssistantConversationMessage,
   type AgentRuntimeExtensionSnapshot,
   type CollaborationAuthor,
+  type ConversationReplyTarget,
   type SessionMemoryMergeFailureStage
 } from "@forge/protocol";
 import { sanitizePathSegment as sanitizePersistedPathSegment } from "./data-paths.js";
+import { formatConversationReplyTargetMetadata } from "./conversation-reply.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import {
   isConversationBinaryAttachment,
@@ -1478,6 +1480,7 @@ export function formatInboundUserMessageForManager(
   sourceContext: MessageSourceContext,
   collaborationAuthor?: CollaborationAuthor,
   assistantOutputTarget?: AssistantOutputTarget,
+  replyTo?: ConversationReplyTarget,
 ): string {
   const metadataLines = [`[sourceContext] ${JSON.stringify(sourceContext)}`];
   if (collaborationAuthor) {
@@ -1488,6 +1491,9 @@ export function formatInboundUserMessageForManager(
   }
   if (assistantOutputTarget) {
     metadataLines.push(formatAssistantOutputTargetMetadata(assistantOutputTarget));
+  }
+  if (replyTo) {
+    metadataLines.push(formatConversationReplyTargetMetadata(replyTo));
   }
 
   const metadataBlock = metadataLines.join("\n");
