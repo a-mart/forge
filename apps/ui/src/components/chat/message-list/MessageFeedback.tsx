@@ -1,13 +1,13 @@
 import { useState } from 'react'
-import { ThumbsUp, ThumbsDown, MessageSquare } from 'lucide-react'
+import { MessageCircleMore, ThumbsDown, ThumbsUp, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Popover,
-  PopoverAnchor,
   PopoverContent,
+  PopoverTrigger,
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { type FeedbackReasonCode } from '@/lib/feedback-types'
@@ -76,6 +76,8 @@ interface MessageFeedbackProps {
   size?: 'sm' | 'md'
 }
 
+type FeedbackMode = 'menu' | 'up' | 'down' | 'comment'
+
 export function MessageFeedback({
   targetId,
   legacyTargetId,
@@ -88,43 +90,51 @@ export function MessageFeedback({
   scope = 'message',
   size = 'sm',
 }: MessageFeedbackProps) {
-  const [activePopover, setActivePopover] = useState<'up' | 'down' | 'comment' | null>(null)
+  const [mode, setMode] = useState<FeedbackMode>('menu')
+  const [isOpen, setIsOpen] = useState(false)
   const [selectedReasons, setSelectedReasons] = useState<FeedbackReasonCode[]>([])
   const [comment, setComment] = useState('')
 
-  const iconSize = size === 'sm' ? 'size-3' : 'size-3.5'
-  const buttonSize = size === 'sm' ? 'size-5' : 'size-6'
+  const iconSize = size === 'sm' ? 'size-3.5' : 'size-4'
+  const buttonSize = size === 'sm' ? 'size-6' : 'size-7'
 
-  const handleUpClick = () => {
-    if (isSubmitting) return
-    if (currentVote === 'up') {
-      // Already upvoted — open popover to add reasons/comment
-      setSelectedReasons([])
-      setComment('')
-      setActivePopover('up')
-    } else {
-      // Instant upvote
-      void onVote(scope, targetId, 'up', undefined, undefined, legacyTargetId)
+  const resetDraft = () => {
+    setSelectedReasons([])
+    setComment('')
+  }
+
+  const openMode = (nextMode: FeedbackMode) => {
+    resetDraft()
+    setMode(nextMode)
+    setIsOpen(true)
+  }
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open)
+    if (!open) {
+      setMode('menu')
+      resetDraft()
     }
   }
 
-  const handleDownClick = () => {
+  const handleGoodResponse = () => {
     if (isSubmitting) return
-    if (currentVote === 'down') {
-      // Toggle off
-      void onVote(scope, targetId, 'down', undefined, undefined, legacyTargetId)
+    if (currentVote === 'up') {
+      openMode('up')
       return
     }
-    // Open reason picker for new downvote
-    setSelectedReasons([])
-    setComment('')
-    setActivePopover('down')
+    void onVote(scope, targetId, 'up', undefined, undefined, legacyTargetId)
+    handleOpenChange(false)
+  }
+
+  const handleNeedsWork = () => {
+    if (isSubmitting) return
+    openMode('down')
   }
 
   const handleCommentClick = () => {
-    if (isSubmitting) return
-    setComment('')
-    setActivePopover('comment')
+    if (isSubmitting || !onComment) return
+    openMode('comment')
   }
 
   const handleReasonToggle = (code: FeedbackReasonCode) => {
@@ -134,247 +144,241 @@ export function MessageFeedback({
   }
 
   const handleSubmit = () => {
-    if (!activePopover) return
-    if (activePopover === 'comment') {
+    if (mode === 'comment') {
       if (onComment && comment.trim()) {
         void onComment(scope, targetId, comment.trim(), legacyTargetId)
       }
-    } else {
+    } else if (mode === 'up' || mode === 'down') {
       void onVote(
         scope,
         targetId,
-        activePopover,
+        mode,
         selectedReasons,
         comment.trim() || undefined,
         legacyTargetId,
       )
     }
-    setActivePopover(null)
-    setSelectedReasons([])
-    setComment('')
+    handleOpenChange(false)
   }
 
   const handleClearVote = () => {
-    if (!activePopover) return
-    // Send bare vote (no reasons) — hook treats same-value + no reasons as toggle-off
+    if (mode !== 'up' && mode !== 'down') return
+    // Send bare vote (no reasons) — hook treats same-value + no reasons as toggle-off.
     void onVote(
       scope,
       targetId,
-      activePopover as 'up' | 'down',
+      mode,
       undefined,
       undefined,
       legacyTargetId,
     )
-    setActivePopover(null)
-    setSelectedReasons([])
-    setComment('')
+    handleOpenChange(false)
   }
 
   const handleClearComment = () => {
     if (onClearComment) {
       void onClearComment(scope, targetId, legacyTargetId)
     }
-    setActivePopover(null)
-    setComment('')
+    handleOpenChange(false)
   }
 
-  const renderVotePopoverContent = (direction: 'up' | 'down') => (
-    <PopoverContent
-      side="bottom"
-      align="start"
-      sideOffset={6}
-      className="w-64 p-3"
-      onOpenAutoFocus={(e) => e.preventDefault()}
-    >
-      <div className="space-y-3">
-        <p className="text-xs font-medium text-foreground">
-          {direction === 'up' ? 'What was good?' : 'What went wrong?'}
-        </p>
-        <div className="space-y-1.5">
-          {(direction === 'up' ? UP_REASON_CODES : DOWN_REASON_CODES).map((code) => (
-            <div key={code} className="flex items-center gap-2">
-              <Checkbox
-                id={`reason-${targetId}-${direction}-${code}`}
-                checked={selectedReasons.includes(code)}
-                onCheckedChange={() => handleReasonToggle(code)}
-                className="size-3.5"
-              />
-              <Label
-                htmlFor={`reason-${targetId}-${direction}-${code}`}
-                className="cursor-pointer text-xs font-normal text-foreground/80"
-              >
-                {REASON_LABELS[code]}
-              </Label>
-            </div>
-          ))}
-        </div>
-        <Textarea
-          placeholder="Optional comment…"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          className="min-h-[52px] resize-none text-xs"
-          rows={2}
-          maxLength={2000}
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={handleSubmit}
-            disabled={isSubmitting}
-          >
-            Submit
-          </Button>
-          {direction === 'up' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-muted-foreground"
-              onClick={handleClearVote}
-              disabled={isSubmitting}
-            >
-              Remove
-            </Button>
+  const triggerLabel = currentVote === 'up'
+    ? 'Feedback: good response'
+    : currentVote === 'down'
+      ? 'Feedback: needs work'
+      : hasComment
+        ? 'Feedback: comment added'
+        : 'Feedback'
+
+  const triggerTone = currentVote === 'up'
+    ? 'text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300'
+    : currentVote === 'down'
+      ? 'text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300'
+      : hasComment
+        ? 'text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300'
+        : 'text-muted-foreground/55 hover:text-muted-foreground'
+
+  const renderMenu = () => (
+    <div className="space-y-1 p-1" role="menu" aria-label="Feedback options">
+      <button
+        type="button"
+        role="menuitem"
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
+        onClick={handleGoodResponse}
+        disabled={isSubmitting}
+      >
+        <ThumbsUp
+          className={cn(
+            'size-3.5',
+            currentVote === 'up' && 'fill-current text-emerald-600 dark:text-emerald-400',
           )}
-        </div>
-      </div>
-    </PopoverContent>
+        />
+        <span>Good response</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
+        onClick={handleNeedsWork}
+        disabled={isSubmitting}
+      >
+        <ThumbsDown
+          className={cn(
+            'size-3.5',
+            currentVote === 'down' && 'fill-current text-red-500 dark:text-red-400',
+          )}
+        />
+        <span>Needs work</span>
+      </button>
+      {onComment ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
+          onClick={handleCommentClick}
+          disabled={isSubmitting}
+        >
+          <MessageSquare
+            className={cn(
+              'size-3.5',
+              hasComment && 'fill-current text-blue-500 dark:text-blue-400',
+            )}
+          />
+          <span>{hasComment ? 'Edit comment' : 'Add comment'}</span>
+        </button>
+      ) : null}
+    </div>
   )
 
-  const renderCommentPopoverContent = () => (
-    <PopoverContent
-      side="bottom"
-      align="start"
-      sideOffset={6}
-      className="w-64 p-3"
-      onOpenAutoFocus={(e) => e.preventDefault()}
-    >
-      <div className="space-y-3">
-        <p className="text-xs font-medium text-foreground">Add a comment</p>
-        <Textarea
-          placeholder="Your comment…"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          className="min-h-[60px] resize-none text-xs"
-          rows={3}
-          maxLength={2000}
-          autoFocus
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={handleSubmit}
-            disabled={isSubmitting || !comment.trim()}
-          >
-            Submit
-          </Button>
-          {hasComment && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-muted-foreground"
-              onClick={handleClearComment}
-              disabled={isSubmitting}
+  const renderVoteContent = (direction: 'up' | 'down') => (
+    <div className="space-y-3 p-3">
+      <p className="text-xs font-medium text-foreground">
+        {direction === 'up' ? 'What was good?' : 'What went wrong?'}
+      </p>
+      <div className="space-y-1.5">
+        {(direction === 'up' ? UP_REASON_CODES : DOWN_REASON_CODES).map((code) => (
+          <div key={code} className="flex items-center gap-2">
+            <Checkbox
+              id={`reason-${targetId}-${direction}-${code}`}
+              checked={selectedReasons.includes(code)}
+              onCheckedChange={() => handleReasonToggle(code)}
+              className="size-3.5"
+            />
+            <Label
+              htmlFor={`reason-${targetId}-${direction}-${code}`}
+              className="cursor-pointer text-xs font-normal text-foreground/80"
             >
-              Remove
-            </Button>
-          )}
-        </div>
+              {REASON_LABELS[code]}
+            </Label>
+          </div>
+        ))}
       </div>
-    </PopoverContent>
+      <Textarea
+        placeholder="Optional comment…"
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        className="min-h-[52px] resize-none text-xs"
+        rows={2}
+        maxLength={2000}
+      />
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          className="h-7 flex-1 text-xs"
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+        >
+          Submit
+        </Button>
+        {currentVote === direction ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-muted-foreground"
+            onClick={handleClearVote}
+            disabled={isSubmitting}
+          >
+            Remove
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  )
+
+  const renderCommentContent = () => (
+    <div className="space-y-3 p-3">
+      <p className="text-xs font-medium text-foreground">
+        {hasComment ? 'Edit comment' : 'Add a comment'}
+      </p>
+      <Textarea
+        placeholder="Your comment…"
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        className="min-h-[60px] resize-none text-xs"
+        rows={3}
+        maxLength={2000}
+        autoFocus
+      />
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          className="h-7 flex-1 text-xs"
+          onClick={handleSubmit}
+          disabled={isSubmitting || !comment.trim()}
+        >
+          Submit
+        </Button>
+        {hasComment ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-muted-foreground"
+            onClick={handleClearComment}
+            disabled={isSubmitting}
+          >
+            Remove
+          </Button>
+        ) : null}
+      </div>
+    </div>
   )
 
   return (
-    <span className="inline-flex items-center gap-0.5">
-      {/* Thumbs Up — with reason picker popover on re-click */}
-      <Popover
-        open={activePopover === 'up'}
-        onOpenChange={(open) => { if (!open) setActivePopover(null) }}
-      >
-        <PopoverAnchor asChild>
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={handleUpClick}
-            className={cn(
-              'inline-flex items-center justify-center rounded-sm transition-colors',
-              buttonSize,
-              currentVote === 'up'
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-muted-foreground/50 hover:text-muted-foreground',
-              isSubmitting && 'pointer-events-none opacity-50',
-            )}
-            aria-label="Thumbs up"
-            aria-pressed={currentVote === 'up'}
-          >
-            <ThumbsUp
-              className={cn(iconSize, currentVote === 'up' && 'fill-current')}
-            />
-          </button>
-        </PopoverAnchor>
-        {renderVotePopoverContent('up')}
-      </Popover>
-
-      {/* Thumbs Down — with reason picker popover */}
-      <Popover
-        open={activePopover === 'down'}
-        onOpenChange={(open) => { if (!open) setActivePopover(null) }}
-      >
-        <PopoverAnchor asChild>
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={handleDownClick}
-            className={cn(
-              'inline-flex items-center justify-center rounded-sm transition-colors',
-              buttonSize,
-              currentVote === 'down'
-                ? 'text-red-500 dark:text-red-400'
-                : 'text-muted-foreground/50 hover:text-muted-foreground',
-              isSubmitting && 'pointer-events-none opacity-50',
-            )}
-            aria-label="Thumbs down"
-            aria-pressed={currentVote === 'down'}
-          >
-            <ThumbsDown
-              className={cn(iconSize, currentVote === 'down' && 'fill-current')}
-            />
-          </button>
-        </PopoverAnchor>
-        {renderVotePopoverContent('down')}
-      </Popover>
-
-      {/* Comment — standalone comment button */}
-      {onComment && (
-        <Popover
-          open={activePopover === 'comment'}
-          onOpenChange={(open) => { if (!open) setActivePopover(null) }}
+    <Popover open={isOpen} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={isSubmitting}
+          className={cn(
+            'inline-flex items-center justify-center rounded-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            buttonSize,
+            triggerTone,
+            isSubmitting && 'pointer-events-none opacity-50',
+          )}
+          aria-label={triggerLabel}
+          aria-pressed={currentVote !== null || hasComment}
+          title="Feedback"
         >
-          <PopoverAnchor asChild>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleCommentClick}
-              className={cn(
-                'inline-flex items-center justify-center rounded-sm transition-colors',
-                buttonSize,
-                hasComment
-                  ? 'text-blue-500 dark:text-blue-400'
-                  : 'text-muted-foreground/50 hover:text-muted-foreground',
-                isSubmitting && 'pointer-events-none opacity-50',
-              )}
-              aria-label="Add comment"
-              aria-pressed={hasComment}
-            >
-              <MessageSquare
-                className={cn(iconSize, hasComment && 'fill-current')}
-              />
-            </button>
-          </PopoverAnchor>
-          {renderCommentPopoverContent()}
-        </Popover>
-      )}
-    </span>
+          <MessageCircleMore
+            className={cn(iconSize, (currentVote !== null || hasComment) && 'fill-current')}
+          />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        className={cn('p-0', mode === 'menu' ? 'w-44' : 'w-64')}
+        onOpenAutoFocus={(event) => {
+          if (mode !== 'comment') event.preventDefault()
+        }}
+      >
+        {mode === 'menu'
+          ? renderMenu()
+          : mode === 'comment'
+            ? renderCommentContent()
+            : renderVoteContent(mode)}
+      </PopoverContent>
+    </Popover>
   )
 }
