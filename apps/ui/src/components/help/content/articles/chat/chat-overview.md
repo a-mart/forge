@@ -26,6 +26,10 @@ Builder web also supports Codex app-server sidecars. A plain leading @Codex or [
 
 Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
 
+## Replying
+
+In normal Builder chat, hover a visible user or assistant message and click **Reply** to quote it in your next message. The composer shows a compact reply target preview; clear it to send without a quote, or choose Reply on another message to change the target. Sent replies show a compact quoted preview above the message. Click that quote to scroll back to the original when it is loaded in the current transcript. Collaboration messages and async Project Agent delivery do not use this reply threading in v1.
+
 ## Context window
 
 The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.

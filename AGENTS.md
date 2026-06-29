@@ -76,6 +76,7 @@ Shared TypeScript types and API message definitions live in `packages/protocol/`
 
 **Recent protocol changes:**
 - `UnreadNotificationEvent` now includes optional `reason?: 'message' | 'choice_request'` to distinguish notification triggers, and `sessionAgentId?: string` for per-manager preference resolution on worker-originated events. This supports dedicated question notification sounds that take priority over regular unread sounds.
+- Normal Builder chat `conversation_message` events can include optional `replyTo` metadata. Backend send handling resolves the target from session history when possible and injects a structured `[replyTo]` JSON block into manager model input; Collaboration remains out of scope for Quote/Reply v1.
 
 ### Additional Subsystems
 

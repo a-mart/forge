@@ -9,6 +9,10 @@ Forge has two input modes, toggled with the **Aa** button (or `Shift+Cmd+X` / `S
 
 Your mode preference is saved across sessions.
 
+## Replying to a message
+
+Hover a visible normal user or assistant message and click **Reply** to attach it as the target for your next send. The composer preview means your message will include that quoted context. Use the clear control to remove the target, or click Reply on a different message to change it before sending.
+
 ## Slash commands
 
 Type `/` to open a command picker. Slash commands are shortcuts that expand into predefined prompts. You can create custom ones in Settings > Slash Commands.

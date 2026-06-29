@@ -108,6 +108,8 @@ Use **Session Audit Log** from the chat header menu when you need the canonical 
 
 Agents can include Mermaid diagrams in their responses using standard markdown code fences (` ```mermaid ... ``` `). These render inline with an interactive toolbar for toggling between diagram and source, copying code, exporting as SVG or PNG, and viewing fullscreen.
 
+You can reply to visible user or assistant messages in normal Builder chat. Hover a message and click **Reply** to attach it as the reply target. The composer shows a compact quote preview so you can confirm the target before sending; clear it if you changed your mind, or choose Reply on another message to change targets. Sent replies render a compact quoted preview above the message, and clicking the quote jumps to the original message when that message is loaded in the current transcript.
+
 You can pin important messages to preserve them through compaction. Hover over any user or assistant message and click the pin icon. Pinned messages show an amber indicator and are guaranteed to survive when the context window is summarized. See [Smart Compaction](#8-reliability--continuity) for details.
 
 ### Workspace Rail and File Browser
