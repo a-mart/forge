@@ -55,7 +55,8 @@ describe('MessageFeedback', () => {
   it('opens a compact feedback menu from one neutral trigger', () => {
     renderFeedback({ onComment: vi.fn().mockResolvedValue(undefined) })
 
-    const trigger = container.querySelector('button[aria-label="Feedback"]')
+    const trigger = container.querySelector('button[aria-label="Give feedback"]') as HTMLButtonElement | null
+    expect(trigger?.title).toBe('Give feedback')
     click(trigger)
 
     expect(document.body.textContent).toContain('Good response')
@@ -67,7 +68,7 @@ describe('MessageFeedback', () => {
     const onVote = vi.fn().mockResolvedValue(undefined)
     renderFeedback({ onVote })
 
-    click(container.querySelector('button[aria-label="Feedback"]'))
+    click(container.querySelector('button[aria-label="Give feedback"]'))
     click(getButtonByText('Good response'))
 
     expect(onVote).toHaveBeenCalledTimes(1)
@@ -78,7 +79,7 @@ describe('MessageFeedback', () => {
     const onVote = vi.fn().mockResolvedValue(undefined)
     renderFeedback({ onVote })
 
-    click(container.querySelector('button[aria-label="Feedback"]'))
+    click(container.querySelector('button[aria-label="Give feedback"]'))
     click(getButtonByText('Needs work'))
 
     expect(document.body.textContent).toContain('What went wrong?')
@@ -91,7 +92,7 @@ describe('MessageFeedback', () => {
     const onComment = vi.fn().mockResolvedValue(undefined)
     renderFeedback({ onComment })
 
-    click(container.querySelector('button[aria-label="Feedback"]'))
+    click(container.querySelector('button[aria-label="Give feedback"]'))
     click(getButtonByText('Add comment'))
 
     const textarea = document.body.querySelector('textarea') as HTMLTextAreaElement | null
@@ -112,5 +113,40 @@ describe('MessageFeedback', () => {
     const trigger = container.querySelector('button[aria-label="Feedback: good response"]') as HTMLButtonElement | null
     expect(trigger).toBeTruthy()
     expect(trigger?.getAttribute('aria-pressed')).toBe('true')
+    expect(trigger?.title).toBe('Feedback: good response')
+  })
+
+  it('removes an existing upvote from the detail flow', () => {
+    const onVote = vi.fn().mockResolvedValue(undefined)
+    renderFeedback({ currentVote: 'up', onVote })
+
+    click(container.querySelector('button[aria-label="Feedback: good response"]'))
+    click(getButtonByText('Good response'))
+    click(getButtonByText('Remove'))
+
+    expect(onVote).toHaveBeenCalledWith('message', 'msg-1', 'up', undefined, undefined, undefined)
+  })
+
+  it('removes an existing downvote from the detail flow', () => {
+    const onVote = vi.fn().mockResolvedValue(undefined)
+    renderFeedback({ currentVote: 'down', onVote })
+
+    click(container.querySelector('button[aria-label="Feedback: needs work"]'))
+    click(getButtonByText('Needs work'))
+    click(getButtonByText('Remove'))
+
+    expect(onVote).toHaveBeenCalledWith('message', 'msg-1', 'down', undefined, undefined, undefined)
+  })
+
+  it('removes an existing comment from the comment flow', () => {
+    const onComment = vi.fn().mockResolvedValue(undefined)
+    const onClearComment = vi.fn().mockResolvedValue(undefined)
+    renderFeedback({ hasComment: true, onComment, onClearComment })
+
+    click(container.querySelector('button[aria-label="Feedback: comment added"]'))
+    click(getButtonByText('Add/update comment'))
+    click(getButtonByText('Remove'))
+
+    expect(onClearComment).toHaveBeenCalledWith('message', 'msg-1', undefined)
   })
 })

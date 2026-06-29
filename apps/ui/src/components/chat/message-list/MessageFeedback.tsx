@@ -188,7 +188,7 @@ export function MessageFeedback({
       ? 'Feedback: needs work'
       : hasComment
         ? 'Feedback: comment added'
-        : 'Feedback'
+        : 'Give feedback'
 
   const triggerTone = currentVote === 'up'
     ? 'text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300'
@@ -199,10 +199,9 @@ export function MessageFeedback({
         : 'text-muted-foreground/55 hover:text-muted-foreground'
 
   const renderMenu = () => (
-    <div className="space-y-1 p-1" role="menu" aria-label="Feedback options">
+    <div className="space-y-1 p-1" aria-label="Feedback options">
       <button
         type="button"
-        role="menuitem"
         className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
         onClick={handleGoodResponse}
         disabled={isSubmitting}
@@ -217,7 +216,6 @@ export function MessageFeedback({
       </button>
       <button
         type="button"
-        role="menuitem"
         className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
         onClick={handleNeedsWork}
         disabled={isSubmitting}
@@ -233,7 +231,6 @@ export function MessageFeedback({
       {onComment ? (
         <button
           type="button"
-          role="menuitem"
           className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
           onClick={handleCommentClick}
           disabled={isSubmitting}
@@ -244,7 +241,7 @@ export function MessageFeedback({
               hasComment && 'fill-current text-blue-500 dark:text-blue-400',
             )}
           />
-          <span>{hasComment ? 'Edit comment' : 'Add comment'}</span>
+          <span>{hasComment ? 'Add/update comment' : 'Add comment'}</span>
         </button>
       ) : null}
     </div>
@@ -308,7 +305,7 @@ export function MessageFeedback({
   const renderCommentContent = () => (
     <div className="space-y-3 p-3">
       <p className="text-xs font-medium text-foreground">
-        {hasComment ? 'Edit comment' : 'Add a comment'}
+        {hasComment ? 'Add/update comment' : 'Add a comment'}
       </p>
       <Textarea
         placeholder="Your comment…"
@@ -357,7 +354,7 @@ export function MessageFeedback({
           )}
           aria-label={triggerLabel}
           aria-pressed={currentVote !== null || hasComment}
-          title="Feedback"
+          title={triggerLabel}
         >
           <MessageCircleMore
             className={cn(iconSize, (currentVote !== null || hasComment) && 'fill-current')}
