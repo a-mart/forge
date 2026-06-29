@@ -103,6 +103,7 @@ import type {
   ChoiceAnswer,
   ClientCommand,
   ConversationAttachment,
+  ConversationReplyTargetInput,
   DeliveryMode,
   ManagerExactModelSelection,
   ManagerModelPreset,
@@ -307,7 +308,7 @@ export class ManagerWsClient {
 
   sendUserMessage(
     text: string,
-    options?: { agentId?: string; delivery?: DeliveryMode; attachments?: ConversationAttachment[] },
+    options?: { agentId?: string; delivery?: DeliveryMode; attachments?: ConversationAttachment[]; replyTo?: ConversationReplyTargetInput },
   ): void {
     const trimmed = text.trim()
     const attachments = normalizeConversationAttachments(options?.attachments)
@@ -357,6 +358,7 @@ export class ManagerWsClient {
       buildUserMessageCommand({
         text: trimmed,
         attachments,
+        replyTo: options?.replyTo,
         agentId,
         delivery: options?.delivery,
       }),

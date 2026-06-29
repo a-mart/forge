@@ -13,7 +13,7 @@ import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ProjectAgentInfo, SessionTaskStateSnapshotEvent, WorkPlanSnapshot } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ConversationReplyTargetInput, ProjectAgentInfo, SessionTaskStateSnapshotEvent, WorkPlanSnapshot } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
@@ -59,6 +59,7 @@ interface MessageListProps {
   onForkFromMessage?: (messageId: string) => void
   onPinMessage?: (messageId: string, pinned: boolean) => void
   onStopExternalThread?: (sidecarAgentId: string) => void
+  onReplyToMessage?: (target: ConversationReplyTargetInput) => void
   getVote?: (targetId: string, fallbackTargetId?: string) => 'up' | 'down' | null
   hasComment?: (targetId: string, fallbackTargetId?: string) => boolean
   onFeedbackVote?: (
@@ -102,6 +103,24 @@ export interface MessageListHandle {
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
+const REPLY_TEXT_MAX_CHARS = 2000
+
+function buildReplyTargetSnapshot(
+  message: Extract<ConversationEntry, { type: 'conversation_message' }>,
+): ConversationReplyTargetInput | null {
+  const messageId = message.id?.trim()
+  if (!messageId) return null
+
+  const text = message.text.trim()
+  return {
+    messageId,
+    role: message.role,
+    timestamp: message.timestamp,
+    text: text.length > REPLY_TEXT_MAX_CHARS ? text.slice(0, REPLY_TEXT_MAX_CHARS) : text,
+    source: message.source,
+    attachmentCount: message.attachments?.length ? message.attachments.length : undefined,
+  }
+}
 
 function findLatestWorkPlanSnapshot(
   snapshot: SessionTaskStateSnapshotEvent | null | undefined,
@@ -351,6 +370,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onForkFromMessage,
   onPinMessage,
   onStopExternalThread,
+  onReplyToMessage,
   getVote,
   hasComment,
   onFeedbackVote,
@@ -380,6 +400,16 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
   const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
+  const loadedConversationMessageIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const entry of displayEntries) {
+      if (entry.type === 'conversation_message') {
+        const id = entry.message.id?.trim()
+        if (id) ids.add(id)
+      }
+    }
+    return ids
+  }, [displayEntries])
 
   const stoppableExternalThreadMessageIds = useMemo(
     () => buildStoppableExternalThreadMessageIds(messages, statuses),
@@ -670,6 +700,16 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                     onForkFromMessage={entry.message.role !== 'system' ? onForkFromMessage : undefined}
                     onPinMessage={entry.message.role !== 'system' ? onPinMessage : undefined}
                     onStopExternalThread={onStopExternalThread}
+                    onReplyToMessage={
+                      surface === 'builder' && entry.message.role !== 'system' && onReplyToMessage
+                        ? (message) => {
+                            const target = buildReplyTargetSnapshot(message)
+                            if (target) onReplyToMessage(target)
+                          }
+                        : undefined
+                    }
+                    isReplyTargetLoaded={(messageId) => loadedConversationMessageIds.has(messageId)}
+                    onReplyPreviewClick={(messageId) => scrollToMessage(messageId)}
                     canStopExternalThread={
                       hasExternalThreadContext
                         ? stoppableExternalThreadMessageIds.has(feedbackTargetId)

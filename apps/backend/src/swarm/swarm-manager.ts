@@ -10,6 +10,8 @@ import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
   CollaborationAuthor,
+  ConversationReplyTarget,
+  ConversationReplyTargetInput,
   CredentialPoolState,
   CredentialPoolStrategy,
   OpenAIBrokerInviteRedeemResponse,
@@ -60,6 +62,7 @@ import {
   type PromptRegistry
 } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
+import { resolveConversationReplyTarget } from "./conversation-reply.js";
 import {
   collectConversationMessageIdsFromSessionFile,
   copySessionHistoryForFork
@@ -407,6 +410,7 @@ export interface AppendConversationUserMessageOptions {
   attachments?: ConversationAttachment[];
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
+  replyTo?: ConversationReplyTarget;
 }
 
 export interface AppendConversationUserMessageResult {
@@ -438,6 +442,7 @@ interface PreparedInboundConversationPayload {
   collaborationAuthor?: CollaborationAuthor;
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
   attachments?: ConversationAttachment[];
+  replyTo?: ConversationReplyTarget;
 }
 
 interface AppendPreparedInboundConversationPayloadResult {
@@ -5698,6 +5703,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       attachments,
       sourceContext,
       options?.collaborationAuthor,
+      options?.replyTo,
     );
   }
 
@@ -5724,6 +5730,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       delivery?: RequestedDeliveryMode;
       attachments?: ConversationAttachment[];
       sourceContext?: MessageSourceContext;
+      replyTo?: ConversationReplyTargetInput;
     }
   ): Promise<void> {
     const trimmed = text.trim();
@@ -5733,6 +5740,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveUserMessageTarget(options?.targetAgentId);
     this.assertCodexPluginWorkerNotUserTargetable(target);
+
+    const resolvedReplyTo = options?.replyTo
+      ? resolveConversationReplyTarget(this.getConversationHistory(target.agentId), options.replyTo)
+      : undefined;
 
     if (await this.maybeRouteCodexUserMessage(target, trimmed, attachments, sourceContext)) {
       return;
@@ -5786,7 +5797,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       trimmed,
       attachments,
       sourceContext,
-      undefined
+      undefined,
+      resolvedReplyTo,
     );
 
     if (target.role === "manager") {
@@ -5826,6 +5838,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       codexClassification,
       codexPluginDelegationContext,
       codexPluginRetryAuthorizationContext,
+      resolvedReplyTo,
     );
   }
 
@@ -6583,6 +6596,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     attachments: ConversationAttachment[],
     sourceContext: MessageSourceContext,
     collaborationAuthor?: CollaborationAuthor,
+    replyTo?: ConversationReplyTarget,
   ): Promise<AppendConversationUserMessageResult> {
     const receivedAt = this.now();
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
@@ -6610,6 +6624,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext,
       collaborationAuthor,
       attachments,
+      replyTo,
     });
 
     return {
@@ -6648,6 +6663,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext: payload.source === "user_input" ? payload.sourceContext : undefined,
       collaborationAuthor: payload.source === "user_input" ? payload.collaborationAuthor : undefined,
       projectAgentContext: payload.source === "project_agent_input" ? payload.projectAgentContext : undefined,
+      replyTo: payload.source === "user_input" ? payload.replyTo : undefined,
     };
     this.emitConversationMessage(event);
     this.markSessionActivity(target.agentId, timestamp);
@@ -6711,6 +6727,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     codexClassification: ReturnType<typeof classifyCodexUserMessage> = { kind: "none" },
     codexPluginDelegationContext?: CodexPluginDelegationTurnContext,
     codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext,
+    replyTo?: ConversationReplyTarget,
   ): Promise<void> {
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
@@ -6720,9 +6737,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       const requestedDelivery = delivery ?? "auto";
+      const workerRuntimeText = replyTo
+        ? formatInboundUserMessageForManager(text, sourceContext, undefined, undefined, replyTo)
+        : text;
       let receipt: SendMessageReceipt;
       try {
-        receipt = await this.sendMessage(managerContextId, target.agentId, text, requestedDelivery, {
+        receipt = await this.sendMessage(managerContextId, target.agentId, workerRuntimeText, requestedDelivery, {
           origin: "user",
           attachments: runtimeAttachments
         });
@@ -6793,7 +6813,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const assistantOutputTarget = this.resolveAssistantOutputTargetForUserInput(target, sourceContext, collaborationAuthor);
-    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext, collaborationAuthor, assistantOutputTarget);
+    const managerVisibleMessage = formatInboundUserMessageForManager(
+      text,
+      sourceContext,
+      collaborationAuthor,
+      assistantOutputTarget,
+      replyTo,
+    );
     const runtimeVisibleMessage = codexPluginDelegationContext
       ? this.appendCodexPluginManagerTurnGuidance(managerVisibleMessage, codexPluginDelegationContext)
       : codexPluginRetryAuthorizationContext

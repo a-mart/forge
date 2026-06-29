@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PendingAttachment } from '@/lib/file-attachments'
 import { loadFormatMode, persistFormatMode } from '../draft-storage'
-import { TEXTAREA_MAX_HEIGHT } from '../types'
+import type { ConversationReplyTargetInput } from '@forge/protocol'
+import { TEXTAREA_MAX_HEIGHT, type MessageInputSendOptions } from '../types'
 
 interface LastSubmission {
   text: string
@@ -15,10 +16,12 @@ interface UseComposerOptions {
   blockedByLoading: boolean
   isRecording: boolean
   isTranscribingVoice: boolean
-  onSend: (message: string, attachments?: import('@forge/protocol').ConversationAttachment[]) => void | boolean | Promise<boolean>
+  onSend: (message: string, attachments?: import('@forge/protocol').ConversationAttachment[], options?: MessageInputSendOptions) => void | boolean | Promise<boolean>
   onSubmitted?: () => void
   setInputWithDraft: (value: string) => void
   setAttachedFilesWithDraft: (files: PendingAttachment[]) => void
+  replyTarget?: ConversationReplyTargetInput | null
+  onAccepted?: () => void
 }
 
 interface UseComposerReturn {
@@ -49,6 +52,8 @@ export function useComposer({
   onSubmitted,
   setInputWithDraft,
   setAttachedFilesWithDraft,
+  replyTarget,
+  onAccepted,
 }: UseComposerOptions): UseComposerReturn {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
@@ -149,13 +154,17 @@ export function useComposer({
         })
       : undefined
 
-    const result = onSend(trimmed, convertedAttachments) as boolean | Promise<boolean> | undefined
+    const shouldAttachReply = !!replyTarget && !trimmed.startsWith('/')
+    const result = shouldAttachReply
+      ? onSend(trimmed, convertedAttachments, { replyTo: replyTarget })
+      : onSend(trimmed, convertedAttachments) as boolean | Promise<boolean> | undefined
 
     // Accept send and clear draft, saving the submission for potential restoration
     const acceptSend = () => {
       lastSubmissionRef.current = { text: input, attachments: [...attachedFiles] }
       setInputWithDraft('')
       setAttachedFilesWithDraft([])
+      onAccepted?.()
       requestAnimationFrame(() => {
         onSubmitted?.()
       })
@@ -181,6 +190,8 @@ export function useComposer({
     isTranscribingVoice,
     onSend,
     onSubmitted,
+    onAccepted,
+    replyTarget,
     setInputWithDraft,
     setAttachedFilesWithDraft,
   ])

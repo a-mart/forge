@@ -356,4 +356,84 @@ describe("conversation validators", () => {
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinks: [{ type: "worker", linkId: "link", agentId: "   ", linkedAt: FIXED_NOW }] }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinks: [{ type: "artifact", linkId: "link", agentId: "worker", linkedAt: FIXED_NOW }] }] } }))).toBe(false);
   });
+
+  it("accepts conversation_message replyTo metadata and rejects malformed reply targets", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        id: "msg-1",
+        role: "user",
+        text: "Follow-up",
+        timestamp: FIXED_NOW,
+        source: "user_input",
+        replyTo: {
+          messageId: "msg-target",
+          role: "assistant",
+          timestamp: FIXED_NOW,
+          text: "Quoted",
+          source: "assistant_output",
+          attachmentCount: 0,
+          truncated: true,
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        id: "msg-1",
+        role: "user",
+        text: "Follow-up",
+        timestamp: FIXED_NOW,
+        source: "user_input",
+        replyTo: {
+          messageId: "",
+          role: "assistant",
+          timestamp: FIXED_NOW,
+          text: "Quoted",
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        id: "msg-1",
+        role: "user",
+        text: "Follow-up",
+        timestamp: FIXED_NOW,
+        source: "user_input",
+        replyTo: {
+          messageId: "msg-target",
+          role: "assistant",
+          timestamp: FIXED_NOW,
+          text: "Quoted",
+          source: "assistant_output",
+          attachmentCount: 1.5,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        id: "msg-1",
+        role: "user",
+        text: "Follow-up",
+        timestamp: FIXED_NOW,
+        source: "user_input",
+        replyTo: {
+          messageId: "msg-target",
+          role: "assistant",
+          timestamp: FIXED_NOW,
+          text: "Quoted",
+          source: "user_input",
+        },
+      }),
+    ).toBe(false);
+  });
 });

@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from 'react'
-import { Copy, Check, GitFork, Pin } from 'lucide-react'
+import { Copy, Check, GitFork, Pin, MessageSquareReply } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { MessageFeedback } from './MessageFeedback'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
 import { getAuthorColor, getAuthorInitials } from './collab-author-utils'
 import { ExternalThreadContextCard } from './ExternalThreadContextCard'
+import { ReplyPreview } from './ReplyPreview'
 import type { ConversationMessageEntry, MessageListSurface } from './types'
 
 function CopyButton({ text }: { text: string }) {
@@ -52,6 +53,25 @@ function ForkButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+function ReplyButton({ onClick, userTone = false }: { onClick: () => void; userTone?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex size-5 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        userTone
+          ? 'text-primary-foreground/50 hover:text-primary-foreground'
+          : 'text-muted-foreground/50 hover:text-muted-foreground',
+      )}
+      aria-label="Reply to this message"
+      title="Reply"
+    >
+      <MessageSquareReply className="size-3" />
+    </button>
+  )
+}
+
 function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }) {
   return (
     <button
@@ -83,6 +103,9 @@ interface ConversationMessageRowProps {
   onPinMessage?: (messageId: string, pinned: boolean) => void
   onStopExternalThread?: (sidecarAgentId: string) => void
   canStopExternalThread?: boolean
+  onReplyToMessage?: (message: ConversationMessageEntry) => void
+  onReplyPreviewClick?: (messageId: string) => void
+  isReplyTargetLoaded?: (messageId: string) => boolean
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
   onFeedbackVote?: (
@@ -119,6 +142,9 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   onPinMessage,
   onStopExternalThread,
   canStopExternalThread,
+  onReplyToMessage,
+  onReplyPreviewClick,
+  isReplyTargetLoaded,
   feedbackVote,
   feedbackHasComment,
   onFeedbackVote,
@@ -234,6 +260,22 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
             </div>
           ) : null}
           <div className="space-y-2">
+            {message.replyTo && onReplyPreviewClick ? (
+              <ReplyPreview
+                target={message.replyTo}
+                tone="user-message"
+                interactive
+                disabled={!isReplyTargetLoaded?.(message.replyTo.messageId)}
+                onClick={() => onReplyPreviewClick(message.replyTo!.messageId)}
+                className="mb-1"
+              />
+            ) : message.replyTo ? (
+              <ReplyPreview
+                target={message.replyTo}
+                tone="user-message"
+                className="mb-1"
+              />
+            ) : null}
             <MessageAttachments attachments={attachments} isUser wsUrl={wsUrl} />
             {hasText ? (
               <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
@@ -241,7 +283,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               </p>
             ) : null}
           </div>
-          {timestampLabel || sourceContext || onForkFromMessage || canPin || projectAgentSenderLabel ? (
+          {timestampLabel || sourceContext || onForkFromMessage || canPin || projectAgentSenderLabel || onReplyToMessage ? (
             <div className="mt-1 flex items-center justify-end gap-1.5">
               {projectAgentSenderLabel ? (
                 <span className={cn(
@@ -262,6 +304,12 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
                 )}>
                   {timestampLabel}
                 </p>
+              ) : null}
+              {onReplyToMessage && message.id?.trim() ? (
+                <ReplyButton
+                  userTone
+                  onClick={() => onReplyToMessage(message)}
+                />
               ) : null}
               {canPin ? (
                 <button
@@ -324,6 +372,20 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
           <span>Pinned</span>
         </div>
       ) : null}
+      {message.replyTo && onReplyPreviewClick ? (
+        <ReplyPreview
+          target={message.replyTo}
+          interactive
+          disabled={!isReplyTargetLoaded?.(message.replyTo.messageId)}
+          onClick={() => onReplyPreviewClick(message.replyTo!.messageId)}
+          className="max-w-2xl"
+        />
+      ) : message.replyTo ? (
+        <ReplyPreview
+          target={message.replyTo}
+          className="max-w-2xl"
+        />
+      ) : null}
       {hasText ? (
         <MarkdownMessage
           content={normalizedText}
@@ -333,11 +395,14 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
         />
       ) : null}
       <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
-      {timestampLabel || sourceContext || showFeedback || onForkFromMessage || canPinAssistant ? (
+      {timestampLabel || sourceContext || showFeedback || onForkFromMessage || canPinAssistant || onReplyToMessage ? (
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />
           {timestampLabel ? <span>{timestampLabel}</span> : null}
           {hasText ? <CopyButton text={normalizedText} /> : null}
+          {onReplyToMessage && message.id?.trim() ? (
+            <ReplyButton onClick={() => onReplyToMessage(message)} />
+          ) : null}
           {canPinAssistant ? (
             <PinButton
               pinned={!!message.pinned}

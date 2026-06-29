@@ -112,6 +112,25 @@ export function isAssistantProgressConversationSource(
   return typeof source === 'string' && (ASSISTANT_PROGRESS_MESSAGE_SOURCES as readonly string[]).includes(source)
 }
 
+export interface ConversationReplyTarget {
+  messageId: string
+  role: 'user' | 'assistant' | 'system'
+  timestamp: string
+  text: string
+  source?: ConversationMessageSource
+  attachmentCount?: number
+  truncated?: boolean
+}
+
+export interface ConversationReplyTargetInput {
+  messageId: string
+  role?: 'user' | 'assistant' | 'system'
+  timestamp?: string
+  text?: string
+  source?: ConversationMessageSource
+  attachmentCount?: number
+}
+
 export interface ConversationMessageEvent {
   type: 'conversation_message'
   agentId: string
@@ -126,6 +145,7 @@ export interface ConversationMessageEvent {
   projectAgentContext?: ProjectAgentMessageContext
   externalThreadContext?: ExternalThreadMessageContext
   pinned?: boolean
+  replyTo?: ConversationReplyTarget
 }
 
 export interface MessagePinnedEvent {

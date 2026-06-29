@@ -1,11 +1,15 @@
-import type { ConversationAttachment } from '@forge/protocol'
+import type { ConversationAttachment, ConversationReplyTargetInput } from '@forge/protocol'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ProjectAgentSuggestion } from './mention-types'
 
 export type { ProjectAgentSuggestion } from './mention-types'
 
+export interface MessageInputSendOptions {
+  replyTo?: ConversationReplyTargetInput
+}
+
 export interface MessageInputProps {
-  onSend: (message: string, attachments?: ConversationAttachment[]) => void | boolean | Promise<boolean>
+  onSend: (message: string, attachments?: ConversationAttachment[], options?: MessageInputSendOptions) => void | boolean | Promise<boolean>
   onSubmitted?: () => void
   isLoading: boolean
   disabled?: boolean
@@ -22,6 +26,8 @@ export interface MessageInputProps {
   enableCodexMention?: boolean
   /** Manager session id for Codex app/tool catalog fetches. */
   managerAgentId?: string
+  replyTarget?: ConversationReplyTargetInput | null
+  onClearReplyTarget?: () => void
 }
 
 export interface MessageInputHandle {

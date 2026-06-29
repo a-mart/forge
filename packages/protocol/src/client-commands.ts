@@ -1,4 +1,5 @@
 import type { ConversationAttachment } from './attachments.js'
+import type { ConversationReplyTargetInput } from './conversation-events.js'
 import type { ProjectAgentCapability } from './agents.js'
 import type {
   CollaborationBootstrapCommand,
@@ -40,6 +41,7 @@ export type ClientCommand =
       attachments?: ConversationAttachment[]
       agentId?: string
       delivery?: DeliveryMode
+      replyTo?: ConversationReplyTargetInput
     }
   | CollaborationBootstrapCommand
   | CollaborationSubscribeChannelCommand

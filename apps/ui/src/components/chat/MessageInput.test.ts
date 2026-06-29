@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { fireEvent, getByLabelText } from '@testing-library/dom'
-import { createElement, createRef } from 'react'
+import { createElement, createRef, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -146,7 +146,7 @@ async function flush(): Promise<void> {
 
 function renderMessageInput(
   overrides: Partial<{
-    onSend: (msg: string, attachments?: ConversationAttachment[]) => void | boolean | Promise<boolean>
+    onSend: (msg: string, attachments?: ConversationAttachment[], options?: Parameters<ComponentProps<typeof MessageInput>['onSend']>[2]) => void | boolean | Promise<boolean>
     isLoading: boolean
     disabled: boolean
     agentId: string
@@ -156,6 +156,8 @@ function renderMessageInput(
     enableCodexMention: boolean
     managerAgentId: string
     wsUrl: string
+    replyTarget: ComponentProps<typeof MessageInput>['replyTarget']
+    onClearReplyTarget: () => void
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
 ): void {
@@ -516,6 +518,55 @@ describe('MessageInput', () => {
 
       expect(onSend).toHaveBeenCalledWith('hello', undefined)
       expect(getTextarea().value).toBe('')
+    })
+
+    it('passes reply metadata and clears the reply target only when send is accepted', async () => {
+      const onSend = vi.fn(() => true)
+      const onClearReplyTarget = vi.fn()
+      const replyTarget = {
+        messageId: 'assistant-1',
+        role: 'assistant' as const,
+        timestamp: '2026-06-29T10:00:00.000Z',
+        text: 'Original answer',
+      }
+      renderMessageInput({ onSend, replyTarget, onClearReplyTarget })
+      await flush()
+
+      expect(container.textContent).toContain('Replying to Assistant')
+      typeInTextarea('follow up')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      expect(onSend).toHaveBeenCalledWith('follow up', undefined, { replyTo: replyTarget })
+      expect(onClearReplyTarget).toHaveBeenCalledTimes(1)
+    })
+
+    it('omits reply metadata for local slash commands', async () => {
+      const onSend = vi.fn(() => true)
+      const replyTarget = {
+        messageId: 'assistant-1',
+        role: 'assistant' as const,
+        timestamp: '2026-06-29T10:00:00.000Z',
+        text: 'Original answer',
+      }
+      renderMessageInput({ onSend, replyTarget })
+      await flush()
+
+      typeInTextarea('/compact')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      expect(onSend).toHaveBeenCalledWith('/compact', undefined)
     })
 
     it('preserves draft when onSend returns false', async () => {
