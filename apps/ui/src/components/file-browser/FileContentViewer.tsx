@@ -51,31 +51,11 @@ const CodeMirrorFileEditorLazy = lazy(async () => {
 /* ------------------------------------------------------------------ */
 
 const WORD_WRAP_STORAGE_KEY = 'forge-file-browser-word-wrap'
-const MARKDOWN_RAW_STORAGE_KEY = 'forge-file-browser-markdown-raw'
-
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdx'])
 
 function isMarkdownFile(filePath: string): boolean {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
   return MARKDOWN_EXTENSIONS.has(ext)
-}
-
-function readMarkdownRawPreference(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    return window.localStorage.getItem(MARKDOWN_RAW_STORAGE_KEY) === 'true'
-  } catch {
-    return false
-  }
-}
-
-function storeMarkdownRawPreference(value: boolean): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(MARKDOWN_RAW_STORAGE_KEY, String(value))
-  } catch {
-    // Ignore
-  }
 }
 
 function readWordWrapPreference(): boolean {
@@ -148,8 +128,8 @@ export function FileContentViewer({
   onContentScrollSnapshotChange,
 }: FileContentViewerProps) {
   const [wordWrap, setWordWrap] = useState(readWordWrapPreference)
-  const [markdownRaw, setMarkdownRaw] = useState(readMarkdownRawPreference)
-  const [markdownRawTouchedKey, setMarkdownRawTouchedKey] = useState<string | null>(null)
+  const [markdownRaw, setMarkdownRaw] = useState(false)
+  const [markdownRawFileKey, setMarkdownRawFileKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false)
 
@@ -188,17 +168,25 @@ export function FileContentViewer({
   const isEditing = canEdit
   const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
   const conflictActionsDisabled = editorLocked
-  const contentRestoreKey = `${worktreeId ?? ''}:${filePath ?? ''}:${versionRestoreKey(content?.version)}`
-  const effectiveMarkdownRaw = markdownRawTouchedKey === contentRestoreKey
+  const fileIdentityKey = `${worktreeId ?? ''}:${filePath ?? ''}`
+  const previousFileIdentityKeyRef = useRef(fileIdentityKey)
+  const fileIdentityChanged = previousFileIdentityKeyRef.current !== fileIdentityKey
+  const contentRestoreKey = `${fileIdentityKey}:${versionRestoreKey(content?.version)}`
+  const effectiveMarkdownRaw = isMarkdown && !fileIdentityChanged && markdownRawFileKey === fileIdentityKey
     ? markdownRaw
-    : markdownRaw || (isMarkdown && isEditing)
+    : false
+
+  useEffect(() => {
+    if (previousFileIdentityKeyRef.current === fileIdentityKey) return
+    previousFileIdentityKeyRef.current = fileIdentityKey
+    setMarkdownRaw(false)
+    setMarkdownRawFileKey(null)
+  }, [fileIdentityKey])
 
   const handleToggleMarkdownRaw = useCallback(() => {
-    const next = !effectiveMarkdownRaw
-    setMarkdownRawTouchedKey(contentRestoreKey)
-    setMarkdownRaw(next)
-    storeMarkdownRawPreference(next)
-  }, [contentRestoreKey, effectiveMarkdownRaw])
+    setMarkdownRawFileKey(fileIdentityKey)
+    setMarkdownRaw(!effectiveMarkdownRaw)
+  }, [effectiveMarkdownRaw, fileIdentityKey])
 
   const handleCopyContent = useCallback(async () => {
     if (!contentText) return
@@ -352,8 +340,8 @@ export function FileContentViewer({
   // --- Text content ---
   const text = content?.content ?? ''
 
-  // --- Markdown file: show rendered or raw based on toggle. Editable markdown opens as source,
-  // but can still be toggled to preview the current draft. ---
+  // --- Markdown file: default to rendered preview on file open, with a source toggle
+  // that preserves editable draft behavior for the currently selected file. ---
   if (isMarkdown && !effectiveMarkdownRaw) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden" role="region" aria-label={`File content: ${fileName}`}>

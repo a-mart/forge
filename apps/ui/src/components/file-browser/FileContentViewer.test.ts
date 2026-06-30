@@ -216,30 +216,30 @@ describe('FileContentViewer direct inline editing', () => {
 })
 
 describe('FileContentViewer markdown source/preview toggle', () => {
-  it('defaults editable markdown files to source mode and toggles to rendered preview', () => {
+  it('defaults editable markdown files to preview mode with the current draft and toggles to source', () => {
     const editSession = createEditSession({
       state: editState({ mode: 'edit', draft: '# Draft heading', dirty: true }),
     })
     renderViewer(editSession, {
       filePath: 'docs/readme.md',
       content: { ...content, content: '# Base heading', lines: 1 },
-    })
-
-    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
-    expect(codeMirrorProps.at(-1)?.value).toBe('# Draft heading')
-    expect(markdownPreviewProps).toHaveLength(0)
-
-    act(() => {
-      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
-      toggle?.()
     })
 
     expect(headerProps.at(-1)?.markdownRaw).toBe(false)
     expect(container.querySelector('[data-testid="markdown-preview"]')).not.toBeNull()
     expect(markdownPreviewProps.at(-1)?.content).toBe('# Draft heading')
+    expect(codeMirrorProps).toHaveLength(0)
+
+    act(() => {
+      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
+      toggle?.()
+    })
+
+    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
+    expect(codeMirrorProps.at(-1)?.value).toBe('# Draft heading')
   })
 
-  it('toggles editable markdown from preview back to source mode', () => {
+  it('toggles editable markdown from source back to preview mode', () => {
     const editSession = createEditSession({
       state: editState({ mode: 'edit', draft: '# Draft heading', dirty: true }),
     })
@@ -252,15 +252,71 @@ describe('FileContentViewer markdown source/preview toggle', () => {
       const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
       toggle?.()
     })
-    expect(headerProps.at(-1)?.markdownRaw).toBe(false)
+    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
 
     act(() => {
       const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
       toggle?.()
     })
 
+    expect(headerProps.at(-1)?.markdownRaw).toBe(false)
+    expect(markdownPreviewProps.at(-1)?.content).toBe('# Draft heading')
+  })
+
+  it('preserves a user-selected source view across unrelated re-renders for the same markdown file', () => {
+    const editSession = createEditSession({
+      state: editState({ mode: 'edit', draft: '# Draft heading', dirty: true }),
+    })
+    renderViewer(editSession, {
+      filePath: 'docs/readme.md',
+      content: { ...content, content: '# Base heading', lines: 1 },
+    })
+
+    act(() => {
+      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
+      toggle?.()
+    })
+    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
+
+    renderViewer(editSession, {
+      filePath: 'docs/readme.md',
+      content: { ...content, content: '# Base heading', lines: 1 },
+      contentScrollSnapshot: { kind: 'editor', scrollTop: 12, scrollLeft: 0 },
+    })
+
     expect(headerProps.at(-1)?.markdownRaw).toBe(true)
     expect(codeMirrorProps.at(-1)?.value).toBe('# Draft heading')
+  })
+
+  it('defaults back to preview when selecting a different markdown file', () => {
+    const editSession = createEditSession({
+      state: editState({ mode: 'edit', draft: '# Draft heading', dirty: true }),
+    })
+    renderViewer(editSession, {
+      filePath: 'docs/readme.md',
+      content: { ...content, content: '# Base heading', lines: 1 },
+    })
+
+    act(() => {
+      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
+      toggle?.()
+    })
+    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
+
+    renderViewer(editSession, {
+      filePath: 'docs/other.md',
+      content: { ...content, content: '# Other heading', lines: 1 },
+    })
+
+    expect(headerProps.at(-1)?.markdownRaw).toBe(false)
+    expect(markdownPreviewProps.at(-1)?.content).toBe('# Draft heading')
+
+    renderViewer(editSession, {
+      filePath: 'docs/readme.md',
+      content: { ...content, content: '# Base heading', lines: 1 },
+    })
+
+    expect(headerProps.at(-1)?.markdownRaw).toBe(false)
   })
 })
 
