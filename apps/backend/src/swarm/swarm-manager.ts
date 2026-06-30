@@ -500,6 +500,11 @@ interface PendingInboundTurnContext {
   codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext;
 }
 
+interface PendingChoiceAssistantOutputContinuation {
+  managerId: string;
+  target: SessionTranscriptAssistantOutputTarget;
+}
+
 interface ActiveObservabilityRootContext {
   rootTurnId: string;
   parentRootTurnId?: string;
@@ -1309,6 +1314,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly inboundTurnContextActivatedByAgentId = new Set<string>();
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, AssistantOutputTarget>();
+  private readonly pendingChoiceAssistantOutputContinuationByChoiceId = new Map<string, PendingChoiceAssistantOutputContinuation>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeCodexPluginDelegationByManagerId = new Map<string, CodexPluginDelegationTurnContext>();
   private readonly lastCodexPluginDelegationByManagerId = new Map<string, CodexPluginRetryContext>();
@@ -2905,9 +2911,52 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
     this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "present_choices");
-    const pending = this.choiceService.requestUserChoice(agentId, questions);
+    const pending = this.choiceService.requestUserChoiceWithId(agentId, questions);
+    this.rememberPendingChoiceAssistantOutputContinuation(pending.choiceId, agentId);
     this.runtimeController.flushPreservedManagerAssistantOutputForTool(agentId, "present_choices");
-    return pending;
+    return pending.promise;
+  }
+
+  private rememberPendingChoiceAssistantOutputContinuation(choiceId: string, agentId: string): void {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return;
+    }
+
+    const target = this.activeAssistantOutputTargetByManagerId.get(agentId);
+    if (!target || target.kind !== "session_transcript" || target.channel !== "web") {
+      return;
+    }
+
+    this.pendingChoiceAssistantOutputContinuationByChoiceId.set(choiceId, {
+      managerId: agentId,
+      target: cloneSessionTranscriptAssistantOutputTarget(target),
+    });
+  }
+
+  private activatePendingChoiceAssistantOutputContinuation(choiceId: string, ownerAgentId: string): void {
+    const continuation = this.pendingChoiceAssistantOutputContinuationByChoiceId.get(choiceId);
+    this.pendingChoiceAssistantOutputContinuationByChoiceId.delete(choiceId);
+    if (!continuation || continuation.managerId !== ownerAgentId) {
+      return;
+    }
+
+    const descriptor = this.descriptors.get(continuation.managerId);
+    if (!descriptor || descriptor.role !== "manager" || descriptor.collab) {
+      return;
+    }
+
+    this.inboundTurnContextActivatedByAgentId.add(continuation.managerId);
+    this.activeAssistantOutputTargetByManagerId.set(continuation.managerId, continuation.target);
+    this.runtimeController.activateManagerAssistantOutputTurn(continuation.managerId, continuation.target);
+  }
+
+  private clearPendingChoiceAssistantOutputContinuationsForAgent(agentId: string): void {
+    for (const [choiceId, continuation] of Array.from(this.pendingChoiceAssistantOutputContinuationByChoiceId.entries())) {
+      if (continuation.managerId === agentId) {
+        this.pendingChoiceAssistantOutputContinuationByChoiceId.delete(choiceId);
+      }
+    }
   }
 
   private scheduleProjectExecutableTrustPromptsForAllManagers(): void {
@@ -3278,14 +3327,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
+    const owner = this.choiceService.getPendingChoiceOwner(choiceId);
+    if (owner) {
+      this.activatePendingChoiceAssistantOutputContinuation(choiceId, owner.agentId);
+    } else {
+      this.pendingChoiceAssistantOutputContinuationByChoiceId.delete(choiceId);
+    }
     this.choiceService.resolveChoiceRequest(choiceId, answers);
   }
 
   cancelChoiceRequest(choiceId: string, reason: Extract<ChoiceRequestStatus, "cancelled" | "expired">): void {
+    this.pendingChoiceAssistantOutputContinuationByChoiceId.delete(choiceId);
     this.choiceService.cancelChoiceRequest(choiceId, reason);
   }
 
   cancelAllPendingChoicesForAgent(agentId: string): void {
+    this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
     this.choiceService.cancelAllPendingChoicesForAgent(agentId);
   }
 
@@ -9718,6 +9775,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.pendingInboundTurnContextsByAgentId.delete(agentId);
     this.inboundTurnContextActivatedByAgentId.delete(agentId);
     this.activeAssistantOutputTargetByManagerId.delete(agentId);
+    this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
     this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
     this.clearInheritedAssistantOutputTargetsForManager(agentId);
     this.runtimeController.clearManagerAssistantOutputTurn(agentId);
@@ -9765,6 +9823,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
       this.clearInheritedAssistantOutputTargetsForManager(agentId);
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);

@@ -990,6 +990,141 @@ describe('SwarmManager', () => {
     await expect(pending).resolves.toEqual([{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
   })
 
+  it('projects manager assistant final text after answered web present_choices continuation', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('help me decide')
+    await startRuntimeUserTurn(manager, 'manager')
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [
+          { type: 'thinking', thinking: 'hidden initial thinking', signature: 'hidden-signature' },
+          { type: 'text', text: 'Pick one option.' },
+          { type: 'toolCall', name: 'present_choices', id: 'choice-tool-1', arguments: { questions: [] } },
+        ],
+      },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_start',
+      toolName: 'present_choices',
+      toolCallId: 'choice-tool-1',
+      args: {},
+    })
+
+    const pending = manager.requestUserChoice('manager', [
+      {
+        id: 'q1',
+        question: 'Choose one.',
+        options: [
+          { id: 'alpha', label: 'Alpha' },
+          { id: 'beta', label: 'Beta' },
+        ],
+      },
+    ])
+    const choiceRequest = manager.getConversationHistory('manager').find(
+      (entry: any) => entry.type === 'choice_request' && entry.status === 'pending',
+    ) as any
+    expect(choiceRequest).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    manager.resolveChoiceRequest(choiceRequest.choiceId, [{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
+    await expect(pending).resolves.toEqual([{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'present_choices',
+      toolCallId: 'choice-tool-1',
+      isError: false,
+      result: { answers: [{ questionId: 'q1', selectedOptionIds: ['alpha'] }] },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'stop',
+        content: [
+          { type: 'thinking', thinking: 'hidden final thinking', signature: 'secret-signature' },
+          { type: 'text', text: 'Final clean answer.' },
+        ],
+      },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    const choiceRows = manager
+      .getConversationHistory('manager')
+      .filter((entry: any) => entry.type === 'choice_request' && entry.choiceId === choiceRequest.choiceId)
+    expect(choiceRows.map((entry: any) => entry.status)).toEqual(['pending', 'answered'])
+
+    expect(assistantOutputsFor(manager, 'manager')).toMatchObject([
+      { text: 'Pick one option.', source: 'assistant_output' },
+      { text: 'Final clean answer.', source: 'assistant_output' },
+    ])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text).join('\n')).not.toContain('hidden')
+    expect((manager as any).pendingChoiceAssistantOutputContinuationByChoiceId.size).toBe(0)
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Unrelated internal text', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    expect(assistantOutputsFor(manager, 'manager')).toHaveLength(2)
+  })
+
+  it('does not project non-web present_choices continuations into the web transcript', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('telegram choice', {
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    await startRuntimeUserTurn(manager, 'manager')
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [
+          { type: 'text', text: 'Pick one option.' },
+          { type: 'toolCall', name: 'present_choices', id: 'choice-tool-1', arguments: { questions: [] } },
+        ],
+      },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_start',
+      toolName: 'present_choices',
+      toolCallId: 'choice-tool-1',
+      args: {},
+    })
+
+    const pending = manager.requestUserChoice('manager', [{ id: 'q1', question: 'Choose one.' }])
+    const choiceRequest = manager.getConversationHistory('manager').find(
+      (entry: any) => entry.type === 'choice_request' && entry.status === 'pending',
+    ) as any
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    manager.resolveChoiceRequest(choiceRequest.choiceId, [{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
+    await expect(pending).resolves.toEqual([{ questionId: 'q1', selectedOptionIds: ['alpha'] }])
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'present_choices',
+      toolCallId: 'choice-tool-1',
+      isError: false,
+      result: {},
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Telegram-only final answer.', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
   it('does not flush preserved present_choices assistant text when choice creation fails', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

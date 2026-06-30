@@ -32,6 +32,10 @@ export class SwarmChoiceService {
   constructor(private readonly options: SwarmChoiceServiceOptions) {}
 
   requestUserChoice(agentId: string, questions: ChoiceQuestion[]): Promise<ChoiceAnswer[]> {
+    return this.requestUserChoiceWithId(agentId, questions).promise;
+  }
+
+  requestUserChoiceWithId(agentId: string, questions: ChoiceQuestion[]): { choiceId: string; promise: Promise<ChoiceAnswer[]> } {
     const descriptor = this.options.getDescriptor(agentId);
     if (!descriptor) {
       throw new Error(`Agent not found: ${agentId}`);
@@ -44,7 +48,7 @@ export class SwarmChoiceService {
     const choiceId = randomUUID().slice(0, 12);
     const createdAt = this.options.now();
 
-    return new Promise<ChoiceAnswer[]>((resolve, reject) => {
+    const promise = new Promise<ChoiceAnswer[]>((resolve, reject) => {
       const pending: PendingChoiceRequest = {
         choiceId,
         agentId,
@@ -59,6 +63,8 @@ export class SwarmChoiceService {
       this.pendingChoiceRequests.set(choiceId, pending);
       this.options.emitAgentsSnapshot();
     });
+
+    return { choiceId, promise };
   }
 
   resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
