@@ -149,6 +149,7 @@ export function FileContentViewer({
 }: FileContentViewerProps) {
   const [wordWrap, setWordWrap] = useState(readWordWrapPreference)
   const [markdownRaw, setMarkdownRaw] = useState(readMarkdownRawPreference)
+  const [markdownRawTouchedKey, setMarkdownRawTouchedKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false)
 
@@ -181,29 +182,23 @@ export function FileContentViewer({
     })
   }, [])
 
-  const handleToggleMarkdownRaw = useCallback(() => {
-    setMarkdownRaw((prev) => {
-      const next = !prev
-      storeMarkdownRawPreference(next)
-      return next
-    })
-  }, [])
-
   const contentText = content?.content
   const editState = editSession?.state
   const canEdit = inlineEditingEnabled && Boolean(editSession?.canEnterEditMode)
   const isEditing = canEdit
   const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
   const conflictActionsDisabled = editorLocked
-  const effectiveMarkdownRaw = markdownRaw || (isMarkdown && isEditing)
   const contentRestoreKey = `${worktreeId ?? ''}:${filePath ?? ''}:${versionRestoreKey(content?.version)}`
+  const effectiveMarkdownRaw = markdownRawTouchedKey === contentRestoreKey
+    ? markdownRaw
+    : markdownRaw || (isMarkdown && isEditing)
 
-  useEffect(() => {
-    if (isEditing && isMarkdown && !markdownRaw) {
-      setMarkdownRaw(true)
-      storeMarkdownRawPreference(true)
-    }
-  }, [isEditing, isMarkdown, markdownRaw])
+  const handleToggleMarkdownRaw = useCallback(() => {
+    const next = !effectiveMarkdownRaw
+    setMarkdownRawTouchedKey(contentRestoreKey)
+    setMarkdownRaw(next)
+    storeMarkdownRawPreference(next)
+  }, [contentRestoreKey, effectiveMarkdownRaw])
 
   const handleCopyContent = useCallback(async () => {
     if (!contentText) return
@@ -357,8 +352,9 @@ export function FileContentViewer({
   // --- Text content ---
   const text = content?.content ?? ''
 
-  // --- Markdown file: show rendered or raw based on toggle. Editable markdown opens as source. ---
-  if (isMarkdown && !effectiveMarkdownRaw && !isEditing) {
+  // --- Markdown file: show rendered or raw based on toggle. Editable markdown opens as source,
+  // but can still be toggled to preview the current draft. ---
+  if (isMarkdown && !effectiveMarkdownRaw) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden" role="region" aria-label={`File content: ${fileName}`}>
         <FileContentHeader
@@ -377,7 +373,7 @@ export function FileContentViewer({
           onRevert={editSession?.revert}
         />
         <MarkdownPreview
-          content={text}
+          content={isEditing && editState?.mode === 'edit' ? editState.draft : text}
           initialScroll={contentScrollSnapshot?.kind === 'markdown'
             ? { top: contentScrollSnapshot.scrollTop, left: contentScrollSnapshot.scrollLeft }
             : undefined}

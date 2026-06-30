@@ -10,6 +10,7 @@ import type { FileEditSessionController, FileEditSessionState } from './use-file
 
 const codeMirrorProps: Array<Record<string, unknown>> = []
 const headerProps: Array<Record<string, unknown>> = []
+const markdownPreviewProps: Array<Record<string, unknown>> = []
 const pdfPreviewProps: Array<Record<string, unknown>> = []
 
 vi.mock('./PdfPreview', () => ({
@@ -33,6 +34,13 @@ vi.mock('./FileContentHeader', () => ({
   },
 }))
 
+vi.mock('./MarkdownPreview', () => ({
+  MarkdownPreview: (props: Record<string, unknown>) => {
+    markdownPreviewProps.push(props)
+    return createElement('div', { 'data-testid': 'markdown-preview' }, String(props.content ?? ''))
+  },
+}))
+
 const content: FileContentResult = {
   content: 'base content',
   binary: false,
@@ -51,7 +59,9 @@ beforeEach(() => {
   document.body.appendChild(container)
   codeMirrorProps.length = 0
   headerProps.length = 0
+  markdownPreviewProps.length = 0
   pdfPreviewProps.length = 0
+  window.localStorage?.removeItem?.('forge-file-browser-markdown-raw')
 })
 
 afterEach(() => {
@@ -202,6 +212,55 @@ describe('FileContentViewer direct inline editing', () => {
       contentScrollSnapshot: null,
     })
     expect(codeMirrorProps.at(-1)?.initialScroll).toBeUndefined()
+  })
+})
+
+describe('FileContentViewer markdown source/preview toggle', () => {
+  it('defaults editable markdown files to source mode and toggles to rendered preview', () => {
+    const editSession = createEditSession({
+      state: editState({ mode: 'edit', draft: '# Draft heading', dirty: true }),
+    })
+    renderViewer(editSession, {
+      filePath: 'docs/readme.md',
+      content: { ...content, content: '# Base heading', lines: 1 },
+    })
+
+    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
+    expect(codeMirrorProps.at(-1)?.value).toBe('# Draft heading')
+    expect(markdownPreviewProps).toHaveLength(0)
+
+    act(() => {
+      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
+      toggle?.()
+    })
+
+    expect(headerProps.at(-1)?.markdownRaw).toBe(false)
+    expect(container.querySelector('[data-testid="markdown-preview"]')).not.toBeNull()
+    expect(markdownPreviewProps.at(-1)?.content).toBe('# Draft heading')
+  })
+
+  it('toggles editable markdown from preview back to source mode', () => {
+    const editSession = createEditSession({
+      state: editState({ mode: 'edit', draft: '# Draft heading', dirty: true }),
+    })
+    renderViewer(editSession, {
+      filePath: 'docs/readme.md',
+      content: { ...content, content: '# Base heading', lines: 1 },
+    })
+
+    act(() => {
+      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
+      toggle?.()
+    })
+    expect(headerProps.at(-1)?.markdownRaw).toBe(false)
+
+    act(() => {
+      const toggle = headerProps.at(-1)?.onToggleMarkdownRaw as (() => void) | undefined
+      toggle?.()
+    })
+
+    expect(headerProps.at(-1)?.markdownRaw).toBe(true)
+    expect(codeMirrorProps.at(-1)?.value).toBe('# Draft heading')
   })
 })
 
