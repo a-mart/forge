@@ -169,19 +169,19 @@ export function FileContentViewer({
   const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
   const conflictActionsDisabled = editorLocked
   const fileIdentityKey = `${worktreeId ?? ''}:${filePath ?? ''}`
-  const previousFileIdentityKeyRef = useRef(fileIdentityKey)
-  const fileIdentityChanged = previousFileIdentityKeyRef.current !== fileIdentityKey
+  const [previousFileIdentityKey, setPreviousFileIdentityKey] = useState(fileIdentityKey)
+  const fileIdentityChanged = previousFileIdentityKey !== fileIdentityKey
   const contentRestoreKey = `${fileIdentityKey}:${versionRestoreKey(content?.version)}`
   const effectiveMarkdownRaw = isMarkdown && !fileIdentityChanged && markdownRawFileKey === fileIdentityKey
     ? markdownRaw
     : false
 
   useEffect(() => {
-    if (previousFileIdentityKeyRef.current === fileIdentityKey) return
-    previousFileIdentityKeyRef.current = fileIdentityKey
+    if (previousFileIdentityKey === fileIdentityKey) return
+    setPreviousFileIdentityKey(fileIdentityKey)
     setMarkdownRaw(false)
     setMarkdownRawFileKey(null)
-  }, [fileIdentityKey])
+  }, [fileIdentityKey, previousFileIdentityKey])
 
   const handleToggleMarkdownRaw = useCallback(() => {
     setMarkdownRawFileKey(fileIdentityKey)
