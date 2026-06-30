@@ -116,4 +116,23 @@ describe("manager model selection", () => {
       thinkingLevel: "high",
     });
   });
+
+  it("keeps pi-sonnet preset resolution on Sonnet 5 instead of Opus", async () => {
+    expect(resolveModelDescriptorFromPreset("pi-sonnet")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      thinkingLevel: "medium",
+    });
+
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "anthropic", modelId: "claude-sonnet-5" },
+        { surface: "create", providerAvailability: new Map([["anthropic", true]]) },
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      thinkingLevel: "medium",
+    });
+  });
 });

@@ -100,6 +100,10 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
     return 'sdk-sonnet'
   }
 
+  if (normalizedProvider === 'anthropic' && normalizedModelId.startsWith('claude-sonnet-')) {
+    return 'pi-sonnet'
+  }
+
   const model = getCatalogModel(normalizedModelId, normalizedProvider)
   if (model && model.provider === normalizedProvider) {
     return model.familyId

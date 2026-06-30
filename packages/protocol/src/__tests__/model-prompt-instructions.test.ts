@@ -13,14 +13,16 @@ describe('model-prompt-instructions', () => {
     expect(gpt55Instructions).toBe(codexInstructions)
   })
 
-  it('returns Claude instructions for pi-opus and Claude SDK families', () => {
+  it('returns Claude instructions for pi-opus, pi-sonnet, and Claude SDK families', () => {
     const instructions = getBuiltInModelSpecificInstructions('pi-opus')
+    const sonnetInstructions = getBuiltInModelSpecificInstructions('pi-sonnet')
     const variantInstructions = getBuiltInModelSpecificInstructions('pi-opus-sonnet')
     const sdkOpusInstructions = getBuiltInModelSpecificInstructions('sdk-opus')
     const sdkSonnetInstructions = getBuiltInModelSpecificInstructions('sdk-sonnet')
 
     expect(instructions).toContain('Prefer concise, direct answers over essay-style framing.')
     expect(instructions).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+    expect(sonnetInstructions).toBe(instructions)
     expect(variantInstructions).toBe(instructions)
     expect(sdkOpusInstructions).toBe(instructions)
     expect(sdkSonnetInstructions).toBe(instructions)

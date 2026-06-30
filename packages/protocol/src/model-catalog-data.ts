@@ -122,6 +122,17 @@ export const FORGE_MODEL_CATALOG = {
       visibleInSpawnPreset: true,
       visibleInSpecialists: true,
     },
+    'pi-sonnet': {
+      familyId: 'pi-sonnet',
+      displayName: 'Claude Sonnet 5',
+      provider: 'anthropic',
+      defaultModelId: 'claude-sonnet-5',
+      defaultReasoningLevel: 'medium',
+      visibleInCreateManager: true,
+      visibleInChangeManager: true,
+      visibleInSpawnPreset: true,
+      visibleInSpecialists: true,
+    },
     'sdk-opus': {
       familyId: 'sdk-opus',
       displayName: 'Claude Opus 4.8 (SDK)',
@@ -295,9 +306,9 @@ export const FORGE_MODEL_CATALOG = {
     'claude-sonnet-5': {
       modelId: 'claude-sonnet-5',
       provider: 'anthropic',
-      familyId: 'pi-opus',
+      familyId: 'pi-sonnet',
       displayName: 'Claude Sonnet 5',
-      isFamilyDefault: false,
+      isFamilyDefault: true,
       supportsReasoning: true,
       supportedReasoningLevels: ['low', 'medium', 'high'],
       defaultReasoningLevel: 'medium',
@@ -313,7 +324,7 @@ export const FORGE_MODEL_CATALOG = {
     'claude-sonnet-4-5-20250929': {
       modelId: 'claude-sonnet-4-5-20250929',
       provider: 'anthropic',
-      familyId: 'pi-opus',
+      familyId: 'pi-sonnet',
       displayName: 'Claude Sonnet 4.5',
       isFamilyDefault: false,
       supportsReasoning: true,

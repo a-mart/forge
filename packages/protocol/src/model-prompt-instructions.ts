@@ -37,6 +37,7 @@ export function getBuiltInModelSpecificInstructions(familyId: string): string | 
 
   if (
     normalizedFamilyId.startsWith('pi-opus') ||
+    normalizedFamilyId.startsWith('pi-sonnet') ||
     normalizedFamilyId.startsWith('sdk-opus') ||
     normalizedFamilyId.startsWith('sdk-sonnet')
   ) {

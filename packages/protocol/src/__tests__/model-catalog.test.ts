@@ -65,6 +65,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
+  'pi-sonnet': {
+    provider: 'anthropic',
+    defaultModelId: 'claude-sonnet-5',
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
+    visibleInSpecialists: true,
+  },
   'sdk-opus': {
     provider: 'claude-sdk',
     defaultModelId: 'claude-opus-4-8',
@@ -158,7 +166,7 @@ const EXPECTED_MODELS = {
   },
   'claude-sonnet-5': {
     provider: 'anthropic',
-    familyId: 'pi-opus',
+    familyId: 'pi-sonnet',
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -166,7 +174,7 @@ const EXPECTED_MODELS = {
   },
   'claude-sonnet-4-5-20250929': {
     provider: 'anthropic',
-    familyId: 'pi-opus',
+    familyId: 'pi-sonnet',
     contextWindow: 200_000,
     maxOutputTokens: 64_000,
     supportsReasoning: true,
@@ -431,7 +439,8 @@ describe('model-catalog', () => {
     expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
-    expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-opus')
+    expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
+    expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
     expect(getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.displayName).toBe('Claude Sonnet 4.5 (SDK)')
@@ -453,6 +462,8 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-4-5-20250929')).toBe('sdk-sonnet')
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-5')).toBe('sdk-sonnet')
+    expect(inferCatalogFamily('anthropic', 'claude-sonnet-5')).toBe('pi-sonnet')
+    expect(inferCatalogFamily('anthropic', 'claude-sonnet-4-5-20250929')).toBe('pi-sonnet')
     expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-8')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
@@ -515,6 +526,7 @@ describe('model-catalog', () => {
       'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
+      'pi-sonnet',
       'sdk-opus',
       'sdk-sonnet',
       'cursor-composer',
@@ -525,6 +537,7 @@ describe('model-catalog', () => {
       'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
+      'pi-sonnet',
       'sdk-opus',
       'sdk-sonnet',
       'cursor-composer',
@@ -535,6 +548,7 @@ describe('model-catalog', () => {
       'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
+      'pi-sonnet',
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',
@@ -546,6 +560,7 @@ describe('model-catalog', () => {
       'pi-codex-spark',
       'pi-5.4',
       'pi-opus',
+      'pi-sonnet',
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',

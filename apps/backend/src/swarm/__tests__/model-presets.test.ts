@@ -106,7 +106,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "cursor-composer"] as const) {
+    for (const presetId of ["pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "sdk-opus", "sdk-sonnet", "cursor-composer"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -214,6 +214,34 @@ describe("model-presets", () => {
       modelId: "claude-sonnet-5",
     });
     expect(presets.find((preset) => preset.presetId === "sdk-sonnet")?.variants?.map((variant) => variant.modelId)).toEqual([
+      "claude-sonnet-4-5-20250929",
+    ]);
+  });
+
+  it("exposes Anthropic Sonnet presets with the expected defaults", () => {
+    const presets = getModelPresetInfoList();
+
+    expect(inferSwarmModelPresetFromDescriptor({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+    })).toBe("pi-sonnet");
+
+    expect(inferSwarmModelPresetFromDescriptor({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+    })).toBe("pi-sonnet");
+
+    expect(resolveModelDescriptorFromPreset("pi-sonnet")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+      thinkingLevel: "medium",
+    });
+
+    expect(presets.find((preset) => preset.presetId === "pi-sonnet")).toMatchObject({
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+    });
+    expect(presets.find((preset) => preset.presetId === "pi-sonnet")?.variants?.map((variant) => variant.modelId)).toEqual([
       "claude-sonnet-4-5-20250929",
     ]);
   });

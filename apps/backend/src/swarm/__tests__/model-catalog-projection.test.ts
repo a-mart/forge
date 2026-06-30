@@ -141,7 +141,7 @@ describe("model-catalog-projection", () => {
     );
 
     const upstreamAnthropicIds = new Set(getModels("anthropic").map((model) => model.id));
-    if (upstreamAnthropicIds.has("claude-opus-4-8")) {
+    if (upstreamAnthropicIds.has("claude-opus-4-8") && upstreamAnthropicIds.has("claude-sonnet-5")) {
       return;
     }
 
@@ -157,17 +157,33 @@ describe("model-catalog-projection", () => {
       }>;
     };
 
-    expect(projection.providers.anthropic?.models).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
-          contextWindow: 1_000_000,
-          maxTokens: 128_000,
-        }),
-      ]),
-    );
-    expect(projection.providers.anthropic?.modelOverrides?.["claude-opus-4-8"]).toBeUndefined();
+    if (!upstreamAnthropicIds.has("claude-opus-4-8")) {
+      expect(projection.providers.anthropic?.models).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude-opus-4-8",
+            name: "Claude Opus 4.8",
+            contextWindow: 1_000_000,
+            maxTokens: 128_000,
+          }),
+        ]),
+      );
+      expect(projection.providers.anthropic?.modelOverrides?.["claude-opus-4-8"]).toBeUndefined();
+    }
+
+    if (!upstreamAnthropicIds.has("claude-sonnet-5")) {
+      expect(projection.providers.anthropic?.models).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
+            contextWindow: 1_000_000,
+            maxTokens: 128_000,
+          }),
+        ]),
+      );
+      expect(projection.providers.anthropic?.modelOverrides?.["claude-sonnet-5"]).toBeUndefined();
+    }
 
     const registry = new RealModelRegistry(authStorageStub as any, projectionPath) as {
       getError: () => unknown;
@@ -175,10 +191,18 @@ describe("model-catalog-projection", () => {
     };
 
     expect(registry.getError()).toBeUndefined();
-    expect(registry.find("anthropic", "claude-opus-4-8")).toMatchObject({
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
-    });
+    if (!upstreamAnthropicIds.has("claude-opus-4-8")) {
+      expect(registry.find("anthropic", "claude-opus-4-8")).toMatchObject({
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      });
+    }
+    if (!upstreamAnthropicIds.has("claude-sonnet-5")) {
+      expect(registry.find("anthropic", "claude-sonnet-5")).toMatchObject({
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      });
+    }
   });
 
   it("keeps disabled curated models in the projection so existing configs retain Forge-owned runtime behavior", async () => {
