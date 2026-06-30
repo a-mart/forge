@@ -198,6 +198,11 @@ describe("model-presets", () => {
       modelId: "claude-sonnet-4-5-20250929",
     })).toBe("sdk-sonnet");
 
+    expect(inferSwarmModelPresetFromDescriptor({
+      provider: "claude-sdk",
+      modelId: "claude-sonnet-5",
+    })).toBe("sdk-sonnet");
+
     expect(presets.find((preset) => preset.presetId === "sdk-opus")?.variants?.map((variant) => variant.modelId)).toEqual([
       "claude-opus-4-7",
       "claude-opus-4-6",
@@ -206,9 +211,11 @@ describe("model-presets", () => {
 
     expect(presets.find((preset) => preset.presetId === "sdk-sonnet")).toMatchObject({
       provider: "claude-sdk",
-      modelId: "claude-sonnet-4-5-20250929",
+      modelId: "claude-sonnet-5",
     });
-    expect(presets.find((preset) => preset.presetId === "sdk-sonnet")?.variants).toBeUndefined();
+    expect(presets.find((preset) => preset.presetId === "sdk-sonnet")?.variants?.map((variant) => variant.modelId)).toEqual([
+      "claude-sonnet-4-5-20250929",
+    ]);
   });
 
   it("omits deprecated variants that are not present in the catalog", () => {

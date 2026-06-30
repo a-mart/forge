@@ -96,7 +96,7 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
   const normalizedProvider = provider.trim().toLowerCase()
   const normalizedModelId = modelId.trim().toLowerCase()
 
-  if (normalizedProvider === 'claude-sdk' && normalizedModelId === 'claude-sonnet-4-5-20250929') {
+  if (normalizedProvider === 'claude-sdk' && normalizedModelId.startsWith('claude-sonnet-')) {
     return 'sdk-sonnet'
   }
 

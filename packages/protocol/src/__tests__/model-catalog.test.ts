@@ -75,7 +75,7 @@ const EXPECTED_FAMILIES = {
   },
   'sdk-sonnet': {
     provider: 'claude-sdk',
-    defaultModelId: 'claude-sonnet-4-5-20250929',
+    defaultModelId: 'claude-sonnet-5',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -156,6 +156,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'claude-sonnet-5': {
+    provider: 'anthropic',
+    familyId: 'pi-opus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'claude-sonnet-4-5-20250929': {
     provider: 'anthropic',
     familyId: 'pi-opus',
@@ -191,6 +199,14 @@ const EXPECTED_MODELS = {
   'claude-sdk/claude-opus-4-6': {
     provider: 'claude-sdk',
     familyId: 'sdk-opus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'claude-sdk/claude-sonnet-5': {
+    provider: 'claude-sdk',
+    familyId: 'sdk-sonnet',
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -266,7 +282,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(21)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
@@ -303,6 +319,7 @@ describe('model-catalog', () => {
   it('documents the intentional xAI divergences from Pi upstream', () => {
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
     expect(getCatalogModel('claude-opus-4-8')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
+    expect(getCatalogModel('claude-sonnet-5')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4.20-0309-reasoning')?.intentionalDivergenceNotes).toContain(
       'text-only',
     )
@@ -414,8 +431,11 @@ describe('model-catalog', () => {
     expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
+    expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-opus')
     expect(getCatalogFamilyForModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
+    expect(getCatalogFamilyForModel('claude-sonnet-5', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
     expect(getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.displayName).toBe('Claude Sonnet 4.5 (SDK)')
+    expect(getCatalogModel('claude-sonnet-5', 'claude-sdk')?.displayName).toBe('Claude Sonnet 5 (SDK)')
     expect(getCatalogModel('claude-sdk/claude-sonnet-4-5-20250929')?.provider).toBe('claude-sdk')
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
@@ -432,6 +452,7 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-4-5-20250929')).toBe('sdk-sonnet')
+    expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-5')).toBe('sdk-sonnet')
     expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-8')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
