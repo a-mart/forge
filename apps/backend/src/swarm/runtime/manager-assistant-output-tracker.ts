@@ -1,15 +1,12 @@
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import type { ConversationMessageEvent, MessageSourceContext } from "../types.js";
+import { extractMessageText, extractRole } from "../message-utils.js";
 import {
-  extractMessageErrorMessage,
-  extractMessageStopReason,
-  extractMessageText,
-  extractRole,
-  hasMessageErrorMessageField,
-  isAbortLikeErrorMessage,
-} from "../message-utils.js";
+  getToolLikeMessageBlocks,
+  messageHasIneligibleStopOrError,
+} from "./manager-assistant-final-message.js";
 
-type SessionTranscriptAssistantOutputTarget = {
+export type SessionTranscriptAssistantOutputTarget = {
   kind: "session_transcript";
   channel: "web" | "cli";
   sourceContext?: MessageSourceContext;
@@ -25,6 +22,8 @@ export type AssistantOutputTarget =
 interface AssistantOutputCandidate {
   text: string;
   sourceContext: MessageSourceContext;
+  // "final" is only the preserved present_choices companion text. General
+  // manager final assistant text is projected directly from clean message_end.
   kind: "final" | "progress";
   preserveThroughToolName?: string;
   expectedToolCallIds?: string[];
@@ -65,13 +64,11 @@ export class ManagerAssistantOutputTracker {
   }
 
   flushTurn(agentId: string): void {
-    const activeTurn = this.activeTurnsByAgentId.get(agentId);
-    if (!activeTurn) {
-      return;
-    }
-
-    this.emitCandidateIfEligible(agentId, activeTurn);
     this.clearTurn(agentId);
+  }
+
+  getActiveTarget(agentId: string): AssistantOutputTarget | undefined {
+    return this.activeTurnsByAgentId.get(agentId)?.target;
   }
 
   flushPreservedCandidateForTool(agentId: string, toolName: string): boolean {
@@ -223,11 +220,22 @@ export class ManagerAssistantOutputTracker {
       }
     }
 
+    if (!onlyPresentChoicesToolBlocks) {
+      if (options?.provisional) {
+        activeTurn.candidate = {
+          text,
+          kind: "progress",
+          sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
+        };
+      }
+      return;
+    }
+
     activeTurn.candidate = {
       text,
       kind: "final",
       sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
-      ...(onlyPresentChoicesToolBlocks ? { preserveThroughToolName: "present_choices" } : {}),
+      preserveThroughToolName: "present_choices",
     };
   }
 
@@ -306,44 +314,6 @@ export class ManagerAssistantOutputTracker {
     activeTurn.lastProgressText = candidate.text;
     return true;
   }
-}
-
-function messageHasIneligibleStopOrError(message: unknown): boolean {
-  const stopReason = extractMessageStopReason(message);
-  const errorMessage = extractMessageErrorMessage(message) ?? extractMessageText(message);
-  return (
-    stopReason === "error" ||
-    stopReason === "aborted" ||
-    hasMessageErrorMessageField(message) ||
-    isAbortLikeErrorMessage(errorMessage)
-  );
-}
-
-function getToolLikeMessageBlocks(message: unknown): Array<Record<string, unknown>> {
-  if (!message || typeof message !== "object") {
-    return [];
-  }
-
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) {
-    return [];
-  }
-
-  return content.filter((block): block is Record<string, unknown> => {
-    if (!block || typeof block !== "object") {
-      return false;
-    }
-
-    const maybeBlock = block as { type?: unknown; toolCallId?: unknown; name?: unknown };
-    return (
-      maybeBlock.type === "toolCall" ||
-      maybeBlock.type === "tool_call" ||
-      maybeBlock.type === "tool_use" ||
-      maybeBlock.type === "toolResult" ||
-      maybeBlock.type === "tool_result" ||
-      (typeof maybeBlock.toolCallId === "string" && maybeBlock.toolCallId.trim().length > 0)
-    );
-  });
 }
 
 function readToolBlockName(block: Record<string, unknown>): string | undefined {

@@ -149,6 +149,7 @@ import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
 import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
 import { formatAssistantOutputTargetMetadata } from "./runtime/manager-assistant-output-target-metadata.js";
+import { isCleanManagerAssistantFinalMessage } from "./runtime/manager-assistant-final-message.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import { reconcileInterruptedToolCallsForBoot } from "./interrupted-tool-reconciliation.js";
@@ -5238,8 +5239,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const shouldEnqueueAgentMessageTurnContext =
       target.role === "manager" &&
       (Boolean(observabilityInput) ||
-        assistantOutputProjectionTarget.kind === "session_transcript" ||
-        assistantOutputTarget.kind === "session_transcript" ||
+        assistantOutputProjectionTarget.kind !== "internal_only" ||
+        assistantOutputTarget.kind !== "internal_only" ||
         isAssistantOutputEligibleWorkerReport);
     const rollbackObservabilityInboundContext = shouldEnqueueAgentMessageTurnContext
       ? this.enqueueInboundTurnContext(target.agentId, {
@@ -7394,7 +7395,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (phase === "after_projection" && (event.type === "turn_end" || event.type === "agent_end")) {
+    if (phase === "after_projection" && event.type === "turn_end") {
+      this.inboundTurnContextActivatedByAgentId.delete(agentId);
+      this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+      this.activeObservabilityRootByAgentId.delete(agentId);
+      this.codexMcpToolTurnGateByManagerId.delete(agentId);
+      this.activeCodexPluginDelegationByManagerId.delete(agentId);
+      this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
+      return;
+    }
+
+    if (phase === "after_projection" && event.type === "agent_end") {
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
@@ -7402,9 +7413,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
-      // The tracker also self-clears on terminal turn events; keep this manager-level
-      // clear as lifecycle belt-and-suspenders for skipped/suppressed projections.
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
+      return;
+    }
+
+    if (phase === "after_projection" && isCleanManagerAssistantFinalMessage(event)) {
+      this.inboundTurnContextActivatedByAgentId.delete(agentId);
     }
   }
 
@@ -7415,6 +7429,39 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private getActiveAssistantOutputTargetForDelegation(managerId: string): AssistantOutputTarget {
     const target = this.activeAssistantOutputTargetByManagerId.get(managerId);
     return target ? cloneAssistantOutputTarget(target) : { kind: "internal_only", reason: "no_active_root" };
+  }
+
+  resolveManagerAssistantFinalOutputTarget(
+    agentId: string,
+    activeTarget: AssistantOutputTarget | undefined,
+  ): SessionTranscriptAssistantOutputTarget | undefined {
+    const manager = this.descriptors.get(agentId);
+    if (!manager || manager.role !== "manager") {
+      return undefined;
+    }
+
+    const rememberedTarget = activeTarget ?? this.activeAssistantOutputTargetByManagerId.get(agentId);
+    const fallbackTarget: AssistantOutputTarget = { kind: "explicit_tool_required", reason: "missing_active_target" };
+    let candidate: SessionTranscriptAssistantOutputTarget | undefined;
+
+    if (rememberedTarget?.kind === "session_transcript" && rememberedTarget.channel === "web") {
+      candidate = cloneSessionTranscriptAssistantOutputTarget(rememberedTarget);
+    } else if (!rememberedTarget && !manager.projectAgent && !manager.creatorAgentId) {
+      candidate = { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+    }
+
+    if (!candidate) {
+      return undefined;
+    }
+
+    if (!this.canProjectManagerFinalTextToWebByDefault(
+      { sender: manager, target: manager },
+      rememberedTarget ?? fallbackTarget,
+    )) {
+      return undefined;
+    }
+
+    return candidate;
   }
 
   private resolveAssistantOutputTargetForAgentMessage(input: {
@@ -7474,6 +7521,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     inputTarget: AssistantOutputTarget,
   ): SessionTranscriptAssistantOutputTarget | undefined {
     if (inputTarget.kind === "session_transcript") {
+      if (inputTarget.channel === "web" && !this.canProjectManagerFinalTextToWebByDefault(input, inputTarget)) {
+        return undefined;
+      }
       return cloneSessionTranscriptAssistantOutputTarget(inputTarget);
     }
 
@@ -7500,6 +7550,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (inheritedTarget.kind === "session_transcript") {
+      if (inheritedTarget.channel === "web" && !this.canProjectManagerFinalTextToWebByDefault(input, inheritedTarget)) {
+        return undefined;
+      }
       return cloneAssistantOutputTarget(inheritedTarget);
     }
 

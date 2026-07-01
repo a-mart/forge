@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtime/runtime-event-projector.js";
+import {
+  extractCleanManagerAssistantFinalMessage,
+  isCleanManagerAssistantFinalMessage,
+} from "../runtime/manager-assistant-final-message.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "../runtime/worker-health-types.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
@@ -93,7 +97,21 @@ function createHarness(debug = false): {
     logDebug: vi.fn(),
     getRuntime: vi.fn(() => undefined),
     isModelCacheVisualizationEnabled: vi.fn(() => false),
-    emitModelCacheObservation: vi.fn()
+    emitModelCacheObservation: vi.fn(),
+    resolveManagerAssistantFinalOutputTarget: vi.fn((_agentId, _descriptor, activeTarget) => {
+      if (activeTarget?.kind === "session_transcript") {
+        return activeTarget.channel === "web" ? activeTarget : undefined;
+      }
+      if (
+        activeTarget?.kind === "external_channel" ||
+        activeTarget?.kind === "peer_agent" ||
+        activeTarget?.kind === "internal_only" ||
+        (activeTarget?.kind === "explicit_tool_required" && activeTarget.reason !== "agent_message")
+      ) {
+        return undefined;
+      }
+      return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+    })
   };
 
   return { projector: new RuntimeEventProjector(deps), deps, descriptors, workerStallState, workerActivityState, runtimeRecoveryState };
@@ -112,8 +130,65 @@ function stallState(overrides: Partial<WorkerStallStateLike> = {}): WorkerStallS
   };
 }
 
+describe("clean manager assistant final message detection", () => {
+  it("accepts string content and text arrays", () => {
+    expect(extractCleanManagerAssistantFinalMessage({
+      type: "message_end",
+      message: { role: "assistant", content: " String final. ", stopReason: "stop" },
+    })?.text).toBe("String final.");
+    expect(extractCleanManagerAssistantFinalMessage({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "Array final." }], stopReason: "stop" },
+    })?.text).toBe("Array final.");
+  });
+
+  it("accepts thinking plus text and emits only text", () => {
+    expect(extractCleanManagerAssistantFinalMessage({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "private reasoning" },
+          { type: "text", text: "Visible final." },
+        ],
+        stopReason: "stop",
+      },
+    })?.text).toBe("Visible final.");
+  });
+
+  it("rejects empty, error, aborted, tool-call, and tool-result finals", () => {
+    const rejected: RuntimeSessionEvent[] = [
+      { type: "message_end", message: { role: "assistant", content: "   ", stopReason: "stop" } },
+      { type: "message_end", message: { role: "assistant", content: "failed", stopReason: "error" } },
+      { type: "message_end", message: { role: "assistant", content: "aborted", stopReason: "aborted" } },
+      { type: "message_end", message: { role: "assistant", content: "Request was aborted", errorMessage: "Request was aborted" } },
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "tool" }, { type: "toolCall", name: "bash", id: "t1" }],
+          stopReason: "toolUse",
+        },
+      },
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "result" }, { type: "toolResult", toolCallId: "t1", result: "ok" }],
+          stopReason: "stop",
+        },
+      },
+    ];
+
+    for (const event of rejected) {
+      expect(isCleanManagerAssistantFinalMessage(event)).toBe(false);
+      expect(extractCleanManagerAssistantFinalMessage(event)).toBeUndefined();
+    }
+  });
+});
+
 describe("RuntimeEventProjector", () => {
-  it("projects activated manager assistant output after conversation capture at turn end", async () => {
+  it("projects activated manager assistant output immediately at clean assistant message_end and does not duplicate on turn_end", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
     descriptors.set(manager.agentId, manager);
@@ -123,11 +198,9 @@ describe("RuntimeEventProjector", () => {
       agentId: manager.agentId,
       event: { type: "message_end", message: { role: "assistant", content: "Final answer", stopReason: "stop" } },
     });
-    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
 
-    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
-
-    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledTimes(2);
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
     expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: "conversation_message",
       agentId: manager.agentId,
@@ -137,9 +210,14 @@ describe("RuntimeEventProjector", () => {
       sourceContext: { channel: "web" },
     }));
     expect(deps.markSessionActivity).toHaveBeenCalledWith(manager.agentId, "2026-05-06T00:00:01.000Z");
+
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledTimes(2);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("projects manager assistant progress before continued tool work", async () => {
+  it("projects manager assistant progress for tool-use text and immediate final text after continued tool work", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
     descriptors.set(manager.agentId, manager);
@@ -147,7 +225,17 @@ describe("RuntimeEventProjector", () => {
 
     await projector.projectEvent({
       agentId: manager.agentId,
-      event: { type: "message_end", message: { role: "assistant", content: "I'll inspect that now.", stopReason: "stop" } },
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [
+            { type: "text", text: "I'll inspect that now." },
+            { type: "toolCall", name: "read", id: "read-1", arguments: { path: "src/index.ts" } },
+          ],
+        },
+      },
     });
     await projector.projectEvent({
       agentId: manager.agentId,
@@ -177,6 +265,56 @@ describe("RuntimeEventProjector", () => {
       source: "assistant_output",
       text: "Done.",
     }));
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("projects a post-tool clean final immediately even when no later turn_end arrives", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-rapa", role: "manager", managerId: "manager-rapa" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [
+            { type: "text", text: "I'll bootstrap the repo." },
+            { type: "toolCall", name: "bash", id: "bash-1", arguments: { command: "pnpm install" } },
+          ],
+        },
+      },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "bash", toolCallId: "bash-1", args: { command: "pnpm install" } },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_end", toolName: "bash", toolCallId: "bash-1", result: { exitCode: 0 }, isError: false },
+    });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Bootstrap complete.", stopReason: "stop" } },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      source: "assistant_progress",
+      text: "I'll bootstrap the repo.",
+    }));
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      source: "assistant_output",
+      text: "Bootstrap complete.",
+    }));
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(2);
+
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(2);
   });
 
   it("can project preserved manager assistant output when a present_choices card is opened", async () => {
@@ -215,9 +353,61 @@ describe("RuntimeEventProjector", () => {
     }));
   });
 
-  it("does not project routed-required or internal-only manager assistant output turns", async () => {
+  it("projects clean finals after agent-message routing, choices, explicit speak_to_user, and prior progress", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "explicit_tool_required", reason: "agent_message" });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Agent message follow-up.", stopReason: "stop" } },
+    });
+
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_end", toolName: "present_choices", toolCallId: "choice-1", result: { answered: true }, isError: false },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Choice continuation final.", stopReason: "stop" } },
+    });
+
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "Working..." }] } },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "bash", toolCallId: "bash-2", args: { command: "echo ok" } },
+    });
+    projector.markExplicitManagerAssistantOutput(manager.agentId);
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Final after progress and speak_to_user.", stopReason: "stop" } },
+    });
+
+    const assistantOutputs = vi.mocked(deps.conversationProjector.emitConversationMessage).mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.source === "assistant_output");
+    expect(assistantOutputs.map((event) => event.text)).toEqual([
+      "Agent message follow-up.",
+      "Choice continuation final.",
+      "Final after progress and speak_to_user.",
+    ]);
+  });
+
+  it("does not project protected non-web manager assistant output turns", async () => {
     for (const target of [
-      { kind: "explicit_tool_required" as const, reason: "agent_message" },
+      { kind: "explicit_tool_required" as const, reason: "collaboration_channel" },
+      { kind: "external_channel" as const, sourceContext: { channel: "telegram" as const, channelId: "chat-1" } },
+      { kind: "peer_agent" as const, fromAgentId: "peer-1" },
       { kind: "internal_only" as const },
     ]) {
       const { projector, deps, descriptors } = createHarness();
@@ -235,19 +425,61 @@ describe("RuntimeEventProjector", () => {
     }
   });
 
-  it("does not project manager assistant output after post-projection cleanup clears the turn", async () => {
+  it("does not project manager or worker finals when the server-owned surface resolver denies web output", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const collabManager = baseDescriptor({
+      agentId: "collab-manager",
+      role: "manager",
+      managerId: "collab-manager",
+      sessionSurface: "collab",
+    });
+    const cortexManager = baseDescriptor({
+      agentId: "cortex-manager",
+      role: "manager",
+      managerId: "cortex-manager",
+      profileId: "cortex",
+      sessionPurpose: "cortex_review",
+    });
+    const projectAgent = baseDescriptor({
+      agentId: "project-agent",
+      role: "manager",
+      managerId: "project-agent",
+      projectAgent: { handle: "agent", whenToUse: "test" },
+    });
+    const worker = baseDescriptor({ agentId: "worker-1", role: "worker", managerId: "manager-1" });
+    for (const descriptor of [collabManager, cortexManager, projectAgent, worker]) {
+      descriptors.set(descriptor.agentId, descriptor);
+    }
+    vi.mocked(deps.resolveManagerAssistantFinalOutputTarget).mockReturnValue(undefined);
+
+    for (const descriptor of [collabManager, cortexManager, projectAgent, worker]) {
+      await projector.projectEvent({
+        agentId: descriptor.agentId,
+        event: { type: "message_end", message: { role: "assistant", content: "Hidden final.", stopReason: "stop" } },
+      });
+    }
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+  });
+
+  it("projects clean manager assistant output using the default web surface even without an active turn", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
     descriptors.set(manager.agentId, manager);
-    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
 
-    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
     await projector.projectEvent({
       agentId: manager.agentId,
-      event: { type: "message_end", message: { role: "assistant", content: "Too late", stopReason: "stop" } },
+      event: { type: "message_end", message: { role: "assistant", content: "No active marker needed.", stopReason: "stop" } },
     });
 
-    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_output",
+      text: "No active marker needed.",
+      sourceContext: { channel: "web" },
+    }));
   });
 
   it("forwards missing-descriptor events to conversation capture and skips descriptor-dependent side effects", async () => {

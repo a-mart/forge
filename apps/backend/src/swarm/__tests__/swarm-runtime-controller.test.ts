@@ -241,7 +241,16 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     getRuntime: vi.fn(() => undefined),
     markSessionActivity: vi.fn(),
     isModelCacheVisualizationEnabled: vi.fn(() => false),
-    emitModelCacheObservation: vi.fn()
+    emitModelCacheObservation: vi.fn(),
+    resolveManagerAssistantFinalOutputTarget: vi.fn((_agentId, activeTarget) => {
+      if (activeTarget?.kind === "session_transcript") {
+        return activeTarget.channel === "web" ? activeTarget : undefined;
+      }
+      if (activeTarget?.kind === "explicit_tool_required" && activeTarget.reason === "agent_message") {
+        return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+      }
+      return undefined;
+    })
   };
 
   return {
@@ -282,7 +291,7 @@ describe("SwarmRuntimeController", () => {
     expect(controller.getRuntimeToken("agent-a")).toBeUndefined();
   });
 
-  it("flushes pending manager assistant output from the agent-end callback when no terminal event arrives", async () => {
+  it("projects manager assistant output from message_end without waiting for agent_end", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
     const { host, descriptors, emitConversationMessage } = createRuntimeControllerHarness(config);
@@ -308,9 +317,6 @@ describe("SwarmRuntimeController", () => {
       type: "message_end",
       message: { role: "assistant", content: "Callback-only final", stopReason: "stop" },
     });
-    expect(emitConversationMessage).not.toHaveBeenCalled();
-
-    await controller.handleRuntimeAgentEnd(token, manager.agentId);
 
     expect(emitConversationMessage).toHaveBeenCalledTimes(1);
     expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({

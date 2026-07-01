@@ -23,7 +23,10 @@ import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
 import { RuntimeEventProjector } from "./runtime/runtime-event-projector.js";
-import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
+import type {
+  AssistantOutputTarget,
+  SessionTranscriptAssistantOutputTarget,
+} from "./runtime/manager-assistant-output-tracker.js";
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type {
   WorkerActivityStateLike,
@@ -174,6 +177,10 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   getRuntime(agentId: string): SwarmAgentRuntime | undefined;
   isModelCacheVisualizationEnabled(): boolean;
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
+  resolveManagerAssistantFinalOutputTarget(
+    agentId: string,
+    activeTarget: AssistantOutputTarget | undefined
+  ): SessionTranscriptAssistantOutputTarget | undefined;
 }
 
 export class SwarmRuntimeController {
@@ -557,7 +564,9 @@ export class SwarmRuntimeController {
         logDebug: (message, details) => this.logDebug(message, details),
         getRuntime: (agentId) => this.getRuntime(agentId),
         isModelCacheVisualizationEnabled: () => this.host.isModelCacheVisualizationEnabled(),
-        emitModelCacheObservation: (event) => this.host.emitModelCacheObservation(event)
+        emitModelCacheObservation: (event) => this.host.emitModelCacheObservation(event),
+        resolveManagerAssistantFinalOutputTarget: (agentId, _descriptor, activeTarget) =>
+          this.host.resolveManagerAssistantFinalOutputTarget(agentId, activeTarget)
       });
     }
 

@@ -23,7 +23,12 @@ import type { VersioningMutation } from "../../versioning/versioning-types.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "../manual-stop-notice.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "./worker-health-types.js";
 import type { RuntimeRecoveryState } from "./runtime-recovery-state.js";
-import { ManagerAssistantOutputTracker, type AssistantOutputTarget } from "./manager-assistant-output-tracker.js";
+import {
+  ManagerAssistantOutputTracker,
+  type AssistantOutputTarget,
+  type SessionTranscriptAssistantOutputTarget,
+} from "./manager-assistant-output-tracker.js";
+import { extractCleanManagerAssistantFinalMessage } from "./manager-assistant-final-message.js";
 
 export type RuntimeEventProjectorRecoveryState = Pick<
   RuntimeRecoveryState,
@@ -68,6 +73,11 @@ export interface RuntimeEventProjectorDeps {
   getRuntime(agentId: string): SwarmAgentRuntime | undefined;
   isModelCacheVisualizationEnabled(): boolean;
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
+  resolveManagerAssistantFinalOutputTarget(
+    agentId: string,
+    descriptor: AgentDescriptor,
+    activeTarget: AssistantOutputTarget | undefined
+  ): SessionTranscriptAssistantOutputTarget | undefined;
 }
 
 export interface RuntimeEventProjectionInput {
@@ -263,6 +273,7 @@ export class RuntimeEventProjector {
       this.managerAssistantOutputTracker.clearTurn(agentId);
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
+      this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent);
       this.maybeEmitModelCacheObservation(agentId, descriptor, effectiveEvent);
     }
     if (shouldSurfaceManualStopNotice) {
@@ -283,6 +294,42 @@ export class RuntimeEventProjector {
     }
 
     this.logManagerDebug(descriptor, event, effectiveEvent);
+  }
+
+  private maybeProjectCleanManagerAssistantFinalMessage(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    effectiveEvent: RuntimeSessionEvent
+  ): void {
+    if (!descriptor || descriptor.role !== "manager") {
+      return;
+    }
+
+    const finalMessage = extractCleanManagerAssistantFinalMessage(effectiveEvent);
+    if (!finalMessage) {
+      return;
+    }
+
+    const target = this.deps.resolveManagerAssistantFinalOutputTarget(
+      agentId,
+      descriptor,
+      this.managerAssistantOutputTracker.getActiveTarget(agentId)
+    );
+    if (!target || target.channel !== "web") {
+      return;
+    }
+
+    const timestamp = this.deps.now();
+    this.deps.conversationProjector.emitConversationMessage({
+      type: "conversation_message",
+      agentId,
+      role: "assistant",
+      text: finalMessage.text,
+      timestamp,
+      source: "assistant_output",
+      sourceContext: target.sourceContext ?? { channel: target.channel },
+    });
+    this.deps.markSessionActivity(agentId, timestamp);
   }
 
   private maybeEmitModelCacheObservation(

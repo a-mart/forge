@@ -112,6 +112,17 @@ async function projectAssistantFinalTextWithSyntheticUserMessageStart(
   await (manager as any).handleRuntimeSessionEvent(agentId, { type: 'turn_end', toolResults: [] })
 }
 
+async function emitCleanManagerAssistantMessage(
+  manager: TestSwarmManager,
+  agentId: string,
+  text: string,
+): Promise<void> {
+  await (manager as any).handleRuntimeSessionEvent(agentId, {
+    type: 'message_end',
+    message: { role: 'assistant', content: text, stopReason: 'stop' },
+  })
+}
+
 function assistantOutputsFor(manager: TestSwarmManager, agentId: string): any[] {
   return manager
     .getConversationHistory(agentId)
@@ -800,7 +811,7 @@ describe('SwarmManager', () => {
     expect(systemErrorEvents).toHaveLength(malformedErrorMessages.length)
   })
 
-  it('does not surface normal manager assistant turns as conversation messages', async () => {
+  it('projects normal manager assistant turns as assistant_output conversation messages', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     seedManagerDescriptorForRuntimeEventTests(manager, config)
@@ -814,11 +825,19 @@ describe('SwarmManager', () => {
       },
     })
 
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
     const history = manager.getConversationHistory('manager')
-    expect(history).toHaveLength(0)
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({
+      type: 'conversation_message',
+      role: 'assistant',
+      source: 'assistant_output',
+      text: 'normal hidden manager assistant turn',
+    })
   })
 
-  it('does not surface non-error manager turns that mention token limits', async () => {
+  it('projects non-error manager turns that mention token limits as assistant_output', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     seedManagerDescriptorForRuntimeEventTests(manager, config)
@@ -833,7 +852,13 @@ describe('SwarmManager', () => {
     })
 
     const history = manager.getConversationHistory('manager')
-    expect(history).toHaveLength(0)
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({
+      type: 'conversation_message',
+      role: 'assistant',
+      source: 'assistant_output',
+      text: 'We should keep the summary short to avoid token limit issues.',
+    })
   })
 
   it('handles /compact as a manager slash command without forwarding it as a user prompt', async () => {
@@ -1072,7 +1097,11 @@ describe('SwarmManager', () => {
       message: { role: 'assistant', content: 'Unrelated internal text', stopReason: 'stop' },
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
-    expect(assistantOutputsFor(manager, 'manager')).toHaveLength(2)
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Pick one option.',
+      'Final clean answer.',
+      'Unrelated internal text',
+    ])
   })
 
   it('does not project non-web present_choices continuations into the web transcript', async () => {
@@ -1426,6 +1455,124 @@ describe('SwarmManager', () => {
       .filter((entry) => entry.type === 'conversation_message' && entry.source === 'assistant_output')
 
     expect(assistantOutputs).toEqual([])
+  })
+
+  it('gates remembered web transcript targets through manager surface policy', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const state = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      activeAssistantOutputTargetByManagerId: Map<string, unknown>
+    }
+
+    state.descriptors.get('manager')!.sessionSurface = 'collab'
+    state.activeAssistantOutputTargetByManagerId.set('manager', {
+      kind: 'session_transcript',
+      channel: 'web',
+      sourceContext: { channel: 'web' },
+    })
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Misclassified collab final must not project')
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+
+    state.descriptors.get('manager')!.sessionSurface = undefined
+    state.activeAssistantOutputTargetByManagerId.set('manager', {
+      kind: 'session_transcript',
+      channel: 'web',
+      sourceContext: { channel: 'web' },
+    })
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Normal remembered web final projects')
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Normal remembered web final projects',
+    ])
+  })
+
+  it('does not leak telegram protected clean-final continuations through worker reports', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('telegram clean final then delegated work', {
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    await startRuntimeUserTurn(manager)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Telegram interim clean text')
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Telegram Continuation Worker',
+      initialMessage: 'Do telegram continuation work.',
+    })
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: telegram continuation finished', 'auto')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(reportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
+
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Telegram worker closeout must stay hidden')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
+  it('does not leak collaboration protected clean-final continuations through worker reports', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.dispatchRuntimeUserMessage({
+      targetAgentId: 'manager',
+      text: 'collab clean final then delegated work',
+      sourceContext: { channel: 'web', channelId: 'collab-channel', userId: 'user-1' },
+      collaborationAuthor: {
+        userId: 'user-1',
+        displayName: 'Adam',
+        role: 'admin',
+        workspaceId: 'workspace-1',
+        channelId: 'collab-channel',
+      },
+    })
+    await startRuntimeUserTurn(manager)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Collab interim clean text')
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Collab Continuation Worker',
+      initialMessage: 'Do collab continuation work.',
+    })
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: collab continuation finished', 'auto')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(reportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"collaboration_channel"}')
+
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Collab worker closeout must stay hidden')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
+  it('does not leak peer-only project-agent clean-final continuations through worker reports', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const sender = await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager(sender.agentId, {
+      name: 'Peer Continuation Target',
+      cwd: config.defaultCwd,
+    })
+    await manager.setSessionProjectAgent(target.agentId, { whenToUse: 'Use for peer continuation tests.' })
+
+    await manager.sendMessage(sender.agentId, target.agentId, 'peer clean final then delegated work', 'auto')
+    await startRuntimeUserTurn(manager, target.agentId)
+    ;(manager as any).activeAssistantOutputTargetByManagerId.set(target.agentId, {
+      kind: 'peer_agent',
+      fromAgentId: sender.agentId,
+    })
+    await emitCleanManagerAssistantMessage(manager, target.agentId, 'Peer interim clean text')
+
+    const worker = await manager.spawnAgent(target.agentId, {
+      agentId: 'Peer Continuation Worker',
+    })
+    await manager.sendMessage(target.agentId, worker.agentId, 'Do peer continuation work.', 'auto')
+    await manager.sendMessage(worker.agentId, target.agentId, 'status: done\nsummary: peer continuation finished', 'auto')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get(target.agentId)?.sendCalls.at(-1)?.message
+    expect(reportRuntimeMessage).toContain('[assistantOutputTarget] {"kind":"peer_agent"}')
+
+    await projectAssistantFinalText(manager, target.agentId, reportRuntimeMessage, 'Peer worker closeout must stay hidden')
+
+    expect(assistantOutputsFor(manager, target.agentId)).toEqual([])
   })
 
   it('allows assistant_output for direct web project-agent and Agent Architect session transcripts', async () => {
@@ -2045,7 +2192,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Spoofed closeout'])
   })
 
-  it('clears inherited worker-report assistant candidates when the manager continues with tools', async () => {
+  it('projects clean manager final text even when the manager continues with tools', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2069,7 +2216,7 @@ describe('SwarmManager', () => {
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['I will ask another worker.'])
   })
 
   it('projects assistant_output after canonical speak_to_user publication even when duplicate', async () => {
