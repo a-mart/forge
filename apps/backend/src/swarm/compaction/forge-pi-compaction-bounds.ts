@@ -13,18 +13,15 @@ type SerializeConversationFn = (messages: unknown[]) => string;
 
 const require = createRequire(import.meta.url);
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const piCodingAgentDistDir = findPiCodingAgentDistDir(currentDir);
-const { convertToLlm } = require(join(piCodingAgentDistDir, "core/messages.js")) as {
-  convertToLlm: ConvertToLlmFn;
-};
-const { serializeConversation: serializePiConversation } = require(join(
-  piCodingAgentDistDir,
-  "core/compaction/utils.js",
-)) as {
-  serializeConversation: SerializeConversationFn;
-};
 
-function findPiCodingAgentDistDir(startDir: string): string {
+interface PiCompactionMeasurementModule {
+  convertToLlm: ConvertToLlmFn;
+  serializeConversation: SerializeConversationFn;
+}
+
+let piCompactionMeasurementModule: PiCompactionMeasurementModule | null | undefined;
+
+function findPiCodingAgentDistDir(startDir: string): string | null {
   let current = startDir;
   for (;;) {
     const candidate = join(current, "node_modules", "@mariozechner", "pi-coding-agent", "dist");
@@ -33,10 +30,59 @@ function findPiCodingAgentDistDir(startDir: string): string {
     }
     const parent = dirname(current);
     if (parent === current) {
-      throw new Error("Unable to locate @mariozechner/pi-coding-agent/dist for compaction measurement");
+      return null;
     }
     current = parent;
   }
+}
+
+function loadPiCompactionMeasurementModule(): PiCompactionMeasurementModule | null {
+  if (piCompactionMeasurementModule !== undefined) {
+    return piCompactionMeasurementModule;
+  }
+
+  try {
+    const piCodingAgentDistDir = findPiCodingAgentDistDir(currentDir);
+    if (!piCodingAgentDistDir) {
+      throw new Error("Unable to locate @mariozechner/pi-coding-agent/dist for compaction measurement");
+    }
+
+    const { convertToLlm } = require(join(piCodingAgentDistDir, "core/messages.js")) as {
+      convertToLlm: ConvertToLlmFn;
+    };
+    const { serializeConversation } = require(join(
+      piCodingAgentDistDir,
+      "core/compaction/utils.js",
+    )) as {
+      serializeConversation: SerializeConversationFn;
+    };
+
+    if (typeof convertToLlm !== "function" || typeof serializeConversation !== "function") {
+      throw new Error("Pi compaction measurement modules are missing required exports");
+    }
+
+    piCompactionMeasurementModule = { convertToLlm, serializeConversation };
+  } catch (error) {
+    console.warn(
+      "[swarm] Pi compaction measurement unavailable; using JSON fallback for prompt sizing:",
+      error instanceof Error ? error.message : String(error),
+    );
+    piCompactionMeasurementModule = null;
+  }
+
+  return piCompactionMeasurementModule;
+}
+
+export function __resetPiCompactionMeasurementModuleForTests(): void {
+  piCompactionMeasurementModule = undefined;
+}
+
+export function __forcePiCompactionMeasurementFallbackForTests(): void {
+  piCompactionMeasurementModule = null;
+}
+
+function fallbackSerializeMessagesForCompactionMeasurement(messages: AgentMessage[]): string {
+  return safeStableStringify(messages);
 }
 
 type BoundsCategory =
@@ -859,7 +905,12 @@ function measurePreparationPrompts(
 }
 
 export function serializeMessagesForCompactionMeasurement(messages: AgentMessage[]): string {
-  return serializePiConversation(convertToLlm(messages));
+  const measurementModule = loadPiCompactionMeasurementModule();
+  if (!measurementModule) {
+    return fallbackSerializeMessagesForCompactionMeasurement(messages);
+  }
+
+  return measurementModule.serializeConversation(measurementModule.convertToLlm(messages));
 }
 
 function serializeMessages(messages: AgentMessage[]): string {

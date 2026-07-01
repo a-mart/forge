@@ -1,5 +1,5 @@
 import gracefulFs from 'graceful-fs'
-import fs, { existsSync } from 'node:fs'
+import fs, { existsSync, readFileSync } from 'node:fs'
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -77,6 +77,13 @@ const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
       typeof loadedModule?.getText === 'function' && typeof loadedModule?.setText === 'function'
         ? null
         : 'expected getText()/setText() exports',
+  },
+  {
+    name: '@mariozechner/pi-coding-agent',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.compact === 'function' ? null : 'expected a compact() export',
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedPiCodingAgentPackageDir(stagedPackageDir),
   },
 ]
 const PACKAGE_METADATA_DIRS_TO_PRUNE = new Set([
@@ -203,7 +210,7 @@ export async function validatePackagedRuntimePreflight() {
 
     let resolvedEntry
     try {
-      resolvedEntry = stagedRequire.resolve(runtimePackage.name)
+      resolvedEntry = resolveStagedRuntimePackageEntry(stagedRequire, runtimePackage.name, stagedPackageDir)
     } catch (error) {
       throw new Error(
         `Packaged-runtime preflight failed: unable to resolve staged runtime package "${runtimePackage.name}" from ${backendStageBundlePath}: ${
@@ -220,7 +227,7 @@ export async function validatePackagedRuntimePreflight() {
 
     let loadedModule
     try {
-      loadedModule = await loadRuntimeModule(stagedRequire, runtimePackage.name, resolvedEntry)
+      loadedModule = await loadRuntimeModuleFromEntry(stagedRequire, resolvedEntry)
     } catch (error) {
       throw new Error(
         `Packaged-runtime preflight failed: unable to load staged runtime package "${runtimePackage.name}" from ${resolvedEntry}: ${
@@ -242,6 +249,7 @@ export async function validatePackagedRuntimePreflight() {
   }
 
   await validateStagedCursorSdkRuntime(stagedRequire)
+  await validateStagedPiCompactionMeasurement(stagedRequire)
 
   console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
   for (const resolution of verifiedPackages) {
@@ -323,9 +331,66 @@ async function validateStagedCliPreflight() {
   }
 }
 
-async function loadRuntimeModule(stagedRequire, packageName, resolvedEntry) {
+export function pickPackageEntryFromExports(exportsField) {
+  if (typeof exportsField === 'string') {
+    return exportsField
+  }
+
+  if (!exportsField || typeof exportsField !== 'object') {
+    return null
+  }
+
+  return exportsField.import ?? exportsField.default ?? exportsField.node ?? exportsField.require ?? null
+}
+
+export function resolveStagedPackageEntryFromManifest(stagedPackageDir) {
+  const manifestPath = path.join(stagedPackageDir, 'package.json')
+  if (!existsSync(manifestPath)) {
+    return null
+  }
+
+  let manifest
   try {
-    return stagedRequire(packageName)
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch {
+    return null
+  }
+
+  const relativeEntry =
+    pickPackageEntryFromExports(manifest.exports?.['.']) ??
+    pickPackageEntryFromExports(manifest.exports) ??
+    (typeof manifest.main === 'string' ? manifest.main : null)
+
+  if (!relativeEntry) {
+    return null
+  }
+
+  const resolvedEntry = path.resolve(stagedPackageDir, relativeEntry)
+  return existsSync(resolvedEntry) ? resolvedEntry : null
+}
+
+function resolveStagedRuntimePackageEntry(stagedRequire, packageName, stagedPackageDir) {
+  try {
+    return stagedRequire.resolve(packageName)
+  } catch (error) {
+    if (!isStagedPackageManifestResolutionError(error)) {
+      throw error
+    }
+  }
+
+  const manifestResolvedEntry = resolveStagedPackageEntryFromManifest(stagedPackageDir)
+  if (!manifestResolvedEntry) {
+    throw new Error(
+      `unable to resolve staged runtime package "${packageName}" via require or package.json exports/main`,
+    )
+  }
+
+  return manifestResolvedEntry
+}
+
+export async function loadRuntimeModuleFromEntry(stagedRequire, resolvedEntry) {
+  try {
+    return stagedRequire(resolvedEntry)
   } catch (error) {
     if (!isRequireEsmError(error)) {
       throw error
@@ -333,6 +398,18 @@ async function loadRuntimeModule(stagedRequire, packageName, resolvedEntry) {
 
     const importedModule = await import(pathToFileURL(resolvedEntry).href)
     return importedModule.default ?? importedModule
+  }
+}
+
+async function loadRuntimeModule(stagedRequire, packageName, resolvedEntry) {
+  try {
+    return stagedRequire(packageName)
+  } catch (error) {
+    if (!isRequireEsmError(error) && !isStagedPackageManifestResolutionError(error)) {
+      throw error
+    }
+
+    return loadRuntimeModuleFromEntry(stagedRequire, resolvedEntry)
   }
 }
 
@@ -529,6 +606,15 @@ function isRequireEsmError(error) {
   return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ERR_REQUIRE_ESM')
 }
 
+function isStagedPackageManifestResolutionError(error) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error.code === 'ERR_REQUIRE_ESM' || error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED'),
+  )
+}
+
 async function stageRuntimePackages(runtimePackages) {
   if (runtimePackages.length === 0) {
     return
@@ -549,6 +635,66 @@ async function copyRuntimePackage(runtimePackage, targetDir) {
     dereference: true,
     filter: (sourcePath) => shouldCopyRuntimePackagePath(runtimePackage.name, runtimePackage.packageRoot, sourcePath),
   })
+}
+
+export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
+  const requiredPaths = [
+    'package.json',
+    path.join('dist', 'core', 'messages.js'),
+    path.join('dist', 'core', 'compaction', 'utils.js'),
+  ]
+
+  for (const relativePath of requiredPaths) {
+    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
+      return `missing required asset ${relativePath}`
+    }
+  }
+
+  return null
+}
+
+async function validateStagedPiCompactionMeasurement(stagedRequire) {
+  const stagedPackageDir = path.join(backendStageNodeModulesDir, '@mariozechner', 'pi-coding-agent')
+  const stagedPackageValidationFailure = validateStagedPiCodingAgentPackageDir(stagedPackageDir)
+  if (stagedPackageValidationFailure) {
+    throw new Error(
+      `Packaged-runtime preflight failed: staged Pi compaction measurement package is invalid: ${stagedPackageValidationFailure}`,
+    )
+  }
+
+  const messagesPath = path.join(stagedPackageDir, 'dist', 'core', 'messages.js')
+  const utilsPath = path.join(stagedPackageDir, 'dist', 'core', 'compaction', 'utils.js')
+
+  for (const [label, modulePath] of [
+    ['messages', messagesPath],
+    ['compaction utils', utilsPath],
+  ]) {
+    assertPathIsWithinDirectory(
+      modulePath,
+      backendStageNodeModulesDir,
+      `Packaged-runtime preflight failed: Pi compaction ${label} module resolved outside staged node_modules`,
+    )
+
+    let loadedModule
+    try {
+      loadedModule = await loadRuntimeModuleFromEntry(stagedRequire, modulePath)
+    } catch (error) {
+      throw new Error(
+        `Packaged-runtime preflight failed: unable to load Pi compaction ${label} module from ${modulePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+
+    const exportName = label === 'messages' ? 'convertToLlm' : 'serializeConversation'
+    if (typeof loadedModule?.[exportName] !== 'function') {
+      throw new Error(
+        `Packaged-runtime preflight failed: Pi compaction ${label} module at ${modulePath} is missing ${exportName}() export`,
+      )
+    }
+  }
+
+  console.log('[electron/build-all] Packaged-runtime preflight verified Pi compaction measurement modules')
 }
 
 function validateStagedCursorSdkPackageDir(stagedPackageDir) {

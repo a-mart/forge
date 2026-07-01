@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  __forcePiCompactionMeasurementFallbackForTests,
+  __resetPiCompactionMeasurementModuleForTests,
   boundCompactionPreparation,
   serializeMessagesForCompactionMeasurement,
 } from "../compaction/forge-pi-compaction-bounds.js";
@@ -227,6 +229,34 @@ describe("forge pi compaction bounds", () => {
     expect(result.stats.promptChars.maxBounded).toBe(actualPrompt.length);
     expect(result.stats.truncationCounts.overBudgetAfterBounding).toBe(false);
   }, 10_000);
+
+  it("falls back to JSON serialization when Pi measurement modules are unavailable", () => {
+    __forcePiCompactionMeasurementFallbackForTests();
+
+    try {
+      const messages = [
+        {
+          role: "user" as const,
+          content: "hello from fallback",
+          timestamp: 1,
+        },
+      ];
+
+      const serialized = serializeMessagesForCompactionMeasurement(messages);
+      expect(serialized).toContain('"role":"user"');
+      expect(serialized).toContain("hello from fallback");
+
+      const preparation = createPreparation();
+      const result = boundCompactionPreparation(preparation, {
+        maxPromptChars: 4_000,
+      });
+
+      expect(result.stats.promptChars.maxBounded).toBeLessThanOrEqual(4_000);
+      expect(result.stats.truncationCounts.overBudgetAfterBounding).toBe(false);
+    } finally {
+      __resetPiCompactionMeasurementModuleForTests();
+    }
+  });
 
   it("keeps instrumentation/details redacted with no raw prompt payloads", () => {
     const secret = "VERY_SECRET_BOUNDING_VALUE";
