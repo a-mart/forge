@@ -407,7 +407,6 @@ describe("RuntimeEventProjector", () => {
     for (const target of [
       { kind: "explicit_tool_required" as const, reason: "collaboration_channel" },
       { kind: "external_channel" as const, sourceContext: { channel: "telegram" as const, channelId: "chat-1" } },
-      { kind: "peer_agent" as const, fromAgentId: "peer-1" },
       { kind: "internal_only" as const },
     ]) {
       const { projector, deps, descriptors } = createHarness();
@@ -423,6 +422,51 @@ describe("RuntimeEventProjector", () => {
 
       expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
     }
+  });
+
+  it("projects peer-agent marked manager finals when the server-owned surface resolver maps them to web", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.resolveManagerAssistantFinalOutputTarget).mockReturnValue({
+      kind: "session_transcript",
+      channel: "web",
+      sourceContext: { channel: "web" },
+    });
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "peer_agent", fromAgentId: "peer-1" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Visible peer-context closeout", stopReason: "stop" } },
+    });
+
+    expect(deps.resolveManagerAssistantFinalOutputTarget).toHaveBeenCalledWith(
+      manager.agentId,
+      manager,
+      { kind: "peer_agent", fromAgentId: "peer-1" },
+    );
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_output",
+      text: "Visible peer-context closeout",
+    }));
+  });
+
+  it("does not project peer-agent marked manager finals when the server-owned surface resolver denies web output", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.resolveManagerAssistantFinalOutputTarget).mockReturnValue(undefined);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "peer_agent", fromAgentId: "peer-1" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Hidden peer-context closeout", stopReason: "stop" } },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
   });
 
   it("does not project manager or worker finals when the server-owned surface resolver denies web output", async () => {

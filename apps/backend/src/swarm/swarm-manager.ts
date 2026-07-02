@@ -7446,6 +7446,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (rememberedTarget?.kind === "session_transcript" && rememberedTarget.channel === "web") {
       candidate = cloneSessionTranscriptAssistantOutputTarget(rememberedTarget);
+    } else if (
+      rememberedTarget?.kind === "peer_agent" &&
+      !this.activeExternalProjectAgentTurnByAgentId.has(agentId)
+    ) {
+      candidate = { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
     } else if (!rememberedTarget && !manager.projectAgent && !manager.creatorAgentId) {
       candidate = { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
     }
@@ -7569,10 +7574,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       target: AgentDescriptor;
       workerReportSourceAgentId?: string;
     },
-    _inputTarget: AssistantOutputTarget,
+    inputTarget: AssistantOutputTarget,
   ): boolean {
     const { sender, target } = input;
     if (target.role !== "manager") {
+      return false;
+    }
+
+    if (
+      (target.projectAgent !== undefined || target.creatorAgentId !== undefined) &&
+      inputTarget.kind !== "session_transcript"
+    ) {
       return false;
     }
 

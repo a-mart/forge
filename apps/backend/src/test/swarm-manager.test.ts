@@ -89,6 +89,41 @@ async function projectAssistantFinalText(
   await (manager as any).handleRuntimeSessionEvent(agentId, { type: 'turn_end', toolResults: [] })
 }
 
+function formatProjectAgentPeerRuntimeMessage(
+  context: {
+    fromAgentId: string
+    fromDisplayName: string
+    external?: boolean
+    fromProfileId?: string
+    fromProjectName?: string
+  },
+  message: string,
+): string {
+  return `[projectAgentContext] ${JSON.stringify(context)}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\n${message}`
+}
+
+function enqueueProjectAgentPeerInput(
+  manager: TestSwarmManager,
+  agentId: string,
+  context: {
+    fromAgentId: string
+    fromDisplayName: string
+    external?: boolean
+    fromProfileId?: string
+    fromProjectName?: string
+  },
+  message: string,
+): string {
+  const runtimeMessage = formatProjectAgentPeerRuntimeMessage(context, message)
+  ;(manager as any).enqueueInboundTurnContext(agentId, {
+    source: 'project_agent_input',
+    runtimeMessageText: runtimeMessage,
+    projectAgentContext: context,
+    assistantOutputTarget: { kind: 'peer_agent', fromAgentId: context.fromAgentId },
+  })
+  return runtimeMessage
+}
+
 async function projectAssistantFinalTextWithSyntheticUserMessageStart(
   manager: TestSwarmManager,
   agentId: string,
@@ -1626,7 +1661,79 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects internal normal web manager messages but not project-agent peer context', async () => {
+  it('projects project-agent peer input clean finals in normal web-visible manager sessions', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const runtimeMessage = enqueueProjectAgentPeerInput(
+      manager,
+      'manager',
+      {
+        fromAgentId: 'it-ops-director',
+        fromDisplayName: 'IT Ops Director',
+        external: false,
+        fromProfileId: 'middleman-project',
+        fromProjectName: 'Middleman Project',
+      },
+      'Plain-film setup finished; summarize this to Adam.',
+    )
+
+    await projectAssistantFinalText(
+      manager,
+      'manager',
+      runtimeMessage,
+      'The plain-film setup is complete and ready for review.',
+    )
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'The plain-film setup is complete and ready for review.',
+    ])
+  })
+
+  it('does not project external, collaboration, or Cortex project-agent peer clean finals to web', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const externalRuntimeMessage = enqueueProjectAgentPeerInput(
+      manager,
+      'manager',
+      {
+        fromAgentId: 'shared-agent',
+        fromDisplayName: 'Shared Agent',
+        external: true,
+        fromProfileId: 'external-profile',
+        fromProjectName: 'External Project',
+      },
+      'External protected update',
+    )
+    await projectAssistantFinalText(manager, 'manager', externalRuntimeMessage, 'External peer final must stay hidden')
+
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    state.descriptors.get('manager')!.sessionSurface = 'collab'
+    const collabRuntimeMessage = enqueueProjectAgentPeerInput(
+      manager,
+      'manager',
+      { fromAgentId: 'collab-peer', fromDisplayName: 'Collab Peer', external: false },
+      'Collaboration protected update',
+    )
+    await projectAssistantFinalText(manager, 'manager', collabRuntimeMessage, 'Collab peer final must stay hidden')
+
+    state.descriptors.get('manager')!.sessionSurface = undefined
+    state.descriptors.get('manager')!.profileId = 'cortex'
+    const cortexRuntimeMessage = enqueueProjectAgentPeerInput(
+      manager,
+      'manager',
+      { fromAgentId: 'cortex-peer', fromDisplayName: 'Cortex Peer', external: false },
+      'Cortex protected update',
+    )
+    await projectAssistantFinalText(manager, 'manager', cortexRuntimeMessage, 'Cortex peer final must stay hidden')
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
+  it('projects internal normal web manager messages but not peer-only project-agent target context', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const sender = await bootWithDefaultManager(manager, config)
