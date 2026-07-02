@@ -126,6 +126,43 @@ async function createRepoProjectAgentDefinition(rootDir: string, options: {
   }
 }
 
+function runtimeTextFromLastSend(runtime: FakeRuntime | undefined): string {
+  const message = runtime?.sendCalls.at(-1)?.message
+  const text = typeof message === 'string' ? message : message?.text
+  if (typeof text !== 'string') {
+    throw new Error('Expected last runtime send to contain text')
+  }
+  return text
+}
+
+async function activateLastRuntimeUserMessage(manager: TestSwarmManager, agentId: string): Promise<string> {
+  const runtimeText = runtimeTextFromLastSend(manager.runtimeByAgentId.get(agentId))
+  await manager.handleRuntimeSessionEvent(agentId, {
+    type: 'message_start',
+    message: { role: 'user', content: runtimeText },
+  })
+  return runtimeText
+}
+
+async function emitCleanAssistantFinal(manager: TestSwarmManager, agentId: string, text: string): Promise<void> {
+  await manager.handleRuntimeSessionEvent(agentId, {
+    type: 'message_end',
+    message: { role: 'assistant', content: text, stopReason: 'stop' },
+  })
+}
+
+function assistantOutputTexts(manager: TestSwarmManager, agentId: string): string[] {
+  return manager
+    .getConversationHistory(agentId)
+    .filter(
+      (entry) =>
+        entry.type === 'conversation_message' &&
+        entry.role === 'assistant' &&
+        entry.source === 'assistant_output',
+    )
+    .map((entry) => entry.text)
+}
+
 async function installForgeLifecycleLogger(config: SwarmConfig, logPath: string): Promise<void> {
   const extensionsDir = join(config.paths.dataDir, 'extensions')
   await mkdir(extensionsDir, { recursive: true })
@@ -1640,6 +1677,179 @@ describe('SwarmManager', () => {
           entry.text === 'SYSTEM: closeout reminder',
       ),
     ).toBe(false)
+  })
+
+  it('projects clean final assistant output for direct-web project-agent self continuations after explicit agent-message routing', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Ops Director' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Coordinate read-only health checks.',
+    })
+
+    await manager.handleUserMessage('Run the read-only health check.', { targetAgentId: sessionAgent.agentId })
+    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+
+    await manager.sendMessage(
+      sessionAgent.agentId,
+      sessionAgent.agentId,
+      'SYSTEM: Completed the read-only health check across all three hosts.',
+      'auto',
+      {
+        observabilityParentTool: {
+          agentId: sessionAgent.agentId,
+          toolCallId: 'send-self-1',
+          toolName: 'send_message_to_agent',
+        },
+      },
+    )
+    const continuationRuntimeText = await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    expect(continuationRuntimeText).toBe(
+      'SYSTEM: Completed the read-only health check across all three hosts.\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
+    )
+
+    await emitCleanAssistantFinal(
+      manager,
+      sessionAgent.agentId,
+      'Completed the read-only health check across all three hosts.',
+    )
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual([
+      'Completed the read-only health check across all three hosts.',
+    ])
+  })
+
+  it('projects clean final assistant output for direct-web project-agent worker report continuations', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Ops Director' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Coordinate read-only health checks.',
+    })
+
+    await manager.handleUserMessage('Run the read-only health check.', { targetAgentId: sessionAgent.agentId })
+    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+
+    const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Health Worker' })
+    await manager.sendMessage(sessionAgent.agentId, worker.agentId, 'Check all three hosts.', 'auto')
+    await manager.sendMessage(
+      worker.agentId,
+      sessionAgent.agentId,
+      'status: done\nsummary: Completed the health check.',
+      'auto',
+    )
+    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+
+    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Health check complete.')
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual(['Health check complete.'])
+  })
+
+  it('keeps later internal same-manager project-agent self messages hidden after a direct-web turn completes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Ops Director' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Coordinate read-only health checks.',
+    })
+
+    await manager.handleUserMessage('Run the read-only health check.', { targetAgentId: sessionAgent.agentId })
+    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Visible direct web final.')
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    await manager.sendMessage(
+      sessionAgent.agentId,
+      sessionAgent.agentId,
+      'SYSTEM: background maintenance notification',
+      'auto',
+      { origin: 'internal' },
+    )
+    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Hidden background final.')
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual(['Visible direct web final.'])
+  })
+
+  it('keeps unassociated worker completions hidden after a direct-web project-agent turn completes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Ops Director' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Coordinate read-only health checks.',
+    })
+
+    await manager.handleUserMessage('Run the read-only health check.', { targetAgentId: sessionAgent.agentId })
+    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Visible direct web final.')
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Unassociated Worker' })
+    await manager.sendMessage(
+      worker.agentId,
+      sessionAgent.agentId,
+      'status: done\nsummary: unassociated worker completion',
+      'auto',
+    )
+    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+
+    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Hidden unassociated worker final.')
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual(['Visible direct web final.'])
+  })
+
+  it('keeps true peer-only project-agent contexts hidden from assistant_output', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sender = await manager.createSession('manager', { label: 'Coordinator' })
+    const { sessionAgent: target } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    await manager.sendMessage(sender.sessionAgent.agentId, target.agentId, 'Need a release summary.', 'auto')
+    await activateLastRuntimeUserMessage(manager, target.agentId)
+    await emitCleanAssistantFinal(manager, target.agentId, 'Hidden peer-only final.')
+    await manager.handleRuntimeSessionEvent(target.agentId, { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, target.agentId)).toEqual([])
+  })
+
+  it('keeps non-web direct project-agent sources hidden from assistant_output', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Ops Director' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Coordinate read-only health checks.',
+    })
+
+    await manager.handleUserMessage('Run the health check from Telegram.', {
+      targetAgentId: sessionAgent.agentId,
+      sourceContext: { channel: 'telegram', channelId: 'chat-1' },
+    })
+    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
+    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Hidden Telegram final.')
+    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual([])
   })
 
   it('rate limits project-agent sends per sender session', async () => {

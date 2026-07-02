@@ -1314,6 +1314,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
   private readonly inboundTurnContextActivatedByAgentId = new Set<string>();
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
+  private readonly activeWebAssistantOutputTurnByManagerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, AssistantOutputTarget>();
   private readonly pendingChoiceAssistantOutputContinuationByChoiceId = new Map<string, PendingChoiceAssistantOutputContinuation>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
@@ -5201,6 +5202,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       modelMessage,
       rawMessage: message,
       workerReportSourceAgentId: options?.workerReportSourceAgentId,
+      sendMessageToolContinuation: options?.observabilityParentTool?.toolName === "send_message_to_agent",
     };
     const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage(assistantOutputInput);
     // Keep the runtime input marker as routing guidance for the manager, but derive
@@ -7332,8 +7334,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (assistantOutputProjectionTarget) {
       this.activeAssistantOutputTargetByManagerId.set(agentId, assistantOutputProjectionTarget);
       this.runtimeController.activateManagerAssistantOutputTurn(agentId, assistantOutputProjectionTarget);
+      if (assistantOutputProjectionTarget.kind === "session_transcript" && assistantOutputProjectionTarget.channel === "web") {
+        this.activeWebAssistantOutputTurnByManagerId.set(agentId, cloneSessionTranscriptAssistantOutputTarget(assistantOutputProjectionTarget));
+      } else {
+        this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
+      }
     } else {
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     }
 
@@ -7398,6 +7406,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (phase === "after_projection" && event.type === "turn_end") {
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+      this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
+      this.expireActiveWebAssistantOutputTargetIfUncontinued(agentId);
       this.activeObservabilityRootByAgentId.delete(agentId);
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
@@ -7409,6 +7419,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.activeObservabilityRootByAgentId.delete(agentId);
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
@@ -7419,7 +7430,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (phase === "after_projection" && isCleanManagerAssistantFinalMessage(event)) {
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
+      this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
+      this.expireActiveWebAssistantOutputTargetIfUncontinued(agentId);
     }
+  }
+
+  private expireActiveWebAssistantOutputTargetIfUncontinued(agentId: string): void {
+    const activeTarget = this.activeAssistantOutputTargetByManagerId.get(agentId);
+    if (activeTarget?.kind !== "session_transcript" || activeTarget.channel !== "web") {
+      return;
+    }
+
+    if (this.hasPendingWebAssistantOutputContinuation(agentId)) {
+      return;
+    }
+
+    this.activeAssistantOutputTargetByManagerId.delete(agentId);
+  }
+
+  private hasPendingWebAssistantOutputContinuation(agentId: string): boolean {
+    const queue = this.pendingInboundTurnContextsByAgentId.get(agentId);
+    return Boolean(queue?.some((context) => {
+      const target = context.assistantOutputProjectionTarget ?? context.assistantOutputTarget;
+      return target?.kind === "session_transcript" && target.channel === "web";
+    }));
   }
 
   private getActiveExternalProjectAgentTurn(agentId: string): ExternalProjectAgentTurnContext | undefined {
@@ -7475,6 +7509,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelMessage: string | RuntimeUserMessage;
     rawMessage?: string;
     workerReportSourceAgentId?: string;
+    sendMessageToolContinuation?: boolean;
   }): AssistantOutputTarget {
     const reportLike =
       input.target.role === "manager" &&
@@ -7501,6 +7536,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       modelMessage: string | RuntimeUserMessage;
       rawMessage?: string;
       workerReportSourceAgentId?: string;
+      sendMessageToolContinuation?: boolean;
     },
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
@@ -7509,12 +7545,52 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return inheritedRoutingTarget;
     }
 
+    const activeWebContinuationTarget = this.resolveActiveWebAssistantOutputContinuationTarget(input, inputTarget);
+    if (activeWebContinuationTarget) {
+      return activeWebContinuationTarget;
+    }
+
     const defaultWebTarget = this.resolveDefaultManagerFinalTextWebProjectionTarget(input, inputTarget);
     if (defaultWebTarget) {
       return defaultWebTarget;
     }
 
     return inputTarget;
+  }
+
+  private resolveActiveWebAssistantOutputContinuationTarget(
+    input: {
+      sender: AgentDescriptor;
+      target: AgentDescriptor;
+      workerReportSourceAgentId?: string;
+      sendMessageToolContinuation?: boolean;
+    },
+    inputTarget: AssistantOutputTarget,
+  ): SessionTranscriptAssistantOutputTarget | undefined {
+    if (
+      input.target.role !== "manager" ||
+      inputTarget.kind !== "explicit_tool_required" ||
+      inputTarget.reason !== "agent_message"
+    ) {
+      return undefined;
+    }
+
+    const sameManagerToolContinuation =
+      input.sender.agentId === input.target.agentId && input.sendMessageToolContinuation === true;
+    if (!sameManagerToolContinuation) {
+      return undefined;
+    }
+
+    const activeTarget = this.activeWebAssistantOutputTurnByManagerId.get(input.target.agentId);
+    if (!activeTarget) {
+      return undefined;
+    }
+
+    if (!this.canProjectManagerFinalTextToWebByDefault(input, activeTarget)) {
+      return undefined;
+    }
+
+    return cloneSessionTranscriptAssistantOutputTarget(activeTarget);
   }
 
   private resolveDefaultManagerFinalTextWebProjectionTarget(
@@ -7596,7 +7672,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
-    if (sender.role === "worker" && (target.projectAgent !== undefined || target.creatorAgentId !== undefined)) {
+    if (
+      sender.role === "worker" &&
+      (target.projectAgent !== undefined || target.creatorAgentId !== undefined) &&
+      inputTarget.kind !== "session_transcript"
+    ) {
       return false;
     }
 
@@ -7683,6 +7763,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelMessage: string | RuntimeUserMessage;
     rawMessage?: string;
     workerReportSourceAgentId?: string;
+    sendMessageToolContinuation?: boolean;
   }): boolean {
     if (input.target.role !== "manager") {
       return false;
@@ -9840,6 +9921,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.pendingInboundTurnContextsByAgentId.delete(agentId);
     this.inboundTurnContextActivatedByAgentId.delete(agentId);
     this.activeAssistantOutputTargetByManagerId.delete(agentId);
+    this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
     this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
     this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
     this.clearInheritedAssistantOutputTargetsForManager(agentId);
@@ -9888,6 +9970,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
+      this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
       this.clearInheritedAssistantOutputTargetsForManager(agentId);
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
