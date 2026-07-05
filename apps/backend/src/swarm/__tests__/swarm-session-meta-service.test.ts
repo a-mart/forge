@@ -1,5 +1,5 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
 import { getSessionFilePath } from "../data-paths.js";
@@ -109,7 +109,74 @@ function sessionMetaFixture(sessionId: string, profileId: string, compactionCoun
   })}\n`;
 }
 
+async function createTurnIdFixture(options: { worker?: boolean } = {}): Promise<{
+  config: SwarmConfig;
+  service: SwarmSessionMetaService;
+  descriptors: Map<string, AgentDescriptor>;
+  manager: AgentDescriptor;
+  worker?: AgentDescriptor;
+}> {
+  const config = await makeConfig();
+  const managerSessionFilePath = managerSessionFile(config, "manager");
+  await mkdir(dirname(managerSessionFilePath), { recursive: true });
+  await writeFile(managerSessionFilePath, "", "utf8");
+  const manager = createAgentDescriptor({
+    agentId: "manager",
+    role: "manager",
+    managerId: "manager",
+    profileId: "manager",
+    rootDir: config.defaultCwd,
+    sessionFile: managerSessionFilePath,
+  });
+  const descriptors = new Map<string, AgentDescriptor>([["manager", manager]]);
+  let worker: AgentDescriptor | undefined;
+  if (options.worker) {
+    const workerSessionFilePath = managerSessionFile(config, "worker-1");
+    await mkdir(dirname(workerSessionFilePath), { recursive: true });
+    await writeFile(workerSessionFilePath, "", "utf8");
+    worker = createAgentDescriptor({
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager",
+      profileId: "manager",
+      rootDir: config.defaultCwd,
+      sessionFile: workerSessionFilePath,
+    });
+    descriptors.set(worker.agentId, worker);
+  }
+  const service = buildService(config, descriptors);
+  await service.writeInitialSessionMeta(manager);
+  return { config, service, descriptors, manager, worker };
+}
+
 describe("SwarmSessionMetaService", () => {
+  it("mints monotonic turn ids and resumes from persisted session meta after service restart", async () => {
+    const { config, service, manager } = await createTurnIdFixture();
+
+    await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe("manager:1");
+    await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe("manager:2");
+
+    const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
+    expect(meta?.lastTurnSeq).toBe(2);
+
+    const descriptors = new Map<string, AgentDescriptor>([["manager", manager]]);
+    const restartedService = buildService(config, descriptors);
+    expect(await restartedService.mintTurnIdForDescriptor(manager)).toBe("manager:3");
+  });
+
+  it("serializes concurrent manager and worker turn id mints in the same session", async () => {
+    const { config, service, manager, worker } = await createTurnIdFixture({ worker: true });
+
+    const ids = await Promise.all([
+      service.mintTurnIdForDescriptor(manager),
+      service.mintTurnIdForDescriptor(worker!),
+    ]);
+
+    expect(ids.sort()).toEqual(["manager:1", "manager:2"]);
+    const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
+    expect(meta?.lastTurnSeq).toBe(2);
+  });
+
   it("writeInitialSessionMeta creates session meta with model, label, and timestamps", async () => {
     const config = await makeConfig();
     const dataDir = config.paths.dataDir;

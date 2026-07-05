@@ -43,7 +43,7 @@ export interface RuntimeEventProjectorDeps {
   runtimeRecoveryState: RuntimeEventProjectorRecoveryState;
   now: () => string;
   conversationProjector: {
-    captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void;
+    captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void;
     emitConversationMessage(event: ConversationMessageEvent): void;
   };
   markSessionActivity(agentId: string, timestamp: string): void;
@@ -71,6 +71,7 @@ export interface RuntimeEventProjectorDeps {
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
   getRuntime(agentId: string): SwarmAgentRuntime | undefined;
+  getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined;
   isModelCacheVisualizationEnabled(): boolean;
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
   resolveManagerAssistantFinalOutputTarget(
@@ -99,8 +100,8 @@ export class RuntimeEventProjector {
     });
   }
 
-  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget): void {
-    this.managerAssistantOutputTracker.activateTurn(agentId, target);
+  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget, options?: { turnId?: string }): void {
+    this.managerAssistantOutputTracker.activateTurn(agentId, target, options);
   }
 
   clearManagerAssistantOutputTurn(agentId: string): void {
@@ -268,18 +269,26 @@ export class RuntimeEventProjector {
       ? this.deps.stripManagerAbortErrorFromEvent(event)
       : event;
 
-    this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
+    const activeTurnId = this.deps.getActiveTurnId(agentId, runtimeToken);
+    if (activeTurnId) {
+      this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent, {
+        turnId: activeTurnId
+      });
+    } else {
+      this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
+    }
     if (shouldSurfaceManualStopNotice || isContextRecoveryAbort) {
       this.managerAssistantOutputTracker.clearTurn(agentId);
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
-      this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent);
+      this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent, activeTurnId);
       this.maybeEmitModelCacheObservation(agentId, descriptor, effectiveEvent);
     }
     if (shouldSurfaceManualStopNotice) {
       this.deps.conversationProjector.emitConversationMessage({
         type: "conversation_message",
         agentId,
+        ...(activeTurnId ? { turnId: activeTurnId } : {}),
         role: "system",
         text: MANUAL_MANAGER_STOP_NOTICE,
         timestamp: this.deps.now(),
@@ -299,7 +308,8 @@ export class RuntimeEventProjector {
   private maybeProjectCleanManagerAssistantFinalMessage(
     agentId: string,
     descriptor: AgentDescriptor | undefined,
-    effectiveEvent: RuntimeSessionEvent
+    effectiveEvent: RuntimeSessionEvent,
+    turnId?: string
   ): void {
     if (!descriptor || descriptor.role !== "manager") {
       return;
@@ -323,6 +333,7 @@ export class RuntimeEventProjector {
     this.deps.conversationProjector.emitConversationMessage({
       type: "conversation_message",
       agentId,
+      ...(turnId ? { turnId } : {}),
       role: "assistant",
       text: finalMessage.text,
       timestamp,

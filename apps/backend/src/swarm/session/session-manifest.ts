@@ -256,6 +256,7 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             updatedAt: sessionDescriptor.updatedAt ?? now(),
             cwd: normalizeOptionalString(sessionDescriptor.cwd) ?? null,
             compactionCount: existingMeta?.compactionCount ?? 0,
+            lastTurnSeq: existingMeta?.lastTurnSeq ?? 0,
             resolvedSystemPrompt: existingMeta?.resolvedSystemPrompt ?? null,
             promptFingerprint: existingMeta?.promptFingerprint ?? null,
             promptComponents: existingMeta?.promptComponents ?? null,
@@ -456,6 +457,7 @@ function createEmptySessionMeta(profileId: string, sessionId: string, timestamp:
     updatedAt: timestamp,
     cwd: null,
     compactionCount: 0,
+    lastTurnSeq: 0,
     resolvedSystemPrompt: null,
     promptFingerprint: null,
     promptComponents: null,
@@ -778,6 +780,7 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
     updatedAt,
     cwd: normalizeOptionalString(value.cwd) ?? null,
     compactionCount: coerceOptionalNonNegativeInteger(value.compactionCount),
+    lastTurnSeq: coerceOptionalNonNegativeInteger(value.lastTurnSeq),
     resolvedSystemPrompt: normalizeOptionalNullableString(value.resolvedSystemPrompt),
     promptFingerprint: normalizeOptionalString(value.promptFingerprint) ?? null,
     promptComponents: promptComponentsRecord

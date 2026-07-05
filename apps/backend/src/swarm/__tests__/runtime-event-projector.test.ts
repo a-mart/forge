@@ -96,6 +96,7 @@ function createHarness(debug = false): {
     queueVersionedToolMutation: vi.fn(async () => undefined),
     logDebug: vi.fn(),
     getRuntime: vi.fn(() => undefined),
+    getActiveTurnId: vi.fn(() => undefined),
     isModelCacheVisualizationEnabled: vi.fn(() => false),
     emitModelCacheObservation: vi.fn(),
     resolveManagerAssistantFinalOutputTarget: vi.fn((_agentId, _descriptor, activeTarget) => {

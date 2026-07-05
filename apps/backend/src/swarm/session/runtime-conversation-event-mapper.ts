@@ -31,27 +31,28 @@ export class RuntimeConversationEventMapper {
     event: RuntimeSessionEvent;
     timestamp: string;
     descriptor?: AgentDescriptor;
+    turnId?: string;
   }): RuntimeConversationProjection[] {
     const projections: RuntimeConversationProjection[] = [];
-    const { agentId, event, timestamp, descriptor } = options;
+    const { agentId, event, timestamp, descriptor, turnId } = options;
 
     if (descriptor) {
       const managerContextId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
-      const toolProjection = mapToolCallActivityFromRuntime(managerContextId, agentId, event, timestamp, descriptor);
+      const toolProjection = mapToolCallActivityFromRuntime(managerContextId, agentId, event, timestamp, descriptor, turnId);
       if (toolProjection) {
         projections.push(toolProjection);
       }
     }
 
     if (descriptor?.role === "manager") {
-      const managerErrorProjection = mapManagerRuntimeErrorConversationEvent(agentId, event, timestamp);
+      const managerErrorProjection = mapManagerRuntimeErrorConversationEvent(agentId, event, timestamp, turnId);
       if (managerErrorProjection) {
         projections.push(managerErrorProjection);
       }
       return projections;
     }
 
-    const runtimeLogProjections = mapNonManagerRuntimeEvent(agentId, event, timestamp, descriptor);
+    const runtimeLogProjections = mapNonManagerRuntimeEvent(agentId, event, timestamp, descriptor, turnId);
     projections.push(...runtimeLogProjections);
     return projections;
   }
@@ -61,7 +62,8 @@ function mapNonManagerRuntimeEvent(
   agentId: string,
   event: RuntimeSessionEvent,
   timestamp: string,
-  descriptor?: AgentDescriptor
+  descriptor?: AgentDescriptor,
+  turnId?: string
 ): RuntimeConversationProjection[] {
   switch (event.type) {
     case "message_start": {
@@ -98,6 +100,7 @@ function mapNonManagerRuntimeEvent(
         projections.push({
           type: "conversation_message",
           agentId,
+          ...(turnId ? { turnId } : {}),
           role,
           text: extractedText ?? "",
           attachments: attachments.length > 0 ? attachments : undefined,
@@ -118,6 +121,7 @@ function mapNonManagerRuntimeEvent(
           projections.push({
             type: "conversation_message",
             agentId,
+            ...(turnId ? { turnId } : {}),
             role: "system",
             text: buildWorkerErrorConversationText({
               errorMessage: normalizedErrorMessage,
@@ -200,7 +204,8 @@ function mapNonManagerRuntimeEvent(
 function mapManagerRuntimeErrorConversationEvent(
   agentId: string,
   event: RuntimeSessionEvent,
-  timestamp: string
+  timestamp: string,
+  turnId?: string
 ): ConversationMessageEvent | undefined {
   if (event.type !== "message_end") {
     return undefined;
@@ -224,6 +229,7 @@ function mapManagerRuntimeErrorConversationEvent(
   return {
     type: "conversation_message",
     agentId,
+    ...(turnId ? { turnId } : {}),
     role: "system",
     text: buildManagerErrorConversationText({
       errorMessage: normalizedErrorMessage,
@@ -239,7 +245,8 @@ function mapToolCallActivityFromRuntime(
   actorAgentId: string,
   event: RuntimeSessionEvent,
   timestamp: string,
-  descriptor: AgentDescriptor
+  descriptor: AgentDescriptor,
+  turnId?: string
 ): AgentToolCallEvent | undefined {
   switch (event.type) {
     case "tool_execution_start":
@@ -247,6 +254,7 @@ function mapToolCallActivityFromRuntime(
         type: "agent_tool_call",
         agentId: managerContextId,
         actorAgentId,
+        ...(turnId ? { turnId } : {}),
         timestamp,
         kind: "tool_execution_start",
         toolName: event.toolName,
@@ -259,6 +267,7 @@ function mapToolCallActivityFromRuntime(
         type: "agent_tool_call",
         agentId: managerContextId,
         actorAgentId,
+        ...(turnId ? { turnId } : {}),
         timestamp,
         kind: "tool_execution_update",
         toolName: event.toolName,
@@ -271,6 +280,7 @@ function mapToolCallActivityFromRuntime(
         type: "agent_tool_call",
         agentId: managerContextId,
         actorAgentId,
+        ...(turnId ? { turnId } : {}),
         timestamp,
         kind: "tool_execution_end",
         toolName: event.toolName,

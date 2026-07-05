@@ -72,7 +72,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
   >;
   conversationProjector: {
-    captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void;
+    captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void;
     emitConversationMessage(event: ConversationMessageEvent): void;
   };
   promptService: {
@@ -147,6 +147,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): Promise<void>;
   isRuntimeRecoveryActive(agentId: string): boolean;
   beforeRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
+  getActiveTurnId?(agentId: string, runtimeToken?: number): string | undefined;
   afterRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   onAcceptedRuntimeSessionEvent?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   incrementSessionCompactionCount(
@@ -304,8 +305,8 @@ export class SwarmRuntimeController {
     this.getRuntimeEventProjector().clearTrackedToolPaths(agentId);
   }
 
-  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget): void {
-    this.getRuntimeEventProjector().activateManagerAssistantOutputTurn(agentId, target);
+  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget, options?: { turnId?: string }): void {
+    this.getRuntimeEventProjector().activateManagerAssistantOutputTurn(agentId, target, options);
   }
 
   clearManagerAssistantOutputTurn(agentId: string): void {
@@ -541,8 +542,8 @@ export class SwarmRuntimeController {
         runtimeRecoveryState: this.host.runtimeRecoveryState,
         now: () => this.now(),
         conversationProjector: {
-          captureConversationEventFromRuntime: (agentId, event) =>
-            this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event),
+          captureConversationEventFromRuntime: (agentId, event, options) =>
+            this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event, options),
           emitConversationMessage: (event) => this.host.emitConversationMessage(event),
         },
         markSessionActivity: (agentId, timestamp) => this.host.markSessionActivity(agentId, timestamp),
@@ -565,6 +566,7 @@ export class SwarmRuntimeController {
         getRuntime: (agentId) => this.getRuntime(agentId),
         isModelCacheVisualizationEnabled: () => this.host.isModelCacheVisualizationEnabled(),
         emitModelCacheObservation: (event) => this.host.emitModelCacheObservation(event),
+        getActiveTurnId: (agentId, runtimeToken) => this.host.getActiveTurnId?.(agentId, runtimeToken),
         resolveManagerAssistantFinalOutputTarget: (agentId, _descriptor, activeTarget) =>
           this.host.resolveManagerAssistantFinalOutputTarget(agentId, activeTarget)
       });

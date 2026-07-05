@@ -47,6 +47,7 @@ export interface SessionMeta {
   label: string | null
   cli?: CliSessionMetadata
   compactionCount?: number
+  lastTurnSeq?: number
   model: {
     provider: string | null
     modelId: string | null

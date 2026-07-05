@@ -487,6 +487,9 @@ interface CodexPluginRetryAuthorizationContext {
 type SessionTranscriptAssistantOutputTarget = Extract<AssistantOutputTarget, { kind: "session_transcript" }>;
 
 interface PendingInboundTurnContext {
+  turnId?: string;
+  runtimeToken?: number;
+  activationEligible?: boolean;
   source: PreparedInboundConversationPayload["source"] | "agent_message";
   rootTurnId?: string;
   parentRootTurnId?: string;
@@ -509,6 +512,11 @@ interface PendingChoiceAssistantOutputContinuation {
 interface ActiveObservabilityRootContext {
   rootTurnId: string;
   parentRootTurnId?: string;
+}
+
+interface ActiveTurnContext {
+  turnId: string;
+  runtimeToken?: number;
 }
 
 interface ExternalProjectAgentTurnContext {
@@ -1313,6 +1321,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
   private readonly inboundTurnContextActivatedByAgentId = new Set<string>();
+  // Inbound turn ids are minted when dispatch is accepted and cleared on rollback,
+  // turn_end, agent_end, runtime error, or runtime detach. The first queued turn
+  // owns activeTurn until a runtime event dequeues a later context; this is safe
+  // because dispatch into a single agent runtime is ordered, while runtimeToken
+  // prevents events from a replacement runtime from inheriting the old id.
+  // Some queued contexts are id carriers only: they advance activeTurn for event
+  // projection but intentionally do not participate in assistant-output routing.
+  private readonly activeTurnByAgentId = new Map<string, ActiveTurnContext>();
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly activeWebAssistantOutputTurnByManagerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, AssistantOutputTarget>();
@@ -5074,7 +5090,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
         },
       });
-      const rollbackInboundTurnContext = this.enqueueInboundTurnContext(target.agentId, {
+      const rollbackInboundTurnContext = await this.enqueueInboundTurnContext(target.agentId, {
         source: "project_agent_input",
         rootTurnId: observabilityInput?.rootTurnId,
         parentRootTurnId,
@@ -5205,13 +5221,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sendMessageToolContinuation: options?.observabilityParentTool?.toolName === "send_message_to_agent",
     };
     const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage(assistantOutputInput);
+    const isAssistantOutputEligibleWorkerReport = this.isAssistantOutputEligibleWorkerReportMessage(assistantOutputInput);
     // Keep the runtime input marker as routing guidance for the manager, but derive
     // assistant_output visibility from the target manager/session context.
     const assistantOutputProjectionTarget = this.resolveAssistantOutputProjectionTargetForAgentMessage(
       assistantOutputInput,
       assistantOutputTarget,
     );
-    const isAssistantOutputEligibleWorkerReport = this.isAssistantOutputEligibleWorkerReportMessage(assistantOutputInput);
     if (target.role === "manager") {
       modelMessage = appendAssistantOutputTargetMetadataToRuntimeMessage(modelMessage, assistantOutputTarget);
     }
@@ -5244,16 +5260,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         assistantOutputProjectionTarget.kind !== "internal_only" ||
         assistantOutputTarget.kind !== "internal_only" ||
         isAssistantOutputEligibleWorkerReport);
-    const rollbackObservabilityInboundContext = shouldEnqueueAgentMessageTurnContext
-      ? this.enqueueInboundTurnContext(target.agentId, {
-          source: "agent_message",
-          rootTurnId: observabilityInput?.rootTurnId,
-          parentRootTurnId,
-          runtimeMessageText: extractRuntimeMessageText(modelMessage),
-          assistantOutputTarget,
-          assistantOutputProjectionTarget,
-        })
-      : undefined;
+    const rollbackObservabilityInboundContext = await this.enqueueInboundTurnContext(target.agentId, {
+      source: "agent_message",
+      rootTurnId: observabilityInput?.rootTurnId,
+      parentRootTurnId,
+      runtimeMessageText: extractRuntimeMessageText(modelMessage),
+      assistantOutputTarget,
+      assistantOutputProjectionTarget,
+      activationEligible: shouldEnqueueAgentMessageTurnContext,
+    });
 
     let receipt: SendMessageReceipt;
     try {
@@ -6931,7 +6946,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         collaboration: Boolean(collaborationAuthor),
       },
     });
-    const rollbackInboundTurnContext = this.enqueueInboundTurnContext(managerContextId, {
+    const rollbackInboundTurnContext = await this.enqueueInboundTurnContext(managerContextId, {
       source: "user_input",
       rootTurnId: observabilityInput?.rootTurnId,
       runtimeMessageText: extractRuntimeMessageText(runtimeMessage),
@@ -7241,26 +7256,76 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return { kind: "explicit_tool_required", reason: `unsupported_direct_${sourceContext.channel}_source` };
   }
 
-  private enqueueInboundTurnContext(agentId: string, context: PendingInboundTurnContext): () => void {
+  getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined {
+    const activeTurn = this.activeTurnByAgentId.get(agentId);
+    if (!activeTurn) {
+      return undefined;
+    }
+
+    if (
+      runtimeToken !== undefined &&
+      activeTurn.runtimeToken !== undefined &&
+      activeTurn.runtimeToken !== runtimeToken
+    ) {
+      return undefined;
+    }
+
+    return activeTurn.turnId;
+  }
+
+  private async enqueueInboundTurnContext(agentId: string, context: PendingInboundTurnContext): Promise<() => void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      throw new Error(`Cannot mint turn id for unknown agent: ${agentId}`);
+    }
+
+    const runtimeToken = this.runtimeController.getRuntimeToken(agentId);
+    const queuedContext: PendingInboundTurnContext = {
+      ...context,
+      activationEligible: context.activationEligible ?? true,
+      turnId: await this.sessionMetaService.mintTurnIdForDescriptor(descriptor),
+      ...(runtimeToken !== undefined ? { runtimeToken } : {})
+    };
+
     const queue = this.pendingInboundTurnContextsByAgentId.get(agentId) ?? [];
-    queue.push(context);
+    queue.push(queuedContext);
     this.pendingInboundTurnContextsByAgentId.set(agentId, queue);
+    if (!this.activeTurnByAgentId.has(agentId)) {
+      this.activeTurnByAgentId.set(agentId, {
+        turnId: queuedContext.turnId!,
+        ...(runtimeToken !== undefined ? { runtimeToken } : {})
+      });
+    }
 
     return () => {
       const currentQueue = this.pendingInboundTurnContextsByAgentId.get(agentId);
-      if (!currentQueue) {
-        return;
+      if (currentQueue) {
+        const index = currentQueue.lastIndexOf(queuedContext);
+        if (index >= 0) {
+          currentQueue.splice(index, 1);
+        }
+
+        if (currentQueue.length === 0) {
+          this.pendingInboundTurnContextsByAgentId.delete(agentId);
+        }
       }
 
-      const index = currentQueue.lastIndexOf(context);
-      if (index >= 0) {
-        currentQueue.splice(index, 1);
-      }
-
-      if (currentQueue.length === 0) {
-        this.pendingInboundTurnContextsByAgentId.delete(agentId);
+      if (this.activeTurnByAgentId.get(agentId)?.turnId === queuedContext.turnId) {
+        this.activeTurnByAgentId.delete(agentId);
       }
     };
+  }
+
+  private setActiveTurnFromInboundContext(agentId: string, context: PendingInboundTurnContext): void {
+    if (!context.turnId) {
+      this.activeTurnByAgentId.delete(agentId);
+      return;
+    }
+
+    this.activeTurnByAgentId.set(agentId, {
+      turnId: context.turnId,
+      ...(context.runtimeToken !== undefined ? { runtimeToken: context.runtimeToken } : {})
+    });
   }
 
   private dequeueInboundTurnContextForRuntimeMessage(
@@ -7296,7 +7361,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string,
     descriptor: AgentDescriptor | undefined,
     nextContext: PendingInboundTurnContext | undefined,
+    options?: { preserveActiveTurn?: boolean },
   ): void {
+    if (nextContext?.turnId) {
+      this.setActiveTurnFromInboundContext(agentId, nextContext);
+    } else if (!options?.preserveActiveTurn) {
+      this.activeTurnByAgentId.delete(agentId);
+    }
+
     if (nextContext?.rootTurnId) {
       this.activeObservabilityRootByAgentId.set(agentId, {
         rootTurnId: nextContext.rootTurnId,
@@ -7333,7 +7405,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const assistantOutputProjectionTarget = nextContext?.assistantOutputProjectionTarget ?? nextContext?.assistantOutputTarget;
     if (assistantOutputProjectionTarget) {
       this.activeAssistantOutputTargetByManagerId.set(agentId, assistantOutputProjectionTarget);
-      this.runtimeController.activateManagerAssistantOutputTurn(agentId, assistantOutputProjectionTarget);
+      this.runtimeController.activateManagerAssistantOutputTurn(agentId, assistantOutputProjectionTarget, {
+        turnId: nextContext?.turnId,
+      });
       if (assistantOutputProjectionTarget.kind === "session_transcript" && assistantOutputProjectionTarget.channel === "web") {
         this.activeWebAssistantOutputTurnByManagerId.set(agentId, cloneSessionTranscriptAssistantOutputTarget(assistantOutputProjectionTarget));
       } else {
@@ -7369,6 +7443,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  private activateDequeuedInboundTurnContext(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    nextContext: PendingInboundTurnContext,
+  ): void {
+    if (nextContext.activationEligible) {
+      this.activateInboundTurnContext(agentId, descriptor, nextContext);
+      return;
+    }
+
+    this.setActiveTurnFromInboundContext(agentId, nextContext);
+    this.activateInboundTurnContext(agentId, descriptor, undefined, { preserveActiveTurn: true });
+  }
+
+  private dequeueNextInboundTurnContext(agentId: string): PendingInboundTurnContext | undefined {
+    const queue = this.pendingInboundTurnContextsByAgentId.get(agentId);
+    const nextContext = queue?.shift();
+    if (!queue || !nextContext) {
+      return undefined;
+    }
+
+    if (queue.length === 0) {
+      this.pendingInboundTurnContextsByAgentId.delete(agentId);
+    }
+
+    return nextContext;
+  }
+
   private applyInboundTurnContextRuntimeEvent(
     agentId: string,
     event: RuntimeSessionEvent,
@@ -7396,7 +7498,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
       if (nextContext) {
         this.inboundTurnContextActivatedByAgentId.add(agentId);
-        this.activateInboundTurnContext(agentId, descriptor, nextContext);
+        this.activateDequeuedInboundTurnContext(agentId, descriptor, nextContext);
       } else if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
         this.activateInboundTurnContext(agentId, descriptor, undefined);
       }
@@ -7404,7 +7506,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (phase === "after_projection" && event.type === "turn_end") {
+      if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
+        this.dequeueNextInboundTurnContext(agentId);
+      }
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
+      this.activeTurnByAgentId.delete(agentId);
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
       this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.expireActiveWebAssistantOutputTargetIfUncontinued(agentId);
@@ -7416,7 +7522,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (phase === "after_projection" && event.type === "agent_end") {
+      if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
+        this.dequeueNextInboundTurnContext(agentId);
+      }
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
+      this.activeTurnByAgentId.delete(agentId);
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
       this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
@@ -9920,6 +10030,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private discardPendingInboundTurnContexts(agentId: string): void {
     this.pendingInboundTurnContextsByAgentId.delete(agentId);
     this.inboundTurnContextActivatedByAgentId.delete(agentId);
+    this.activeTurnByAgentId.delete(agentId);
     this.activeAssistantOutputTargetByManagerId.delete(agentId);
     this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
     this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
@@ -9969,6 +10080,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor?.role === "manager") {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
       this.inboundTurnContextActivatedByAgentId.delete(agentId);
+      this.activeTurnByAgentId.delete(agentId);
       this.activeAssistantOutputTargetByManagerId.delete(agentId);
       this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
