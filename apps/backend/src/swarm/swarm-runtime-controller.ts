@@ -542,8 +542,13 @@ export class SwarmRuntimeController {
         runtimeRecoveryState: this.host.runtimeRecoveryState,
         now: () => this.now(),
         conversationProjector: {
-          captureConversationEventFromRuntime: (agentId, event, options) =>
-            this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event, options),
+          captureConversationEventFromRuntime: (agentId, event, options) => {
+            if (options?.turnId) {
+              this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event, options);
+            } else {
+              this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event);
+            }
+          },
           emitConversationMessage: (event) => this.host.emitConversationMessage(event),
         },
         markSessionActivity: (agentId, timestamp) => this.host.markSessionActivity(agentId, timestamp),

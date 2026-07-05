@@ -6,7 +6,8 @@ import type {
   SessionMemoryMergeStrategy,
   SessionMeta
 } from "@forge/protocol";
-import { getProfileMemoryPath } from "./data-paths.js";
+import { updateJsonFileAtomic } from "../utils/atomic-files.js";
+import { getProfileMemoryPath, getSessionMetaPath } from "./data-paths.js";
 import {
   backfillCompactionCounts,
   computePromptFingerprint,
@@ -21,6 +22,13 @@ import { normalizeOptionalAgentId } from "./swarm-manager-utils.js";
 import type { AgentDescriptor, AgentStatus } from "./types.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
+
+/**
+ * Restart hydration intentionally skips a block of sequence numbers so a crash
+ * after minting but before async persistence cannot reuse recently issued ids.
+ */
+export const TURN_SEQ_RESTART_GAP = 1000;
+const TURN_SEQ_PERSIST_DELAY_MS = 250;
 
 export interface SessionMemoryMergeAttemptMetaUpdate {
   attemptId?: string | null;
@@ -49,7 +57,15 @@ export interface SwarmSessionMetaServiceOptions {
   resolveSystemPromptForDescriptor: (descriptor: AgentDescriptor) => Promise<string>;
 }
 
+type SessionMetaTarget = {
+  descriptor: AgentDescriptor & { role: "manager"; profileId: string };
+  profileId: string;
+  sessionId: string;
+};
+
 export class SwarmSessionMetaService {
+  private readonly turnSeqBySessionId = new Map<string, number>();
+  private readonly turnSeqHydrationBySessionId = new Map<string, Promise<number>>();
   private readonly turnSeqUpdateBySessionId = new Map<string, Promise<unknown>>();
 
   constructor(private readonly options: SwarmSessionMetaServiceOptions) {}
@@ -310,26 +326,14 @@ export class SwarmSessionMetaService {
       throw new Error(`Cannot resolve session meta target for turn id mint: ${descriptor.agentId}`);
     }
 
-    return this.serializeTurnSeqUpdate(target.sessionId, async () => {
-      const existingMeta = await readSessionMeta(this.options.dataDir, target.profileId, target.sessionId);
-      const base = existingMeta ?? this.createSessionMetaSkeleton(target.descriptor);
-      const nextSeq = (base.lastTurnSeq ?? 0) + 1;
-      await writeSessionMeta(this.options.dataDir, {
-        ...base,
-        sessionId: target.sessionId,
-        profileId: target.profileId,
-        label: normalizeOptionalAgentId(target.descriptor.sessionLabel) ?? base.label,
-        cli: target.descriptor.cli ?? base.cli,
-        model: {
-          provider: target.descriptor.model.provider,
-          modelId: target.descriptor.model.modelId
-        },
-        cwd: target.descriptor.cwd,
-        updatedAt: this.options.now(),
-        lastTurnSeq: nextSeq
-      });
-      return `${target.sessionId}:${nextSeq}`;
-    });
+    if (!this.turnSeqBySessionId.has(target.sessionId)) {
+      await this.hydrateTurnSeq(target);
+    }
+
+    const nextSeq = (this.turnSeqBySessionId.get(target.sessionId) ?? 0) + 1;
+    this.turnSeqBySessionId.set(target.sessionId, nextSeq);
+    this.persistLastTurnSeq(target, nextSeq);
+    return `${target.sessionId}:${nextSeq}`;
   }
 
   async writeSessionMemoryMergeAttemptMeta(
@@ -380,9 +384,7 @@ export class SwarmSessionMetaService {
     await writeSessionMeta(this.options.dataDir, next);
   }
 
-  private resolveSessionMetaTarget(
-    descriptor: AgentDescriptor
-  ): { descriptor: AgentDescriptor & { role: "manager"; profileId: string }; profileId: string; sessionId: string } | null {
+  private resolveSessionMetaTarget(descriptor: AgentDescriptor): SessionMetaTarget | null {
     if (descriptor.role === "manager") {
       const profileId = descriptor.profileId ?? descriptor.agentId;
       return {
@@ -464,23 +466,84 @@ export class SwarmSessionMetaService {
   }
 
   private async serializeTurnSeqUpdate<T>(sessionId: string, update: () => Promise<T>): Promise<T> {
-    const previous = this.turnSeqUpdateBySessionId.get(sessionId) ?? Promise.resolve();
-    let release: () => void = () => undefined;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const chained = previous.then(() => current, () => current);
+    const previous = this.turnSeqUpdateBySessionId.get(sessionId);
+    const run = previous ? previous.catch(() => undefined).then(update) : update();
+    const chained = run.then(() => undefined, () => undefined);
     this.turnSeqUpdateBySessionId.set(sessionId, chained);
 
-    await previous.catch(() => undefined);
     try {
-      return await update();
+      return await run;
     } finally {
-      release();
       if (this.turnSeqUpdateBySessionId.get(sessionId) === chained) {
         this.turnSeqUpdateBySessionId.delete(sessionId);
       }
     }
+  }
+
+  private async hydrateTurnSeq(target: SessionMetaTarget): Promise<number> {
+    const hydrated = this.turnSeqBySessionId.get(target.sessionId);
+    if (hydrated !== undefined) {
+      return hydrated;
+    }
+
+    const existingHydration = this.turnSeqHydrationBySessionId.get(target.sessionId);
+    if (existingHydration) {
+      return existingHydration;
+    }
+
+    const hydration = (async () => {
+      const existingMeta = await readSessionMeta(this.options.dataDir, target.profileId, target.sessionId);
+      const persistedSeq = existingMeta?.lastTurnSeq ?? 0;
+      const restartSeq = persistedSeq + TURN_SEQ_RESTART_GAP;
+      this.turnSeqBySessionId.set(target.sessionId, restartSeq);
+      return restartSeq;
+    })();
+
+    this.turnSeqHydrationBySessionId.set(target.sessionId, hydration);
+    try {
+      return await hydration;
+    } finally {
+      if (this.turnSeqHydrationBySessionId.get(target.sessionId) === hydration) {
+        this.turnSeqHydrationBySessionId.delete(target.sessionId);
+      }
+    }
+  }
+
+  private persistLastTurnSeq(target: SessionMetaTarget, nextSeq: number): void {
+    const timer = setTimeout(() => {
+      void this.persistLastTurnSeqNow(target, nextSeq);
+    }, TURN_SEQ_PERSIST_DELAY_MS);
+    timer.unref?.();
+  }
+
+  private async persistLastTurnSeqNow(target: SessionMetaTarget, nextSeq: number): Promise<void> {
+    await this.serializeTurnSeqUpdate(target.sessionId, async () => {
+      const defaultMeta = this.createSessionMetaSkeleton(target.descriptor);
+      const metaPath = getSessionMetaPath(this.options.dataDir, target.profileId, target.sessionId);
+      await updateJsonFileAtomic<SessionMeta>(metaPath, defaultMeta, (current) => ({
+        ...defaultMeta,
+        ...current,
+        sessionId: target.sessionId,
+        profileId: target.profileId,
+        label: normalizeOptionalAgentId(target.descriptor.sessionLabel) ?? current.label ?? defaultMeta.label,
+        cli: target.descriptor.cli ?? current.cli ?? defaultMeta.cli,
+        model: {
+          provider: target.descriptor.model.provider,
+          modelId: target.descriptor.model.modelId
+        },
+        cwd: target.descriptor.cwd,
+        updatedAt: this.options.now(),
+        lastTurnSeq: Math.max(current.lastTurnSeq ?? 0, nextSeq)
+      }), {
+        createIfMissing: false,
+        createParentDir: false
+      });
+    }).catch((error) => {
+      this.options.logDebug("session:turn-seq:persist_error", {
+        sessionId: target.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
   }
 
   private buildSessionMetaStats(

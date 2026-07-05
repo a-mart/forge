@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
 import { getSessionFilePath } from "../data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
-import { SwarmSessionMetaService } from "../swarm-session-meta-service.js";
+import { SwarmSessionMetaService, TURN_SEQ_RESTART_GAP } from "../swarm-session-meta-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
 const repoRoot = resolve(process.cwd(), "../..");
@@ -153,15 +153,22 @@ describe("SwarmSessionMetaService", () => {
   it("mints monotonic turn ids and resumes from persisted session meta after service restart", async () => {
     const { config, service, manager } = await createTurnIdFixture();
 
-    await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe("manager:1");
-    await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe("manager:2");
+    const firstSeq = TURN_SEQ_RESTART_GAP + 1;
+    const secondSeq = TURN_SEQ_RESTART_GAP + 2;
+    await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe(`manager:${firstSeq}`);
+    await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe(`manager:${secondSeq}`);
 
-    const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
-    expect(meta?.lastTurnSeq).toBe(2);
+    await vi.waitFor(async () => {
+      const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
+      expect(meta?.lastTurnSeq).toBe(secondSeq);
+    });
 
     const descriptors = new Map<string, AgentDescriptor>([["manager", manager]]);
     const restartedService = buildService(config, descriptors);
-    expect(await restartedService.mintTurnIdForDescriptor(manager)).toBe("manager:3");
+    const restartedId = await restartedService.mintTurnIdForDescriptor(manager);
+    const restartedSeq = Number(restartedId.split(":").at(-1));
+    expect(new Set([`manager:${firstSeq}`, `manager:${secondSeq}`, restartedId])).toHaveLength(3);
+    expect(restartedSeq).toBeGreaterThan(secondSeq);
   });
 
   it("serializes concurrent manager and worker turn id mints in the same session", async () => {
@@ -172,9 +179,11 @@ describe("SwarmSessionMetaService", () => {
       service.mintTurnIdForDescriptor(worker!),
     ]);
 
-    expect(ids.sort()).toEqual(["manager:1", "manager:2"]);
-    const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
-    expect(meta?.lastTurnSeq).toBe(2);
+    expect(ids.sort()).toEqual([`manager:${TURN_SEQ_RESTART_GAP + 1}`, `manager:${TURN_SEQ_RESTART_GAP + 2}`]);
+    await vi.waitFor(async () => {
+      const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
+      expect(meta?.lastTurnSeq).toBe(TURN_SEQ_RESTART_GAP + 2);
+    });
   });
 
   it("writeInitialSessionMeta creates session meta with model, label, and timestamps", async () => {
