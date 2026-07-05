@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { GitDiffService } from "../ws/routes/git-diff-service.js";
+import { GitDiffService } from "../ws/http/services/git-diff-service.js";
 
 const execFileAsync = promisify(execFile);
 const activeRoots: string[] = [];

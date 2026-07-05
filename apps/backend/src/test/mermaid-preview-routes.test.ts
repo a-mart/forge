@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createMermaidPreviewRoutes } from '../ws/routes/mermaid-preview-routes.js'
+import { createMermaidPreviewRoutes } from '../ws/http/routes/mermaid-preview-routes.js'
 
 interface TestServer {
   readonly baseUrl: string

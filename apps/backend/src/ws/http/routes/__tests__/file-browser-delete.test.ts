@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FileDeleteResponse } from "@forge/protocol";
-import { createFileBrowserRoutes } from "../../../routes/file-browser-routes.js";
+import { createFileBrowserRoutes } from "../file-browser-routes.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 
 interface TestServer {

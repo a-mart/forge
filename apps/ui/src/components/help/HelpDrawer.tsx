@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { BookOpen, Compass, Keyboard } from 'lucide-react'
 import {
   Sheet,
@@ -23,6 +23,7 @@ import {
 } from './help-registry'
 import { formatCategory } from './help-utils'
 import { cn } from '@/lib/utils'
+import { useDrawerResize } from '@/hooks/use-drawer-resize'
 import type { HelpArticle as HelpArticleType, HelpCategory } from './help-types'
 
 // ── Drawer resize ──
@@ -31,67 +32,6 @@ const HELP_DRAWER_WIDTH_KEY = 'forge-help-drawer-width'
 const DEFAULT_DRAWER_WIDTH = 720
 const MIN_DRAWER_WIDTH = 500
 const MAX_DRAWER_WIDTH = 1200
-
-function loadDrawerWidth(): number {
-  if (typeof window === 'undefined') return DEFAULT_DRAWER_WIDTH
-  try {
-    const stored = window.localStorage.getItem(HELP_DRAWER_WIDTH_KEY)
-    if (stored) {
-      const w = parseInt(stored, 10)
-      // Only use cached width if it's within current bounds AND at least the default
-      // (so upgrading the default actually takes effect for users with old cached values)
-      if (w >= DEFAULT_DRAWER_WIDTH && w <= MAX_DRAWER_WIDTH) return w
-    }
-  } catch { /* ignore */ }
-  return DEFAULT_DRAWER_WIDTH
-}
-
-function persistDrawerWidth(width: number): void {
-  try {
-    window.localStorage.setItem(HELP_DRAWER_WIDTH_KEY, String(width))
-  } catch { /* ignore */ }
-}
-
-function useDrawerResize() {
-  const [width, setWidth] = useState(loadDrawerWidth)
-  const [isResizing, setIsResizing] = useState(false)
-  const widthRef = useRef(width)
-
-  useEffect(() => {
-    widthRef.current = width
-  }, [width])
-
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsResizing(true)
-    const startX = e.clientX
-    const startWidth = widthRef.current
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      // Dragging left = increasing width (handle is on left edge of right-side sheet)
-      const delta = startX - moveEvent.clientX
-      const newWidth = Math.min(MAX_DRAWER_WIDTH, Math.max(MIN_DRAWER_WIDTH, startWidth + delta))
-      setWidth(newWidth)
-    }
-
-    const handleMouseUp = () => {
-      setIsResizing(false)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      persistDrawerWidth(widthRef.current)
-    }
-
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [])
-
-  return { width, isResizing, handleResizeStart }
-}
 
 // ── Categories ──
 
@@ -145,7 +85,12 @@ export function HelpDrawer() {
     return getAllArticles()
   }, [searchQuery, activeCategory, contextKey])
 
-  const { width: drawerWidth, isResizing, handleResizeStart } = useDrawerResize()
+  const { width: drawerWidth, isResizing, handleResizeStart } = useDrawerResize({
+    storageKey: HELP_DRAWER_WIDTH_KEY,
+    defaultWidth: DEFAULT_DRAWER_WIDTH,
+    minWidth: MIN_DRAWER_WIDTH,
+    maxWidth: MAX_DRAWER_WIDTH,
+  })
 
   const handleBack = () => {
     // Clear article selection to go back to list

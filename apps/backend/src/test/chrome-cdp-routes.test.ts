@@ -13,14 +13,14 @@ const chromeCdpHelperState = vi.hoisted(() => ({
   resolveChromeCdpEndpoint: vi.fn(async () => ({ port: 9222 })),
 }));
 
-vi.mock("../ws/routes/chrome-cdp-helper.js", () => ({
+vi.mock("../ws/http/services/chrome-cdp-service.js", () => ({
   queryChromeBrowserContexts: (...args: unknown[]) => chromeCdpHelperState.queryChromeBrowserContexts(...args),
   queryChromeCdpTargets: (...args: unknown[]) => chromeCdpHelperState.queryChromeCdpTargets(...args),
   queryChromeCdpVersion: (...args: unknown[]) => chromeCdpHelperState.queryChromeCdpVersion(...args),
   resolveChromeCdpEndpoint: (...args: unknown[]) => chromeCdpHelperState.resolveChromeCdpEndpoint(...args),
 }));
 
-import { createChromeCdpRoutes } from "../ws/routes/chrome-cdp-routes.js";
+import { createChromeCdpRoutes } from "../ws/http/routes/chrome-cdp-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

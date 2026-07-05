@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorktreeId } from "../../../../versioning/git-source-control-helpers.js";
-import { createFileBrowserRoutes, parseBytesRangeHeader, setRawFileReadStreamFactoryForTest } from "../../../routes/file-browser-routes.js";
+import { createFileBrowserRoutes, parseBytesRangeHeader, setRawFileReadStreamFactoryForTest } from "../file-browser-routes.js";
 import { Readable } from "node:stream";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 
