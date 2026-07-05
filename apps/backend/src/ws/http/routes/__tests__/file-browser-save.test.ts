@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { FileContentResult, FileSaveResponse, FileVersionToken } from "@forge/protocol";
 import { createWorktreeId } from "../../../../versioning/git-source-control-helpers.js";
-import { createFileBrowserRoutes } from "../../../routes/file-browser-routes.js";
+import { createFileBrowserRoutes } from "../file-browser-routes.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 import {
   MAX_FILE_CONTENT_BYTES,

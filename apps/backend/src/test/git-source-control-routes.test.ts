@@ -22,7 +22,7 @@ import {
   createWorktreeId,
   resolveStableWorktreePathKey
 } from "../versioning/git-source-control-helpers.js";
-import { createGitSourceControlRoutes } from "../ws/routes/git-source-control-routes.js";
+import { createGitSourceControlRoutes } from "../ws/http/routes/git-source-control-routes.js";
 
 const execFileAsync = promisify(execFile);
 

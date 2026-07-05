@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { TerminalServiceError } from "../terminal/terminal-service.js";
 import { TerminalSettingsService } from "../terminal/terminal-settings-service.js";
-import { createTerminalRoutes } from "../ws/routes/terminal-routes.js";
+import { createTerminalRoutes } from "../ws/http/routes/terminal-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

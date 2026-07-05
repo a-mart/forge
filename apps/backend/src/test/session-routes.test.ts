@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ServerEvent } from "@forge/protocol";
-import { handleSessionCommand } from "../ws/routes/session-routes.js";
+import { handleSessionCommand } from "../ws/commands/session-command-handler.js";
 
 const DEFAULT_MODEL = {
   provider: "openai-codex",

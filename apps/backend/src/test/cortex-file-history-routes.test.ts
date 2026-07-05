@@ -7,7 +7,7 @@ import type { CortexFileReviewHistoryResult } from "@forge/protocol";
 import { appendCortexReviewRun } from "../swarm/cortex-review-runs.js";
 import { appendCortexReviewLogEntry, writeCortexPromotionManifest } from "../swarm/scripts/cortex-review-state.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { createCortexRoutes } from "../ws/routes/cortex-routes.js";
+import { createCortexRoutes } from "../ws/http/routes/cortex-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

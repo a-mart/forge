@@ -14,7 +14,7 @@ import type {
 } from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { createGitDiffRoutes } from "../ws/routes/git-diff-routes.js";
+import { createGitDiffRoutes } from "../ws/http/routes/git-diff-routes.js";
 import { createWorktreeId } from "../versioning/git-source-control-helpers.js";
 
 const execFileAsync = promisify(execFile);

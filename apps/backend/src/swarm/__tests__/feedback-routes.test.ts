@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AgentDescriptor } from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SwarmManager } from "../swarm-manager.js";
-import { createFeedbackRoutes } from "../../ws/routes/feedback-routes.js";
+import { createFeedbackRoutes } from "../../ws/http/routes/feedback-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

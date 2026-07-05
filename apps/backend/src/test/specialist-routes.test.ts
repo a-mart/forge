@@ -49,7 +49,7 @@ vi.mock("../swarm/specialists/specialist-registry.js", () => ({
   invalidateSpecialistCache: (...args: unknown[]) => specialistRegistryState.invalidateSpecialistCache(...args),
 }));
 
-import { createSpecialistRoutes } from "../ws/routes/specialist-routes.js";
+import { createSpecialistRoutes } from "../ws/http/routes/specialist-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

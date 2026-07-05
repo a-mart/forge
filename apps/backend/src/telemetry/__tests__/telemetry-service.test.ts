@@ -6,7 +6,7 @@ import type { PersistedTelemetryConfig, StatsSnapshot, TelemetryPayload } from '
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getTelemetryConfigPath } from '../../swarm/data-paths.js'
 import { TelemetryService } from '../telemetry-service.js'
-import { createTelemetryRoutes } from '../../ws/routes/telemetry-routes.js'
+import { createTelemetryRoutes } from '../../ws/http/routes/telemetry-routes.js'
 
 interface TestServer {
   baseUrl: string

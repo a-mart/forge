@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { StatsSnapshot } from '@forge/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createStatsRoutes } from '../ws/routes/stats-routes.js'
+import { createStatsRoutes } from '../ws/http/routes/stats-routes.js'
 
 interface TestServer {
   baseUrl: string

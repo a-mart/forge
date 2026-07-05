@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AvailableTerminalShell, GetAvailableTerminalShellsResponse, GetTerminalSettingsResponse } from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { TerminalSettingsService } from "../terminal/terminal-settings-service.js";
-import { createTerminalRoutes } from "../ws/routes/terminal-routes.js";
+import { createTerminalRoutes } from "../ws/http/routes/terminal-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

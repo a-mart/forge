@@ -10,7 +10,7 @@ import {
   writeP0HttpRouteAuthKey as writeAuthKey,
 } from '../../../../test-support/ws-integration-harness.js'
 import { applyCorsHeaders, sendJson } from '../../../http-utils.js'
-import { createSettingsRoutes } from '../../../routes/settings-routes.js'
+import { createSettingsRoutes } from '../settings-routes.js'
 import { SwarmWebSocketServer } from '../../../server.js'
 
 const oauthMockState = vi.hoisted(() => ({

@@ -13,7 +13,7 @@ import {
   queryChromeCdpTargets,
   queryChromeCdpVersion,
   resolveChromeCdpEndpoint
-} from "../../routes/chrome-cdp-helper.js";
+} from "../services/chrome-cdp-service.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
