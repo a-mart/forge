@@ -4,17 +4,31 @@ import { basename, dirname, join } from "node:path";
 import { renameWithRetry } from "../swarm/retry-rename.js";
 import { isEnoentError } from "./fs-errors.js";
 
-export async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+interface AtomicWriteOptions {
+  createParentDir?: boolean;
+}
+
+interface AtomicJsonUpdateOptions extends AtomicWriteOptions {
+  createIfMissing?: boolean;
+}
+
+export async function writeFileAtomic(filePath: string, content: string, options: AtomicWriteOptions = {}): Promise<void> {
   const targetDirectory = dirname(filePath);
   const tempPath = createTempPath(filePath);
 
-  await mkdir(targetDirectory, { recursive: true });
+  if (options.createParentDir !== false) {
+    await mkdir(targetDirectory, { recursive: true });
+  }
   await writeFile(tempPath, content, "utf8");
   await renameWithRetry(tempPath, filePath, { retries: 8, baseDelayMs: 15 });
 }
 
-export async function writeJsonFileAtomic(filePath: string, data: unknown): Promise<void> {
-  await writeFileAtomic(filePath, `${JSON.stringify(data, null, 2)}\n`);
+export async function writeJsonFileAtomic(
+  filePath: string,
+  data: unknown,
+  options: AtomicWriteOptions = {}
+): Promise<void> {
+  await writeFileAtomic(filePath, `${JSON.stringify(data, null, 2)}\n`, options);
 }
 
 export async function readJsonFileIfExists<T = unknown>(filePath: string): Promise<T | undefined> {
@@ -47,11 +61,16 @@ export async function readJsonFileIfExists<T = unknown>(filePath: string): Promi
 export async function updateJsonFileAtomic<T>(
   filePath: string,
   defaultValue: T,
-  updater: (current: T) => T
+  updater: (current: T) => T,
+  options: AtomicJsonUpdateOptions = {}
 ): Promise<T> {
-  const current = (await readJsonFileIfExists<T>(filePath)) ?? defaultValue;
+  const existing = await readJsonFileIfExists<T>(filePath);
+  if (existing === undefined && options.createIfMissing === false) {
+    return defaultValue;
+  }
+  const current = existing ?? defaultValue;
   const next = updater(current);
-  await writeJsonFileAtomic(filePath, next);
+  await writeJsonFileAtomic(filePath, next, { createParentDir: options.createParentDir });
   return next;
 }
 
