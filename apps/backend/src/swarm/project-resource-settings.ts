@@ -1,6 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, normalize, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { normalize, resolve } from "node:path";
 import { getProjectResourceSettingsPath } from "./data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 export type ProjectExecutableTrustState = "trusted" | "blocked";
 
@@ -100,10 +102,7 @@ export class ProjectResourceSettingsStore {
 
   async save(settings: ProjectResourceSettingsData): Promise<void> {
     const normalized = normalizeSettings(settings);
-    await mkdir(dirname(this.path), { recursive: true });
-    const tempPath = `${this.path}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf-8");
-    await rename(tempPath, this.path);
+    await writeJsonFileAtomic(this.path, normalized);
   }
 
   private get path(): string {
@@ -183,6 +182,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
-}

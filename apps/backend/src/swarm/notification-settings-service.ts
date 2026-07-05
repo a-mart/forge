@@ -1,8 +1,8 @@
 import type { AgentDescriptor, NotificationSettings, UpdateNotificationSettingsRequest } from "@forge/protocol";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { getNotificationSettingsPath } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 const SETTINGS_FILE_VERSION = 1;
 
@@ -203,12 +203,6 @@ async function writeSettingsFile(settingsPath: string, settings: NotificationSet
     updatedAt: settings.updatedAt,
   } satisfies NotificationSettingsFile;
 
-  await mkdir(dirname(settingsPath), { recursive: true });
-  const tempPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await renameWithRetry(tempPath, settingsPath);
+  await writeJsonFileAtomic(settingsPath, payload);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
-}

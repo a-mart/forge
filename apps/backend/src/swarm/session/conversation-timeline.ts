@@ -3,6 +3,7 @@ import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync, wr
 import { mkdir, open as openFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ConversationEntryEvent } from "../types.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 export const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
 export const SESSION_HEADER_VERSION = 3;
@@ -738,11 +739,3 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

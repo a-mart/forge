@@ -1,9 +1,8 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import type { ModelCacheVisualizationSettings } from '@forge/protocol'
 import { getModelCacheVisualizationSettingsPath } from './data-paths.js'
 import { isEnoentError } from './swarm-manager-utils.js'
+import { writeJsonFileAtomic } from '../utils/atomic-files.js'
 
 const DEFAULT_MODEL_CACHE_VISUALIZATION_ENABLED = false
 
@@ -35,20 +34,8 @@ export async function setModelCacheVisualizationEnabled(
     enabled,
     updatedAt: new Date().toISOString(),
   }
-  await mkdir(dirname(filePath), { recursive: true })
-  const tempPath = `${filePath}.tmp-${randomUUID()}`
 
-  try {
-    await writeFile(tempPath, JSON.stringify(settings, null, 2) + '\n', 'utf8')
-    await rename(tempPath, filePath)
-  } catch (error) {
-    try {
-      await unlink(tempPath)
-    } catch {
-      // Best-effort cleanup.
-    }
-    throw error
-  }
+  await writeJsonFileAtomic(filePath, settings)
 
   return settings
 }

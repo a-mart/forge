@@ -13,6 +13,7 @@ import {
   readReferenceDoc,
   writeReferenceDoc
 } from "./storage/asset-root-storage.js";
+import { isEnoentError, isErrnoCode } from "../utils/fs-errors.js";
 
 export const PROFILE_REFERENCE_INDEX_FILE = "index.md";
 export const LEGACY_PROFILE_KNOWLEDGE_REFERENCE_FILE = "legacy-profile-knowledge.md";
@@ -78,7 +79,7 @@ export async function ensureProfileReferenceDoc(
     });
     return { path: targetPath, created: true };
   } catch (error) {
-    if (isEexistError(error)) {
+    if (isErrnoCode(error, "EEXIST")) {
       return { path: targetPath, created: false };
     }
 
@@ -246,7 +247,7 @@ async function ensureProjectAgentReferenceDoc(
     });
     return { path: targetPath, created: true };
   } catch (error) {
-    if (isEexistError(error)) {
+    if (isErrnoCode(error, "EEXIST")) {
       return { path: targetPath, created: false };
     }
 
@@ -430,20 +431,3 @@ function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}
-
-function isEexistError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "EEXIST"
-  );
-}

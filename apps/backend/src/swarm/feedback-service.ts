@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   FEEDBACK_REASON_CODES,
@@ -11,6 +11,8 @@ import {
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
+import { isEnoentError } from "../utils/fs-errors.js";
+import { writeFileAtomic } from "../utils/atomic-files.js";
 
 export interface FeedbackListOptions {
   since?: string;
@@ -239,11 +241,9 @@ async function readFeedbackEventsFile(path: string): Promise<FeedbackEvent[]> {
 }
 
 async function writeFeedbackEventsFile(path: string, events: FeedbackEvent[]): Promise<void> {
-  const tmp = `${path}.tmp-${randomUUID()}`;
   const payload = events.length > 0 ? `${events.map((event) => JSON.stringify(event)).join("\n")}\n` : "";
 
-  await writeFile(tmp, payload, "utf8");
-  await rename(tmp, path);
+  await writeFileAtomic(path, payload);
 }
 
 function normalizeSubmitFeedbackInput(
@@ -478,13 +478,4 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

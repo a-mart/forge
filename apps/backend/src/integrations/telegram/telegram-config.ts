@@ -1,9 +1,10 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   BaseConfigPersistence,
   buildIntegrationProfileId
 } from "../base-config-persistence.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import {
   getLegacySharedIntegrationConfigPath,
   getSharedIntegrationConfigPath,
@@ -281,11 +282,7 @@ async function saveTelegramConfigToPath(
   configPath: string,
   config: TelegramIntegrationConfig
 ): Promise<void> {
-  const tmpPath = `${configPath}.tmp`;
-
-  await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(tmpPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  await rename(tmpPath, configPath);
+  await writeJsonFileAtomic(configPath, config);
 }
 
 async function readConfigText(configPath: string): Promise<string | undefined> {

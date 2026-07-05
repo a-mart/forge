@@ -8,6 +8,7 @@ type SettingsStorage = {
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver, type ProjectWorkspaceResolution } from "./project-workspace-resolver.js";
 import type { AgentDescriptor, SwarmConfig } from "./types.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export interface ProjectExecutableTrustPlan {
   resolution?: ProjectWorkspaceResolution;
@@ -229,7 +230,7 @@ function readJsonObjectSync(pathValue: string): Record<string, unknown> | undefi
     const parsed = JSON.parse(readFileSync(pathValue, "utf-8"));
     return isRecord(parsed) ? parsed : undefined;
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+    if (isEnoentError(error)) {
       return undefined;
     }
     if (error instanceof SyntaxError) return undefined;
@@ -351,7 +352,7 @@ function readOptionalFileSync(pathValue: string): string | undefined {
   try {
     return readFileSync(pathValue, "utf-8");
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+    if (isEnoentError(error)) {
       return undefined;
     }
     throw error;

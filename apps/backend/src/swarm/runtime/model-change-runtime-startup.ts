@@ -10,6 +10,7 @@ import {
   loadModelChangeContinuityState,
   type ModelChangeContinuityRequest
 } from "./model-change-continuity.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 const CONVERSATION_ENTRY_CUSTOM_TYPE = "swarm_conversation_entry";
 const CLAUDE_COMPACTION_SUMMARY_ENTRY_TYPE = "swarm_claude_compaction_summary";
@@ -143,6 +144,3 @@ function parseClaudeCompactionSummary(data: unknown): string | undefined {
   return typeof summary === "string" && summary.trim().length > 0 ? summary.trim() : undefined;
 }
 
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}

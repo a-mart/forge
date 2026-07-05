@@ -1,8 +1,10 @@
 import type { Dirent } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { getProfileUnreadStatePath, getProfilesDir } from "../data-paths.js";
 import { renameWithRetry } from "../retry-rename.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 const DEFAULT_DEBOUNCE_MS = 3000;
 const MAX_UNREAD_COUNT = 999;
@@ -243,7 +245,7 @@ export class UnreadTracker {
     try {
       raw = await readFile(path, "utf8");
     } catch (error) {
-      if (isEnoent(error)) {
+      if (isEnoentError(error)) {
         return new Map<string, number>();
       }
 
@@ -272,7 +274,7 @@ export class UnreadTracker {
     try {
       await renameWithRetry(path, corruptPath, { retries: 8, baseDelayMs: 15 });
     } catch (error) {
-      if (!isEnoent(error)) {
+      if (!isEnoentError(error)) {
         console.warn(`[swarm] unread:failed_to_mark_corrupt path=${path}`, {
           message: error instanceof Error ? error.message : String(error)
         });
@@ -287,7 +289,7 @@ export class UnreadTracker {
     try {
       entries = await readdir(profilesDir, { withFileTypes: true });
     } catch (error) {
-      if (isEnoent(error)) {
+      if (isEnoentError(error)) {
         return;
       }
 
@@ -303,7 +305,7 @@ export class UnreadTracker {
       try {
         await rm(orphanPath, { force: true });
       } catch (error) {
-        if (!isEnoent(error)) {
+        if (!isEnoentError(error)) {
           console.warn(`[swarm] unread:failed_to_prune_orphan profile=${entry.name} path=${orphanPath}`, {
             message: error instanceof Error ? error.message : String(error)
           });
@@ -321,11 +323,8 @@ export class UnreadTracker {
 
     const map = this.counts.get(profileId);
     const payload = toPersistedUnreadState(map);
-    const tmpPath = `${path}.tmp`;
 
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(path, payload);
   }
 
 }
@@ -378,11 +377,3 @@ function toPersistedUnreadState(map: Map<string, number> | undefined): Persisted
   return { counts };
 }
 
-function isEnoent(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

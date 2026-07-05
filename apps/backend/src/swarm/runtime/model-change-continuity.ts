@@ -4,6 +4,7 @@ import {
   appendImmediateCustomEntry,
   type ImmediateCustomEntryWriteResult
 } from "../session/immediate-custom-entry-writer.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
 const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
@@ -373,6 +374,3 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}

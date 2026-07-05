@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PICKER_PROMPT = "Select a manager working directory";
@@ -154,12 +155,7 @@ async function execFileCommand(command: string, args: string[]): Promise<ExecFil
 }
 
 function isCommandMissing(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
+  return isEnoentError(error);
 }
 
 function isDirectoryPickerCanceled(error: unknown): boolean {

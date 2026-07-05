@@ -1,10 +1,11 @@
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
-import { renameWithRetry } from "../swarm/retry-rename.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import { isEnoentError } from "../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const MIN_POLL_INTERVAL_MS = 5_000;
@@ -430,12 +431,7 @@ export class CronSchedulerService {
   }
 
   private async writeSchedulesFile(payload: SchedulesFile): Promise<void> {
-    const target = this.schedulesFile;
-    const temp = `${target}.tmp`;
-
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await renameWithRetry(temp, target, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(this.schedulesFile, payload);
   }
 }
 
@@ -505,15 +501,6 @@ function normalizeRequiredString(value: string | undefined): string | undefined 
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function parseIsoDate(value: string | undefined): Date | undefined {

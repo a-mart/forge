@@ -17,6 +17,7 @@ import {
 } from "./data-paths.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
 
@@ -221,15 +222,6 @@ export class PersistenceService {
       managerId: descriptor.managerId
     });
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 async function deleteFileIfPresent(path: string): Promise<void> {

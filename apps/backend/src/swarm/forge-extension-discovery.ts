@@ -7,6 +7,7 @@ import {
   getProjectLocalForgeExtensionsDir
 } from "./data-paths.js";
 import type { DiscoveredForgeExtension, ForgeScope } from "./forge-extension-types.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 interface DiscoverForgeExtensionsOptions {
   dataDir: string;
@@ -203,10 +204,6 @@ function normalizeExtensionDisplayName(pathValue: string): string {
 function isSupportedForgeExtensionFile(fileName: string): boolean {
   const normalized = fileName.toLowerCase();
   return normalized.endsWith(".ts") || normalized.endsWith(".js");
-}
-
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
 
 function toComparablePath(pathValue: string): string {

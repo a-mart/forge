@@ -17,7 +17,8 @@ import {
   getWorkerSessionFilePath
 } from "./data-paths.js";
 import { rebuildSessionMeta } from "./session-manifest.js";
-import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError, isErrnoCode } from "../utils/fs-errors.js";
+import { writeFileAtomic, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 const MIGRATION_SENTINEL_FILE = ".migration-v1-done";
@@ -130,7 +131,7 @@ export async function migrateDataDirectory(
     logger
   );
 
-  await writeJsonAtomic(config.agentsStoreFile, {
+  await writeJsonFileAtomic(config.agentsStoreFile, {
     agents: updatedAgents,
     profiles
   });
@@ -143,7 +144,7 @@ export async function migrateDataDirectory(
 
   await cleanupLegacyFlatPaths(config.dataDir, logger);
 
-  await writeTextAtomic(sentinelPath, `${new Date().toISOString()}\n`);
+  await writeFileAtomic(sentinelPath, `${new Date().toISOString()}\n`);
 
   log(logger, "info", "migration:complete", {
     sentinelPath,
@@ -377,7 +378,7 @@ async function mergeScheduleFileIntoProfileSchedule(
   const normalizedSourceSchedules = stampLegacyImportedSchedules(sourcePayload.schedules, sourceSessionId);
 
   if (!(await pathExists(targetPath))) {
-    await writeJsonAtomic(targetPath, {
+    await writeJsonFileAtomic(targetPath, {
       ...sourcePayload.payload,
       schedules: normalizedSourceSchedules
     });
@@ -394,7 +395,7 @@ async function mergeScheduleFileIntoProfileSchedule(
     return;
   }
 
-  await writeJsonAtomic(targetPath, {
+  await writeJsonFileAtomic(targetPath, {
     ...targetPayload.payload,
     schedules: mergedSchedules
   });
@@ -678,7 +679,7 @@ async function hardlinkOrCopyFileIfMissing(
     await fileOps.link(sourcePath, targetPath);
     return;
   } catch (error) {
-    if (isEexistError(error) || isEnoentError(error)) {
+    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
       return;
     }
 
@@ -692,7 +693,7 @@ async function hardlinkOrCopyFileIfMissing(
   try {
     await fileOps.copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
   } catch (error) {
-    if (isEexistError(error) || isEnoentError(error)) {
+    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
       return;
     }
 
@@ -710,7 +711,7 @@ async function copyFileIfMissing(sourcePath: string, targetPath: string): Promis
   try {
     await fs.copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
   } catch (error) {
-    if (isEexistError(error) || isEnoentError(error)) {
+    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
       return;
     }
 
@@ -739,20 +740,6 @@ async function copyDirectoryIfExists(sourceDir: string, targetDir: string): Prom
       await copyFileIfMissing(sourcePath, targetPath);
     }
   }
-}
-
-async function writeJsonAtomic(path: string, payload: unknown): Promise<void> {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  await fs.mkdir(dirname(path), { recursive: true });
-  await fs.writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
-}
-
-async function writeTextAtomic(path: string, content: string): Promise<void> {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  await fs.mkdir(dirname(path), { recursive: true });
-  await fs.writeFile(tmpPath, content, "utf8");
-  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -799,24 +786,6 @@ function log(
   }
 
   logHandler(message, details);
-}
-
-function isEexistError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "EEXIST"
-  );
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function errorToMessage(error: unknown): string {

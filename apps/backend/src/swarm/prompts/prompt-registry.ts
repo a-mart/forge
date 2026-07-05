@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { VersioningMutationSink } from "../../versioning/versioning-types.js";
 import type { PromptEntry, PromptRegistryContract } from "../prompt-contracts.js";
 import { sanitizePathSegment } from "../data-paths.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 const PROMPT_REGISTRY_DIR = fileURLToPath(new URL(".", import.meta.url));
 const SWARM_DIR = join(PROMPT_REGISTRY_DIR, "..");
@@ -535,11 +536,3 @@ function toPromptEntry(
   };
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

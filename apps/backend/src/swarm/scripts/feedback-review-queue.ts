@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 interface ScriptArgs {
   dataDir: string;
@@ -143,7 +144,7 @@ async function readFeedbackEvents(feedbackPath: string): Promise<{
   try {
     raw = await readFile(feedbackPath, "utf8");
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
+    if (isEnoentError(error)) {
       return { events: [], invalidLines: 0, sizeBytes: 0 };
     }
     throw error;
@@ -247,10 +248,6 @@ function scoreQueueItem(item: QueueItem): number {
   score += item.summary.counts.byValue.down * 30;
   score += item.summary.counts.withCommentText * 10;
   return score;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object";
 }
 
 async function main(): Promise<void> {

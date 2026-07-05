@@ -1,8 +1,9 @@
-import { mkdir, readdir, rm, rmdir, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readdir, rm, rmdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { getSharedDir, getSharedStateDir } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
+import { writeFileAtomic } from "../../utils/atomic-files.js";
 
 const SHARED_CONFIG_MIGRATION_SENTINEL = ".shared-config-migration-done";
 const SHARED_CONFIG_CLEANUP_SENTINEL = ".shared-config-cleanup-done";
@@ -63,7 +64,7 @@ export async function migrateSharedConfigLayout(dataDir: string): Promise<void> 
     await copyDirectoryIfExists(join(sharedDir, oldRelative), join(sharedDir, newRelative));
   }
 
-  await writeTextAtomic(sentinelPath, `${new Date().toISOString()}\n`);
+  await writeFileAtomic(sentinelPath, `${new Date().toISOString()}\n`);
 }
 
 export async function cleanupOldSharedConfigPaths(dataDir: string): Promise<void> {
@@ -95,7 +96,7 @@ export async function cleanupOldSharedConfigPaths(dataDir: string): Promise<void
   }
 
   try {
-    await writeTextAtomic(cleanupSentinelPath, `${new Date().toISOString()}\n`);
+    await writeFileAtomic(cleanupSentinelPath, `${new Date().toISOString()}\n`);
   } catch (error) {
     logCleanupWarning(`failed to write cleanup sentinel at ${cleanupSentinelPath}`, error);
   }
@@ -224,22 +225,6 @@ async function safeVerifiedFileExists(path: string): Promise<boolean> {
     logCleanupWarning(`failed to verify migrated file at ${path}`, error);
     return false;
   }
-}
-
-async function writeTextAtomic(path: string, content: string): Promise<void> {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmpPath, content, "utf8");
-  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function isDirectoryNotEmptyError(error: unknown): boolean {

@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
@@ -10,7 +10,8 @@ import {
 } from "./openai-auth/openai-auth-settings-service.js";
 import { OpenAIAuthBrokerRuntimeService } from "./openai-auth/openai-auth-broker-runtime-service.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
-import { renameWithRetry } from "./retry-rename.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 import type {
   ForgeProviderCredentialAuthType,
   ForgeProviderCredentialSource,
@@ -288,12 +289,9 @@ export class SecretsEnvService {
 
   private async saveSecretsStore(): Promise<void> {
     const target = this.deps.config.paths.sharedSecretsFile;
-    const tmp = `${target}.tmp`;
     const preservedSecrets = await readReservedSecretsForPreservationFromConfig(this.deps.config);
 
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(tmp, `${JSON.stringify({ ...preservedSecrets, ...this.secrets }, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(target, { ...preservedSecrets, ...this.secrets });
   }
 
   private async resolveAuthFileForRead(): Promise<string> {
@@ -784,11 +782,3 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

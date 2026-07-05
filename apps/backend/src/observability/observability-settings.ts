@@ -1,6 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import { dirname } from "node:path";
 import type {
   PhoenixObservabilityCaptureSettings,
   PhoenixObservabilityExportSettings,
@@ -10,6 +9,8 @@ import type {
   PhoenixObservabilitySettingsPatch,
 } from "@forge/protocol";
 import { getPhoenixObservabilitySettingsPath } from "../swarm/data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 export const DEFAULT_PHOENIX_ENDPOINT = "http://127.0.0.1:6006/v1/traces";
 export const DEFAULT_PHOENIX_PROJECT_NAME = "default";
@@ -62,10 +63,7 @@ export class PhoenixObservabilitySettingsService {
       updatedAt: new Date().toISOString(),
     };
 
-    await mkdir(dirname(this.settingsPath), { recursive: true });
-    const tmpPath = `${this.settingsPath}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await rename(tmpPath, this.settingsPath);
+    await writeJsonFileAtomic(this.settingsPath, next);
     this.settings = next;
     return cloneSettings(next);
   }
@@ -308,6 +306,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT");
-}

@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import type { ProviderUsagePace, ProviderUsageWindow } from "@forge/protocol";
+import { writeFileAtomic } from "../utils/atomic-files.js";
 
 export type ProviderUsageHistoryProvider = "anthropic" | "openai";
 
@@ -48,14 +48,12 @@ const EPSILON = 1e-9;
 
 export class ProviderUsageHistoryStore {
   private readonly filePath: string;
-  private readonly tempFilePath: string;
   private records: ProviderUsageHistoryRecord[] = [];
   private loaded = false;
   private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(filePath: string) {
     this.filePath = filePath;
-    this.tempFilePath = `${filePath}.tmp`;
   }
 
   async loadDataset(
@@ -212,9 +210,7 @@ export class ProviderUsageHistoryStore {
     const payload = `${this.records.map((record) => JSON.stringify(record)).join("\n")}\n`;
 
     try {
-      await mkdir(dirname(this.filePath), { recursive: true });
-      await writeFile(this.tempFilePath, payload, "utf8");
-      await rename(this.tempFilePath, this.filePath);
+      await writeFileAtomic(this.filePath, payload);
     } catch {
       // Best-effort history file; ignore write failures.
     }
