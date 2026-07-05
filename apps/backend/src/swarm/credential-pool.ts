@@ -6,6 +6,7 @@ import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@mariozechner/
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { CredentialPoolState, CredentialPoolStrategy, PooledCredentialInfo } from "@forge/protocol";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 // ── Storage types (persisted to credential-pool.json) ──
 
@@ -835,11 +836,3 @@ async function readAuthFileRaw(authFile: string): Promise<Record<string, unknown
   return {};
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

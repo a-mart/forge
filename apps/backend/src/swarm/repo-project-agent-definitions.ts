@@ -13,6 +13,7 @@ import {
 } from "@forge/protocol";
 import { normalizeProjectAgentHandle, isReservedProjectAgentHandle } from "./agents/project-agent-registry.js";
 import { sanitizePathSegment } from "./data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 import { normalizePersistedSwarmModelDescriptor } from "./model-presets.js";
 
 const MAX_DEFINITIONS = 50;
@@ -460,6 +461,3 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
-}

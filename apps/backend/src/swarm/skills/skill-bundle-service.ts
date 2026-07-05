@@ -2,6 +2,7 @@ import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { arch as currentArch, release as currentOsRelease } from "node:os";
 import { resolve } from "node:path";
 import { TextDecoder } from "node:util";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import type { SkillBundleFileEntry, SkillBundleIssue, SkillBundleManifestV1 } from "@forge/protocol";
 import {
   DEFAULT_SKILL_BUNDLE_MAX_FILE_BYTES,
@@ -401,7 +402,7 @@ function missingSkillRootError(cause: unknown): SkillBundleError {
 }
 
 function isNoEntryError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+  return isEnoentError(error);
 }
 
 function decodeUtf8Text(bytes: Buffer): string | undefined {

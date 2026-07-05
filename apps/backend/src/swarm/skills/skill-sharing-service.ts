@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, lstat, writeFile, chmod } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import type {
   SkillBundleFileEntry,
   SkillBundleIssue,
@@ -761,7 +762,7 @@ async function pathExists(path: string): Promise<boolean> {
     await lstat(path);
     return true;
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
+    if (isEnoentError(error)) {
       return false;
     }
     throw error;
@@ -805,9 +806,6 @@ function normalizeRetryAfterValue(value: string | undefined): string | undefined
   return undefined;
 }
 
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return typeof error === "object" && error !== null && "code" in error;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

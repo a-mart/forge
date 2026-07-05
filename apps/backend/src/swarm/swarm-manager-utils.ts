@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
+import { isEnoentError } from "../utils/fs-errors.js";
 import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import {
@@ -577,14 +578,7 @@ function normalizeOptionalPersistedString(value: unknown, fieldName: string): st
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}
+export { isEnoentError };
 
 export function parseSessionNumberFromAgentId(agentId: string, profileId: string): number | undefined {
   if (!agentId.startsWith(`${profileId}${SESSION_ID_SUFFIX_SEPARATOR}`)) {

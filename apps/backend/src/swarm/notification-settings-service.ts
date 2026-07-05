@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getNotificationSettingsPath } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const SETTINGS_FILE_VERSION = 1;
 
@@ -209,6 +210,3 @@ async function writeSettingsFile(settingsPath: string, settings: NotificationSet
   await renameWithRetry(tempPath, settingsPath);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
-}

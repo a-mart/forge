@@ -13,6 +13,7 @@ import type {
   UpdateOpenAIBrokerSettingsRequest,
 } from "@forge/protocol";
 import type { SwarmConfig } from "../types.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import { renameWithRetry } from "../retry-rename.js";
 import { OpenAIAuthBrokerClient, OpenAIAuthBrokerClientError } from "./openai-auth-broker-client.js";
 import { parseOpenAIAuthBrokerInvite } from "./openai-auth-broker-invite.js";
@@ -790,11 +791,3 @@ function isKnownBrokerStatusReason(value: string): value is NonNullable<OpenAIBr
   ].includes(value);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

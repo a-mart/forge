@@ -18,6 +18,7 @@ import {
 } from "./data-paths.js";
 import { rebuildSessionMeta } from "./session-manifest.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError, isErrnoCode } from "../utils/fs-errors.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 const MIGRATION_SENTINEL_FILE = ".migration-v1-done";
@@ -678,7 +679,7 @@ async function hardlinkOrCopyFileIfMissing(
     await fileOps.link(sourcePath, targetPath);
     return;
   } catch (error) {
-    if (isEexistError(error) || isEnoentError(error)) {
+    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
       return;
     }
 
@@ -692,7 +693,7 @@ async function hardlinkOrCopyFileIfMissing(
   try {
     await fileOps.copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
   } catch (error) {
-    if (isEexistError(error) || isEnoentError(error)) {
+    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
       return;
     }
 
@@ -710,7 +711,7 @@ async function copyFileIfMissing(sourcePath: string, targetPath: string): Promis
   try {
     await fs.copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
   } catch (error) {
-    if (isEexistError(error) || isEnoentError(error)) {
+    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
       return;
     }
 
@@ -799,24 +800,6 @@ function log(
   }
 
   logHandler(message, details);
-}
-
-function isEexistError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "EEXIST"
-  );
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function errorToMessage(error: unknown): string {

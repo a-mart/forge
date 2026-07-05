@@ -2,6 +2,7 @@ import { access, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import type { SwarmConfig } from "../types.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 export async function ensureCanonicalAuthFilePath(config: Pick<SwarmConfig, "paths">): Promise<string> {
   const preferredPath = config.paths.sharedAuthFile;
@@ -39,11 +40,3 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

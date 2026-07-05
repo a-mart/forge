@@ -11,6 +11,7 @@ import {
 import { OpenAIAuthBrokerRuntimeService } from "./openai-auth/openai-auth-broker-runtime-service.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 import type {
   ForgeProviderCredentialAuthType,
   ForgeProviderCredentialSource,
@@ -784,11 +785,3 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, normalize, resolve } from "node:path";
 import { getProjectResourceSettingsPath } from "./data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export type ProjectExecutableTrustState = "trusted" | "blocked";
 
@@ -183,6 +184,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
-}

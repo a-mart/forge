@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 const UP_ONLY = new Set(["great_outcome"]);
 const DOWN_ONLY = new Set(["over_engineered", "poor_outcome"]);
@@ -155,7 +156,7 @@ async function readFeedback(path: string): Promise<{ events: FeedbackEvent[]; in
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
+    if (isEnoentError(error)) {
       return { events: [], invalidLines: 0, raw: "" };
     }
     throw error;
@@ -405,9 +406,6 @@ function renderMarkdown(report: {
   return lines.join("\n");
 }
 
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object";
-}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

@@ -13,6 +13,7 @@ import {
   getProjectForgeSpecialistsDir
 } from "./data-paths.js";
 import { resolveLocalPiPackageExtensionPathsFromSettings } from "./project-pi-package-extensions.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 
 const execFileAsync = promisify(execFile);
@@ -389,7 +390,4 @@ function isPathInside(pathValue: string, rootPath: string): boolean {
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}${sep}`);
 }
 
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
-}
 

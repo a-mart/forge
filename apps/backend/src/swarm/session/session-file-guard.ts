@@ -1,6 +1,7 @@
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { statSync, writeFileSync } from "node:fs";
 import { renameSyncWithRetry } from "../retry-rename.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 export const MAX_SESSION_FILE_BYTES_FOR_OPEN = 256 * 1024 * 1024;
 
@@ -129,11 +130,3 @@ function warn(
   console.warn(`[swarm] ${message}`);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

@@ -11,6 +11,7 @@ import {
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export interface FeedbackListOptions {
   since?: string;
@@ -480,11 +481,3 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

@@ -6,6 +6,7 @@ import {
   type PersistedProjectAgentConfig,
   type ProjectAgentCapability
 } from "@forge/protocol";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import {
   getProjectAgentBackupDir,
   getProjectAgentConfigPath,
@@ -340,10 +341,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT";
 }
 
 function errorToMessage(error: unknown): string {

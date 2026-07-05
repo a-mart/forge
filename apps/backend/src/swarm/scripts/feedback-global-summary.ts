@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 interface ScriptArgs {
   dataDir: string;
@@ -129,7 +130,7 @@ async function readFeedbackEvents(path: string): Promise<{
       sizeBytes: Buffer.byteLength(raw, "utf8")
     };
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
+    if (isEnoentError(error)) {
       return { exists: false, events: [], invalidLines: 0, sizeBytes: 0 };
     }
     throw error;
@@ -138,10 +139,6 @@ async function readFeedbackEvents(path: string): Promise<{
 
 function increment(map: Map<string, number>, key: string, amount = 1): void {
   map.set(key, (map.get(key) ?? 0) + amount);
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object";
 }
 
 async function main(): Promise<void> {

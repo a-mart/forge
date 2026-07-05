@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { isNotDirLikeMissingError } from "../utils/fs-errors.js";
 
 export async function resolveLocalPiPackageExtensionPathsFromSettings(settingsPath: string): Promise<string[]> {
   const settings = await readJsonObject(settingsPath);
@@ -277,13 +278,8 @@ async function isFile(pathValue: string): Promise<boolean> {
   return entry?.isFile() === true;
 }
 
-function isMissingPathError(error: unknown): error is NodeJS.ErrnoException {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    ((error as { code?: unknown }).code === "ENOENT" || (error as { code?: unknown }).code === "ENOTDIR")
-  );
+function isMissingPathError(error: unknown): boolean {
+  return isNotDirLikeMissingError(error);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

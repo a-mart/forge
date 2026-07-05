@@ -2,6 +2,7 @@ import { access, copyFile, mkdir, readdir, readFile, rename, unlink, writeFile }
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Dirent } from "node:fs";
+import { isEnoentError, isNotDirLikeMissingError } from "../../../utils/fs-errors.js";
 import type { RuntimeTarget } from "../../../runtime-target.js";
 import {
   FORGE_MODEL_CATALOG,
@@ -1234,7 +1235,7 @@ async function listMarkdownFiles(directoryPath: string): Promise<Dirent[]> {
   try {
     entries = await readdir(directoryPath, { withFileTypes: true });
   } catch (error) {
-    if (isMissingOrNonDirectoryError(error)) {
+    if (isNotDirLikeMissingError(error)) {
       return [];
     }
 
@@ -1267,20 +1268,3 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function isMissingOrNonDirectoryError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    ["ENOENT", "ENOTDIR"].includes((error as { code?: string }).code ?? "")
-  );
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

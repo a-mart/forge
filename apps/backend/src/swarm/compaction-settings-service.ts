@@ -18,6 +18,7 @@ import {
 } from "./compaction-settings-validation.js";
 import { getCompactionSettingsPath } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
 
@@ -333,8 +334,3 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isEnoentError(error: unknown): boolean {
-  return Boolean(
-    error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT",
-  );
-}

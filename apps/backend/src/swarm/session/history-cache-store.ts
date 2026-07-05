@@ -9,6 +9,7 @@ import { mergeDiagnosticDetails } from "./conversation-diagnostics.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { CONVERSATION_ENTRY_TYPE, extractSessionEntryId, hasValidSessionHeader } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import {
   MAX_CONVERSATION_HISTORY,
   shouldPersistConversationEntry,
@@ -1041,11 +1042,3 @@ function parsePersistedConversationEntryIdentity(line: string | undefined): Pers
   return extractPersistedConversationEntryIdentity(hydratedEntry);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}

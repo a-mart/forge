@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { getSharedDir, getSharedStateDir } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 const SHARED_CONFIG_MIGRATION_SENTINEL = ".shared-config-migration-done";
 const SHARED_CONFIG_CLEANUP_SENTINEL = ".shared-config-cleanup-done";
@@ -231,15 +232,6 @@ async function writeTextAtomic(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(tmpPath, content, "utf8");
   await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function isDirectoryNotEmptyError(error: unknown): boolean {

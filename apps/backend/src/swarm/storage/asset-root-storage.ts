@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { sanitizePathSegment } from "./data-paths.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 export interface ReferenceDocMetadata {
   fileName: string;
@@ -85,11 +86,3 @@ function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}
