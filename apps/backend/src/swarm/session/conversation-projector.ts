@@ -235,12 +235,13 @@ export class ConversationProjector {
     }
   }
 
-  captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
+  captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void {
     const projections = this.runtimeConversationEventMapper.mapRuntimeEvent({
       agentId,
       event,
       timestamp: this.deps.now(),
-      descriptor: this.deps.descriptors.get(agentId)
+      descriptor: this.deps.descriptors.get(agentId),
+      turnId: options?.turnId
     });
 
     for (const projection of projections) {

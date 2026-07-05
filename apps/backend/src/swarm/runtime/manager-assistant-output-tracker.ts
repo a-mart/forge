@@ -32,6 +32,7 @@ interface AssistantOutputCandidate {
 
 interface ActiveManagerAssistantOutputTurn {
   target: AssistantOutputTarget;
+  turnId?: string;
   openToolCalls: Map<string, string>;
   completedToolCalls: Map<string, { toolName: string; isError: boolean }>;
   progressEmitted: boolean;
@@ -50,9 +51,10 @@ export class ManagerAssistantOutputTracker {
 
   constructor(private readonly options: ManagerAssistantOutputTrackerOptions) {}
 
-  activateTurn(agentId: string, target: AssistantOutputTarget): void {
+  activateTurn(agentId: string, target: AssistantOutputTarget, options?: { turnId?: string }): void {
     this.activeTurnsByAgentId.set(agentId, {
       target,
+      turnId: options?.turnId,
       openToolCalls: new Map<string, string>(),
       completedToolCalls: new Map<string, { toolName: string; isError: boolean }>(),
       progressEmitted: false,
@@ -263,6 +265,7 @@ export class ManagerAssistantOutputTracker {
     this.options.emitConversationMessage({
       type: "conversation_message",
       agentId,
+      ...(activeTurn.turnId ? { turnId: activeTurn.turnId } : {}),
       role: "assistant",
       text: candidate.text,
       timestamp,
@@ -303,6 +306,7 @@ export class ManagerAssistantOutputTracker {
     this.options.emitConversationMessage({
       type: "conversation_message",
       agentId,
+      ...(activeTurn.turnId ? { turnId: activeTurn.turnId } : {}),
       role: "assistant",
       text: candidate.text,
       timestamp,

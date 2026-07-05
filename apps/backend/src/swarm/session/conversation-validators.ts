@@ -66,6 +66,9 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
   const maybe = value as Partial<ConversationMessageEvent>;
   if (maybe.type !== "conversation_message") return false;
   if (typeof maybe.agentId !== "string" || maybe.agentId.length === 0) return false;
+  if (maybe.turnId !== undefined && (typeof maybe.turnId !== "string" || maybe.turnId.trim().length === 0)) {
+    return false;
+  }
   if (maybe.role !== "user" && maybe.role !== "assistant" && maybe.role !== "system") return false;
   if (typeof maybe.id !== "undefined" && (typeof maybe.id !== "string" || maybe.id.trim().length === 0)) {
     return false;
@@ -683,6 +686,9 @@ function isAgentToolCallEvent(value: unknown): value is AgentToolCallEvent {
   if (maybe.type !== "agent_tool_call") return false;
   if (typeof maybe.agentId !== "string" || maybe.agentId.length === 0) return false;
   if (typeof maybe.actorAgentId !== "string" || maybe.actorAgentId.length === 0) return false;
+  if (maybe.turnId !== undefined && (typeof maybe.turnId !== "string" || maybe.turnId.trim().length === 0)) {
+    return false;
+  }
   if (typeof maybe.timestamp !== "string") return false;
   if (
     maybe.kind !== "tool_execution_start" &&

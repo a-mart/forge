@@ -50,6 +50,8 @@ export interface SwarmSessionMetaServiceOptions {
 }
 
 export class SwarmSessionMetaService {
+  private readonly turnSeqUpdateBySessionId = new Map<string, Promise<unknown>>();
+
   constructor(private readonly options: SwarmSessionMetaServiceOptions) {}
 
   async rebuildSessionManifestForBoot(): Promise<void> {
@@ -302,6 +304,34 @@ export class SwarmSessionMetaService {
     return readSessionMeta(this.options.dataDir, target.profileId, target.sessionId);
   }
 
+  async mintTurnIdForDescriptor(descriptor: AgentDescriptor): Promise<string> {
+    const target = this.resolveSessionMetaTarget(descriptor);
+    if (!target) {
+      throw new Error(`Cannot resolve session meta target for turn id mint: ${descriptor.agentId}`);
+    }
+
+    return this.serializeTurnSeqUpdate(target.sessionId, async () => {
+      const existingMeta = await readSessionMeta(this.options.dataDir, target.profileId, target.sessionId);
+      const base = existingMeta ?? this.createSessionMetaSkeleton(target.descriptor);
+      const nextSeq = (base.lastTurnSeq ?? 0) + 1;
+      await writeSessionMeta(this.options.dataDir, {
+        ...base,
+        sessionId: target.sessionId,
+        profileId: target.profileId,
+        label: normalizeOptionalAgentId(target.descriptor.sessionLabel) ?? base.label,
+        cli: target.descriptor.cli ?? base.cli,
+        model: {
+          provider: target.descriptor.model.provider,
+          modelId: target.descriptor.model.modelId
+        },
+        cwd: target.descriptor.cwd,
+        updatedAt: this.options.now(),
+        lastTurnSeq: nextSeq
+      });
+      return `${target.sessionId}:${nextSeq}`;
+    });
+  }
+
   async writeSessionMemoryMergeAttemptMeta(
     descriptor: AgentDescriptor,
     attempt: SessionMemoryMergeAttemptMetaUpdate
@@ -399,6 +429,7 @@ export class SwarmSessionMetaService {
       createdAt: descriptor.createdAt,
       updatedAt: timestamp,
       cwd: descriptor.cwd,
+      lastTurnSeq: 0,
       resolvedSystemPrompt: null,
       promptFingerprint: null,
       promptComponents: null,
@@ -430,6 +461,26 @@ export class SwarmSessionMetaService {
         memoryFileSize: null
       }
     };
+  }
+
+  private async serializeTurnSeqUpdate<T>(sessionId: string, update: () => Promise<T>): Promise<T> {
+    const previous = this.turnSeqUpdateBySessionId.get(sessionId) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chained = previous.then(() => current, () => current);
+    this.turnSeqUpdateBySessionId.set(sessionId, chained);
+
+    await previous.catch(() => undefined);
+    try {
+      return await update();
+    } finally {
+      release();
+      if (this.turnSeqUpdateBySessionId.get(sessionId) === chained) {
+        this.turnSeqUpdateBySessionId.delete(sessionId);
+      }
+    }
   }
 
   private buildSessionMetaStats(

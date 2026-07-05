@@ -134,6 +134,7 @@ export interface ConversationReplyTargetInput {
 export interface ConversationMessageEvent {
   type: 'conversation_message'
   agentId: string
+  turnId?: string
   id?: string
   role: 'user' | 'assistant' | 'system'
   text: string
@@ -199,6 +200,7 @@ export interface AgentToolCallEvent {
   type: 'agent_tool_call'
   agentId: string
   actorAgentId: string
+  turnId?: string
   timestamp: string
   kind: AgentToolCallKind
   toolName?: string
