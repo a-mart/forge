@@ -116,4 +116,65 @@ export default tseslint.config(
       'react-hooks/static-components': 'error',
     },
   },
+  {
+    // Guard against new hand-rolled atomic-file and timeout helpers in the
+    // backend. Shared helpers live in apps/backend/src/utils/: atomic-files.ts
+    // (writeFileAtomic, writeJsonFileAtomic, updateJsonFileAtomic) covers
+    // temp+rename JSON persistence, and appendJsonl/withTimeout land there via
+    // WP-F2 — use those instead of a new local implementation. Warn-level so
+    // this doesn't block the build ahead of WP-F2 landing; migrating existing
+    // call sites is tracked separately (roadmap 3.3).
+    files: ['apps/backend/**/*.{ts,tsx}'],
+    ignores: [
+      'apps/backend/src/utils/**',
+      'apps/backend/src/swarm/retry-rename.ts',
+      'apps/backend/src/swarm/storage/retry-rename.ts',
+      'apps/backend/**/*.test.ts',
+      'apps/backend/**/__tests__/**',
+      // Pre-existing hand-rolled sites inventoried by the structure review
+      // (roadmap 1.6/3.3). Excluded here rather than migrated so this rule
+      // lands warn-level without breaking `--max-warnings 0`; the migration
+      // itself is the separate Group 3.3 follow-up. Remove an entry from this
+      // list once its file adopts the shared helper.
+      'apps/backend/src/integrations/base-config-persistence.ts',
+      'apps/backend/src/integrations/telegram/telegram-config.ts',
+      'apps/backend/src/integrations/telegram/telegram-topic-store.ts',
+      'apps/backend/src/observability/observability-settings.ts',
+      'apps/backend/src/stats/provider-usage-history.ts',
+      'apps/backend/src/swarm/agents/specialists/specialist-registry.ts',
+      'apps/backend/src/swarm/catalog/model-catalog-projection.ts',
+      'apps/backend/src/swarm/feedback-service.ts',
+      'apps/backend/src/swarm/model-cache-visualization-settings.ts',
+      'apps/backend/src/swarm/project-resource-settings.ts',
+      'apps/backend/src/swarm/runtime/claude/claude-query-session.ts',
+      'apps/backend/src/swarm/runtime/pi-agent-runtime.ts',
+      'apps/backend/src/swarm/session/history-cache-store.ts',
+      'apps/backend/src/swarm/session/message-pins.ts',
+      'apps/backend/src/swarm/storage/project-agent-storage.ts',
+      'apps/backend/src/terminal/terminal-persistence.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector:
+            "CallExpression[callee.name='rename'], CallExpression[callee.property.name='rename']",
+          message:
+            'Hand-rolled temp+rename detected. Use writeFileAtomic/writeJsonFileAtomic from apps/backend/src/utils/atomic-files.ts instead of a local rename() call.',
+        },
+        {
+          selector:
+            "FunctionDeclaration[id.name=/^withTimeout$/i], VariableDeclarator[id.name=/^withTimeout$/i]",
+          message:
+            'Local withTimeout implementation detected. Use the shared timeout helper in apps/backend/src/utils/ (added by WP-F2) instead of a new local copy.',
+        },
+        {
+          selector:
+            "FunctionDeclaration[id.name=/^appendJsonl$/i], VariableDeclarator[id.name=/^appendJsonl$/i]",
+          message:
+            'Local appendJsonl implementation detected. Use the shared appendJsonl helper in apps/backend/src/utils/ (added by WP-F2) instead of a new local copy.',
+        },
+      ],
+    },
+  },
 );
