@@ -67,6 +67,8 @@ export class SwarmSessionMetaService {
   private readonly turnSeqBySessionId = new Map<string, number>();
   private readonly turnSeqHydrationBySessionId = new Map<string, Promise<number>>();
   private readonly turnSeqUpdateBySessionId = new Map<string, Promise<unknown>>();
+  private readonly turnSeqPersistTimerBySessionId = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly turnSeqPendingPersistBySessionId = new Map<string, { target: SessionMetaTarget; nextSeq: number }>();
 
   constructor(private readonly options: SwarmSessionMetaServiceOptions) {}
 
@@ -510,10 +512,35 @@ export class SwarmSessionMetaService {
   }
 
   private persistLastTurnSeq(target: SessionMetaTarget, nextSeq: number): void {
+    // True debounce: one pending timer per session, latest seq wins. Timers are
+    // tracked so they can be cancelled/flushed — no stray fire-and-forget I/O
+    // after teardown (matters for deterministic tests as much as for shutdown).
+    this.turnSeqPendingPersistBySessionId.set(target.sessionId, { target, nextSeq });
+    const existing = this.turnSeqPersistTimerBySessionId.get(target.sessionId);
+    if (existing) {
+      clearTimeout(existing);
+    }
     const timer = setTimeout(() => {
-      void this.persistLastTurnSeqNow(target, nextSeq);
+      this.turnSeqPersistTimerBySessionId.delete(target.sessionId);
+      const pending = this.turnSeqPendingPersistBySessionId.get(target.sessionId);
+      this.turnSeqPendingPersistBySessionId.delete(target.sessionId);
+      if (pending) {
+        void this.persistLastTurnSeqNow(pending.target, pending.nextSeq);
+      }
     }, TURN_SEQ_PERSIST_DELAY_MS);
     timer.unref?.();
+    this.turnSeqPersistTimerBySessionId.set(target.sessionId, timer);
+  }
+
+  /** Cancel pending debounce timers and persist any outstanding turn seqs now. */
+  async flushPendingTurnSeqPersists(): Promise<void> {
+    for (const timer of this.turnSeqPersistTimerBySessionId.values()) {
+      clearTimeout(timer);
+    }
+    this.turnSeqPersistTimerBySessionId.clear();
+    const pending = [...this.turnSeqPendingPersistBySessionId.values()];
+    this.turnSeqPendingPersistBySessionId.clear();
+    await Promise.all(pending.map((p) => this.persistLastTurnSeqNow(p.target, p.nextSeq)));
   }
 
   private async persistLastTurnSeqNow(target: SessionMetaTarget, nextSeq: number): Promise<void> {
