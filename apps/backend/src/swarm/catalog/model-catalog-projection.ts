@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getModels } from "@mariozechner/pi-ai";
 import {
@@ -9,6 +8,7 @@ import {
 } from "@forge/protocol";
 import { getSharedCacheGeneratedDir } from "../data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 const PI_MODELS_FILENAME = "pi-models.json";
 
@@ -94,13 +94,9 @@ export async function generatePiProjection(dataDir: string): Promise<string> {
   await modelCatalogService.loadOverrides(dataDir);
 
   const outputPath = getPiModelsProjectionPath(dataDir);
-  const generatedDir = getSharedCacheGeneratedDir(dataDir);
-  const tempPath = join(generatedDir, `${PI_MODELS_FILENAME}.tmp`);
   const projection = buildPiModelsProjection();
 
-  await mkdir(generatedDir, { recursive: true });
-  await writeFile(tempPath, `${JSON.stringify(projection, null, 2)}\n`, "utf8");
-  await rename(tempPath, outputPath);
+  await writeJsonFileAtomic(outputPath, projection);
 
   return outputPath;
 }

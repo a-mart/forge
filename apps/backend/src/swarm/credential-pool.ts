@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { CredentialPoolState, CredentialPoolStrategy, PooledCredentialInfo } from "@forge/protocol";
-import { renameWithRetry } from "./retry-rename.js";
 import { isEnoentError } from "../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 // ── Storage types (persisted to credential-pool.json) ──
 
@@ -812,15 +812,6 @@ function getAddCredentialConflictMessage(provider: string): string {
   }
 
   return "Remove the existing API key before adding OAuth accounts";
-}
-
-async function writeJsonFileAtomic(target: string, data: unknown): Promise<void> {
-  const dir = dirname(target);
-  await mkdir(dir, { recursive: true });
-
-  const tmp = `${target}.tmp.${Date.now()}.${randomUUID()}`;
-  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-  await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
 }
 
 async function readAuthFileRaw(authFile: string): Promise<Record<string, unknown>> {

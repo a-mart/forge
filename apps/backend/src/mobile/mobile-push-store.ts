@@ -1,11 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   getSharedMobileDevicesPath,
   getSharedMobileNotificationPreferencesPath
 } from "../swarm/data-paths.js";
-import { renameWithRetry } from "../swarm/retry-rename.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 const MOBILE_DEVICES_FILE_VERSION = 1;
 const MOBILE_NOTIFICATION_PREFERENCES_VERSION = 1;
@@ -116,7 +114,7 @@ export class MobilePushStore {
       }
 
       registry.updatedAt = nowIso;
-      await writeJsonAtomic(this.devicesPath, registry);
+      await writeJsonFileAtomic(this.devicesPath, registry);
       return { ...nextDevice };
     });
   }
@@ -134,7 +132,7 @@ export class MobilePushStore {
       }
 
       registry.updatedAt = this.now().toISOString();
-      await writeJsonAtomic(this.devicesPath, registry);
+      await writeJsonFileAtomic(this.devicesPath, registry);
       return true;
     });
   }
@@ -159,7 +157,7 @@ export class MobilePushStore {
       device.disabledAt = nowIso;
       device.disabledReason = reason;
       registry.updatedAt = nowIso;
-      await writeJsonAtomic(this.devicesPath, registry);
+      await writeJsonFileAtomic(this.devicesPath, registry);
       return true;
     });
   }
@@ -200,7 +198,7 @@ export class MobilePushStore {
         preferences: nextPreferences
       };
 
-      await writeJsonAtomic(this.preferencesPath, nextFile);
+      await writeJsonFileAtomic(this.preferencesPath, nextFile);
       return { ...nextPreferences };
     });
   }
@@ -521,12 +519,6 @@ function validatePreferencesPatch(patch: MobileNotificationPreferencesPatch): vo
   }
 }
 
-async function writeJsonAtomic(path: string, payload: unknown): Promise<void> {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
-}
 
 function isEnoentError(error: unknown): boolean {
   return (

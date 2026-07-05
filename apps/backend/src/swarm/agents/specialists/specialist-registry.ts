@@ -1,8 +1,8 @@
-import { access, copyFile, mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { access, copyFile, mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Dirent } from "node:fs";
 import { isEnoentError, isNotDirLikeMissingError } from "../../../utils/fs-errors.js";
+import { writeFileAtomic, writeJsonFileAtomic } from "../../../utils/atomic-files.js";
 import type { RuntimeTarget } from "../../../runtime-target.js";
 import {
   FORGE_MODEL_CATALOG,
@@ -518,21 +518,9 @@ export async function getSpecialistsEnabled(dataDir: string): Promise<boolean> {
 
 export async function setSpecialistsEnabled(dataDir: string, enabled: boolean): Promise<void> {
   const dir = getSharedSpecialistsDir(dataDir);
-  await mkdir(dir, { recursive: true });
   const filePath = join(dir, SPECIALISTS_ENABLED_FILENAME);
-  const tempPath = `${filePath}.tmp-${randomUUID()}`;
 
-  try {
-    await writeFile(tempPath, JSON.stringify({ enabled }, null, 2) + "\n", "utf8");
-    await rename(tempPath, filePath);
-  } catch (error) {
-    try {
-      await unlink(tempPath);
-    } catch {
-      // Best-effort cleanup.
-    }
-    throw error;
-  }
+  await writeJsonFileAtomic(filePath, { enabled });
 }
 
 export async function saveProfileSpecialist(
@@ -1215,19 +1203,7 @@ function quoteYamlString(value: string): string {
 }
 
 async function writeSpecialistFile(filePath: string, content: string): Promise<void> {
-  const tempPath = `${filePath}.tmp-${randomUUID()}`;
-
-  try {
-    await writeFile(tempPath, content, "utf8");
-    await rename(tempPath, filePath);
-  } catch (error) {
-    try {
-      await unlink(tempPath);
-    } catch {
-      // Best-effort cleanup for failed temp writes.
-    }
-    throw error;
-  }
+  await writeFileAtomic(filePath, content);
 }
 
 async function listMarkdownFiles(directoryPath: string): Promise<Dirent[]> {

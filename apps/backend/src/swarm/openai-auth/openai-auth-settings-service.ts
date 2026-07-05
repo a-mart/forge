@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type {
   OpenAIBrokerInviteRedeemResponse,
@@ -14,7 +14,7 @@ import type {
 } from "@forge/protocol";
 import type { SwarmConfig } from "../types.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
-import { renameWithRetry } from "../retry-rename.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { OpenAIAuthBrokerClient, OpenAIAuthBrokerClientError } from "./openai-auth-broker-client.js";
 import { parseOpenAIAuthBrokerInvite } from "./openai-auth-broker-invite.js";
 import { maskOpenAIAuthBrokerSecret, redactOpenAIAuthBrokerText } from "./openai-auth-redaction.js";
@@ -364,10 +364,7 @@ export class OpenAIAuthSettingsService {
 
   private async writeConfigFile(file: OpenAICodexAuthSourceFileV1): Promise<void> {
     const target = this.getConfigFilePath();
-    const tmp = `${target}.tmp`;
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(tmp, `${JSON.stringify(file, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(target, file);
   }
 
   private async removeConfigFile(): Promise<void> {
@@ -417,10 +414,7 @@ export class OpenAIAuthSettingsService {
 
   private async writeSecretsStore(secrets: Record<string, string>): Promise<void> {
     const target = this.options.config.paths.sharedSecretsFile;
-    const tmp = `${target}.tmp`;
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(tmp, `${JSON.stringify(secrets, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(target, secrets);
   }
 
   private now = (): Date => this.options.now?.() ?? new Date();

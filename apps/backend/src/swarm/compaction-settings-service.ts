@@ -6,8 +6,7 @@ import type {
   UpdateCompactionSettingsRequest,
 } from "@forge/protocol";
 import { MANAGER_REASONING_LEVELS } from "@forge/protocol";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   isCompactionModelCatalogValid,
   isCompactionReasoningSupported,
@@ -17,8 +16,8 @@ import {
   CompactionSettingsValidationError,
 } from "./compaction-settings-validation.js";
 import { getCompactionSettingsPath } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
 import { isEnoentError } from "../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 export { CompactionSettingsValidationError } from "./compaction-settings-validation.js";
 
@@ -305,11 +304,8 @@ async function writeSettingsFile(targetPath: string, settings: CompactionSetting
     timeoutMs: settings.timeoutMs,
     updatedAt: settings.updatedAt,
   };
-  const tempPath = `${targetPath}.tmp`;
 
-  await mkdir(dirname(targetPath), { recursive: true });
-  await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await renameWithRetry(tempPath, targetPath, { retries: 8, baseDelayMs: 15 });
+  await writeJsonFileAtomic(targetPath, payload);
 }
 
 function normalizeIsoTimestamp(value: unknown): string | null {

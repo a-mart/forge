@@ -1,9 +1,10 @@
 import type { Dirent } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { getProfileUnreadStatePath, getProfilesDir } from "../data-paths.js";
 import { renameWithRetry } from "../retry-rename.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 const DEFAULT_DEBOUNCE_MS = 3000;
 const MAX_UNREAD_COUNT = 999;
@@ -322,11 +323,8 @@ export class UnreadTracker {
 
     const map = this.counts.get(profileId);
     const payload = toPersistedUnreadState(map);
-    const tmpPath = `${path}.tmp`;
 
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(path, payload);
   }
 
 }

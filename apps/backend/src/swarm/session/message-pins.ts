@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { ConversationMessageAttachment } from "../types.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 export interface PinEntry {
   pinnedAt: string;
@@ -41,14 +41,8 @@ export async function savePins(sessionDir: string, registry: PinRegistry): Promi
   const normalizedRegistry = normalizeRegistry(registry);
   const normalizedSessionDir = resolve(sessionDir);
   const filePath = getPinsFilePath(normalizedSessionDir);
-  const tempPath = join(
-    normalizedSessionDir,
-    `${PINNED_MESSAGES_FILE_NAME}.${process.pid}.${randomUUID()}.tmp`
-  );
 
-  await mkdir(normalizedSessionDir, { recursive: true });
-  await writeFile(tempPath, `${JSON.stringify(normalizedRegistry, null, 2)}\n`, "utf8");
-  await rename(tempPath, filePath);
+  await writeJsonFileAtomic(filePath, normalizedRegistry);
 }
 
 export async function togglePin(

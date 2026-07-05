@@ -1,7 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { getProfileIntegrationsDir } from "../../swarm/data-paths.js";
 import { normalizeManagerId } from "../../utils/normalize.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 
 const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
 const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
@@ -79,11 +80,7 @@ export async function saveTopicStore(
   store: TelegramTopicStore
 ): Promise<void> {
   const storePath = getTopicStorePath(dataDir, managerId);
-  const tmpPath = `${storePath}.tmp`;
-
-  await mkdir(dirname(storePath), { recursive: true });
-  await writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  await rename(tmpPath, storePath);
+  await writeJsonFileAtomic(storePath, store);
 }
 
 export function findTopicForSession(

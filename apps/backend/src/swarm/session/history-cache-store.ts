@@ -1,8 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { dirname } from "node:path";
 import type { HistoryCacheState } from "../../stats/sidebar-perf-metrics.js";
 import type { ConversationEntryEvent } from "../types.js";
 import { mergeDiagnosticDetails } from "./conversation-diagnostics.js";
@@ -10,6 +8,7 @@ import { getConversationHistoryCacheFilePath } from "./conversation-history-cach
 import { CONVERSATION_ENTRY_TYPE, extractSessionEntryId, hasValidSessionHeader } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
+import { writeFileAtomic } from "../../utils/atomic-files.js";
 import {
   MAX_CONVERSATION_HISTORY,
   shouldPersistConversationEntry,
@@ -779,7 +778,6 @@ export class HistoryCacheStore {
         continue;
       }
 
-      await mkdir(dirname(cacheFile), { recursive: true });
       const resolvedMetadata =
         metadata ?? buildConversationHistoryCacheMetadata(history, 0, this.readSessionFileCanonicalStat(queuedSnapshot.sessionFile));
       const cacheEntries = history.filter(shouldWriteConversationHistoryCacheEntry);
@@ -787,9 +785,7 @@ export class HistoryCacheStore {
         JSON.stringify(resolvedMetadata),
         ...cacheEntries.map((entry) => JSON.stringify(entry))
       ].join("\n")}\n`;
-      const tempCacheFile = `${cacheFile}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
-      await writeFile(tempCacheFile, serializedHistory, "utf8");
-      await rename(tempCacheFile, cacheFile);
+      await writeFileAtomic(cacheFile, serializedHistory);
     }
   }
 }

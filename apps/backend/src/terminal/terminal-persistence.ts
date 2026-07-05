@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile, appendFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { TerminalMeta } from "@forge/protocol";
 import type * as HeadlessModule from "@xterm/headless";
@@ -12,6 +12,7 @@ import {
   getTerminalMetaPath,
   getTerminalSnapshotPath,
 } from "../swarm/data-paths.js";
+import { appendJsonl, writeFileAtomic } from "../utils/atomic-files.js";
 
 const { Terminal } = headlessPkg as typeof HeadlessModule;
 const { SerializeAddon } = serializePkg as typeof SerializeModule;
@@ -79,21 +80,20 @@ export class TerminalPersistence {
   async writeSnapshot(meta: TerminalMeta): Promise<void> {
     const mirror = this.requireMirror(meta.terminalId);
     const snapshot = mirror.serializeAddon.serialize({ scrollback: this.scrollbackLines });
-    await atomicWriteFile(getTerminalSnapshotPath(this.dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId), snapshot);
+    await writeFileAtomic(getTerminalSnapshotPath(this.dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId), snapshot);
   }
 
   async appendJournal(meta: TerminalMeta, seq: number, chunk: Buffer): Promise<number> {
     const path = getTerminalLogPath(this.dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId);
-    await mkdir(dirname(path), { recursive: true });
-    const line = `${JSON.stringify({ seq, dataBase64: chunk.toString("base64") })}\n`;
-    await appendFile(path, line, "utf8");
-    return Buffer.byteLength(line, "utf8");
+    const entry = { seq, dataBase64: chunk.toString("base64") };
+    await appendJsonl(path, entry);
+    return Buffer.byteLength(`${JSON.stringify(entry)}\n`, "utf8");
   }
 
   async truncateJournal(meta: TerminalMeta): Promise<void> {
     const path = getTerminalLogPath(this.dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId);
     await mkdir(dirname(path), { recursive: true });
-    await atomicWriteFile(path, "");
+    await writeFileAtomic(path, "");
   }
 
   async readSnapshot(meta: TerminalMeta): Promise<string | null> {
@@ -166,7 +166,7 @@ export class TerminalPersistence {
 
   async saveMeta(meta: TerminalMeta): Promise<void> {
     const path = getTerminalMetaPath(this.dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId);
-    await atomicWriteFile(path, `${JSON.stringify(meta, null, 2)}\n`);
+    await writeFileAtomic(path, `${JSON.stringify(meta, null, 2)}\n`);
   }
 
   async loadMeta(path: string): Promise<TerminalMeta | null> {
@@ -332,13 +332,6 @@ async function writeToTerminal(terminal: HeadlessTerminal, data: string): Promis
   await new Promise<void>((resolve) => {
     terminal.write(data, () => resolve());
   });
-}
-
-async function atomicWriteFile(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tempPath, content, "utf8");
-  await rename(tempPath, path);
 }
 
 function buildRestoreState(

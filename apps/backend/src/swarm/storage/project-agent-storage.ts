@@ -1,12 +1,13 @@
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import { readPromptFile, writePromptFile } from "./asset-root-storage.js";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   PROJECT_AGENT_CAPABILITIES,
   type PersistedProjectAgentConfig,
   type ProjectAgentCapability
 } from "@forge/protocol";
 import { isEnoentError } from "../../utils/fs-errors.js";
+import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import {
   getProjectAgentBackupDir,
   getProjectAgentConfigPath,
@@ -38,7 +39,6 @@ export async function writeProjectAgentRecord(
   const dirPath = getProjectAgentDir(dataDir, profileId, config.handle);
   const promptPath = getProjectAgentPromptPath(dataDir, profileId, config.handle);
   const configPath = getProjectAgentConfigPath(dataDir, profileId, config.handle);
-  const tempConfigPath = buildTempSiblingPath(configPath);
 
   await mkdir(dirPath, { recursive: true });
 
@@ -55,8 +55,7 @@ export async function writeProjectAgentRecord(
     ...(normalizedCapabilities.length > 0 ? { capabilities: normalizedCapabilities } : {})
   };
 
-  await writeFile(tempConfigPath, `${JSON.stringify(persistedConfig, null, 2)}\n`, "utf8");
-  await rename(tempConfigPath, configPath);
+  await writeJsonFileAtomic(configPath, persistedConfig);
 }
 
 export async function renameProjectAgentRecord(
@@ -328,11 +327,6 @@ function assertProjectAgentDirPathInProfile(
   }
 
   return targetDir;
-}
-
-function buildTempSiblingPath(targetPath: string): string {
-  const suffix = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 10)}.tmp`;
-  return join(dirname(targetPath), `${basename(targetPath)}.${suffix}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
