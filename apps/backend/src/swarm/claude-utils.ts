@@ -29,7 +29,6 @@ export function readBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-
 export function isPlausibleContextUsage(usage: AgentContextUsage | undefined): usage is AgentContextUsage {
   if (!usage) {
     return false;

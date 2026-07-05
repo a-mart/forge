@@ -250,7 +250,6 @@ function scoreQueueItem(item: QueueItem): number {
   return score;
 }
 
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const dataDir = resolve(args.dataDir);

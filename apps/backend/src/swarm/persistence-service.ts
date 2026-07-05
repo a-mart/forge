@@ -224,7 +224,6 @@ export class PersistenceService {
   }
 }
 
-
 async function deleteFileIfPresent(path: string): Promise<void> {
   try {
     await unlink(path);

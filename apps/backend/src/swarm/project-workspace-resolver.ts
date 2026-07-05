@@ -389,5 +389,3 @@ function isPathInside(pathValue: string, rootPath: string): boolean {
   const normalizedRoot = resolve(rootPath);
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}${sep}`);
 }
-
-

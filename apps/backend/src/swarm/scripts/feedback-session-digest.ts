@@ -406,7 +406,6 @@ function renderMarkdown(report: {
   return lines.join("\n");
 }
 
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const dataDir = resolve(args.dataDir);
