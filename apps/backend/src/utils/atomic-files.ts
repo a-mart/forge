@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 // Atomic refers to the write operation (temp file + rename), not to concurrent access.
 import { basename, dirname, join } from "node:path";
 import { renameWithRetry } from "../swarm/retry-rename.js";
@@ -58,4 +58,16 @@ export async function updateJsonFileAtomic<T>(
 function createTempPath(filePath: string): string {
   const randomSuffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
   return join(dirname(filePath), `${basename(filePath)}.${randomSuffix}.tmp`);
+}
+
+/**
+ * Append a single JSON value as one line to a JSONL file, creating the parent
+ * directory and the file itself if needed. Not atomic in the temp+rename sense
+ * (an append is a single write syscall on POSIX for line-sized payloads, which
+ * is the existing behavior this helper replaces); concurrent appenders from
+ * multiple processes are not serialized.
+ */
+export async function appendJsonl(filePath: string, value: unknown): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await appendFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
 }
