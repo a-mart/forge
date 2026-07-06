@@ -168,15 +168,18 @@ describe("runtime tool plan", () => {
     expect(toolNames(createDescriptor(rootDir))).toEqual([
       "list_agents",
       "send_message_to_agent",
+      "knowledge",
     ]);
     expect(toolNames(createManagerDescriptor(rootDir))).toEqual([
       "list_agents",
       "send_message_to_agent",
+      "knowledge",
       "spawn_agent",
       "retry_codex_plugin_worker",
       "kill_agent",
       "speak_to_user",
       "present_choices",
+      "save_learning",
     ]);
   });
 

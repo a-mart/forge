@@ -2,7 +2,16 @@ import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { PromptCategory } from "../swarm/prompt-registry.js";
-import { getProfilesDir, getSharedKnowledgeDir } from "../swarm/data-paths.js";
+import {
+  getKnowledgeArchiveDir,
+  getKnowledgeEntriesDir,
+  getKnowledgeIndexPath,
+  getProfileKnowledgeArchiveDir,
+  getProfileKnowledgeEntriesDir,
+  getProfileKnowledgeIndexPath,
+  getProfilesDir,
+  getSharedKnowledgeDir,
+} from "../swarm/data-paths.js";
 
 export interface VersionedPathsOptions {
   trackSessionMemory?: boolean;
@@ -14,7 +23,7 @@ export interface VersionedPathMetadata {
   sessionId?: string;
   promptCategory?: PromptCategory;
   promptId?: string;
-  surface: "knowledge" | "memory" | "reference" | "prompt";
+  surface: "knowledge" | "memory" | "reference" | "prompt" | "index" | "entry";
 }
 
 export interface TrackedVersionedPathReference extends VersionedPathMetadata {
@@ -51,13 +60,13 @@ export function resolveVersionedPathMetadata(
     return { relativePath, surface: "knowledge", profileId: "cortex" };
   }
 
-  const legacyKnowledgeMatch = /^shared\/knowledge\/profiles\/([^/]+)\.md$/.exec(relativePath);
-  if (legacyKnowledgeMatch) {
-    return {
-      relativePath,
-      profileId: legacyKnowledgeMatch[1],
-      surface: "knowledge"
-    };
+  if (relativePath === "shared/knowledge/INDEX.md") {
+    return { relativePath, profileId: "cortex", surface: "index" };
+  }
+
+  const globalEntryMatch = /^shared\/knowledge\/(?:entries|archive)\/([^/]+)\.md$/.exec(relativePath);
+  if (globalEntryMatch) {
+    return { relativePath, profileId: "cortex", surface: "entry" };
   }
 
   const profileMemoryMatch = /^profiles\/([^/]+)\/memory\.md$/.exec(relativePath);
@@ -66,6 +75,24 @@ export function resolveVersionedPathMetadata(
       relativePath,
       profileId: profileMemoryMatch[1],
       surface: "memory"
+    };
+  }
+
+  const profileIndexMatch = /^profiles\/([^/]+)\/knowledge\/INDEX\.md$/.exec(relativePath);
+  if (profileIndexMatch) {
+    return {
+      relativePath,
+      profileId: profileIndexMatch[1],
+      surface: "index"
+    };
+  }
+
+  const profileEntryMatch = /^profiles\/([^/]+)\/knowledge\/(?:entries|archive)\/([^/]+)\.md$/.exec(relativePath);
+  if (profileEntryMatch) {
+    return {
+      relativePath,
+      profileId: profileEntryMatch[1],
+      surface: "entry"
     };
   }
 
@@ -130,12 +157,14 @@ export async function enumerateExistingTrackedPaths(
   for (const candidate of [
     join(knowledgeDir, "common.md"),
     join(knowledgeDir, ".cortex-notes.md"),
-    join(knowledgeDir, ".cortex-worker-prompts.md")
+    join(knowledgeDir, ".cortex-worker-prompts.md"),
+    getKnowledgeIndexPath(dataDir)
   ]) {
     await addTrackedPathIfPresent(dataDir, candidate, tracked, options);
   }
 
-  await addTrackedMarkdownChildren(dataDir, join(knowledgeDir, "profiles"), tracked, options);
+  await addTrackedMarkdownChildren(dataDir, getKnowledgeEntriesDir(dataDir), tracked, options);
+  await addTrackedMarkdownChildren(dataDir, getKnowledgeArchiveDir(dataDir), tracked, options);
 
   const profilesDir = getProfilesDir(dataDir);
   let profileEntries: Dirent[] = [];
@@ -155,6 +184,9 @@ export async function enumerateExistingTrackedPaths(
 
     const profileDir = join(profilesDir, entry.name);
     await addTrackedPathIfPresent(dataDir, join(profileDir, "memory.md"), tracked, options);
+    await addTrackedPathIfPresent(dataDir, getProfileKnowledgeIndexPath(dataDir, entry.name), tracked, options);
+    await addTrackedMarkdownChildren(dataDir, getProfileKnowledgeEntriesDir(dataDir, entry.name), tracked, options);
+    await addTrackedMarkdownChildren(dataDir, getProfileKnowledgeArchiveDir(dataDir, entry.name), tracked, options);
     await addTrackedMarkdownChildren(dataDir, join(profileDir, "reference"), tracked, options);
     await addTrackedMarkdownChildren(dataDir, join(profileDir, "prompts", "archetypes"), tracked, options);
     await addTrackedMarkdownChildren(dataDir, join(profileDir, "prompts", "operational"), tracked, options);

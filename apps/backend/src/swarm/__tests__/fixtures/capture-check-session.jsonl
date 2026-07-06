@@ -1,0 +1,5 @@
+{"id":"m1","source":"user","timestamp":"2026-07-05T12:00:00.000Z","text":"Please remember that Forge contributors prefer pnpm for this repo."}
+{"id":"m2","source":"assistant","timestamp":"2026-07-05T12:00:10.000Z","text":"Understood."}
+{"id":"tool1","source":"tool","timestamp":"2026-07-05T12:00:20.000Z","text":"bulk tool output that should be ignored"}
+{"id":"m3","source":"user","timestamp":"2026-07-05T12:06:00.000Z","text":"Correction: scope that convention to this project, not global."}
+{"id":"m4","source":"assistant","timestamp":"2026-07-05T12:06:10.000Z","text":"I will treat it as project-scoped."}

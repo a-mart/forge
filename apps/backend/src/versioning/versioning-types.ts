@@ -5,6 +5,7 @@ export type VersioningMutationSource =
   | "reference-doc"
   | "reference-index"
   | "legacy-knowledge-migration"
+  | "knowledge-v2"
   | "api-write-file"
   | "api-write-file-restore"
   | "agent-write-tool"

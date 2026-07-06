@@ -62,6 +62,19 @@ const speakToUserTargetSchema = Type.Object({
   )
 });
 
+const knowledgeScopeSchema = Type.Union([
+  Type.Literal("global"),
+  Type.Literal("profile"),
+  Type.Literal("all")
+]);
+
+const knowledgeEntryTypeSchema = Type.Union([
+  Type.Literal("preference"),
+  Type.Literal("convention"),
+  Type.Literal("gotcha"),
+  Type.Literal("pointer")
+]);
+
 function includeListAgentsEntry(agent: AgentDescriptor, includeTerminated: boolean): boolean {
   if (includeTerminated) {
     return true;
@@ -340,6 +353,52 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             }
           ],
           details: receipt
+        };
+      }
+    },
+    {
+      name: "knowledge",
+      label: "Knowledge",
+      description:
+        "Search or read Cortex v2 recalled notes. Search returns metadata only; read pulls a single full entry before acting on it.",
+      parameters: Type.Object({
+        action: Type.Union([Type.Literal("search"), Type.Literal("read")]),
+        query: Type.Optional(Type.String({ description: "Search query for action=search." })),
+        id: Type.Optional(Type.String({ description: "Entry id for action=read." })),
+        scope: Type.Optional(knowledgeScopeSchema),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+      }),
+      async execute(_toolCallId, params) {
+        if (!host.searchKnowledge || !host.readKnowledgeEntry) {
+          throw new Error("Knowledge v2 is not available in this runtime.");
+        }
+        const parsed = params as {
+          action?: "search" | "read";
+          query?: string;
+          id?: string;
+          scope?: "global" | "profile" | "all";
+          limit?: number;
+        };
+
+        if (parsed.action === "read") {
+          if (!parsed.id?.trim()) {
+            throw new Error("knowledge read requires id.");
+          }
+          const entry = await host.readKnowledgeEntry(descriptor.agentId, parsed.id);
+          return {
+            content: [{ type: "text", text: JSON.stringify(entry, null, 2) }],
+            details: entry,
+          };
+        }
+
+        const results = await host.searchKnowledge(descriptor.agentId, {
+          query: parsed.query,
+          scope: parsed.scope,
+          limit: parsed.limit,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
+          details: { results },
         };
       }
     }
@@ -721,6 +780,53 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
           throw error;
         }
+      },
+    },
+    {
+      name: "save_learning",
+      label: "Save Learning",
+      description:
+        "Persist a durable correction, preference, convention, gotcha, or pointer through the Cortex v2 single-writer knowledge store. Do not use for task-local details, secrets, or facts directly derivable from the repository.",
+      parameters: Type.Object({
+        type: knowledgeEntryTypeSchema,
+        scope: Type.Union([
+          Type.Literal("global"),
+          Type.String({ description: "Use profile:<profileId> for project-scoped knowledge." }),
+        ]),
+        title: Type.String({ description: "One-line durable claim title." }),
+        body: Type.String({ description: "Short markdown body, capped by the writer at 120 tokens." }),
+        evidence: Type.Union([Type.Literal("user-stated"), Type.Literal("observed")]),
+      }),
+      async execute(_toolCallId, params) {
+        if (!host.saveLearning) {
+          throw new Error("Knowledge v2 save_learning is not available in this runtime.");
+        }
+        const parsed = params as {
+          type: "preference" | "convention" | "gotcha" | "pointer";
+          scope: "global" | `profile:${string}`;
+          title: string;
+          body: string;
+          evidence: "user-stated" | "observed";
+        };
+        const entry = await host.saveLearning(descriptor.agentId, parsed);
+        const details = {
+          id: entry.frontmatter.id,
+          version: entry.frontmatter.version,
+          scope: entry.frontmatter.scope,
+          support_count: entry.frontmatter.support_count,
+        };
+        recordToolSideEffect(host, descriptor, {
+          toolName: "save_learning",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: details,
+          metadata: details,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(details) }],
+          details,
+        };
       },
     },
   ];

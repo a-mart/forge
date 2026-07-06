@@ -38,6 +38,7 @@ import {
   CortexAutoReviewSettingsService
 } from "../swarm/cortex-auto-review-settings.js";
 import { CompactionSettingsService } from "../swarm/compaction-settings-service.js";
+import { KnowledgeV2SettingsService } from "../swarm/knowledge-v2-settings-service.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
 import {
   NotificationSettingsService,
@@ -76,6 +77,7 @@ import { createGitDiffRoutes } from "./http/routes/git-diff-routes.js";
 import { createGitSourceControlRoutes } from "./http/routes/git-source-control-routes.js";
 import { createHealthRoutes } from "./http/routes/health-routes.js";
 import { createIntegrationRoutes } from "./http/routes/integration-routes.js";
+import { createKnowledgeV2SettingsRoutes } from "./http/routes/knowledge-v2-settings-routes.js";
 import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes.js";
 import { createMobileRoutes } from "./http/routes/mobile-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
@@ -116,6 +118,7 @@ export class SwarmWebSocketServer {
   private actualPort: number | null = null;
   private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly cortexAutoReviewSettingsService: CortexAutoReviewSettingsService;
+  private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService | null;
   private readonly compactionSettingsService: CompactionSettingsService | null;
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
@@ -416,6 +419,7 @@ export class SwarmWebSocketServer {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
     notificationSettingsService?: NotificationSettingsService;
+    knowledgeV2SettingsService?: KnowledgeV2SettingsService;
     compactionSettingsService?: CompactionSettingsService;
     observabilityService?: ObservabilityFacade;
     feedbackService?: FeedbackService;
@@ -429,6 +433,10 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       cortexEnabled,
     });
+    this.knowledgeV2SettingsService =
+      options.knowledgeV2SettingsService ??
+      this.swarmManager.getKnowledgeV2SettingsService?.() ??
+      null;
     this.compactionSettingsService =
       options.compactionSettingsService ?? this.swarmManager.getCompactionSettingsService();
     this.cliAccessService = options.cliAccessService ?? new CliAccessService({
@@ -568,6 +576,12 @@ export class SwarmWebSocketServer {
         settingsService: this.cortexAutoReviewSettingsService,
         cortexEnabled,
       }),
+      ...(this.knowledgeV2SettingsService
+        ? createKnowledgeV2SettingsRoutes({
+            settingsService: this.knowledgeV2SettingsService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
+        : []),
       ...(this.compactionSettingsService
         ? createCompactionSettingsRoutes({
             settingsService: this.compactionSettingsService,
@@ -644,6 +658,9 @@ export class SwarmWebSocketServer {
     }
 
     await this.cortexAutoReviewSettingsService.load();
+    if (this.knowledgeV2SettingsService) {
+      await this.knowledgeV2SettingsService.load();
+    }
     if (this.compactionSettingsService) {
       await this.compactionSettingsService.load();
     }
