@@ -1,4 +1,4 @@
-import type { ManagerExactModelSelection, SpecialistTargetSpace } from "@forge/protocol";
+import type { EffortTier, ManagerExactModelSelection, SpecialistTargetSpace, TierConfig } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
@@ -42,6 +42,14 @@ import {
 } from "./swarm-manager-utils.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import {
+  getTierAttributionId,
+  normalizeEffortTier,
+  resolveLegacySpecialistRewrite,
+  resolveTierConfig,
+  DEFAULT_TIER_CONFIGS,
+  EFFORT_TIER_ORDER,
+} from "./specialists/specialist-registry.js";
+import {
   assertForgeRuntimeEligibleDescriptor,
   interruptExternalThreadWorkerDescriptor,
   isExternalThreadDescriptor,
@@ -59,8 +67,8 @@ interface ResolvedSpecialistDefinitionLike {
   color: string;
   enabled: boolean;
   whenToUse: string;
-  modelId: string;
-  provider: string;
+  modelId?: string;
+  provider?: string;
   reasoningLevel?: SwarmReasoningLevel;
   fallbackModelId?: string;
   fallbackProvider?: string;
@@ -70,6 +78,7 @@ interface ResolvedSpecialistDefinitionLike {
   available: boolean;
   availabilityCode?: string;
   availabilityMessage?: string;
+  defaultTier?: EffortTier;
 }
 
 interface ModelCapacityBlockLike {
@@ -478,14 +487,38 @@ export class SwarmAgentLifecycleService {
     const createdAt = this.options.now();
     const managerProfileId = manager.profileId ?? manager.agentId;
     const rawSpecialist = input.specialist?.trim();
+    const requestedTier = normalizeEffortTier(input.tier);
+    const rawLens = input.lens?.trim();
+    const requestedLensId = rawLens ? await this.options.normalizeSpecialistHandle(rawLens) : undefined;
     let requestedSpecialistId: string | undefined;
+    let tierSelection: { tier: EffortTier; lens?: string; legacySpecialistId?: string } | undefined;
 
     if (rawSpecialist) {
       requestedSpecialistId = await this.options.normalizeSpecialistHandle(rawSpecialist);
+      const rewrite = requestedSpecialistId ? resolveLegacySpecialistRewrite(requestedSpecialistId) : undefined;
+      if (rewrite) {
+        tierSelection = {
+          ...rewrite,
+          legacySpecialistId: requestedSpecialistId,
+        };
+        requestedSpecialistId = undefined;
+      }
+    }
+
+    if (input.tier !== undefined && !requestedTier) {
+      throw new Error(`spawn_agent.tier must be one of ${EFFORT_TIER_ORDER.join("|")}`);
+    }
+
+    if (!tierSelection && requestedTier) {
+      tierSelection = { tier: requestedTier, ...(requestedLensId ? { lens: requestedLensId } : {}) };
+    } else if (tierSelection && requestedLensId) {
+      tierSelection = { ...tierSelection, lens: requestedLensId };
+    } else if (!tierSelection && requestedLensId) {
+      tierSelection = { tier: "standard", lens: requestedLensId };
     }
 
     if (
-      requestedSpecialistId &&
+      (requestedSpecialistId || tierSelection) &&
       (
         input.model !== undefined ||
         input.modelId !== undefined ||
@@ -494,8 +527,12 @@ export class SwarmAgentLifecycleService {
       )
     ) {
       throw new Error(
-        "Cannot combine 'specialist' with model/prompt/archetype overrides. Use specialist mode or ad-hoc mode, not both. reasoningLevel is the only allowed override in specialist mode."
+        "Cannot combine specialist/tier/lens mode with model/prompt/archetype overrides. Use specialist/tier mode or ad-hoc mode, not both. reasoningLevel is the only allowed override."
       );
+    }
+
+    if (requestedSpecialistId && (input.tier !== undefined || requestedLensId)) {
+      throw new Error("Cannot combine 'specialist' with tier/lens. Use one delegation mode.");
     }
 
     let model: AgentModelDescriptor;
@@ -504,8 +541,21 @@ export class SwarmAgentLifecycleService {
     let specialistFallbackModel: AgentModelDescriptor | undefined;
     let explicitSystemPrompt: string | undefined;
     let webSearch = false;
+    let selectedTierConfig: TierConfig | undefined;
 
-    if (requestedSpecialistId) {
+    const resolveRoster = async () => this.options.resolveSpecialistRosterForManager
+      ? await this.options.resolveSpecialistRosterForManager(
+          manager,
+          isCollabSession(manager) ? "collaboration" : "builder"
+        )
+      : await this.options.resolveSpecialistRosterForProfile(
+          managerProfileId,
+          isCollabSession(manager) ? "collaboration" : "builder"
+        );
+
+    if (tierSelection) {
+      let tierConfig = await resolveTierConfig(this.options.dataDir, tierSelection.tier);
+      selectedTierConfig = tierConfig;
       const roster = this.options.resolveSpecialistRosterForManager
         ? await this.options.resolveSpecialistRosterForManager(
             manager,
@@ -515,6 +565,81 @@ export class SwarmAgentLifecycleService {
             managerProfileId,
             isCollabSession(manager) ? "collaboration" : "builder"
           );
+      const lensId = tierSelection.lens;
+      if (lensId) {
+        specialist = roster.find((entry) => entry.specialistId === lensId);
+        if (!specialist) {
+          throw new Error(
+            `Unknown lens: ${lensId}. See manager system prompt for available lenses.`
+          );
+        }
+        if (!specialist.enabled) {
+          throw new Error(`Lens "${lensId}" is disabled for this profile. Enable it before spawning.`);
+        }
+        if (!specialist.available) {
+          const reason =
+            specialist.availabilityMessage?.trim() ||
+            (specialist.availabilityCode
+              ? `availability code: ${specialist.availabilityCode}`
+              : "unavailable with current auth/configuration");
+          throw new Error(`Lens "${lensId}" is currently unavailable: ${reason}`);
+        }
+        if (!input.tier && !tierSelection.legacySpecialistId && specialist.defaultTier) {
+          tierSelection = { ...tierSelection, tier: specialist.defaultTier };
+          tierConfig = await resolveTierConfig(this.options.dataDir, specialist.defaultTier);
+          selectedTierConfig = tierConfig;
+        }
+      }
+
+      const modelConfig = specialist?.modelId
+        ? {
+            provider: specialist.provider || inferProviderFromModelId(specialist.modelId),
+            modelId: specialist.modelId,
+            reasoningLevel: specialist.reasoningLevel,
+            fallbackModelId: specialist.fallbackModelId,
+            fallbackProvider: specialist.fallbackProvider,
+            fallbackReasoningLevel: specialist.fallbackReasoningLevel,
+          }
+        : tierConfig;
+      if (!modelConfig.provider) {
+        throw new Error(`Tier "${tierSelection.tier}" has an unknown modelId provider mapping: ${modelConfig.modelId}`);
+      }
+
+      const reasoningLevelOverride = parseSwarmReasoningLevel(
+        input.reasoningLevel,
+        "spawn_agent.reasoningLevel"
+      );
+      model = {
+        provider: modelConfig.provider,
+        modelId: modelConfig.modelId,
+        thinkingLevel: reasoningLevelOverride ?? modelConfig.reasoningLevel ?? "xhigh",
+      };
+      model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+      model = this.resolveSpawnModelWithCapacityFallback(model);
+
+      if (modelConfig.fallbackModelId) {
+        const inferredFallbackProvider = modelConfig.fallbackProvider || inferProviderFromModelId(modelConfig.fallbackModelId);
+        if (inferredFallbackProvider) {
+          specialistFallbackModel = {
+            provider: inferredFallbackProvider,
+            modelId: modelConfig.fallbackModelId,
+            thinkingLevel: modelConfig.fallbackReasoningLevel ?? model.thinkingLevel
+          };
+          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
+            specialistFallbackModel.provider,
+            specialistFallbackModel.thinkingLevel
+          );
+          specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
+        }
+      }
+
+      archetypeId = undefined;
+      explicitSystemPrompt = specialist?.promptBody;
+      if (specialist?.webSearch) {
+        webSearch = true;
+      }
+    } else if (requestedSpecialistId) {
+      const roster = await resolveRoster();
       specialist = roster.find((entry) => entry.specialistId === requestedSpecialistId);
       if (!specialist) {
         throw new Error(
@@ -537,27 +662,61 @@ export class SwarmAgentLifecycleService {
         throw new Error(`Specialist "${requestedSpecialistId}" is currently unavailable: ${reason}`);
       }
 
-      const inferredProvider = specialist.provider || inferProviderFromModelId(specialist.modelId);
-      if (!inferredProvider) {
+      if (!specialist.modelId) {
+        const tier = specialist.defaultTier ?? "standard";
+        tierSelection = { tier, lens: specialist.specialistId, legacySpecialistId: requestedSpecialistId };
+        const tierConfig = await resolveTierConfig(this.options.dataDir, tier);
+        selectedTierConfig = tierConfig;
+        const reasoningLevelOverride = parseSwarmReasoningLevel(
+          input.reasoningLevel,
+          "spawn_agent.reasoningLevel"
+        );
+        model = {
+          provider: tierConfig.provider,
+          modelId: tierConfig.modelId,
+          thinkingLevel: reasoningLevelOverride ?? tierConfig.reasoningLevel ?? "xhigh",
+        };
+        model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+        model = this.resolveSpawnModelWithCapacityFallback(model);
+        if (tierConfig.fallbackModelId) {
+          specialistFallbackModel = {
+            provider: tierConfig.fallbackProvider ?? inferProviderFromModelId(tierConfig.fallbackModelId) ?? tierConfig.provider,
+            modelId: tierConfig.fallbackModelId,
+            thinkingLevel: tierConfig.fallbackReasoningLevel ?? model.thinkingLevel,
+          };
+          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
+            specialistFallbackModel.provider,
+            specialistFallbackModel.thinkingLevel
+          );
+          specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
+        }
+        archetypeId = undefined;
+        explicitSystemPrompt = specialist.promptBody;
+        if (specialist.webSearch) {
+          webSearch = true;
+        }
+      } else {
+        const inferredProvider = specialist.provider || inferProviderFromModelId(specialist.modelId);
+        if (!inferredProvider) {
         throw new Error(
           `Specialist "${requestedSpecialistId}" has an unknown modelId provider mapping: ${specialist.modelId}`
         );
       }
 
-      const reasoningLevelOverride = parseSwarmReasoningLevel(
+        const reasoningLevelOverride = parseSwarmReasoningLevel(
         input.reasoningLevel,
         "spawn_agent.reasoningLevel"
       );
 
-      model = {
+        model = {
         provider: inferredProvider,
         modelId: specialist.modelId,
         thinkingLevel: reasoningLevelOverride ?? specialist.reasoningLevel ?? "xhigh"
       };
-      model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
-      model = this.resolveSpawnModelWithCapacityFallback(model);
+        model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+        model = this.resolveSpawnModelWithCapacityFallback(model);
 
-      if (specialist.fallbackModelId) {
+        if (specialist.fallbackModelId) {
         const inferredFallbackProvider = specialist.fallbackProvider || inferProviderFromModelId(specialist.fallbackModelId);
         if (inferredFallbackProvider) {
           specialistFallbackModel = {
@@ -573,8 +732,9 @@ export class SwarmAgentLifecycleService {
         }
       }
 
-      archetypeId = undefined;
-      explicitSystemPrompt = specialist.promptBody;
+        archetypeId = undefined;
+        explicitSystemPrompt = specialist.promptBody;
+      }
     } else {
       const requestedModel = this.resolveSpawnModel(input, manager.model);
       model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
@@ -604,7 +764,20 @@ export class SwarmAgentLifecycleService {
       ...(webSearch ? { webSearch: true } : {})
     };
 
-    if (specialist) {
+    if (tierSelection) {
+      descriptor.specialistTier = tierSelection.tier;
+      if (tierSelection.lens) {
+        descriptor.specialistLens = tierSelection.lens;
+      }
+      descriptor.specialistId = getTierAttributionId(tierSelection.tier, tierSelection.lens);
+      descriptor.specialistDisplayName = specialist
+        ? `${selectedTierConfig?.displayName ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].displayName} — ${specialist.displayName}`
+        : selectedTierConfig?.displayName ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].displayName;
+      descriptor.specialistColor = specialist?.color ?? selectedTierConfig?.color ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].color;
+      if (specialist?.webSearch) {
+        descriptor.webSearch = true;
+      }
+    } else if (specialist) {
       descriptor.specialistId = specialist.specialistId;
       descriptor.specialistDisplayName = specialist.displayName;
       descriptor.specialistColor = specialist.color;

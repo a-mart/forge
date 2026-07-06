@@ -1,5 +1,6 @@
 import {
   MANAGER_MODEL_PRESETS,
+  type EffortTier,
   type AgentCollaborationLink,
   type AgentCreatorResult,
   type CliSessionMetadata,
@@ -97,6 +98,8 @@ export interface AgentDescriptor {
   streamingStartedAt?: number;
   pendingChoiceCount?: number;
   specialistId?: string;
+  specialistTier?: EffortTier;
+  specialistLens?: string;
   specialistDisplayName?: string;
   specialistColor?: string;
   internalWorkerKind?: InternalWorkerKind;
@@ -142,6 +145,8 @@ export interface SendMessageReceipt {
 export interface SpawnAgentInput {
   agentId: string;
   specialist?: string;
+  tier?: EffortTier;
+  lens?: string;
   archetypeId?: AgentArchetypeId;
   systemPrompt?: string;
   model?: SwarmModelPreset;

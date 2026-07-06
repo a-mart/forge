@@ -5,6 +5,7 @@ import {
   type ModelPresetInfo,
   type ServerEvent,
   type SpecialistTargetSpace,
+  type TierConfig,
 } from "@forge/protocol";
 import {
   deleteProfileSpecialist,
@@ -15,6 +16,8 @@ import {
   generateRosterBlock,
   getWorkerTemplate,
   getSpecialistsEnabled,
+  resolveTierConfigs,
+  saveTierConfigs,
   setSpecialistsEnabled,
   saveProfileSpecialist,
   saveSharedSpecialist,
@@ -39,6 +42,7 @@ import type { HttpRoute } from "../shared/http-route.js";
 
 const SPECIALISTS_ENDPOINT_PATH = "/api/settings/specialists";
 const SPECIALISTS_ENABLED_ENDPOINT_PATH = "/api/settings/specialists/enabled";
+const SPECIALIST_TIERS_ENDPOINT_PATH = "/api/settings/specialists/tiers";
 const SETTINGS_MODELS_ENDPOINT_PATH = "/api/settings/models";
 const ROSTER_PROMPT_SUFFIX = "/roster-prompt";
 const METHODS = "GET, PUT, DELETE, OPTIONS";
@@ -64,6 +68,13 @@ export function createSpecialistRoutes(options: {
       matches: (pathname) => pathname === SPECIALISTS_ENABLED_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         await handleSpecialistsEnabledRequest(swarmManager, broadcastEvent, request, response, requestUrl);
+      },
+    },
+    {
+      methods: ENABLED_METHODS,
+      matches: (pathname) => pathname === SPECIALIST_TIERS_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        await handleSpecialistTiersRequest(swarmManager, broadcastEvent, request, response);
       },
     },
     {
@@ -213,6 +224,52 @@ async function handleSpecialistsEnabledRequest(
   sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
+async function handleSpecialistTiersRequest(
+  swarmManager: SwarmManager,
+  broadcastEvent: (event: ServerEvent) => void,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, ENABLED_METHODS);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  applyCorsHeaders(request, response, ENABLED_METHODS);
+
+  const dataDir = swarmManager.getConfig().paths.dataDir;
+
+  if (request.method === "GET") {
+    try {
+      sendJson(response, 200, { tiers: await resolveTierConfigs(dataDir) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, 500, { error: message });
+    }
+    return;
+  }
+
+  if (request.method === "PUT") {
+    try {
+      const body = await readJsonBody(request);
+      const tiers = parseTierConfigBody(body);
+      const saved = await saveTierConfigs(dataDir, tiers);
+      invalidateSpecialistCache();
+      await notifyGlobalSpecialistMutation({ swarmManager, broadcastEvent, dataDir });
+      sendJson(response, 200, { tiers: saved });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, getErrorStatusCode(message), { error: message });
+    }
+    return;
+  }
+
+  response.setHeader("Allow", ENABLED_METHODS);
+  sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
 async function handleSpecialistRequest(
   swarmManager: SwarmManager,
   broadcastEvent: (event: ServerEvent) => void,
@@ -334,7 +391,7 @@ async function handleSpecialistRequest(
   if (request.method === "GET" && relativePath === ROSTER_PROMPT_SUFFIX) {
     try {
       const workspaceSpecialistsDir = await resolveWorkspaceSpecialistsDir(swarmManager, profileId, sessionAgentId, targetSpace);
-      const roster = await resolveWorkspaceRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace);
+      const roster = await resolveProfileRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace);
       const markdown = generateRosterBlock(roster);
       sendJson(response, 200, { markdown });
     } catch (error) {
@@ -348,7 +405,7 @@ async function handleSpecialistRequest(
   if (request.method === "GET" && relativePath === "") {
     try {
       const workspaceSpecialistsDir = await resolveWorkspaceSpecialistsDir(swarmManager, profileId, sessionAgentId, targetSpace);
-      const specialists = await resolveWorkspaceRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace);
+      const specialists = await resolveProfileRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace);
       // Strip sourcePath — it's a server filesystem detail the UI doesn't need.
       const sanitized = specialists.map(({ sourcePath: _, ...rest }) => rest);
       sendJson(response, 200, { specialists: sanitized });
@@ -415,6 +472,17 @@ async function handleSpecialistRequest(
 
   response.setHeader("Allow", METHODS);
   sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+function resolveProfileRoster(
+  profileId: string,
+  dataDir: string,
+  workspaceSpecialistsDir: string | undefined,
+  targetSpace: SpecialistTargetSpace,
+) {
+  return workspaceSpecialistsDir
+    ? resolveWorkspaceRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace)
+    : resolveRoster(profileId, dataDir, targetSpace);
 }
 
 async function resolveWorkspaceSpecialistsDir(
@@ -535,7 +603,7 @@ function parseSaveSpecialistBody(
     color: readRequiredStringField(obj, "color"),
     enabled: readRequiredBooleanField(obj, "enabled"),
     whenToUse: readRequiredStringField(obj, "whenToUse"),
-    modelId: readRequiredStringField(obj, "modelId"),
+    modelId: readOptionalStringField(obj, "modelId"),
     provider: readOptionalStringField(obj, "provider"),
     reasoningLevel: readOptionalStringField(obj, "reasoningLevel"),
     fallbackModelId: readOptionalStringField(obj, "fallbackModelId"),
@@ -544,8 +612,50 @@ function parseSaveSpecialistBody(
     pinned: readOptionalBooleanField(obj, "pinned"),
     webSearch: readOptionalBooleanField(obj, "webSearch"),
     targetSpace: readOptionalTargetSpaceField(obj, "targetSpace") ?? [fallbackTargetSpace],
+    defaultTier: readOptionalEffortTierField(obj, "defaultTier"),
     promptBody: readRequiredStringField(obj, "promptBody"),
   };
+}
+
+function readOptionalEffortTierField(obj: Record<string, unknown>, key: string): TierConfig["tier"] | undefined {
+  const value = obj[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value !== "light" && value !== "fast" && value !== "standard" && value !== "deep" && value !== "max") {
+    throw new Error(`${key} must be one of light|fast|standard|deep|max`);
+  }
+  return value;
+}
+
+function parseTierConfigBody(value: unknown): TierConfig[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Request body must be a JSON object");
+  }
+
+  const tiers = (value as { tiers?: unknown }).tiers;
+  if (!Array.isArray(tiers)) {
+    throw new Error("tiers must be an array");
+  }
+
+  return tiers.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`tiers[${index}] must be an object`);
+    }
+    const obj = entry as Record<string, unknown>;
+    return {
+      tier: readRequiredStringField(obj, "tier") as TierConfig["tier"],
+      displayName: readRequiredStringField(obj, "displayName"),
+      description: readRequiredStringField(obj, "description"),
+      color: readRequiredStringField(obj, "color"),
+      modelId: readRequiredStringField(obj, "modelId"),
+      provider: readRequiredStringField(obj, "provider"),
+      reasoningLevel: readOptionalStringField(obj, "reasoningLevel"),
+      fallbackModelId: readOptionalStringField(obj, "fallbackModelId"),
+      fallbackProvider: readOptionalStringField(obj, "fallbackProvider"),
+      fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
+    };
+  });
 }
 
 function readRequiredStringField(obj: Record<string, unknown>, key: string): string {

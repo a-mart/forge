@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSpecialists } from './SettingsSpecialists'
-import type { ManagerProfile, ResolvedSpecialistDefinition } from '@forge/protocol'
+import type { ManagerProfile, ResolvedSpecialistDefinition, TierConfig } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
@@ -19,6 +19,8 @@ const specialistsApiMock = vi.hoisted(() => ({
   fetchRosterPrompt: vi.fn(),
   fetchChannelRosterPrompt: vi.fn(),
   fetchWorkerTemplate: vi.fn(),
+  fetchTierConfigs: vi.fn(),
+  saveTierConfigsApi: vi.fn(),
   fetchSpecialistsEnabled: vi.fn(),
   setSpecialistsEnabledApi: vi.fn(),
   saveSpecialist: vi.fn(),
@@ -43,6 +45,8 @@ vi.mock('./specialists-api', () => ({
   fetchRosterPrompt: (...args: unknown[]) => specialistsApiMock.fetchRosterPrompt(...args),
   fetchChannelRosterPrompt: (...args: unknown[]) => specialistsApiMock.fetchChannelRosterPrompt(...args),
   fetchWorkerTemplate: (...args: unknown[]) => specialistsApiMock.fetchWorkerTemplate(...args),
+  fetchTierConfigs: (...args: unknown[]) => specialistsApiMock.fetchTierConfigs(...args),
+  saveTierConfigsApi: (...args: unknown[]) => specialistsApiMock.saveTierConfigsApi(...args),
   fetchSpecialistsEnabled: (...args: unknown[]) => specialistsApiMock.fetchSpecialistsEnabled(...args),
   setSpecialistsEnabledApi: (...args: unknown[]) => specialistsApiMock.setSpecialistsEnabledApi(...args),
   saveSpecialist: (...args: unknown[]) => specialistsApiMock.saveSpecialist(...args),
@@ -116,6 +120,54 @@ const PROFILES: ManagerProfile[] = [
   },
 ]
 
+const TIER_CONFIGS: TierConfig[] = [
+  {
+    tier: 'light',
+    displayName: 'Light',
+    description: 'Quick checks and narrow tasks',
+    color: '#14b8a6',
+    provider: 'openai-codex',
+    modelId: 'gpt-5.4-mini',
+    reasoningLevel: 'low',
+  },
+  {
+    tier: 'fast',
+    displayName: 'Fast',
+    description: 'Implementation with low latency',
+    color: '#2563eb',
+    provider: 'cursor-sdk',
+    modelId: 'composer-2.5',
+    reasoningLevel: 'medium',
+  },
+  {
+    tier: 'standard',
+    displayName: 'Standard',
+    description: 'Default specialist work',
+    color: '#7c3aed',
+    provider: 'openai-codex',
+    modelId: 'gpt-5.5',
+    reasoningLevel: 'medium',
+  },
+  {
+    tier: 'deep',
+    displayName: 'Deep',
+    description: 'Careful planning and review',
+    color: '#dc2626',
+    provider: 'openai-codex',
+    modelId: 'gpt-5.5',
+    reasoningLevel: 'high',
+  },
+  {
+    tier: 'max',
+    displayName: 'Max',
+    description: 'Highest effort architecture',
+    color: '#111827',
+    provider: 'openai-codex',
+    modelId: 'gpt-5.5',
+    reasoningLevel: 'xhigh',
+  },
+]
+
 // Mock localStorage — Node 22 built-in localStorage is incomplete in jsdom env
 const localStorageMock = (() => {
   let store: Record<string, string> = {}
@@ -151,6 +203,8 @@ beforeEach(() => {
 
   specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
   specialistsApiMock.setSpecialistsEnabledApi.mockResolvedValue(undefined)
+  specialistsApiMock.fetchTierConfigs.mockResolvedValue(TIER_CONFIGS)
+  specialistsApiMock.saveTierConfigsApi.mockImplementation(async (_clientOrWsUrl, tiers) => tiers)
   specialistsApiMock.saveSharedSpecialist.mockResolvedValue(undefined)
   specialistsApiMock.saveSpecialist.mockResolvedValue(undefined)
   specialistsApiMock.deleteSpecialist.mockResolvedValue(undefined)
@@ -241,6 +295,18 @@ describe('SettingsSpecialists', () => {
       await flush()
 
       expect(container.textContent).toContain('Enabled')
+    })
+
+    it('renders effort tier model controls', async () => {
+      renderSpecialists([makeSpecialist()])
+      await flush()
+      await flush()
+
+      expect(specialistsApiMock.fetchTierConfigs).toHaveBeenCalledWith('ws://127.0.0.1:47187')
+      expect(container.textContent).toContain('Tiers')
+      expect(container.textContent).toContain('Fast')
+      expect(container.textContent).toContain('composer-2.5')
+      expect(container.textContent).toContain('Save Tiers')
     })
   })
 

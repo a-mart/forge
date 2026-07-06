@@ -143,6 +143,7 @@ function fakeSkillMetadata(directoryName: string): SkillMetadata {
 function specialistRegistryStub() {
   return {
     resolveRoster: vi.fn(async () => []),
+    resolveTierConfigs: vi.fn(async () => []),
     generateRosterBlock: vi.fn(() => ""),
     getSpecialistsEnabled: vi.fn(async () => false),
     legacyModelRoutingGuidance: "Legacy routing guidance for tests."
@@ -682,6 +683,7 @@ Custom project instruction: always mention the release train when summarizing de
       getSessionsForProfile: () => [defaultDescriptor, collabDescriptor],
       loadSpecialistRegistryModule: async () => ({
         resolveRoster: async () => [],
+        resolveTierConfigs: async () => [],
         generateRosterBlock: () => "Specialist roster block",
         getSpecialistsEnabled: async () => true,
         legacyModelRoutingGuidance: "Legacy routing guidance for tests."

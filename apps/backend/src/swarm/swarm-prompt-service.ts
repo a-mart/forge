@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace } from "@forge/protocol";
+import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace, type TierConfig } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import {
   getCommonKnowledgePath,
@@ -131,7 +131,8 @@ interface ResolvedSpecialistDefinitionLike {
 
 interface SpecialistRegistryModuleLike {
   resolveRoster(profileId: string, targetSpace?: SpecialistTargetSpace): Promise<ResolvedSpecialistDefinitionLike[]>;
-  generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[]): string;
+  generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[], tierConfigs?: readonly TierConfig[]): string;
+  resolveTierConfigs(): Promise<TierConfig[]>;
   getSpecialistsEnabled(): Promise<boolean>;
   legacyModelRoutingGuidance: string;
 }
@@ -279,7 +280,7 @@ export class SwarmPromptService {
       ? await this.resolveProjectAgentPromptComposition(descriptor, options)
       : undefined;
     const normalizedSessionSystemPrompt = normalizeOptionalAgentId(descriptor.sessionSystemPrompt)?.trim();
-    const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
+    const [promptTemplate, roster, specialistsEnabled, tierConfigs] = await Promise.all([
       projectAgentComposition
         ? Promise.resolve(projectAgentComposition.content)
         : normalizedSessionSystemPrompt
@@ -287,10 +288,11 @@ export class SwarmPromptService {
           : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
       this.resolveSpecialistRosterForDescriptor(descriptor, specialistRegistry),
       specialistRegistry.getSpecialistsEnabled(),
+      specialistRegistry.resolveTierConfigs(),
     ]);
 
     const delegationBlock = specialistsEnabled
-      ? specialistRegistry.generateRosterBlock(roster)
+      ? specialistRegistry.generateRosterBlock(roster, tierConfigs)
       : specialistRegistry.legacyModelRoutingGuidance;
     const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
       await this.resolveProjectAgentDirectoryEntries(profileId, descriptor),
@@ -453,7 +455,9 @@ export class SwarmPromptService {
       return this.buildResolvedManagerPrompt(descriptor);
     }
 
-    const specialistId = normalizeOptionalAgentId(descriptor.specialistId)?.toLowerCase();
+    const specialistId = normalizeOptionalAgentId(
+      descriptor.specialistLens ?? descriptor.specialistId?.split(":")[1] ?? descriptor.specialistId
+    )?.toLowerCase();
     if (specialistId) {
       try {
         const specialistRegistry = await this.options.loadSpecialistRegistryModule();

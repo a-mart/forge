@@ -46,9 +46,12 @@ export function SpecialistCard({
   allSpecialists,
 }: SpecialistCardProps) {
   const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
+  const usesTierModel = !specialist.modelId && !!specialist.defaultTier
 
   // Compact summary values (used in collapsed state)
-  const modelDisplay = getModelDisplayLabel(specialist.modelId, modelPresets, specialist.provider)
+  const modelDisplay = specialist.modelId
+    ? getModelDisplayLabel(specialist.modelId, modelPresets, specialist.provider)
+    : null
   const reasoningLabel = REASONING_LEVEL_LABELS[specialist.reasoningLevel ?? 'high'] ?? specialist.reasoningLevel ?? 'High'
   const hasFallback = !!specialist.fallbackModelId
   const fallbackLabel = hasFallback
@@ -114,11 +117,15 @@ export function SpecialistCard({
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              <span>{modelDisplay}</span>
-              <span className="mx-1.5 text-muted-foreground/40">·</span>
-              <span>{reasoningLabel}</span>
-            </p>
+            {usesTierModel ? (
+              <p className="text-xs text-muted-foreground">Default tier: {specialist.defaultTier}</p>
+            ) : modelDisplay ? (
+              <p className="text-xs text-muted-foreground">
+                <span>{modelDisplay}</span>
+                <span className="mx-1.5 text-muted-foreground/40">·</span>
+                <span>{reasoningLabel}</span>
+              </p>
+            ) : null}
             {hasFallback && (
               <p className="text-xs text-muted-foreground/70">
                 Fallback: {fallbackLabel}
@@ -294,54 +301,58 @@ export function SpecialistCard({
         />
       </div>
 
-      {/* Model + reasoning */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-        <div className="flex flex-col gap-1.5 sm:w-52">
-          <Label className="text-xs font-medium text-muted-foreground">Model</Label>
-          <ModelIdSelect
-            modelId={currentValues.modelId}
-            provider={currentValues.provider}
-            onValueChange={(next) => {
-              onUpdateField('provider', next.provider)
-              onUpdateField('modelId', next.modelId)
-            }}
-            models={selectableModels}
-            presets={modelPresets}
-            placeholder="Select model"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5 sm:w-40">
-          <Label className="text-xs font-medium text-muted-foreground">Reasoning level</Label>
-          <Select
-            value={currentValues.reasoningLevel}
-            onValueChange={(value) => onUpdateField('reasoningLevel', value)}
-          >
-            <SelectTrigger className="w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {supportedLevels.map((level) => (
-                <SelectItem key={level} value={level} className="text-xs">
-                  {REASONING_LEVEL_LABELS[level] || level}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      {!usesTierModel && (
+        <>
+          {/* Model + reasoning */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+            <div className="flex flex-col gap-1.5 sm:w-52">
+              <Label className="text-xs font-medium text-muted-foreground">Model</Label>
+              <ModelIdSelect
+                modelId={currentValues.modelId}
+                provider={currentValues.provider}
+                onValueChange={(next) => {
+                  onUpdateField('provider', next.provider)
+                  onUpdateField('modelId', next.modelId)
+                }}
+                models={selectableModels}
+                presets={modelPresets}
+                placeholder="Select model"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5 sm:w-40">
+              <Label className="text-xs font-medium text-muted-foreground">Reasoning level</Label>
+              <Select
+                value={currentValues.reasoningLevel}
+                onValueChange={(value) => onUpdateField('reasoningLevel', value)}
+              >
+                <SelectTrigger className="w-full text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {supportedLevels.map((level) => (
+                    <SelectItem key={level} value={level} className="text-xs">
+                      {REASONING_LEVEL_LABELS[level] || level}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-      {/* Fallback */}
-      <FallbackModelSection
-        isEditing={true}
-        isExpanded={isFallbackExpanded}
-        onToggle={onToggleFallback}
-        fallbackModelId={currentValues.fallbackModelId}
-        fallbackProvider={currentValues.fallbackProvider}
-        fallbackReasoningLevel={currentValues.fallbackReasoningLevel}
-        onUpdateField={onUpdateField}
-        modelPresets={modelPresets}
-        selectableModels={selectableModels}
-      />
+          {/* Fallback */}
+          <FallbackModelSection
+            isEditing={true}
+            isExpanded={isFallbackExpanded}
+            onToggle={onToggleFallback}
+            fallbackModelId={currentValues.fallbackModelId}
+            fallbackProvider={currentValues.fallbackProvider}
+            fallbackReasoningLevel={currentValues.fallbackReasoningLevel}
+            onUpdateField={onUpdateField}
+            modelPresets={modelPresets}
+            selectableModels={selectableModels}
+          />
+        </>
+      )}
 
       {supportsWebSearch && (
         <div className="flex items-center gap-2">

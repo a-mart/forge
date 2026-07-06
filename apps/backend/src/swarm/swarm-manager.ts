@@ -265,6 +265,7 @@ import {
   getSpecialistsEnabled as specialistGetSpecialistsEnabled,
   LEGACY_MODEL_ROUTING_GUIDANCE,
   normalizeSpecialistHandle as specialistNormalizeSpecialistHandle,
+  resolveTierConfigs as specialistResolveTierConfigs,
   resolveCollaborationChannelRoster as specialistResolveCollaborationChannelRoster,
   resolveRoster as specialistResolveRoster,
   resolveWorkspaceRoster as specialistResolveWorkspaceRoster,
@@ -551,8 +552,8 @@ interface ResolvedSpecialistDefinitionLike {
   color: string;
   enabled: boolean;
   whenToUse: string;
-  modelId: string;
-  provider: string;
+  modelId?: string;
+  provider?: string;
   reasoningLevel?: SwarmReasoningLevel;
   fallbackModelId?: string;
   fallbackProvider?: string;
@@ -566,7 +567,8 @@ interface ResolvedSpecialistDefinitionLike {
 
 interface SpecialistRegistryModule {
   resolveRoster(profileId: string, targetSpace?: SpecialistTargetSpace): Promise<ResolvedSpecialistDefinitionLike[]>;
-  generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[]): string;
+  generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[], tierConfigs?: readonly import("@forge/protocol").TierConfig[]): string;
+  resolveTierConfigs(): Promise<import("@forge/protocol").TierConfig[]>;
   normalizeSpecialistHandle(value: string): string;
   getSpecialistsEnabled(): Promise<boolean>;
   legacyModelRoutingGuidance: string;
@@ -1454,6 +1456,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
+      dataDir: this.config.paths.dataDir,
       descriptors: this.descriptors,
       runtimes: this.runtimes,
       getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
@@ -9551,7 +9554,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.specialistRegistryModulePromise = Promise.resolve({
         resolveRoster: (profileId: string, targetSpace?: SpecialistTargetSpace) =>
           specialistResolveRoster(profileId, dataDir, targetSpace) as Promise<ResolvedSpecialistDefinitionLike[]>,
-        generateRosterBlock: specialistGenerateRosterBlock as (roster: ResolvedSpecialistDefinitionLike[]) => string,
+        generateRosterBlock: specialistGenerateRosterBlock as (
+          roster: ResolvedSpecialistDefinitionLike[],
+          tierConfigs?: readonly import("@forge/protocol").TierConfig[],
+        ) => string,
+        resolveTierConfigs: () => specialistResolveTierConfigs(dataDir),
         normalizeSpecialistHandle: specialistNormalizeSpecialistHandle,
         getSpecialistsEnabled: () => specialistGetSpecialistsEnabled(dataDir),
         legacyModelRoutingGuidance: LEGACY_MODEL_ROUTING_GUIDANCE,

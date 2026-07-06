@@ -1,6 +1,6 @@
-Specialists are named worker templates that tell the manager which model, reasoning level, and system prompt to use for different kinds of tasks. Instead of a single generic worker, you can have a backend specialist running Codex and a frontend specialist running GPT-5.5 at medium reasoning, each with tailored instructions.
+Specialists combine effort tiers with lenses. Tiers choose the model, reasoning level, and fallback chain; lenses choose the worker persona and prompt guidance. Instead of a single generic worker, the manager can ask for a `fast` implementation worker, a `deep:planner`, or a `max:architect`.
 
-Forge also ships collaboration-focused builtins such as `collab-planner`, `collab-reviewer`, `collab-doc-writer`, `collab-scout`, and `collab-researcher` for channel work that needs project-context aware roles. It also exposes a contextual `Codex Plugin` specialist in Settings when an active `@Codex` plugin selector scope exists; it is automatic rather than manually spawned, uses GPT-5.5 Medium by default, and uses a slate label color.
+Forge ships shared builtin lenses for `architect`, `planner`, `code-reviewer`, `code-reviewer-2`, `researcher`, and the contextual `codex-plugin` path. Collaboration channels use the same global tiers and TargetSpace-filtered lenses. The `Codex Plugin` lens appears when an active `@Codex` plugin selector scope exists; it is automatic rather than manually spawned and stays bound to that selector scope.
 
 ## Global vs. profile scope
 
@@ -38,7 +38,7 @@ The global toggle at the top turns the specialist system on or off. When disable
 1. Click **New Specialist**.
 2. Enter a handle (kebab-case identifier) and display name.
 3. Click **Create**. The specialist opens in edit mode with a default prompt.
-4. Set the model, reasoning level, color, and "when to use" description.
+4. Set the default tier or, for a direct custom specialist, its model and reasoning level.
 5. Edit the prompt body to describe this specialist's focus.
 6. Click **Save**.
 
@@ -54,11 +54,11 @@ If a project agent has the **Can create sessions** toggle enabled in its setting
 
 ## Model and fallback
 
-Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical. The built-in `web-researcher` follows normal fallback/model config semantics and uses Brave-backed research guidance on OpenAI Codex `gpt-5.4-mini`. The contextual `Codex Plugin` specialist is visible in Settings as `Codex Plugin` only when an active selector scope exists, stays with that scope until stop/replacement/session cleanup/delete/archive/runtime error, and is not a general spawnable worker. Manager follow-ups are allowed while scope remains active, and explicit retry/continuation turns after a stopped or failed scoped worker can reuse the server-stored selector scope without widening it. Direct user or sibling-worker targeting remains blocked. Expand the fallback section to configure it.
+Each effort tier has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Direct custom specialists with their own model keep their own fallback settings. The contextual `Codex Plugin` specialist is visible in Settings as `Codex Plugin` only when an active selector scope exists, stays with that scope until stop/replacement/session cleanup/delete/archive/runtime error, and is not a general spawnable worker. Manager follow-ups are allowed while scope remains active, and explicit retry/continuation turns after a stopped or failed scoped worker can reuse the server-stored selector scope without widening it. Direct user or sibling-worker targeting remains blocked.
 
 ## Specialist web research
 
-Forge's current production web research path is the built-in `web-researcher`, which uses Brave-backed research guidance. xAI native web/X search is not a current production path unless a future adapter enables it.
+Forge's current production web research path is the `researcher` lens, which includes Brave-backed research guidance. xAI native web/X search is not a current production path unless a future adapter enables it.
 
 ## Pinning
 

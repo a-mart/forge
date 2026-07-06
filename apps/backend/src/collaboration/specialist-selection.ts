@@ -1,11 +1,6 @@
 import { normalizeSpecialistHandle } from "../swarm/specialists/specialist-registry.js";
 
 export const DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES = [
-  "collab-planner",
-  "collab-reviewer",
-  "collab-doc-writer",
-  "collab-scout",
-  "collab-researcher",
 ] as const;
 
 export type CollaborationSpecialistHandleList = string[];

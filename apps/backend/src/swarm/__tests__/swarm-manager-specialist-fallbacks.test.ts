@@ -381,7 +381,7 @@ describe('SwarmManager', () => {
     })
     const spawnedSessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
     const spawnedWorkerMeta = spawnedSessionMeta?.workers.find((entry) => entry.id === worker.agentId)
-    expect(spawnedWorkerMeta?.specialistId).toBe('planner')
+    expect(spawnedWorkerMeta?.specialistId).toBe('deep:planner')
     expect(spawnedWorkerMeta?.specialistAttributionKnown).toBe(true)
     expect(managerRuntime).toBeDefined()
     expect(originalRuntime).toBeDefined()
@@ -404,8 +404,8 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls).toHaveLength(0)
     expect(manager.getAgent(worker.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'high',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium',
     })
     expect(replacementRuntime?.sendCalls).toEqual([
       {
@@ -525,8 +525,8 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
     expect(manager.getAgent(worker.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'high',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium',
     })
   })
 
@@ -588,8 +588,8 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls).toHaveLength(0)
     expect(manager.getAgent(worker.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'high',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium',
     })
     expect(replacementRuntime?.sendCalls).toEqual([
       {
@@ -1362,8 +1362,8 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
     expect(manager.getAgent(worker.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'high',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium',
     })
   })
 
@@ -1443,8 +1443,8 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(worker.agentId)?.status).toBe('terminated')
     expect(manager.getAgent(worker.agentId)?.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.4',
-      thinkingLevel: 'high',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium',
     })
   })
 

@@ -6,10 +6,13 @@ import {
   deleteChannelSpecialist,
   deleteProfileSpecialist,
   deleteSharedSpecialist,
+  EFFORT_TIER_ORDER,
   generateRosterBlock,
+  generateTierLensRosterBlock,
   invalidateSpecialistCache,
   normalizeSpecialistHandle,
   parseSpecialistFile,
+  resolveLegacySpecialistRewrite,
   resolveCollaborationChannelRoster,
   resolveRoster,
   resolveSharedRoster,
@@ -171,10 +174,11 @@ describe("specialist-registry", () => {
 
     await seedBuiltins(dataDir);
 
-    expect(files).toContain("backend.md");
-    expect(files).toContain("scout.md");
-    await expect(readFile(join(dataDir, "shared", "specialists", "backend.md"), "utf8")).resolves.toContain(
-      "displayName: Backend Engineer",
+    expect(files).toContain("architect.md");
+    expect(files).toContain("planner.md");
+    expect(files).not.toContain("backend.md");
+    await expect(readFile(join(dataDir, "shared", "specialists", "architect.md"), "utf8")).resolves.toContain(
+      "defaultTier: max",
     );
   });
 
@@ -495,6 +499,36 @@ describe("specialist-registry", () => {
     expect(parsed?.frontmatter.modelId).toBe("gpt-5.5");
   });
 
+  it("accepts legacy model frontmatter when it already contains an exact model id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "legacy-model-id.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Legacy Model Id Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Legacy explicit model tasks",
+        "model: gpt-5.4",
+        "reasoningLevel: high",
+        "---",
+        "",
+        "Legacy explicit model prompt body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const parsed = await parseSpecialistFile(filePath);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.frontmatter).toMatchObject({
+      modelId: "gpt-5.4",
+      provider: "openai-codex",
+      reasoningLevel: "high",
+    });
+  });
+
   it("maps legacy preset-based frontmatter through the effective family default when overrides disable the builtin default", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
@@ -773,11 +807,11 @@ describe("specialist-registry", () => {
         modelId: "gpt-5.5",
         provider: "openai-codex",
         reasoningLevel: "high",
-        builtin: true,
+        builtin: false,
         pinned: false,
         targetSpace: ["builder"],
         promptBody: "Prompt",
-        sourceKind: "builtin",
+        sourceKind: "global",
         available: true,
         availabilityCode: "ok",
         shadowsGlobal: false,
@@ -819,12 +853,46 @@ describe("specialist-registry", () => {
       },
     ]);
 
-    expect(markdown).toContain("Named specialist workers");
+    expect(markdown).toContain("Effort tiers");
+    for (const tier of EFFORT_TIER_ORDER) {
+      expect(markdown).toContain(`\`${tier}\``);
+    }
     expect(markdown).toContain("`backend`");
     expect(markdown).toContain("Backend work");
-    expect(markdown).toContain("[openai-codex/gpt-5.5 high]");
+    expect(markdown).toContain("Custom specialists (legacy `specialist` handle)");
     expect(markdown).not.toContain("`disabled`");
     expect(markdown).not.toContain("`invalid`");
+  });
+
+  it("maps all legacy builtin specialist handles to tier/lens selections", () => {
+    expect(resolveLegacySpecialistRewrite("architect")).toEqual({ tier: "max", lens: "architect" });
+    expect(resolveLegacySpecialistRewrite("planner")).toEqual({ tier: "deep", lens: "planner" });
+    expect(resolveLegacySpecialistRewrite("code-reviewer")).toEqual({ tier: "deep", lens: "code-reviewer" });
+    expect(resolveLegacySpecialistRewrite("code-reviewer-2")).toEqual({ tier: "deep", lens: "code-reviewer-2" });
+    expect(resolveLegacySpecialistRewrite("researcher")).toEqual({ tier: "standard", lens: "researcher" });
+    expect(resolveLegacySpecialistRewrite("web-researcher")).toEqual({ tier: "standard", lens: "researcher" });
+    expect(resolveLegacySpecialistRewrite("codex-plugin")).toEqual({ tier: "standard", lens: "codex-plugin" });
+    expect(resolveLegacySpecialistRewrite("backend")).toEqual({ tier: "fast" });
+    expect(resolveLegacySpecialistRewrite("frontend")).toEqual({ tier: "fast" });
+    expect(resolveLegacySpecialistRewrite("doc-writer")).toEqual({ tier: "standard" });
+    expect(resolveLegacySpecialistRewrite("scout")).toEqual({ tier: "light" });
+    expect(resolveLegacySpecialistRewrite("cursor-builder")).toEqual({ tier: "fast" });
+    expect(resolveLegacySpecialistRewrite("collab-planner")).toEqual({ tier: "deep" });
+    expect(resolveLegacySpecialistRewrite("collab-reviewer")).toEqual({ tier: "deep" });
+    expect(resolveLegacySpecialistRewrite("collab-doc-writer")).toEqual({ tier: "standard" });
+    expect(resolveLegacySpecialistRewrite("collab-scout")).toEqual({ tier: "light" });
+    expect(resolveLegacySpecialistRewrite("collab-researcher")).toEqual({ tier: "standard" });
+    expect(resolveLegacySpecialistRewrite("custom-worker")).toBeUndefined();
+  });
+
+  it("generates a compact tier/lens roster block under the builtin token budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await seedBuiltins(dataDir);
+    const markdown = generateTierLensRosterBlock(await resolveSharedRoster(dataDir));
+
+    expect(Math.ceil(markdown.length / 4)).toBeLessThanOrEqual(400);
   });
 
   it("seeds builtins and preserves enabled and pinned state for non-pinned builtin files", async () => {
@@ -874,11 +942,7 @@ describe("specialist-registry", () => {
     const backend = await parseSpecialistFile(join(sharedDir, "backend.md"));
     const reviewerMarkdown = await readFile(join(sharedDir, "reviewer.md"), "utf8");
 
-    expect(backend).not.toBeNull();
-    expect(backend?.frontmatter.displayName).toBe("Backend Engineer");
-    expect(backend?.frontmatter.enabled).toBe(false);
-    expect(backend?.frontmatter.builtin).toBe(true);
-    expect(backend?.frontmatter.pinned).toBe(false);
+    expect(backend).toBeNull();
 
     expect(reviewerMarkdown).toContain("displayName: Custom Reviewer");
 
@@ -886,7 +950,7 @@ describe("specialist-registry", () => {
     expect(architect).not.toBeNull();
   });
 
-  it("seeds builtin fallback models with current Codex specialist defaults", async () => {
+  it("seeds builtin lenses with default tiers instead of per-lens model defaults", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
 
@@ -896,89 +960,31 @@ describe("specialist-registry", () => {
     const byId = new Map(roster.map((entry) => [entry.specialistId, entry]));
 
     expect(byId.get("architect")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-      fallbackReasoningLevel: "medium",
+      defaultTier: "max",
     });
-    expect(byId.get("backend")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-      fallbackReasoningLevel: "medium",
-    });
+    expect(byId.get("architect")).not.toHaveProperty("modelId");
+    expect(byId.get("architect")).not.toHaveProperty("provider");
     expect(byId.get("code-reviewer")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-      fallbackReasoningLevel: "medium",
+      defaultTier: "deep",
     });
+    expect(byId.get("code-reviewer")).not.toHaveProperty("modelId");
     expect(byId.get("researcher")).toMatchObject({
-      provider: "openai-codex",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-      fallbackReasoningLevel: "low",
+      defaultTier: "standard",
     });
-    expect(byId.get("scout")).toMatchObject({
-      provider: "openai-codex",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-      fallbackReasoningLevel: "low",
-    });
+    expect(byId.get("researcher")).not.toHaveProperty("modelId");
 
     expect(byId.get("code-reviewer-2")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      reasoningLevel: "medium",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.4",
-      fallbackReasoningLevel: "high",
+      defaultTier: "deep",
     });
-    expect(byId.get("doc-writer")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      reasoningLevel: "low",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.4-mini",
-      fallbackReasoningLevel: "medium",
-    });
-    expect(byId.get("frontend")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      reasoningLevel: "medium",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.4",
-      fallbackReasoningLevel: "high",
-    });
+    expect(byId.get("code-reviewer-2")).not.toHaveProperty("modelId");
     expect(byId.get("planner")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.5",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.5",
-      fallbackReasoningLevel: "medium",
+      defaultTier: "deep",
     });
+    expect(byId.get("planner")).not.toHaveProperty("modelId");
 
     expect(byId.get("app-runtime")).toBeUndefined();
-    expect(byId.get("cursor-builder")).toMatchObject({
-      provider: "cursor-sdk",
-      modelId: "composer-2.5",
-      reasoningLevel: "medium",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.4",
-      fallbackReasoningLevel: "high",
-      enabled: false,
-      builtin: true,
-      sourceKind: "builtin",
-    });
-    expect(byId.get("web-researcher")).toMatchObject({
-      provider: "openai-codex",
-      modelId: "gpt-5.4-mini",
-    });
-    expect(byId.get("web-researcher")?.fallbackProvider).toBeUndefined();
-    expect(byId.get("web-researcher")?.fallbackModelId).toBeUndefined();
+    expect(byId.get("cursor-builder")).toBeUndefined();
+    expect(byId.get("web-researcher")).toBeUndefined();
 
     const rosterBlock = generateRosterBlock(roster);
     expect(rosterBlock).not.toContain("`cursor-builder`");
@@ -999,33 +1005,21 @@ describe("specialist-registry", () => {
 
     expect(allHandles).toEqual([
       "architect",
-      "backend",
       "code-reviewer",
       "code-reviewer-2",
       "codex-plugin",
-      "collab-doc-writer",
-      "collab-planner",
-      "collab-researcher",
-      "collab-reviewer",
-      "collab-scout",
-      "cursor-builder",
-      "doc-writer",
-      "frontend",
       "planner",
       "researcher",
-      "scout",
-      "web-researcher",
     ].sort());
-    expect(builderHandles).toContain("backend");
     expect(builderHandles).toContain("architect");
     expect(builderHandles).toContain("codex-plugin");
     expect(builderHandles).not.toContain("collab-planner");
     expect(collaborationHandles).toEqual([
-      "collab-doc-writer",
-      "collab-planner",
-      "collab-researcher",
-      "collab-reviewer",
-      "collab-scout",
+      "architect",
+      "code-reviewer",
+      "code-reviewer-2",
+      "planner",
+      "researcher",
     ].sort());
     expect(allHandles).not.toContain("collab-builder");
   });
@@ -1039,14 +1033,14 @@ describe("specialist-registry", () => {
     await mkdir(sharedDir, { recursive: true });
 
     await writeFile(
-      join(sharedDir, "backend.md"),
+      join(sharedDir, "architect.md"),
       [
         "---",
-        "displayName: My Pinned Backend",
+        "displayName: My Pinned Architect",
         "color: '#010203'",
         "enabled: false",
-        "whenToUse: Keep my custom backend prompt",
-        "modelId: gpt-5.5",
+        "whenToUse: Keep my custom architect prompt",
+        "defaultTier: max",
         "builtin: true",
         "pinned: true",
         "---",
@@ -1058,14 +1052,14 @@ describe("specialist-registry", () => {
 
     await seedBuiltins(dataDir);
 
-    const backend = await parseSpecialistFile(join(sharedDir, "backend.md"));
+    const architect = await parseSpecialistFile(join(sharedDir, "architect.md"));
 
-    expect(backend).not.toBeNull();
-    expect(backend?.frontmatter.displayName).toBe("My Pinned Backend");
-    expect(backend?.frontmatter.modelId).toBe("gpt-5.5");
-    expect(backend?.frontmatter.enabled).toBe(false);
-    expect(backend?.frontmatter.pinned).toBe(true);
-    expect(backend?.body).toContain("Do not overwrite this body.");
+    expect(architect).not.toBeNull();
+    expect(architect?.frontmatter.displayName).toBe("My Pinned Architect");
+    expect(architect?.frontmatter.defaultTier).toBe("max");
+    expect(architect?.frontmatter.enabled).toBe(false);
+    expect(architect?.frontmatter.pinned).toBe(true);
+    expect(architect?.body).toContain("Do not overwrite this body.");
   });
 
   it("repairs malformed builtin files during seeding", async () => {
@@ -1074,14 +1068,14 @@ describe("specialist-registry", () => {
     const sharedDir = join(dataDir, "shared", "specialists");
 
     await mkdir(sharedDir, { recursive: true });
-    await writeFile(join(sharedDir, "backend.md"), "not valid specialist markdown", "utf8");
+    await writeFile(join(sharedDir, "architect.md"), "not valid specialist markdown", "utf8");
 
     await seedBuiltins(dataDir);
 
-    const backend = await parseSpecialistFile(join(sharedDir, "backend.md"));
-    expect(backend).not.toBeNull();
-    expect(backend?.frontmatter.displayName).toBe("Backend Engineer");
-    expect(backend?.frontmatter.builtin).toBe(true);
+    const architect = await parseSpecialistFile(join(sharedDir, "architect.md"));
+    expect(architect).not.toBeNull();
+    expect(architect?.frontmatter.displayName).toBe("Architect");
+    expect(architect?.frontmatter.builtin).toBe(true);
   });
 
   it("isolates cached rosters by data directory", async () => {
@@ -1190,8 +1184,9 @@ describe("specialist-registry", () => {
 
   it("generates a compact message for an empty roster", () => {
     const markdown = generateRosterBlock([]);
-    expect(markdown).toContain("none configured");
-    expect(markdown).not.toContain("\n");
+    expect(markdown).toContain("Effort tiers");
+    expect(markdown).toContain("`light`");
+    expect(markdown).not.toContain("Lenses (attach to any tier)");
   });
 
   it("rejects files with missing frontmatter fields", async () => {
@@ -1443,8 +1438,8 @@ describe("specialist-registry", () => {
     ]);
 
     expect(markdown).toContain("`backend`");
-    expect(markdown).toContain("[openai-codex/gpt-5.5 high");
-    expect(markdown).toContain("-> fallback openai-codex/gpt-5.5 medium]");
+    expect(markdown).toContain("[codex/gpt-5.5 high");
+    expect(markdown).toContain("-> fb codex/gpt-5.5 medium]");
   });
 
   it("adds a web search tag to roster entries when enabled", () => {
@@ -1697,8 +1692,11 @@ describe("specialist-registry", () => {
 
     await seedBuiltins(dataDir);
 
+    await expect(deleteSharedSpecialist(dataDir, "architect")).rejects.toThrow(
+      "Cannot delete builtin specialist: architect",
+    );
     await expect(deleteSharedSpecialist(dataDir, "backend")).rejects.toThrow(
-      "Cannot delete builtin specialist: backend",
+      "Unknown specialist: backend",
     );
     await expect(deleteSharedSpecialist(dataDir, "missing-worker")).rejects.toThrow(
       "Unknown specialist: missing-worker",

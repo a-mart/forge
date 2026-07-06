@@ -138,8 +138,8 @@ export function specialistToEditState(
     color: specialist.color,
     enabled: specialist.enabled,
     whenToUse: specialist.whenToUse,
-    modelId: specialist.modelId,
-    provider: specialist.provider,
+    modelId: specialist.modelId ?? '',
+    provider: specialist.provider ?? '',
     reasoningLevel: specialist.reasoningLevel ?? 'high',
     fallbackModelId: specialist.fallbackModelId ?? '',
     fallbackProvider: specialist.fallbackProvider ?? '',
@@ -147,6 +147,7 @@ export function specialistToEditState(
     pinned: specialist.pinned,
     webSearch: specialist.webSearch ?? false,
     targetSpace: [...specialist.targetSpace],
+    defaultTier: specialist.defaultTier,
     promptBody: specialist.promptBody,
   }
 }
@@ -178,7 +179,7 @@ export function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPay
     color: state.color,
     enabled: state.enabled,
     whenToUse: state.whenToUse,
-    modelId: state.modelId,
+    modelId: state.modelId || undefined,
     provider: state.provider || undefined,
     reasoningLevel: normalizedReasoningLevel,
     fallbackModelId: normalizedFallbackModelId,
@@ -187,6 +188,7 @@ export function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPay
     pinned: state.pinned,
     webSearch: state.webSearch,
     targetSpace: [...state.targetSpace],
+    defaultTier: state.defaultTier,
     promptBody: state.promptBody,
   }
 }

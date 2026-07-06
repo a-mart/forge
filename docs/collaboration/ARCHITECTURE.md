@@ -211,7 +211,7 @@ Specialist markdown uses `TargetSpace` frontmatter:
 - `collaboration`
 - `[builder, collaboration]`
 
-Missing `TargetSpace` is treated as Builder-only for legacy compatibility. Collaboration built-ins use `collab-` handles such as `collab-planner` and `collab-reviewer`. Runtime and UI rosters filter by target space.
+Missing `TargetSpace` is treated as Builder-only for legacy compatibility. Collaboration uses the same global effort tiers and TargetSpace-filtered lenses as Builder; legacy `collab-*` builtin handles are accepted as compatibility rewrites rather than active builtin files. Runtime and UI rosters filter by target space.
 
 Global selected specialist handles are structured SQLite state. Channel-local specialist definitions remain markdown files under the backing session.
 
