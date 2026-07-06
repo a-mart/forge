@@ -37,7 +37,7 @@ There are plenty of good coding agents. Forge isn't trying to replace them. It o
 
 **Parallelism kills latency.** Waiting 5 minutes for a model response is painful. Waiting 5 minutes while ten things run simultaneously? You barely notice. Dump a list of tasks and move on. Plan the next thing while the first one builds. You might have five sessions active with fifty workers running concurrently. That's fifty terminal windows you don't have to manage.
 
-**It remembers things.** Most AI tools reset every session. Forge's Cortex reviews your conversations, learns your preferences, and builds persistent knowledge over time. After a few weeks, it knows your review process, your naming conventions, your code style.
+**It remembers things.** Most AI tools reset every session. Forge's Cortex captures your corrections and preferences as they happen and builds persistent, provenance-tracked knowledge over time. After a few weeks, it knows your review process, your naming conventions, your code style.
 
 **Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Manual Smart compact on an already-idle manager keeps it idle on Pi-backed managers, while active or interrupted work resumes after compaction. Active compaction or context recovery also shows a violet pulsing `C` badge in the sidebar. Pin critical messages and they'll survive every compaction. The pin navigator in the chat header lets you jump directly to any pinned message. Conversations that have compacted 50+ times still maintain coherence.
 
@@ -143,14 +143,12 @@ Session forking lets you run discovery in one conversation, gather context, narr
 
 ### Cortex
 
-Cortex is a dedicated subsystem that reviews your sessions and improves Forge's behavior over time. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. It maintains two layers of persistent knowledge:
+Cortex is Forge's persistent knowledge system. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. Knowledge is stored as small per-entry files, each carrying provenance — where it came from, when it was first seen, how many times it's been confirmed — across two scopes:
 
-- **Common knowledge** — cross-project preferences and habits that apply everywhere. How you like code reviewed, your naming conventions, your communication style. Injected into every session's context.
-- **Project knowledge** — per-project learned guidance. Architecture patterns, testing conventions, deployment quirks specific to each codebase. Updated more frequently.
+- **Common knowledge** — cross-project preferences and habits that apply everywhere. How you like code reviewed, your naming conventions, your communication style.
+- **Project knowledge** — per-project learned guidance. Architecture patterns, testing conventions, deployment quirks specific to each codebase.
 
-Cortex keeps internal notes, reviews its own review process, and refines how it identifies patterns. All changes are versioned in git, so you can see exactly what changed and roll back anything that went wrong.
-
-You can trigger reviews manually, queue up batch reviews, or schedule them on a cron. Sessions can be excluded from review if they contain sensitive or one-off work. Cortex detects both transcript drift (new conversation content) and feedback drift (new ratings since last review) to know when a session needs re-analysis.
+Only a small, token-capped index of entry titles is injected into prompts; the agent pulls full entries on demand with a knowledge tool, so context stays lean no matter how much you've taught it. Knowledge is captured inline — when you correct the manager or state a durable preference, it's saved in the moment — and a background consolidator periodically merges duplicates, resolves contradictions, and retires stale entries. Every change is versioned in git with an entry-level changelog, so you can see exactly what changed, when, and why, and roll back anything. Cortex ships behind a switch (off by default) with a one-command migration from any earlier knowledge files.
 
 ### Smart Compaction
 
