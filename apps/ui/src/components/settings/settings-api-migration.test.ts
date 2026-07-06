@@ -509,11 +509,12 @@ describe('onboarding-api via client', () => {
 /* ================================================================== */
 
 describe('backward compatibility — wsUrl string', () => {
-  it('settings-api env fetch with wsUrl uses builder credentials', async () => {
+  it('settings-api env fetch via a wsUrl-derived builder client uses builder credentials', async () => {
     fetchSpy.mockResolvedValueOnce(mockJsonResponse({ variables: [] }))
     const { fetchSettingsEnvVariables } = await import('./settings-api')
 
-    await fetchSettingsEnvVariables('ws://127.0.0.1:47187')
+    // Boundary adapter: a raw wsUrl becomes a target-aware builder client.
+    await fetchSettingsEnvVariables(createBuilderSettingsApiClient('ws://127.0.0.1:47187'))
 
     expect(fetchSpy).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/settings/env',

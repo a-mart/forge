@@ -514,11 +514,13 @@ describe('model preset fetch isolation', () => {
     )
   })
 
-  it('fetchModelPresets with raw wsUrl string uses bare fetch (backward compatible)', async () => {
+  it('fetchModelPresets via a wsUrl-derived builder client hits the same-origin endpoint', async () => {
     fetchSpy.mockResolvedValueOnce(mockJsonResponse({ models: [] }))
     const { fetchModelPresets } = await import('../../lib/model-preset')
+    const { createBuilderSettingsApiClient } = await import('./settings-api-client')
 
-    await fetchModelPresets('ws://127.0.0.1:47187')
+    // Boundary adapter: a raw wsUrl becomes a target-aware builder client.
+    await fetchModelPresets(createBuilderSettingsApiClient('ws://127.0.0.1:47187'))
 
     expect(fetchSpy).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/settings/models',

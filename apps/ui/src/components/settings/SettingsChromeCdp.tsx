@@ -39,7 +39,8 @@ import type { SettingsApiClient } from './settings-api-client'
 /* ------------------------------------------------------------------ */
 
 interface SettingsChromeCdpProps {
-  clientOrWsUrl: SettingsApiClient | string
+  /** Target-aware settings client (resolved at the boundary; never a raw wsUrl). */
+  clientOrWsUrl: SettingsApiClient
   onConfigChanged?: () => void
 }
 

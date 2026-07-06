@@ -68,7 +68,7 @@ import { fetchModelPresets } from '@/lib/model-preset'
 import { fetchCompactionSettings, updateCompactionSettings } from '@/components/settings/compaction-settings-api'
 import { PROVIDER_LABELS, REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
 import type { SettingsBackendTarget } from './settings-target'
-import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
 
 interface SettingsGeneralProps {
   wsUrl: string
@@ -312,6 +312,12 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   )
 
   const compactionSource = apiClient ?? wsUrl
+  // model-preset now takes a target-aware client (never a raw wsUrl); resolve
+  // one at the boundary from the same source used for the other settings calls.
+  const presetsApiClient = useMemo(
+    () => apiClient ?? createBuilderSettingsApiClient(wsUrl),
+    [apiClient, wsUrl],
+  )
 
   const loadCompactionSettings = useCallback(async () => {
     if (!isBuilder) return
@@ -320,13 +326,13 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
     setCompactionError(null)
     const [view, presets] = await Promise.all([
       fetchCompactionSettings(compactionSource),
-      fetchModelPresets(compactionSource).catch(() => [] as ModelPresetInfo[]),
+      fetchModelPresets(presetsApiClient).catch(() => [] as ModelPresetInfo[]),
     ])
     setCompactionView(view)
     setCompactionDraft(view.settings)
     setCompactionModelPresets(presets)
     setCompactionLoadFailed(false)
-  }, [compactionSource, isBuilder])
+  }, [compactionSource, presetsApiClient, isBuilder])
 
   useEffect(() => {
     if (!isBuilder) return

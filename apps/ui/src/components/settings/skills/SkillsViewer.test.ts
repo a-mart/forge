@@ -8,6 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HelpProvider } from '@/components/help/HelpProvider'
 import { SkillsViewer } from './SkillsViewer'
 
+// SkillsViewer now resolves a target-aware SettingsApiClient at the boundary
+// (WP-U3) and passes it — not a raw wsUrl — to the skills-viewer-api calls.
+// Match the client by the backend it targets.
+const builderClientFor = (wsUrl: string) =>
+  expect.objectContaining({ target: expect.objectContaining({ wsUrl }) })
+
 const skillsViewerApiMock = vi.hoisted(() => ({
   fetchSkillInventory: vi.fn(),
   shareSkill: vi.fn(),
@@ -155,7 +161,7 @@ describe('SkillsViewer', () => {
 
     await waitFor(() => {
       expect(skillsViewerApiMock.fetchSkillInventory).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47287',
+        builderClientFor('ws://127.0.0.1:47287'),
         undefined,
         undefined,
       )
@@ -202,7 +208,7 @@ describe('SkillsViewer', () => {
 
     await waitFor(() => {
       expect(skillsViewerApiMock.fetchSkillInventory).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47287',
+        builderClientFor('ws://127.0.0.1:47287'),
         'profile-a',
         'session-a',
       )
@@ -217,7 +223,7 @@ describe('SkillsViewer', () => {
 
     await waitFor(() => {
       expect(skillsViewerApiMock.previewSkillImportFromUrl).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47287',
+        builderClientFor('ws://127.0.0.1:47287'),
         { url: 'https://share.test/s/token', target: { scope: 'global' } },
       )
       expect(skillsViewerApiMock.importSkill).not.toHaveBeenCalled()

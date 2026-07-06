@@ -8,14 +8,20 @@
  *
  * Multi-backend: pings **all** configured collab backend URLs and reports
  * aggregate health (any available → connected).
+ *
+ * Cadence + visibility-pause come from the shared {@link useForegroundPoll}
+ * policy (WP-U3) so this poll behaves consistently with the other foreground
+ * pollers instead of running a bare `setInterval` that never pauses when the
+ * tab is hidden.
  */
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import {
   reportBuilderPoll,
   reportCollabPoll,
 } from '@/lib/connection-health-store'
+import { useForegroundPoll } from '@/hooks/use-foreground-poll'
 
 /** Poll interval in milliseconds */
 const POLL_INTERVAL_MS = 5_000
@@ -70,39 +76,23 @@ export function useBackendHealthPoll(
     collabUrlsRef.current = collabWsUrls
   })
 
-  useEffect(() => {
-    let cancelled = false
+  // Stable poll fn: reads the current URLs off refs so the shared poll policy's
+  // effect does not restart on every URL-array identity change.
+  const poll = useCallback(async () => {
+    const urls = collabUrlsRef.current
+    const collabPings = urls.length > 0
+      ? urls.map((url) => pingBackend(url))
+      : [Promise.resolve(false)]
 
-    async function poll() {
-      if (cancelled) return
+    const [builderOk, ...collabResults] = await Promise.all([
+      pingBackend(builderUrlRef.current),
+      ...collabPings,
+    ])
 
-      const urls = collabUrlsRef.current
-      const collabPings = urls.length > 0
-        ? urls.map((url) => pingBackend(url))
-        : [Promise.resolve(false)]
-
-      const [builderOk, ...collabResults] = await Promise.all([
-        pingBackend(builderUrlRef.current),
-        ...collabPings,
-      ])
-
-      if (!cancelled) {
-        reportBuilderPoll(builderOk)
-        // Aggregate: collab is available if ANY backend responds
-        reportCollabPoll(collabResults.some(Boolean))
-      }
-    }
-
-    // Initial poll immediately
-    void poll()
-
-    const intervalId = setInterval(() => {
-      void poll()
-    }, POLL_INTERVAL_MS)
-
-    return () => {
-      cancelled = true
-      clearInterval(intervalId)
-    }
+    reportBuilderPoll(builderOk)
+    // Aggregate: collab is available if ANY backend responds
+    reportCollabPoll(collabResults.some(Boolean))
   }, [])
+
+  useForegroundPoll(poll, { intervalMs: POLL_INTERVAL_MS })
 }

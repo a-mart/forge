@@ -9,41 +9,24 @@ import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebarConnected } from '@/components/chat/AgentSidebarConnected'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
-import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from '@/components/index-page/activity-rail-workspace'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
-import { isUsableActiveTarget } from '@/components/index-page/archive-target-guards'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { type MessageInputHandle } from '@/components/chat/MessageInput'
 import { type MessageListHandle } from '@/components/chat/MessageList'
-import { useChatSearch } from '@/components/chat/useChatSearch'
-import { useSearchHighlight } from '@/components/chat/useSearchHighlight'
 import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
 import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
 import { FileDirtyConfirmDialog } from '@/components/file-browser/FileDirtyConfirmDialog'
 import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/file-editor-feature-gates'
-import { useFileEditSessions } from '@/components/file-browser/use-file-edit-sessions'
-import { fileBrowserTabId } from '@/components/file-browser/use-file-browser-workspace-state'
-import { useFileEditorCoordinator, type FileEditorSessionKey } from '@/components/file-browser/use-file-editor-coordinator'
-import {
-  applySuccessfulFileDeleteToCaches,
-  deleteFilePath,
-  type FileContentResult,
-} from '@/components/file-browser/use-file-browser-queries'
+import type { useFileEditorCoordinator } from '@/components/file-browser/use-file-editor-coordinator'
 import { DiffViewerContent } from '@/components/diff-viewer/DiffViewerDialog'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
-import { isReplyTargetLoadedInMessages } from '@/components/index-page/reply-target-utils'
-import { requestGuardedAgentTransition, requestGuardedArtifactsPanelToggle } from '@/components/index-page/builder-file-editor-guard-actions'
-import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
-import { chooseFallbackAgentId, filterAgentsAfterProfileArchive, filterAgentsAfterSessionArchive, isAgentEffectivelyArchived, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
-import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
+import { resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { hasProjectManagers } from '@/lib/onboarding-ui'
-import { useFeedback } from '@/lib/use-feedback'
-import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   type ActiveSurface,
@@ -51,54 +34,30 @@ import {
   type AppRouteState,
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
-import {
-  chooseMostRecentSessionFallbackForDeletedTarget,
-} from '@/hooks/index-page/deleted-agent-fallback'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
-import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
-import { useContextWindow } from '@/hooks/index-page/use-context-window'
-import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
+import { useActiveAgent } from '@/hooks/index-page/use-active-agent'
+import { useWorkspacePanels } from '@/hooks/index-page/use-workspace-panels'
+import { useTranscriptController } from '@/hooks/index-page/use-transcript-controller'
+import { useSessionActions } from '@/hooks/index-page/use-session-actions'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import {
   getProjectAgentSuggestions,
   shouldLoadExternalProjectAgentDirectory,
 } from '@/hooks/index-page/project-agent-suggestions'
-import { usePanelState } from '@/hooks/index-page/use-panel-state'
-import { Clock3, FolderOpen, GitBranch, MessageSquare, Package, SquareTerminal } from 'lucide-react'
-import {
-  parseCompactSlashCommand,
-  useSlashCommands,
-} from '@/hooks/index-page/use-slash-commands'
+import { useSlashCommands } from '@/hooks/index-page/use-slash-commands'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
 import type {
   AgentDescriptor,
-  ChoiceAnswer,
-  ConversationAttachment,
-  ConversationReplyTargetInput,
-  ManagerExactModelSelection,
-  ManagerReasoningLevel,
   ProjectAgentExternalDirectoryEntry,
-  GitWorktreeSummary,
 } from '@forge/protocol'
 
-function shouldIgnoreGlobalShortcutTarget(event: KeyboardEvent): boolean {
-  if (event.defaultPrevented) return true
-  const target = event.target
-  if (!(target instanceof HTMLElement)) return false
-  if (target.closest('.cm-editor') || target.closest('.cm-content')) return true
-  return (
-    target.tagName === 'INPUT' ||
-    target.tagName === 'TEXTAREA' ||
-    target.tagName === 'SELECT' ||
-    target.isContentEditable
-  )
-}
+type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
 
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
   return Boolean(
@@ -144,18 +103,24 @@ export function BuilderSurface({
 
     navigateToOuterRoute(nextRouteState, replace)
   }, [navigateToOuterRoute])
+
+  // Shell-level refs shared across the extracted controllers.  Keeping these at
+  // the shell (not inside a hook) is what breaks the apparent ordering cycle
+  // between active-agent derivation and the workspace panels: the route-sync
+  // effect reads `fileEditorCoordinatorRef.current` lazily, and the shell keeps
+  // the ref current during render once the panels hook has created the
+  // coordinator — so every effect (regardless of which hook registered it) sees
+  // the live coordinator.
   const messageInputRef = useRef<MessageInputHandle | null>(null)
-  const [replyTarget, setReplyTarget] = useState<ConversationReplyTargetInput | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
+  const fileEditorCoordinatorRef = useRef<FileEditorCoordinator | null>(null)
   const archiveHydrationRequestedRef = useRef(false)
 
   const { clientRef, httpClientRef, state, setState } = useWsConnection(wsUrl)
 
   // Sync builder WS health to the module-level store so ModeSwitch can
   // display the builder connection dot even from the collab surface.
-  // The route-level health poll keeps the dot accurate when this surface
-  // unmounts, so no cleanup callback is needed here.
   useEffect(() => {
     reportBuilderConnected(state.connected)
   }, [state.connected])
@@ -200,192 +165,28 @@ export function BuilderSurface({
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
   const [activeWorkExpanded, setActiveWorkExpanded] = useState(false)
-  const [diffViewerPresentation, setDiffViewerPresentation] = useState<'modal' | 'inline'>('modal')
   const [externalProjectAgentEntries, setExternalProjectAgentEntries] = useState<ProjectAgentExternalDirectoryEntry[]>([])
 
-  const activeAgentId = useMemo(() => {
-    const preferredId = state.targetAgentId ?? state.subscribedAgentId ?? null
-    const preferredAgent = preferredId ? state.agents.find((agent) => agent.agentId === preferredId) : null
-    const preferredManager = preferredAgent?.role === 'worker'
-      ? state.agents.find((agent) => agent.role === 'manager' && agent.agentId === preferredAgent.managerId)
-      : preferredAgent
-    if (preferredManager?.role === 'manager' && isAgentEffectivelyArchived(preferredManager, state.profiles)) {
-      return chooseFallbackAgentId(state.agents, undefined, state.profiles)
-    }
-    return preferredId ?? chooseFallbackAgentId(state.agents, undefined, state.profiles)
-  }, [state.agents, state.profiles, state.subscribedAgentId, state.targetAgentId])
-
-  const activeAgent = useMemo(() => {
-    if (!activeAgentId) {
-      return null
-    }
-
-    return state.agents.find((agent) => agent.agentId === activeAgentId) ?? null
-  }, [activeAgentId, state.agents])
-
-  useEffect(() => {
-    setReplyTarget(null)
-  }, [activeAgentId])
-
-  useEffect(() => {
-    const targetId = replyTarget?.messageId.trim()
-    if (!targetId) {
-      return
-    }
-
-    if (!isReplyTargetLoadedInMessages(replyTarget, state.messages)) {
-      setReplyTarget(null)
-    }
-  }, [replyTarget, state.messages])
-
+  // ── Active-agent derivation + route→subscription sync ──
   const {
-    activeArtifact,
-    openArtifact: handleOpenArtifact,
-    closeArtifact: handleCloseArtifact,
-    isArtifactsPanelOpen,
-    setIsArtifactsPanelOpen,
-    artifactsPanelTab,
-    setArtifactsPanelTab,
-    openArtifactsPanel: handleOpenArtifactsPanel,
-    toggleArtifactsPanel: handleToggleArtifactsPanel,
-    closeWorkspacePanels: handleCloseWorkspacePanels,
-    cortexDashboardTab,
-    cortexDashboardTabRequest,
-    requestCortexDashboardTab,
-    toggleCortexDashboardTab,
-    handleCortexDashboardTabChange,
-    isMobileSidebarOpen,
-    setIsMobileSidebarOpen,
-    isDiffViewerOpen,
-    setIsDiffViewerOpen,
-    diffViewerInitialState,
-    openDiffViewer,
-    isFileBrowserOpen,
-    openFileBrowser: handleOpenFileBrowser,
-    toggleFileBrowser: handleToggleFileBrowser,
-    selectedFileBrowserFile,
-    selectFileBrowserFile: handleFileBrowserSelectFile,
-    openStickyFileBrowserFile: handleOpenStickyFileBrowserFile,
-    fileBrowserTabs,
-    allFileBrowserTabs,
-    activeFileBrowserTabId,
-    previewFileBrowserTabId,
-    activateFileBrowserTab,
-    stickifyFileBrowserTab,
-    closeFileBrowserTab,
-    fileBrowserTreeSnapshot,
-    activeFileBrowserContentScrollSnapshot,
-    updateFileBrowserTreeSnapshot,
-    updateActiveFileBrowserContentScrollSnapshot,
-    removeFileBrowserTabsAffectedByDelete,
-    navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
-    fileBrowserWorktreeContext,
-    browseWorktreeFiles: handleBrowseWorktreeFiles,
-    clearFileBrowserWorktreeContext: handleClearFileBrowserWorktreeContext,
-  } = usePanelState({
     activeAgentId,
-    activeAgentArchetypeId: activeAgent?.archetypeId,
-    enableKeyboardShortcuts: false,
+    activeAgent,
+    activeManagerId,
+    activeManagerAgent,
+    isActiveManager,
+    terminalSessionAgentId,
+    activeAgentStatus,
+    activeAgentProfileName,
+    activeAgentSessionLabel,
+    activeAgentLabel,
+  } = useActiveAgent({
+    state,
+    routeState,
+    navigateToRoute,
+    clientRef,
+    fileEditorCoordinatorRef,
+    previousAgentsByIdRef,
   })
-
-  const [fileBrowserRefreshNonce, setFileBrowserRefreshNonce] = useState(0)
-  const [sourceControlRefreshNonce, setSourceControlRefreshNonce] = useState(0)
-  const activeFileEditorKey = useMemo<FileEditorSessionKey | null>(() => {
-    if (!activeAgentId || !selectedFileBrowserFile) return null
-    return {
-      agentId: activeAgentId,
-      worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-      filePath: selectedFileBrowserFile,
-    }
-  }, [activeAgentId, fileBrowserWorktreeContext?.worktreeId, selectedFileBrowserFile])
-  const fileEditSessions = useFileEditSessions({
-    wsUrl,
-    activeKey: activeFileEditorKey,
-    editingEnabled: FILE_BROWSER_INLINE_EDITING_ENABLED,
-    onDirtyChange: (key) => {
-      const tab = fileBrowserTabs.find((candidate) =>
-        candidate.key.agentId === key.agentId &&
-        candidate.key.worktreeId === key.worktreeId &&
-        candidate.key.filePath === key.filePath,
-      )
-      if (tab) stickifyFileBrowserTab(tab.id)
-    },
-    onSavedContent: () => {
-      setFileBrowserRefreshNonce((previous) => previous + 1)
-      setSourceControlRefreshNonce((previous) => previous + 1)
-    },
-  })
-  const fileEditSession = fileEditSessions.active
-  const fileEditorCoordinatorOptions = useMemo(() => ({
-    getDirtySnapshots: fileEditSessions.getDirtySnapshots,
-    getGuardForKey: fileEditSessions.getControllerForKey,
-  }), [fileEditSessions.getControllerForKey, fileEditSessions.getDirtySnapshots])
-  const fileEditorCoordinator = useFileEditorCoordinator(null, fileEditorCoordinatorOptions)
-  const fileEditorCoordinatorRef = useRef(fileEditorCoordinator)
-  useEffect(() => {
-    fileEditorCoordinatorRef.current = fileEditorCoordinator
-  }, [fileEditorCoordinator])
-
-  useEffect(() => {
-    const unregister = fileBrowserTabs.map((tab) =>
-      fileEditorCoordinator.registerWritableEditor(tab.key, fileEditSessions.getControllerForKey(tab.key)),
-    )
-    return () => {
-      unregister.forEach((dispose) => dispose())
-    }
-  }, [fileBrowserTabs, fileEditSessions, fileEditorCoordinator])
-
-  useEffect(() => {
-    const retainedTabKeys = new Set(allFileBrowserTabs.map((tab) => tab.id))
-    for (const key of fileEditSessions.getSessionKeys()) {
-      if (!retainedTabKeys.has(fileBrowserTabId(key))) {
-        fileEditSessions.removeSession(key)
-      }
-    }
-  }, [allFileBrowserTabs, fileEditSessions])
-
-  const dirtyFileBrowserTabIds = useMemo(() => new Set(
-    fileBrowserTabs
-      .filter((tab) => fileEditSessions.getDirtySnapshotForKey(tab.key)?.isDirty)
-      .map((tab) => tab.id),
-  ), [fileBrowserTabs, fileEditSessions])
-
-  const handleFileEditorContentLoaded = useCallback((key: FileEditorSessionKey, content: FileContentResult | null) => {
-    fileEditSessions.handleContentLoaded(key, content)
-  }, [fileEditSessions])
-
-  const { slashCommands } = useSlashCommands({ wsUrl, activeView })
-
-  const hasCreatedProjectManager = useMemo(() => hasProjectManagers(state.agents), [state.agents])
-
-  const shouldShowWelcomeForm =
-    routeState.view === 'chat' &&
-    !hasCreatedProjectManager &&
-    onboardingState?.status === 'pending'
-  const shouldShowCreateManagerState =
-    routeState.view === 'chat' &&
-    !hasCreatedProjectManager &&
-    Boolean(onboardingState && onboardingState.status !== 'pending')
-
-  const activeAgentProfileName = useMemo(() => {
-    if (!activeAgent?.profileId || !activeAgent.sessionLabel) return undefined
-    const profile = state.profiles.find((p) => p.profileId === activeAgent.profileId)
-    return profile?.displayName ?? activeAgent.profileId
-  }, [activeAgent, state.profiles])
-
-  const activeAgentSessionLabel = useMemo(() => {
-    if (!activeAgent?.profileId || !activeAgent.sessionLabel) return undefined
-    return activeAgent.sessionLabel
-  }, [activeAgent])
-
-  const activeAgentLabel = useMemo(() => {
-    if (!activeAgent) return activeAgentId ?? 'No active agent'
-    // For session agents, show profile name + session label
-    if (activeAgentProfileName && activeAgentSessionLabel) {
-      return `${activeAgentProfileName} › ${activeAgentSessionLabel}`
-    }
-    return activeAgent.displayName ?? activeAgentId ?? 'No active agent'
-  }, [activeAgent, activeAgentId, activeAgentProfileName, activeAgentSessionLabel])
 
   const totalUnreadCount = useMemo(() => {
     if (!state.unreadCounts) return 0
@@ -394,8 +195,6 @@ export function BuilderSurface({
       return sum + count
     }, 0)
   }, [state.unreadCounts, activeAgentId])
-
-  const isActiveManager = activeAgent?.role === 'manager'
 
   // Reset Detailed All when leaving All view
   useEffect(() => {
@@ -411,31 +210,6 @@ export function BuilderSurface({
   // Derive effective detailed state for hook consumption
   const effectiveDetailedAllView = isActiveManager && messageSourceView === 'all' && detailedAllView
 
-  const activeManagerId = useMemo(() => {
-    if (activeAgent?.role === 'manager') {
-      return activeAgent.agentId
-    }
-
-    if (activeAgent?.managerId) {
-      return activeAgent.managerId
-    }
-
-    return (
-      state.agents.find((agent) => agent.role === 'manager')?.agentId ??
-      DEFAULT_MANAGER_AGENT_ID
-    )
-  }, [activeAgent, state.agents])
-
-  const activeManagerAgent = useMemo(() => {
-    if (!activeManagerId) {
-      return null
-    }
-
-    return state.agents.find(
-      (agent) => agent.role === 'manager' && agent.agentId === activeManagerId,
-    ) ?? null
-  }, [activeManagerId, state.agents])
-
   const activeWorkSnapshot = null
 
   const modelCacheHeaderSummary =
@@ -445,18 +219,6 @@ export function BuilderSurface({
           observations: state.modelCacheObservations,
         })
       : null
-
-  const terminalSessionAgentId = useMemo(() => {
-    if (!activeAgent) {
-      return null
-    }
-
-    if (activeAgent.role === 'manager') {
-      return activeAgent.agentId
-    }
-
-    return activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
-  }, [activeAgent, activeManagerAgent])
 
   const activeAgentRole = activeAgent?.role ?? null
   const activeAgentProfileId = activeAgent?.profileId ?? null
@@ -536,6 +298,29 @@ export function BuilderSurface({
     },
   })
 
+  const isCortexSession = activeAgent?.archetypeId === 'cortex'
+
+  // ── Workspace panels (file browser / diff viewer / artifacts / activity rail) ──
+  const panels = useWorkspacePanels({
+    wsUrl,
+    activeAgentId,
+    activeAgent,
+    activeManagerAgent,
+    terminalSessionAgentId,
+    terminalPanel,
+    terminalCount: state.terminals.length,
+    isCortexSession,
+    clientRef,
+    messageInputRef,
+    navigateToRoute,
+  })
+
+  // Keep the shell-level coordinator ref current for the active-agent route-sync
+  // effect.  Assigned during render (after panels creates the coordinator) so it
+  // is visible to every effect on the next commit, matching the original
+  // in-component ordering where the ref always held the live coordinator.
+  fileEditorCoordinatorRef.current = panels.fileEditorCoordinator
+
   // Workers belonging to the active manager session (for pill bar)
   const sessionWorkers = useMemo(() => {
     if (!activeManagerId) return []
@@ -553,9 +338,7 @@ export function BuilderSurface({
     return manager?.workerCount ?? 0
   }, [activeManagerId, state.agents])
 
-  // Resolve worker-fetch target from actual active agent context only — no fallback to
-  // first-manager or DEFAULT_MANAGER_AGENT_ID to avoid fetching the wrong manager's workers
-  // during cold boot, reconnect, or when a worker descriptor hasn't loaded yet.
+  // Resolve worker-fetch target from actual active agent context only.
   const workerFetchManagerId = useMemo(
     () => resolveWorkerFetchManagerId(activeAgent),
     [activeAgent],
@@ -571,7 +354,6 @@ export function BuilderSurface({
     if (activeAgent?.role !== 'worker' || !activeAgent.managerId) return null
     const manager = state.agents.find((a) => a.agentId === activeAgent.managerId)
     if (!manager) return activeAgent.managerId
-    // Prefer "Profile › Session" format matching activeAgentLabel logic
     if (manager.profileId && manager.sessionLabel) {
       const profile = state.profiles.find((p) => p.profileId === manager.profileId)
       const profileName = profile?.displayName ?? manager.profileId
@@ -585,51 +367,32 @@ export function BuilderSurface({
     const defaultSessionIds = new Set(state.profiles.map((p) => p.defaultSessionAgentId))
     return state.agents.filter((agent) => {
       if (agent.role !== 'manager') return false
-      // If profiles exist, only show default sessions
       if (state.profiles.length > 0) {
         return defaultSessionIds.has(agent.agentId) || !agent.profileId
       }
-      // No profiles yet (legacy) — show all managers
       return true
     })
   }, [state.agents, state.profiles])
-
-  const activeAgentStatus = useMemo(() => {
-    if (!activeAgentId) {
-      return null
-    }
-
-    const fromStatuses = state.statuses[activeAgentId]?.status
-    if (fromStatuses) {
-      return fromStatuses
-    }
-
-    return state.agents.find((agent) => agent.agentId === activeAgentId)?.status ?? null
-  }, [activeAgentId, state.agents, state.statuses])
 
   useDynamicFavicon({
     agents: state.agents,
     statuses: state.statuses,
   })
 
-  const { contextWindowUsage } = useContextWindow({
+  // ── Transcript / search / feedback / pins / context window / pending response ──
+  const transcript = useTranscriptController({
+    state,
+    activeView,
     activeAgent,
     activeAgentId,
-    messages: state.messages,
-    statuses: state.statuses,
-  })
-
-  const {
-    markPendingResponse,
-    clearPendingResponseForAgent,
-    isAwaitingResponseStart,
-  } = usePendingResponse({
-    activeAgentId,
     activeAgentStatus,
-    messages: state.messages,
+    messageSourceView,
+    effectiveDetailedAllView,
+    messageListRef,
   })
+  const { feedback } = transcript
+  const isLoading = transcript.isLoading
 
-  const isLoading = activeAgentStatus === 'streaming' || isAwaitingResponseStart
   const missingPendingChoiceIds = useMemo(
     () => deriveMissingPendingChoiceIds(state.pendingChoiceIds, state.messages, activeAgentId),
     [activeAgentId, state.messages, state.pendingChoiceIds],
@@ -644,111 +407,18 @@ export function BuilderSurface({
     return state.statuses[activeAgentId]?.contextRecoveryInProgress === true
   }, [activeAgentId, state.statuses])
 
-  const { allMessages, visibleMessages } = useVisibleMessages({
-    messages: state.messages,
-    activityMessages: state.activityMessages,
-    agents: state.agents,
-    activeAgent,
-    channelView: messageSourceView,
-    detailedAllView: effectiveDetailedAllView,
-  })
+  const hasCreatedProjectManager = useMemo(() => hasProjectManagers(state.agents), [state.agents])
 
-  const pinnedMessageIds = useMemo(() => {
-    const ids: string[] = []
-    for (const m of visibleMessages) {
-      if (m.type === 'conversation_message' && m.pinned) {
-        const id = m.id?.trim() || m.timestamp
-        ids.push(id)
-      }
-    }
-    return ids
-  }, [visibleMessages])
+  const shouldShowWelcomeForm =
+    routeState.view === 'chat' &&
+    !hasCreatedProjectManager &&
+    onboardingState?.status === 'pending'
+  const shouldShowCreateManagerState =
+    routeState.view === 'chat' &&
+    !hasCreatedProjectManager &&
+    Boolean(onboardingState && onboardingState.status !== 'pending')
 
-  const pinnedCount = pinnedMessageIds.length
-
-  // ── Find-in-chat search ──
-  const chatSearch = useChatSearch(visibleMessages)
-
-  const searchContainerRef = useRef<HTMLElement | null>(null)
-
-  useEffect(() => {
-    searchContainerRef.current = messageListRef.current?.getScrollContainer() ?? null
-  })
-
-  useSearchHighlight(
-    searchContainerRef,
-    chatSearch.matches,
-    chatSearch.currentMatchIndex,
-    chatSearch.isOpen,
-  )
-
-  // Scroll to the message containing the current match
-  useEffect(() => {
-    if (!chatSearch.isOpen || chatSearch.matches.length === 0) return
-    const match = chatSearch.matches[chatSearch.currentMatchIndex]
-    if (match) {
-      messageListRef.current?.scrollToMessage(match.messageId)
-    }
-  }, [chatSearch.isOpen, chatSearch.matches, chatSearch.currentMatchIndex])
-
-  // Close search on session switch
-  useEffect(() => {
-    chatSearch.close()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAgentId])
-
-  // Keyboard shortcut: Ctrl+F / Cmd+F to toggle find-in-chat
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (shouldIgnoreGlobalShortcutTarget(e)) return
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-        if (activeView !== 'chat') return
-        e.preventDefault()
-        if (chatSearch.isOpen) {
-          chatSearch.close()
-        } else {
-          chatSearch.open()
-        }
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [activeView, chatSearch])
-
-  const handleScrollToMessage = useCallback((messageId: string) => {
-    messageListRef.current?.scrollToMessage(messageId)
-  }, [])
-
-  const collectedArtifacts = useMemo(
-    () => collectArtifactsFromMessages(allMessages),
-    [allMessages],
-  )
-
-  const feedbackSessionId = useMemo(() => {
-    if (!activeAgent) {
-      return null
-    }
-
-    return activeAgent.role === 'worker' ? activeAgent.managerId : activeAgent.agentId
-  }, [activeAgent])
-
-  const feedbackSessionAgent = useMemo(() => {
-    if (!feedbackSessionId) {
-      return null
-    }
-
-    return (
-      state.agents.find(
-        (agent) => agent.agentId === feedbackSessionId && agent.role === 'manager',
-      ) ?? null
-    )
-  }, [feedbackSessionId, state.agents])
-
-  const feedbackProfileId = feedbackSessionAgent?.profileId ?? null
-  const { getVote, hasComment, submitVote, submitComment, clearComment, isSubmitting: isFeedbackSubmitting } = useFeedback(
-    feedbackProfileId,
-    feedbackSessionId,
-  )
+  const { slashCommands } = useSlashCommands({ wsUrl, activeView })
 
   const {
     isCreateManagerDialogOpen,
@@ -792,8 +462,27 @@ export function BuilderSurface({
     isActiveManager,
     navigateToRoute,
     setState,
-    clearPendingResponseForAgent,
+    clearPendingResponseForAgent: transcript.clearPendingResponseForAgent,
   })
+
+  // ── Session / sidebar action handlers ──
+  const session = useSessionActions({
+    clientRef,
+    fileEditorCoordinator: panels.fileEditorCoordinator,
+    state,
+    activeAgent,
+    activeAgentId,
+    isActiveManager,
+    isLoading,
+    navigateToRoute,
+    setState,
+    visibleMessages: transcript.visibleMessages,
+    markPendingResponse: transcript.markPendingResponse,
+    handleCompactManager,
+    messageInputRef,
+    messageListRef,
+  })
+  const { replyTarget, setReplyTarget, messageForkTarget, setMessageForkTarget } = session
 
   const {
     isDraggingFiles,
@@ -813,716 +502,6 @@ export function BuilderSurface({
     }, 4000)
     return () => clearTimeout(timer)
   }, [state.lastSuccess, setState])
-
-  useEffect(() => {
-    if (routeState.view !== 'chat') {
-      return
-    }
-
-    const currentAgentId = state.targetAgentId ?? state.subscribedAgentId
-    const hasExplicitRouteSelection = routeState.agentId !== DEFAULT_MANAGER_AGENT_ID
-    const explicitSelectionAgentId =
-      clientRef.current?.getExplicitSelectionAgentId() ??
-      (hasExplicitRouteSelection ? routeState.agentId : null)
-    const hasExplicitSelection =
-      hasExplicitRouteSelection || clientRef.current?.hasExplicitSelection() === true
-
-    if (
-      hasExplicitSelection &&
-      explicitSelectionAgentId &&
-      explicitSelectionAgentId !== DEFAULT_MANAGER_AGENT_ID
-    ) {
-      const explicitTargetUsable = isUsableActiveTarget(
-        explicitSelectionAgentId,
-        state.agents,
-        state.profiles,
-      )
-
-      if (explicitTargetUsable) {
-        if (currentAgentId !== explicitSelectionAgentId) {
-          requestGuardedAgentTransition(
-            fileEditorCoordinatorRef.current,
-            explicitSelectionAgentId,
-            () => clientRef.current?.subscribeToAgent(explicitSelectionAgentId),
-          )
-        }
-        return
-      }
-
-      if (!state.hasReceivedAgentsSnapshot) {
-        return
-      }
-
-      const fallbackAgentId =
-        chooseMostRecentSessionFallbackForDeletedTarget(
-          state.agents,
-          explicitSelectionAgentId,
-          previousAgentsByIdRef.current,
-        ) ?? chooseFallbackAgentId(state.agents, undefined, state.profiles)
-
-      if (!fallbackAgentId) {
-        requestGuardedAgentTransition(
-          fileEditorCoordinatorRef.current,
-          DEFAULT_MANAGER_AGENT_ID,
-          () => navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true),
-        )
-        return
-      }
-
-      requestGuardedAgentTransition(
-        fileEditorCoordinatorRef.current,
-        fallbackAgentId,
-        () => {
-          if (currentAgentId !== fallbackAgentId) {
-            clientRef.current?.subscribeToAgent(fallbackAgentId, { explicit: false })
-          }
-          navigateToRoute({ view: 'chat', agentId: fallbackAgentId }, true)
-        },
-      )
-      return
-    }
-
-    if (currentAgentId === routeState.agentId) {
-      return
-    }
-
-    if (isUsableActiveTarget(routeState.agentId, state.agents, state.profiles)) {
-      requestGuardedAgentTransition(
-        fileEditorCoordinatorRef.current,
-        routeState.agentId,
-        () => clientRef.current?.subscribeToAgent(routeState.agentId),
-      )
-      return
-    }
-
-    if (state.agents.length === 0) {
-      return
-    }
-
-    const fallbackAgentId = chooseFallbackAgentId(state.agents, undefined, state.profiles)
-    if (!fallbackAgentId || fallbackAgentId === currentAgentId) {
-      return
-    }
-
-    requestGuardedAgentTransition(
-      fileEditorCoordinatorRef.current,
-      fallbackAgentId,
-      () => clientRef.current?.subscribeToAgent(fallbackAgentId, { explicit: false }),
-    )
-  }, [
-    clientRef,
-    navigateToRoute,
-    routeState,
-    state.agents,
-    state.hasReceivedAgentsSnapshot,
-    state.profiles,
-    state.subscribedAgentId,
-    state.targetAgentId,
-  ])
-
-  useEffect(() => {
-    previousAgentsByIdRef.current = new Map(
-      state.agents.map((agent) => [agent.agentId, agent]),
-    )
-  }, [state.agents])
-
-  const handleSend = (
-    text: string,
-    attachments?: ConversationAttachment[],
-    options?: { replyTo?: ConversationReplyTargetInput },
-  ) => {
-    if (!activeAgentId) {
-      return false
-    }
-
-    const compactCommand =
-      isActiveManager && (!attachments || attachments.length === 0)
-        ? parseCompactSlashCommand(text)
-        : null
-
-    if (compactCommand) {
-      void handleCompactManager(compactCommand.customInstructions)
-      return true
-    }
-
-    markPendingResponse(activeAgentId, state.messages.length)
-
-    clientRef.current?.sendUserMessage(text, {
-      agentId: activeAgentId,
-      delivery: isActiveManager ? 'steer' : isLoading ? 'steer' : 'auto',
-      attachments,
-      replyTo: options?.replyTo,
-    })
-    return true
-  }
-
-  const handleReplyToMessage = useCallback((target: ConversationReplyTargetInput) => {
-    setReplyTarget(target)
-    requestAnimationFrame(() => messageInputRef.current?.focus())
-  }, [])
-
-  const handleMessageInputSubmitted = useCallback(() => {
-    messageListRef.current?.scrollToBottom('smooth')
-  }, [])
-
-  const handleChoiceSubmit = useCallback((agentId: string, choiceId: string, answers: ChoiceAnswer[]) => {
-    clientRef.current?.sendChoiceResponse(agentId, choiceId, answers)
-  }, [clientRef])
-
-  const handleChoiceCancel = useCallback((agentId: string, choiceId: string) => {
-    clientRef.current?.sendChoiceCancel(agentId, choiceId)
-  }, [clientRef])
-
-  const handlePinMessage = useCallback((messageId: string, pinned: boolean) => {
-    if (!activeAgentId || !isActiveManager) return
-    clientRef.current?.pinMessage(activeAgentId, messageId, pinned)
-  }, [activeAgentId, clientRef, isActiveManager])
-
-  const handleClearAllPins = useCallback(() => {
-    if (!activeAgentId || !isActiveManager) return
-    clientRef.current?.clearAllPins(activeAgentId)
-  }, [activeAgentId, clientRef, isActiveManager])
-
-  const handleNewChat = () => {
-    if (!isActiveManager || !activeAgentId || !activeAgent) {
-      return
-    }
-
-    setReplyTarget(null)
-
-    // Multi-session: clear current session conversation
-    const profileId = activeAgent.profileId
-    if (profileId && clientRef.current) {
-      void (async () => {
-        try {
-          setReplyTarget(null)
-          await clientRef.current!.clearSession(activeAgentId)
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to clear conversation: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-      return
-    }
-
-    // Legacy fallback: destructive /new
-    setReplyTarget(null)
-    clientRef.current?.sendUserMessage('/new', {
-      agentId: activeAgentId,
-      delivery: 'steer',
-    })
-  }
-
-  const handleCreateSession = useCallback((profileId: string, name?: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    requestGuardedAgentTransition(fileEditorCoordinator, profileId, () => {
-      void (async () => {
-        try {
-          const result = await client.createSession(profileId, name)
-          navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
-          client.subscribeToAgent(result.sessionAgent.agentId)
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to create session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    })
-  }, [clientRef, fileEditorCoordinator, navigateToRoute, setState])
-
-  const handleCreateAgentCreator = useCallback((profileId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    requestGuardedAgentTransition(fileEditorCoordinator, profileId, () => {
-      void (async () => {
-        try {
-          const result = await client.createSession(profileId, undefined, {
-            sessionPurpose: 'agent_creator',
-            label: 'Agent Creator',
-          })
-          navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
-          client.subscribeToAgent(result.sessionAgent.agentId)
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to create agent creator: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    })
-  }, [clientRef, fileEditorCoordinator, navigateToRoute, setState])
-
-  const handleStopSession = useCallback((agentId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        await client.stopSession(agentId)
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to stop session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
-
-  const handleResumeSession = useCallback((agentId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        await client.resumeSession(agentId)
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to resume session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
-
-  const handleDeleteSession = useCallback((agentId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    const runDelete = () => {
-      void (async () => {
-        try {
-          await client.deleteSession(agentId)
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to delete session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    }
-
-    if (agentId === activeAgentId) {
-      requestGuardedAgentTransition(fileEditorCoordinator, agentId, runDelete)
-      return
-    }
-
-    runDelete()
-  }, [activeAgentId, clientRef, fileEditorCoordinator, setState])
-
-  const handleArchiveSession = useCallback((agentId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    const runArchive = () => {
-      void (async () => {
-        try {
-          await client.archiveSession(agentId)
-          const fallbackAgentId = chooseFallbackAgentId(
-            filterAgentsAfterSessionArchive(state.agents, agentId),
-            undefined,
-            state.profiles,
-          )
-          if (agentId === activeAgentId && fallbackAgentId) {
-            navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
-          }
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to archive session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    }
-
-    if (agentId === activeAgentId) {
-      requestGuardedAgentTransition(fileEditorCoordinator, agentId, runArchive)
-      return
-    }
-
-    runArchive()
-  }, [activeAgentId, clientRef, fileEditorCoordinator, navigateToRoute, setState, state.agents, state.profiles])
-
-  const handleArchiveProfile = useCallback((profileId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    const archivesActiveProfile = activeAgent?.role === 'manager' && (activeAgent.profileId ?? activeAgent.agentId) === profileId
-    const runArchive = () => {
-      void (async () => {
-        try {
-          await client.archiveProfile(profileId)
-          const fallbackAgentId = chooseFallbackAgentId(
-            filterAgentsAfterProfileArchive(state.agents, profileId),
-            undefined,
-            state.profiles.filter((profile) => profile.profileId !== profileId),
-          )
-          if (archivesActiveProfile && fallbackAgentId) {
-            navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
-          }
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to archive project: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    }
-
-    if (archivesActiveProfile) {
-      requestGuardedAgentTransition(fileEditorCoordinator, profileId, runArchive)
-      return
-    }
-
-    runArchive()
-  }, [activeAgent, clientRef, fileEditorCoordinator, navigateToRoute, setState, state.agents, state.profiles])
-
-  const handleRestoreSession = useCallback((agentId: string, open = false) => {
-    const client = clientRef.current
-    if (!client) return
-
-    const runRestore = () => {
-      void (async () => {
-        try {
-          const result = await client.restoreSession(agentId)
-          if (open) navigateToRoute({ view: 'chat', agentId: result.openAgentId ?? result.agentId })
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to restore session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    }
-
-    if (open) {
-      requestGuardedAgentTransition(fileEditorCoordinator, agentId, runRestore)
-      return
-    }
-
-    runRestore()
-  }, [clientRef, fileEditorCoordinator, navigateToRoute, setState])
-
-  const handleRestoreProfile = useCallback((profileId: string, open = false) => {
-    const client = clientRef.current
-    if (!client) return
-
-    const runRestore = () => {
-      void (async () => {
-        try {
-          const result = await client.restoreProfile(profileId)
-          if (open && result.openAgentId) navigateToRoute({ view: 'chat', agentId: result.openAgentId })
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to restore project: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    }
-
-    if (open) {
-      requestGuardedAgentTransition(fileEditorCoordinator, profileId, runRestore)
-      return
-    }
-
-    runRestore()
-  }, [clientRef, fileEditorCoordinator, navigateToRoute, setState])
-
-  const handleRenameSession = useCallback((agentId: string, label: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        await client.renameSession(agentId, label)
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to rename session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
-
-  const handlePinSession = useCallback((agentId: string, pinned: boolean) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        await client.pinSession(agentId, pinned)
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to ${pinned ? 'pin' : 'unpin'} session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
-
-  const handleRenameProfile = useCallback((profileId: string, displayName: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        await client.renameProfile(profileId, displayName)
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to rename profile: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
-
-  const handleForkSession = useCallback((sourceAgentId: string, name?: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    requestGuardedAgentTransition(fileEditorCoordinator, sourceAgentId, () => {
-      void (async () => {
-        try {
-          const result = await client.forkSession(sourceAgentId, name)
-          navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
-          client.subscribeToAgent(result.newSessionAgent.agentId)
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to fork session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    })
-  }, [clientRef, fileEditorCoordinator, navigateToRoute, setState])
-
-  const [messageForkTarget, setMessageForkTarget] = useState<{ messageId: string; messageTimestamp?: string } | null>(null)
-
-  const handleForkFromMessage = useCallback((messageId: string) => {
-    if (!activeAgentId) return
-    // Find the message timestamp for display in the dialog
-    const msg = visibleMessages.find(
-      (m) => m.type === 'conversation_message' && ((m.id?.trim() || m.timestamp) === messageId),
-    )
-    const timestamp = msg?.timestamp
-    setMessageForkTarget({ messageId, messageTimestamp: timestamp })
-  }, [activeAgentId, visibleMessages])
-
-  const handleConfirmMessageFork = useCallback((name?: string) => {
-    const client = clientRef.current
-    if (!client || !activeAgentId || !messageForkTarget) return
-
-    const { messageId } = messageForkTarget
-    setMessageForkTarget(null)
-
-    requestGuardedAgentTransition(fileEditorCoordinator, activeAgentId, () => {
-      void (async () => {
-        try {
-          const result = await client.forkSession(activeAgentId, name, messageId)
-          navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
-          client.subscribeToAgent(result.newSessionAgent.agentId)
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            lastError: `Failed to fork session from message: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
-    })
-  }, [clientRef, activeAgentId, fileEditorCoordinator, messageForkTarget, navigateToRoute, setState])
-
-
-  const handleRequestSessionWorkers = useCallback((sessionAgentId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        await client.getSessionWorkers(sessionAgentId)
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to load session workers: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
-
-  const handleMarkUnread = useCallback((agentId: string) => {
-    clientRef.current?.markUnread(agentId)
-  }, [clientRef])
-
-  const handleMarkAllRead = useCallback((profileId: string) => {
-    clientRef.current?.markAllRead(profileId)
-  }, [clientRef])
-
-
-  const handleUpdateManagerModel = useCallback(async (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => {
-    const client = clientRef.current
-    if (!client) return
-
-    try {
-      await client.updateProfileDefaultModel(profileId, undefined, reasoningLevel, modelSelection)
-    } catch (error) {
-      setState((previous) => ({
-        ...previous,
-        lastError: `Failed to update default model: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      }))
-    }
-  }, [clientRef, setState])
-
-  const handleUpdateSessionModel = useCallback(async (
-    sessionAgentId: string,
-    mode: 'inherit' | 'override',
-    modelSelection?: ManagerExactModelSelection,
-    reasoningLevel?: ManagerReasoningLevel,
-  ) => {
-    const client = clientRef.current
-    if (!client) return
-
-    try {
-      await client.updateSessionModel(sessionAgentId, mode, undefined, reasoningLevel, modelSelection)
-    } catch (error) {
-      setState((previous) => ({
-        ...previous,
-        lastError: `Failed to update session model: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      }))
-    }
-  }, [clientRef, setState])
-
-  const handleUpdateManagerCwd = useCallback(async (managerId: string, cwd: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-
-    await client.updateManagerCwd(managerId, cwd)
-  }, [clientRef])
-
-  const handleBrowseDirectoryForCwd = useCallback(async (defaultPath: string) => {
-    const client = clientRef.current
-    if (!client) return null
-    return client.pickDirectory(defaultPath)
-  }, [clientRef])
-
-  const handleValidateDirectoryForCwd = useCallback(async (path: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.validateDirectory(path)
-  }, [clientRef])
-
-  const handleReorderProfiles = useCallback((profileIds: string[]) => {
-    clientRef.current?.reorderProfiles(profileIds)
-  }, [clientRef])
-
-  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: import('@forge/protocol').ProjectAgentCapability[] } | null) => {
-    await clientRef.current?.setSessionProjectAgent(agentId, projectAgent)
-  }, [clientRef])
-
-  const handleGetProjectAgentConfig = useCallback(async (agentId: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.getProjectAgentConfig(agentId)
-  }, [clientRef])
-
-  const handleGetProjectAgentSharing = useCallback(async (agentId: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.getProjectAgentSharing(agentId)
-  }, [clientRef])
-
-  const handleSetProjectAgentSharing = useCallback(async (agentId: string, targetProfileIds: string[]) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.setProjectAgentSharing(agentId, targetProfileIds)
-  }, [clientRef])
-
-  const handleListProjectAgentReferences = useCallback(async (agentId: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.listProjectAgentReferences(agentId)
-  }, [clientRef])
-
-  const handleGetProjectAgentReference = useCallback(async (agentId: string, fileName: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.getProjectAgentReference(agentId, fileName)
-  }, [clientRef])
-
-  const handleSetProjectAgentReference = useCallback(async (agentId: string, fileName: string, content: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.setProjectAgentReference(agentId, fileName, content)
-  }, [clientRef])
-
-  const handleDeleteProjectAgentReference = useCallback(async (agentId: string, fileName: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.deleteProjectAgentReference(agentId, fileName)
-  }, [clientRef])
-
-  const handleRequestProjectAgentRecommendations = useCallback(async (agentId: string) => {
-    const client = clientRef.current
-    if (!client) throw new Error('WebSocket is not connected.')
-    return client.requestProjectAgentRecommendations(agentId)
-  }, [clientRef])
-
-  const handleSelectAgent = useCallback((agentId: string) => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'select-agent', nextAgentId: agentId }, () => {
-      getSidebarPerfRegistry().startSessionSwitch(agentId)
-      navigateToRoute({ view: 'chat', agentId })
-      clientRef.current?.subscribeToAgent(agentId)
-    })
-  }, [clientRef, fileEditorCoordinator, navigateToRoute])
-
-  const handleDeleteAgent = (agentId: string) => {
-    const agent = state.agents.find((entry) => entry.agentId === agentId)
-    if (!agent || agent.role !== 'worker') {
-      return
-    }
-
-    const runDelete = () => {
-      if (activeAgentId === agentId) {
-        const remainingAgents = state.agents.filter((entry) => entry.agentId !== agentId)
-        const fallbackAgentId = chooseFallbackAgentId(remainingAgents, undefined, state.profiles)
-        if (fallbackAgentId) {
-          navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
-          clientRef.current?.subscribeToAgent(fallbackAgentId)
-        }
-      }
-
-      clientRef.current?.deleteAgent(agentId)
-    }
-
-    if (activeAgentId === agentId) {
-      requestGuardedAgentTransition(fileEditorCoordinator, agentId, runDelete)
-      return
-    }
-
-    runDelete()
-  }
-
-  const handleOpenSettingsPanel = () => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
-      navigateToRoute({ view: 'settings', surface: 'builder' })
-    })
-  }
-
-  const handleOpenStats = () => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'stats' }, () => {
-      navigateToRoute({ view: 'stats' })
-    })
-  }
-
-  const handleOpenArchive = () => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'archive' }, () => {
-      navigateToRoute({ view: 'archive', surface: 'builder' })
-    })
-  }
 
   const handleSaveOnboarding = useCallback((input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
     void (async () => {
@@ -1559,405 +538,13 @@ export function BuilderSurface({
     }
   }, [activeAgentId, state.agents])
 
-  const handleSuggestionClick = (prompt: string) => {
-    messageInputRef.current?.setInput(prompt)
-  }
-
-  const handleFocusChatInput = useCallback(() => {
-    messageInputRef.current?.focus()
-  }, [])
-
-  const handleTerminalAddToChat = useCallback((context: TerminalSelectionContext) => {
-    messageInputRef.current?.addTerminalContext(context)
-  }, [])
-
-  const isCortexSession = activeAgent?.archetypeId === 'cortex'
   const showActivityRail = activeView === 'chat'
-  const isInlineDiffViewerOpen = isDiffViewerOpen && diffViewerPresentation === 'inline'
 
-  const handleGuardedFileBrowserSelectFile = useCallback((path: string) => {
-    handleFileBrowserSelectFile(path)
-  }, [handleFileBrowserSelectFile])
-
-  const handleFileBrowserOpenStickyFile = useCallback((path: string) => {
-    handleOpenStickyFileBrowserFile(path)
-  }, [handleOpenStickyFileBrowserFile])
-
-  const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory'): Promise<boolean> => {
-    if (!activeAgentId) return Promise.resolve(false)
-
-    const runDelete = async (): Promise<boolean> => {
-      await deleteFilePath(wsUrl, {
-        agentId: activeAgentId,
-        path,
-        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-      })
-      applySuccessfulFileDeleteToCaches({
-        agentId: activeAgentId,
-        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-        path,
-        entryType,
-      })
-      removeFileBrowserTabsAffectedByDelete(path, entryType)
-      fileEditSessions.removeSessionsAffectedByDelete({
-        agentId: activeAgentId,
-        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-        path,
-        entryType,
-      })
-      setFileBrowserRefreshNonce((previous) => previous + 1)
-      setSourceControlRefreshNonce((previous) => previous + 1)
-      return true
-    }
-
-    return new Promise<boolean>((resolve, reject) => {
-      fileEditorCoordinator.requestFileEditorTransition(
-        {
-          type: 'delete-entry',
-          path,
-          entryType,
-          agentId: activeAgentId,
-          worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-        },
-        () => {
-          void runDelete().then(resolve, reject)
-        },
-        () => resolve(false),
-      )
-    })
-  }, [
-    activeAgentId,
-    fileBrowserWorktreeContext?.worktreeId,
-    fileEditorCoordinator,
-    fileEditSessions,
-    removeFileBrowserTabsAffectedByDelete,
-    wsUrl,
-  ])
-
-  const handleRequestCloseFileBrowserTab = useCallback((tabId: string) => {
-    const tab = fileBrowserTabs.find((candidate) => candidate.id === tabId)
-    if (!tab) return
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'close-tab', key: tab.key }, () => {
-      closeFileBrowserTab(tab.id)
-      fileEditSessions.removeSession(tab.key)
-    })
-  }, [closeFileBrowserTab, fileBrowserTabs, fileEditSessions, fileEditorCoordinator])
-
-  const handleGuardedFileBrowserClosePanel = useCallback(() => {
-    if (activeFileBrowserTabId) {
-      handleRequestCloseFileBrowserTab(activeFileBrowserTabId)
-    }
-  }, [activeFileBrowserTabId, handleRequestCloseFileBrowserTab])
-
-  const handleGuardedFileBrowserNavigateToDirectory = useCallback((dirPath: string) => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'select-file', nextPath: dirPath }, () => {
-      handleFileBrowserNavigateToDirectory(dirPath)
-    })
-  }, [fileEditorCoordinator, handleFileBrowserNavigateToDirectory])
-
-  const handleGuardedClearFileBrowserWorktreeContext = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'select-file', nextPath: selectedFileBrowserFile ?? '' }, () => {
-      handleClearFileBrowserWorktreeContext()
-    })
-  }, [fileEditorCoordinator, handleClearFileBrowserWorktreeContext, selectedFileBrowserFile])
-
-  const handleGuardedArtifactsClose = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'chat' }, () => {
-      setIsArtifactsPanelOpen(false)
-    })
-  }, [fileEditorCoordinator, setIsArtifactsPanelOpen])
-
-  const handleGuardedArtifactDialogClose = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'chat' }, () => {
-      handleCloseArtifact()
-    })
-  }, [fileEditorCoordinator, handleCloseArtifact])
-
-  const handleGuardedDiffViewerOpenChange = useCallback((open: boolean) => {
-    fileEditorCoordinator.requestFileEditorTransition(
-      open ? { type: 'open-source-control-inline' } : { type: 'open-workspace-panel', panel: 'chat' },
-      () => {
-        setIsDiffViewerOpen(open)
-      },
-    )
-  }, [fileEditorCoordinator, setIsDiffViewerOpen])
-
-  const handleGuardedToggleFileBrowser = useCallback(() => {
-    const actionType = isFileBrowserOpen ? 'close-file-browser' : 'open-workspace-panel'
-    fileEditorCoordinator.requestFileEditorTransition(
-      actionType === 'close-file-browser'
-        ? { type: 'close-file-browser' }
-        : { type: 'open-workspace-panel', panel: 'chat' },
-      () => {
-        handleToggleFileBrowser()
-      },
-    )
-  }, [fileEditorCoordinator, handleToggleFileBrowser, isFileBrowserOpen])
-
-  const handleOpenDiffViewerModal = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-source-control-inline' }, () => {
-      setDiffViewerPresentation('modal')
-      openDiffViewer()
-    })
-  }, [fileEditorCoordinator, openDiffViewer])
-
-  const handleReturnToChatWorkspace = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'chat' }, () => {
-      const chatTargetAgentId = resolveChatRailTargetAgentId(
-        activeAgentId,
-        activeAgent,
-        activeManagerAgent,
-      )
-
-      if (chatTargetAgentId && chatTargetAgentId !== activeAgentId) {
-        handleSelectAgent(chatTargetAgentId)
-      }
-
-      setIsDiffViewerOpen(false)
-      setDiffViewerPresentation('modal')
-      handleCloseWorkspacePanels()
-      messageInputRef.current?.focus()
-    })
-  }, [activeAgent, activeAgentId, activeManagerAgent, fileEditorCoordinator, handleCloseWorkspacePanels, handleSelectAgent, setIsDiffViewerOpen])
-
-  const handleToggleFileBrowserFromRail = useCallback(() => {
-    if (isFileBrowserOpen && !isInlineDiffViewerOpen) {
-      handleGuardedToggleFileBrowser()
-      return
-    }
-
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'chat' }, () => {
-      setIsDiffViewerOpen(false)
-      setDiffViewerPresentation('modal')
-      handleOpenFileBrowser()
-    })
-  }, [fileEditorCoordinator, handleGuardedToggleFileBrowser, handleOpenFileBrowser, isFileBrowserOpen, isInlineDiffViewerOpen, setIsDiffViewerOpen])
-
-  const handleOpenDiffViewerInline = useCallback(() => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-source-control-inline' }, () => {
-      if (isInlineDiffViewerOpen) {
-        setIsDiffViewerOpen(false)
-        setDiffViewerPresentation('modal')
-        return
-      }
-
-      handleCloseWorkspacePanels()
-      setDiffViewerPresentation('inline')
-      openDiffViewer()
-    })
-  }, [fileEditorCoordinator, handleCloseWorkspacePanels, isInlineDiffViewerOpen, openDiffViewer, setIsDiffViewerOpen])
-
-  const handleGuardedToggleArtifactsPanel = useCallback(() => {
-    requestGuardedArtifactsPanelToggle(fileEditorCoordinator, () => {
-      handleToggleArtifactsPanel()
-    })
-  }, [fileEditorCoordinator, handleToggleArtifactsPanel])
-
-  const handleOpenArtifactsFromRail = useCallback((tab: 'artifacts' | 'schedules') => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'artifacts' }, () => {
-      if (isInlineDiffViewerOpen) {
-        setIsDiffViewerOpen(false)
-        setDiffViewerPresentation('modal')
-        handleOpenArtifactsPanel(tab)
-        return
-      }
-
-      handleToggleArtifactsPanel(tab)
-    })
-  }, [fileEditorCoordinator, handleOpenArtifactsPanel, handleToggleArtifactsPanel, isInlineDiffViewerOpen, setIsDiffViewerOpen])
-
-  const handleOpenCortexDashboardFromRail = useCallback((tab: 'index' | 'consolidation') => {
-    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'cortex' }, () => {
-      if (isInlineDiffViewerOpen) {
-        setIsDiffViewerOpen(false)
-        setDiffViewerPresentation('modal')
-        requestCortexDashboardTab(tab)
-        return
-      }
-
-      toggleCortexDashboardTab(tab)
-    })
-  }, [fileEditorCoordinator, isInlineDiffViewerOpen, requestCortexDashboardTab, setIsDiffViewerOpen, toggleCortexDashboardTab])
-
-  const handleCloseDiffViewer = useCallback(() => {
-    setIsDiffViewerOpen(false)
-  }, [setIsDiffViewerOpen])
-
-  const handleRequestSourceControlMutation = useCallback((
-    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
-    target: { agentId: string; worktreeId: string | null },
-    run: () => void,
-  ) => {
-    fileEditorCoordinator.requestFileEditorTransition({
-      type: 'source-control-mutation',
-      mutation,
-      agentId: target.agentId,
-      worktreeId: target.worktreeId,
-    }, run)
-  }, [fileEditorCoordinator])
-
-  const handleSourceControlMutationComplete = useCallback(() => {
-    setFileBrowserRefreshNonce((previous) => previous + 1)
-  }, [])
-
-  const handleBrowseWorktreeFromSourceControl = useCallback(
-    (worktree: GitWorktreeSummary) => {
-      fileEditorCoordinator.requestFileEditorTransition({ type: 'select-file', nextPath: '' }, () => {
-        handleBrowseWorktreeFiles({
-          worktreeId: worktree.id,
-          worktreePath: worktree.path,
-          branch: worktree.branch,
-          repoRoot: worktree.repoRoot,
-        })
-        setIsDiffViewerOpen(false)
-      })
-    },
-    [fileEditorCoordinator, handleBrowseWorktreeFiles, setIsDiffViewerOpen],
-  )
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (shouldIgnoreGlobalShortcutTarget(event)) return
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === 'E' || event.key === 'e')) {
-        event.preventDefault()
-        handleGuardedToggleFileBrowser()
-        return
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === 'D' || event.key === 'd')) {
-        event.preventDefault()
-        handleOpenDiffViewerInline()
-      }
-    }
-
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [handleGuardedToggleFileBrowser, handleOpenDiffViewerInline])
-
-  useEffect(() => {
-    if (!isDiffViewerOpen && diffViewerPresentation === 'inline') {
-      setDiffViewerPresentation('modal')
-    }
-  }, [diffViewerPresentation, isDiffViewerOpen])
-
-  const keyboardShortcutLabels = useMemo(() => {
-    const electronPlatform = typeof window !== 'undefined' ? (window.electronBridge?.platform ?? '') : ''
-    const platform =
-      electronPlatform || (typeof window !== 'undefined' ? (window.navigator.platform ?? '') : '')
-    const normalizedPlatform = platform.toLowerCase()
-    const isMacPlatform =
-      normalizedPlatform.includes('mac') || normalizedPlatform.includes('darwin')
-    return {
-      terminal: isMacPlatform ? '⌘`' : 'Ctrl+`',
-      changes: isMacPlatform ? '⌘⇧D' : 'Ctrl+Shift+D',
-    }
-  }, [])
-
-  const activityRailItems = useMemo(() => {
-    const artifactsLabel = isCortexSession ? 'Dashboard' : 'Artifacts'
-    const workspaceDisabled = !isActivityRailWorkspaceAvailable(activeAgentId, activeManagerAgent)
-    const artifactsActive = isCortexSession
-      ? isArtifactsPanelOpen && cortexDashboardTab !== 'consolidation'
-      : isArtifactsPanelOpen && artifactsPanelTab === 'artifacts'
-    const schedulesActive = isCortexSession
-      ? isArtifactsPanelOpen && cortexDashboardTab === 'consolidation'
-      : isArtifactsPanelOpen && artifactsPanelTab === 'schedules'
-
-    const chatActive = !isInlineDiffViewerOpen && !isFileBrowserOpen && !isArtifactsPanelOpen
-
-    return [
-      {
-        id: 'chat' as const,
-        label: 'Chat',
-        icon: MessageSquare,
-        active: chatActive,
-        disabled: !activeAgentId,
-        onClick: handleReturnToChatWorkspace,
-      },
-      {
-        id: 'files' as const,
-        label: isFileBrowserOpen && !isInlineDiffViewerOpen ? 'Close file browser' : 'Browse Files',
-        icon: FolderOpen,
-        active: isFileBrowserOpen && !isInlineDiffViewerOpen,
-        disabled: workspaceDisabled || !activeAgentId,
-        onClick: handleToggleFileBrowserFromRail,
-      },
-      {
-        id: 'changes' as const,
-        label: 'Source Control',
-        icon: GitBranch,
-        active: isInlineDiffViewerOpen,
-        disabled: workspaceDisabled || !activeAgentId,
-        shortcutLabel: keyboardShortcutLabels.changes,
-        onClick: handleOpenDiffViewerInline,
-      },
-      {
-        id: 'terminal' as const,
-        label: terminalPanel.isPanelVisible ? 'Hide terminal panel' : 'Terminal',
-        icon: SquareTerminal,
-        active: terminalPanel.isPanelVisible,
-        disabled: !terminalSessionAgentId,
-        badge:
-          !terminalPanel.isPanelVisible && state.terminals.length > 0
-            ? state.terminals.length
-            : undefined,
-        shortcutLabel: keyboardShortcutLabels.terminal,
-        onClick: () => {
-          terminalPanel.togglePanel()
-        },
-      },
-      {
-        id: 'schedules' as const,
-        label: 'Cron / Schedules',
-        icon: Clock3,
-        active: schedulesActive && !isInlineDiffViewerOpen,
-        disabled: workspaceDisabled,
-        onClick: () => {
-          if (isCortexSession) {
-            handleOpenCortexDashboardFromRail('consolidation')
-          } else {
-            handleOpenArtifactsFromRail('schedules')
-          }
-        },
-      },
-      {
-        id: 'artifacts' as const,
-        label: artifactsLabel,
-        icon: Package,
-        active: artifactsActive && !isInlineDiffViewerOpen,
-        disabled: workspaceDisabled,
-        onClick: () => {
-          if (isCortexSession) {
-            handleOpenCortexDashboardFromRail('index')
-          } else {
-            handleOpenArtifactsFromRail('artifacts')
-          }
-        },
-      },
-    ]
-  }, [
-    activeAgentId,
-    activeManagerAgent,
-    artifactsPanelTab,
-    cortexDashboardTab,
-    handleOpenArtifactsFromRail,
-    handleOpenCortexDashboardFromRail,
-    handleOpenDiffViewerInline,
-    handleReturnToChatWorkspace,
-    handleToggleFileBrowserFromRail,
-    isArtifactsPanelOpen,
-    isCortexSession,
-    isInlineDiffViewerOpen,
-    isFileBrowserOpen,
-    state.terminals.length,
-    terminalPanel,
-    terminalSessionAgentId,
-    keyboardShortcutLabels.changes,
-    keyboardShortcutLabels.terminal,
-  ])
+  const feedbackProfileId = transcript.feedbackProfileId
 
   return (
     <>
-      <FileDirtyConfirmDialog state={fileEditorCoordinator.dialogState} />
+      <FileDirtyConfirmDialog state={panels.fileEditorCoordinator.dialogState} />
 
       <AgentSidebarConnected
         wsUrl={wsUrl}
@@ -1966,48 +553,54 @@ export function BuilderSurface({
         isSettingsActive={activeView === 'settings'}
         isStatsActive={activeView === 'stats'}
         isArchiveActive={activeView === 'archive'}
-        isMobileOpen={isMobileSidebarOpen}
-        onMobileClose={() => setIsMobileSidebarOpen(false)}
+        isMobileOpen={panels.isMobileSidebarOpen}
+        onMobileClose={() => panels.setIsMobileSidebarOpen(false)}
         onAddManager={handleOpenCreateManagerDialog}
-        onSelectAgent={handleSelectAgent}
-        onDeleteAgent={handleDeleteAgent}
+        onSelectAgent={panels.handleSelectAgent}
+        onDeleteAgent={session.handleDeleteAgent}
         onDeleteManager={handleRequestDeleteManager}
-        onOpenSettings={handleOpenSettingsPanel}
-        onOpenStats={handleOpenStats}
-        onOpenArchive={handleOpenArchive}
-        onCreateSession={handleCreateSession}
-        onStopSession={handleStopSession}
-        onResumeSession={handleResumeSession}
-        onDeleteSession={handleDeleteSession}
-        onArchiveSession={handleArchiveSession}
-        onArchiveProfile={handleArchiveProfile}
-        onRenameSession={handleRenameSession}
-        onPinSession={handlePinSession}
-        onRenameProfile={handleRenameProfile}
-        onForkSession={handleForkSession}
-        onMarkUnread={handleMarkUnread}
-        onMarkAllRead={handleMarkAllRead}
-        onUpdateManagerModel={handleUpdateManagerModel}
-        onUpdateSessionModel={handleUpdateSessionModel}
-        onUpdateManagerCwd={handleUpdateManagerCwd}
-        onBrowseDirectory={handleBrowseDirectoryForCwd}
-        onValidateDirectory={handleValidateDirectoryForCwd}
-        onRequestSessionWorkers={handleRequestSessionWorkers}
-        onReorderProfiles={handleReorderProfiles}
-        onSetSessionProjectAgent={handleSetSessionProjectAgent}
-        onGetProjectAgentConfig={handleGetProjectAgentConfig}
-        onGetProjectAgentSharing={handleGetProjectAgentSharing}
-        onSetProjectAgentSharing={handleSetProjectAgentSharing}
-        onListProjectAgentReferences={handleListProjectAgentReferences}
-        onGetProjectAgentReference={handleGetProjectAgentReference}
-        onSetProjectAgentReference={handleSetProjectAgentReference}
-        onDeleteProjectAgentReference={handleDeleteProjectAgentReference}
-        onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
-        onCreateAgentCreator={handleCreateAgentCreator}
+        onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
+          navigateToRoute({ view: 'settings', surface: 'builder' })
+        })}
+        onOpenStats={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'stats' }, () => {
+          navigateToRoute({ view: 'stats' })
+        })}
+        onOpenArchive={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'archive' }, () => {
+          navigateToRoute({ view: 'archive', surface: 'builder' })
+        })}
+        onCreateSession={session.handleCreateSession}
+        onStopSession={session.handleStopSession}
+        onResumeSession={session.handleResumeSession}
+        onDeleteSession={session.handleDeleteSession}
+        onArchiveSession={session.handleArchiveSession}
+        onArchiveProfile={session.handleArchiveProfile}
+        onRenameSession={session.handleRenameSession}
+        onPinSession={session.handlePinSession}
+        onRenameProfile={session.handleRenameProfile}
+        onForkSession={session.handleForkSession}
+        onMarkUnread={session.handleMarkUnread}
+        onMarkAllRead={session.handleMarkAllRead}
+        onUpdateManagerModel={session.handleUpdateManagerModel}
+        onUpdateSessionModel={session.handleUpdateSessionModel}
+        onUpdateManagerCwd={session.handleUpdateManagerCwd}
+        onBrowseDirectory={session.handleBrowseDirectoryForCwd}
+        onValidateDirectory={session.handleValidateDirectoryForCwd}
+        onRequestSessionWorkers={session.handleRequestSessionWorkers}
+        onReorderProfiles={session.handleReorderProfiles}
+        onSetSessionProjectAgent={session.handleSetSessionProjectAgent}
+        onGetProjectAgentConfig={session.handleGetProjectAgentConfig}
+        onGetProjectAgentSharing={session.handleGetProjectAgentSharing}
+        onSetProjectAgentSharing={session.handleSetProjectAgentSharing}
+        onListProjectAgentReferences={session.handleListProjectAgentReferences}
+        onGetProjectAgentReference={session.handleGetProjectAgentReference}
+        onSetProjectAgentReference={session.handleSetProjectAgentReference}
+        onDeleteProjectAgentReference={session.handleDeleteProjectAgentReference}
+        onRequestProjectAgentRecommendations={session.handleRequestProjectAgentRecommendations}
+        onCreateAgentCreator={session.handleCreateAgentCreator}
       />
 
       {showActivityRail ? (
-        <ActivityRail items={activityRailItems} />
+        <ActivityRail items={panels.activityRailItems} />
       ) : null}
 
       <div
@@ -2021,89 +614,89 @@ export function BuilderSurface({
             <div className="pointer-events-none absolute inset-2 z-50 rounded-lg border-2 border-dashed border-primary bg-primary/10" />
           ) : null}
 
-          {activeView === 'chat' && !isInlineDiffViewerOpen && isArtifactsPanelOpen ? (
+          {activeView === 'chat' && !panels.isInlineDiffViewerOpen && panels.isArtifactsPanelOpen ? (
             <ArtifactsSidebar
               wsUrl={wsUrl}
               managerId={activeManagerId}
-              artifacts={collectedArtifacts}
-              isOpen={isArtifactsPanelOpen}
-              onClose={handleGuardedArtifactsClose}
-              onArtifactClick={handleOpenArtifact}
-              activeTab={artifactsPanelTab}
-              onActiveTabChange={setArtifactsPanelTab}
+              artifacts={transcript.collectedArtifacts}
+              isOpen={panels.isArtifactsPanelOpen}
+              onClose={panels.handleGuardedArtifactsClose}
+              onArtifactClick={panels.handleOpenArtifact}
+              activeTab={panels.artifactsPanelTab}
+              onActiveTabChange={panels.setArtifactsPanelTab}
               panelMode="rail-selected"
               desktopPlacement="left"
               desktopOnly
             />
           ) : null}
 
-          {activeView === 'chat' && !isInlineDiffViewerOpen && !isArtifactsPanelOpen ? (
+          {activeView === 'chat' && !panels.isInlineDiffViewerOpen && !panels.isArtifactsPanelOpen ? (
             <FileBrowserSidebar
               wsUrl={wsUrl}
               agentId={activeAgentId}
-              isOpen={isFileBrowserOpen}
-              onClose={handleGuardedToggleFileBrowser}
-              onSelectFile={handleGuardedFileBrowserSelectFile}
-              onOpenStickyFile={handleFileBrowserOpenStickyFile}
-              selectedFile={selectedFileBrowserFile}
-              treeSnapshot={fileBrowserTreeSnapshot}
-              onTreeSnapshotChange={updateFileBrowserTreeSnapshot}
-              worktreeContext={fileBrowserWorktreeContext}
-              onClearWorktreeContext={handleGuardedClearFileBrowserWorktreeContext}
+              isOpen={panels.isFileBrowserOpen}
+              onClose={panels.handleGuardedToggleFileBrowser}
+              onSelectFile={panels.handleGuardedFileBrowserSelectFile}
+              onOpenStickyFile={panels.handleFileBrowserOpenStickyFile}
+              selectedFile={panels.selectedFileBrowserFile}
+              treeSnapshot={panels.fileBrowserTreeSnapshot}
+              onTreeSnapshotChange={panels.updateFileBrowserTreeSnapshot}
+              worktreeContext={panels.fileBrowserWorktreeContext}
+              onClearWorktreeContext={panels.handleGuardedClearFileBrowserWorktreeContext}
               projectResourceProfileId={activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null}
               projectResourceSessionAgentId={activeManagerAgent?.agentId ?? null}
               desktopPlacement="left"
               desktopOnly
-              refreshNonce={fileBrowserRefreshNonce}
-              onDeleteEntry={handleFileBrowserDeleteEntry}
+              refreshNonce={panels.fileBrowserRefreshNonce}
+              onDeleteEntry={panels.handleFileBrowserDeleteEntry}
             />
           ) : null}
 
-          {activeView === 'chat' && !isInlineDiffViewerOpen && isFileBrowserOpen && selectedFileBrowserFile ? (
+          {activeView === 'chat' && !panels.isInlineDiffViewerOpen && panels.isFileBrowserOpen && panels.selectedFileBrowserFile ? (
             <FileBrowserPanel
               wsUrl={wsUrl}
               agentId={activeAgentId}
-              filePath={selectedFileBrowserFile}
-              onClose={handleGuardedFileBrowserClosePanel}
-              onNavigateToDirectory={handleGuardedFileBrowserNavigateToDirectory}
-              tabs={fileBrowserTabs}
-              activeTabId={activeFileBrowserTabId}
-              previewTabId={previewFileBrowserTabId}
-              dirtyTabIds={dirtyFileBrowserTabIds}
-              contentScrollSnapshot={activeFileBrowserContentScrollSnapshot}
-              onContentScrollSnapshotChange={updateActiveFileBrowserContentScrollSnapshot}
-              onActivateTab={activateFileBrowserTab}
-              onCloseTab={(tab) => handleRequestCloseFileBrowserTab(tab.id)}
-              onStickifyTab={stickifyFileBrowserTab}
-              worktreeId={fileBrowserWorktreeContext?.worktreeId ?? null}
+              filePath={panels.selectedFileBrowserFile}
+              onClose={panels.handleGuardedFileBrowserClosePanel}
+              onNavigateToDirectory={panels.handleGuardedFileBrowserNavigateToDirectory}
+              tabs={panels.fileBrowserTabs}
+              activeTabId={panels.activeFileBrowserTabId}
+              previewTabId={panels.previewFileBrowserTabId}
+              dirtyTabIds={panels.dirtyFileBrowserTabIds}
+              contentScrollSnapshot={panels.activeFileBrowserContentScrollSnapshot}
+              onContentScrollSnapshotChange={panels.updateActiveFileBrowserContentScrollSnapshot}
+              onActivateTab={panels.activateFileBrowserTab}
+              onCloseTab={(tab) => panels.handleRequestCloseFileBrowserTab(tab.id)}
+              onStickifyTab={panels.stickifyFileBrowserTab}
+              worktreeId={panels.fileBrowserWorktreeContext?.worktreeId ?? null}
               desktopOnly
               resizeHandlePlacement="right"
               inlineEditingEnabled={FILE_BROWSER_INLINE_EDITING_ENABLED}
-              editSession={fileEditSession}
-              editorSessionKey={activeFileEditorKey}
-              refreshNonce={fileBrowserRefreshNonce}
-              onContentLoaded={handleFileEditorContentLoaded}
+              editSession={panels.fileEditSession}
+              editorSessionKey={panels.activeFileEditorKey}
+              refreshNonce={panels.fileBrowserRefreshNonce}
+              onContentLoaded={panels.handleFileEditorContentLoaded}
             />
           ) : null}
 
           <div className="flex min-w-0 flex-1 flex-col">
-            {isInlineDiffViewerOpen ? (
+            {panels.isInlineDiffViewerOpen ? (
               <div className="diff-viewer flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Source Control workspace">
                 <DiffViewerContent
-                  active={isInlineDiffViewerOpen}
+                  active={panels.isInlineDiffViewerOpen}
                   wsUrl={wsUrl}
                   agentId={activeAgentId}
                   isCortex={isDiffViewerCortexSession}
-                  onClose={handleCloseDiffViewer}
-                  onBrowseWorktreeFiles={handleBrowseWorktreeFromSourceControl}
-                  onRequestSourceControlMutation={handleRequestSourceControlMutation}
-                  onSourceControlMutationComplete={handleSourceControlMutationComplete}
-                  externalRefreshNonce={sourceControlRefreshNonce}
-                  initialRepoTarget={diffViewerInitialState?.initialRepoTarget}
-                  initialTab={diffViewerInitialState?.initialTab}
-                  initialSha={diffViewerInitialState?.initialSha}
-                  initialFile={diffViewerInitialState?.initialFile}
-                  initialQuickFilter={diffViewerInitialState?.initialQuickFilter}
+                  onClose={panels.handleCloseDiffViewer}
+                  onBrowseWorktreeFiles={panels.handleBrowseWorktreeFromSourceControl}
+                  onRequestSourceControlMutation={panels.handleRequestSourceControlMutation}
+                  onSourceControlMutationComplete={panels.handleSourceControlMutationComplete}
+                  externalRefreshNonce={panels.sourceControlRefreshNonce}
+                  initialRepoTarget={panels.diffViewerInitialState?.initialRepoTarget}
+                  initialTab={panels.diffViewerInitialState?.initialTab}
+                  initialSha={panels.diffViewerInitialState?.initialSha}
+                  initialFile={panels.diffViewerInitialState?.initialFile}
+                  initialQuickFilter={panels.diffViewerInitialState?.initialQuickFilter}
                 />
               </div>
             ) : activeView === 'settings' ? (
@@ -2155,8 +748,8 @@ export function BuilderSurface({
                     agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
                   })
                 }
-                onRestoreProfile={handleRestoreProfile}
-                onRestoreSession={handleRestoreSession}
+                onRestoreProfile={session.handleRestoreProfile}
+                onRestoreSession={session.handleRestoreSession}
               />
             ) : (
               <ChatWorkspace
@@ -2178,12 +771,12 @@ export function BuilderSurface({
                   onChannelViewChange: setMessageSourceView,
                   detailedAllView: effectiveDetailedAllView,
                   onDetailedAllViewChange: undefined,
-                  contextWindowUsage,
+                  contextWindowUsage: transcript.contextWindowUsage,
                   modelCacheHeaderSummary,
                   activeWorkSnapshot,
                   activeWorkAgents: state.agents,
                   activeWorkStatuses: state.statuses,
-                  onNavigateToActiveWorkWorker: isActiveManager ? handleSelectAgent : undefined,
+                  onNavigateToActiveWorkWorker: isActiveManager ? panels.handleSelectAgent : undefined,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,
@@ -2192,43 +785,43 @@ export function BuilderSurface({
                   smartCompactInProgress: isSmartCompactingManager,
                   onSmartCompact: () => void handleSmartCompactManager(),
                   autoCompactionInProgress,
-                  pinnedCount,
-                  pinnedMessageIds,
-                  onScrollToMessage: handleScrollToMessage,
-                  onClearAllPins: handleClearAllPins,
+                  pinnedCount: transcript.pinnedCount,
+                  pinnedMessageIds: transcript.pinnedMessageIds,
+                  onScrollToMessage: transcript.handleScrollToMessage,
+                  onClearAllPins: session.handleClearAllPins,
                   showStopAll: isActiveManager,
                   stopAllInProgress: isStoppingAllAgents,
                   stopAllDisabled: !state.connected || !canStopAllAgents,
                   onStopAll: () => void handleStopAllAgents(),
                   showNewChat: isActiveManager,
-                  onNewChat: handleNewChat,
-                  isArtifactsPanelOpen,
-                  onToggleArtifactsPanel: handleGuardedToggleArtifactsPanel,
+                  onNewChat: session.handleNewChat,
+                  isArtifactsPanelOpen: panels.isArtifactsPanelOpen,
+                  onToggleArtifactsPanel: panels.handleGuardedToggleArtifactsPanel,
                   isTerminalPanelOpen: terminalPanel.isPanelVisible,
                   terminalCount: state.terminals.length,
                   onToggleTerminalPanel: terminalSessionAgentId ? terminalPanel.togglePanel : undefined,
-                  onOpenDiffViewer: handleOpenDiffViewerModal,
-                  isFileBrowserOpen,
-                  onToggleFileBrowser: handleGuardedToggleFileBrowser,
+                  onOpenDiffViewer: panels.handleOpenDiffViewerModal,
+                  isFileBrowserOpen: panels.isFileBrowserOpen,
+                  onToggleFileBrowser: panels.handleGuardedToggleFileBrowser,
                   onToggleMobileSidebar: () =>
-                    setIsMobileSidebarOpen((previous) => !previous),
+                    panels.setIsMobileSidebarOpen((previous) => !previous),
                   showDesktopWorkspaceActions: !showActivityRail,
-                  sessionFeedbackVote: isActiveManager && activeAgentId ? getVote(activeAgentId) : null,
-                  sessionFeedbackHasComment: isActiveManager && activeAgentId ? hasComment(activeAgentId) : false,
+                  sessionFeedbackVote: isActiveManager && activeAgentId ? feedback.getVote(activeAgentId) : null,
+                  sessionFeedbackHasComment: isActiveManager && activeAgentId ? feedback.hasComment(activeAgentId) : false,
                   onSessionFeedbackVote:
-                    isActiveManager && feedbackProfileId ? submitVote : undefined,
+                    isActiveManager && feedbackProfileId ? feedback.submitVote : undefined,
                   onSessionFeedbackComment:
-                    isActiveManager && feedbackProfileId ? submitComment : undefined,
+                    isActiveManager && feedbackProfileId ? feedback.submitComment : undefined,
                   onSessionFeedbackClearComment:
-                    isActiveManager && feedbackProfileId ? clearComment : undefined,
-                  isFeedbackSubmitting,
+                    isActiveManager && feedbackProfileId ? feedback.clearComment : undefined,
+                  isFeedbackSubmitting: feedback.isSubmitting,
                 }}
                 lastError={state.lastError}
                 lastSuccess={state.lastSuccess}
                 restartRecovery={state.restartRecovery}
                 onResumeRestartRecovery={() => clientRef.current?.resumeRestartRecovery()}
                 onDismissRestartRecovery={() => clientRef.current?.dismissRestartRecovery()}
-                chatSearchBarProps={{ search: chatSearch }}
+                chatSearchBarProps={{ search: transcript.chatSearch }}
                 showWelcomeForm={shouldShowWelcomeForm}
                 showCreateManagerState={shouldShowCreateManagerState}
                 welcomeCalloutProps={{
@@ -2253,33 +846,33 @@ export function BuilderSurface({
                 }
                 messageListRef={messageListRef}
                 messageListProps={{
-                  messages: visibleMessages,
+                  messages: transcript.visibleMessages,
                   agents: state.agents,
                   isLoading,
                   wsUrl,
                   activeAgentId,
                   projectAgent: activeAgent?.projectAgent,
-                  onSuggestionClick: handleSuggestionClick,
-                  onArtifactClick: handleOpenArtifact,
-                  onForkFromMessage: activeAgentId ? handleForkFromMessage : undefined,
-                  onPinMessage: isActiveManager && activeAgentId ? handlePinMessage : undefined,
-                  onStopExternalThread: handleStopSession,
-                  onReplyToMessage: handleReplyToMessage,
-                  getVote: feedbackProfileId ? getVote : undefined,
-                  hasComment: feedbackProfileId ? hasComment : undefined,
-                  onFeedbackVote: feedbackProfileId ? submitVote : undefined,
-                  onFeedbackComment: feedbackProfileId ? submitComment : undefined,
-                  onFeedbackClearComment: feedbackProfileId ? clearComment : undefined,
-                  isFeedbackSubmitting,
-                  onChoiceSubmit: handleChoiceSubmit,
-                  onChoiceCancel: handleChoiceCancel,
+                  onSuggestionClick: session.handleSuggestionClick,
+                  onArtifactClick: panels.handleOpenArtifact,
+                  onForkFromMessage: activeAgentId ? session.handleForkFromMessage : undefined,
+                  onPinMessage: isActiveManager && activeAgentId ? session.handlePinMessage : undefined,
+                  onStopExternalThread: session.handleStopSession,
+                  onReplyToMessage: session.handleReplyToMessage,
+                  getVote: feedbackProfileId ? feedback.getVote : undefined,
+                  hasComment: feedbackProfileId ? feedback.hasComment : undefined,
+                  onFeedbackVote: feedbackProfileId ? feedback.submitVote : undefined,
+                  onFeedbackComment: feedbackProfileId ? feedback.submitComment : undefined,
+                  onFeedbackClearComment: feedbackProfileId ? feedback.clearComment : undefined,
+                  isFeedbackSubmitting: feedback.isSubmitting,
+                  onChoiceSubmit: session.handleChoiceSubmit,
+                  onChoiceCancel: session.handleChoiceCancel,
                   pendingChoiceIds: state.pendingChoiceIds,
                   missingPendingChoiceIds,
                   activeWorkSnapshot,
                   activeWorkExpanded,
                   onActiveWorkExpandedChange: setActiveWorkExpanded,
                   statuses: state.statuses,
-                  onNavigateToWorker: isActiveManager ? handleSelectAgent : undefined,
+                  onNavigateToWorker: isActiveManager ? panels.handleSelectAgent : undefined,
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt
@@ -2291,7 +884,7 @@ export function BuilderSurface({
                         workers: sessionWorkers,
                         statuses: state.statuses,
                         activityMessages: state.activityMessages,
-                        onNavigateToWorker: handleSelectAgent,
+                        onNavigateToWorker: panels.handleSelectAgent,
                       }
                     : undefined
                 }
@@ -2299,7 +892,7 @@ export function BuilderSurface({
                   activeAgent?.role === 'worker' && activeAgent.managerId && parentManagerLabel
                     ? {
                         managerLabel: parentManagerLabel,
-                        onNavigateBack: () => handleSelectAgent(activeAgent.managerId),
+                        onNavigateBack: () => panels.handleSelectAgent(activeAgent.managerId),
                       }
                     : undefined
                 }
@@ -2329,14 +922,14 @@ export function BuilderSurface({
                   onMaximizePanel: terminalPanel.maximizePanel,
                   onHidePanel: terminalPanel.hidePanel,
                   onPanelHeightChange: terminalPanel.setPanelHeight,
-                  onFocusChatInput: handleFocusChatInput,
-                  onAddToChat: handleTerminalAddToChat,
+                  onFocusChatInput: session.handleFocusChatInput,
+                  onAddToChat: session.handleTerminalAddToChat,
                   issueTicket: terminalPanel.issueTicket,
                 }}
                 messageInputRef={messageInputRef}
                 messageInputProps={{
-                  onSend: handleSend,
-                  onSubmitted: handleMessageInputSubmitted,
+                  onSend: session.handleSend,
+                  onSubmitted: session.handleMessageInputSubmitted,
                   isLoading,
                   disabled: !state.connected || !activeAgentId || hasActivePendingChoice,
                   placeholderOverride: hasActivePendingChoice
@@ -2357,50 +950,50 @@ export function BuilderSurface({
             )}
           </div>
 
-          {activeView === 'chat' && !isInlineDiffViewerOpen ? (
+          {activeView === 'chat' && !panels.isInlineDiffViewerOpen ? (
             <ChatSidePanels
               isCortexSession={activeAgent?.archetypeId === 'cortex'}
               cortexDashboardProps={{
                 wsUrl,
                 managerId: activeManagerId,
-                isOpen: isArtifactsPanelOpen,
-                onClose: handleGuardedArtifactsClose,
-                onArtifactClick: handleOpenArtifact,
-                onOpenSession: handleSelectAgent,
-                onOpenDiffViewer: handleOpenDiffViewerModal,
-                requestedTab: cortexDashboardTabRequest,
-                onActiveTabChange: handleCortexDashboardTabChange,
+                isOpen: panels.isArtifactsPanelOpen,
+                onClose: panels.handleGuardedArtifactsClose,
+                onArtifactClick: panels.handleOpenArtifact,
+                onOpenSession: panels.handleSelectAgent,
+                onOpenDiffViewer: panels.handleOpenDiffViewerModal,
+                requestedTab: panels.cortexDashboardTabRequest,
+                onActiveTabChange: panels.handleCortexDashboardTabChange,
               }}
               artifactsSidebarProps={{
                 wsUrl,
                 managerId: activeManagerId,
-                artifacts: collectedArtifacts,
-                isOpen: isArtifactsPanelOpen,
-                onClose: handleGuardedArtifactsClose,
-                onArtifactClick: handleOpenArtifact,
-                activeTab: artifactsPanelTab,
-                onActiveTabChange: setArtifactsPanelTab,
+                artifacts: transcript.collectedArtifacts,
+                isOpen: panels.isArtifactsPanelOpen,
+                onClose: panels.handleGuardedArtifactsClose,
+                onArtifactClick: panels.handleOpenArtifact,
+                activeTab: panels.artifactsPanelTab,
+                onActiveTabChange: panels.setArtifactsPanelTab,
                 panelMode: 'rail-selected',
                 mobileOnly: true,
               }}
               fileBrowserPanelProps={
-                isFileBrowserOpen && selectedFileBrowserFile
+                panels.isFileBrowserOpen && panels.selectedFileBrowserFile
                   ? {
                       wsUrl,
                       agentId: activeAgentId,
-                      filePath: selectedFileBrowserFile,
-                      onClose: handleGuardedFileBrowserClosePanel,
-                      onNavigateToDirectory: handleGuardedFileBrowserNavigateToDirectory,
-                      tabs: fileBrowserTabs,
-                      activeTabId: activeFileBrowserTabId,
-                      previewTabId: previewFileBrowserTabId,
-                      dirtyTabIds: dirtyFileBrowserTabIds,
-                      contentScrollSnapshot: activeFileBrowserContentScrollSnapshot,
-                      onContentScrollSnapshotChange: updateActiveFileBrowserContentScrollSnapshot,
-                      onActivateTab: activateFileBrowserTab,
-                      onCloseTab: (tab) => handleRequestCloseFileBrowserTab(tab.id),
-                      onStickifyTab: stickifyFileBrowserTab,
-                      worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+                      filePath: panels.selectedFileBrowserFile,
+                      onClose: panels.handleGuardedFileBrowserClosePanel,
+                      onNavigateToDirectory: panels.handleGuardedFileBrowserNavigateToDirectory,
+                      tabs: panels.fileBrowserTabs,
+                      activeTabId: panels.activeFileBrowserTabId,
+                      previewTabId: panels.previewFileBrowserTabId,
+                      dirtyTabIds: panels.dirtyFileBrowserTabIds,
+                      contentScrollSnapshot: panels.activeFileBrowserContentScrollSnapshot,
+                      onContentScrollSnapshotChange: panels.updateActiveFileBrowserContentScrollSnapshot,
+                      onActivateTab: panels.activateFileBrowserTab,
+                      onCloseTab: (tab) => panels.handleRequestCloseFileBrowserTab(tab.id),
+                      onStickifyTab: panels.stickifyFileBrowserTab,
+                      worktreeId: panels.fileBrowserWorktreeContext?.worktreeId ?? null,
                       mobileOnly: true,
                     }
                   : null
@@ -2408,20 +1001,20 @@ export function BuilderSurface({
               fileBrowserSidebarProps={{
                 wsUrl,
                 agentId: activeAgentId,
-                isOpen: isFileBrowserOpen,
-                onClose: handleGuardedToggleFileBrowser,
-                onSelectFile: handleGuardedFileBrowserSelectFile,
-                onOpenStickyFile: handleFileBrowserOpenStickyFile,
-                selectedFile: selectedFileBrowserFile,
-                treeSnapshot: fileBrowserTreeSnapshot,
-                onTreeSnapshotChange: updateFileBrowserTreeSnapshot,
-                worktreeContext: fileBrowserWorktreeContext,
-                onClearWorktreeContext: handleGuardedClearFileBrowserWorktreeContext,
+                isOpen: panels.isFileBrowserOpen,
+                onClose: panels.handleGuardedToggleFileBrowser,
+                onSelectFile: panels.handleGuardedFileBrowserSelectFile,
+                onOpenStickyFile: panels.handleFileBrowserOpenStickyFile,
+                selectedFile: panels.selectedFileBrowserFile,
+                treeSnapshot: panels.fileBrowserTreeSnapshot,
+                onTreeSnapshotChange: panels.updateFileBrowserTreeSnapshot,
+                worktreeContext: panels.fileBrowserWorktreeContext,
+                onClearWorktreeContext: panels.handleGuardedClearFileBrowserWorktreeContext,
                 projectResourceProfileId: activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null,
                 projectResourceSessionAgentId: activeManagerAgent?.agentId ?? null,
                 mobileOnly: true,
-                refreshNonce: fileBrowserRefreshNonce,
-                onDeleteEntry: handleFileBrowserDeleteEntry,
+                refreshNonce: panels.fileBrowserRefreshNonce,
+                onDeleteEntry: panels.handleFileBrowserDeleteEntry,
               }}
             />
           ) : null}
@@ -2429,11 +1022,11 @@ export function BuilderSurface({
 
       <GlobalDialogs
         artifactPanelProps={{
-          artifact: activeArtifact,
+          artifact: panels.activeArtifact,
           wsUrl,
           activeAgentId,
-          onClose: handleGuardedArtifactDialogClose,
-          onArtifactClick: handleOpenArtifact,
+          onClose: panels.handleGuardedArtifactDialogClose,
+          onArtifactClick: panels.handleOpenArtifact,
         }}
         createManagerDialogProps={{
           open: isCreateManagerDialogOpen,
@@ -2473,7 +1066,7 @@ export function BuilderSurface({
         forkSessionDialogProps={
           messageForkTarget
             ? {
-                onConfirm: handleConfirmMessageFork,
+                onConfirm: session.handleConfirmMessageFork,
                 onClose: () => setMessageForkTarget(null),
                 fromMessageTimestamp: messageForkTarget.messageTimestamp
                   ? new Date(messageForkTarget.messageTimestamp).toLocaleString()
@@ -2482,20 +1075,20 @@ export function BuilderSurface({
             : null
         }
         diffViewerDialogProps={{
-          open: isDiffViewerOpen && diffViewerPresentation === 'modal',
-          onOpenChange: handleGuardedDiffViewerOpenChange,
+          open: panels.isDiffViewerOpen && panels.diffViewerPresentation === 'modal',
+          onOpenChange: panels.handleGuardedDiffViewerOpenChange,
           wsUrl,
           agentId: activeAgentId,
           isCortex: isDiffViewerCortexSession,
-          onBrowseWorktreeFiles: handleBrowseWorktreeFromSourceControl,
-          onRequestSourceControlMutation: handleRequestSourceControlMutation,
-          onSourceControlMutationComplete: handleSourceControlMutationComplete,
-          externalRefreshNonce: sourceControlRefreshNonce,
-          initialRepoTarget: diffViewerInitialState?.initialRepoTarget,
-          initialTab: diffViewerInitialState?.initialTab,
-          initialSha: diffViewerInitialState?.initialSha,
-          initialFile: diffViewerInitialState?.initialFile,
-          initialQuickFilter: diffViewerInitialState?.initialQuickFilter,
+          onBrowseWorktreeFiles: panels.handleBrowseWorktreeFromSourceControl,
+          onRequestSourceControlMutation: panels.handleRequestSourceControlMutation,
+          onSourceControlMutationComplete: panels.handleSourceControlMutationComplete,
+          externalRefreshNonce: panels.sourceControlRefreshNonce,
+          initialRepoTarget: panels.diffViewerInitialState?.initialRepoTarget,
+          initialTab: panels.diffViewerInitialState?.initialTab,
+          initialSha: panels.diffViewerInitialState?.initialSha,
+          initialFile: panels.diffViewerInitialState?.initialFile,
+          initialQuickFilter: panels.diffViewerInitialState?.initialQuickFilter,
         }}
       />
     </>

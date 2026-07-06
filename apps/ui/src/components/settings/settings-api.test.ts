@@ -10,7 +10,7 @@ import {
   startPoolAddAccountOAuthStream,
   startSettingsAuthOAuthLoginStream,
 } from './settings-api'
-import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -129,7 +129,7 @@ describe('settings-api skills list', () => {
       }),
     )
 
-    const skills = await fetchSkillsList('ws://127.0.0.1:47187')
+    const skills = await fetchSkillsList(createBuilderSettingsApiClient('ws://127.0.0.1:47187'))
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/settings/skills',
@@ -156,7 +156,7 @@ describe('settings-api server version', () => {
       }),
     )
 
-    await expect(fetchServerVersion('ws://127.0.0.1:47187')).resolves.toBe('0.13.0')
+    await expect(fetchServerVersion(createBuilderSettingsApiClient('ws://127.0.0.1:47187'))).resolves.toBe('0.13.0')
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/stats?range=7d',
       expect.objectContaining({ credentials: 'same-origin' }),

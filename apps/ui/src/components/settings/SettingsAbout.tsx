@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, Download, ExternalLink, Loader2, RefreshCw, RotateCcw, AlertCircle, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from './settings-row'
 import { fetchServerVersion } from './settings-api'
-import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
 import { isElectron, type UpdateStatus } from '@/lib/electron-bridge'
 
 interface SettingsAboutProps {
@@ -16,7 +16,11 @@ interface SettingsAboutProps {
 export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
   const bridge = window.electronBridge
   const inElectron = isElectron()
-  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
+  // Resolve a target-aware client at the boundary (settings-api takes a client).
+  const clientOrWsUrl = useMemo<SettingsApiClient>(
+    () => apiClient ?? createBuilderSettingsApiClient(wsUrl),
+    [apiClient, wsUrl],
+  )
   const appVersion = inElectron ? (bridge?.getVersion?.() ?? null) : null
   const [backendVersion, setBackendVersion] = useState<string | null>(null)
   const [status, setStatus] = useState<UpdateStatus | null>(null)
