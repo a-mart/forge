@@ -45,7 +45,7 @@ export interface MessageRouteProvenance {
   origin: MessageRouteOrigin;
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
   sourceContext?: MessageSourceContext;
-  sessionPurpose?: "cortex_review" | "agent_creator";
+  sessionPurpose?: "cortex_review" | "agent_creator" | "capture_check";
   archetypeId?: string;
   targetKind: MessageRouteTargetKind;
   role: MessageRouteRole;

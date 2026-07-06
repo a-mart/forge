@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
@@ -135,6 +135,7 @@ export async function runKnowledgeV2Migration(
           summary.pointers += 1;
           const referencePath = await writePointerReference(options.dataDir, candidate, classification);
           upsert = {
+            id: stableMigrationEntryId("pointer", classification.title),
             type: "pointer",
             scope: file.scope,
             title: classification.title,
@@ -148,6 +149,7 @@ export async function runKnowledgeV2Migration(
           };
         } else {
           upsert = {
+            id: stableMigrationEntryId(classification.type, classification.title),
             type: classification.type,
             scope: file.scope,
             title: classification.title,
@@ -205,6 +207,16 @@ export async function runKnowledgeV2Migration(
   } finally {
     await releaseLock();
   }
+}
+
+function stableMigrationEntryId(type: KnowledgeEntryType, title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72)
+    .replace(/-+$/g, "");
+  return `${type}-${slug || "legacy"}`;
 }
 
 export async function rollbackKnowledgeV2Migration(
@@ -330,8 +342,14 @@ function splitLegacyKnowledgeFile(sourceFile: LegacyKnowledgeFile): LegacyCandid
 function classifyLegacyCandidate(candidate: LegacyCandidate): CandidateClassification {
   const text = candidate.text.replace(/\s+/g, " ").trim();
   const haystack = `${candidate.section} ${text}`.toLowerCase();
-  if (/\b(this task|current task|today|tomorrow|one[- ]off|temporary|scratch|wp-[a-z0-9-]+)\b/u.test(haystack)) {
+  if (/\b(this task|current task|today|tomorrow|yesterday|one[- ]off|temporary|scratch|wp-[a-z0-9-]+|pr\b|pull request|branch|commit|review bounce|round [0-9]+|fixture|smoke test|gate passed)\b/u.test(haystack)) {
     return { action: "discard", reason: "task-local" };
+  }
+  if (/\b(done|completed|merged|accepted|verified|green|red|passed|failed)\b/u.test(haystack) && /\b(wp-|wave|suite|test run|gate|branch|commit)\b/u.test(haystack)) {
+    return { action: "discard", reason: "process-log" };
+  }
+  if (text.length < 24 || /^(yes|no|ok|todo|done|n\/a|none)\.?$/iu.test(text)) {
+    return { action: "discard", reason: "too-thin" };
   }
   const title = buildEntryTitle(text);
   if (estimateTokens(text) > 90 || /\b(reference|architecture|large topic|full details|long-form)\b/u.test(haystack)) {
@@ -520,8 +538,4 @@ async function fileExists(path: string): Promise<boolean> {
     if (isEnoentError(error)) return false;
     throw error;
   }
-}
-
-export function manifestFileName(path: string): string {
-  return basename(path);
 }

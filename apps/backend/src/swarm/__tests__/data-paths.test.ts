@@ -52,12 +52,10 @@ import {
   getSessionsDir,
   getCommonKnowledgePath,
   getCortexAutoReviewSettingsPath,
+  getCortexConsolidationRunsPath,
   getCompactionSettingsPath,
-  getCortexNotesPath,
   getCortexPromotionManifestsDir,
-  getCortexReviewLockPath,
   getCortexReviewLogPath,
-  getCortexReviewRunsPath,
   getCliAccessFilePath,
   getSharedAuthDir,
   getSharedAuthFilePath,
@@ -180,11 +178,9 @@ describe("data-paths", () => {
       join(DATA_DIR, "shared", "knowledge", "profiles", `${PROFILE_ID}.md`)
     );
     expect(getCommonKnowledgePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "common.md"));
-    expect(getCortexNotesPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-notes.md"));
     expect(getCortexReviewLogPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-review-log.jsonl"));
-    expect(getCortexReviewRunsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-review-runs.json"));
+    expect(getCortexConsolidationRunsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-consolidation-runs.json"));
     expect(getCortexPromotionManifestsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-promotion-manifests"));
-    expect(getCortexReviewLockPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-lock.json"));
     expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth"));
     expect(getSharedAuthFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth", "auth.json"));
     expect(getCliAccessFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth", "cli-access.json"));

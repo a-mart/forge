@@ -18,6 +18,10 @@ export function createKnowledgeConsolidatorApi(service: KnowledgeService): Knowl
       const mergedSources = entries.flatMap((entry) => entry.frontmatter.sources);
       const mergedSupersedes = Array.from(new Set(entries.flatMap((entry) => entry.frontmatter.supersedes)));
       const sourceEntryIds = Array.from(new Set([...ids, ...entries.flatMap((entry) => entry.frontmatter.source_entry_ids)]));
+      const supportCount = entries.reduce((sum, entry) => sum + entry.frontmatter.support_count, 0);
+      const lastConfirmed = entries
+        .map((entry) => entry.frontmatter.last_confirmed)
+        .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
       const merged = await service.upsertEntry({
         id: primary.frontmatter.id,
         type: primary.frontmatter.type,
@@ -29,11 +33,13 @@ export function createKnowledgeConsolidatorApi(service: KnowledgeService): Knowl
         importance: primary.frontmatter.importance,
         supersedes: mergedSupersedes,
         sourceEntryIds,
+        supportCount,
+        lastConfirmed,
         expectedVersion: primary.frontmatter.version,
       });
 
       for (const entry of entries.slice(1)) {
-        await service.archiveEntry(entry.frontmatter.id);
+        await service.supersedeEntry(entry.frontmatter.id, [merged.frontmatter.id]);
       }
 
       return merged;
@@ -42,7 +48,7 @@ export function createKnowledgeConsolidatorApi(service: KnowledgeService): Knowl
       return service.archiveEntry(id);
     },
     async reindex(): Promise<void> {
-      const scopes = new Set((await service.searchEntries({ scope: "all", limit: 100 })).map((entry) => entry.scope));
+      const scopes = new Set((await service.listEntries({ scope: "all" })).map((entry) => entry.frontmatter.scope));
       await service.regenerateIndex("global");
       for (const scope of scopes) {
         await service.regenerateIndex(scope);

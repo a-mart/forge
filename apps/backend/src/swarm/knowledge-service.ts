@@ -95,6 +95,12 @@ export interface KnowledgeSearchResult {
   status: KnowledgeEntryStatus;
 }
 
+export interface KnowledgeEntryListOptions {
+  scope?: "global" | "profile" | "all";
+  profileId?: string;
+  includeArchived?: boolean;
+}
+
 export interface KnowledgeIndexResult {
   scope: KnowledgeEntryScope;
   path: string;
@@ -150,7 +156,7 @@ export class KnowledgeService {
 
   async upsertEntry(input: KnowledgeUpsertInput): Promise<KnowledgeEntry> {
     return this.withWriteLock(async () => {
-      const normalized = this.normalizeUpsertInput(input);
+      const normalized = await this.normalizeUpsertInput(input);
       const existing = await this.readEntry(normalized.id, { includeArchived: true }).catch((error) => {
         if (error instanceof KnowledgeServiceError && error.code === "not_found") return undefined;
         throw error;
@@ -283,6 +289,16 @@ export class KnowledgeService {
       }));
   }
 
+  async listEntries(options: KnowledgeEntryListOptions = {}): Promise<KnowledgeEntry[]> {
+    const scopes = await this.resolveSearchScopes(options);
+    const active = await Promise.all(scopes.map((scope) => this.readEntriesByScope(scope, false)));
+    if (options.includeArchived !== true) {
+      return active.flat().sort(compareIndexPriority);
+    }
+    const archived = await Promise.all(scopes.map((scope) => this.readEntriesByScope(scope, true)));
+    return [...active.flat(), ...archived.flat()].sort(compareIndexPriority);
+  }
+
   async archiveEntry(id: string): Promise<KnowledgeEntry> {
     return this.withWriteLock(async () => {
       const existing = await this.readEntry(id, { includeArchived: false });
@@ -307,6 +323,32 @@ export class KnowledgeService {
       await this.recordMutation(archived.path, "write", archived.frontmatter.scope);
       await this.regenerateIndex(archived.frontmatter.scope);
       return archived;
+    });
+  }
+
+  async supersedeEntry(id: string, supersededByIds: string[] = []): Promise<KnowledgeEntry> {
+    return this.withWriteLock(async () => {
+      const existing = await this.readEntry(id, { includeArchived: false });
+      const next = await this.upsertEntryUnlocked({
+        id: existing.frontmatter.id,
+        type: existing.frontmatter.type,
+        scope: existing.frontmatter.scope,
+        title: existing.frontmatter.title,
+        body: existing.body,
+        evidenceTier: existing.frontmatter.evidence_tier,
+        sources: existing.frontmatter.sources,
+        importance: existing.frontmatter.importance,
+        status: "superseded",
+        supersedes: Array.from(new Set([...existing.frontmatter.supersedes, ...supersededByIds])),
+        sourceEntryIds: existing.frontmatter.source_entry_ids,
+        firstSeen: existing.frontmatter.first_seen,
+        lastConfirmed: existing.frontmatter.last_confirmed,
+        supportCount: existing.frontmatter.support_count,
+        legacy: existing.frontmatter.legacy,
+        expectedVersion: existing.frontmatter.version,
+      });
+      await this.regenerateIndex(next.frontmatter.scope);
+      return next;
     });
   }
 
@@ -342,7 +384,7 @@ export class KnowledgeService {
     };
   }
 
-  private normalizeUpsertInput(input: KnowledgeUpsertInput): NormalizedKnowledgeUpsertInput {
+  private async normalizeUpsertInput(input: KnowledgeUpsertInput): Promise<NormalizedKnowledgeUpsertInput> {
     const type = normalizeEntryType(input.type);
     const scope = normalizeScope(input.scope);
     const title = normalizeTitle(input.title);
@@ -355,7 +397,7 @@ export class KnowledgeService {
     }
     const sources = input.sources.map(normalizeSource);
     return {
-      id: normalizeId(input.id ?? `${type}-${slugify(title)}`),
+      id: input.id ? normalizeId(input.id) : await this.allocateEntryId(type, scope, title),
       type,
       scope,
       title,
@@ -373,6 +415,60 @@ export class KnowledgeService {
         : { supportCount: normalizePositiveInteger(input.supportCount, "supportCount") }),
       legacy: input.legacy === true,
     };
+  }
+
+  private async upsertEntryUnlocked(input: KnowledgeUpsertInput): Promise<KnowledgeEntry> {
+    const normalized = await this.normalizeUpsertInput(input);
+    const existing = await this.readEntry(normalized.id, { includeArchived: true }).catch((error) => {
+      if (error instanceof KnowledgeServiceError && error.code === "not_found") return undefined;
+      throw error;
+    });
+    if (input.expectedVersion !== undefined && existing?.frontmatter.version !== input.expectedVersion) {
+      throw new KnowledgeServiceError("Knowledge entry version conflict", "version_conflict");
+    }
+    const timestamp = this.now().toISOString().slice(0, 10);
+    const frontmatter: KnowledgeEntryFrontmatter = {
+      id: normalized.id,
+      version: (existing?.frontmatter.version ?? 0) + 1,
+      type: normalized.type,
+      scope: normalized.scope,
+      status: normalized.status ?? existing?.frontmatter.status ?? "active",
+      first_seen: normalized.firstSeen ?? existing?.frontmatter.first_seen ?? timestamp,
+      last_confirmed: normalized.lastConfirmed ?? timestamp,
+      support_count: normalized.supportCount ?? existing?.frontmatter.support_count ?? 1,
+      sources: normalized.sources,
+      evidence_tier: normalized.evidenceTier,
+      supersedes: normalized.supersedes,
+      source_entry_ids: normalized.sourceEntryIds,
+      importance: normalized.importance,
+      decay_after_days: defaultDecayAfterDays(normalized.type),
+      title: normalized.title,
+      legacy: normalized.legacy || existing?.frontmatter.legacy ? true : undefined,
+      indexed: existing?.frontmatter.indexed,
+    };
+    const targetPath = this.entryPath(frontmatter.scope, frontmatter.id, frontmatter.status === "archived");
+    await writeKnowledgeEntryFile(targetPath, frontmatter, normalized.body);
+    if (existing && existing.path !== targetPath) {
+      await archiveOldPath(existing.path).catch(() => undefined);
+    }
+    await this.recordMutation(targetPath, "write", frontmatter.scope);
+    return { frontmatter, body: normalized.body, path: targetPath };
+  }
+
+  private async allocateEntryId(type: KnowledgeEntryType, scope: KnowledgeEntryScope, title: string): Promise<string> {
+    const base = normalizeId(`${type}-${slugifyTitleWords(title, 6)}`);
+    let candidate = base;
+    for (let suffix = 2; suffix < 10_000; suffix += 1) {
+      const existing = await this.readEntry(candidate, { includeArchived: true }).catch((error) => {
+        if (error instanceof KnowledgeServiceError && error.code === "not_found") return undefined;
+        throw error;
+      });
+      if (!existing || existing.frontmatter.scope !== scope) {
+        return candidate;
+      }
+      candidate = `${base}-${suffix}`;
+    }
+    throw new KnowledgeServiceError(`Unable to allocate a unique id for ${base}`, "id_collision");
   }
 
   private async readEntriesForSearch(options: KnowledgeSearchOptions): Promise<KnowledgeEntry[]> {
@@ -722,6 +818,17 @@ function importanceRank(importance: KnowledgeEntryImportance): number {
 
 function slugify(value: string): string {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+}
+
+function slugifyTitleWords(value: string, maxWords: number): string {
+  const words = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .slice(0, maxWords);
+  return slugify(words.join("-"));
 }
 
 function normalizeSearchText(value: string): string {

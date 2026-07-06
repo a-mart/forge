@@ -1,5 +1,3 @@
-import type { CortexReviewRunScope, CortexReviewRunTrigger } from './cortex-review.js'
-
 export type CortexDocumentGroup =
   | 'commonKnowledge'
   | 'profileMemory'
@@ -23,17 +21,20 @@ export interface CortexDocumentEntry {
 
 export interface CortexFileReviewHistoryEntry {
   reviewId?: string
+  runId?: string
   recordedAt: string
-  status: 'success' | 'no-op' | 'blocked' | 'failed'
+  action?: 'added' | 'merged' | 'archived' | 'superseded' | 'reindexed'
+  entryId?: string
+  why?: string
+  status?: 'success' | 'partial' | 'failed'
+  trigger?: 'manual' | 'scheduled' | 'boot_recovery'
+  scopeLabel?: string
+  sessionAgentId?: string | null
+  scheduleName?: string
   changedFiles: string[]
   notes: string[]
   blockers: string[]
   watermarksAdvanced: boolean
-  trigger?: CortexReviewRunTrigger
-  scope?: CortexReviewRunScope
-  scopeLabel?: string
-  sessionAgentId?: string | null
-  scheduleName?: string | null
   manifestPath?: string
   manifestExists: boolean
 }

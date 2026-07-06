@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
+import { complete, getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { isRepoProjectAgentSource, isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
 import type {
@@ -20,9 +20,8 @@ import type {
   RedeemOpenAIBrokerInviteRequest,
   UpdateOpenAIBrokerSettingsRequest,
   PooledCredentialInfo,
-  CortexReviewRunRecord,
-  CortexReviewRunScope,
-  CortexReviewRunTrigger,
+  CortexConsolidationRunRecord,
+  CortexConsolidationTrigger,
   PromptPreviewResponse,
   ManagerExactModelSelection,
   ServerEvent,
@@ -74,10 +73,8 @@ import {
 } from "./session/worker-transcript-files.js";
 import {
   getCommonKnowledgePath,
-  getCortexPromotionManifestsDir,
+  getCortexConsolidationRunsPath,
   getCortexReviewLogPath,
-  getCortexReviewRunsPath,
-  getCortexWorkerPromptsPath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getSessionDir,
@@ -119,6 +116,15 @@ import {
   type KnowledgeEntryType,
   type KnowledgeSearchResult,
 } from "./knowledge-service.js";
+import {
+  countUserTurnsSinceWatermark,
+  evaluateCaptureCadence,
+  invokeCaptureJudge,
+  readCaptureDeltaFromSessionFile,
+  runCaptureCheckFork,
+  type CaptureCadenceInput,
+} from "./capture-check.js";
+import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import { ArchiveService } from "./archive/archive-service.js";
 import { ArchiveLastUsedHydrator, type ArchiveLastUsedHydrationResult } from "./archive/archive-last-used-hydrator.js";
@@ -694,511 +700,6 @@ const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
 ## Cross-Project Gotchas
 `;
 
-const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates — v4
-<!-- Cortex Worker Prompts Version: 4 -->
-
-> Owned by Cortex. Refine these templates over time based on what produces good vs bad results from workers.
-
-Use these templates when spawning workers. Copy the relevant template, fill in the placeholders (marked with \`{{...}}\`), and send as the worker's task message.
-
-Model-selection guidance:
-- Cortex chooses the actual runtime model.
-- Default to a cheap/fast extraction model for narrow transcript work.
-- Retry with a more reliable balanced model if the fast path idles or emits no output.
-- Escalate to a deep-synthesis model for ambiguity, conflict resolution, or large reconciliation passes.
-
----
-
-## Promotion Discipline (all templates)
-
-Default to **precision over coverage**.
-
-- A clean **no durable findings** result is good work.
-- Prefer **discard** over weak promotion.
-- Prefer **note** over weak \`inject\` / \`reference\` proposals.
-- Prefer **reference** over **inject** for narrow procedures, command catalogs, troubleshooting flows, and task-local runbooks.
-- Only use **inject** when the finding should change future agent behavior by default within its scope.
-- Distill findings into future-facing guidance. Do not copy transcript chronology, long command sequences, or logs unless the exact string is itself the durable convention.
-- Cap retained findings to the strongest few. Merge overlaps instead of emitting near-duplicates.
-- Prioritize explicit user statements, trusted artifacts, explicit feedback, and repeated user-side patterns over assistant chatter.
-
-## Evidence Discipline (all templates)
-
-Prefer **exogenous evidence** over **endogenous evidence**.
-
-Stronger evidence:
-- explicit user instructions or corrections
-- trusted source-of-truth artifacts (\`AGENTS.md\`, stable design docs, configs)
-- explicit feedback telemetry
-- repeated user-side patterns across sessions
-
-Weaker evidence:
-- manager/worker behavior that may have been shaped by existing memory
-- assistant narrative claims
-- session-memory text by itself
-- one-off inferences from ambiguous context
-
-Rules:
-- Do not propose weak evidence directly for \`common\` injected memory.
-- Treat session memory as supporting evidence, not authoritative truth.
-- If a signal is interesting but weak, return it as \`note\`.
-
-## Required Finding Schema (all extraction templates)
-
-Write markdown, but include one fenced \`json\` block containing this normalized shape:
-
-\`\`\`json
-{
-  "profile": "<profileId>",
-  "session": "<sessionId>",
-  "source_kind": "transcript | session_memory | feedback",
-  "findings": [
-    {
-      "id": "F1",
-      "statement": "atomic durable claim",
-      "type": "preference | workflow | decision | fact | gotcha | procedure | feedback",
-      "proposed_outcome": "note | inject | reference | discard",
-      "proposed_target": "common | profile_memory | reference/<file>.md | notes | none",
-      "scope": "common | profile",
-      "confidence": "high | medium | low",
-      "evidence_tier": "explicit_user | trusted_artifact | feedback_signal | repeated_user_pattern | agent_inference",
-      "sources": [
-        { "kind": "session_message | session_memory | feedback | doc", "ref": "..." }
-      ],
-      "rationale": "why this routing is appropriate"
-    }
-  ],
-  "summary": {
-    "finding_count": 0,
-    "blockers": []
-  }
-}
-\`\`\`
-
-Schema rules:
-- cap retained findings to the strongest 8 unless the task explicitly asks for fewer
-- prefer atomic claims rather than bundled paragraphs
-- return empty \`findings\` if nothing durable exists
-- do not substitute a prose session summary for structured findings
-
----
-
-## Callback Format (all templates)
-
-Every worker MUST send a final callback to the manager via \`send_message_to_agent\` in this format:
-
-\`\`\`
-STATUS: DONE | FAILED
-FINDINGS: <count>
-ARTIFACT: <path to output file>
-BLOCKER: <none | brief description>
-\`\`\`
-
-Detailed reasoning and full findings go in the output artifact file, NOT in the callback message.
-
----
-
-## 1. Session Transcript Extraction Worker
-
-Use for: Reviewing a single session's transcript delta and extracting durable knowledge signals.
-
-\`\`\`
-You are a knowledge extraction worker for Cortex.
-
-## Task
-Review only the transcript delta that starts at byte offset {{BYTE_OFFSET}} in \`{{SESSION_JSONL_PATH}}\`.
-
-Important: the \`read\` tool offset is line-based, NOT byte-based. Do NOT pass {{BYTE_OFFSET}} into \`read\` directly.
-
-Use this workflow:
-1. If \`{{BYTE_OFFSET}}\` is greater than 0, use \`bash\` with Python/Node to copy the transcript slice starting at byte offset {{BYTE_OFFSET}} into \`{{DELTA_SLICE_PATH}}\`.
-2. Read \`{{DELTA_SLICE_PATH}}\` with the \`read\` tool.
-3. If \`{{BYTE_OFFSET}}\` is 0, you may read the original session file directly.
-
-The file is JSONL. Prioritize \`user_message\` entries, then explicit decisions or conventions stated elsewhere. Treat assistant behavior that may have been shaped by existing memory as weak evidence.
-
-## Extract only durable signals
-Examples:
-- user preferences
-- workflow patterns
-- technical decisions
-- project facts
-- quality standards
-- working conventions
-- recurring gotchas
-- cross-project patterns
-
-## Skip
-- transient task details
-- implementation minutiae
-- secrets
-- ephemeral progress chatter
-- raw code unless it clearly reveals a durable convention
-- long runbooks unless the exact command/name is itself the durable convention
-
-## Output
-Write markdown to \`{{OUTPUT_ARTIFACT_PATH}}\` with:
-1. \`Outcome: promote | no-op | follow-up-needed\`
-2. \`Why:\` one short paragraph
-3. \`Candidate Findings (JSON)\` containing the required normalized schema with:
-   - \`profile: "{{PROFILE_ID}}"\`
-   - \`session: "{{SESSION_ID}}"\`
-   - \`source_kind: "transcript"\`
-4. \`Discarded candidates\` with brief bullets for tempting but weak/transient signals
-5. \`Concise completion summary\` with 1-3 bullets Cortex could reuse in a user closeout
-
-Additional rules:
-- At most 8 retained findings.
-- Use \`note\` when the signal is plausible but not strong enough to promote.
-- Do not promote weak evidence directly to \`common\`.
-- Do not summarize the whole session.
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 2. Session-Memory Extraction Worker
-
-Use for: Reviewing a session working-memory file for signals worth promoting or preserving as notes.
-
-\`\`\`
-You are a session-memory review worker for Cortex.
-
-## Task
-Read the session memory file at \`{{SESSION_MEMORY_PATH}}\`.
-
-For context, the current profile memory is:
-{{PROFILE_MEMORY_CONTENT_OR "Profile memory is currently empty."}}
-
-## Evidence rule
-Session memory is supporting evidence, not authoritative truth. If a claim is interesting but not independently strong, return it as \`note\`.
-
-## What to look for
-- durable decisions or conventions
-- corrections to existing profile memory
-- architecture/gotcha signals worth remembering
-- patterns not yet captured in profile memory
-
-## What to skip
-- active task state and in-progress work items
-- duplicates of existing profile memory
-- speculative notes without support
-- Cortex-internal orchestration details
-- long procedural detail better suited for reference
-
-## Output
-Write markdown to \`{{OUTPUT_ARTIFACT_PATH}}\` with:
-1. \`Outcome: promote | no-op | follow-up-needed\`
-2. \`Why:\` one short paragraph
-3. \`Candidate Findings (JSON)\` containing the required normalized schema with:
-   - \`profile: "{{PROFILE_ID}}"\`
-   - \`session: "{{SESSION_ID}}"\`
-   - \`source_kind: "session_memory"\`
-4. \`Discarded candidates\`
-5. \`Concise completion summary\`
-
-Additional rules:
-- Prefer \`note\` when the signal is not independently confirmed.
-- Default target is \`profile_memory\`, \`reference/<file>.md\`, or \`notes\`.
-- Do not create common injected lore from session memory alone.
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 3. Knowledge Synthesis Worker
-
-Use for: Deduplicating multiple worker artifacts into promotion-ready actions.
-
-\`\`\`
-You are a knowledge synthesis worker for Cortex.
-
-## Task
-Below are raw findings from multiple worker artifacts. Deduplicate, reconcile conflicts, and produce promotion-ready actions.
-
-## Raw findings
-{{PASTE_ALL_WORKER_FINDINGS_HERE}}
-
-## Current knowledge state
-{{PASTE_RELEVANT_EXISTING_KNOWLEDGE_OR "No existing entries — all findings are new."}}
-
-## Instructions
-1. Deduplicate overlapping findings.
-2. Reconcile conflicts and flag tensions explicitly.
-3. Keep only findings that add new durable signal.
-4. Validate each retained finding's proposed outcome and target.
-5. Prefer no-op over marginal promotion.
-
-## Output
-Write markdown to \`{{OUTPUT_ARTIFACT_PATH}}\` with:
-1. \`Outcome: promote | no-op | follow-up-needed\`
-2. \`Recommended Actions (JSON)\` in this shape:
-
-\`\`\`json
-{
-  "actions": [
-    {
-      "action": "add_note | promote_to_inject | promote_to_reference | update_entry | retire_entry | merge_duplicate | no_change",
-      "target_file": "relative/path.md | notes | none",
-      "target_section": "section name or managed block",
-      "finding_ids": ["F1"],
-      "confidence": "high | medium | low",
-      "conflict_status": "none | tension | blocked",
-      "proposed_text": "concise future-facing text",
-      "reason": "why this action is appropriate"
-    }
-  ],
-  "summary": {
-    "promote_count": 0,
-    "note_count": 0,
-    "discard_count": 0,
-    "blockers": []
-  }
-}
-\`\`\`
-
-3. \`Discarded / no-op findings\`
-4. \`Open tensions or blockers\`
-5. \`Concise completion summary\` with 2-4 bullets Cortex can adapt into a short user-facing completion
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 4. Scan / Triage Worker (fallback only)
-
-Use for: Optional fallback when Cortex cannot safely run the bounded scan directly.
-
-\`\`\`
-You are a scan and triage worker for Cortex.
-
-## Task
-Only use this worker if Cortex explicitly asked for delegated scan help. Cortex normally runs the bounded scan itself.
-
-1. Execute: \`bash node {{SWARM_SCRIPTS_DIR}}/cortex-scan.js {{SWARM_DATA_DIR}}\`
-2. Parse transcript, memory, and feedback drift.
-3. Sort by the requested priority rule.
-
-## Output
-Write results to \`{{OUTPUT_ARTIFACT_PATH}}\`:
-- \`Review Queue\` table
-- \`Summary\` bullets
-- \`Notable priority drivers\`
-
-Do NOT read any session files.
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 5. Feedback Telemetry Worker (programmatic-first)
-
-Use for: Feedback-system reviews where you want structured signal without reading whole sessions manually.
-
-\`\`\`
-You are a feedback telemetry worker for Cortex.
-
-## Task
-Use scripts and structured outputs first.
-
-1. Run one or more telemetry scripts as needed:
-   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-review-queue.js {{SWARM_DATA_DIR}}\`
-   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-session-digest.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}}\`
-   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-global-summary.js {{SWARM_DATA_DIR}}\`
-2. Identify high-signal anomalies.
-3. Only if needed, run targeted context extraction:
-   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-target-context.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}} --target {{TARGET_ID}}\`
-
-## Output
-Write markdown to \`{{OUTPUT_ARTIFACT_PATH}}\` with:
-1. \`Outcome: promote | no-op | follow-up-needed\`
-2. \`Programmatic digest\`
-3. \`Candidate Findings (JSON)\` containing the required normalized schema with:
-   - \`profile: "{{PROFILE_ID}}"\`
-   - \`session: "{{SESSION_ID}}"\`
-   - \`source_kind: "feedback"\`
-4. \`Data quality issues\`
-5. \`Concise completion summary\`
-
-Additional rules:
-- Allow \`note\` when feedback reveals a plausible pattern but not a promotion-ready one.
-- Treat explicit negative/positive feedback as stronger evidence than assistant narration.
-- Never include secrets.
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 6. Orchestration Kickoff Worker
-
-Use for: Planning a review cycle from scan results.
-
-\`\`\`
-You are an orchestration planning worker for Cortex.
-
-## Task
-Given scan results, produce a concrete execution plan.
-
-## Scan results
-{{SCAN_RESULTS_OR_ARTIFACT_CONTENT}}
-
-## Constraints
-- Max concurrent workers: {{MAX_WORKERS | default: 5}}
-- Use the current fast extraction default first.
-- Prefer balanced fallback for reliability retries.
-- Escalate to deep-synthesis model only for ambiguity/high-complexity work.
-
-## Output
-Write plan to \`{{OUTPUT_ARTIFACT_PATH}}\` with:
-- execution batches
-- risk flags
-- synthesis plan
-- likely no-op targets vs likely promotion/note targets
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 7. Deep Audit Worker
-
-Use for: Auditing knowledge files for stale entries, scope drift, contradictions, and bloat.
-
-\`\`\`
-You are a knowledge audit worker for Cortex.
-
-## Task
-Audit the listed knowledge files for quality and scope correctness.
-
-## Files to audit
-{{LIST_OF_FILES_TO_AUDIT}}
-
-## Current file contents
-{{PASTE_FILE_CONTENTS_HERE}}
-
-## Output
-Write audit results to \`{{OUTPUT_ARTIFACT_PATH}}\`.
-For each issue include:
-- **Entry**
-- **Issue type**: stale | scope-drift | contradiction | vague | bloated | missing-link
-- **Recommendation**: update | move | remove | sharpen | split-to-reference | demote-to-note
-- **Detail**
-
-End with:
-- **Top priority fixes**: max 5 bullets
-- **Concise completion summary**: 1-3 bullets Cortex could reuse
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 8. Prune / Retirement Worker
-
-Use for: Identifying knowledge entries that should be retired or demoted from inject to reference/note.
-
-\`\`\`
-You are a knowledge pruning worker for Cortex.
-
-## Task
-Review the knowledge file below and identify entries that should be retired, demoted, archived, or sharpened.
-
-## File to prune
-Path: {{FILE_PATH}}
-Contents:
-{{FILE_CONTENTS}}
-
-## Recent evidence
-{{RECENT_EVIDENCE_SUMMARY_OR "No recent evidence provided."}}
-
-## Output
-Write recommendations to \`{{OUTPUT_ARTIFACT_PATH}}\`.
-For each entry include:
-- **Action**: retire | demote-to-reference | demote-to-note | archive | sharpen
-- **Rationale**
-- **Replacement text**: (if sharpen)
-
-End with:
-- **Concise completion summary**: 1-3 bullets Cortex could reuse
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## 9. Migration / Reclassification Worker
-
-Use for: Migrating legacy \`shared/knowledge/profiles/<profileId>.md\` content into the v2 structure.
-
-\`\`\`
-You are a knowledge migration worker for Cortex.
-
-## Task
-Reclassify the legacy profile knowledge file into \`note | inject | reference | discard\` outputs.
-
-## Legacy file
-Path: {{LEGACY_FILE_PATH}}
-Contents:
-{{LEGACY_FILE_CONTENTS}}
-
-## Current v2 state
-Profile memory (\`profiles/{{PROFILE_ID}}/memory.md\`):
-{{PROFILE_MEMORY_CONTENTS_OR "Empty — not yet created."}}
-
-Reference docs exist: {{REFERENCE_DOCS_LIST_OR "None yet."}}
-
-## Output
-Write migration recommendations to \`{{OUTPUT_ARTIFACT_PATH}}\` with sections:
-- \`Outcome: promote | no-op | follow-up-needed\`
-- \`Candidate Findings (JSON)\` using the required schema (\`source_kind\` may be \`doc\` in \`sources\`)
-- \`Migration summary\`
-- \`Concise completion summary\`
-
-## Callback
-After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
-\`\`\`
-
----
-
-## Usage Notes
-
-- Cortex normally runs the bounded scan itself.
-- Use template 1 for transcript deltas.
-- Use template 2 when session memory drift exists.
-- Use template 3 when 3+ workers need synthesis or when shard reconciliation is needed.
-- Use template 4 only as fallback for delegated scan help.
-- Use template 5 for feedback-specific analysis.
-- Use template 6 for large review-cycle planning.
-- Use template 7 periodically for quality audits.
-- Use template 8 when injected knowledge grows stale or bloated.
-- Use template 9 for legacy-profile-knowledge migration/reclassification.
-- Every template requires the concise callback.
-- Workers propose \`note | inject | reference | discard\`; Cortex validates before promotion.
-- No-op is a first-class outcome. Clean closure beats noisy promotion.
-`;
-
-const CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 4 -->";
-const PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKERS = ["<!-- Cortex Worker Prompts Version: 3 -->", "<!-- Cortex Worker Prompts Version: 2 -->"] as const;
-const LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES = [
-  "# Cortex Worker Prompt Templates",
-  "Read the session file at \\`{{SESSION_JSONL_PATH}}\\` starting from byte offset {{BYTE_OFFSET}}",
-  "Return your findings as a structured list.",
-  "Workers report back via \\`worker_message\\`."
-] as const;
-
 const FORKED_SESSION_MEMORY_HEADER_TEMPLATE = [
   "# Session Memory",
   '> Forked from session "' + "$" + "{SOURCE_LABEL}" + '" (' + "$" + "{SOURCE_AGENT_ID}" + ") on " + "$" + "{FORK_TIMESTAMP}",
@@ -1239,50 +740,6 @@ interface ModelCapacityBlock {
   blockSetAt: string;
   sourcePhase: RuntimeErrorEvent["phase"];
   reason: string;
-}
-
-function getCortexWorkerPromptsBackupSuffix(content: string): ".v1.bak" | ".v2.bak" | ".v3.bak" | undefined {
-  if (content.includes(CORTEX_WORKER_PROMPTS_VERSION_MARKER)) {
-    return undefined;
-  }
-
-  for (const marker of PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKERS) {
-    if (content.includes(marker)) {
-      return marker.includes("Version: 3") ? ".v3.bak" : ".v2.bak";
-    }
-  }
-
-  if (LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES.every((signature) => content.includes(signature))) {
-    return ".v1.bak";
-  }
-
-  return undefined;
-}
-
-function shouldUpgradeLegacyCortexWorkerPrompts(content: string): boolean {
-  return getCortexWorkerPromptsBackupSuffix(content) !== undefined;
-}
-
-async function backupLegacyCortexWorkerPrompts(path: string, content: string): Promise<void> {
-  const suffix = getCortexWorkerPromptsBackupSuffix(content);
-  if (!suffix) {
-    return;
-  }
-
-  try {
-    await copyFile(path, `${path}${suffix}`);
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code?: string }).code === "EEXIST"
-    ) {
-      return;
-    }
-
-    throw error;
-  }
 }
 
 function formatRuntimeErrorForCapacityClassification(error: RuntimeErrorEvent): string {
@@ -1676,14 +1133,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       now: this.now,
       descriptors: this.descriptors,
-      runtimes: this.runtimes,
-      getWorkersForManager: (managerId) => this.getWorkersForManager(managerId),
-      getConversationHistory: (agentId) => this.getConversationHistory(agentId),
-      createSession: (profileId, options) => this.createSession(profileId, options),
-      handleUserMessage: (text, options) => this.handleUserMessage(text, options),
-      ensureCortexProfile: () => this.ensureCortexProfile(),
-      sendMessage: (fromAgentId, targetAgentId, message, delivery, options) =>
-        this.sendMessage(fromAgentId, targetAgentId, message, delivery, options),
+      knowledgeService: this.knowledgeService,
+      knowledgeV2SettingsService: this.knowledgeV2SettingsService,
+      handleCaptureCascade: (descriptor, trigger) => this.maybeRunCaptureCascade(descriptor.agentId, trigger),
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.memoryMergeService = new SwarmMemoryMergeService({
@@ -1713,8 +1165,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       queueVersioningMutation: (mutation) => {
         this.queueVersioningMutation(mutation);
       },
-      resolveActiveCortexReviewRunIdForDescriptor: (descriptor) =>
-        this.cortexService.resolveActiveReviewRunIdForDescriptor(descriptor),
       saveStore: async () => {
         await this.saveStore();
       },
@@ -2205,11 +1655,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureCortexProfile();
     await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
-    // IMPORTANT: reconcileInterruptedCortexReviewRunsForBoot MUST precede
-    // normalizeStreamingStatusesForBoot — reconciliation relies on descriptors
-    // still having status "streaming" to detect interrupted review runs.
-    // Reordering these calls will silently break interrupted-run detection.
-    await this.cortexService.reconcileInterruptedReviewRunsForBoot();
     const interruptedStreamingAgentIds = this.collectStreamingAgentIdsForBoot();
     reconcileInterruptedToolCallsForBoot({
       descriptors: this.descriptors,
@@ -2236,7 +1681,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         reconciledAgentIds: reconciledExternalThreadSidecarIds,
       });
     }
-    await this.cortexService.recoverIncompleteReviewRunDispatchesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
 
     // Reconcile project agent storage: hydrate descriptors from on-disk config,
@@ -2268,7 +1712,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
     this.scheduleProjectExecutableTrustPromptsForAllManagers();
-    this.cortexService.scheduleReviewRunQueueCheck(0);
 
     this.workerHealthService.ensureStarted();
 
@@ -3120,18 +2563,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
-    return this.cortexService.listReviewRuns();
+  async listCortexConsolidationRuns(): Promise<CortexConsolidationRunRecord[]> {
+    return this.cortexService.listConsolidationRuns();
   }
 
-  async startCortexReviewRun(input: {
-    scope: CortexReviewRunScope;
-    trigger: CortexReviewRunTrigger;
-    sourceContext?: MessageSourceContext;
-    requestText?: string;
-    scheduleName?: string | null;
-  }): Promise<CortexReviewRunRecord | null> {
-    return this.cortexService.startReviewRun(input);
+  async getCortexConsolidationSnapshot() {
+    return this.cortexService.getConsolidationSnapshot();
+  }
+
+  async runCortexConsolidation(trigger: CortexConsolidationTrigger): Promise<CortexConsolidationRunRecord | null> {
+    return this.cortexService.runConsolidation(trigger);
   }
 
   getConversationHistory(agentId?: string): ConversationEntryEvent[] {
@@ -3910,6 +3351,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async archiveSession(agentId: string): Promise<{ agentId: string; profileId: string; archivedAt: string; terminatedWorkerIds: string[] }> {
+    await this.maybeRunCaptureCascade(agentId, "archive");
     this.codexPluginScopeService.closeScopesForManager(agentId);
     this.clearCodexPluginRetryContextForManager(agentId);
     const result = await this.archiveService.archiveSession(agentId);
@@ -4329,7 +3771,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async forkSession(
     sourceAgentId: string,
-    options?: { label?: string; fromMessageId?: string }
+    options?: { label?: string; fromMessageId?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const sourceDescriptor = cloneDescriptor(
       this.getRequiredBuilderSessionDescriptor(sourceAgentId, "fork Builder sessions")
@@ -5950,6 +5392,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         trigger: options?.trigger ?? "api"
       });
 
+      await this.maybeRunCaptureCascade(agentId, "compaction");
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -6071,6 +5514,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         reason: result.compacted ? undefined : result.reason
       });
 
+      if (result.compacted) {
+        await this.maybeRunCaptureCascade(agentId, "compaction");
+      }
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -6164,8 +5610,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.preflightRepoProjectAgentRuntime(target);
 
     if (target.role === "manager" && attachments.length === 0) {
-      const routedReviewRun = await this.maybeStartCortexReviewRunFromIncomingMessage(trimmed, target, sourceContext);
-      if (routedReviewRun) {
+      const routedConsolidation = await this.maybeRunCortexConsolidationFromIncomingMessage(trimmed, target, sourceContext);
+      if (routedConsolidation) {
         return;
       }
     }
@@ -7346,12 +6792,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private async maybeStartCortexReviewRunFromIncomingMessage(
+  private async maybeRunCortexConsolidationFromIncomingMessage(
     text: string,
     target: AgentDescriptor,
     sourceContext: MessageSourceContext
   ): Promise<boolean> {
-    return this.cortexService.maybeStartReviewRunFromIncomingMessage(text, target, sourceContext);
+    return this.cortexService.maybeRunConsolidationFromIncomingMessage(text, target, sourceContext);
   }
 
   async resetManagerSession(
@@ -9158,7 +8604,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
       }
       await this.ensureCommonKnowledgeFile();
-      await this.ensureCortexWorkerPromptsFile();
       await this.ensureCortexOperationalFiles();
       return;
     }
@@ -9219,7 +8664,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.writeInitialSessionMeta(descriptor);
     await this.refreshSessionMetaStats(descriptor);
     await this.ensureCommonKnowledgeFile();
-    await this.ensureCortexWorkerPromptsFile();
     await this.ensureCortexOperationalFiles();
 
     this.logDebug("cortex:profile:auto_created", {
@@ -9282,8 +8726,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async ensureCortexOperationalFiles(): Promise<void> {
     const knowledgeDir = dirname(getCortexReviewLogPath(this.config.paths.dataDir));
     const reviewLogPath = getCortexReviewLogPath(this.config.paths.dataDir);
-    const reviewRunsPath = getCortexReviewRunsPath(this.config.paths.dataDir);
-    const manifestsDir = getCortexPromotionManifestsDir(this.config.paths.dataDir);
+    const consolidationRunsPath = getCortexConsolidationRunsPath(this.config.paths.dataDir);
 
     await mkdir(knowledgeDir, { recursive: true });
 
@@ -9298,59 +8741,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     try {
-      await readFile(reviewRunsPath, "utf8");
+      await readFile(consolidationRunsPath, "utf8");
     } catch (error) {
       if (!isEnoentError(error)) {
         throw error;
       }
 
-      await writeFile(reviewRunsPath, `${JSON.stringify({ version: 1, runs: [] }, null, 2)}\n`, "utf8");
+      await writeFile(consolidationRunsPath, `${JSON.stringify({ version: 1, runs: [] }, null, 2)}\n`, "utf8");
     }
-
-    await mkdir(manifestsDir, { recursive: true });
-  }
-
-  private async ensureCortexWorkerPromptsFile(): Promise<void> {
-    const workerPromptsPath = getCortexWorkerPromptsPath(this.config.paths.dataDir);
-    const workerPromptTemplate = await this.resolvePromptWithFallback(
-      "operational",
-      "cortex-worker-prompts",
-      CORTEX_PROFILE_ID,
-      CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE
-    );
-
-    try {
-      const existingContent = await readFile(workerPromptsPath, "utf8");
-      if (!shouldUpgradeLegacyCortexWorkerPrompts(existingContent)) {
-        return;
-      }
-
-      await backupLegacyCortexWorkerPrompts(workerPromptsPath, existingContent);
-      await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
-      this.queueVersioningMutation({
-        path: workerPromptsPath,
-        action: "write",
-        source: "bootstrap",
-        profileId: CORTEX_PROFILE_ID
-      });
-      this.logDebug("cortex:worker_prompts:auto_upgraded", {
-        path: workerPromptsPath
-      });
-      return;
-    } catch (error) {
-      if (!isEnoentError(error)) {
-        throw error;
-      }
-    }
-
-    await mkdir(dirname(workerPromptsPath), { recursive: true });
-    await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
-    this.queueVersioningMutation({
-      path: workerPromptsPath,
-      action: "write",
-      source: "bootstrap",
-      profileId: CORTEX_PROFILE_ID
-    });
   }
 
   private collectStreamingAgentIdsForBoot(): Set<string> {
@@ -10406,14 +9804,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor,
     mutation: VersioningMutation
   ): Promise<void> {
-    this.queueVersioningMutation({
-      ...mutation,
-      reviewRunId: await this.resolveActiveCortexReviewRunIdForDescriptor(descriptor)
-    });
-  }
-
-  private async resolveActiveCortexReviewRunIdForDescriptor(descriptor: AgentDescriptor): Promise<string | undefined> {
-    return this.cortexService.resolveActiveReviewRunIdForDescriptor(descriptor);
+    void descriptor;
+    this.queueVersioningMutation(mutation);
   }
 
   private queueVersioningMutation(mutation: VersioningMutation): void {
@@ -10459,8 +9851,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     for (const snapshot of this.sessionActiveTools.recordAgentStatus(payload, descriptor)) {
       this.emitSessionActiveToolsSnapshot(snapshot);
     }
-
-    this.cortexService.handleAgentStatusEvent(descriptor, status);
   }
 
   private emitAgentsSnapshot(): void {
@@ -10874,11 +10264,200 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Profile-scoped knowledge requires a caller profile.");
     }
     const scope = input.scope === "global" ? "global" : input.scope || `profile:${profileId}`;
-    return this.knowledgeService.saveLearning({
+    const entry = await this.knowledgeService.saveLearning({
       ...input,
       scope,
       sessionId: caller.agentId,
     });
+    await this.advanceCaptureWatermark(caller.agentId, this.now());
+    return entry;
+  }
+
+  async handleCaptureFeedbackSignal(profileId: string, sessionId: string): Promise<void> {
+    const descriptor = this.descriptors.get(sessionId);
+    if (!descriptor || descriptor.profileId !== profileId || descriptor.role !== "manager") {
+      return;
+    }
+    await this.maybeRunCaptureCascade(sessionId, "feedback");
+  }
+
+  private async maybeRunCaptureCascade(
+    agentId: string,
+    trigger: NonNullable<CaptureCadenceInput["trigger"]>,
+  ): Promise<void> {
+    if (!this.config.cortexEnabled || !this.knowledgeV2SettingsService.getSettings().enabled) {
+      return;
+    }
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager" || !descriptor.profileId || descriptor.sessionPurpose === "capture_check") {
+      return;
+    }
+
+    const meta = await readSessionMeta(this.config.paths.dataDir, descriptor.profileId, descriptor.agentId);
+    if (!meta) {
+      return;
+    }
+
+    const messages = await readCaptureDeltaFromSessionFile(descriptor.sessionFile, {
+      lastCaptureCheckAt: meta.cortexCaptureLastCheckedAt,
+    }).catch((error) => {
+      this.logDebug("cortex:capture:read_delta_error", {
+        agentId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    });
+    const today = this.now().slice(0, 10);
+    const dailyForksUsed = meta.cortexCaptureForksDay === today ? (meta.cortexCaptureForksToday ?? 0) : 0;
+    const decision = evaluateCaptureCadence({
+      enabled: true,
+      userTurnsSinceWatermark: countUserTurnsSinceWatermark(messages),
+      lastCaptureCheckAt: meta.cortexCaptureLastCheckedAt,
+      trigger,
+      idleGapMs: trigger === "idle" ? this.resolveIdleGapMs(descriptor) : undefined,
+      dailyForksUsed,
+      saveLearningAdvancedWatermark: false,
+    });
+
+    if (!decision.shouldJudge && !decision.shouldForkDirectly) {
+      this.logDebug("cortex:capture:skipped", { agentId, trigger, skippedReason: decision.skippedReason });
+      return;
+    }
+
+    let judgePointer: string | undefined;
+    if (decision.shouldJudge) {
+      if (messages.length === 0) {
+        await this.advanceCaptureWatermark(agentId, this.now());
+        return;
+      }
+      try {
+        const judge = await invokeCaptureJudge(
+          { complete: (prompt) => this.executeCaptureJudgePrompt(prompt) },
+          messages,
+        );
+        if (!judge.shouldFork) {
+          await this.advanceCaptureWatermark(agentId, this.now());
+          this.logDebug("cortex:capture:judge_no", { agentId, trigger, raw: previewForLog(judge.raw) });
+          return;
+        }
+        judgePointer = judge.pointer;
+      } catch (error) {
+        this.logDebug("cortex:capture:judge_error", {
+          agentId,
+          trigger,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        await this.advanceCaptureWatermark(agentId, this.now());
+        return;
+      }
+    }
+
+    const fromMessageId = [...messages].reverse().find((message) => message.id)?.id;
+    try {
+      await runCaptureCheckFork({
+        enabled: true,
+        sourceAgentId: agentId,
+        fromMessageId,
+        judgePointer: decision.reason === "feedback" ? "user feedback signal" : judgePointer,
+        adapter: {
+          forkSession: async (sourceAgentId, options) => {
+            const fork = await this.forkSession(sourceAgentId, {
+              label: options.label,
+              fromMessageId: options.fromMessageId,
+              sessionPurpose: "capture_check",
+            });
+            return { sessionAgentId: fork.sessionAgent.agentId };
+          },
+          sendRestrictedTurn: async (forkedAgentId, message) => {
+            await this.sendMessage(forkedAgentId, forkedAgentId, message, "auto", {
+              origin: "internal",
+              internalDeliveryKind: "bootstrap",
+              skipTurnLedger: true,
+            });
+          },
+          discardFork: async (forkedAgentId) => {
+            await this.deleteSession(forkedAgentId);
+          },
+        },
+      });
+      await this.recordCaptureFork(agentId, today, dailyForksUsed + 1);
+      this.logDebug("cortex:capture:forked", {
+        agentId,
+        trigger,
+        reason: decision.reason,
+        fromMessageId,
+      });
+    } catch (error) {
+      this.logDebug("cortex:capture:fork_error", {
+        agentId,
+        trigger,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  protected async executeCaptureJudgePrompt(prompt: string): Promise<string> {
+    const authFilePath = await ensureCanonicalAuthFilePath(this.config);
+    const authStorage = AuthStorage.create(authFilePath);
+    const modelRegistry = createPiModelRegistry(authStorage, this.getPiModelsJsonPathOrThrow());
+    const candidates = [
+      { provider: "openai-codex", modelId: "gpt-5.4-mini" },
+      { provider: "openai-codex", modelId: "gpt-5.4" },
+    ] as const;
+
+    for (const candidate of candidates) {
+      const model =
+        modelRegistry.find(candidate.provider, candidate.modelId) ??
+        (getModel(candidate.provider as never, candidate.modelId as never) as Model<Api> | undefined);
+      if (!model) continue;
+      const auth = await modelRegistry.getApiKeyAndHeaders(model);
+      if (!auth.ok) continue;
+      const response = await complete(
+        model,
+        {
+          systemPrompt: "You are a cheap binary classifier. Return only the requested YES/NO line.",
+          messages: [{ role: "user", timestamp: Date.now(), content: [{ type: "text", text: prompt }] }],
+        },
+        auth.apiKey || auth.headers
+          ? {
+              ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+              ...(auth.headers ? { headers: auth.headers } : {}),
+            }
+          : undefined,
+      );
+      return extractAssistantText(response);
+    }
+
+    throw new Error("No configured cheap model is available for Cortex capture judge.");
+  }
+
+  private resolveIdleGapMs(descriptor: AgentDescriptor): number | undefined {
+    if (!descriptor.updatedAt) {
+      return undefined;
+    }
+    return Math.max(0, Date.parse(this.now()) - Date.parse(descriptor.updatedAt));
+  }
+
+  private async advanceCaptureWatermark(agentId: string, at: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor?.profileId) return;
+    const meta = await readSessionMeta(this.config.paths.dataDir, descriptor.profileId, agentId);
+    if (!meta) return;
+    meta.cortexCaptureLastCheckedAt = at;
+    meta.updatedAt = this.now();
+    await writeSessionMeta(this.config.paths.dataDir, meta);
+  }
+
+  private async recordCaptureFork(agentId: string, day: string, forksToday: number): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor?.profileId) return;
+    const meta = await readSessionMeta(this.config.paths.dataDir, descriptor.profileId, agentId);
+    if (!meta) return;
+    meta.cortexCaptureLastCheckedAt = this.now();
+    meta.cortexCaptureForksDay = day;
+    meta.cortexCaptureForksToday = forksToday;
+    meta.updatedAt = this.now();
+    await writeSessionMeta(this.config.paths.dataDir, meta);
   }
 
   private async ensureCompactionSettingsLoadedForRuntime(): Promise<void> {
@@ -11353,6 +10932,14 @@ async function writeUniqueArtifactFile(
 
 function isNodeErrorCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === code);
+}
+
+function extractAssistantText(message: AssistantMessage): string {
+  return message.content
+    .filter((part): part is Extract<AssistantMessage["content"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+    .trim();
 }
 
 function hashCodexPluginExportArgs(args: Record<string, unknown> | undefined): string {

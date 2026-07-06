@@ -10,8 +10,10 @@ import {
 describe('knowledge-surface', () => {
   it('classifies tracked knowledge surfaces from versioned paths', () => {
     expect(classifyKnowledgeSurface('shared/knowledge/common.md').label).toBe('Common Knowledge')
-    expect(classifyKnowledgeSurface('shared/knowledge/.cortex-notes.md').label).toBe('Cortex Notes')
-    expect(classifyKnowledgeSurface('shared/knowledge/.cortex-worker-prompts.md').label).toBe('Cortex Worker Prompts')
+    expect(classifyKnowledgeSurface('shared/knowledge/INDEX.md').label).toBe('Knowledge Index')
+    expect(classifyKnowledgeSurface('shared/knowledge/entries/preference-use-pnpm.md').label).toBe('Knowledge Entry')
+    expect(classifyKnowledgeSurface('profiles/alpha/knowledge/INDEX.md').label).toBe('Knowledge Index')
+    expect(classifyKnowledgeSurface('profiles/alpha/knowledge/archive/preference-old.md').label).toBe('Knowledge Entry')
     expect(classifyKnowledgeSurface('shared/knowledge/profiles/alpha.md').label).toBe('Profile Knowledge (legacy)')
     expect(classifyKnowledgeSurface('profiles/alpha/memory.md').label).toBe('Profile Memory')
     expect(classifyKnowledgeSurface('profiles/alpha/sessions/alpha--s1/memory.md').label).toBe('Profile Memory')

@@ -95,7 +95,9 @@ describe("KnowledgeService", () => {
     expect(merged.frontmatter.source_entry_ids).toEqual(
       expect.arrayContaining([first.frontmatter.id, second.frontmatter.id]),
     );
-    await expect(service.readEntry(second.frontmatter.id)).rejects.toMatchObject({ code: "not_found" });
+    await expect(service.readEntry(second.frontmatter.id)).resolves.toMatchObject({
+      frontmatter: { status: "superseded", supersedes: [first.frontmatter.id] },
+    });
   });
 
   it("deduplicates save_learning by title and bumps support count", async () => {

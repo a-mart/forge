@@ -62,7 +62,7 @@ export interface AgentContextUsage {
   percent: number;
 }
 
-export type AgentSessionPurpose = "cortex_review" | "agent_creator";
+export type AgentSessionPurpose = "cortex_review" | "agent_creator" | "capture_check";
 
 export type InternalWorkerKind = "codex_plugin";
 

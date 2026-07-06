@@ -124,7 +124,6 @@ function renderSidebar({
   onDeleteAgent = vi.fn(),
   onDeleteManager = vi.fn(),
   onOpenSettings = vi.fn(),
-  onOpenCortexReview = vi.fn(),
   onOpenArchive,
   onArchiveSession,
   onArchiveProfile,
@@ -139,7 +138,6 @@ function renderSidebar({
   onDeleteAgent?: (agentId: string) => void
   onDeleteManager?: (managerId: string) => void
   onOpenSettings?: () => void
-  onOpenCortexReview?: (agentId: string) => void
   onOpenArchive?: () => void
   onArchiveSession?: (agentId: string) => void
   onArchiveProfile?: (profileId: string) => void
@@ -172,7 +170,6 @@ function renderSidebar({
           onDeleteAgent,
           onDeleteManager,
           onOpenSettings,
-          onOpenCortexReview,
           onOpenArchive,
           onArchiveSession,
           onArchiveProfile,
@@ -403,15 +400,9 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, 'beta-mgr')).toBeTruthy()
   })
 
-  it('shows the outstanding Cortex review count badge and keeps review-run sessions hidden from the default sidebar list', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ scan: { summary: { needsReview: 7 } } }),
-    })))
-
+  it('shows Cortex sessions directly without review-run badge indirection', async () => {
     const createdAt = '2026-01-01T00:00:00.000Z'
     const updatedAt = createdAt
-    const onOpenCortexReview = vi.fn()
     const cortexRoot = {
       ...sessionManager('cortex', 'cortex'),
       displayName: 'Cortex',
@@ -441,19 +432,13 @@ describe('AgentSidebar', () => {
     renderSidebar({
       agents: [cortexRoot, reviewRunSession],
       profiles: [cortexProfile],
-      onOpenCortexReview,
       wsUrl: 'ws://127.0.0.1:47187/ws',
     })
     await flushEffects()
 
     const sidebar = getDesktopSidebar()
-    expect(queryByText(sidebar, 'Review Run · Full Queue')).toBeNull()
-    expect(getByText(sidebar, 'Review 7')).toBeTruthy()
-    const reviewHint = getByRole(sidebar, 'button', { name: '1 review run hidden here — open them from Cortex Review.' })
-    expect(reviewHint).toBeTruthy()
-
-    click(reviewHint)
-    expect(onOpenCortexReview).toHaveBeenCalledWith('cortex')
+    expect(getByText(sidebar, 'Review Run · Full Queue')).toBeTruthy()
+    expect(queryByText(sidebar, /^Review \d+$/)).toBeNull()
   })
 
   it('hides the Cortex review badge when there are no outstanding sessions needing review', async () => {
@@ -487,7 +472,7 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, /^Review \d+$/)).toBeNull()
   })
 
-  it('shows a running indicator when a hidden Cortex review run is active', () => {
+  it('does not show a Cortex review-run running indicator', () => {
     const createdAt = '2026-01-01T00:00:00.000Z'
     const updatedAt = createdAt
     const cortexRoot = {
@@ -526,7 +511,7 @@ describe('AgentSidebar', () => {
     })
 
     const sidebar = getDesktopSidebar()
-    expect(getByText(sidebar, 'Running')).toBeTruthy()
+    expect(queryByText(sidebar, 'Running')).toBeNull()
   })
 
   it('hides CLI sessions when the hide-cli-sessions localStorage pref is set', () => {

@@ -150,7 +150,7 @@ export interface SwarmMemoryMergeServiceOptions {
   appendSessionMemoryMergeAuditEntry: (entry: SessionMemoryMergeAuditEntry) => Promise<void>;
   refreshSessionMetaStatsBySessionId: (sessionAgentId: string) => Promise<void>;
   queueVersioningMutation: (mutation: VersioningMutation) => void;
-  resolveActiveCortexReviewRunIdForDescriptor: (
+  resolveActiveCortexReviewRunIdForDescriptor?: (
     descriptor: AgentDescriptor
   ) => Promise<string | undefined>;
   saveStore: () => Promise<void>;
@@ -428,7 +428,7 @@ export class SwarmMemoryMergeService {
           source: "profile-memory-merge",
           profileId,
           sessionId: descriptor.agentId,
-          reviewRunId: await this.options.resolveActiveCortexReviewRunIdForDescriptor(descriptor)
+          reviewRunId: await this.options.resolveActiveCortexReviewRunIdForDescriptor?.(descriptor)
         });
       }
       failureContext.stage = "refresh_session_meta_stats";

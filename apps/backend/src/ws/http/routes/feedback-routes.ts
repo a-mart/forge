@@ -63,6 +63,13 @@ export function createFeedbackRoutes(options: { swarmManager: SwarmManager; feed
               actor: "user",
               ...(parsed.clearKind ? { clearKind: parsed.clearKind } : {})
             });
+            if (submitted.value !== "clear") {
+              // Best-effort capture-cascade signal: recording feedback must never
+              // block on or fail because of the async capture check (which may
+              // spawn a judge + fork). Fire-and-forget, error-isolated, and
+              // optional so partial hosts without the hook still record feedback.
+              void swarmManager.handleCaptureFeedbackSignal?.(route.profileId, route.sessionId).catch(() => undefined);
+            }
 
             sendJson(response, 201, { feedback: submitted });
             return;

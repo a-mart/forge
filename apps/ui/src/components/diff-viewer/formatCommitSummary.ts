@@ -53,10 +53,10 @@ function summarizeFromPaths(metadata: GitCommitMetadata, mode: 'update' | 'resto
   switch (surfaceIds[0]) {
     case 'common-knowledge':
       return mode === 'restore' ? 'Restored common knowledge' : 'Updated common knowledge'
-    case 'cortex-notes':
-      return mode === 'restore' ? 'Restored Cortex notes' : 'Updated Cortex notes'
-    case 'cortex-worker-prompts':
-      return mode === 'restore' ? 'Restored Cortex worker prompts' : 'Updated Cortex worker prompts'
+    case 'knowledge-index':
+      return mode === 'restore' ? 'Restored knowledge index' : 'Regenerated knowledge index'
+    case 'knowledge-entry':
+      return mode === 'restore' ? 'Restored knowledge entry' : 'Updated knowledge entry'
     case 'profile-knowledge':
       return mode === 'restore' ? 'Restored profile knowledge' : 'Updated profile knowledge'
     case 'profile-memory':

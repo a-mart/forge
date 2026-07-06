@@ -2,8 +2,8 @@ import type { GitCommitMetadata, GitFileStatus } from '@forge/protocol'
 
 export type KnowledgeSurfaceId =
   | 'common-knowledge'
-  | 'cortex-notes'
-  | 'cortex-worker-prompts'
+  | 'knowledge-index'
+  | 'knowledge-entry'
   | 'profile-knowledge'
   | 'profile-memory'
   | 'reference-docs'
@@ -30,8 +30,8 @@ export interface KnowledgeQuickFilterDefinition {
 
 const SURFACES: Record<KnowledgeSurfaceId, KnowledgeSurfaceDefinition> = {
   'common-knowledge': { id: 'common-knowledge', label: 'Common Knowledge' },
-  'cortex-notes': { id: 'cortex-notes', label: 'Cortex Notes' },
-  'cortex-worker-prompts': { id: 'cortex-worker-prompts', label: 'Cortex Worker Prompts' },
+  'knowledge-index': { id: 'knowledge-index', label: 'Knowledge Index' },
+  'knowledge-entry': { id: 'knowledge-entry', label: 'Knowledge Entry' },
   'profile-knowledge': { id: 'profile-knowledge', label: 'Profile Knowledge (legacy)' },
   'profile-memory': { id: 'profile-memory', label: 'Profile Memory' },
   'reference-docs': { id: 'reference-docs', label: 'Reference Docs' },
@@ -41,8 +41,8 @@ const SURFACES: Record<KnowledgeSurfaceId, KnowledgeSurfaceDefinition> = {
 
 const SURFACE_ORDER: KnowledgeSurfaceId[] = [
   'common-knowledge',
-  'cortex-notes',
-  'cortex-worker-prompts',
+  'knowledge-index',
+  'knowledge-entry',
   'profile-knowledge',
   'profile-memory',
   'reference-docs',
@@ -69,12 +69,15 @@ export function classifyKnowledgeSurface(path: string): KnowledgeSurfaceDefiniti
     return SURFACES['common-knowledge']
   }
 
-  if (normalizedPath === 'shared/knowledge/.cortex-notes.md') {
-    return SURFACES['cortex-notes']
+  if (normalizedPath === 'shared/knowledge/INDEX.md' || /^profiles\/[^/]+\/knowledge\/INDEX\.md$/u.test(normalizedPath)) {
+    return SURFACES['knowledge-index']
   }
 
-  if (normalizedPath === 'shared/knowledge/.cortex-worker-prompts.md') {
-    return SURFACES['cortex-worker-prompts']
+  if (
+    /^shared\/knowledge\/(?:entries|archive)\/[^/]+\.md$/u.test(normalizedPath) ||
+    /^profiles\/[^/]+\/knowledge\/(?:entries|archive)\/[^/]+\.md$/u.test(normalizedPath)
+  ) {
+    return SURFACES['knowledge-entry']
   }
 
   if (/^shared\/knowledge\/profiles\/[^/]+\.md$/u.test(normalizedPath)) {

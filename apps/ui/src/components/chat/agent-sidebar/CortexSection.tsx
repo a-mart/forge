@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  CircleDashed,
   Pause,
 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -34,8 +33,6 @@ export function CortexSection({
   onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
-  onOpenCortexReview,
-  outstandingReviewCount,
   onStopSession,
   onResumeSession,
   onMarkUnread,
@@ -46,19 +43,7 @@ export function CortexSection({
   onMuteAllSessions,
 }: CortexSectionProps) {
   const { profile, sessions } = cortexRow
-  const reviewRunSessions = sessions.filter((session) => session.sessionAgent.sessionPurpose === 'cortex_review')
-  const primarySessions = sessions.filter((session) => session.sessionAgent.sessionPurpose !== 'cortex_review')
-  const selectedReviewRunSession = reviewRunSessions.find(
-    (session) =>
-      session.sessionAgent.agentId === selectedAgentId ||
-      session.workers.some((worker) => worker.agentId === selectedAgentId),
-  )
-  const isSearchActive = Boolean(highlightQuery?.trim())
-  const visibleSessions = isSearchActive
-    ? sessions
-    : selectedReviewRunSession
-      ? [selectedReviewRunSession, ...primarySessions]
-      : primarySessions
+  const visibleSessions = sessions
 
   const defaultSession = visibleSessions.find((s) => s.isDefault) ?? sessions.find((s) => s.isDefault)
   const targetId = visibleSessions[0]?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
@@ -74,14 +59,6 @@ export function CortexSection({
   const showUnread = displayUnread > 0
 
   // Activity
-  const activeReviewRunCount = reviewRunSessions.filter((session) => {
-    const reviewStatus = getAgentLiveStatus(session.sessionAgent, statuses).status
-    if (reviewStatus === 'streaming') return true
-    // Check loaded workers first, then fall back to descriptor's activeWorkerCount
-    // (workers for hidden review sessions are never lazy-loaded into the tree)
-    if (session.workers.some((worker) => getAgentLiveStatus(worker, statuses).status === 'streaming')) return true
-    return (session.sessionAgent.activeWorkerCount ?? 0) > 0
-  }).length
   const activeSessionCount = visibleSessions.filter((s) => isSessionRunning(s.sessionAgent)).length
 
   // Root session status
@@ -152,17 +129,6 @@ export function CortexSection({
               {isCollapsed && visibleSessions.length > 1 ? (
                 <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {activeSessionCount}/{visibleSessions.length}
-                </span>
-              ) : null}
-              {typeof outstandingReviewCount === 'number' && outstandingReviewCount > 0 && !isSearchActive ? (
-                <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
-                  Review {outstandingReviewCount}
-                </span>
-              ) : null}
-              {activeReviewRunCount > 0 ? (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-500">
-                  <CircleDashed className="size-2.5 animate-spin" aria-hidden="true" />
-                  Running
                 </span>
               ) : null}
               {showUnread ? (
@@ -301,25 +267,6 @@ export function CortexSection({
                       </button>
                     ) : null}
                   </div>
-                ) : null}
-                {reviewRunSessions.length > 0 && !selectedReviewRunSession ? (
-                  onOpenCortexReview && targetId ? (
-                    <button
-                      type="button"
-                      className={cn(
-                        'px-5 pt-1 text-left text-[10px] text-muted-foreground/70 transition-colors',
-                        'hover:text-muted-foreground',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                      )}
-                      onClick={() => onOpenCortexReview(targetId)}
-                    >
-                      {reviewRunSessions.length} review run{reviewRunSessions.length === 1 ? '' : 's'} hidden here — open them from Cortex Review.
-                    </button>
-                  ) : (
-                    <p className="px-5 pt-1 text-[10px] text-muted-foreground/70">
-                      {reviewRunSessions.length} review run{reviewRunSessions.length === 1 ? '' : 's'} hidden here — open them from Cortex Review.
-                    </p>
-                  )
                 ) : null}
               </>
             )

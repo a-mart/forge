@@ -1,214 +1,126 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CortexReviewRunScope } from "@forge/protocol";
-import { appendCortexReviewRun, buildCortexReviewRunRequestText, buildCortexReviewRunScopeLabel, createCortexReviewRunId, readStoredCortexReviewRuns } from "../cortex-review-runs.js";
+import { describe, expect, it } from "vitest";
+import { KnowledgeService, type KnowledgeEntrySource } from "../knowledge-service.js";
 import { SwarmCortexService } from "../swarm-cortex-service.js";
-import type { AgentDescriptor, MessageSourceContext } from "../types.js";
+import { readCortexConsolidationRuns } from "../cortex-consolidation-runs.js";
+import { readCortexReviewLogEntries } from "../scripts/cortex-review-state.js";
+import type { AgentDescriptor, SwarmConfig } from "../types.js";
+import type { KnowledgeV2SettingsService } from "../knowledge-v2-settings-service.js";
 
-function createReviewDescriptor(agentId: string, label = "Review Run"): AgentDescriptor {
-  return {
-    agentId,
-    managerId: agentId,
-    displayName: label,
-    role: "manager",
-    status: "idle",
-    createdAt: "2026-03-17T00:00:00.000Z",
-    updatedAt: "2026-03-17T00:00:00.000Z",
-    cwd: "/tmp",
-    model: { provider: "openai", modelId: "gpt-test", thinkingLevel: "medium" },
-    sessionFile: join("/tmp", `${agentId}.jsonl`),
-    profileId: "cortex",
-    sessionLabel: label,
-    sessionPurpose: "cortex_review",
-  };
-}
+describe("SwarmCortexService consolidation", () => {
+  it("merges duplicates, supersedes contradictions, archives decayed entries, and records a run", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "swarm-cortex-service-"));
+    const knowledgeService = createKnowledgeService(dataDir);
+    const source = entrySource();
 
-async function makeHarness(options: { handleUserMessage?: (text: string, options?: { targetAgentId?: string; sourceContext?: MessageSourceContext }) => Promise<void> } = {}) {
-  const dataDir = await mkdtemp(join(tmpdir(), "swarm-cortex-service-"));
-  await mkdir(dataDir, { recursive: true });
-  const descriptors = new Map<string, AgentDescriptor>();
-  let nextSession = 1;
-  const handleUserMessage = vi.fn(options.handleUserMessage ?? (async () => undefined));
-  const scheduleReviewRunQueueCheckSpy = vi
-    .spyOn(SwarmCortexService.prototype, "scheduleReviewRunQueueCheck")
-    .mockImplementation(() => undefined);
-  const service = new SwarmCortexService({
-    config: { cortexEnabled: true, paths: { dataDir } } as any,
-    now: () => "2026-03-17T00:00:00.000Z",
-    descriptors,
-    runtimes: new Map(),
-    getWorkersForManager: () => [],
-    getConversationHistory: () => [],
-    createSession: async (_profileId, createOptions) => {
-      const descriptor = createReviewDescriptor(`cortex--s${nextSession++}`, createOptions?.label ?? "Review Run");
-      descriptors.set(descriptor.agentId, descriptor);
-      return { sessionAgent: descriptor };
-    },
-    handleUserMessage,
-    ensureCortexProfile: async () => undefined,
-    sendMessage: async () => ({ delivered: true }) as any,
+    const duplicateA = await knowledgeService.upsertEntry({
+      type: "preference",
+      scope: "global",
+      title: "Use pnpm for installs",
+      body: "Use pnpm for installs.",
+      evidenceTier: "explicit_user",
+      sources: [source],
+      supportCount: 2,
+      lastConfirmed: "2026-07-01T00:00:00.000Z",
+    });
+    const duplicateB = await knowledgeService.upsertEntry({
+      type: "preference",
+      scope: "global",
+      title: "Use pnpm for installs",
+      body: "Use pnpm for installs.",
+      evidenceTier: "agent_inference",
+      sources: [entrySource("s2")],
+      supportCount: 3,
+      lastConfirmed: "2026-07-03T00:00:00.000Z",
+    });
+    const winner = await knowledgeService.upsertEntry({
+      type: "convention",
+      scope: "global",
+      title: "Use lint before merge",
+      body: "Always use lint before merge.",
+      evidenceTier: "repeated_pattern",
+      sources: [entrySource("s3")],
+      supportCount: 4,
+    });
+    const loser = await knowledgeService.upsertEntry({
+      type: "convention",
+      scope: "global",
+      title: "Do not use lint before merge",
+      body: "Do not use lint before merge.",
+      evidenceTier: "agent_inference",
+      sources: [entrySource("s4")],
+      supportCount: 1,
+    });
+    const stale = await knowledgeService.upsertEntry({
+      type: "gotcha",
+      scope: "global",
+      title: "Old setup gotcha",
+      body: "This old setup gotcha is no longer useful.",
+      evidenceTier: "agent_inference",
+      sources: [entrySource("s5")],
+      lastConfirmed: "2025-01-01T00:00:00.000Z",
+    });
+
+    const service = createService(dataDir, knowledgeService);
+    const run = await service.runConsolidation("manual");
+
+    expect(run).toMatchObject({ status: "completed", merged: 1, superseded: 1, archived: 1 });
+    const duplicateEntries = await Promise.all([
+      knowledgeService.readEntry(duplicateA.frontmatter.id),
+      knowledgeService.readEntry(duplicateB.frontmatter.id),
+    ]);
+    const mergedDuplicate = duplicateEntries.find((entry) => entry.frontmatter.status === "active");
+    const supersededDuplicate = duplicateEntries.find((entry) => entry.frontmatter.status === "superseded");
+    expect(mergedDuplicate).toMatchObject({
+      frontmatter: { support_count: 5, source_entry_ids: expect.arrayContaining([duplicateA.frontmatter.id, duplicateB.frontmatter.id]) },
+    });
+    expect(supersededDuplicate?.frontmatter.supersedes).toEqual([mergedDuplicate?.frontmatter.id]);
+    await expect(knowledgeService.readEntry(loser.frontmatter.id)).resolves.toMatchObject({
+      frontmatter: { status: "superseded", supersedes: [winner.frontmatter.id] },
+    });
+    await expect(knowledgeService.readEntry(stale.frontmatter.id)).rejects.toMatchObject({ code: "not_found" });
+    expect(await readCortexConsolidationRuns(dataDir)).toHaveLength(1);
+    expect((await readCortexReviewLogEntries(dataDir)).map((entry) => entry.action)).toEqual(
+      expect.arrayContaining(["merged", "superseded", "archived", "reindexed"]),
+    );
+  });
+});
+
+function createService(dataDir: string, knowledgeService: KnowledgeService): SwarmCortexService {
+  return new SwarmCortexService({
+    config: { cortexEnabled: true, paths: { dataDir } } as SwarmConfig,
+    now: () => "2026-07-05T12:00:00.000Z",
+    descriptors: new Map<string, AgentDescriptor>(),
+    knowledgeService,
+    knowledgeV2SettingsService: {
+      getSettings: () => ({
+        enabled: true,
+        legacyCleanupConfirmed: false,
+        indexCaps: { global: 1_500, profile: 800 },
+        updatedAt: null,
+      }),
+    } as KnowledgeV2SettingsService,
     logDebug: () => undefined,
   });
-
-  return { dataDir, descriptors, service, handleUserMessage, scheduleReviewRunQueueCheckSpy };
 }
 
-async function seedQueuedRun(dataDir: string, scope: CortexReviewRunScope = { mode: "all" }) {
-  const run = {
-    runId: createCortexReviewRunId(),
-    trigger: "manual" as const,
-    scope,
-    scopeLabel: buildCortexReviewRunScopeLabel(scope),
-    requestText: buildCortexReviewRunRequestText(scope),
-    requestedAt: "2026-03-17T00:00:00.000Z",
-    sessionAgentId: null,
-    dispatchState: "queued" as const,
-    sourceContext: { channel: "web" as const },
-  };
-  await appendCortexReviewRun(dataDir, run);
-  return run;
+function createKnowledgeService(dataDir: string): KnowledgeService {
+  return new KnowledgeService({
+    dataDir,
+    settingsService: {
+      getSettings: () => ({
+        enabled: true,
+        legacyCleanupConfirmed: false,
+        indexCaps: { global: 1_500, profile: 800 },
+        updatedAt: null,
+      }),
+    } as KnowledgeV2SettingsService,
+    now: () => new Date("2026-07-05T12:00:00.000Z"),
+  });
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-describe("SwarmCortexService dispatch lifecycle", () => {
-  it("recovers crash after createSession before ledger update by attaching marker session and dispatching", async () => {
-    const { dataDir, descriptors, service, handleUserMessage } = await makeHarness();
-    const run = await seedQueuedRun(dataDir);
-    const orphan = createReviewDescriptor("cortex--orphan", `Review Run · Full Queue · ${run.runId.slice(0, 12)}`);
-    descriptors.set(orphan.agentId, orphan);
-
-    await service.recoverIncompleteReviewRunDispatchesForBoot();
-
-    const [stored] = await readStoredCortexReviewRuns(dataDir);
-    expect(stored).toMatchObject({ runId: run.runId, sessionAgentId: orphan.agentId, dispatchState: "dispatched" });
-    expect(handleUserMessage).toHaveBeenCalledWith(run.requestText, expect.objectContaining({ targetAgentId: orphan.agentId }));
-  });
-
-  it("recovers crash after session_created before handleUserMessage by retry-dispatching", async () => {
-    const { dataDir, descriptors, service, handleUserMessage } = await makeHarness();
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: descriptor.agentId, dispatchState: "session_created", dispatchStartedAt: "2026-03-17T00:01:00.000Z" });
-
-    await service.recoverIncompleteReviewRunDispatchesForBoot();
-
-    expect((await readStoredCortexReviewRuns(dataDir))[0]).toMatchObject({ runId: run.runId, dispatchState: "dispatched" });
-    expect(handleUserMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not treat persisted request text as acceptance proof for ambiguous session_created runs", async () => {
-    const { dataDir, descriptors, service, handleUserMessage } = await makeHarness();
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: descriptor.agentId, dispatchState: "session_created" });
-
-    await service.recoverIncompleteReviewRunDispatchesForBoot();
-
-    expect(handleUserMessage).toHaveBeenCalledTimes(1);
-    expect((await readStoredCortexReviewRuns(dataDir))[0]?.dispatchState).toBe("dispatched");
-  });
-
-  it("does not duplicate-dispatch when explicit dispatched acceptance is already persisted", async () => {
-    const { dataDir, descriptors, service, handleUserMessage } = await makeHarness();
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: descriptor.agentId, dispatchState: "dispatched", dispatchedAt: "2026-03-17T00:02:00.000Z" });
-
-    await service.recoverIncompleteReviewRunDispatchesForBoot();
-
-    expect(handleUserMessage).not.toHaveBeenCalled();
-    expect((await readStoredCortexReviewRuns(dataDir))[0]?.dispatchState).toBe("dispatched");
-  });
-
-  it("keeps the reserved session for reuse when handleUserMessage fails", async () => {
-    const { dataDir, service } = await makeHarness({ handleUserMessage: async () => { throw new Error("dispatch failed"); } });
-    const scope: CortexReviewRunScope = { mode: "all" };
-
-    await expect(service.startReviewRun({ scope, trigger: "manual", sourceContext: { channel: "web" } })).rejects.toThrow("dispatch failed");
-
-    const [failedRun] = await readStoredCortexReviewRuns(dataDir);
-    expect(failedRun).toMatchObject({ dispatchState: "queued" });
-    expect(failedRun?.sessionAgentId).toMatch(/^cortex--s\d+$/);
-  });
-
-  it("blocks repeated dispatch failures instead of retrying forever", async () => {
-    const { dataDir, descriptors, service } = await makeHarness({ handleUserMessage: async () => { throw new Error("persistent dispatch failure"); } });
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, {
-      ...run,
-      sessionAgentId: descriptor.agentId,
-      dispatchState: "queued",
-      dispatchFailureCount: 2,
-    });
-
-    await expect((service as unknown as { startNextQueuedReviewRun: () => Promise<unknown> }).startNextQueuedReviewRun()).rejects.toThrow("persistent dispatch failure");
-
-    expect((await readStoredCortexReviewRuns(dataDir))[0]).toMatchObject({
-      runId: run.runId,
-      sessionAgentId: descriptor.agentId,
-      dispatchState: "queued",
-      dispatchFailureCount: 3,
-      blockedReason: expect.stringContaining("Review dispatch failed 3 times"),
-    });
-  });
-
-  it("treats session_created as reserved for scheduled all-scope coalescing", async () => {
-    const { dataDir, descriptors, service } = await makeHarness();
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir, { mode: "all" });
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: descriptor.agentId, dispatchState: "session_created" });
-
-    await service.startReviewRun({ scope: { mode: "all" }, trigger: "scheduled", sourceContext: { channel: "web" } });
-
-    expect((await readStoredCortexReviewRuns(dataDir)).filter((entry) => entry.scope.mode === "all")).toHaveLength(1);
-  });
-
-  it("retries session_created runs during live queue processing", async () => {
-    const { dataDir, descriptors, service, handleUserMessage } = await makeHarness();
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: descriptor.agentId, dispatchState: "session_created" });
-
-    await (service as unknown as { startNextQueuedReviewRun: () => Promise<unknown> }).startNextQueuedReviewRun();
-
-    expect(handleUserMessage).toHaveBeenCalledWith(run.requestText, expect.objectContaining({ targetAgentId: descriptor.agentId }));
-    expect((await readStoredCortexReviewRuns(dataDir))[0]).toMatchObject({ sessionAgentId: descriptor.agentId, dispatchState: "dispatched" });
-  });
-
-  it("reuses reserved queued sessions during runtime queue processing instead of creating orphans", async () => {
-    const { dataDir, descriptors, service, handleUserMessage } = await makeHarness();
-    const descriptor = createReviewDescriptor("cortex--s1");
-    descriptors.set(descriptor.agentId, descriptor);
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: descriptor.agentId, dispatchState: "queued" });
-
-    await (service as unknown as { startNextQueuedReviewRun: () => Promise<unknown> }).startNextQueuedReviewRun();
-
-    expect(handleUserMessage).toHaveBeenCalledWith(run.requestText, expect.objectContaining({ targetAgentId: descriptor.agentId }));
-    expect(Array.from(descriptors.keys())).toEqual([descriptor.agentId]);
-    expect((await readStoredCortexReviewRuns(dataDir))[0]).toMatchObject({ sessionAgentId: descriptor.agentId, dispatchState: "dispatched" });
-  });
-
-  it("returns missing session_created descriptors to queued/recoverable state", async () => {
-    const { dataDir, service, handleUserMessage } = await makeHarness();
-    const run = await seedQueuedRun(dataDir);
-    await appendCortexReviewRun(dataDir, { ...run, sessionAgentId: "cortex--missing", dispatchState: "session_created" });
-
-    await service.recoverIncompleteReviewRunDispatchesForBoot();
-
-    expect(handleUserMessage).not.toHaveBeenCalled();
-    expect((await readStoredCortexReviewRuns(dataDir))[0]).toMatchObject({ sessionAgentId: null, dispatchState: "queued" });
-  });
-});
+function entrySource(session = "s1"): KnowledgeEntrySource {
+  return { kind: "observed", session, at: "2026-07-05T12:00:00.000Z" };
+}
