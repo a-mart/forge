@@ -1799,6 +1799,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
       getWorkPlansEnabled: () => this.isWorkPlansEnabled(),
+      getKnowledgeV2Enabled: () => this.knowledgeV2SettingsService.getSettings().enabled,
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
     });

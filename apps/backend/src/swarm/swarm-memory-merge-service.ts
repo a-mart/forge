@@ -10,6 +10,7 @@ import type {
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { getProfileMemoryPath, getProfileMergeAuditLogPath } from "./data-paths.js";
+import { assertKnowledgeMigrationNotBusy } from "./knowledge-v2-migration-lock.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import type { PromptCategory } from "./prompt-registry.js";
@@ -215,6 +216,8 @@ export class SwarmMemoryMergeService {
     if (descriptor.agentId === profileId) {
       throw new Error(`Default session working memory merge is not supported: ${agentId}`);
     }
+
+    await assertKnowledgeMigrationNotBusy(this.options.config.paths.dataDir);
 
     const releaseMergeLock = await this.acquireProfileMergeLock(profileId);
 

@@ -303,6 +303,14 @@ export function getKnowledgeArchiveDir(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), "archive");
 }
 
+export function getKnowledgeLegacyArchiveDir(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".archive");
+}
+
+export function getKnowledgeReferenceDir(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), "reference");
+}
+
 export function getKnowledgeIndexPath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), "INDEX.md");
 }
@@ -321,6 +329,14 @@ export function getProfileKnowledgeArchiveDir(dataDir: string, profileId: string
 
 export function getProfileKnowledgeIndexPath(dataDir: string, profileId: string): string {
   return join(getProfileKnowledgeV2Dir(dataDir, profileId), "INDEX.md");
+}
+
+export function getKnowledgeMigrationLockPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".knowledge-v2-migration.lock.json");
+}
+
+export function getKnowledgeMigrationManifestPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".knowledge-v2-migration-manifest.json");
 }
 
 export function getProfileKnowledgeDir(dataDir: string): string {

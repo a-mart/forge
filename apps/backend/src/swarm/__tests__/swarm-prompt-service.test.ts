@@ -9,10 +9,13 @@ import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
 import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";
 import { ACTIVE_WORK_PLANS_GUIDANCE_ENABLED } from "../coordination/work-plans-settings.js";
+import { estimateTokens } from "../knowledge-service.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
 import {
   getCommonKnowledgePath,
+  getKnowledgeIndexPath,
+  getProfileKnowledgeIndexPath,
   getProfileMemoryPath,
   getSessionContextPromptPath,
   getSessionContextReferenceDir,
@@ -162,7 +165,7 @@ function createPromptRegistry(config: SwarmConfig) {
 function createPromptServiceForDescriptor(
   config: SwarmConfig,
   descriptor: AgentDescriptor,
-  options?: { getWorkPlansEnabled?: () => boolean },
+  options?: { getWorkPlansEnabled?: () => boolean; getKnowledgeV2Enabled?: () => boolean },
 ): SwarmPromptService {
   const profileId = descriptor.profileId ?? descriptor.agentId;
   return new SwarmPromptService({
@@ -176,7 +179,13 @@ function createPromptServiceForDescriptor(
       getAdditionalSkillPaths: () => []
     } as never,
     getAgentMemoryPath: (agentId) => resolveMemoryFilePath(config.paths.dataDir, { ...descriptor, agentId }, undefined),
-    ensureAgentMemoryFile: async (path) => ensureMemoryFile(path, "# m\n"),
+    ensureAgentMemoryFile: async (path) => {
+      try {
+        await readFile(path, "utf8");
+      } catch {
+        await ensureMemoryFile(path, "# m\n");
+      }
+    },
     resolveMemoryOwnerAgentId: (d) => d.agentId,
     resolveSessionProfileId: () => profileId,
     refreshSessionMetaStats: async () => {},
@@ -184,6 +193,7 @@ function createPromptServiceForDescriptor(
     getSessionsForProfile: () => [descriptor],
     loadSpecialistRegistryModule: async () => specialistRegistryStub(),
     getWorkPlansEnabled: options?.getWorkPlansEnabled,
+    getKnowledgeV2Enabled: options?.getKnowledgeV2Enabled,
     getIntegrationContext: () => undefined,
     logDebug: () => {}
   });
@@ -1356,5 +1366,56 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resources.memoryContextFile.content).toContain("Session line");
     expect(resources.memoryContextFile.content).toContain("Common Knowledge");
     expect(resources.memoryContextFile.content).toContain("Common fact");
+  });
+
+  it("getMemoryRuntimeResources injects only generated knowledge indexes when knowledge v2 is enabled", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const descriptor = createManagerDescriptor(config, repoRoot, { archetypeId: "cortex" });
+    const sessionPath = resolveMemoryFilePath(
+      dataDir,
+      { agentId: "manager", role: "manager", profileId, managerId: "manager" },
+      undefined,
+    );
+    const profilePath = getProfileMemoryPath(dataDir, profileId);
+    const profileIndexPath = getProfileKnowledgeIndexPath(dataDir, profileId);
+    const globalIndexPath = getKnowledgeIndexPath(dataDir);
+    const commonPath = getCommonKnowledgePath(dataDir);
+
+    await ensureMemoryFile(sessionPath, "## Session line\n");
+    await ensureMemoryFile(
+      profilePath,
+      `## Legacy profile line\n${Array.from({ length: 80 }, (_, index) => `legacy-profile-${index}`).join(" ")}\n`,
+    );
+    await ensureMemoryFile(profileIndexPath, "# Knowledge Index (profile:manager)\n\n- [pref-a] Profile index line\n");
+    await ensureMemoryFile(globalIndexPath, "# Knowledge Index (global)\n\n- [conv-a] Global index line\n");
+    await ensureMemoryFile(
+      commonPath,
+      `Legacy common fact\n${Array.from({ length: 80 }, (_, index) => `legacy-common-${index}`).join(" ")}\n`,
+    );
+
+    let knowledgeV2Enabled = true;
+    const service = createPromptServiceForDescriptor(config, descriptor, {
+      getKnowledgeV2Enabled: () => knowledgeV2Enabled,
+    });
+
+    const resources = await service.getMemoryRuntimeResources(descriptor);
+    expect(resources.memoryContextFile.path).toBe(sessionPath);
+    expect(resources.memoryContextFile.content).toContain("Profile index line");
+    expect(resources.memoryContextFile.content).toContain("Global index line");
+    expect(resources.memoryContextFile.content).toContain("Session line");
+    expect(resources.memoryContextFile.content).not.toContain("Legacy profile line");
+    expect(resources.memoryContextFile.content).not.toContain("Legacy common fact");
+    expect(resources.memoryContextFile.content).not.toContain("# Common Knowledge (maintained by Cortex");
+
+    knowledgeV2Enabled = false;
+    const legacyResources = await service.getMemoryRuntimeResources(descriptor);
+    expect(legacyResources.memoryContextFile.content).toContain("Legacy profile line");
+    expect(legacyResources.memoryContextFile.content).toContain("Legacy common fact");
+    expect(legacyResources.memoryContextFile.content).not.toContain("Profile index line");
+    expect(estimateTokens(resources.memoryContextFile.content)).toBeLessThan(
+      estimateTokens(legacyResources.memoryContextFile.content),
+    );
   });
 });

@@ -5,6 +5,9 @@ import { ONBOARDING_STATUSES, ONBOARDING_TECHNICAL_LEVEL_VALUES } from "@forge/p
 import { readJsonFileIfExists, writeFileAtomic, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { getCommonKnowledgePath, getSharedKnowledgeDir } from "./data-paths.js";
+import { assertKnowledgeMigrationNotBusy } from "./knowledge-v2-migration-lock.js";
+import type { KnowledgeService } from "./knowledge-service.js";
+import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 
 export const ONBOARDING_STATE_FILE_NAME = "onboarding-state.json";
 const ONBOARDING_COMMON_BLOCK_START = "<!-- BEGIN MANAGED:ONBOARDING -->";
@@ -75,8 +78,17 @@ export async function skipOnboarding(dataDir: string): Promise<OnboardingState> 
 
 export async function renderOnboardingCommonKnowledge(
   dataDir: string,
-  snapshot: OnboardingState
+  snapshot: OnboardingState,
+  options?: {
+    knowledgeService?: KnowledgeService;
+    settingsService?: Pick<KnowledgeV2SettingsService, "getSettings">;
+  },
 ): Promise<{ path: string; content: string }> {
+  if (options?.settingsService?.getSettings().enabled === true && options.knowledgeService) {
+    return renderOnboardingKnowledgeEntries(dataDir, snapshot, options.knowledgeService);
+  }
+
+  await assertKnowledgeMigrationNotBusy(dataDir);
   const commonKnowledgePath = getCommonKnowledgePath(dataDir);
   const managedBlock = buildManagedOnboardingBlock(snapshot);
   const renderedAt = nowIso();
@@ -98,6 +110,41 @@ export async function renderOnboardingCommonKnowledge(
   return {
     path: commonKnowledgePath,
     content: nextContent
+  };
+}
+
+async function renderOnboardingKnowledgeEntries(
+  dataDir: string,
+  snapshot: OnboardingState,
+  knowledgeService: KnowledgeService,
+): Promise<{ path: string; content: string }> {
+  const entries = buildManagedOnboardingLines(snapshot)
+    .filter((line) => !line.startsWith("- Onboarding status:"))
+    .map((line) => line.replace(/^-\s*/u, ""));
+
+  for (const line of entries) {
+    const [label, ...rest] = line.split(":");
+    const value = rest.join(":").trim();
+    if (!value) continue;
+    const normalizedLabel = label.trim();
+    await knowledgeService.upsertEntry({
+      id: `preference-onboarding-${normalizedLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      type: "preference",
+      scope: "global",
+      title: `Onboarding ${normalizedLabel.toLowerCase()}`,
+      body: `${normalizedLabel}: ${truncateKnowledgeBody(value)}`,
+      evidenceTier: "explicit_user",
+      sources: [{
+        kind: "user-stated",
+        at: snapshot.completedAt ?? snapshot.skippedAt ?? new Date().toISOString(),
+      }],
+    });
+  }
+
+  const indexPath = join(getSharedKnowledgeDir(dataDir), "INDEX.md");
+  return {
+    path: indexPath,
+    content: entries.join("\n"),
   };
 }
 
@@ -375,6 +422,11 @@ function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
 }
 
+function truncateKnowledgeBody(value: string): string {
+  const words = value.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  return words.length > 110 ? `${words.slice(0, 110).join(" ")}...` : words.join(" ");
+}
+
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -419,4 +471,3 @@ function nowIso(): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
