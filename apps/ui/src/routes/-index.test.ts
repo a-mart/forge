@@ -16,6 +16,10 @@ globalThis.ResizeObserver ??= class ResizeObserver {
 import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession, parseWindowRouteSearch } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
 import { buildManagerModelRows } from '@/lib/manager-model-selection'
+import {
+  installVirtualizationHarness,
+  type VirtualizationHarness,
+} from '@/components/chat/message-list/test-virtualization-harness'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -115,6 +119,7 @@ function buildWorker(agentId: string, managerId: string, cwd: string) {
 
 let container: HTMLDivElement
 let root: Root | null = null
+let virt: VirtualizationHarness | null = null
 
 const originalWebSocket = globalThis.WebSocket
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
@@ -167,6 +172,10 @@ beforeEach(() => {
 
   container = document.createElement('div')
   document.body.appendChild(container)
+  // Give the virtualized MessageList a real viewport in jsdom so its transcript
+  // rows mount (jsdom reports 0 for every measurement). Tall viewport → the
+  // small fixtures here render in full, matching pre-virtualization behavior.
+  virt = installVirtualizationHarness()
 })
 
 afterEach(() => {
@@ -179,6 +188,11 @@ afterEach(() => {
   root = null
   container.remove()
 
+  // Drain any pending virtualizer scroll-reset/settle timers before swapping
+  // back to real timers so they don't fire post-teardown (window undefined).
+  vi.runOnlyPendingTimers()
+  virt?.restore()
+  virt = null
   vi.useRealTimers()
   ;(globalThis as any).WebSocket = originalWebSocket
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {

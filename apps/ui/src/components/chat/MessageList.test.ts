@@ -6,9 +6,14 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationEntry, SessionTaskStateSnapshotEvent } from '@forge/protocol'
 import { MessageList } from './MessageList'
+import {
+  installVirtualizationHarness,
+  type VirtualizationHarness,
+} from './message-list/test-virtualization-harness'
 
 let root: Root
 let container: HTMLDivElement
+let virt: VirtualizationHarness
 const now = '2026-05-30T00:00:00.000Z'
 const originalResizeObserver = globalThis.ResizeObserver
 const originalRequestAnimationFrame = globalThis.requestAnimationFrame
@@ -27,11 +32,14 @@ beforeEach(() => {
   globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver
   globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0)) as typeof requestAnimationFrame
   globalThis.cancelAnimationFrame = ((id: number) => window.clearTimeout(id)) as typeof cancelAnimationFrame
+  // Tall viewport so these small fixtures fully render through the virtualizer.
+  virt = installVirtualizationHarness()
 })
 
 afterEach(() => {
   flushSync(() => root.unmount())
   container.remove()
+  virt.restore()
   globalThis.ResizeObserver = originalResizeObserver
   globalThis.requestAnimationFrame = originalRequestAnimationFrame
   globalThis.cancelAnimationFrame = originalCancelAnimationFrame

@@ -3,10 +3,12 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
@@ -104,6 +106,12 @@ export interface MessageListHandle {
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
 const REPLY_TEXT_MAX_CHARS = 2000
+/** Rows rendered above/below the viewport. Keeps scrolling smooth and makes
+ *  search/DOM-walk highlighting resilient to small measurement drift. */
+const OVERSCAN = 8
+/** Estimated row height before a row has been measured. Rows self-correct via
+ *  `measureElement`, so this only affects the very first paint of each row. */
+const ESTIMATED_ROW_HEIGHT = 96
 
 function buildReplyTargetSnapshot(
   message: Extract<ConversationEntry, { type: 'conversation_message' }>,
@@ -321,6 +329,18 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   return displayEntries
 }
 
+/**
+ * The full ordered list of virtualized rows. Non-message chrome (active-work
+ * card, missing-choice fallbacks, streaming indicator) is folded into the same
+ * flat list as the transcript so the virtualizer measures and positions every
+ * vertically-stacked item uniformly, preserving order/grouping exactly.
+ */
+type VirtualRow =
+  | { kind: 'active_work'; id: string }
+  | { kind: 'missing_choice'; id: string; choiceId: string }
+  | { kind: 'entry'; id: string; entry: DisplayEntry }
+  | { kind: 'loading'; id: string }
+
 function LoadingIndicator({ streamingStartedAt }: { streamingStartedAt?: number }) {
   const [nowMs, setNowMs] = useState(() => Date.now())
 
@@ -389,17 +409,47 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   statuses = {},
   onNavigateToWorker,
 }, ref) {
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
+  // useState (not useRef) for the scroll element so that the callback ref's
+  // re-render lets the virtualizer pick up the real element via getScrollElement.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
+  const scrollElRef = useRef<HTMLDivElement | null>(null)
   const previousAgentIdRef = useRef<string | null>(null)
   const previousFirstEntryIdRef = useRef<string | null>(null)
   const previousEntryCountRef = useRef(0)
   const hasScrolledRef = useRef(false)
   const isAtBottomRef = useRef(true)
   const [showScrollButton, setShowScrollButton] = useState(false)
+  // A row index that must stay mounted regardless of the viewport window —
+  // set transiently by scrollToMessage so pin/search/reply jumps to an
+  // off-screen row land on a real DOM node (for flash + DOM-walk highlight).
+  const [pinnedIndex, setPinnedIndex] = useState<number | null>(null)
+  const pinnedIndexTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Mirrors rows.length so the stable scrollToBottom callback can read the
+  // current row count without re-creating on every message append.
+  const rowCountRef = useRef(0)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
   const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
+  const showActiveWorkCard = hasActiveWork(activeWorkSnapshot)
+
+  const rows = useMemo<VirtualRow[]>(() => {
+    const next: VirtualRow[] = []
+    if (showActiveWorkCard) {
+      next.push({ kind: 'active_work', id: 'active-work-card' })
+    }
+    for (const choiceId of missingPendingChoiceIds) {
+      next.push({ kind: 'missing_choice', id: `missing-choice-${choiceId}`, choiceId })
+    }
+    for (const entry of displayEntries) {
+      next.push({ kind: 'entry', id: entry.id, entry })
+    }
+    if (isLoading) {
+      next.push({ kind: 'loading', id: 'loading-indicator' })
+    }
+    return next
+  }, [showActiveWorkCard, missingPendingChoiceIds, displayEntries, isLoading])
+  rowCountRef.current = rows.length
+
   const loadedConversationMessageIds = useMemo(() => {
     const ids = new Set<string>()
     for (const entry of displayEntries) {
@@ -411,6 +461,22 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     return ids
   }, [displayEntries])
 
+  // Map every scroll-to-able message id (conversation target id, work-plan id)
+  // to its row index, so scrollToMessage can drive the virtualizer to an
+  // off-screen row. Mirrors the ids set as data-message-id below.
+  const messageIdToRowIndex = useMemo(() => {
+    const map = new Map<string, number>()
+    rows.forEach((row, index) => {
+      if (row.kind !== 'entry') return
+      if (row.entry.type === 'conversation_message') {
+        map.set(resolveConversationMessageTargetId(row.entry.message), index)
+      } else if (row.entry.type === 'work_plan_created') {
+        map.set(row.entry.event.id, index)
+      }
+    })
+    return map
+  }, [rows])
+
   const stoppableExternalThreadMessageIds = useMemo(
     () => buildStoppableExternalThreadMessageIds(messages, statuses),
     [messages, statuses],
@@ -421,13 +487,26 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     [agents],
   )
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- useVirtualizer returns unstable functions by design; MessageList does not pass them into memoized children.
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollEl,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    getItemKey: (index) => rows[index]?.id ?? index,
+    overscan: OVERSCAN,
+    // Reset the `isScrolling` flag from the native `scrollend` event instead of
+    // a 150ms debounce timer. Avoids a stray timer that can fire after unmount
+    // (React state update on a torn-down tree); supported in all target browsers
+    // and jsdom, with the library falling back safely if unavailable.
+    useScrollendEvent: true,
+  })
+
   // Sidebar perf: attempt to complete `session_switch.click_to_first_transcript_paint_ms`
   // after every commit. The registry refuses completion unless:
   //   - the active session-switch token targets `activeAgentId`, AND
   //   - the matching `conversation_history` has already been processed.
   // This is the explicit fix for the v1 review's reset-empty-state false
   // completion. We schedule the sample inside one rAF so it lands after paint.
-  // Plan section 4 — `MessageList.tsx` post-commit effect.
   useEffect(() => {
     if (!activeAgentId) {
       return
@@ -489,94 +568,151 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     [onChoiceCancel],
   )
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto', force = false) => {
-    const container = scrollContainerRef.current
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const container = scrollElRef.current
     if (!container) {
       return
     }
 
-    const doScroll = () => {
-      if (behavior === 'smooth' && typeof container.scrollTo === 'function') {
-        container.scrollTo({ top: container.scrollHeight, behavior })
-      } else {
-        container.scrollTop = container.scrollHeight
-      }
+    isAtBottomRef.current = true
+    setShowScrollButton(false)
 
-      isAtBottomRef.current = true
-      setShowScrollButton(false)
+    const lastIndex = rowCountRef.current - 1
+
+    const pinToBottom = () => {
+      const c = scrollElRef.current
+      if (!c || !isAtBottomRef.current) return
+      if (lastIndex >= 0) {
+        // Idiomatic react-virtual bottom-pin: drives both the virtualizer's
+        // internal offset (so the correct window renders) and the DOM scroll
+        // (via elementScroll). Robust with dynamic heights.
+        virtualizer.scrollToIndex(lastIndex, { align: 'end', behavior })
+      }
+      // Belt-and-suspenders: also drive the raw scroll offset to the true
+      // bottom in case measurements under-report before rows resolve.
+      if (behavior === 'smooth' && typeof c.scrollTo === 'function') {
+        c.scrollTo({ top: c.scrollHeight, behavior })
+      } else {
+        c.scrollTop = c.scrollHeight
+      }
     }
 
-    doScroll()
+    pinToBottom()
 
-    // When force-scrolling (agent switch, initial load), content-visibility: auto
-    // causes the browser to use estimated heights for off-screen items. The real
-    // heights are only resolved once content scrolls into view, which can push
-    // the position away from the true bottom. Schedule follow-up scrolls to
-    // compensate once layout has settled.
-    if (force) {
+    // Off-screen rows measured with estimates may shift total size once real
+    // heights resolve; re-pin to the true bottom across two frames.
+    if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
-        doScroll()
-        requestAnimationFrame(() => {
-          doScroll()
-        })
+        pinToBottom()
+        requestAnimationFrame(pinToBottom)
       })
     }
-  }, [])
+  }, [virtualizer])
 
   const scrollToMessage = useCallback((messageId: string) => {
-    const container = scrollContainerRef.current
+    const container = scrollElRef.current
     if (!container) return
 
-    const target = container.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`)
-    if (!target) return
+    const index = messageIdToRowIndex.get(messageId)
 
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    // Re-scroll after layout settles (content-visibility can cause height shifts)
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+    const escapeId =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape
+        : (value: string) => value.replace(/["\\]/g, '\\$&')
+
+    const highlightMounted = () => {
+      const target = container.querySelector(`[data-message-id="${escapeId(messageId)}"]`)
+      if (!target) return
+      if (typeof (target as HTMLElement).scrollIntoView === 'function') {
         target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      })
-    })
+      }
+      // Flash highlight
+      target.classList.remove('pin-nav-highlight')
+      // Force reflow so re-adding the class restarts the animation
+      void (target as HTMLElement).offsetWidth
+      target.classList.add('pin-nav-highlight')
+      setTimeout(() => target.classList.remove('pin-nav-highlight'), 1500)
+    }
 
-    // Flash highlight
-    target.classList.remove('pin-nav-highlight')
-    // Force reflow so re-adding the class restarts the animation
-    void (target as HTMLElement).offsetWidth
-    target.classList.add('pin-nav-highlight')
-    setTimeout(() => target.classList.remove('pin-nav-highlight'), 1500)
-  }, [])
+    if (index === undefined) {
+      // Row id not in the virtualized set (should not happen for valid ids) —
+      // fall back to a best-effort DOM lookup in case it is already mounted.
+      highlightMounted()
+      return
+    }
+
+    // Keep the target row mounted while we scroll to and settle on it, so the
+    // flash + DOM-walk search highlight land on a real node even off-screen.
+    setPinnedIndex(index)
+    if (pinnedIndexTimerRef.current) {
+      clearTimeout(pinnedIndexTimerRef.current)
+    }
+
+    virtualizer.scrollToIndex(index, { align: 'center' })
+
+    // Re-scroll after measurement settles (dynamic heights shift offsets), then
+    // refine onto the real DOM node and flash it.
+    const settle = () => {
+      virtualizer.scrollToIndex(index, { align: 'center' })
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(highlightMounted)
+      } else {
+        highlightMounted()
+      }
+    }
+
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(settle)
+    } else {
+      settle()
+    }
+
+    // Release the forced mount after the jump settles.
+    pinnedIndexTimerRef.current = setTimeout(() => {
+      setPinnedIndex(null)
+      pinnedIndexTimerRef.current = null
+    }, 1600)
+  }, [messageIdToRowIndex, virtualizer])
 
   useImperativeHandle(
     ref,
     () => ({
       scrollToBottom,
       scrollToMessage,
-      getScrollContainer: () => scrollContainerRef.current,
+      getScrollContainer: () => scrollElRef.current,
     }),
     [scrollToBottom, scrollToMessage],
   )
 
-  const updateIsAtBottom = () => {
-    const container = scrollContainerRef.current
+  useEffect(() => {
+    return () => {
+      if (pinnedIndexTimerRef.current) {
+        clearTimeout(pinnedIndexTimerRef.current)
+      }
+    }
+  }, [])
+
+  const updateIsAtBottom = useCallback(() => {
+    const container = scrollElRef.current
     if (!container) {
       isAtBottomRef.current = true
       setShowScrollButton(false)
       return
     }
 
-    const isAtBottom = isNearBottom(container)
-    isAtBottomRef.current = isAtBottom
-    setShowScrollButton(!isAtBottom)
-  }
+    const atBottom = isNearBottom(container)
+    isAtBottomRef.current = atBottom
+    setShowScrollButton(!atBottom)
+  }, [])
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     updateIsAtBottom()
-  }
+  }, [updateIsAtBottom])
 
   // Re-scroll to bottom when the scroll container resizes (e.g. WorkerPillBar
   // appearing/disappearing changes flex layout) and the user was already at the bottom.
   useEffect(() => {
-    const container = scrollContainerRef.current
+    const container = scrollEl
     if (!container) return
 
     const observer = new ResizeObserver(() => {
@@ -587,9 +723,18 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
     observer.observe(container)
     return () => observer.disconnect()
-  }, [scrollToBottom])
+  }, [scrollEl, scrollToBottom])
 
-  useEffect(() => {
+  // Stick-to-bottom and force-scroll on session/conversation transitions.
+  // Runs in a layout effect so the scroll adjustment is applied before paint,
+  // avoiding a visible jump when new content is appended at the bottom.
+  useLayoutEffect(() => {
+    // The scroll element is wired to the virtualizer via a callback ref, which
+    // lands one commit before this element becomes non-null in state. Defer the
+    // (force) scroll until the container exists so scrollToIndex has a target;
+    // hasScrolledRef stays false so this re-runs once scrollEl is set.
+    if (!scrollEl) return
+
     const nextAgentId = activeAgentId ?? null
     const nextFirstEntryId = displayEntries[0]?.id ?? null
     const nextEntryCount = displayEntries.length
@@ -612,16 +757,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const shouldAutoScroll = shouldForceScroll || isAtBottomRef.current
 
     if (shouldAutoScroll) {
-      scrollToBottom(shouldForceScroll ? 'auto' : 'smooth', shouldForceScroll)
+      scrollToBottom(shouldForceScroll ? 'auto' : 'smooth')
     }
 
     hasScrolledRef.current = true
     previousAgentIdRef.current = nextAgentId
     previousFirstEntryIdRef.current = nextFirstEntryId
     previousEntryCountRef.current = nextEntryCount
-  }, [activeAgentId, displayEntries, isLoading, scrollToBottom])
-
-  const showActiveWorkCard = hasActiveWork(activeWorkSnapshot)
+  }, [activeAgentId, displayEntries, isLoading, scrollToBottom, scrollEl])
 
   if (displayEntries.length === 0 && !isLoading && !showActiveWorkCard && !hasMissingPendingChoices) {
     return (
@@ -637,183 +780,205 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     scrollToBottom('smooth')
   }
 
+  const renderRow = (row: VirtualRow) => {
+    if (row.kind === 'active_work') {
+      return (
+        <ActiveWorkCard
+          snapshot={activeWorkSnapshot}
+          agents={agents ?? []}
+          statuses={statuses}
+          expanded={activeWorkExpanded}
+          onExpandedChange={onActiveWorkExpandedChange ?? (() => undefined)}
+          focusNonce={activeWorkFocusNonce}
+          onNavigateToWorker={onNavigateToWorker}
+        />
+      )
+    }
+
+    if (row.kind === 'missing_choice') {
+      return (
+        <MissingChoiceDetailsFallback
+          choiceId={row.choiceId}
+          responseAgentId={activeAgentId}
+          onCancel={handleChoiceCancel}
+        />
+      )
+    }
+
+    if (row.kind === 'loading') {
+      return <LoadingIndicator streamingStartedAt={streamingStartedAt} />
+    }
+
+    const entry = row.entry
+
+    if (entry.type === 'conversation_message') {
+      const isAssistant = entry.message.role === 'assistant'
+      const feedbackTargetId = resolveConversationMessageTargetId(entry.message)
+      const feedbackLegacyTargetId = resolveConversationMessageLegacyTargetId(entry.message)
+      const hasExternalThreadContext =
+        entry.message.role === 'system' &&
+        entry.message.externalThreadContext?.type === 'codex_app_server'
+
+      return (
+        <div data-message-id={feedbackTargetId}>
+          <ConversationMessageRow
+            message={entry.message}
+            wsUrl={wsUrl}
+            surface={surface}
+            currentCollabUserId={currentCollabUserId}
+            feedbackTargetId={feedbackTargetId}
+            feedbackLegacyTargetId={feedbackLegacyTargetId}
+            onArtifactClick={onArtifactClick}
+            onForkFromMessage={entry.message.role !== 'system' ? onForkFromMessage : undefined}
+            onPinMessage={entry.message.role !== 'system' ? onPinMessage : undefined}
+            onStopExternalThread={onStopExternalThread}
+            onReplyToMessage={
+              surface === 'builder' && entry.message.role !== 'system' && onReplyToMessage
+                ? (message) => {
+                    const target = buildReplyTargetSnapshot(message)
+                    if (target) onReplyToMessage(target)
+                  }
+                : undefined
+            }
+            isReplyTargetLoaded={(messageId) => loadedConversationMessageIds.has(messageId)}
+            onReplyPreviewClick={(messageId) => scrollToMessage(messageId)}
+            canStopExternalThread={
+              hasExternalThreadContext
+                ? stoppableExternalThreadMessageIds.has(feedbackTargetId)
+                : undefined
+            }
+            feedbackVote={
+              isAssistant && getVote
+                ? getVote(feedbackTargetId, feedbackLegacyTargetId)
+                : undefined
+            }
+            feedbackHasComment={
+              isAssistant && hasComment
+                ? hasComment(feedbackTargetId, feedbackLegacyTargetId)
+                : undefined
+            }
+            onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
+            onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
+            onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}
+            isFeedbackSubmitting={isFeedbackSubmitting}
+          />
+        </div>
+      )
+    }
+
+    if (entry.type === 'choice_request') {
+      const isLive =
+        entry.entry.status === 'pending' &&
+        pendingChoiceIds.has(entry.entry.choiceId)
+
+      return isLive ? (
+        <ChoiceRequestCard
+          choiceId={entry.entry.choiceId}
+          agentId={resolveChoiceResponseAgentId(entry.entry, activeAgentId)}
+          questions={entry.entry.questions}
+          onSubmit={handleChoiceSubmit}
+          onCancel={handleChoiceCancel}
+        />
+      ) : (
+        <ChoiceAnsweredRow
+          choiceId={entry.entry.choiceId}
+          questions={entry.entry.questions}
+          answers={entry.entry.answers ?? []}
+          status={entry.entry.status === 'pending' ? 'expired' : entry.entry.status}
+          timestamp={entry.entry.timestamp}
+        />
+      )
+    }
+
+    if (entry.type === 'agent_message') {
+      return <AgentMessageRow message={entry.message} />
+    }
+
+    if (entry.type === 'work_plan_created') {
+      return (
+        <div data-message-id={entry.event.id}>
+          <WorkPlanCreatedRow
+            event={entry.event}
+            agents={agents ?? []}
+            statuses={statuses}
+            latestPlan={findLatestWorkPlanSnapshot(activeWorkSnapshot, entry.event.planId)}
+            onNavigateToWorker={onNavigateToWorker}
+          />
+        </div>
+      )
+    }
+
+    return (
+      <ToolLogRow
+        type={entry.type}
+        entry={entry.entry}
+        isActive={isLoading}
+        actorDisplay={
+          entry.type === 'tool_execution' && entry.entry.actorAgentId
+            ? agentDisplayMap.get(entry.entry.actorAgentId)
+            : undefined
+        }
+      />
+    )
+  }
+
+  const virtualItems = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
+  // Union the viewport window with any transiently pinned row so pin/search
+  // jumps to off-screen rows still mount a real node. `start` comes from the
+  // virtual item when windowed, else from the (now-current) measurements cache.
+  const startByIndex = new Map<number, number>()
+  for (const item of virtualItems) {
+    startByIndex.set(item.index, item.start)
+  }
+  if (
+    pinnedIndex !== null &&
+    pinnedIndex < rows.length &&
+    !startByIndex.has(pinnedIndex)
+  ) {
+    startByIndex.set(pinnedIndex, virtualizer.measurementsCache[pinnedIndex]?.start ?? 0)
+  }
+  const renderIndexes = Array.from(startByIndex.keys()).sort((a, b) => a - b)
+
   return (
     <div className="relative min-h-0 flex flex-1 flex-col overflow-hidden">
       <div
-        ref={scrollContainerRef}
+        ref={(el) => {
+          scrollElRef.current = el
+          setScrollEl(el)
+        }}
         onScroll={handleScroll}
         className={cn(
-          'min-h-0 flex-1 overflow-y-auto',
+          'min-h-0 flex-1 overflow-y-auto p-2 md:p-3',
           '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
           '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
           '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',
           'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
         )}
       >
-        <div className="space-y-2 p-2 md:p-3">
-          {showActiveWorkCard ? (
-            <ActiveWorkCard
-              snapshot={activeWorkSnapshot}
-              agents={agents ?? []}
-              statuses={statuses}
-              expanded={activeWorkExpanded}
-              onExpandedChange={onActiveWorkExpandedChange ?? (() => undefined)}
-              focusNonce={activeWorkFocusNonce}
-              onNavigateToWorker={onNavigateToWorker}
-            />
-          ) : null}
-          {missingPendingChoiceIds.map((choiceId) => (
-            <div
-              key={`missing-choice-${choiceId}`}
-              className="[content-visibility:auto] [contain-intrinsic-size:auto_160px]"
-            >
-              <MissingChoiceDetailsFallback
-                choiceId={choiceId}
-                responseAgentId={activeAgentId}
-                onCancel={handleChoiceCancel}
-              />
-            </div>
-          ))}
-          {displayEntries.map((entry) => {
-            if (entry.type === 'conversation_message') {
-              const isAssistant = entry.message.role === 'assistant'
-              const feedbackTargetId = resolveConversationMessageTargetId(entry.message)
-              const feedbackLegacyTargetId = resolveConversationMessageLegacyTargetId(entry.message)
-              const hasExternalThreadContext =
-                entry.message.role === 'system' &&
-                entry.message.externalThreadContext?.type === 'codex_app_server'
-
-              return (
-                <div
-                  key={entry.id}
-                  data-message-id={resolveConversationMessageTargetId(entry.message)}
-                  className="[content-visibility:auto] [contain-intrinsic-size:auto_96px]"
-                >
-                  <ConversationMessageRow
-                    message={entry.message}
-                    wsUrl={wsUrl}
-                    surface={surface}
-                    currentCollabUserId={currentCollabUserId}
-                    feedbackTargetId={feedbackTargetId}
-                    feedbackLegacyTargetId={feedbackLegacyTargetId}
-                    onArtifactClick={onArtifactClick}
-                    onForkFromMessage={entry.message.role !== 'system' ? onForkFromMessage : undefined}
-                    onPinMessage={entry.message.role !== 'system' ? onPinMessage : undefined}
-                    onStopExternalThread={onStopExternalThread}
-                    onReplyToMessage={
-                      surface === 'builder' && entry.message.role !== 'system' && onReplyToMessage
-                        ? (message) => {
-                            const target = buildReplyTargetSnapshot(message)
-                            if (target) onReplyToMessage(target)
-                          }
-                        : undefined
-                    }
-                    isReplyTargetLoaded={(messageId) => loadedConversationMessageIds.has(messageId)}
-                    onReplyPreviewClick={(messageId) => scrollToMessage(messageId)}
-                    canStopExternalThread={
-                      hasExternalThreadContext
-                        ? stoppableExternalThreadMessageIds.has(feedbackTargetId)
-                        : undefined
-                    }
-                    feedbackVote={
-                      isAssistant && getVote
-                        ? getVote(feedbackTargetId, feedbackLegacyTargetId)
-                        : undefined
-                    }
-                    feedbackHasComment={
-                      isAssistant && hasComment
-                        ? hasComment(feedbackTargetId, feedbackLegacyTargetId)
-                        : undefined
-                    }
-                    onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
-                    onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
-                    onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}
-                    isFeedbackSubmitting={isFeedbackSubmitting}
-                  />
-                </div>
-              )
-            }
-
-            if (entry.type === 'choice_request') {
-              const isLive =
-                entry.entry.status === 'pending' &&
-                pendingChoiceIds.has(entry.entry.choiceId)
-
-              return (
-                <div
-                  key={entry.id}
-                  className="[content-visibility:auto] [contain-intrinsic-size:auto_200px]"
-                >
-                  {isLive ? (
-                    <ChoiceRequestCard
-                      choiceId={entry.entry.choiceId}
-                      agentId={resolveChoiceResponseAgentId(entry.entry, activeAgentId)}
-                      questions={entry.entry.questions}
-                      onSubmit={handleChoiceSubmit}
-                      onCancel={handleChoiceCancel}
-                    />
-                  ) : (
-                    <ChoiceAnsweredRow
-                      choiceId={entry.entry.choiceId}
-                      questions={entry.entry.questions}
-                      answers={entry.entry.answers ?? []}
-                      status={entry.entry.status === 'pending' ? 'expired' : entry.entry.status}
-                      timestamp={entry.entry.timestamp}
-                    />
-                  )}
-                </div>
-              )
-            }
-
-            if (entry.type === 'agent_message') {
-              return (
-                <div
-                  key={entry.id}
-                  className="[content-visibility:auto] [contain-intrinsic-size:auto_84px]"
-                >
-                  <AgentMessageRow message={entry.message} />
-                </div>
-              )
-            }
-
-            if (entry.type === 'work_plan_created') {
-              return (
-                <div
-                  key={entry.id}
-                  data-message-id={entry.event.id}
-                  className="[content-visibility:auto] [contain-intrinsic-size:auto_160px]"
-                >
-                  <WorkPlanCreatedRow
-                    event={entry.event}
-                    agents={agents ?? []}
-                    statuses={statuses}
-                    latestPlan={findLatestWorkPlanSnapshot(activeWorkSnapshot, entry.event.planId)}
-                    onNavigateToWorker={onNavigateToWorker}
-                  />
-                </div>
-              )
-            }
-
+        <div style={{ height: totalSize, position: 'relative', width: '100%' }}>
+          {renderIndexes.map((index) => {
+            const row = rows[index]
+            if (!row) return null
+            const start = startByIndex.get(index) ?? 0
             return (
               <div
-                key={entry.id}
-                className="[content-visibility:auto] [contain-intrinsic-size:auto_84px]"
+                key={row.id}
+                data-index={index}
+                ref={virtualizer.measureElement}
+                className="pb-2"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${start}px)`,
+                }}
               >
-                <ToolLogRow
-                  type={entry.type}
-                  entry={entry.entry}
-                  isActive={isLoading}
-                  actorDisplay={
-                    entry.type === 'tool_execution' && entry.entry.actorAgentId
-                      ? agentDisplayMap.get(entry.entry.actorAgentId)
-                      : undefined
-                  }
-                />
+                {renderRow(row)}
               </div>
             )
           })}
-          {isLoading ? <LoadingIndicator streamingStartedAt={streamingStartedAt} /> : null}
-          <div ref={bottomRef} />
         </div>
       </div>
 
