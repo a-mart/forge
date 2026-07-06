@@ -6,7 +6,7 @@ import {
   useState,
 } from 'react'
 import { reportBuilderConnected } from '@/lib/connection-health-store'
-import { AgentSidebar } from '@/components/chat/AgentSidebar'
+import { AgentSidebarConnected } from '@/components/chat/AgentSidebarConnected'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
 import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from '@/components/index-page/activity-rail-workspace'
@@ -150,7 +150,7 @@ export function BuilderSurface({
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
   const archiveHydrationRequestedRef = useRef(false)
 
-  const { clientRef, state, setState } = useWsConnection(wsUrl)
+  const { clientRef, httpClientRef, state, setState } = useWsConnection(wsUrl)
 
   // Sync builder WS health to the module-level store so ModeSwitch can
   // display the builder connection dot even from the collab surface.
@@ -162,7 +162,9 @@ export function BuilderSurface({
 
   useEffect(() => {
     let cancelled = false
-    void fetchModelCacheVisualizationEnabled(wsUrl)
+    // Route through the origin's target-aware HTTP client (requirement 9)
+    // rather than a raw wsUrl, so remote origins carry their credentials.
+    void fetchModelCacheVisualizationEnabled(httpClientRef.current ?? wsUrl)
       .then((enabled) => {
         if (!cancelled) {
           clientRef.current?.applyLoadedModelCacheVisualizationSetting(enabled)
@@ -172,7 +174,7 @@ export function BuilderSurface({
     return () => {
       cancelled = true
     }
-  }, [clientRef, wsUrl])
+  }, [clientRef, httpClientRef, wsUrl])
 
   useEffect(() => {
     if (activeView !== 'archive') {
@@ -1965,16 +1967,9 @@ export function BuilderSurface({
     <>
       <FileDirtyConfirmDialog state={fileEditorCoordinator.dialogState} />
 
-      <AgentSidebar
-        connected={state.connected}
+      <AgentSidebarConnected
         wsUrl={wsUrl}
-        agents={state.agents}
-        profiles={state.profiles}
-        statuses={state.statuses}
-        unreadCounts={state.unreadCounts}
         collaborationModeSwitch={collaborationModeSwitch}
-        terminalScopeId={state.terminalSessionScopeId}
-        terminalCount={state.terminals.length}
         selectedAgentId={activeAgentId}
         isSettingsActive={activeView === 'settings'}
         isStatsActive={activeView === 'stats'}
