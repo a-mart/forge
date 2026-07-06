@@ -48,7 +48,7 @@ import { handleSessionCommand } from "./commands/session-command-handler.js";
 import { CollabSubscriptionManager } from "./collab-subscription-manager.js";
 import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
 import { WsApiProxy } from "./ws-api-proxy.js";
-import { sendWsEvent } from "./ws-send.js";
+import { sendWsEvent, sendWsEventWithBackpressure } from "./ws-send.js";
 import { WsSubscriptions } from "./ws-subscriptions.js";
 
 export class WsHandler {
@@ -92,6 +92,7 @@ export class WsHandler {
       unreadTracker: this.unreadTracker,
       perf,
       send: (socket, event) => this.send(socket, event),
+      sendBootstrapCritical: (socket, event) => this.sendWithBackpressure(socket, event),
       getServer: () => this.wss,
     });
 
@@ -611,6 +612,17 @@ export class WsHandler {
 
   private send(socket: WebSocket, event: ServerEvent | CollaborationServerEvent): number | null {
     return sendWsEvent({
+      socket,
+      event,
+      onDropSocket: (targetSocket) => this.dropSocket(targetSocket),
+    });
+  }
+
+  private sendWithBackpressure(
+    socket: WebSocket,
+    event: ServerEvent | CollaborationServerEvent,
+  ): Promise<number | null> {
+    return sendWsEventWithBackpressure({
       socket,
       event,
       onDropSocket: (targetSocket) => this.dropSocket(targetSocket),

@@ -32,6 +32,10 @@ export class WsSubscriptions {
   private readonly unreadTracker: UnreadTracker | null;
   private readonly perf: SidebarPerfRecorder;
   private readonly send: (socket: WebSocket, event: ServerEvent) => number | null;
+  private readonly sendBootstrapCritical: (
+    socket: WebSocket,
+    event: ServerEvent,
+  ) => Promise<number | null>;
   private readonly getServer: () => WebSocketServer | null;
 
   constructor(options: {
@@ -43,6 +47,7 @@ export class WsSubscriptions {
     unreadTracker: UnreadTracker | null;
     perf: SidebarPerfRecorder;
     send: (socket: WebSocket, event: ServerEvent) => number | null;
+    sendBootstrapCritical?: (socket: WebSocket, event: ServerEvent) => Promise<number | null>;
     getServer: () => WebSocketServer | null;
   }) {
     this.swarmManager = options.swarmManager;
@@ -53,6 +58,9 @@ export class WsSubscriptions {
     this.unreadTracker = options.unreadTracker;
     this.perf = options.perf;
     this.send = options.send;
+    // Falls back to the plain send when a backpressure-aware sender isn't wired (e.g. in tests).
+    this.sendBootstrapCritical =
+      options.sendBootstrapCritical ?? ((socket, event) => Promise.resolve(options.send(socket, event)));
     this.getServer = options.getServer;
   }
 
@@ -387,7 +395,8 @@ export class WsSubscriptions {
       listTerminalsForSession: this.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
       perf: this.perf,
-      send: this.send,
+      // Bootstrap-critical events flow-control (await drain) instead of dropping under backpressure.
+      send: this.sendBootstrapCritical,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       resolveTaskSnapshotSessionAgentId: (agentId) => this.resolveTaskSnapshotSessionAgentId(agentId),

@@ -59,7 +59,7 @@ export async function sendSubscriptionBootstrap(options: {
   listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   unreadTracker: UnreadTracker | null;
   perf: SidebarPerfRecorder;
-  send: (socket: WebSocket, event: ServerEvent) => number | null;
+  send: (socket: WebSocket, event: ServerEvent) => number | null | Promise<number | null>;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
   resolveTaskSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
@@ -96,9 +96,12 @@ export async function sendSubscriptionBootstrap(options: {
     allProfiles.filter((profile) => isSystemProfile(profile)).map((profile) => profile.profileId),
   );
 
-  const sendMeasured = (fieldPrefix: string, event: ServerEvent): number | null => {
+  // Awaits `send`, which for bootstrap-critical events flow-controls (awaits socket drain) before
+  // sending. Sending sequentially with `await` lets the socket buffer drain between events so the
+  // whole bootstrap completes without overflowing the 1 MB buffer and dropping later events.
+  const sendMeasured = async (fieldPrefix: string, event: ServerEvent): Promise<number | null> => {
     const sendStartedAtMs = performance.now();
-    const payloadBytes = send(socket, event);
+    const payloadBytes = await send(socket, event);
     metricFields[`${fieldPrefix}SendMs`] = performance.now() - sendStartedAtMs;
     metricFields[`${fieldPrefix}PayloadBytes`] = payloadBytes;
     if (typeof payloadBytes === "number") {
@@ -107,7 +110,7 @@ export async function sendSubscriptionBootstrap(options: {
     return payloadBytes;
   };
 
-  sendMeasured("ready", {
+  await sendMeasured("ready", {
     type: "ready",
     serverTime: new Date().toISOString(),
     subscribedAgentId: targetAgentId
@@ -135,10 +138,10 @@ export async function sendSubscriptionBootstrap(options: {
       }
     });
     agentsSnapshotSent =
-      sendMeasured("agentsSnapshot", {
+      (await sendMeasured("agentsSnapshot", {
         type: "agents_snapshot",
         agents
-      }) !== null;
+      })) !== null;
   } else {
     metricFields.agentsSnapshotBuildMs = 0;
     metricFields.agentsSnapshotSendMs = 0;
@@ -155,10 +158,10 @@ export async function sendSubscriptionBootstrap(options: {
     metricFields.profilesSnapshotBuildMs = profilesSnapshotBuildMs;
     metricFields.profilesReturned = profiles.length;
     profilesSnapshotSent =
-      sendMeasured("profilesSnapshot", {
+      (await sendMeasured("profilesSnapshot", {
         type: "profiles_snapshot",
         profiles
-      }) !== null;
+      })) !== null;
   } else {
     metricFields.profilesSnapshotBuildMs = 0;
     metricFields.profilesSnapshotSendMs = 0;
@@ -211,13 +214,13 @@ export async function sendSubscriptionBootstrap(options: {
   metricFields.cacheReadMs = historyResult.diagnostics.cacheReadMs;
   metricFields.sessionSummaryReadMs = historyResult.diagnostics.sessionSummaryReadMs;
   metricFields.historyDetail = historyResult.diagnostics.detail ?? undefined;
-  sendMeasured("conversationHistory", {
+  await sendMeasured("conversationHistory", {
     type: "conversation_history",
     agentId: targetAgentId,
     messages: conversationHistory
   });
 
-  sendMeasured("pendingChoicesSnapshot", {
+  await sendMeasured("pendingChoicesSnapshot", {
     type: "pending_choices_snapshot",
     agentId: targetAgentId,
     choiceIds: pendingChoiceIds,
@@ -225,7 +228,7 @@ export async function sendSubscriptionBootstrap(options: {
   });
   metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
 
-  sendMeasured("restartRecoverySnapshot", {
+  await sendMeasured("restartRecoverySnapshot", {
     type: "restart_recovery_snapshot",
     snapshot: swarmManager.getRestartRecoverySnapshot?.() ?? null,
   });
@@ -240,7 +243,7 @@ export async function sendSubscriptionBootstrap(options: {
     metricFields.taskSnapshotRevision = taskSnapshot.revision;
     metricFields.taskSnapshotDiagnosticsState = taskSnapshot.diagnostics?.state ?? null;
     metricFields.taskSnapshotRecentWorkPlanCount = taskSnapshot.recentWorkPlanCount;
-    sendMeasured("taskSnapshot", taskSnapshot);
+    await sendMeasured("taskSnapshot", taskSnapshot);
     metricFields.taskSnapshotMs = performance.now() - taskSnapshotStartedAtMs;
   } else {
     metricFields.taskSnapshotBuildMs = 0;
@@ -259,7 +262,7 @@ export async function sendSubscriptionBootstrap(options: {
     terminalService?.listTerminals(effectiveTerminalSessionId) ??
     [];
   metricFields.terminalCount = terminals.length;
-  sendMeasured("terminalsSnapshot", {
+  await sendMeasured("terminalsSnapshot", {
     type: "terminals_snapshot",
     sessionAgentId: effectiveTerminalSessionId,
     terminals,
@@ -268,7 +271,7 @@ export async function sendSubscriptionBootstrap(options: {
 
   if (unreadTracker) {
     const unreadSnapshotStartedAtMs = performance.now();
-    sendMeasured("unreadCountsSnapshot", {
+    await sendMeasured("unreadCountsSnapshot", {
       type: "unread_counts_snapshot",
       counts: unreadTracker.getSnapshot(),
     });
@@ -278,7 +281,7 @@ export async function sendSubscriptionBootstrap(options: {
   const managerContextId = resolveManagerContextAgentId(targetAgentId);
   if (integrationRegistry && managerContextId) {
     const integrationStatusStartedAtMs = performance.now();
-    sendMeasured("integrationStatus", integrationRegistry.getStatus(managerContextId, "telegram"));
+    await sendMeasured("integrationStatus", integrationRegistry.getStatus(managerContextId, "telegram"));
     metricFields.integrationStatusMs = performance.now() - integrationStatusStartedAtMs;
   }
 

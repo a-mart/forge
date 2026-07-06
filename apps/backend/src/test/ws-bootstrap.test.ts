@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { WebSocket } from 'ws'
 import type { ServerEvent } from '@forge/protocol'
 import {
   SIDEBAR_BOOTSTRAP_METRIC,
@@ -6,6 +7,10 @@ import {
 } from '../stats/sidebar-perf-metrics.js'
 import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { sendSubscriptionBootstrap } from '../ws/ws-bootstrap.js'
+import {
+  MAX_WS_BUFFERED_AMOUNT_BYTES,
+  sendWsEventWithBackpressure,
+} from '../ws/ws-send.js'
 
 function createPerfStub(): SidebarPerfRecorder {
   return {
@@ -670,5 +675,84 @@ describe('sendSubscriptionBootstrap', () => {
       agentId: 'manager-1',
       choiceIds: ['legacy-choice-1'],
     })
+  })
+
+  it('flow-controls bootstrap-critical events over a backpressured socket instead of dropping them', async () => {
+    // A fake socket that starts saturated (over the 1 MB cap) and drains on the next macrotask tick.
+    let bufferedAmount = MAX_WS_BUFFERED_AMOUNT_BYTES + 750_000
+    const sentTypes: string[] = []
+    const socket = {
+      _socket: { write: () => true },
+      get readyState() {
+        return WebSocket.OPEN
+      },
+      get bufferedAmount() {
+        return bufferedAmount
+      },
+      send: vi.fn((data: string, cb?: (error?: Error) => void) => {
+        sentTypes.push((JSON.parse(data) as ServerEvent).type)
+        cb?.(undefined)
+      }),
+      terminate: vi.fn(),
+    } as unknown as WebSocket
+
+    // Relieve backpressure shortly after the bootstrap starts awaiting drain.
+    const drainTimer = setInterval(() => {
+      bufferedAmount = 0
+    }, 5)
+
+    const onDropSocket = vi.fn()
+    try {
+      await sendSubscriptionBootstrap({
+        socket,
+        targetAgentId: 'manager-1',
+        swarmManager: {
+          listBootstrapAgents: () => [],
+          listProfiles: () => [],
+          getConversationHistoryWithDiagnostics: () => ({
+            history: [],
+            diagnostics: {
+              cacheState: 'hit' as const,
+              historySource: 'cache_hit' as const,
+              coldLoad: false,
+              fsReadOps: 0,
+              fsReadBytes: 0,
+              sessionFileBytes: 0,
+              cacheFileBytes: 0,
+              persistedEntryCount: 0,
+              cachedEntryCount: 0,
+              sessionSummaryBytesScanned: 0,
+              cacheReadMs: 0,
+              sessionSummaryReadMs: 0,
+              detail: undefined,
+            },
+          }),
+          getPendingChoiceIdsForSession: () => [],
+          getPendingChoiceRequestsForSession: () => [],
+          getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+        } as any,
+        integrationRegistry: null,
+        terminalService: null,
+        unreadTracker: null,
+        perf: createPerfStub(),
+        // Wire the real backpressure-aware sender so bootstrap-critical events await drain.
+        send: (targetSocket, event) =>
+          sendWsEventWithBackpressure({ socket: targetSocket, event, onDropSocket, timeoutMs: 2000 }),
+        resolveTerminalScopeAgentId: () => undefined,
+        resolveManagerContextAgentId: () => undefined,
+        resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      })
+    } finally {
+      clearInterval(drainTimer)
+    }
+
+    // Every bootstrap-critical event was actually sent after drain (none dropped), and transient
+    // backpressure never terminated the socket.
+    expect(sentTypes).toContain('ready')
+    expect(sentTypes).toContain('agents_snapshot')
+    expect(sentTypes).toContain('profiles_snapshot')
+    expect(sentTypes).toContain('conversation_history')
+    expect(onDropSocket).not.toHaveBeenCalled()
+    expect(socket.terminate).not.toHaveBeenCalled()
   })
 })

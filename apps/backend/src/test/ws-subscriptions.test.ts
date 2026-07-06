@@ -4,6 +4,15 @@ import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { WsSubscriptions } from '../ws/ws-subscriptions.js'
 import { WebSocket } from 'ws'
 
+// The bootstrap send sequence is async and flow-controls bootstrap-critical events (awaits socket
+// drain between sends). Fire-and-forget bootstrap paths (queueSubscriptionBootstrap) therefore settle
+// across microtask boundaries, so flush the microtask queue before asserting on delivered events.
+async function flushMicrotasks(ticks = 20): Promise<void> {
+  for (let i = 0; i < ticks; i += 1) {
+    await Promise.resolve()
+  }
+}
+
 function createPerfStub(): SidebarPerfRecorder {
   return {
     recordDuration: vi.fn(),
@@ -290,6 +299,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     manager.deleteAgent('session-1')
 
     subscriptions.handleDeletedAgentSubscriptions(new Set(['session-1']))
+    await flushMicrotasks()
 
     expect(getEventTypes(sentEvents)).toContain('ready')
     expect(getEventTypes(sentEvents)).toContain('agents_snapshot')
@@ -319,6 +329,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     manager.deleteAgent('session-1')
 
     expect(subscriptions.resolveSubscribedAgentId(socket)).toBe('manager')
+    await flushMicrotasks()
     expect(getEventTypes(sentEvents)).toContain('ready')
     expect(getEventTypes(sentEvents)).toContain('agents_snapshot')
     expect(getEventTypes(sentEvents)).toContain('profiles_snapshot')
