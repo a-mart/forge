@@ -1,6 +1,20 @@
 export type SpecialistSourceKind = 'builtin' | 'global' | 'profile' | 'channel' | 'workspace'
 export type SpecialistTargetSpace = 'builder' | 'collaboration'
 export type SpecialistAvailabilityCode = 'ok' | 'invalid_model' | 'missing_auth'
+export type EffortTier = 'light' | 'fast' | 'standard' | 'deep' | 'max'
+
+export interface TierConfig {
+  tier: EffortTier
+  displayName: string
+  description: string
+  color: string
+  modelId: string
+  provider: string
+  reasoningLevel?: string
+  fallbackModelId?: string
+  fallbackProvider?: string
+  fallbackReasoningLevel?: string
+}
 
 export interface ResolvedSpecialistDefinition {
   specialistId: string
@@ -8,8 +22,8 @@ export interface ResolvedSpecialistDefinition {
   color: string
   enabled: boolean
   whenToUse: string
-  modelId: string
-  provider: string
+  modelId?: string
+  provider?: string
   reasoningLevel?: string
   fallbackModelId?: string
   fallbackProvider?: string
@@ -26,4 +40,5 @@ export interface ResolvedSpecialistDefinition {
   availabilityMessage?: string
   shadowsGlobal: boolean
   conflictWarning?: string
+  defaultTier?: EffortTier
 }

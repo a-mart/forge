@@ -192,6 +192,8 @@ export interface AgentDescriptor {
   streamingStartedAt?: number
   pendingChoiceCount?: number
   specialistId?: string
+  specialistTier?: import('./specialists.js').EffortTier
+  specialistLens?: string
   specialistDisplayName?: string
   specialistColor?: string
   internalWorkerKind?: InternalWorkerKind

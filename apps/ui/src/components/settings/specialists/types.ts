@@ -101,6 +101,7 @@ export interface CardEditState {
   pinned: boolean
   webSearch: boolean
   targetSpace: SpecialistTargetSpace[]
+  defaultTier?: import('@forge/protocol').EffortTier
   promptBody: string
 }
 

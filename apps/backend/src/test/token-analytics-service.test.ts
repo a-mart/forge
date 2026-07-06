@@ -140,6 +140,55 @@ describe("TokenAnalyticsService", () => {
     ]);
   });
 
+  it("keeps tier lens composite specialist ids as opaque analytics keys", async () => {
+    await writeSession(
+      context.dataDir,
+      "alpha",
+      "alpha-composite",
+      "Gamma Session",
+      [
+        {
+          id: "worker-planner",
+          specialistId: "deep:planner",
+          specialistAttributionKnown: true,
+          createdAt: "2026-04-06T10:00:00.000Z",
+          terminatedAt: "2026-04-06T10:10:00.000Z",
+        },
+      ],
+      {
+        "worker-planner": [
+          {
+            type: "message",
+            timestamp: "2026-04-06T10:01:00.000Z",
+            message: {
+              provider: "openai-codex",
+              model: "gpt-5.5",
+              reasoningLevel: "high",
+              usage: { input: 6, output: 4 },
+            },
+          },
+        ],
+      },
+    );
+
+    const snapshot = await context.service.getSnapshot({
+      rangePreset: "all",
+      timezone: "UTC",
+      specialistId: "deep:planner",
+    }, { forceRefresh: true });
+
+    expect(snapshot.query.specialistId).toBe("deep:planner");
+    expect(snapshot.attribution.specialist.runCount).toBe(1);
+    expect(snapshot.specialistBreakdown).toEqual([
+      expect.objectContaining({
+        specialistId: "deep:planner",
+        displayName: "deep:planner",
+        runCount: 1,
+        usage: expect.objectContaining({ total: 10 }),
+      }),
+    ]);
+  });
+
   it("composes specialistId with attribution filters instead of discarding it", async () => {
     const snapshot = await context.service.getSnapshot({
       rangePreset: "all",

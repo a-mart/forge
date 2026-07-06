@@ -1824,6 +1824,112 @@ describe("SwarmAgentLifecycleService", () => {
     expect(spawned.model.modelId).toBe("gpt-5.4");
   });
 
+  it("spawnAgent composes tier and lens into model, prompt, and composite specialist metadata", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle",
+      cwd: "/proj"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const createRuntimeForDescriptor = vi.fn(async (d: AgentDescriptor, systemPrompt: string) =>
+      makeRuntimeStub({ descriptor: d, getSystemPrompt: () => systemPrompt })
+    );
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        createRuntimeForDescriptor,
+        resolveSpecialistRosterForProfile: vi.fn(async () => [
+          {
+            specialistId: "planner",
+            displayName: "Planner",
+            color: "#7c3aed",
+            enabled: true,
+            whenToUse: "planning",
+            promptBody: "lens prompt",
+            available: true,
+            defaultTier: "deep"
+          }
+        ])
+      })
+    );
+
+    const spawned = await svc.spawnAgent("m1", {
+      agentId: "worker-a",
+      tier: "fast",
+      lens: "planner"
+    });
+
+    expect(spawned.model).toMatchObject({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "medium"
+    });
+    expect(spawned.specialistId).toBe("fast:planner");
+    expect(spawned.specialistTier).toBe("fast");
+    expect(spawned.specialistLens).toBe("planner");
+    expect(spawned.specialistDisplayName).toBe("Fast — Planner");
+    expect(createRuntimeForDescriptor).toHaveBeenCalledWith(expect.objectContaining({ agentId: "worker-a" }), "lens prompt");
+  });
+
+  it("spawnAgent rewrites deleted thin builtin specialists to bare tiers", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle",
+      cwd: "/proj"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        normalizeSpecialistHandle: vi.fn(async (handle: string) => handle)
+      })
+    );
+
+    const spawned = await svc.spawnAgent("m1", {
+      agentId: "worker-a",
+      specialist: "backend"
+    });
+
+    expect(spawned.specialistId).toBe("fast");
+    expect(spawned.specialistTier).toBe("fast");
+    expect(spawned.model).toMatchObject({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5"
+    });
+  });
+
+  it("spawnAgent rejects unknown tiers before creating workers", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle",
+      cwd: "/proj"
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[manager.agentId, manager]]),
+        assertManager: () => manager
+      })
+    );
+
+    await expect(svc.spawnAgent("m1", {
+      agentId: "worker-a",
+      tier: "huge" as SpawnAgentInput["tier"]
+    })).rejects.toThrow("spawn_agent.tier must be one of light|fast|standard|deep|max");
+  });
+
   it("notifySpecialistRosterChanged syncs worker metadata from builder and collaboration rosters", async () => {
     const builderManager = createAgentDescriptor({
       agentId: "builder-manager",

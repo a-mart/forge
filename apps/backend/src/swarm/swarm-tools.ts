@@ -437,7 +437,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        `Create and start a new worker agent. Prefer specialist mode via \`specialist\` for standard delegation; use ad-hoc archetype/prompt/model overrides only when no specialist fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
+        `Create and start a new worker agent. Prefer tier/lens mode via \`tier\` and optional \`lens\`; legacy \`specialist\` handles remain supported for custom specialists and compatibility. Use ad-hoc archetype/prompt/model overrides only when no tier/lens fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -446,7 +446,23 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         specialist: Type.Optional(
           Type.String({
             description:
-              "Specialist handle. See system prompt for available specialists. Omit to use ad-hoc model params instead."
+              "Legacy specialist handle. Builtin handles are rewritten to tier/lens; custom specialist handles still use their saved model/prompt."
+          })
+        ),
+        tier: Type.Optional(
+          Type.Union([
+            Type.Literal("light"),
+            Type.Literal("fast"),
+            Type.Literal("standard"),
+            Type.Literal("deep"),
+            Type.Literal("max"),
+          ], {
+            description: "Effort tier for the worker: light, fast, standard, deep, or max."
+          })
+        ),
+        lens: Type.Optional(
+          Type.String({
+            description: "Optional lens id for technique/output-contract guidance, such as planner, researcher, code-reviewer, code-reviewer-2, architect, or codex-plugin."
           })
         ),
         archetypeId: Type.Optional(
@@ -476,6 +492,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         const parsed = params as {
           agentId: string;
           specialist?: string;
+          tier?: "light" | "fast" | "standard" | "deep" | "max";
+          lens?: string;
           archetypeId?: string;
           systemPrompt?: string;
           model?: unknown;
@@ -489,6 +507,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         const spawnInput: SpawnAgentInput = {
           agentId: parsed.agentId,
           specialist: parsed.specialist,
+          tier: parsed.tier,
+          lens: parsed.lens,
           archetypeId: parsed.archetypeId,
           systemPrompt: parsed.systemPrompt,
           model: parseSwarmModelPreset(parsed.model, "spawn_agent.model"),
@@ -509,6 +529,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           metadata: {
             spawnedAgentId: spawned.agentId,
             specialist: spawnInput.specialist,
+            tier: spawnInput.tier,
+            lens: spawnInput.lens,
             modelProvider: spawned.model.provider,
             modelId: spawned.model.modelId,
           },

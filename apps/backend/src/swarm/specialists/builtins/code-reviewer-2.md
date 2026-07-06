@@ -3,11 +3,8 @@ displayName: Code Reviewer 2
 color: "#06b6d4"
 enabled: true
 whenToUse: Architectural review, design pattern evaluation, maintainability assessment, API ergonomics, style consistency. Not for bug hunting or correctness verification — use Code Reviewer for that.
-modelId: gpt-5.5
-TargetSpace: [builder]
-reasoningLevel: medium
-fallbackModelId: gpt-5.4
-fallbackReasoningLevel: high
+TargetSpace: [builder, collaboration]
+defaultTier: deep
 builtin: true
 ---
 You are a worker agent in a swarm.

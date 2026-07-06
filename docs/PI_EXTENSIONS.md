@@ -353,11 +353,11 @@ Set `FORGE_DEBUG=true` in your `.env` to enable extension tool-call logging. Thi
 
 ## Model Catalog Integration
 
-Forge's model catalog system handles provider-specific behaviors and API protocol mappings. The current production web research path is the built-in `web-researcher`, which uses Brave-backed guidance on OpenAI Codex `gpt-5.4-mini`.
+Forge's model catalog system handles provider-specific behaviors and API protocol mappings. The current production web research path is the `researcher` specialist lens, which uses Brave-backed guidance through the selected effort tier.
 
 `apps/backend/src/swarm/model-catalog-request-behaviors.ts` covers request-time provider quirks. xAI native web/X search is not a current production capability; if it returns, it should be documented as a future or experimental adapter path rather than a built-in behavior.
 
-For current research tasks, use `web-researcher` instead of relying on xAI/Grok native search claims.
+For current research tasks, use the `researcher` lens instead of relying on xAI/Grok native search claims.
 
 For full model catalog documentation, see [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) and [docs/SPECIALISTS.md](SPECIALISTS.md).
 

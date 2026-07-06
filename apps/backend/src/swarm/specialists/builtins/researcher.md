@@ -2,12 +2,9 @@
 displayName: Researcher
 color: "#e11d48"
 enabled: true
-whenToUse: General research from indexed web sources, fact-checking against authoritative publications, documentation lookup, technical research, background investigation. Uses Brave Search API for structured results. Provider-neutral — works with any model. Not intended for real-time social media or breaking-news research; use Web Researcher for X/Twitter search or live developments instead.
-modelId: gpt-5.4-mini
-TargetSpace: [builder]
-reasoningLevel: medium
-fallbackModelId: gpt-5.5
-fallbackReasoningLevel: low
+whenToUse: Research, fact-checking, documentation lookup, current web/source verification, technical background investigation, and citation/source-quality synthesis.
+TargetSpace: [builder, collaboration]
+defaultTier: standard
 builtin: true
 webSearch: false
 ---

@@ -5,6 +5,7 @@ import type {
   ManagerReasoningLevel,
   ResolvedSpecialistDefinition,
   SpecialistTargetSpace,
+  TierConfig,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 import { createBuilderSettingsApiClient } from './settings-api-client'
@@ -14,7 +15,7 @@ export interface SaveSpecialistPayload {
   color: string
   enabled: boolean
   whenToUse: string
-  modelId: string
+  modelId?: string
   provider?: string
   reasoningLevel?: ManagerReasoningLevel
   fallbackModelId?: string
@@ -23,6 +24,7 @@ export interface SaveSpecialistPayload {
   pinned?: boolean
   webSearch?: boolean
   targetSpace?: SpecialistTargetSpace[]
+  defaultTier?: import('@forge/protocol').EffortTier
   promptBody: string
 }
 
@@ -77,8 +79,8 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     typeof specialist.color === 'string' &&
     typeof specialist.enabled === 'boolean' &&
     typeof specialist.whenToUse === 'string' &&
-    typeof specialist.modelId === 'string' &&
-    typeof specialist.provider === 'string' &&
+    (specialist.modelId === undefined || typeof specialist.modelId === 'string') &&
+    (specialist.provider === undefined || typeof specialist.provider === 'string') &&
     (specialist.reasoningLevel === undefined || typeof specialist.reasoningLevel === 'string') &&
     (specialist.fallbackModelId === undefined || typeof specialist.fallbackModelId === 'string') &&
     (specialist.fallbackProvider === undefined || typeof specialist.fallbackProvider === 'string') &&
@@ -100,7 +102,13 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
       specialist.availabilityCode === 'missing_auth') &&
     (specialist.availabilityMessage === undefined || typeof specialist.availabilityMessage === 'string') &&
     typeof specialist.shadowsGlobal === 'boolean' &&
-    (specialist.conflictWarning === undefined || typeof specialist.conflictWarning === 'string')
+    (specialist.conflictWarning === undefined || typeof specialist.conflictWarning === 'string') &&
+    (specialist.defaultTier === undefined ||
+      specialist.defaultTier === 'light' ||
+      specialist.defaultTier === 'fast' ||
+      specialist.defaultTier === 'standard' ||
+      specialist.defaultTier === 'deep' ||
+      specialist.defaultTier === 'max')
   )
 }
 
@@ -220,6 +228,48 @@ export async function setSpecialistsEnabledApi(
     body: JSON.stringify({ enabled }),
   })
   if (!response.ok) throw new Error(await client.readApiError(response))
+}
+
+export async function fetchTierConfigs(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<TierConfig[]> {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, '/tiers')
+  const response = await client.fetch(path, { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { tiers?: unknown }
+  return Array.isArray(payload.tiers) ? payload.tiers.filter(isTierConfig) : []
+}
+
+export async function saveTierConfigsApi(
+  clientOrWsUrl: SettingsApiClient | string | undefined,
+  tiers: TierConfig[],
+): Promise<TierConfig[]> {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, '/tiers')
+  const response = await client.fetch(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tiers }),
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { tiers?: unknown }
+  return Array.isArray(payload.tiers) ? payload.tiers.filter(isTierConfig) : tiers
+}
+
+function isTierConfig(value: unknown): value is TierConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const tier = value as Record<string, unknown>
+  return (
+    (tier.tier === 'light' || tier.tier === 'fast' || tier.tier === 'standard' || tier.tier === 'deep' || tier.tier === 'max') &&
+    typeof tier.displayName === 'string' &&
+    typeof tier.description === 'string' &&
+    typeof tier.color === 'string' &&
+    typeof tier.modelId === 'string' &&
+    typeof tier.provider === 'string' &&
+    (tier.reasoningLevel === undefined || typeof tier.reasoningLevel === 'string') &&
+    (tier.fallbackModelId === undefined || typeof tier.fallbackModelId === 'string') &&
+    (tier.fallbackProvider === undefined || typeof tier.fallbackProvider === 'string') &&
+    (tier.fallbackReasoningLevel === undefined || typeof tier.fallbackReasoningLevel === 'string')
+  )
 }
 
 export async function fetchWorkerTemplate(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<string> {

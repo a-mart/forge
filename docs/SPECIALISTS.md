@@ -1,18 +1,24 @@
-# Named Specialists
+# Specialists, Tiers, and Lenses
 
-Named specialists are configurable worker spawn templates that let you define specialized worker personas with specific models, reasoning levels, and system prompts. The manager uses the specialist roster to decide which worker profile to use for each task.
+Forge routes worker spawns through two concepts:
+
+- **Effort tiers** choose the model, provider, reasoning level, and fallback chain.
+- **Specialist lenses** choose the persona, prompt, color, and "when to use" guidance.
+
+The manager sees a compact tier/lens roster and can spawn a worker with `tier`, `lens`, or both. Custom legacy specialists are still supported as direct worker spawn templates.
 
 ## How It Works
 
-Each specialist is a **markdown file with YAML frontmatter**. The filename (without `.md`) becomes the specialist's handle (kebab-case). The manager sees the full roster in its prompt and can spawn workers using any enabled specialist.
+Each custom specialist or lens is a **markdown file with YAML frontmatter**. The filename (without `.md`) becomes the handle (kebab-case). Builtin lenses normally omit `modelId` because their model is supplied by the selected tier. Custom specialists can still include `modelId` and `provider` to behave like the older direct specialist templates.
 
 ## File Locations
 
 - **Global specialists** (shared across all profiles): `~/.forge/shared/specialists/<handle>.md`
+- **Workspace specialists** (repo-scoped passive resources): `<repo>/.forge/specialists/<handle>.md`
 - **Profile-specific specialists**: `~/.forge/profiles/<profileId>/specialists/<handle>.md`
 - **Collaboration channel-local specialists**: `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/<handle>.md`
 
-Profile specialists shadow global ones with the same filename. Forge ships with builtin specialists that are seeded to the global directory on startup. Collaboration servers seed both Builder built-ins and `collab-` prefixed Collaboration built-ins into the shared directory; each surface filters the roster by `TargetSpace`.
+Profile specialists shadow global ones with the same filename. Forge ships with builtin lenses that are seeded to the global directory on startup. Builder and Collaboration share the same core lenses where `TargetSpace` allows it; each surface filters the roster by `TargetSpace`.
 
 ## Frontmatter Fields
 
@@ -20,12 +26,13 @@ Profile specialists shadow global ones with the same filename. Forge ships with 
 ---
 displayName: Backend Engineer        # Required — human-readable name shown in UI and badges
 color: "#2563eb"                     # Required — hex color (click color swatch in UI to pick)
-handle: backend-engineer             # Optional — specialist handle (defaults to filename without .md)
 enabled: true                        # Required — whether the manager can use this specialist
 whenToUse: >-                        # Required — guidance for the manager on when to pick this specialist
   Backend/core implementation, TypeScript refactors, debugging server routes
-modelId: gpt-5.5              # Required — the model ID to use
-reasoningLevel: high                 # Optional — defaults to model preset default
+defaultTier: fast                    # Optional — default tier when this lens is selected without tier
+modelId: gpt-5.5                     # Optional — direct custom specialist model override
+provider: openai-codex               # Optional with modelId — runtime provider
+reasoningLevel: high                 # Optional with modelId — defaults to model preset default
 fallbackModelId: gpt-5.5             # Optional — model if primary is unavailable (can be cross-provider)
 fallbackReasoningLevel: medium       # Optional — reasoning for fallback (defaults to primary)
 pin: true                            # Optional — pin to top of sidebar list
@@ -35,6 +42,33 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 ```
 
 `TargetSpace` is the canonical frontmatter key and is case-sensitive when Forge writes files. Use `builder` for normal Builder managers, `collaboration` for collaboration channel managers, or `[builder, collaboration]` for a shared definition available in both surfaces. Files without `TargetSpace` default to Builder-only for legacy compatibility. Collaboration channel-local specialist files are always treated as collaboration-scoped.
+
+`defaultTier` can be one of `light`, `fast`, `standard`, `deep`, or `max`. It only affects lens-only spawns. If both `tier` and `lens` are provided, the explicit tier wins unless the lens has an explicit `modelId` override.
+
+## Builtin Tiers
+
+| Tier | Default Model | Reasoning | Fallback |
+|---|---|---|---|
+| `light` | `openai-codex/gpt-5.4-mini` | low | `openai-codex/gpt-5.5` low |
+| `fast` | `cursor-sdk/composer-2.5` | medium | `openai-codex/gpt-5.4` high |
+| `standard` | `openai-codex/gpt-5.5` | medium | `openai-codex/gpt-5.5` medium |
+| `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
+| `max` | `openai-codex/gpt-5.5` | xhigh | `openai-codex/gpt-5.5` medium |
+
+Tier settings are global and editable in **Settings → Specialists → Tiers**. They are persisted at `~/.forge/shared/specialists/tier-configs.json`.
+
+## Builtin Lenses
+
+Forge ships six builtin lenses:
+
+- `architect` (`defaultTier: max`, Builder and Collaboration)
+- `planner` (`defaultTier: deep`, Builder and Collaboration)
+- `code-reviewer` (`defaultTier: deep`, Builder and Collaboration)
+- `code-reviewer-2` (`defaultTier: deep`, Builder and Collaboration)
+- `researcher` (`defaultTier: standard`, Builder and Collaboration; includes Brave-backed web research guidance)
+- `codex-plugin` (`defaultTier: standard`, Builder-only; used for scoped `@Codex` plugin turns)
+
+Older builtin handles are rewritten for compatibility: `backend`, `frontend`, and `cursor-builder` become `fast`; `doc-writer` becomes `standard`; `scout` becomes `light`; `web-researcher` becomes `standard:researcher`; `planner`, `architect`, `code-reviewer`, `code-reviewer-2`, `researcher`, and `codex-plugin` map to their default tier plus lens. Legacy `collab-*` handles map to the shared lenses or bare tiers.
 
 ## Available Models
 
@@ -63,7 +97,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 - Anthropic Pi managers/workers use the `anthropic` provider. Claude Agent SDK variants reuse the same `modelId` strings but require `provider: claude-sdk` in specialist frontmatter or exact manager selection so Forge routes to the native SDK runtime instead of Pi.
 - Manager and specialist selectors expose dedicated presets: `pi-sonnet` for Anthropic Sonnet and `sdk-sonnet` for Claude SDK Sonnet. Choosing the preset selects Sonnet 5 by default; Sonnet 4.5 remains available as a variant.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
-- Cursor SDK models are specialist-only. The built-in `cursor-builder` specialist targets Composer 2.5, ships disabled by default, manager selectors do not offer Cursor SDK models, and runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
+- Cursor SDK models are tier/specialist-only. The default `fast` tier targets Composer 2.5 with a Codex fallback. Manager selectors do not offer Cursor SDK models. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt
@@ -94,10 +128,7 @@ displayName: Planner
 color: "#7c3aed"
 enabled: true
 whenToUse: Architecture planning, design docs, implementation sequencing, risk analysis
-modelId: gpt-5.5
-reasoningLevel: high
-fallbackModelId: gpt-5.5
-fallbackReasoningLevel: medium
+defaultTier: deep
 ---
 You are a worker agent in a swarm.
 [...base worker prompt...]
@@ -116,6 +147,7 @@ Go to **Settings → Specialists** to manage your roster:
 
 - **Global scope**: View and edit shared specialists. Create new global specialists. Builtins are editable but cannot be deleted.
 - **Profile scope**: View inherited specialists and create profile-specific overrides or new profile-only specialists.
+- **Tiers**: Edit the five global effort-tier model and fallback settings.
 
 Click any specialist card to expand and edit it. Changes are saved per-file.
 
@@ -127,16 +159,11 @@ Click any specialist card to expand and edit it. Changes are saved per-file.
 
 ### Fallback Models
 
-Each specialist can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry.
+Each tier, and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry.
 
 Only exhausted fallback failures surface upward.
 
-**Built-in specialists default to OpenAI Codex fallbacks** for current shipped Builder and Collaboration specialists. Built-in `web-researcher` is an exception because it has no fallback by default and follows normal fallback/model config semantics.
-
-
 **Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
-
-`cursor-builder` is the built-in Cursor SDK specialist. It targets Composer 2.5, ships disabled by default, and is intended for opt-in implementation work rather than manager sessions; runtime containment is provider-local and fail-closed, with one pre-output retry only for attributed transient transport or throttle failures.
 
 `codex-plugin` is a contextual built-in specialist. It appears only when a user turn includes an active `@Codex` plugin selector, and Forge binds that worker to the server-stored selector scope. Normal scoped plugin tools return bounded preview/metadata only. Full connector exports, such as Fireflies transcripts or summaries, must use the scoped export artifact tool, which writes redacted JSON artifacts under the session and returns only path/metadata plus a bounded preview. If that scoped worker is stopped or fails, Forge can authorize retry only for an explicit retry/continuation turn that refers to the same Codex/plugin context; unrelated turns require a fresh selector tag.
 
@@ -144,10 +171,11 @@ Only exhausted fallback failures surface upward.
 
 When resolving the roster for a Builder profile:
 1. Profile-specific specialists whose `TargetSpace` includes `builder` (in `~/.forge/profiles/<profileId>/specialists/`)
-2. Global specialists whose `TargetSpace` includes `builder` (in `~/.forge/shared/specialists/`)
+2. Workspace specialists whose `TargetSpace` includes `builder` and either introduce a new handle or explicitly override a non-builtin global specialist with `forgePrecedence: override` (in `<repo>/.forge/specialists/`)
+3. Global specialists whose `TargetSpace` includes `builder` (in `~/.forge/shared/specialists/`)
 
 When resolving a collaboration channel roster:
 1. Channel-local specialists (in `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/`)
 2. Selected global specialists whose `TargetSpace` includes `collaboration` (in `~/.forge/shared/specialists/`)
 
-Profile or channel-local files shadow global files with the same handle. Collaboration category defaults select global handles for newly created channels only; existing channels keep their own selected-handle list in SQLite.
+Profile or channel-local files shadow global files with the same handle. Workspace specialists are Builder-only passive project resources and do not override builtins. Collaboration category defaults select global handles for newly created channels only; existing channels keep their own selected-handle list in SQLite.

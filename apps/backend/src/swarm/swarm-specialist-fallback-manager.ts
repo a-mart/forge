@@ -23,6 +23,7 @@ import {
   isCollabSession
 } from "./swarm-manager-utils.js";
 import type { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
+import { normalizeEffortTier, resolveTierConfig } from "./specialists/specialist-registry.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
@@ -67,6 +68,7 @@ export interface SpecialistFallbackHandoffController {
 }
 
 export interface SwarmSpecialistFallbackManagerOptions {
+  dataDir?: string;
   descriptors: Map<string, AgentDescriptor>;
   runtimes: Map<string, SwarmAgentRuntime>;
   runtimeCreationPromisesByAgentId?: Map<string, Promise<SwarmAgentRuntime>>;
@@ -450,6 +452,28 @@ export class SwarmSpecialistFallbackManager {
     const specialistId = normalizeOptionalAgentId(descriptor.specialistId)?.toLowerCase();
     if (!specialistId) {
       return undefined;
+    }
+
+    const tier = descriptor.specialistTier ?? normalizeEffortTier(specialistId.split(":")[0]);
+    if (tier && this.options.dataDir) {
+      const tierConfig = await resolveTierConfig(this.options.dataDir, tier);
+      if (!tierConfig.fallbackModelId) {
+        return undefined;
+      }
+      const inferredFallbackProvider =
+        tierConfig.fallbackProvider ?? inferProviderFromModelId(tierConfig.fallbackModelId);
+      if (!inferredFallbackProvider) {
+        return undefined;
+      }
+      const fallbackModel: AgentModelDescriptor = {
+        provider: inferredFallbackProvider,
+        modelId: tierConfig.fallbackModelId,
+        thinkingLevel: normalizeThinkingLevelForProvider(
+          inferredFallbackProvider,
+          tierConfig.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
+        )
+      };
+      return this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
     }
 
     const managerDescriptor = this.options.descriptors.get(descriptor.managerId);
