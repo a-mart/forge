@@ -729,5 +729,10 @@ function normalizeSearchText(value: string): string {
 }
 
 export function estimateTokens(text: string): number {
-  return text.trim() ? text.trim().split(/\s+/u).length : 0;
+  // ~4 chars/token (the estimate used throughout the v2 design). Word-count
+  // undercounts kebab-case ids catastrophically — a 90-char slug is one
+  // "word" but ~22 tokens — which would let the injected INDEX blow past its
+  // cap. Measure characters so the cap binds to the real injected size.
+  const trimmed = text.trim();
+  return trimmed ? Math.ceil(trimmed.length / 4) : 0;
 }

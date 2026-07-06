@@ -68,7 +68,7 @@ describe("KnowledgeService", () => {
 
   it("regenerates an index under cap pressure using importance, support, and recency ordering", async () => {
     const dataDir = await tempDir();
-    const service = createService(dataDir, { global: 50, profile: 50 });
+    const service = createService(dataDir, { global: 80, profile: 80 });
     await service.upsertEntry({ ...baseEntry("Normal old"), importance: "normal" });
     await service.upsertEntry({ ...baseEntry("Pinned newest"), importance: "pinned" });
     await service.upsertEntry({ ...baseEntry("High newest"), importance: "high" });

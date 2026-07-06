@@ -53,3 +53,4 @@ apps/backend/static/playwright-live/assets/
 *.events.jsonl
 *.summary.json
 *.snapshot-evidence.json
+packages/cli/e2e-bootstrap.mjs
