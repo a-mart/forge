@@ -194,6 +194,8 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   └── specialists/                       # Global specialist definitions (.md files)
 └── profiles/<profileId>/
     ├── memory.md                          # Profile-level memory
+    ├── knowledge/entries/*.md             # Cortex knowledge (v2): per-profile entries (dark until knowledgeV2.enabled)
+    ├── knowledge/INDEX.md                 # Cortex knowledge (v2): generated per-profile index
     ├── extensions/                        # Profile-scoped Forge extensions (auto-created)
     ├── specialists/                       # Profile-specific specialist overrides
     ├── project-agents/<handle>/
@@ -211,6 +213,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
     ├── slash-commands.json                # Profile slash commands
     └── sessions/<sessionId>/
         ├── session.jsonl                  # Conversation history
+        ├── turns.jsonl                    # Liveness turn ledger (dispatch/delivery/terminal events; boot reconciliation source)
         ├── memory.md                      # Session working memory
         ├── meta.json                      # Session metadata (includes sessionPurpose: 'agent_creator' for Agent Architect sessions)
         ├── feedback.jsonl                 # User feedback
