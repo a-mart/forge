@@ -5,6 +5,8 @@ import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPrevie
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import {
   getCommonKnowledgePath,
+  getKnowledgeIndexPath,
+  getProfileKnowledgeIndexPath,
   getProfileMemoryPath,
   getProjectAgentPromptPath,
   getSessionContextPromptPath,
@@ -164,6 +166,7 @@ export interface SwarmPromptServiceOptions {
   ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSkillRosterForDescriptor?: (descriptor: AgentDescriptor) => Promise<SkillMetadata[] | null | undefined>;
   getWorkPlansEnabled?: () => boolean;
+  getKnowledgeV2Enabled?: () => boolean;
   getIntegrationContext: (profileId: string) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
 }
@@ -624,31 +627,35 @@ export class SwarmPromptService {
     let memoryContent = sessionMemoryContent;
 
     const profileMemoryOwnerId = this.options.resolveSessionProfileId(memoryOwnerAgentId);
-    if (profileMemoryOwnerId) {
-      const profileMemoryPath = getProfileMemoryPath(this.options.config.paths.dataDir, profileMemoryOwnerId);
-      await this.options.ensureAgentMemoryFile(profileMemoryPath, profileMemoryOwnerId);
-      const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
-      memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
-    }
-
-    const commonKnowledgePath = getCommonKnowledgePath(this.options.config.paths.dataDir);
-    try {
-      const commonKnowledgeContent = (await readFile(commonKnowledgePath, "utf8")).trim();
-      if (commonKnowledgeContent.length > 0) {
-        const baseMemoryContent = memoryContent.trimEnd();
-        memoryContent = [
-          baseMemoryContent,
-          "",
-          "---",
-          "",
-          COMMON_KNOWLEDGE_MEMORY_HEADER,
-          "",
-          commonKnowledgeContent,
-        ].join("\n");
+    if (this.options.getKnowledgeV2Enabled?.() === true) {
+      memoryContent = await this.buildKnowledgeV2MemoryRuntimeView(profileMemoryOwnerId, sessionMemoryContent);
+    } else {
+      if (profileMemoryOwnerId) {
+        const profileMemoryPath = getProfileMemoryPath(this.options.config.paths.dataDir, profileMemoryOwnerId);
+        await this.options.ensureAgentMemoryFile(profileMemoryPath, profileMemoryOwnerId);
+        const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
+        memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
       }
-    } catch (error) {
-      if (!isEnoentError(error)) {
-        throw error;
+
+      const commonKnowledgePath = getCommonKnowledgePath(this.options.config.paths.dataDir);
+      try {
+        const commonKnowledgeContent = (await readFile(commonKnowledgePath, "utf8")).trim();
+        if (commonKnowledgeContent.length > 0) {
+          const baseMemoryContent = memoryContent.trimEnd();
+          memoryContent = [
+            baseMemoryContent,
+            "",
+            "---",
+            "",
+            COMMON_KNOWLEDGE_MEMORY_HEADER,
+            "",
+            commonKnowledgeContent,
+          ].join("\n");
+        }
+      } catch (error) {
+        if (!isEnoentError(error)) {
+          throw error;
+        }
       }
     }
 
@@ -684,6 +691,39 @@ export class SwarmPromptService {
       additionalSkillPaths: skillMetadata.map((skill) => skill.path),
       skillMetadata,
     };
+  }
+
+  private async buildKnowledgeV2MemoryRuntimeView(
+    profileId: string | undefined,
+    sessionMemoryContent: string,
+  ): Promise<string> {
+    const indexSections: string[] = [];
+    if (profileId) {
+      const profileIndex = await readOptionalTextFile(getProfileKnowledgeIndexPath(this.options.config.paths.dataDir, profileId));
+      if (profileIndex?.trim()) {
+        indexSections.push(profileIndex.trimEnd());
+      }
+    }
+
+    const globalIndex = await readOptionalTextFile(getKnowledgeIndexPath(this.options.config.paths.dataDir));
+    if (globalIndex?.trim()) {
+      indexSections.push(globalIndex.trimEnd());
+    }
+
+    const normalizedSessionMemory = sessionMemoryContent.trimEnd();
+    if (indexSections.length === 0) {
+      return normalizedSessionMemory;
+    }
+
+    return [
+      indexSections.join("\n\n---\n\n"),
+      "",
+      "---",
+      "",
+      "# Session Memory (this session's working memory — your writes go here)",
+      "",
+      normalizedSessionMemory,
+    ].join("\n").trimEnd();
   }
 
   private async getActiveWorkPromptPreviewSection(
@@ -1208,4 +1248,15 @@ function buildOnboardingSnapshotMemoryBlock(
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+async function readOptionalTextFile(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
 }

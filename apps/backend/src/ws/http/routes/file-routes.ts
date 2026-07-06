@@ -3,6 +3,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { ServerEvent } from "@forge/protocol";
 import { writeTrackedCortexPromptSurfaceFile } from "../../../swarm/cortex-prompt-surfaces.js";
 import { isPathWithinRoots } from "../../../swarm/cwd-policy.js";
+import {
+  assertKnowledgeMigrationNotBusy,
+  isLegacyKnowledgeWritePath,
+} from "../../../swarm/knowledge-v2-migration-lock.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -317,6 +321,9 @@ export function createFileRoutes(options: {
           const versioningSource = resolveWriteVersioningSource(requestedVersioningSource);
 
           const resolvedPath = await resolveWriteAllowedPath(pathFromBody);
+          if (await isLegacyKnowledgeWritePath(swarmManager.getConfig().paths.dataDir, resolvedPath)) {
+            await assertKnowledgeMigrationNotBusy(swarmManager.getConfig().paths.dataDir);
+          }
           const trackedWrite = await maybeWriteTrackedCortexFile(
             swarmManager.getConfig().paths.dataDir,
             resolvedPath,
@@ -356,6 +363,11 @@ export function createFileRoutes(options: {
 
           if (message.includes("valid JSON")) {
             sendJson(response, 400, { error: message });
+            return;
+          }
+
+          if (message.includes("Knowledge v2 migration is running")) {
+            sendJson(response, 423, { error: message });
             return;
           }
 

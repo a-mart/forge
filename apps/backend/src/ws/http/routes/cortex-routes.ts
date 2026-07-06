@@ -120,7 +120,10 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
           const snapshot = 'status' in mutation
             ? await skipOnboarding(dataDir)
             : await saveOnboardingPreferences(dataDir, mutation);
-          await renderOnboardingCommonKnowledge(dataDir, snapshot);
+          await renderOnboardingCommonKnowledge(dataDir, snapshot, {
+            knowledgeService: swarmManager.getKnowledgeService(),
+            settingsService: swarmManager.getKnowledgeV2SettingsService(),
+          });
           sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to save onboarding preferences.";
@@ -135,6 +138,10 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
           }
           if (message.includes("Request body exceeds")) {
             sendJson(response, 413, { error: message });
+            return;
+          }
+          if (message.includes("Knowledge v2 migration is running")) {
+            sendJson(response, 423, { error: message });
             return;
           }
           sendJson(response, 500, { error: message });

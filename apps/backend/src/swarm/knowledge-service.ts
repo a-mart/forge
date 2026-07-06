@@ -46,6 +46,7 @@ export interface KnowledgeEntryFrontmatter {
   importance: KnowledgeEntryImportance;
   decay_after_days: number | null;
   title: string;
+  legacy?: boolean;
   indexed?: boolean;
 }
 
@@ -67,6 +68,10 @@ export interface KnowledgeUpsertInput {
   status?: KnowledgeEntryStatus;
   supersedes?: string[];
   sourceEntryIds?: string[];
+  firstSeen?: string;
+  lastConfirmed?: string;
+  supportCount?: number;
+  legacy?: boolean;
   expectedVersion?: number;
 }
 
@@ -97,6 +102,24 @@ export interface KnowledgeIndexResult {
   tokenEstimate: number;
   indexedEntryIds: string[];
   demotedEntryIds: string[];
+}
+
+interface NormalizedKnowledgeUpsertInput {
+  id: string;
+  type: KnowledgeEntryType;
+  scope: KnowledgeEntryScope;
+  title: string;
+  body: string;
+  evidenceTier: KnowledgeEvidenceTier;
+  sources: KnowledgeEntrySource[];
+  importance: KnowledgeEntryImportance;
+  status: KnowledgeEntryStatus;
+  supersedes: string[];
+  sourceEntryIds: string[];
+  firstSeen?: string;
+  lastConfirmed?: string;
+  supportCount?: number;
+  legacy: boolean;
 }
 
 export class KnowledgeServiceError extends Error {
@@ -142,9 +165,9 @@ export class KnowledgeService {
         type: normalized.type,
         scope: normalized.scope,
         status: normalized.status ?? existing?.frontmatter.status ?? "active",
-        first_seen: existing?.frontmatter.first_seen ?? timestamp,
-        last_confirmed: timestamp,
-        support_count: existing?.frontmatter.support_count ?? 1,
+        first_seen: normalized.firstSeen ?? existing?.frontmatter.first_seen ?? timestamp,
+        last_confirmed: normalized.lastConfirmed ?? timestamp,
+        support_count: normalized.supportCount ?? existing?.frontmatter.support_count ?? 1,
         sources: normalized.sources,
         evidence_tier: normalized.evidenceTier,
         supersedes: normalized.supersedes,
@@ -152,6 +175,7 @@ export class KnowledgeService {
         importance: normalized.importance,
         decay_after_days: defaultDecayAfterDays(normalized.type),
         title: normalized.title,
+        legacy: normalized.legacy || existing?.frontmatter.legacy ? true : undefined,
         indexed: existing?.frontmatter.indexed,
       };
       const targetPath = this.entryPath(frontmatter.scope, frontmatter.id, frontmatter.status === "archived");
@@ -318,7 +342,7 @@ export class KnowledgeService {
     };
   }
 
-  private normalizeUpsertInput(input: KnowledgeUpsertInput): Required<Omit<KnowledgeUpsertInput, "expectedVersion">> {
+  private normalizeUpsertInput(input: KnowledgeUpsertInput): NormalizedKnowledgeUpsertInput {
     const type = normalizeEntryType(input.type);
     const scope = normalizeScope(input.scope);
     const title = normalizeTitle(input.title);
@@ -342,6 +366,12 @@ export class KnowledgeService {
       status: normalizeStatus(input.status ?? "active"),
       supersedes: (input.supersedes ?? []).map(normalizeId),
       sourceEntryIds: (input.sourceEntryIds ?? []).map(normalizeId),
+      ...(input.firstSeen ? { firstSeen: normalizeDateString(input.firstSeen, "firstSeen") } : {}),
+      ...(input.lastConfirmed ? { lastConfirmed: normalizeDateString(input.lastConfirmed, "lastConfirmed") } : {}),
+      ...(input.supportCount === undefined
+        ? {}
+        : { supportCount: normalizePositiveInteger(input.supportCount, "supportCount") }),
+      legacy: input.legacy === true,
     };
   }
 
@@ -514,6 +544,7 @@ function validateFrontmatter(value: Record<string, unknown>, body: string): Know
     decay_after_days:
       value.decay_after_days === null ? null : normalizePositiveInteger(value.decay_after_days, "decay_after_days"),
     title: normalizeTitle(value.title),
+    legacy: value.legacy === true ? true : undefined,
     indexed: typeof value.indexed === "boolean" ? value.indexed : undefined,
   };
 }

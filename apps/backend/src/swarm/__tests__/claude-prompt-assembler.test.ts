@@ -32,21 +32,18 @@ describe("claude-prompt-assembler", () => {
     ]);
   });
 
-  it("builds the manager/session/common memory composite in Pi-compatible order", async () => {
+  it("builds the manager/session memory composite without common knowledge", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "forge-claude-memory-"));
     const profileMemoryPath = join(tempRoot, "profile-memory.md");
     const sessionMemoryPath = join(tempRoot, "session-memory.md");
-    const commonKnowledgePath = join(tempRoot, "common.md");
 
     await writeFile(profileMemoryPath, "# Profile Memory\n\nprofile fact\n", "utf8");
     await writeFile(sessionMemoryPath, "# Session Memory\n\nsession note\n", "utf8");
-    await writeFile(commonKnowledgePath, "# Common Knowledge\n\ncommon fact\n", "utf8");
 
     await expect(
       buildMemoryComposite({
         profileMemoryPath,
-        sessionMemoryPath,
-        commonKnowledgePath
+        sessionMemoryPath
       })
     ).resolves.toBe([
       "# Manager Memory (shared across all sessions — read-only reference)",
@@ -61,15 +58,7 @@ describe("claude-prompt-assembler", () => {
       "",
       "# Session Memory",
       "",
-      "session note",
-      "",
-      "---",
-      "",
-      "# Common Knowledge (maintained by Cortex — read-only reference)",
-      "",
-      "# Common Knowledge",
-      "",
-      "common fact"
+      "session note"
     ].join("\n"));
   });
 
@@ -79,7 +68,6 @@ describe("claude-prompt-assembler", () => {
     const nestedDir = join(repoDir, "apps", "backend");
     const sessionMemoryPath = join(tempRoot, "session-memory.md");
     const profileMemoryPath = join(tempRoot, "profile-memory.md");
-    const commonKnowledgePath = join(tempRoot, "common.md");
     const rootAgentsPath = join(tempRoot, "AGENTS.md");
     const repoAgentsPath = join(repoDir, "AGENTS.md");
     const swarmMdPath = join(repoDir, "SWARM.md");
@@ -90,13 +78,11 @@ describe("claude-prompt-assembler", () => {
     await writeFile(swarmMdPath, "repo swarm\n", "utf8");
     await writeFile(profileMemoryPath, "profile fact\n", "utf8");
     await writeFile(sessionMemoryPath, "session fact\n", "utf8");
-    await writeFile(commonKnowledgePath, "common fact\n", "utf8");
 
     const prompt = await assembleClaudePrompt({
       basePrompt: "You are the manager.",
       profileMemoryPath,
       sessionMemoryPath,
-      commonKnowledgePath,
       agentsMdPaths: [rootAgentsPath, repoAgentsPath],
       swarmMdPath,
       projectAgentDirectory: "Project agents in this profile — none configured.",
@@ -124,7 +110,7 @@ describe("claude-prompt-assembler", () => {
     expect(prompt).toContain(`## ${sessionMemoryPath}`);
     expect(prompt).toContain("# Manager Memory (shared across all sessions — read-only reference)");
     expect(prompt).toContain("# Session Memory (this session's working memory — your writes go here)");
-    expect(prompt).toContain("# Common Knowledge (maintained by Cortex — read-only reference)");
+    expect(prompt).not.toContain("# Common Knowledge (maintained by Cortex — read-only reference)");
     expect(prompt).toContain("# Onboarding Snapshot (authoritative backend state — read-only reference)");
     expect(prompt).toContain("<available_skills>");
     expect(prompt).toContain("<name>memory</name>");

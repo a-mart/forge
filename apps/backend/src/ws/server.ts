@@ -580,6 +580,7 @@ export class SwarmWebSocketServer {
       ...(this.knowledgeV2SettingsService
         ? createKnowledgeV2SettingsRoutes({
             settingsService: this.knowledgeV2SettingsService,
+            dataDir: this.swarmManager.getConfig().paths.dataDir,
             runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
           })
         : []),

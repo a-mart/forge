@@ -6,7 +6,6 @@ const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
 const CLAUDE_CONTEXT_FILE_NAME = "CLAUDE.md";
 const MANAGER_MEMORY_HEADER = "# Manager Memory (shared across all sessions — read-only reference)";
 const SESSION_MEMORY_HEADER = "# Session Memory (this session's working memory — your writes go here)";
-const COMMON_KNOWLEDGE_MEMORY_HEADER = "# Common Knowledge (maintained by Cortex — read-only reference)";
 
 export interface ClaudePromptAssemblerOptions {
   // Base prompt (archetype or specialist)
@@ -15,7 +14,6 @@ export interface ClaudePromptAssemblerOptions {
   // Memory
   profileMemoryPath?: string;
   sessionMemoryPath?: string;
-  commonKnowledgePath?: string;
   memoryContextFile?: { path: string; content: string };
 
   // Context
@@ -67,8 +65,7 @@ export async function assembleClaudePrompt(options: ClaudePromptAssemblerOptions
       ? Promise.resolve(trimTrailingNewlines(options.memoryContextFile.content))
       : buildMemoryComposite({
           profileMemoryPath: options.profileMemoryPath,
-          sessionMemoryPath: options.sessionMemoryPath,
-          commonKnowledgePath: options.commonKnowledgePath
+          sessionMemoryPath: options.sessionMemoryPath
         })
   ]);
 
@@ -141,12 +138,10 @@ export async function discoverAgentsMd(cwd: string): Promise<string[]> {
 export async function buildMemoryComposite(options: {
   profileMemoryPath?: string;
   sessionMemoryPath?: string;
-  commonKnowledgePath?: string;
 }): Promise<string> {
-  const [profileMemoryContent, sessionMemoryContent, commonKnowledgeContent] = await Promise.all([
+  const [profileMemoryContent, sessionMemoryContent] = await Promise.all([
     readOptionalTextFile(options.profileMemoryPath),
-    readOptionalTextFile(options.sessionMemoryPath),
-    readOptionalTextFile(options.commonKnowledgePath)
+    readOptionalTextFile(options.sessionMemoryPath)
   ]);
 
   const sections: string[] = [];
@@ -162,14 +157,6 @@ export async function buildMemoryComposite(options: {
       sections.push("", "---", "");
     }
     sections.push(SESSION_MEMORY_HEADER, "", trimTrailingNewlines(sessionMemoryContent ?? ""));
-  }
-
-  const normalizedCommonKnowledge = trimTrailingNewlines(commonKnowledgeContent ?? "").trim();
-  if (normalizedCommonKnowledge.length > 0) {
-    if (sections.length > 0) {
-      sections.push("", "---", "");
-    }
-    sections.push(COMMON_KNOWLEDGE_MEMORY_HEADER, "", trimTrailingNewlines(commonKnowledgeContent ?? ""));
   }
 
   return sections.join("\n").trimEnd();
@@ -299,4 +286,3 @@ function escapeXml(value: string): string {
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&apos;");
 }
-
