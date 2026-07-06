@@ -169,7 +169,7 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    let text = extractMessageText(event.message)?.trim();
+    const text = extractMessageText(event.message)?.trim();
     if (!text) {
       return;
     }
