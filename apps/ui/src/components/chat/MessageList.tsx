@@ -419,6 +419,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const hasScrolledRef = useRef(false)
   const isAtBottomRef = useRef(true)
   const [showScrollButton, setShowScrollButton] = useState(false)
+  // Mirrors showScrollButton so setter callers can cheaply bail when the value
+  // is unchanged, keeping visibility writes from adding to any render churn.
+  const showScrollButtonRef = useRef(false)
+  const setShowScrollButtonGuarded = useCallback((next: boolean) => {
+    if (showScrollButtonRef.current === next) return
+    showScrollButtonRef.current = next
+    setShowScrollButton(next)
+  }, [])
   // A row index that must stay mounted regardless of the viewport window —
   // set transiently by scrollToMessage so pin/search/reply jumps to an
   // off-screen row land on a real DOM node (for flash + DOM-walk highlight).
@@ -575,7 +583,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
 
     isAtBottomRef.current = true
-    setShowScrollButton(false)
+    setShowScrollButtonGuarded(false)
 
     const lastIndex = rowCountRef.current - 1
 
@@ -607,7 +615,17 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
         requestAnimationFrame(pinToBottom)
       })
     }
-  }, [virtualizer])
+  }, [virtualizer, setShowScrollButtonGuarded])
+
+  // scrollToBottom is intentionally re-created every render because it closes
+  // over `virtualizer`, whose functions are unstable by design (see the
+  // eslint-disable on useVirtualizer above). Mirror the latest callback into a
+  // ref so the scroll effects/observers can invoke it WITHOUT taking it as a
+  // dependency — otherwise those effects would re-run every render, re-install
+  // their observers, and feed a setState/re-measure cascade (React #185) on
+  // large transcripts. The ref write is idempotent and safe during render.
+  const scrollToBottomRef = useRef(scrollToBottom)
+  scrollToBottomRef.current = scrollToBottom
 
   const scrollToMessage = useCallback((messageId: string) => {
     const container = scrollElRef.current
@@ -696,14 +714,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const container = scrollElRef.current
     if (!container) {
       isAtBottomRef.current = true
-      setShowScrollButton(false)
+      setShowScrollButtonGuarded(false)
       return
     }
 
     const atBottom = isNearBottom(container)
     isAtBottomRef.current = atBottom
-    setShowScrollButton(!atBottom)
-  }, [])
+    setShowScrollButtonGuarded(!atBottom)
+  }, [setShowScrollButtonGuarded])
 
   const handleScroll = useCallback(() => {
     updateIsAtBottom()
@@ -715,15 +733,18 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const container = scrollEl
     if (!container) return
 
+    // Keyed only on the scroll element, so the observer is created ONCE per
+    // element, not per render. Read scrollToBottom from the ref to avoid
+    // depending on its (intentionally unstable) identity.
     const observer = new ResizeObserver(() => {
       if (isAtBottomRef.current) {
-        scrollToBottom('auto')
+        scrollToBottomRef.current('auto')
       }
     })
 
     observer.observe(container)
     return () => observer.disconnect()
-  }, [scrollEl, scrollToBottom])
+  }, [scrollEl])
 
   // Stick-to-bottom and force-scroll on session/conversation transitions.
   // Runs in a layout effect so the scroll adjustment is applied before paint,
@@ -756,15 +777,21 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       didInitialConversationLoad
     const shouldAutoScroll = shouldForceScroll || isAtBottomRef.current
 
-    if (shouldAutoScroll) {
-      scrollToBottom(shouldForceScroll ? 'auto' : 'smooth')
-    }
-
+    // Commit the transition markers BEFORE scrolling. scrollToBottom drives the
+    // virtualizer/DOM synchronously; the markers being current means that if the
+    // scroll causes another synchronous commit, this effect re-runs as a no-op
+    // (no agent/reset/initial-load change) rather than re-entering the cascade.
     hasScrolledRef.current = true
     previousAgentIdRef.current = nextAgentId
     previousFirstEntryIdRef.current = nextFirstEntryId
     previousEntryCountRef.current = nextEntryCount
-  }, [activeAgentId, displayEntries, isLoading, scrollToBottom, scrollEl])
+
+    if (shouldAutoScroll) {
+      // Read from the ref so this effect does not depend on scrollToBottom's
+      // (intentionally unstable) identity and thus does not re-run every render.
+      scrollToBottomRef.current(shouldForceScroll ? 'auto' : 'smooth')
+    }
+  }, [activeAgentId, displayEntries, isLoading, scrollEl])
 
   if (displayEntries.length === 0 && !isLoading && !showActiveWorkCard && !hasMissingPendingChoices) {
     return (

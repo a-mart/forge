@@ -339,3 +339,128 @@ describe('MessageList virtualization — large transcript perf', () => {
     expect(indexes.at(-1)!).toBeLessThan(1100)
   })
 })
+
+/**
+ * Regression guard for the React #185 ("Maximum update depth exceeded") render
+ * cascade root-caused in UI-RELOAD-LOOP-INVESTIGATION.md §2(d): the scroll
+ * effects used to depend on `scrollToBottom`, whose identity changed every
+ * render in a real browser (it closes over the virtualizer, whose returned
+ * object identity churns as `measureElement` resolves real row heights across
+ * frames). That made the ResizeObserver effect tear down and re-install a NEW
+ * observer on every render, and the observer's callback drives setState →
+ * re-render → new observer → …, a self-feeding loop on large transcripts.
+ *
+ * HARNESS LIMITATION (deliberate + documented): jsdom has no layout engine, so
+ * `measureElement` never shifts and the virtualizer's identity stays stable —
+ * meaning the `[scrollEl, scrollToBottom]` effect does NOT re-fire per render in
+ * this harness even with the pre-fix deps. These tests therefore CANNOT
+ * reproduce the live cascade and are not red-on-pre-fix. What they DO lock in is
+ * the stabilized-callback contract the fix establishes and which the harness can
+ * observe: (1) the observer is installed via a ref-read + element-keyed effect,
+ * so it is created once at mount and NEVER grows across re-renders; (2) firing
+ * that observer repeatedly under `isLoading` + a 1000-row list settles without
+ * throwing or spawning observers. The invariant that the observer is created
+ * exactly once per element (not per render) is verified live in the fix's ref
+ * indirection; the true per-render-churn behavior must be re-checked in a real
+ * large session (see report).
+ */
+describe('MessageList virtualization — scroll-effect stability (React #185 guard)', () => {
+  it('installs zero additional ResizeObservers across a growing, streaming re-render sequence', async () => {
+    virt = installVirtualizationHarness({ viewportHeight: 800, rowHeight: ROW_HEIGHT })
+
+    let constructed = 0
+    class CountingResizeObserver {
+      constructor(_cb: ResizeObserverCallback) {
+        constructed += 1
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = CountingResizeObserver as unknown as typeof ResizeObserver
+
+    const messages = makeMessages(1000)
+    const ref = { current: null as MessageListHandle | null }
+    render(messages, { isLoading: true }, ref)
+    await flushFrames()
+
+    // Baseline: however many the mount-time scrollEl settling produced (bounded).
+    const afterMount = constructed
+    expect(afterMount).toBeGreaterThan(0)
+
+    // Re-render repeatedly with a growing, still-streaming transcript. The effect
+    // is keyed only on the scroll element and reads scrollToBottom from a ref, so
+    // no new observer is created while the element is stable — the delta stays 0.
+    for (let i = 0; i < 25; i++) {
+      messages.push({
+        type: 'conversation_message',
+        agentId: 'session-1',
+        id: `stream-${i}`,
+        role: 'assistant',
+        text: `streaming chunk ${i}`,
+        timestamp: now,
+        source: 'speak_to_user',
+      } as Extract<ConversationEntry, { type: 'conversation_message' }>)
+      render([...messages], { isLoading: true }, ref)
+    }
+    await flushFrames()
+
+    // No per-render churn: the observer set did not grow with re-renders.
+    expect(constructed - afterMount).toBe(0)
+  })
+
+  it('settles when the ResizeObserver fires under isLoading (no render loop, no observer growth)', async () => {
+    virt = installVirtualizationHarness({ viewportHeight: 800, rowHeight: ROW_HEIGHT })
+
+    // An observer that invokes its callback immediately on observe() AND retains
+    // the callbacks so we can fire them on demand — reproducing the measured-size
+    // oscillation that drove the cascade.
+    let constructed = 0
+    const callbacks: ResizeObserverCallback[] = []
+    class FiringResizeObserver {
+      cb: ResizeObserverCallback
+      constructor(cb: ResizeObserverCallback) {
+        constructed += 1
+        this.cb = cb
+        callbacks.push(cb)
+      }
+      observe() {
+        // Fire synchronously on observe, as a real RO does after the first layout.
+        this.cb([], this as unknown as ResizeObserver)
+      }
+      disconnect() {}
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = FiringResizeObserver as unknown as typeof ResizeObserver
+
+    const messages = makeMessages(1000)
+    const ref = { current: null as MessageListHandle | null }
+
+    // Mounting a 1000-row streaming list while the observer fires on install must
+    // converge, not recurse into #185.
+    expect(() => {
+      render(messages, { isLoading: true }, ref)
+    }).not.toThrow()
+    await flushFrames()
+
+    const afterMount = constructed
+    expect(afterMount).toBeGreaterThan(0)
+
+    // Fire the (stable) observer callbacks repeatedly by hand — simulating
+    // continued size oscillation. Each fire calls scrollToBottom via the ref;
+    // none of them may install a new observer or throw.
+    await act(async () => {
+      for (let i = 0; i < 30; i++) {
+        for (const cb of callbacks) {
+          cb([], null as unknown as ResizeObserver)
+        }
+      }
+    })
+    await flushFrames()
+
+    // No new observers were created by the firing cascade.
+    expect(constructed - afterMount).toBe(0)
+    // The list is still mounted and pinned to the newest row — behavior intact.
+    expect(mountedMessageIds()).toContain('msg-999')
+  })
+})
