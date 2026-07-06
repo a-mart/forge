@@ -72,7 +72,7 @@ export function useSettingsBackendState({
       return
     }
 
-    const client = new ManagerWsClient(target.wsUrl, null, { reloadOnReconnect: false })
+    const client = new ManagerWsClient(target.wsUrl, null)
     clientRef.current = client
     setWsState(client.getState())
 

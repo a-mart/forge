@@ -18,18 +18,15 @@
  *
  * Ingestion is transport-agnostic (requirement 7): {@link ingest} hydrates the
  * store from a `snapshot` or a single `event` with no socket, no `window`, and
- * no reload side effects — the reload-on-reconnect behavior stays inside the
- * client as per-connection config (`reloadOnReconnect`, OFF-able per origin).
+ * no reload side effects. A reconnect re-hydrates WS state in place (the client
+ * re-subscribes on transport open) rather than reloading the page.
  *
  * @see .internal/forge-review-2026-07/97-remote/U1-REQUIREMENTS.md
  * @see apps/ui/src/lib/connection-health-store.ts (useSyncExternalStore precedent)
  */
 
 import type { ServerEvent } from '@forge/protocol'
-import {
-  ManagerWsClient,
-  type ManagerWsClientOptions,
-} from '@/lib/ws-client'
+import { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { handleConversationEvent } from '@/lib/ws-client/event-handlers/conversation-event-handlers'
 import { createBuilderSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
@@ -63,13 +60,6 @@ export interface OriginStoreOptions {
   originId: OriginId
   /** WebSocket URL for this origin's backend. */
   wsUrl: string
-  /**
-   * Reload the page after reconnecting from a dropped socket.  Local Builder
-   * keeps this ON so the app refreshes after backend restarts; remote origins
-   * MUST keep it OFF (requirement 7 — no reload for a non-primary origin).
-   * Defaults to `true` only for the reserved local origin.
-   */
-  reloadOnReconnect?: boolean
   /**
    * Optional explicit HTTP client factory (Wave R remote origins pass a
    * credentialed collab client).  When omitted, a same-origin Builder client
@@ -105,11 +95,7 @@ export class OriginStore {
     this.originId = options.originId
     this.wsUrl = options.wsUrl
 
-    const reloadOnReconnect =
-      options.reloadOnReconnect ?? options.originId === LOCAL_ORIGIN_ID
-    const clientOptions: ManagerWsClientOptions = { reloadOnReconnect }
-
-    this.client = new ManagerWsClient(options.wsUrl, null, clientOptions)
+    this.client = new ManagerWsClient(options.wsUrl, null)
     this.state = this.client.getState()
     this.meta = createInitialOriginMetaState()
 

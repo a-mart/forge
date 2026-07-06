@@ -681,7 +681,12 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('reloads the page only after reconnecting following a disconnect', () => {
+  it('re-hydrates in place on reconnect — re-subscribes and never reloads the page', () => {
+    // Guard: a reconnect must NOT trigger a full page reload. The redundant
+    // window.location.reload() re-ran the entire bootstrap from scratch and,
+    // under a large session on a backpressured socket, fueled a reconnect→reload
+    // loop (see UI-RELOAD-LOOP-INVESTIGATION.md). Reconnect now re-hydrates state
+    // in place via the re-subscribe below.
     const reload = vi.fn()
     ;(globalThis as any).window = {
       location: {
@@ -698,44 +703,32 @@ describe('ManagerWsClient', () => {
     expect(socket).toBeDefined()
 
     socket.emit('open')
+    expect(JSON.parse(socket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
+
+    // Backend restart drops the socket; the client schedules a reconnect.
+    socket.close()
+    expect(client.getState().connected).toBe(false)
+    vi.advanceTimersByTime(1200)
+
+    const reconnectedSocket = FakeWebSocket.instances[1]
+    expect(reconnectedSocket).toBeDefined()
+
+    reconnectedSocket.emit('open')
+
+    // Re-hydration in place: reconnect re-subscribes (re-triggering the backend
+    // bootstrap) and resets bootstrap-tracking state — without a page reload.
     expect(reload).not.toHaveBeenCalled()
+    expect(JSON.parse(reconnectedSocket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
+    expect(client.getState().connected).toBe(true)
+    expect(client.getState().hasReceivedAgentsSnapshot).toBe(false)
 
-    socket.close()
-    vi.advanceTimersByTime(1200)
-
-    const reconnectedSocket = FakeWebSocket.instances[1]
-    expect(reconnectedSocket).toBeDefined()
-
-    reconnectedSocket.emit('open')
-    expect(reload).toHaveBeenCalledTimes(1)
-
-    client.destroy()
-  })
-
-  it('can disable page reloads for secondary sockets that reconnect', () => {
-    const reload = vi.fn()
-    ;(globalThis as any).window = {
-      location: {
-        reload,
-      },
-    }
-
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager', { reloadOnReconnect: false })
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    expect(socket).toBeDefined()
-
-    socket.emit('open')
-    socket.close()
-    vi.advanceTimersByTime(1200)
-
-    const reconnectedSocket = FakeWebSocket.instances[1]
-    expect(reconnectedSocket).toBeDefined()
-
-    reconnectedSocket.emit('open')
+    // The re-subscribe lands: the backend's fresh `ready` re-hydrates the target.
+    emitServerEvent(reconnectedSocket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+    expect(client.getState().subscribedAgentId).toBe('manager')
     expect(reload).not.toHaveBeenCalled()
 
     client.destroy()

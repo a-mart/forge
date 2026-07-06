@@ -124,16 +124,6 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
-export interface ManagerWsClientOptions {
-  /**
-   * Reload the page after reconnecting from a dropped socket. Builder keeps
-   * this enabled so the app refreshes state after backend restarts; secondary
-   * collab settings/admin sockets disable it to avoid refreshing the whole app
-   * for a non-primary connection.
-   */
-  reloadOnReconnect?: boolean
-}
-
 export class ManagerWsClient {
   private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
@@ -143,9 +133,6 @@ export class ManagerWsClient {
     return this.transport.getSocket()
   }
 
-  private hasConnectedOnce = false
-  private shouldReloadOnReconnect = false
-  private readonly reloadOnReconnect: boolean
   private hasExplicitAgentSelection = false
   private explicitAgentSelectionAgentId: string | null = null
 
@@ -156,9 +143,8 @@ export class ManagerWsClient {
   private readonly bootstrapBuffer: BootstrapBuffer
   private readonly sessionWorkerCache: SessionWorkerCache
 
-  constructor(url: string, initialAgentId?: string | null, options: ManagerWsClientOptions = {}) {
+  constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
-    this.reloadOnReconnect = options.reloadOnReconnect ?? true
     this.desiredAgentId = normalizedInitialAgentId
     this.state = createInitialManagerWsState(normalizedInitialAgentId)
 
@@ -727,12 +713,16 @@ export class ManagerWsClient {
   // -----------------------------------------------------------------------
 
   private handleTransportOpen(): void {
-    const shouldReload = this.shouldReloadOnReconnect
-    this.hasConnectedOnce = true
-    this.shouldReloadOnReconnect = false
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
 
+    // A reconnect (including after a backend restart) re-hydrates state IN
+    // PLACE — never a full page reload. Resetting the bootstrap-tracking flags
+    // below and re-issuing `subscribe` re-triggers the backend bootstrap and
+    // refreshes WS state without discarding the SPA. Do NOT re-add a
+    // `window.location.reload()` here: it re-runs the entire bootstrap from
+    // scratch and, under a large session on a backpressured socket, fuels a
+    // reconnect→reload loop (see UI-RELOAD-LOOP-INVESTIGATION.md).
     this.updateState({
       connected: true,
       hasReceivedAgentsSnapshot: false,
@@ -741,17 +731,9 @@ export class ManagerWsClient {
     })
 
     this.send(buildSubscribeCommand(this.desiredAgentId))
-
-    if (shouldReload && typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
-      window.location.reload()
-    }
   }
 
   private handleTransportClose(): void {
-    if (this.hasConnectedOnce && this.reloadOnReconnect) {
-      this.shouldReloadOnReconnect = true
-    }
-
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
     this.bootstrapBuffer.clear()

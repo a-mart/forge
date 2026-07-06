@@ -41,8 +41,13 @@ export function useWsConnection(wsUrl: string): {
   // Lazily ensure the local origin store exists for this wsUrl.  Creating it
   // during render (ref-guarded) keeps the client live before the first
   // snapshot read — the React-recommended lazy-init pattern, mirroring
-  // `use-collab-connections.ts`.
-  const store = originRegistry.createOrigin({ originId: LOCAL_ORIGIN_ID, wsUrl })
+  // `use-collab-connections.ts`.  A reconnect (e.g. after a backend restart)
+  // re-hydrates WS state in place via the client's re-subscribe — no page
+  // reload — so there is nothing to gate here.
+  const store = originRegistry.createOrigin({
+    originId: LOCAL_ORIGIN_ID,
+    wsUrl,
+  })
 
   // Lazy-init the refs from the (stable-per-wsUrl) store so consumers have a
   // live client on the first render; the effect below keeps them fresh if the
