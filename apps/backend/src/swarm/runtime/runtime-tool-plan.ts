@@ -156,4 +156,4 @@ function previewForLog(text: string, maxLength = 160): string {
 }
 
 const CORTEX_ARCHETYPE_ID = "cortex";
-const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent", "task"]);
+const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent", "task", "save_learning"]);

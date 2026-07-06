@@ -111,6 +111,14 @@ import {
   type CompactionRuntimeSettingsProvider,
 } from "./compaction-runtime-settings-provider.js";
 import { CompactionSettingsService } from "./compaction-settings-service.js";
+import { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
+import {
+  KnowledgeService,
+  type KnowledgeEntry,
+  type KnowledgeEntryScope,
+  type KnowledgeEntryType,
+  type KnowledgeSearchResult,
+} from "./knowledge-service.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import { ArchiveService } from "./archive/archive-service.js";
 import { ArchiveLastUsedHydrator, type ArchiveLastUsedHydrationResult } from "./archive/archive-last-used-hydrator.js";
@@ -1287,6 +1295,8 @@ type SwarmManagerOptions = {
   /** Kill/delete cleanup-only seam. Distinct from stop interrupts; defaults to Codex cleanup. */
   terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
   compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
+  knowledgeV2SettingsService?: KnowledgeV2SettingsService;
+  knowledgeService?: KnowledgeService;
 };
 
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
@@ -1392,6 +1402,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly liveCompactionRuntimeSettingsProvider: LiveCompactionRuntimeSettingsProvider;
   private compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
   private compactionSettingsService: CompactionSettingsService | null = null;
+  private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService;
+  private readonly knowledgeService: KnowledgeService;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -1408,6 +1420,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.liveCompactionRuntimeSettingsProvider = createLiveCompactionRuntimeSettingsProvider();
     this.compactionRuntimeSettingsProvider =
       options?.compactionRuntimeSettingsProvider ?? this.liveCompactionRuntimeSettingsProvider;
+    this.knowledgeV2SettingsService =
+      options?.knowledgeV2SettingsService ??
+      new KnowledgeV2SettingsService({ dataDir: this.config.paths.dataDir });
+    this.knowledgeService =
+      options?.knowledgeService ??
+      new KnowledgeService({
+        dataDir: this.config.paths.dataDir,
+        settingsService: this.knowledgeV2SettingsService,
+        versioning: this.versioningService,
+        now: () => new Date(this.now()),
+      });
     const resourcesDir = this.config.paths.resourcesDir ?? this.config.paths.rootDir;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
@@ -10491,6 +10514,61 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.compactionSettingsService;
   }
 
+  getKnowledgeV2SettingsService(): KnowledgeV2SettingsService {
+    return this.knowledgeV2SettingsService;
+  }
+
+  getKnowledgeService(): KnowledgeService {
+    return this.knowledgeService;
+  }
+
+  async searchKnowledge(
+    callerAgentId: string,
+    input: { query?: string; scope?: "global" | "profile" | "all"; limit?: number },
+  ): Promise<KnowledgeSearchResult[]> {
+    this.assertKnowledgeV2Enabled();
+    const profileId = this.resolveKnowledgeCallerProfileId(callerAgentId);
+    return this.knowledgeService.searchEntries({
+      query: input.query,
+      scope: input.scope ?? "all",
+      profileId,
+      limit: input.limit,
+    });
+  }
+
+  async readKnowledgeEntry(callerAgentId: string, id: string): Promise<KnowledgeEntry> {
+    this.assertKnowledgeV2Enabled();
+    this.resolveKnowledgeCallerProfileId(callerAgentId);
+    return this.knowledgeService.readEntry(id);
+  }
+
+  async saveLearning(
+    callerAgentId: string,
+    input: {
+      type: KnowledgeEntryType;
+      scope: KnowledgeEntryScope;
+      title: string;
+      body: string;
+      evidence: "user-stated" | "observed";
+    },
+  ): Promise<KnowledgeEntry> {
+    this.assertKnowledgeV2Enabled();
+    const caller = this.descriptors.get(callerAgentId);
+    if (!caller || caller.role !== "manager") {
+      throw new Error("save_learning is manager-only.");
+    }
+    const profileId = this.resolveKnowledgeCallerProfileId(callerAgentId);
+    if (!profileId && input.scope !== "global") {
+      throw new Error("Profile-scoped knowledge requires a caller profile.");
+    }
+    const scope = input.scope === "global" ? "global" : input.scope || `profile:${profileId}`;
+    return this.knowledgeService.saveLearning({
+      ...input,
+      scope,
+      sessionId: caller.agentId,
+    });
+  }
+
   private async ensureCompactionSettingsLoadedForRuntime(): Promise<void> {
     if (!isBuilderRuntimeTarget(this.config.runtimeTarget)) {
       return;
@@ -10513,6 +10591,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (this.compactionRuntimeSettingsProvider === this.liveCompactionRuntimeSettingsProvider) {
       this.liveCompactionRuntimeSettingsProvider.attachSettingsService(service);
     }
+  }
+
+  private assertKnowledgeV2Enabled(): void {
+    if (!this.knowledgeV2SettingsService.getSettings().enabled) {
+      throw new Error("Knowledge v2 is disabled in Settings.");
+    }
+  }
+
+  private resolveKnowledgeCallerProfileId(callerAgentId: string): string | undefined {
+    const caller = this.descriptors.get(callerAgentId);
+    if (!caller) {
+      throw new Error(`Unknown agent: ${callerAgentId}`);
+    }
+    if (caller.profileId) {
+      return caller.profileId;
+    }
+    const manager = this.descriptors.get(caller.managerId);
+    return manager?.profileId;
   }
 
   private async refreshPiModelsJsonProjection(): Promise<void> {

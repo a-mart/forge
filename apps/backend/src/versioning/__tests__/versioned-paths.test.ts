@@ -12,7 +12,11 @@ describe("versioned-paths", () => {
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/common.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-notes.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-worker-prompts.md`)).toBe(true);
-    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/profiles/alpha.md`)).toBe(true);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/INDEX.md`)).toBe(true);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/entries/pref-pnpm.md`)).toBe(true);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/archive/pref-old.md`)).toBe(true);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/knowledge/INDEX.md`)).toBe(true);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/knowledge/entries/pref-pnpm.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/memory.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/reference/overview.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/prompts/archetypes/manager.md`)).toBe(true);
@@ -28,6 +32,7 @@ describe("versioned-paths", () => {
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-review-runs.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-lock.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-worker-prompts.md.bak.1`)).toBe(false);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/profiles/alpha.md`)).toBe(false);
   });
 
   it("extracts path metadata for tracked prompt files", () => {
@@ -57,6 +62,13 @@ describe("versioned-paths", () => {
       relativePath: "shared/knowledge/common.md",
       profileId: "cortex",
       surface: "knowledge"
+    });
+
+    expect(resolveTrackedVersionedPathReference(dataDir, "profiles/alpha/knowledge/entries/pref-pnpm.md")).toEqual({
+      gitPath: "profiles/alpha/knowledge/entries/pref-pnpm.md",
+      relativePath: "profiles/alpha/knowledge/entries/pref-pnpm.md",
+      profileId: "alpha",
+      surface: "entry"
     });
   });
 

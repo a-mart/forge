@@ -12,7 +12,7 @@ export interface CortexDocumentEntry {
   label: string
   description: string
   group: CortexDocumentGroup
-  surface: 'knowledge' | 'memory' | 'reference' | 'prompt'
+  surface: 'knowledge' | 'memory' | 'reference' | 'prompt' | 'entry' | 'index'
   absolutePath: string
   gitPath: string
   profileId?: string

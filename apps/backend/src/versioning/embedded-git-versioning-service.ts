@@ -310,6 +310,7 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
         case "reference-doc":
         case "reference-index":
         case "legacy-knowledge-migration":
+        case "knowledge-v2":
           subject = `knowledge(${primary.profileId ?? "unknown"}): update ${fileCountLabel}`;
           break;
         case "agent-write-tool":

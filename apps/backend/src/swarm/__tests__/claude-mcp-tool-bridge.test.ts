@@ -197,20 +197,24 @@ describe("claude-mcp-tool-bridge", () => {
     expect(registeredTools.map((tool) => tool.name)).toEqual([
       "list_agents",
       "send_message_to_agent",
+      "knowledge",
       "spawn_agent",
       "retry_codex_plugin_worker",
       "kill_agent",
       "speak_to_user",
-      "present_choices"
+      "present_choices",
+      "save_learning"
     ]);
     expect(bridge.allowedTools).toEqual([
       "mcp__forge-swarm__list_agents",
       "mcp__forge-swarm__send_message_to_agent",
+      "mcp__forge-swarm__knowledge",
       "mcp__forge-swarm__spawn_agent",
       "mcp__forge-swarm__retry_codex_plugin_worker",
       "mcp__forge-swarm__kill_agent",
       "mcp__forge-swarm__speak_to_user",
-      "mcp__forge-swarm__present_choices"
+      "mcp__forge-swarm__present_choices",
+      "mcp__forge-swarm__save_learning"
     ]);
   });
 
@@ -226,12 +230,14 @@ describe("claude-mcp-tool-bridge", () => {
 
     expect(registeredTools.map((tool) => tool.name)).toEqual([
       "list_agents",
-      "send_message_to_agent"
+      "send_message_to_agent",
+      "knowledge"
     ]);
     expect(bridge.serverName).toBe("custom-swarm");
     expect(bridge.allowedTools).toEqual([
       "mcp__custom-swarm__list_agents",
-      "mcp__custom-swarm__send_message_to_agent"
+      "mcp__custom-swarm__send_message_to_agent",
+      "mcp__custom-swarm__knowledge"
     ]);
   });
 

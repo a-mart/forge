@@ -15,6 +15,12 @@ import type {
   CodexPluginScopeRuntimeView,
 } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
+import type {
+  KnowledgeEntry,
+  KnowledgeEntryScope,
+  KnowledgeEntryType,
+  KnowledgeSearchResult,
+} from "./knowledge-service.js";
 
 export interface SwarmToolSideEffectEvent {
   toolName: string;
@@ -88,6 +94,21 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: TaskToolInput,
   ): Promise<TaskToolResult>;
+  searchKnowledge?(
+    callerAgentId: string,
+    input: { query?: string; scope?: "global" | "profile" | "all"; limit?: number },
+  ): Promise<KnowledgeSearchResult[]>;
+  readKnowledgeEntry?(callerAgentId: string, id: string): Promise<KnowledgeEntry>;
+  saveLearning?(
+    callerAgentId: string,
+    input: {
+      type: KnowledgeEntryType;
+      scope: KnowledgeEntryScope;
+      title: string;
+      body: string;
+      evidence: "user-stated" | "observed";
+    },
+  ): Promise<KnowledgeEntry>;
   recordToolSideEffect?(callerAgentId: string, event: SwarmToolSideEffectEvent): void;
   isWorkPlansEnabled?(): boolean;
   listCodexMcpTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
