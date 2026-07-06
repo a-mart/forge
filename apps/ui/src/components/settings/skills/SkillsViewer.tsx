@@ -130,14 +130,14 @@ export function SkillsViewer({
         )
       }
     },
-    [collabChannelId],
+    [collabChannelId, setCollabChannels],
   )
 
   const handleCategoryUpdated = useCallback((updated: CollaborationCategory) => {
     setCollabCategories((prev) =>
       prev.map((c) => (c.categoryId === updated.categoryId ? updated : c)),
     )
-  }, [])
+  }, [setCollabCategories])
 
   const selectedCategory = isCollabCategory
     ? collabCategories.find((c) => c.categoryId === collabCategoryId)

@@ -22,7 +22,7 @@ function Harness({ poll, intervalMs, enabled }: {
   intervalMs: number
   enabled?: boolean
 }) {
-  const stablePoll = useCallback(poll, [poll])
+  const stablePoll = useCallback((signal: AbortSignal) => poll(signal), [poll])
   useForegroundPoll(stablePoll, { intervalMs, enabled })
   return null
 }

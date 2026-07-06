@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- intentional shared module: collab-scope hook + its selector component + prefixes live together by design */
 /**
  * Shared collaboration scope loading + selector items (WP-U3, roadmap 3.7).
  *

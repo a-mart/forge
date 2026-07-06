@@ -319,6 +319,7 @@ export function BuilderSurface({
   // effect.  Assigned during render (after panels creates the coordinator) so it
   // is visible to every effect on the next commit, matching the original
   // in-component ordering where the ref always held the live coordinator.
+  // eslint-disable-next-line -- deliberate render-time assignment (see comment above); matches original in-component ordering
   fileEditorCoordinatorRef.current = panels.fileEditorCoordinator
 
   // Workers belonging to the active manager session (for pill bar)

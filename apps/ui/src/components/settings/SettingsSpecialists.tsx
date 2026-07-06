@@ -275,7 +275,7 @@ export function SettingsSpecialists({
     setCollabCategories((prev) =>
       prev.map((c) => (c.categoryId === updated.categoryId ? updated : c)),
     )
-  }, [])
+  }, [setCollabCategories])
 
   /* ---- Resolve category for category scope ---- */
   const selectedCategory = isCategory
