@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ProviderAccountUsage, ProviderUsageStats } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
+import { useForegroundPoll } from './use-foreground-poll'
 
 const PROVIDER_USAGE_POLL_MS = 180_000
 
@@ -16,38 +17,12 @@ export function useProviderUsage(enabled: boolean): ProviderUsageResult {
   const [loading, setLoading] = useState(false)
   const wsUrl = useMemo(() => resolveBackendWsUrl(), [])
 
-  // Mutable refs so the stable refetch callback can trigger a fetch
-  // without re-running the effect.
-  const runRef = useRef<(() => Promise<void>) | null>(null)
-
-  useEffect(() => {
-    if (!enabled) {
-      setProviders(null)
-      setLoading(false)
-      runRef.current = null
-      return
-    }
-
-    let cancelled = false
-    let pollTimer: ReturnType<typeof setTimeout> | null = null
-    let controller: AbortController | null = null
-
-    const clearPollTimer = () => {
-      if (pollTimer) {
-        clearTimeout(pollTimer)
-        pollTimer = null
-      }
-    }
-
-    const fetchProviderUsage = async () => {
-      controller?.abort()
-      controller = new AbortController()
-
-      if (!cancelled) setLoading(true)
-
+  const poll = useCallback(
+    async (signal: AbortSignal) => {
+      setLoading(true)
       try {
         const endpoint = resolveApiEndpoint(wsUrl, '/api/provider-usage')
-        const response = await fetch(endpoint, { signal: controller.signal })
+        const response = await fetch(endpoint, { signal })
         if (!response.ok) {
           throw new Error(`Failed to fetch provider usage: ${response.status}`)
         }
@@ -60,72 +35,35 @@ export function useProviderUsage(enabled: boolean): ProviderUsageResult {
         if (data.anthropic && !Array.isArray(data.anthropic)) {
           data.anthropic = [data.anthropic as ProviderAccountUsage]
         }
-        if (!cancelled) {
+        if (!signal.aborted) {
           setProviders(data)
         }
       } catch (error) {
-        if ((error instanceof DOMException && error.name === 'AbortError') || cancelled) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
           return
         }
+        // Non-abort failures leave the last-known data in place (unchanged from
+        // the prior behavior — errors were swallowed).
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!signal.aborted) setLoading(false)
       }
+    },
+    [wsUrl],
+  )
+
+  const { refetch } = useForegroundPoll(poll, {
+    intervalMs: PROVIDER_USAGE_POLL_MS,
+    enabled,
+  })
+
+  // When disabled, clear transient UI state so a re-enable starts fresh
+  // (matches the prior behavior where the polling effect reset on !enabled).
+  useEffect(() => {
+    if (!enabled) {
+      setProviders(null)
+      setLoading(false)
     }
-
-    const scheduleNextPoll = () => {
-      clearPollTimer()
-      if (cancelled || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
-        return
-      }
-
-      pollTimer = setTimeout(() => {
-        void run()
-      }, PROVIDER_USAGE_POLL_MS)
-    }
-
-    const run = async () => {
-      await fetchProviderUsage()
-      scheduleNextPoll()
-    }
-
-    runRef.current = run
-
-    const handleVisibilityChange = () => {
-      if (typeof document === 'undefined') {
-        return
-      }
-
-      if (document.visibilityState === 'hidden') {
-        clearPollTimer()
-        controller?.abort()
-        controller = null
-        return
-      }
-
-      void run()
-    }
-
-    void run()
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange)
-    }
-
-    return () => {
-      cancelled = true
-      runRef.current = null
-      clearPollTimer()
-      controller?.abort()
-      controller = null
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange)
-      }
-    }
-  }, [enabled, wsUrl])
-
-  const refetch = useCallback(() => {
-    runRef.current?.()
-  }, [])
+  }, [enabled])
 
   return { data: providers, loading, refetch }
 }

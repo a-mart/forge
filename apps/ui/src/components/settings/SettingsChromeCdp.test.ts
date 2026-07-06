@@ -7,7 +7,11 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsChromeCdp } from './SettingsChromeCdp'
 import type { ChromeCdpConfig, ChromeCdpStatus } from './settings-types'
-import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
+
+// Boundary adapter: a raw wsUrl becomes a target-aware builder client.  Shared
+// module-level instance so call-arg assertions match by identity.
+const testClient = createBuilderSettingsApiClient('ws://127.0.0.1:47187')
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -89,7 +93,7 @@ function renderComponent(config = DEFAULT_CONFIG, status: ChromeCdpStatus = CONN
 
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(SettingsChromeCdp, { clientOrWsUrl: 'ws://127.0.0.1:47187' }))
+    root?.render(createElement(SettingsChromeCdp, { clientOrWsUrl: testClient }))
   })
 }
 
@@ -152,7 +156,7 @@ describe('SettingsChromeCdp', () => {
       await flush()
       await flush()
 
-      expect(settingsApiMock.testChromeCdpConnection).toHaveBeenCalledWith('ws://127.0.0.1:47187')
+      expect(settingsApiMock.testChromeCdpConnection).toHaveBeenCalledWith(testClient)
     })
 
     it('shows success message on successful test', async () => {
@@ -217,7 +221,7 @@ describe('SettingsChromeCdp', () => {
       await flush()
 
       expect(settingsApiMock.updateChromeCdpSettings).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        testClient,
         expect.objectContaining({
           contextId: null,
           urlAllow: [],
@@ -267,7 +271,7 @@ describe('SettingsChromeCdp', () => {
       await flush()
 
       expect(settingsApiMock.updateChromeCdpSettings).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        testClient,
         {
           contextId: null,
           urlAllow: [],
@@ -299,7 +303,7 @@ describe('SettingsChromeCdp', () => {
       await flush()
       await flush()
 
-      expect(settingsApiMock.fetchChromeCdpProfiles).toHaveBeenCalledWith('ws://127.0.0.1:47187')
+      expect(settingsApiMock.fetchChromeCdpProfiles).toHaveBeenCalledWith(testClient)
       expect(container.textContent).toContain('ctx-1')
     })
   })
@@ -312,7 +316,7 @@ describe('SettingsChromeCdp', () => {
 
       root = createRoot(container)
       flushSync(() => {
-        root?.render(createElement(SettingsChromeCdp, { clientOrWsUrl: 'ws://127.0.0.1:47187' }))
+        root?.render(createElement(SettingsChromeCdp, { clientOrWsUrl: testClient }))
       })
       await flush()
       await flush()
@@ -425,13 +429,13 @@ describe('SettingsChromeCdp', () => {
       root = createRoot(container)
       flushSync(() => {
         root?.render(createElement(SettingsChromeCdp, {
-          clientOrWsUrl: 'ws://127.0.0.1:47187',
+          clientOrWsUrl: testClient,
         }))
       })
       await flush()
       await flush()
 
-      expect(settingsApiMock.fetchChromeCdpSettings).toHaveBeenCalledWith('ws://127.0.0.1:47187')
+      expect(settingsApiMock.fetchChromeCdpSettings).toHaveBeenCalledWith(testClient)
     })
   })
 })

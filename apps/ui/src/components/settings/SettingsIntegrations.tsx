@@ -34,7 +34,7 @@ import {
   toErrorMessage,
 } from './settings-api'
 import type { AgentDescriptor, TelegramStatusEvent } from '@forge/protocol'
-import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -176,7 +176,11 @@ export function SettingsIntegrations({
   managers,
   telegramStatus,
 }: SettingsIntegrationsProps) {
-  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
+  // Resolve a target-aware client at the boundary (settings-api takes a client).
+  const clientOrWsUrl = useMemo<SettingsApiClient>(
+    () => apiClient ?? createBuilderSettingsApiClient(wsUrl),
+    [apiClient, wsUrl],
+  )
   const managerOptions = useMemo(() => {
     const seenProfileIds = new Set<string>()
     const options: AgentDescriptor[] = []

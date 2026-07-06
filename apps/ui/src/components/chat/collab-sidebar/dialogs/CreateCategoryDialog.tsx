@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select'
 import { createCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
+import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
 import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
 import { fetchSharedSpecialists } from '@/components/settings/specialists-api'
 import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo, ResolvedSpecialistDefinition } from '@forge/protocol'
@@ -62,7 +63,8 @@ export function CreateCategoryDialog({
   const [reasoningLevel, setReasoningLevel] = useState(NO_REASONING_LEVEL_VALUE)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
+  const apiClient = useMemo(() => createBuilderSettingsApiClient(wsUrl ?? ''), [wsUrl])
+  const modelPresets = useModelPresets(apiClient, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
   // Default specialist handles

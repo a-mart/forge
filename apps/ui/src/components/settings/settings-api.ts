@@ -37,7 +37,6 @@ import type {
 } from '@forge/protocol'
 import { SHARED_INTEGRATION_MANAGER_ID } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -202,8 +201,7 @@ function parseSettingsAuthEventName(value: string): SettingsAuthLoginEventName |
 /*  Env variables API                                                 */
 /* ------------------------------------------------------------------ */
 
-export async function fetchSettingsEnvVariables(clientOrWsUrl: SettingsApiClient | string): Promise<SettingsEnvVariable[]> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchSettingsEnvVariables(client: SettingsApiClient): Promise<SettingsEnvVariable[]> {
   const response = await client.fetch('/api/settings/env')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SettingsEnvResponse>
@@ -211,20 +209,17 @@ export async function fetchSettingsEnvVariables(clientOrWsUrl: SettingsApiClient
   return payload.variables.filter(isSettingsEnvVariable)
 }
 
-export async function updateSettingsEnvVariables(clientOrWsUrl: SettingsApiClient | string, values: Record<string, string>): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function updateSettingsEnvVariables(client: SettingsApiClient, values: Record<string, string>): Promise<void> {
   const response = await client.fetch('/api/settings/env', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function deleteSettingsEnvVariable(clientOrWsUrl: SettingsApiClient | string, variableName: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function deleteSettingsEnvVariable(client: SettingsApiClient, variableName: string): Promise<void> {
   const response = await client.fetch(`/api/settings/env/${encodeURIComponent(variableName)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function fetchServerVersion(clientOrWsUrl: SettingsApiClient | string): Promise<string | null> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchServerVersion(client: SettingsApiClient): Promise<string | null> {
   const response = await client.fetch('/api/stats?range=7d')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { system?: { serverVersion?: unknown } }
@@ -236,8 +231,7 @@ export async function fetchServerVersion(clientOrWsUrl: SettingsApiClient | stri
 /*  Auth providers API                                                */
 /* ------------------------------------------------------------------ */
 
-export async function fetchSettingsAuthProviders(clientOrWsUrl: SettingsApiClient | string): Promise<SettingsAuthProvider[]> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchSettingsAuthProviders(client: SettingsApiClient): Promise<SettingsAuthProvider[]> {
   const response = await client.fetch('/api/settings/auth')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SettingsAuthResponse>
@@ -254,22 +248,19 @@ function dispatchSettingsAuthChanged(): void {
   window.dispatchEvent(new Event(SETTINGS_AUTH_CHANGED_EVENT))
 }
 
-export async function updateSettingsAuthProviders(clientOrWsUrl: SettingsApiClient | string, values: Partial<Record<SettingsAuthProviderId, string>>): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function updateSettingsAuthProviders(client: SettingsApiClient, values: Partial<Record<SettingsAuthProviderId, string>>): Promise<void> {
   const response = await client.fetch('/api/settings/auth', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
 }
 
-export async function deleteSettingsAuthProvider(clientOrWsUrl: SettingsApiClient | string, provider: SettingsAuthProviderId): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function deleteSettingsAuthProvider(client: SettingsApiClient, provider: SettingsAuthProviderId): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
 }
 
-export async function fetchOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient | string): Promise<OpenAIBrokerSettingsState> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchOpenAIBrokerSettings(client: SettingsApiClient): Promise<OpenAIBrokerSettingsState> {
   const response = await client.fetch('/api/settings/auth/openai-codex/source')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
@@ -278,10 +269,9 @@ export async function fetchOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient
 }
 
 export async function updateOpenAIBrokerSettings(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   request: UpdateOpenAIBrokerSettingsRequest,
 ): Promise<OpenAIBrokerSettingsState> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch('/api/settings/auth/openai-codex/source', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -295,10 +285,9 @@ export async function updateOpenAIBrokerSettings(
 }
 
 export async function redeemOpenAIBrokerInvite(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   request: RedeemOpenAIBrokerInviteRequest,
 ): Promise<OpenAIBrokerSettingsState> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch('/api/settings/auth/openai-codex/source/invite/redeem', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -312,10 +301,9 @@ export async function redeemOpenAIBrokerInvite(
 }
 
 export async function testOpenAIBrokerSettings(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   request?: Partial<UpdateOpenAIBrokerSettingsRequest>,
 ): Promise<OpenAIBrokerTestResponse> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch('/api/settings/auth/openai-codex/source/test', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -325,8 +313,7 @@ export async function testOpenAIBrokerSettings(
   return (await response.json()) as OpenAIBrokerTestResponse
 }
 
-export async function disableOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient | string): Promise<OpenAIBrokerSettingsState> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function disableOpenAIBrokerSettings(client: SettingsApiClient): Promise<OpenAIBrokerSettingsState> {
   const response = await client.fetch('/api/settings/auth/openai-codex/source/disable', { method: 'POST' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
@@ -335,8 +322,7 @@ export async function disableOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClie
   return payload.settings
 }
 
-export async function clearOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient | string): Promise<OpenAIBrokerSettingsState> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function clearOpenAIBrokerSettings(client: SettingsApiClient): Promise<OpenAIBrokerSettingsState> {
   const response = await client.fetch('/api/settings/auth/openai-codex/source', { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
@@ -346,12 +332,11 @@ export async function clearOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient
 }
 
 export async function startSettingsAuthOAuthLoginStream(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   provider: SettingsAuthProviderId,
   handlers: SettingsAuthOAuthStreamHandlers,
   signal: AbortSignal,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}`, { method: 'POST', signal })
   if (!response.ok) throw new Error(await readApiError(response))
   if (!response.body) throw new Error('OAuth login stream is unavailable.')
@@ -411,8 +396,7 @@ export async function startSettingsAuthOAuthLoginStream(
   flushEvent()
 }
 
-export async function submitSettingsAuthOAuthPrompt(clientOrWsUrl: SettingsApiClient | string, provider: SettingsAuthProviderId, value: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function submitSettingsAuthOAuthPrompt(client: SettingsApiClient, provider: SettingsAuthProviderId, value: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
@@ -433,8 +417,7 @@ function resolveManagerIntegrationPath(managerId: string, provider: 'telegram', 
 /*  Telegram API                                                      */
 /* ------------------------------------------------------------------ */
 
-export async function fetchTelegramSettings(clientOrWsUrl: SettingsApiClient | string, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchTelegramSettings(client: SettingsApiClient, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
   const path = resolveManagerIntegrationPath(managerId, 'telegram')
   const response = await client.fetch(path)
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -443,8 +426,7 @@ export async function fetchTelegramSettings(clientOrWsUrl: SettingsApiClient | s
   return { config: payload.config, status: payload.status ?? null }
 }
 
-export async function updateTelegramSettings(clientOrWsUrl: SettingsApiClient | string, managerId: string, patch: Record<string, unknown>): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function updateTelegramSettings(client: SettingsApiClient, managerId: string, patch: Record<string, unknown>): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
   const path = resolveManagerIntegrationPath(managerId, 'telegram')
   const response = await client.fetch(path, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -453,8 +435,7 @@ export async function updateTelegramSettings(clientOrWsUrl: SettingsApiClient | 
   return { config: payload.config, status: payload.status ?? null }
 }
 
-export async function disableTelegramSettings(clientOrWsUrl: SettingsApiClient | string, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function disableTelegramSettings(client: SettingsApiClient, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
   const path = resolveManagerIntegrationPath(managerId, 'telegram')
   const response = await client.fetch(path, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -463,8 +444,7 @@ export async function disableTelegramSettings(clientOrWsUrl: SettingsApiClient |
   return { config: payload.config, status: payload.status ?? null }
 }
 
-export async function testTelegramConnection(clientOrWsUrl: SettingsApiClient | string, managerId: string, patch?: Record<string, unknown>): Promise<{ botId?: string; botUsername?: string; botDisplayName?: string }> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function testTelegramConnection(client: SettingsApiClient, managerId: string, patch?: Record<string, unknown>): Promise<{ botId?: string; botUsername?: string; botDisplayName?: string }> {
   const path = resolveManagerIntegrationPath(managerId, 'telegram', '/test')
   const response = await client.fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch ?? {}) })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -487,8 +467,7 @@ function isSkillInfo(value: unknown): value is SkillInfo {
   )
 }
 
-export async function fetchSkillsList(clientOrWsUrl: SettingsApiClient | string, profileId?: string): Promise<SkillInfo[]> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchSkillsList(client: SettingsApiClient, profileId?: string): Promise<SkillInfo[]> {
   const path = profileId
     ? `/api/settings/skills?profileId=${encodeURIComponent(profileId)}`
     : '/api/settings/skills'
@@ -540,8 +519,7 @@ function isChromeCdpPreviewTab(value: unknown): value is ChromeCdpPreviewTab {
   )
 }
 
-export async function fetchChromeCdpSettings(clientOrWsUrl: SettingsApiClient | string): Promise<{ config: ChromeCdpConfig; status: ChromeCdpStatus }> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchChromeCdpSettings(client: SettingsApiClient): Promise<{ config: ChromeCdpConfig; status: ChromeCdpStatus }> {
   const response = await client.fetch('/api/settings/chrome-cdp')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { config?: unknown; status?: unknown }
@@ -550,14 +528,12 @@ export async function fetchChromeCdpSettings(clientOrWsUrl: SettingsApiClient | 
   return { config: payload.config, status: payload.status }
 }
 
-export async function updateChromeCdpSettings(clientOrWsUrl: SettingsApiClient | string, config: Partial<ChromeCdpConfig>): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function updateChromeCdpSettings(client: SettingsApiClient, config: Partial<ChromeCdpConfig>): Promise<void> {
   const response = await client.fetch('/api/settings/chrome-cdp', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(config) })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function testChromeCdpConnection(clientOrWsUrl: SettingsApiClient | string): Promise<ChromeCdpStatus> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function testChromeCdpConnection(client: SettingsApiClient): Promise<ChromeCdpStatus> {
   const response = await client.fetch('/api/settings/chrome-cdp/test', { method: 'POST' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as unknown
@@ -565,8 +541,7 @@ export async function testChromeCdpConnection(clientOrWsUrl: SettingsApiClient |
   return payload
 }
 
-export async function fetchChromeCdpProfiles(clientOrWsUrl: SettingsApiClient | string): Promise<ChromeCdpProfile[]> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchChromeCdpProfiles(client: SettingsApiClient): Promise<ChromeCdpProfile[]> {
   const response = await client.fetch('/api/settings/chrome-cdp/profiles', { method: 'POST' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { profiles?: unknown }
@@ -575,11 +550,10 @@ export async function fetchChromeCdpProfiles(clientOrWsUrl: SettingsApiClient | 
 }
 
 export async function fetchChromeCdpPreview(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   config: Partial<ChromeCdpConfig>,
   signal?: AbortSignal,
 ): Promise<{ tabs: ChromeCdpPreviewTab[]; totalFiltered: number; totalUnfiltered: number }> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch('/api/settings/chrome-cdp/preview', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -598,8 +572,7 @@ export async function fetchChromeCdpPreview(
 /*  Extensions API                                                    */
 /* ------------------------------------------------------------------ */
 
-export async function fetchSettingsExtensions(clientOrWsUrl: SettingsApiClient | string): Promise<SettingsExtensionsResponse> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchSettingsExtensions(client: SettingsApiClient): Promise<SettingsExtensionsResponse> {
   const response = await client.fetch('/api/settings/extensions')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as SettingsExtensionsResponse
@@ -610,15 +583,13 @@ export async function fetchSettingsExtensions(clientOrWsUrl: SettingsApiClient |
 /*  Credential Pool API                                               */
 /* ------------------------------------------------------------------ */
 
-export async function fetchCredentialPool(clientOrWsUrl: SettingsApiClient | string, provider: string): Promise<CredentialPoolState> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchCredentialPool(client: SettingsApiClient, provider: string): Promise<CredentialPoolState> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts`)
   if (!response.ok) throw new Error(await client.readApiError(response))
   return ((await response.json()) as { pool: CredentialPoolState }).pool
 }
 
-export async function setCredentialPoolStrategy(clientOrWsUrl: SettingsApiClient | string, provider: string, strategy: CredentialPoolStrategy): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function setCredentialPoolStrategy(client: SettingsApiClient, provider: string, strategy: CredentialPoolStrategy): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/strategy`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -628,8 +599,7 @@ export async function setCredentialPoolStrategy(clientOrWsUrl: SettingsApiClient
   dispatchSettingsAuthChanged()
 }
 
-export async function renamePooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string, label: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function renamePooledCredential(client: SettingsApiClient, provider: string, id: string, label: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/label`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
@@ -638,22 +608,19 @@ export async function renamePooledCredential(clientOrWsUrl: SettingsApiClient | 
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function setPrimaryPooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function setPrimaryPooledCredential(client: SettingsApiClient, provider: string, id: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/primary`, { method: 'POST' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
 }
 
-export async function resetPooledCredentialCooldown(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function resetPooledCredentialCooldown(client: SettingsApiClient, provider: string, id: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/cooldown`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
 }
 
-export async function removePooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function removePooledCredential(client: SettingsApiClient, provider: string, id: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
@@ -664,12 +631,11 @@ export async function removePooledCredential(clientOrWsUrl: SettingsApiClient | 
  * POSTs to the pool-specific login endpoint, NOT the legacy per-provider login.
  */
 export async function startPoolAddAccountOAuthStream(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   provider: string,
   handlers: SettingsAuthOAuthStreamHandlers,
   signal: AbortSignal,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`, { method: 'POST', signal })
   if (!response.ok) throw new Error(await readApiError(response))
   if (!response.body) throw new Error('OAuth login stream is unavailable.')
@@ -732,8 +698,7 @@ export async function startPoolAddAccountOAuthStream(
 /**
  * Submit a prompt response (e.g. authorization code) for the pool add-account OAuth flow.
  */
-export async function submitPoolAddAccountOAuthPrompt(clientOrWsUrl: SettingsApiClient | string, provider: string, value: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function submitPoolAddAccountOAuthPrompt(client: SettingsApiClient, provider: string, value: string): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
@@ -745,8 +710,7 @@ export async function submitPoolAddAccountOAuthPrompt(clientOrWsUrl: SettingsApi
 /**
  * Fetch notification settings from the backend.
  */
-export async function fetchNotificationSettings(clientOrWsUrl: SettingsApiClient | string): Promise<import('@forge/protocol').NotificationSettingsResponse> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+export async function fetchNotificationSettings(client: SettingsApiClient): Promise<import('@forge/protocol').NotificationSettingsResponse> {
   return client.fetchJson<import('@forge/protocol').NotificationSettingsResponse>('/api/settings/notifications')
 }
 
@@ -754,10 +718,9 @@ export async function fetchNotificationSettings(clientOrWsUrl: SettingsApiClient
  * Update notification settings on the backend.
  */
 export async function updateNotificationSettings(
-  clientOrWsUrl: SettingsApiClient | string,
+  client: SettingsApiClient,
   update: { muteCliOriginatedNotifications?: boolean },
 ): Promise<import('@forge/protocol').NotificationSettingsMutationResponse> {
-  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   return client.fetchJson<import('@forge/protocol').NotificationSettingsMutationResponse>('/api/settings/notifications', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },

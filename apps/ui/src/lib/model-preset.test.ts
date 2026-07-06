@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchModelPresets } from './model-preset'
+import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
+
+const client = createBuilderSettingsApiClient('ws://127.0.0.1:47187')
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -31,12 +34,12 @@ describe('fetchModelPresets', () => {
       }),
     } as Response)
 
-    await expect(fetchModelPresets('ws://127.0.0.1:47187')).resolves.toEqual([
+    await expect(fetchModelPresets(client)).resolves.toEqual([
       expect.objectContaining({ presetId: 'pi-5.5' }),
     ])
 
     await expect(
-      fetchModelPresets('ws://127.0.0.1:47187', { allowDynamicPresetIds: true }),
+      fetchModelPresets(client, { allowDynamicPresetIds: true }),
     ).resolves.toEqual([
       expect.objectContaining({ presetId: 'pi-5.5' }),
       expect.objectContaining({ presetId: 'openrouter:anthropic/claude-3.5-sonnet' }),

@@ -27,6 +27,7 @@ import {
   getSupportedReasoningLevelsForModelId,
   useModelPresets,
 } from '@/lib/model-preset'
+import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
 import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
 
 const NO_CATEGORY_VALUE = '__none__'
@@ -65,7 +66,8 @@ export function ChannelSettingsSheet({
     () => [...categories].sort((left, right) => left.position - right.position || left.name.localeCompare(right.name)),
     [categories],
   )
-  const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
+  const apiClient = useMemo(() => createBuilderSettingsApiClient(wsUrl ?? ''), [wsUrl])
+  const modelPresets = useModelPresets(apiClient, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
   const channelName = channel.name

@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { CollaborationCategory, CollaborationChannel, ManagerReasoningLevel, TierConfig } from '@forge/protocol'
+import type { CollaborationCategory, ManagerReasoningLevel, TierConfig } from '@forge/protocol'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { Eye, Loader2, Plus, Save } from 'lucide-react'
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -23,12 +21,13 @@ import {
 import type { SettingsSpecialistsProps } from './specialists/types'
 import {
   SCOPE_GLOBAL,
-  SCOPE_CATEGORY_PREFIX,
   SCOPE_CHANNEL_PREFIX,
   parseScopeKind,
   parseCategoryId,
   parseChannelId,
 } from './specialists/types'
+import { CollabScopeSelectItems, useCollabScopeData } from './collab-scope'
+import { createBuilderSettingsApiClient } from './settings-api-client'
 import { useSpecialistsData } from './specialists/hooks/useSpecialistsData'
 import { useCardEditing } from './specialists/hooks/useCardEditing'
 import { useRosterPrompt } from './specialists/hooks/useRosterPrompt'
@@ -41,7 +40,7 @@ import { PendingSaveDialog } from './specialists/PendingSaveDialog'
 import { CollabSettingsBanner } from './specialists/CollabSettingsBanner'
 import { CategoryDefaultsView } from './specialists/CategoryDefaultsView'
 import { ChannelSpecialistSelection } from './specialists/ChannelSpecialistSelection'
-import { fetchCollabCategories, fetchCollabChannels, fetchTierConfigs, saveTierConfigsApi } from './specialists-api'
+import { fetchTierConfigs, saveTierConfigsApi } from './specialists-api'
 import { ModelIdSelect } from './specialists/ModelIdSelect'
 import { FallbackModelSection } from './specialists/FallbackModelSection'
 import { REASONING_LEVEL_LABELS } from './specialists/types'
@@ -64,6 +63,12 @@ export function SettingsSpecialists({
 }: SettingsSpecialistsProps) {
   useHelpContext('settings.specialists')
   const clientOrWsUrl: import('./settings-api-client').SettingsApiClient | string = apiClient ?? wsUrl
+  // model-preset now takes a target-aware client (never a raw wsUrl); resolve
+  // one at the boundary while the other specialists-api calls keep the string.
+  const presetsApiClient = useMemo(
+    () => apiClient ?? createBuilderSettingsApiClient(wsUrl),
+    [apiClient, wsUrl],
+  )
   const isCollab = apiClient?.target.kind === 'collab'
 
   const [selectedScope, setSelectedScope] = useState<string>(
@@ -78,7 +83,7 @@ export function SettingsSpecialists({
   const channelId = isChannel ? parseChannelId(selectedScope) : undefined
   const categoryId = isCategory ? parseCategoryId(selectedScope) : undefined
 
-  const modelPresets = useModelPresets(clientOrWsUrl, modelConfigChangeKey, { allowDynamicPresetIds: true })
+  const modelPresets = useModelPresets(presetsApiClient, modelConfigChangeKey, { allowDynamicPresetIds: true })
   const selectableModels = useMemo(() => getAllSelectableModels(modelPresets), [modelPresets])
   const [tierConfigs, setTierConfigs] = useState<TierConfig[]>([])
   const [tiersLoading, setTiersLoading] = useState(false)
@@ -121,30 +126,12 @@ export function SettingsSpecialists({
     }
   }, [clientOrWsUrl, tierConfigs])
 
-  /* ---- Collab scope data ---- */
-  const [collabCategories, setCollabCategories] = useState<CollaborationCategory[]>([])
-  const [collabChannels, setCollabChannels] = useState<CollaborationChannel[]>([])
-
-  useEffect(() => {
-    if (!isCollab) return
-    let cancelled = false
-
-    Promise.all([
-      fetchCollabCategories(clientOrWsUrl),
-      fetchCollabChannels(clientOrWsUrl),
-    ])
-      .then(([categories, channels]) => {
-        if (!cancelled) {
-          setCollabCategories(categories)
-          setCollabChannels(channels.filter((ch) => !ch.archived))
-        }
-      })
-      .catch(() => {
-        // Scope selector will just show Global if fetch fails
-      })
-
-    return () => { cancelled = true }
-  }, [isCollab, clientOrWsUrl, specialistChangeKey])
+  /* ---- Collab scope data (shared hook, WP-U3) ---- */
+  const { collabCategories, collabChannels, setCollabCategories } = useCollabScopeData(
+    clientOrWsUrl,
+    isCollab,
+    specialistChangeKey,
+  )
 
   /* ---- Hooks ---- */
 
@@ -381,43 +368,13 @@ export function SettingsSpecialists({
               <SelectValue placeholder="Select scope" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={SCOPE_GLOBAL}>
-                {isCollab ? 'Global Collaboration' : 'Global'}
-              </SelectItem>
-              {/* Builder: show profiles */}
-              {!isCollab && profiles.map((profile) => (
-                <SelectItem key={profile.profileId} value={profile.profileId}>
-                  {profile.displayName || profile.profileId}
-                </SelectItem>
-              ))}
-              {/* Collab: show categories */}
-              {isCollab && collabCategories.length > 0 && (
-                <SelectGroup>
-                  <SelectLabel className="text-xs">Categories</SelectLabel>
-                  {collabCategories.map((cat) => (
-                    <SelectItem
-                      key={`category:${cat.categoryId}`}
-                      value={`${SCOPE_CATEGORY_PREFIX}${cat.categoryId}`}
-                    >
-                      Category: {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )}
-              {/* Collab: show channels */}
-              {isCollab && collabChannels.length > 0 && (
-                <SelectGroup>
-                  <SelectLabel className="text-xs">Channels</SelectLabel>
-                  {collabChannels.map((ch) => (
-                    <SelectItem
-                      key={`channel:${ch.channelId}`}
-                      value={`${SCOPE_CHANNEL_PREFIX}${ch.channelId}`}
-                    >
-                      #{ch.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )}
+              <CollabScopeSelectItems
+                isCollab={isCollab}
+                profiles={profiles}
+                collabCategories={collabCategories}
+                collabChannels={collabChannels}
+                globalScopeValue={SCOPE_GLOBAL}
+              />
             </SelectContent>
           </Select>
         </div>
