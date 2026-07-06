@@ -22,7 +22,7 @@ import type { CompactionRuntimeSettingsProvider } from "./compaction-runtime-set
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
-import { RuntimeEventProjector } from "./runtime/runtime-event-projector.js";
+import { RuntimeEventProjector, type ManagerAssistantOutputRouteResult } from "./runtime/runtime-event-projector.js";
 import type {
   AssistantOutputTarget,
   SessionTranscriptAssistantOutputTarget,
@@ -48,6 +48,7 @@ import { withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
+import type { MessageRoutingReceiptRecord } from "./session/message-routing-receipts.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
@@ -73,7 +74,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   >;
   conversationProjector: {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void;
-    emitConversationMessage(event: ConversationMessageEvent): void;
+    emitConversationMessage(event: ConversationMessageEvent, options?: { routingReceipt?: MessageRoutingReceiptRecord }): void;
   };
   promptService: {
     buildClaudeRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
@@ -176,7 +177,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     agentId: string,
     patch: Partial<AgentDescriptor>
   ): Promise<AgentDescriptor | undefined>;
-  emitConversationMessage(event: ConversationMessageEvent): void;
+  emitConversationMessage(event: ConversationMessageEvent, options?: { routingReceipt?: MessageRoutingReceiptRecord }): void;
   markSessionActivity(agentId: string, timestamp?: string): void;
   emitStatus(
     agentId: string,
@@ -199,6 +200,10 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     agentId: string,
     activeTarget: AssistantOutputTarget | undefined
   ): SessionTranscriptAssistantOutputTarget | undefined;
+  resolveManagerAssistantFinalOutputRoute?(
+    agentId: string,
+    activeTarget: AssistantOutputTarget | undefined
+  ): ManagerAssistantOutputRouteResult;
 }
 
 export class SwarmRuntimeController {
@@ -566,7 +571,13 @@ export class SwarmRuntimeController {
               this.host.conversationProjector.captureConversationEventFromRuntime(agentId, event);
             }
           },
-          emitConversationMessage: (event) => this.host.emitConversationMessage(event),
+          emitConversationMessage: (event, options) => {
+            if (options) {
+              this.host.emitConversationMessage(event, options);
+            } else {
+              this.host.emitConversationMessage(event);
+            }
+          },
         },
         markSessionActivity: (agentId, timestamp) => this.host.markSessionActivity(agentId, timestamp),
         maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
@@ -590,7 +601,9 @@ export class SwarmRuntimeController {
         emitModelCacheObservation: (event) => this.host.emitModelCacheObservation(event),
         getActiveTurnId: (agentId, runtimeToken) => this.host.getActiveTurnId?.(agentId, runtimeToken),
         resolveManagerAssistantFinalOutputTarget: (agentId, _descriptor, activeTarget) =>
-          this.host.resolveManagerAssistantFinalOutputTarget(agentId, activeTarget)
+          this.host.resolveManagerAssistantFinalOutputTarget(agentId, activeTarget),
+        resolveManagerAssistantFinalOutputRoute: (agentId, _descriptor, activeTarget) =>
+          this.host.resolveManagerAssistantFinalOutputRoute?.(agentId, activeTarget)
       });
     }
 

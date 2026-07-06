@@ -206,7 +206,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
       const targetId = resolveConversationMessageTargetId(message)
       displayEntries.push({
         type: 'conversation_message',
-        id: `message-${targetId}-${index}`,
+        id: `message-${targetId}-${message.id ?? index}`,
         message,
       })
       continue

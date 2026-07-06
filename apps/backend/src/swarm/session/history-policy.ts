@@ -54,6 +54,10 @@ export function isProtectedWebTranscriptEntry(entry: ConversationEntryEvent): bo
     return true;
   }
 
+  if (entry.source === "worker_report") {
+    return true;
+  }
+
   if (entry.source !== "user_input" && !isUserVisibleAssistantConversationMessage(entry)) {
     return false;
   }

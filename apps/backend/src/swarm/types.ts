@@ -291,6 +291,9 @@ export interface ConversationMessageEvent {
   collaborationAuthor?: CollaborationAuthor;
   projectAgentContext?: ProjectAgentMessageContext;
   externalThreadContext?: ExternalThreadMessageContext;
+  terminal?: boolean;
+  sourceWorkerId?: string;
+  excludeFromModelContext?: true;
   pinned?: boolean;
   replyTo?: ConversationReplyTarget;
 }

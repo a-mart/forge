@@ -1,3 +1,4 @@
+// Builder event changes are additive-only for remote version skew; removals require a protocolVersion bump.
 import type { ConversationMessageAttachment } from './attachments.js'
 import type { CollaborationAuthor } from './collaboration.js'
 import type {
@@ -66,6 +67,7 @@ export const CONVERSATION_MESSAGE_SOURCES = [
   'assistant_progress',
   'system',
   'project_agent_input',
+  'worker_report',
 ] as const
 
 export type ConversationMessageSource = (typeof CONVERSATION_MESSAGE_SOURCES)[number]
@@ -145,6 +147,9 @@ export interface ConversationMessageEvent {
   collaborationAuthor?: CollaborationAuthor
   projectAgentContext?: ProjectAgentMessageContext
   externalThreadContext?: ExternalThreadMessageContext
+  terminal?: boolean
+  sourceWorkerId?: string
+  excludeFromModelContext?: true
   pinned?: boolean
   replyTo?: ConversationReplyTarget
 }

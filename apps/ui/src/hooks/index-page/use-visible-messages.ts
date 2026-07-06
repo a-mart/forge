@@ -58,6 +58,10 @@ function isWebVisibleConversationMessage(entry: ConversationEntry): boolean {
     return true
   }
 
+  if (entry.source === 'worker_report') {
+    return false
+  }
+
   const channel = entry.sourceContext?.channel ?? 'web'
   return channel === 'web' || channel === 'cli'
 }

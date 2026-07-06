@@ -105,6 +105,21 @@ describe('external thread helpers', () => {
     expect(shouldExcludeConversationMessageFromModelContext(normalMessage)).toBe(false)
   })
 
+  it('excludes worker reports from model context by source', () => {
+    const workerReport = {
+      type: 'conversation_message',
+      agentId: 'session-1',
+      role: 'system',
+      text: 'worker completed',
+      timestamp: now,
+      source: 'worker_report',
+      terminal: true,
+      sourceWorkerId: 'worker-1',
+    } satisfies ConversationMessageEvent
+
+    expect(shouldExcludeConversationMessageFromModelContext(workerReport)).toBe(true)
+  })
+
   it('classifies Forge-managed runtime workers separately from external threads', () => {
     const codexSidecar = {
       agentId: 'session-1--codex',

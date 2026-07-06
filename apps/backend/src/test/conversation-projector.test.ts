@@ -7,6 +7,7 @@ import type { ServerEvent } from '@forge/protocol'
 import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import { reconcileInterruptedToolCallsForBoot } from '../swarm/interrupted-tool-reconciliation.js'
+import { getMessageRoutingReceiptsPath } from '../swarm/session/message-routing-receipts.js'
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session-file-guard.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
@@ -160,6 +161,51 @@ async function buildCacheMetadata(
 }
 
 describe('ConversationProjector session tree continuity', () => {
+  it('writes routing receipts to the session sidecar at the conversation entry choke point', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const projector = makeProjector({ descriptor })
+
+    projector.emitConversationMessage(
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        turnId: 'manager:1',
+        role: 'assistant',
+        text: 'visible',
+        timestamp: FIXED_NOW,
+        source: 'assistant_output',
+      },
+      {
+        routingReceipt: {
+          type: 'message_routing',
+          agentId: descriptor.agentId,
+          turnId: 'manager:1',
+          timestamp: FIXED_NOW,
+          decision: 'render',
+          reasonCode: 'render:user_web',
+          channel: 'web',
+          targetKind: 'explicit_tool_required',
+        },
+      },
+    )
+
+    const receiptsText = await readFile(getMessageRoutingReceiptsPath(sessionFile), 'utf8')
+    expect(receiptsText.trim().split('\n').map((line) => JSON.parse(line))).toEqual([
+      {
+        type: 'message_routing',
+        agentId: descriptor.agentId,
+        turnId: 'manager:1',
+        timestamp: FIXED_NOW,
+        decision: 'render',
+        reasonCode: 'render:user_web',
+        channel: 'web',
+        targetKind: 'explicit_tool_required',
+      },
+    ])
+  })
+
   it('chains direct-append conversation entries to the previous persisted entry after history preload', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-'))
     const sessionFile = join(root, 'manager.jsonl')

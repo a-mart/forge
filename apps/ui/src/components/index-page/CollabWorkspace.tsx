@@ -56,6 +56,10 @@ function filterEntriesByView(
       return false
     }
 
+    if (entry.source === 'worker_report') {
+      return false
+    }
+
     const channel = entry.sourceContext?.channel
     return channel === 'web' || channel === 'cli' || channel === undefined
   })

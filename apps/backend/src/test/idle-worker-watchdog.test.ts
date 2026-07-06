@@ -176,7 +176,7 @@ async function finishWorkerTurnViaIdleStatus(manager: TestSwarmManager, worker: 
 function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
   return [
     'WORKER REPORT: status: done',
-    '[assistantOutputTarget] {"mode":"internal_only"}',
+    '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}',
     `summary: Auto-generated report because worker ${worker.agentId} completed its turn without an explicit callback.`,
   ].join('\n')
 }
@@ -184,7 +184,7 @@ function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
 function buildExpectedDetailedCompletionMessage(worker: AgentDescriptor, text: string): string {
   return [
     'WORKER REPORT: status: done',
-    '[assistantOutputTarget] {"mode":"internal_only"}',
+    '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}',
     `summary: Auto-generated report because worker ${worker.agentId} completed its turn without an explicit callback.`,
     '',
     'Last assistant message:',

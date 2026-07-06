@@ -318,6 +318,54 @@ describe('CollabWorkspace channel recovery', () => {
   })
 })
 
+describe('CollabWorkspace worker report visibility', () => {
+  it('hides worker_report rows in the default view and shows them in All', () => {
+    const managerMessage = {
+      type: 'conversation_message',
+      agentId: 'session-1',
+      id: 'assistant-1',
+      role: 'assistant',
+      text: 'Manager summary',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'assistant_output',
+      sourceContext: { channel: 'web' },
+    }
+    const workerReport = {
+      type: 'conversation_message',
+      agentId: 'session-1',
+      id: 'worker-report-1',
+      role: 'system',
+      text: 'Worker raw output',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'worker_report',
+      terminal: true,
+      sourceWorkerId: 'worker-1',
+      excludeFromModelContext: true,
+    }
+
+    collabAdapterCapture.entries = [workerReport, managerMessage]
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildStateWithChannel(),
+    }
+
+    renderWorkspace({ channelId: 'channel-1' })
+
+    expect((messageListCapture.lastPropsRef.current?.messages as unknown[]).map((entry) => (entry as { id?: string }).id)).toEqual([
+      'assistant-1',
+    ])
+
+    act(() => {
+      ;(collabHeaderCapture.lastPropsRef.current?.onChannelViewChange as (view: string) => void)('all')
+    })
+
+    expect((messageListCapture.lastPropsRef.current?.messages as unknown[]).map((entry) => (entry as { id?: string }).id)).toEqual([
+      'worker-report-1',
+      'assistant-1',
+    ])
+  })
+})
+
 describe('CollabWorkspace prompt preview integration', () => {
   it('wires View AI prompt for signed-in members even when the channel AI toggle is off', () => {
     collabContextMock.value = {

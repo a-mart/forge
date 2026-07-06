@@ -70,6 +70,53 @@ function upsertChoiceRequestMessages(
   return nextMessages
 }
 
+function conversationEntryMergeKey(entry: ServerEvent): string | undefined {
+  switch (entry.type) {
+    case 'conversation_message':
+      return entry.id ? `conversation_message:${entry.id}` : undefined
+    case 'choice_request':
+      return `choice_request:${entry.choiceId}`
+    case 'work_plan_created':
+      return `work_plan_created:${entry.id}`
+    case 'model_cache_observation':
+      return entry.id ? `model_cache_observation:${entry.id}` : undefined
+    case 'agent_tool_call':
+      return entry.toolCallId ? `agent_tool_call:${entry.agentId}:${entry.toolCallId}:${entry.kind}` : undefined
+    default:
+      return undefined
+  }
+}
+
+function mergeBootstrapEntries<T extends ServerEvent>(bootstrapEntries: T[], currentEntries: T[]): T[] {
+  const merged = [...bootstrapEntries]
+  const indexByKey = new Map<string, number>()
+
+  merged.forEach((entry, index) => {
+    const key = conversationEntryMergeKey(entry)
+    if (key) {
+      indexByKey.set(key, index)
+    }
+  })
+
+  for (const currentEntry of currentEntries) {
+    const key = conversationEntryMergeKey(currentEntry)
+    if (!key) {
+      merged.push(currentEntry)
+      continue
+    }
+
+    const existingIndex = indexByKey.get(key)
+    if (existingIndex === undefined) {
+      indexByKey.set(key, merged.length)
+      merged.push(currentEntry)
+    } else {
+      merged[existingIndex] = currentEntry
+    }
+  }
+
+  return merged
+}
+
 export function handleConversationEvent(
   event: ServerEvent,
   context: ManagerWsConversationEventContext,
@@ -215,8 +262,8 @@ export function handleConversationEvent(
         allMessageCount: event.messages.length,
       })
       context.updateState({
-        messages,
-        activityMessages: clampConversationHistory(activityMessages),
+        messages: mergeBootstrapEntries(messages, context.state.messages),
+        activityMessages: clampConversationHistory(mergeBootstrapEntries(activityMessages, context.state.activityMessages)),
         modelCacheObservations: routedObservations.modelCacheObservations,
         pendingModelCacheObservations: routedObservations.pendingModelCacheObservations,
       })
