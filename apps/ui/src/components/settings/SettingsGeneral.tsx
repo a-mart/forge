@@ -45,6 +45,11 @@ import {
   updateCortexAutoReviewSettings,
 } from '@/components/settings/cortex-auto-review-api'
 import {
+  fetchKnowledgeV2Settings,
+  updateKnowledgeV2Settings,
+} from '@/components/settings/knowledge-v2-api'
+import { CORTEX_V2_COPY } from '@/components/settings/cortex-v2-copy'
+import {
   fetchModelCacheVisualizationEnabled,
   setModelCacheVisualizationEnabledApi,
 } from '@/components/settings/model-cache-visualization-api'
@@ -59,6 +64,7 @@ import {
   isCompactionModelSelectionSupported,
   type CompactionSettings,
   type CortexAutoReviewSettings,
+  type KnowledgeV2Settings,
   type GetCompactionSettingsResponse,
   type ManagerReasoningLevel,
   type ModelPresetInfo,
@@ -199,6 +205,12 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [cortexUpdating, setCortexUpdating] = useState(false)
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
   const [cortexDisabled, setCortexDisabled] = useState(false)
+
+  // Knowledge v2 ("New Cortex") — Builder-only; hidden when the endpoint 404s.
+  const [knowledgeV2Settings, setKnowledgeV2Settings] = useState<KnowledgeV2Settings | null>(null)
+  const [knowledgeV2Available, setKnowledgeV2Available] = useState(false)
+  const [knowledgeV2Error, setKnowledgeV2Error] = useState<string | null>(null)
+  const [knowledgeV2Updating, setKnowledgeV2Updating] = useState(false)
 
   const [modelCacheVisualizationEnabled, setModelCacheVisualizationEnabled] = useState(false)
   const [modelCacheVisualizationLoading, setModelCacheVisualizationLoading] = useState(true)
@@ -502,6 +514,31 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
       })
   }, [cortexSource])
 
+  // Fetch Knowledge v2 ("New Cortex") settings on mount. Reuses cortexSource.
+  useEffect(() => {
+    let cancelled = false
+    setKnowledgeV2Error(null)
+    void fetchKnowledgeV2Settings(cortexSource)
+      .then((result) => {
+        if (cancelled) return
+        if (!result.available) {
+          setKnowledgeV2Available(false)
+          setKnowledgeV2Settings(null)
+          return
+        }
+        setKnowledgeV2Available(true)
+        setKnowledgeV2Settings(result.response.settings)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setKnowledgeV2Available(true)
+        setKnowledgeV2Error(err instanceof Error ? err.message : CORTEX_V2_COPY.settings.loadError)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [cortexSource])
+
   const modelCacheVisualizationSource = apiClient ?? wsUrl
 
   useEffect(() => {
@@ -587,6 +624,26 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
         })
     },
     [cortexSource, cortexUpdating],
+  )
+
+  const handleKnowledgeV2Toggle = useCallback(
+    (enabled: boolean) => {
+      if (knowledgeV2Updating) return
+      setKnowledgeV2Updating(true)
+      setKnowledgeV2Error(null)
+
+      void updateKnowledgeV2Settings(cortexSource, { enabled })
+        .then((response) => {
+          setKnowledgeV2Settings(response.settings)
+        })
+        .catch((err) => {
+          setKnowledgeV2Error(err instanceof Error ? err.message : CORTEX_V2_COPY.settings.updateError)
+        })
+        .finally(() => {
+          setKnowledgeV2Updating(false)
+        })
+    },
+    [cortexSource, knowledgeV2Updating],
   )
 
   const handleEditorPreferenceChange = useCallback((nextPreference: EditorPreference) => {
@@ -978,6 +1035,25 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
               </SelectContent>
             </Select>
           </SettingsWithCTA>
+
+          {knowledgeV2Available && (
+            <SettingsWithCTA
+              label={CORTEX_V2_COPY.settings.label}
+              description={`${CORTEX_V2_COPY.settings.description} ${CORTEX_V2_COPY.settings.revertNote}`}
+            >
+              <div className="flex flex-col items-end gap-1.5">
+                <Switch
+                  id="knowledge-v2-enabled-toggle"
+                  checked={knowledgeV2Settings?.enabled ?? false}
+                  onCheckedChange={handleKnowledgeV2Toggle}
+                  disabled={!knowledgeV2Settings || knowledgeV2Updating}
+                />
+                {knowledgeV2Error ? (
+                  <span className="text-[10px] text-destructive">{knowledgeV2Error}</span>
+                ) : null}
+              </div>
+            </SettingsWithCTA>
+          )}
         </SettingsSection>
       )}
 

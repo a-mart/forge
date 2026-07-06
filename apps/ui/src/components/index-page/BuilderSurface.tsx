@@ -23,6 +23,7 @@ import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/f
 import type { useFileEditorCoordinator } from '@/components/file-browser/use-file-editor-coordinator'
 import { DiffViewerContent } from '@/components/diff-viewer/DiffViewerDialog'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
+import { CortexV2OnboardingModal } from '@/components/settings/CortexV2OnboardingModal'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
 import { resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
@@ -1092,6 +1093,8 @@ export function BuilderSurface({
           initialQuickFilter: panels.diffViewerInitialState?.initialQuickFilter,
         }}
       />
+
+      <CortexV2OnboardingModal source={wsUrl} />
     </>
   )
 }

@@ -78,6 +78,34 @@ vi.mock('@/components/settings/cortex-auto-review-api', () => ({
   updateCortexAutoReviewSettings: (...args: unknown[]) => cortexApiMock.updateCortexAutoReviewSettings(...args),
 }))
 
+const knowledgeV2ApiMock = vi.hoisted(() => ({
+  fetchKnowledgeV2Settings: vi.fn(),
+  updateKnowledgeV2Settings: vi.fn(),
+}))
+
+vi.mock('@/components/settings/knowledge-v2-api', () => ({
+  fetchKnowledgeV2Settings: (...args: unknown[]) => knowledgeV2ApiMock.fetchKnowledgeV2Settings(...args),
+  updateKnowledgeV2Settings: (...args: unknown[]) => knowledgeV2ApiMock.updateKnowledgeV2Settings(...args),
+}))
+
+function knowledgeV2SettingsView(enabled: boolean) {
+  return {
+    settings: {
+      enabled,
+      legacyCleanupConfirmed: false,
+      indexCaps: { global: 200, profile: 100 },
+      updatedAt: null,
+    },
+    defaults: {
+      enabled: false,
+      legacyCleanupConfirmed: false,
+      indexCaps: { global: 200, profile: 100 },
+      updatedAt: null,
+    },
+    constraints: { indexCaps: { min: 0, max: 1000, defaults: { global: 200, profile: 100 } } },
+  }
+}
+
 const modelCacheVisualizationApiMock = vi.hoisted(() => ({
   fetchModelCacheVisualizationEnabled: vi.fn(),
   setModelCacheVisualizationEnabledApi: vi.fn(),
@@ -166,6 +194,14 @@ beforeEach(() => {
   cortexApiMock.fetchCortexAutoReviewSettings.mockResolvedValue({
     settings: { enabled: true, intervalMinutes: 120 },
     cortexDisabled: false,
+  })
+  knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
+    available: true,
+    response: knowledgeV2SettingsView(false),
+  })
+  knowledgeV2ApiMock.updateKnowledgeV2Settings.mockResolvedValue({
+    ok: true,
+    ...knowledgeV2SettingsView(true),
   })
   modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled.mockResolvedValue(false)
   modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi.mockResolvedValue(undefined)
@@ -379,6 +415,53 @@ describe('SettingsGeneral', () => {
       await flush()
 
       expect(container.textContent).not.toContain('Automatic Reviews')
+    })
+  })
+
+  /* ---- Knowledge v2 (New Cortex) toggle ---- */
+
+  describe('new cortex (knowledge v2) toggle', () => {
+    it('renders the toggle reflecting the fetched enabled=false state', async () => {
+      renderGeneral()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('New Cortex (Knowledge v2)')
+      const toggle = container.querySelector('#knowledge-v2-enabled-toggle')
+      expect(toggle).toBeTruthy()
+      expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    })
+
+    it('writes enabled=true via PUT when toggled on', async () => {
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const toggle = container.querySelector('#knowledge-v2-enabled-toggle') as HTMLInputElement | null
+      expect(toggle).toBeTruthy()
+
+      flushSync(() => {
+        fireEvent.click(toggle!)
+      })
+      await flush()
+
+      expect(knowledgeV2ApiMock.updateKnowledgeV2Settings).toHaveBeenCalledWith(
+        expect.anything(),
+        { enabled: true },
+      )
+      await flush()
+      const toggleAfter = container.querySelector('#knowledge-v2-enabled-toggle')
+      expect(toggleAfter?.getAttribute('aria-checked')).toBe('true')
+    })
+
+    it('hides the toggle when the knowledge-v2 endpoint is unavailable (404)', async () => {
+      knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({ available: false })
+      renderGeneral()
+      await flush()
+      await flush()
+
+      expect(container.textContent).not.toContain('New Cortex (Knowledge v2)')
+      expect(container.querySelector('#knowledge-v2-enabled-toggle')).toBeFalsy()
     })
   })
 
