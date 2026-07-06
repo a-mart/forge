@@ -178,7 +178,7 @@ describe('sendSubscriptionBootstrap', () => {
       ],
     })
     expect(bootstrapOptions?.fields).not.toHaveProperty('agentId')
-    expect(send).toHaveBeenCalledTimes(7)
+    expect(send).toHaveBeenCalledTimes(8)
     expect(result).toEqual({
       agentsSnapshotSent: true,
       profilesSnapshotSent: true,
@@ -469,7 +469,7 @@ describe('sendSubscriptionBootstrap', () => {
       profilesSnapshotBuildMs: 0,
       profilesSnapshotPayloadBytes: 0,
     })
-    expect(send).toHaveBeenCalledTimes(5)
+    expect(send).toHaveBeenCalledTimes(6)
     expect(result).toEqual({
       agentsSnapshotSent: false,
       profilesSnapshotSent: false,
@@ -538,6 +538,7 @@ describe('sendSubscriptionBootstrap', () => {
       'profiles_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'session_task_state_snapshot',
       'terminals_snapshot',
     ])
@@ -553,7 +554,7 @@ describe('sendSubscriptionBootstrap', () => {
         }),
       ],
     })
-    expect(sentEvents[5]).toMatchObject({
+    expect(sentEvents[6]).toMatchObject({
       type: 'session_task_state_snapshot',
       sessionAgentId: 'manager-1',
       revision: 7,
@@ -615,6 +616,7 @@ describe('sendSubscriptionBootstrap', () => {
       'profiles_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'terminals_snapshot',
     ])
   })

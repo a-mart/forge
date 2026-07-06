@@ -2239,6 +2239,9 @@ export function BuilderSurface({
                 }}
                 lastError={state.lastError}
                 lastSuccess={state.lastSuccess}
+                restartRecovery={state.restartRecovery}
+                onResumeRestartRecovery={() => clientRef.current?.resumeRestartRecovery()}
+                onDismissRestartRecovery={() => clientRef.current?.dismissRestartRecovery()}
                 chatSearchBarProps={{ search: chatSearch }}
                 showWelcomeForm={shouldShowWelcomeForm}
                 showCreateManagerState={shouldShowCreateManagerState}

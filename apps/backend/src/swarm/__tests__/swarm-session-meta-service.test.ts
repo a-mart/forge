@@ -153,8 +153,8 @@ describe("SwarmSessionMetaService", () => {
   it("mints monotonic turn ids and resumes from persisted session meta after service restart", async () => {
     const { config, service, manager } = await createTurnIdFixture();
 
-    const firstSeq = TURN_SEQ_RESTART_GAP + 1;
-    const secondSeq = TURN_SEQ_RESTART_GAP + 2;
+    const firstSeq = 1;
+    const secondSeq = 2;
     await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe(`manager:${firstSeq}`);
     await expect(service.mintTurnIdForDescriptor(manager)).resolves.toBe(`manager:${secondSeq}`);
 
@@ -179,10 +179,10 @@ describe("SwarmSessionMetaService", () => {
       service.mintTurnIdForDescriptor(worker!),
     ]);
 
-    expect(ids.sort()).toEqual([`manager:${TURN_SEQ_RESTART_GAP + 1}`, `manager:${TURN_SEQ_RESTART_GAP + 2}`]);
+    expect(ids.sort()).toEqual(["manager:1", "manager:2"]);
     await vi.waitFor(async () => {
       const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
-      expect(meta?.lastTurnSeq).toBe(TURN_SEQ_RESTART_GAP + 2);
+      expect(meta?.lastTurnSeq).toBe(2);
     });
   });
 

@@ -1260,8 +1260,8 @@ describe('SwarmManager', () => {
     await projectAssistantFinalTextWithSyntheticUserMessageStart(manager, 'manager', 'Second identical turn final', runtimeText)
 
     expect(assistantOutputsFor(manager, 'manager')).toMatchObject([
-      { text: 'First identical turn final', sourceContext: firstSourceContext },
-      { text: 'Second identical turn final', sourceContext: secondSourceContext },
+      { text: 'First identical turn final', sourceContext: { channel: firstSourceContext.channel } },
+      { text: 'Second identical turn final', sourceContext: { channel: secondSourceContext.channel } },
     ])
   })
 

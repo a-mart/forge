@@ -496,7 +496,7 @@ export class SwarmSessionMetaService {
     const hydration = (async () => {
       const existingMeta = await readSessionMeta(this.options.dataDir, target.profileId, target.sessionId);
       const persistedSeq = existingMeta?.lastTurnSeq ?? 0;
-      const restartSeq = persistedSeq + TURN_SEQ_RESTART_GAP;
+      const restartSeq = persistedSeq > 0 ? persistedSeq + TURN_SEQ_RESTART_GAP : 0;
       this.turnSeqBySessionId.set(target.sessionId, restartSeq);
       return restartSeq;
     })();

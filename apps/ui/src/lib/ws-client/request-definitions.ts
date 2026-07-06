@@ -49,6 +49,12 @@ export function buildSubscribeCommand(agentId?: string | null): ClientCommand {
   }
 }
 
+export function buildRestartRecoveryActionCommand(
+  type: 'resume_restart_recovery' | 'dismiss_restart_recovery',
+): ClientCommand {
+  return { type }
+}
+
 export function buildMarkUnreadCommand(agentId: string): ClientCommand {
   return {
     type: 'mark_unread',

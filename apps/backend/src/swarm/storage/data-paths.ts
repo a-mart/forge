@@ -141,6 +141,10 @@ export function getSessionFilePath(dataDir: string, profileId: string, sessionAg
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "session.jsonl");
 }
 
+export function getSessionTurnLedgerPath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "turns.jsonl");
+}
+
 export function getSessionFeedbackPath(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "feedback.jsonl");
 }

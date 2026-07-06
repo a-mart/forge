@@ -146,6 +146,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'profiles_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'session_task_state_snapshot',
       'terminals_snapshot',
     ])
@@ -157,6 +158,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'session_task_state_snapshot',
       'terminals_snapshot',
     ])
@@ -231,6 +233,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'session_task_state_snapshot',
       'terminals_snapshot',
     ])
@@ -406,6 +409,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'profiles_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'terminals_snapshot',
     ])
     expect(getEventTypes(workerEvents)).toEqual([
@@ -414,6 +418,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'profiles_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
+      'restart_recovery_snapshot',
       'terminals_snapshot',
     ])
   })

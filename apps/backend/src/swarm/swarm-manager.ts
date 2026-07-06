@@ -169,6 +169,13 @@ import {
   type WorkerStallState,
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
+import { ManagerTurnWatchdog } from "./manager-turn-watchdog.js";
+import {
+  appendTurnLedgerRecord,
+  replayTurnLedger,
+  type TurnLedgerInboundKind,
+  type TurnLedgerSessionTarget,
+} from "./turn-ledger.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import {
@@ -502,6 +509,7 @@ interface PendingInboundTurnContext {
   codexMcpToolGate?: CodexMcpToolGateEvaluation;
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
   codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext;
+  skipTurnLedger?: boolean;
 }
 
 interface PendingChoiceAssistantOutputContinuation {
@@ -517,6 +525,16 @@ interface ActiveObservabilityRootContext {
 interface ActiveTurnContext {
   turnId: string;
   runtimeToken?: number;
+}
+
+export interface RestartRecoverySnapshot {
+  bootId: string;
+  createdAt: string;
+  interruptedManagers: string[];
+  interruptedWorkers: string[];
+  undeliveredReports: Array<{ deliveryId: string; fromAgentId: string; toAgentId: string; turnId?: string }>;
+  dismissedAt?: string;
+  resumedAt?: string;
 }
 
 interface ExternalProjectAgentTurnContext {
@@ -1246,6 +1264,22 @@ function formatRuntimeErrorForCapacityClassification(error: RuntimeErrorEvent): 
   return detailParts.length > 0 ? `${error.message} ${detailParts.join(" ")}` : error.message;
 }
 
+function classifyTurnLedgerInboundKind(context: PendingInboundTurnContext): TurnLedgerInboundKind {
+  if (context.source === "user_input") return "user";
+  if (context.source === "project_agent_input") return "project_agent";
+  if (context.source === "agent_message") return "agent_message";
+  return "system";
+}
+
+function cloneRestartRecoverySnapshot(snapshot: RestartRecoverySnapshot): RestartRecoverySnapshot {
+  return {
+    ...snapshot,
+    interruptedManagers: [...snapshot.interruptedManagers],
+    interruptedWorkers: [...snapshot.interruptedWorkers],
+    undeliveredReports: snapshot.undeliveredReports.map((report) => ({ ...report })),
+  };
+}
+
 interface DescriptorStoreAdapter {
   loadStore: () => Promise<AgentsStoreFile>;
   saveStore: () => Promise<void>;
@@ -1349,6 +1383,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
   private readonly workerHealthService: SwarmWorkerHealthService;
+  private readonly managerTurnWatchdog: ManagerTurnWatchdog;
+  private restartRecoverySnapshot: RestartRecoverySnapshot | null = null;
   private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
@@ -1434,6 +1470,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.runtimes = this.runtimeController.runtimes;
     this.runtimeCreationPromisesByAgentId = this.runtimeController.runtimeCreationPromisesByAgentId;
     this.runtimeTokensByAgentId = this.runtimeController.runtimeTokensByAgentId;
+    this.managerTurnWatchdog = new ManagerTurnWatchdog({
+      dataDir: this.config.paths.dataDir,
+      descriptors: this.descriptors,
+      now: this.now,
+      getSessionTarget: (agentId) => this.getTurnLedgerSessionTarget(agentId),
+      getActiveTurnId: (agentId, runtimeToken) => this.getActiveTurnId(agentId, runtimeToken),
+      isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
+      emitConversationMessage: (event) => this.emitConversationMessage(event),
+      offerRuntimeRecycle: (agentId) => {
+        this.runtimeRecoveryState.setPendingManagerRuntimeRecycle(agentId, "idle_transition");
+      },
+      logDebug: (message, details) => this.logDebug(message, details),
+    });
     this.workerHealthService = new SwarmWorkerHealthService({
       descriptors: this.descriptors,
       runtimes: this.runtimes,
@@ -1451,6 +1500,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.resolvePromptWithFallback(category, promptId, profileId, fallback),
       isRuntimeInContextRecovery: (agentId) => this.isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
+      onHealthSweep: () => this.runLivenessHealthSweep(),
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
@@ -2127,6 +2177,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
     });
+    await this.reconcileTurnLedgersForBoot();
     this.normalizeStreamingStatusesForBoot();
     const reconciledExternalThreadSidecarIds = reconcilePersistedExternalThreadSidecarsForBoot({
       descriptors: this.descriptors.values(),
@@ -2198,12 +2249,220 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
   }
 
+  private async reconcileTurnLedgersForBoot(): Promise<void> {
+    const bootId = randomUUID();
+    const interruptedManagers = new Set<string>();
+    const interruptedWorkers = new Set<string>();
+    const undeliveredReports = new Map<string, { deliveryId: string; fromAgentId: string; toAgentId: string; turnId?: string }>();
+
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager") {
+        continue;
+      }
+
+      const target = this.getTurnLedgerSessionTarget(descriptor.agentId);
+      if (!target) {
+        continue;
+      }
+
+      const replay = await replayTurnLedger(target).catch((error) => {
+        this.logDebug("turn_ledger:boot_replay:error", {
+          sessionAgentId: descriptor.agentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+      if (!replay) {
+        continue;
+      }
+
+      const dispatchedTurnIds = new Set(
+        replay.records
+          .filter((record) => record.t === "turn_dispatched")
+          .map((record) => record.turnId)
+      );
+      const receiptKeys = new Set(
+        replay.records
+          .filter((record) => record.t === "recovery_receipt")
+          .map((record) => `${record.receipt}:${record.turnId ?? ""}:${record.deliveryId ?? ""}`)
+      );
+
+      for (const terminal of replay.terminalTurns.values()) {
+        if (dispatchedTurnIds.has(terminal.turnId)) {
+          continue;
+        }
+        const key = `terminal_without_dispatch:${terminal.turnId}:`;
+        if (!receiptKeys.has(key)) {
+          await appendTurnLedgerRecord(target, {
+            t: "recovery_receipt",
+            receipt: "terminal_without_dispatch",
+            turnId: terminal.turnId,
+            at: this.now(),
+          });
+        }
+      }
+
+      for (const openTurn of replay.openTurns.values()) {
+        const actor = this.descriptors.get(openTurn.agentId);
+        if (actor?.status === "streaming") {
+          if (actor.role === "manager") {
+            interruptedManagers.add(actor.agentId);
+          } else {
+            interruptedWorkers.add(actor.agentId);
+          }
+          const key = `turn_interrupted:${openTurn.turnId}:`;
+          if (!receiptKeys.has(key)) {
+            await appendTurnLedgerRecord(target, {
+              t: "recovery_receipt",
+              receipt: "turn_interrupted",
+              agentId: actor.agentId,
+              turnId: openTurn.turnId,
+              at: this.now(),
+            });
+          }
+          continue;
+        }
+
+        await appendTurnLedgerRecord(target, {
+          t: "turn_terminal",
+          turnId: openTurn.turnId,
+          outcome: "reconciled",
+          at: this.now(),
+        });
+      }
+
+      for (const pending of replay.pendingDeliveries.values()) {
+        if (replay.ackedDeliveries.has(pending.deliveryId)) {
+          continue;
+        }
+        undeliveredReports.set(pending.deliveryId, {
+          deliveryId: pending.deliveryId,
+          fromAgentId: pending.from,
+          toAgentId: pending.to,
+          ...(pending.turnId ? { turnId: pending.turnId } : {}),
+        });
+      }
+    }
+
+    const snapshot: RestartRecoverySnapshot = {
+      bootId,
+      createdAt: this.now(),
+      interruptedManagers: [...interruptedManagers].sort(),
+      interruptedWorkers: [...interruptedWorkers].sort(),
+      undeliveredReports: [...undeliveredReports.values()].sort((a, b) => a.deliveryId.localeCompare(b.deliveryId)),
+    };
+
+    const hasRecovery =
+      snapshot.interruptedManagers.length > 0 ||
+      snapshot.interruptedWorkers.length > 0 ||
+      snapshot.undeliveredReports.length > 0;
+    this.restartRecoverySnapshot = hasRecovery ? snapshot : null;
+    if (hasRecovery) {
+      this.logDebug("turn_ledger:boot_recovery_snapshot", snapshot);
+    }
+  }
+
   isWorkPlansEnabled(): boolean {
     return this.workPlansEnabled;
   }
 
   isModelCacheVisualizationEnabled(): boolean {
     return this.modelCacheVisualizationEnabled;
+  }
+
+  getRestartRecoverySnapshot(): RestartRecoverySnapshot | null {
+    return this.restartRecoverySnapshot ? cloneRestartRecoverySnapshot(this.restartRecoverySnapshot) : null;
+  }
+
+  dismissRestartRecovery(): RestartRecoverySnapshot | null {
+    if (!this.restartRecoverySnapshot) {
+      return null;
+    }
+    this.restartRecoverySnapshot = {
+      ...this.restartRecoverySnapshot,
+      dismissedAt: this.now(),
+    };
+    return this.getRestartRecoverySnapshot();
+  }
+
+  async resumeRestartRecovery(): Promise<RestartRecoverySnapshot | null> {
+    const snapshot = this.restartRecoverySnapshot;
+    if (!snapshot || snapshot.resumedAt || snapshot.dismissedAt) {
+      return this.getRestartRecoverySnapshot();
+    }
+
+    for (const workerId of snapshot.interruptedWorkers) {
+      const worker = this.descriptors.get(workerId);
+      if (!worker || worker.role !== "worker") continue;
+      await this.sendMessage(worker.managerId, worker.agentId, "The backend restarted while you were mid-turn. Continue from the last persisted state. If your last action was interrupted, the process died during your last action — consider whether repeating it is safe.", "auto", {
+        origin: "internal",
+      }).catch((error) => {
+        this.logDebug("restart_recovery:worker_resume:error", {
+          workerId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
+    for (const managerId of snapshot.interruptedManagers) {
+      await this.sendMessage(managerId, managerId, "The backend restarted while you were mid-turn. Resume from the last persisted state and continue coordinating any interrupted workers.", "auto", {
+        origin: "internal",
+      }).catch((error) => {
+        this.logDebug("restart_recovery:manager_resume:error", {
+          managerId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
+    const pendingReportMessages = await this.resolveRestartRecoveryPendingReportMessages(snapshot);
+    for (const report of snapshot.undeliveredReports) {
+      const message = pendingReportMessages.get(report.deliveryId);
+      if (!message) continue;
+      await this.sendMessage(report.fromAgentId, report.toAgentId, message, "auto", {
+        origin: "internal",
+        workerReportSourceAgentId: report.fromAgentId,
+      }).catch((error) => {
+        this.logDebug("restart_recovery:report_redelivery:error", {
+          deliveryId: report.deliveryId,
+          fromAgentId: report.fromAgentId,
+          toAgentId: report.toAgentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
+    this.restartRecoverySnapshot = {
+      ...snapshot,
+      resumedAt: this.now(),
+    };
+    return this.getRestartRecoverySnapshot();
+  }
+
+  private async resolveRestartRecoveryPendingReportMessages(
+    snapshot: RestartRecoverySnapshot
+  ): Promise<Map<string, string>> {
+    const wantedDeliveryIds = new Set(snapshot.undeliveredReports.map((report) => report.deliveryId));
+    const messages = new Map<string, string>();
+    if (wantedDeliveryIds.size === 0) {
+      return messages;
+    }
+
+    const sessionIds = new Set(snapshot.undeliveredReports.map((report) => report.toAgentId));
+    for (const sessionId of sessionIds) {
+      const target = this.getTurnLedgerSessionTarget(sessionId);
+      if (!target) continue;
+      const replay = await replayTurnLedger(target).catch(() => null);
+      if (!replay) continue;
+      for (const record of replay.records) {
+        if (record.t !== "delivery_pending" || !wantedDeliveryIds.has(record.deliveryId) || !record.message) {
+          continue;
+        }
+        messages.set(record.deliveryId, record.message);
+      }
+    }
+
+    return messages;
   }
 
   async applyModelCacheVisualizationSettingsChange(enabled: boolean): Promise<void> {
@@ -5015,6 +5274,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         toolName?: string;
       };
       workerReportSourceAgentId?: string;
+      skipTurnLedger?: boolean;
     }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
@@ -5268,7 +5528,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       assistantOutputTarget,
       assistantOutputProjectionTarget,
       activationEligible: shouldEnqueueAgentMessageTurnContext,
+      skipTurnLedger: options?.skipTurnLedger,
     });
+    const managerTurnId = this.getActiveTurnId(target.agentId);
+    const deliveryId = `worker-report:${sender.agentId}:${watchdogTurnSeqAtDispatch ?? "unknown"}:${managerTurnId ?? randomUUID()}`;
+    const deliveryLedgerTarget = options?.skipTurnLedger ? null : this.getTurnLedgerSessionTarget(target.agentId);
+    if (deliveryLedgerTarget) {
+      await appendTurnLedgerRecord(deliveryLedgerTarget, {
+        t: "delivery_pending",
+        ...(managerTurnId ? { turnId: managerTurnId } : {}),
+        deliveryId,
+        from: sender.agentId,
+        to: target.agentId,
+        message,
+        at: this.now(),
+      }).catch((error) => {
+        this.logDebug("turn_ledger:delivery_pending:error", {
+          deliveryId,
+          fromAgentId: sender.agentId,
+          toAgentId: target.agentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
 
     let receipt: SendMessageReceipt;
     try {
@@ -5281,6 +5563,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+    if (deliveryLedgerTarget) {
+      await appendTurnLedgerRecord(deliveryLedgerTarget, {
+        t: "delivery_acked",
+        deliveryId,
+        at: this.now(),
+      }).catch((error) => {
+        this.logDebug("turn_ledger:delivery_acked:error", {
+          deliveryId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     this.consumeWorkerAssistantOutputInheritanceAfterReportDispatch({
       sender,
       target,
@@ -7286,6 +7580,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       turnId: await this.sessionMetaService.mintTurnIdForDescriptor(descriptor),
       ...(runtimeToken !== undefined ? { runtimeToken } : {})
     };
+
+    const ledgerTarget = context.skipTurnLedger ? null : this.getTurnLedgerSessionTarget(agentId);
+    if (ledgerTarget) {
+      await appendTurnLedgerRecord(ledgerTarget, {
+        t: "turn_dispatched",
+        turnId: queuedContext.turnId!,
+        agentId,
+        role: descriptor.role,
+        kind: classifyTurnLedgerInboundKind(queuedContext),
+        at: this.now(),
+      }).catch((error) => {
+        this.logDebug("turn_ledger:dispatch:error", {
+          agentId,
+          turnId: queuedContext.turnId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
 
     const queue = this.pendingInboundTurnContextsByAgentId.get(agentId) ?? [];
     queue.push(queuedContext);
@@ -10293,6 +10605,65 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async readSessionMetaForDescriptor(descriptor: AgentDescriptor): Promise<SessionMeta | undefined> {
     return this.sessionMetaService.readSessionMetaForDescriptor(descriptor);
+  }
+
+  private getTurnLedgerSessionTarget(agentId: string): TurnLedgerSessionTarget | null {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      return null;
+    }
+
+    if (descriptor.role === "manager") {
+      return {
+        dataDir: this.config.paths.dataDir,
+        profileId: descriptor.profileId ?? descriptor.agentId,
+        sessionAgentId: descriptor.agentId,
+      };
+    }
+
+    const manager = this.descriptors.get(descriptor.managerId);
+    if (!manager || manager.role !== "manager") {
+      return null;
+    }
+
+    return {
+      dataDir: this.config.paths.dataDir,
+      profileId: manager.profileId ?? manager.agentId,
+      sessionAgentId: manager.agentId,
+    };
+  }
+
+  private runLivenessHealthSweep(): void {
+    this.managerTurnWatchdog.check();
+  }
+
+  recordManagerTurnWatchdogStatus(
+    agentId: string,
+    runtimeToken: number | undefined,
+    status: AgentStatus,
+    pendingCount: number
+  ): void {
+    this.managerTurnWatchdog.recordStatus(agentId, runtimeToken, status, pendingCount);
+  }
+
+  recordManagerTurnWatchdogEvent(
+    agentId: string,
+    runtimeToken: number | undefined,
+    event: RuntimeSessionEvent
+  ): void {
+    this.managerTurnWatchdog.recordEvent(agentId, runtimeToken, event);
+  }
+
+  recordManagerTurnWatchdogRuntimeError(
+    agentId: string,
+    _runtimeToken: number | undefined,
+    error: RuntimeErrorEvent
+  ): void {
+    this.managerTurnWatchdog.recordRuntimeError(agentId, error);
+  }
+
+  recordManagerTurnWatchdogTerminal(agentId: string, outcome: "agent_end" | "idle" | "error"): void {
+    this.managerTurnWatchdog.recordTerminal(agentId, outcome);
   }
 
   private isRuntimeInContextRecovery(agentId: string): boolean {

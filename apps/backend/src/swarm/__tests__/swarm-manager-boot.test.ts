@@ -268,10 +268,16 @@ function appendSessionConversationMessage(sessionFile: string, agentId: string, 
   })
 }
 
-async function waitForFileText(path: string): Promise<string> {
+async function waitForFileText(path: string, containing: string[] = []): Promise<string> {
+  // The conversation cache is an async sidecar with no flush-on-return
+  // contract; wait until the expected content lands, not merely until the
+  // file exists (its metadata header is written first).
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
-      return await readFile(path, 'utf8')
+      const text = await readFile(path, 'utf8')
+      if (containing.every((needle) => text.includes(needle))) {
+        return text
+      }
     } catch (error) {
       if (!isEnoentError(error)) {
         throw error
@@ -2264,7 +2270,7 @@ describe('SwarmManager', () => {
 
     const sessionFile = managerDescriptor?.sessionFile ?? join(config.paths.sessionsDir, 'manager.jsonl')
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
-    const cacheText = await waitForFileText(cacheFile)
+    const cacheText = await waitForFileText(cacheFile, ['persist this', 'saved reply'])
     expect(cacheText).toContain('persist this')
     expect(cacheText).toContain('saved reply')
 

@@ -5,6 +5,7 @@ import type {
   ConversationEntry,
   ManagerProfile,
   SessionTaskStateSnapshotEvent,
+  RestartRecoverySnapshot,
   TelegramStatusEvent,
   TerminalDescriptor,
 } from '@forge/protocol'
@@ -47,6 +48,7 @@ export interface ManagerWsState {
   terminals: TerminalDescriptor[]
   terminalSessionScopeId: string | null
   taskSnapshots: Record<string, SessionTaskStateSnapshotEvent>
+  restartRecovery: RestartRecoverySnapshot | null
   /** Session whose cached task snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
   taskSnapshotLoadingSessionId: string | null
   hasReceivedAgentsSnapshot: boolean
@@ -84,6 +86,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     terminals: [],
     terminalSessionScopeId: null,
     taskSnapshots: {},
+    restartRecovery: null,
     taskSnapshotLoadingSessionId: null,
     hasReceivedAgentsSnapshot: false,
     promptChangeKey: 0,

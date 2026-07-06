@@ -104,6 +104,7 @@ const COMPACTION_RESERVE_TOKENS = 16_384;
 const CONTEXT_BUDGET_CHECK_THROTTLE_MS = 3_000;
 const CONTEXT_GUARD_ABORT_TIMEOUT_MS = 15_000;
 const AUTO_COMPACTION_FAILURE_COOLDOWN_MS = 60_000;
+const SUPPRESS_SESSION_EVENTS_MAX_MS = 30_000;
 const CONTEXT_RECOVERY_GRACE_MS = 2_000;
 const HANDOFF_TURN_TIMEOUT_MS = 45_000;
 const MAX_HANDOFF_CONTENT_CHARS = 3_000;
@@ -209,7 +210,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
   private autoCompactionEntryKeysBefore: Set<string> | undefined;
   private autoCompactionFailureCooldownUntilMs = 0;
-  private suppressSessionEventsUntilIdle = false;
+  private suppressSessionEventsUntilIdle: { active: true; expiresAt: number } | null = null;
+  private autoCompactionTimeout: NodeJS.Timeout | undefined;
   private lastActivityAtMs = Date.now();
   private hiddenOutputResampleState: { triggerKey: string; attempts: number } | undefined;
   private readonly promptDispatchRestoreOptions = new WeakMap<RuntimeUserMessage, PromptDispatchRestoreOptions>();
@@ -358,7 +360,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     _requestedMode: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
     this.ensureNotTerminated();
-    this.suppressSessionEventsUntilIdle = false;
+    this.suppressSessionEventsUntilIdle = null;
 
     const deliveryId = randomUUID();
     const message = await prepareRuntimeUserMessageForDispatch(input);
@@ -475,7 +477,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
           "stop_in_flight_abort"
         );
       } catch (error) {
-        this.suppressSessionEventsUntilIdle = true;
+        this.suppressSessionEventsUntilIdle = {
+          active: true,
+          expiresAt: Date.now() + SUPPRESS_SESSION_EVENTS_MAX_MS
+        };
         this.logRuntimeError("interrupt", error, {
           stage: "stop_in_flight_abort_failed"
         });
@@ -542,7 +547,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionRecoveryInProgress = false;
-    this.suppressSessionEventsUntilIdle = false;
+    this.clearAutoCompactionTimeout();
+    this.suppressSessionEventsUntilIdle = null;
     this.inFlightPrompts.clear();
   }
 
@@ -735,6 +741,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.autoCompactionRecoveryInProgress = true;
     this.beginContextRecovery();
+    this.armAutoCompactionTimeout();
   }
 
   private endAutoCompactionRecovery(): void {
@@ -743,7 +750,24 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.autoCompactionRecoveryInProgress = false;
+    this.clearAutoCompactionTimeout();
     this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
+  }
+
+  private armAutoCompactionTimeout(): void {
+    this.clearAutoCompactionTimeout();
+    this.autoCompactionTimeout = setTimeout(() => {
+      void this.handleAutoCompactionTimeout();
+    }, this.getCompactionTimeoutMs());
+    this.autoCompactionTimeout.unref?.();
+  }
+
+  private clearAutoCompactionTimeout(): void {
+    if (!this.autoCompactionTimeout) {
+      return;
+    }
+    clearTimeout(this.autoCompactionTimeout);
+    this.autoCompactionTimeout = undefined;
   }
 
   private endContextRecovery(graceMs = 0): void {
@@ -937,7 +961,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (this.suppressSessionEventsUntilIdle) {
       if (event.type === "agent_end") {
-        this.suppressSessionEventsUntilIdle = false;
+        this.suppressSessionEventsUntilIdle = null;
+        if (this.status !== "terminated") {
+          await this.updateStatus("idle");
+        }
+      } else if (Date.now() >= this.suppressSessionEventsUntilIdle.expiresAt) {
+        this.suppressSessionEventsUntilIdle = null;
+        this.logRuntimeError("interrupt", new Error("Suppressed session events expired before idle"), {
+          stage: "suppress_session_events_expired",
+          receipt: "suppress_session_events_force_cleared"
+        });
         if (this.status !== "terminated") {
           await this.updateStatus("idle");
         }
@@ -1870,6 +1903,30 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.endAutoCompactionRecovery();
       await this.flushRecoveryBufferedMessages();
     }
+  }
+
+  private async handleAutoCompactionTimeout(): Promise<void> {
+    if (!this.autoCompactionRecoveryInProgress || this.status === "terminated") {
+      return;
+    }
+
+    this.autoCompactionTimeout = undefined;
+    this.abortCompactionSafely("auto_compaction_timeout_abort");
+    this.latestAutoCompactionReason = undefined;
+    this.autoCompactionEntryKeysBefore = undefined;
+    this.endAutoCompactionRecovery();
+    this.noteAutoCompactionFailureCooldown();
+    await this.reportRuntimeError({
+      phase: "compaction",
+      message: "Automatic compaction timed out",
+      details: {
+        recoveryStage: "auto_compaction_timeout",
+        compactionRetryPlanned: false,
+        userFacingMessage: "Automatic compaction timed out; recovery was force-cleared.",
+        receipt: "auto_compaction_timeout_force_cleared"
+      }
+    });
+    await this.flushRecoveryBufferedMessages();
   }
 
   private async retryCompactionOnceAfterAutoFailure(

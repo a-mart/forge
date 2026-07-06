@@ -34,6 +34,7 @@ const WATCHDOG_BATCH_PREVIEW_LIMIT = 10;
 const WATCHDOG_BACKOFF_BASE_MS = 15_000;
 const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
 const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
+export const WATCHDOG_CIRCUIT_MAX_MS = 15 * 60_000;
 const STALL_CHECK_INTERVAL_MS = 60_000;
 const STALL_NUDGE_THRESHOLD_MS = 5 * 60_000;
 const STALL_DETAILED_REPORT_INTERVAL_MS = 10 * 60_000;
@@ -95,7 +96,7 @@ export interface SwarmWorkerHealthServiceOptions {
     targetAgentId: string,
     message: string,
     delivery?: RequestedDeliveryMode,
-    options?: { origin?: "user" | "internal"; workerReportSourceAgentId?: string }
+    options?: { origin?: "user" | "internal"; workerReportSourceAgentId?: string; skipTurnLedger?: boolean }
   ): Promise<unknown>;
   publishToUser(
     agentId: string,
@@ -117,6 +118,7 @@ export interface SwarmWorkerHealthServiceOptions {
   isRuntimeInContextRecovery(agentId: string): boolean;
   isRuntimeRecoveryActive?(agentId: string): boolean;
   logDebug(message: string, details?: unknown): void;
+  onHealthSweep?(): void | Promise<void>;
 }
 
 export class SwarmWorkerHealthService {
@@ -152,6 +154,7 @@ export class SwarmWorkerHealthService {
           message: error instanceof Error ? error.message : String(error)
         });
       });
+      void this.options.onHealthSweep?.();
     }, STALL_CHECK_INTERVAL_MS);
     this.stallCheckInterval.unref();
   }
@@ -873,6 +876,7 @@ export class SwarmWorkerHealthService {
 
   private async runStalledWorkerCheck(): Promise<void> {
     const now = Date.now();
+    this.forceClearExpiredWatchdogSuppressions(now);
 
     for (const [agentId, descriptor] of this.options.descriptors.entries()) {
       if (descriptor.role !== "worker" || descriptor.status !== "streaming" || isExternalThreadDescriptor(descriptor)) {
@@ -1407,7 +1411,10 @@ export class SwarmWorkerHealthService {
 
     let managerNotified = false;
     try {
-      await this.options.sendMessage(managerId, managerId, watchdogMessage, "auto", { origin: "internal" });
+      await this.options.sendMessage(managerId, managerId, watchdogMessage, "auto", {
+        origin: "internal",
+        skipTurnLedger: true,
+      });
       managerNotified = true;
     } catch (error) {
       this.options.logDebug("watchdog:notify:error", {
@@ -1443,11 +1450,12 @@ export class SwarmWorkerHealthService {
 
       if (watchdogState.consecutiveNotifications >= WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS) {
         watchdogState.circuitOpen = true;
-        watchdogState.suppressedUntilMs = Number.MAX_SAFE_INTEGER;
+        watchdogState.suppressedUntilMs = suppressionAppliedAtMs + WATCHDOG_CIRCUIT_MAX_MS;
         this.options.logDebug("watchdog:circuit_open", {
           workerAgentId: workerId,
           managerId,
-          consecutiveNotifications: watchdogState.consecutiveNotifications
+          consecutiveNotifications: watchdogState.consecutiveNotifications,
+          expiresAt: watchdogState.suppressedUntilMs
         });
       } else {
         const backoffMs = Math.min(
@@ -1458,6 +1466,28 @@ export class SwarmWorkerHealthService {
       }
 
       this.workerWatchdogState.set(workerId, watchdogState);
+    }
+  }
+
+  private forceClearExpiredWatchdogSuppressions(nowMs: number): void {
+    for (const [agentId, watchdogState] of this.workerWatchdogState) {
+      if (
+        !watchdogState.circuitOpen ||
+        watchdogState.suppressedUntilMs <= 0 ||
+        !Number.isFinite(watchdogState.suppressedUntilMs) ||
+        nowMs < watchdogState.suppressedUntilMs
+      ) {
+        continue;
+      }
+
+      watchdogState.circuitOpen = false;
+      watchdogState.suppressedUntilMs = 0;
+      watchdogState.consecutiveNotifications = 0;
+      this.workerWatchdogState.set(agentId, watchdogState);
+      this.options.logDebug("watchdog:suppression_expired", {
+        workerAgentId: agentId,
+        receipt: "watchdog_suppression_force_cleared"
+      });
     }
   }
 }
