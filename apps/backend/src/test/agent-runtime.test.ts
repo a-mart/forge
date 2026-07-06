@@ -1787,6 +1787,31 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(event.details?.userFacingMessage).toContain('did not produce a visible response')
   })
 
+  it('carries the terminal report text on the exhausted silent_turn so the outcome can be delivered deterministically', async () => {
+    // Reproduction for docs/MANAGER_EMPTY_TURN_FIX.md: when the manager stays
+    // empty through every resample of a terminal worker report, the outcome is
+    // still on the floor. The exhaustion event must hand the full report text
+    // (not a 160-char preview) to the delivery backstop so SwarmManager can
+    // surface the outcome without depending on the model speaking.
+    const { session, runtime, onRuntimeError } = makeRuntime()
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+      await (runtime as any).handleEvent({ type: 'agent_end' })
+      if (attempt < 3) {
+        await waitForCondition(() => session.promptCalls.length === attempt)
+      }
+    }
+
+    expect(onRuntimeError).toHaveBeenCalledTimes(1)
+    const [, event] = onRuntimeError.mock.calls[0]
+    expect(event.phase).toBe('silent_turn')
+    // The directive-stripped report text is required for the deterministic
+    // delivery backstop; a truncated preview cannot carry status/summary.
+    expect(event.details?.terminalReportText).toBe(TERMINAL_CALLBACK)
+    expect(event.details?.deliverOutcome).toBe(true)
+  })
+
   it('gives up after two resamples and reports the turn end', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
 

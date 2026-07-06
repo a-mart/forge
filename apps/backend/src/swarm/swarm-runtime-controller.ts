@@ -44,7 +44,7 @@ import type {
   SwarmConfig,
   SwarmReasoningLevel
 } from "./types.js";
-import { withManagerTimeout } from "./swarm-manager-utils.js";
+import { readStringDetail, withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
@@ -204,6 +204,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     agentId: string,
     activeTarget: AssistantOutputTarget | undefined
   ): ManagerAssistantOutputRouteResult;
+  deliverTerminalObligationBackstop?(agentId: string, reportText: string): boolean;
 }
 
 export class SwarmRuntimeController {
@@ -683,7 +684,39 @@ export class SwarmRuntimeController {
     this.host.recordManagerTurnWatchdogRuntimeError?.(agentId, runtimeToken, error);
     this.clearManagerAssistantOutputTurn(agentId);
     this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
-    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
+
+    const projectedError = this.maybeApplyTerminalObligationBackstop(agentId, error);
+    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error: projectedError });
+  }
+
+  /**
+   * Deterministic terminal-obligation backstop (docs/MANAGER_EMPTY_TURN_FIX.md).
+   * When the pi runtime exhausts its resample ladder on an unacknowledged
+   * terminal worker report it emits a `silent_turn` error carrying
+   * `deliverOutcome` + the directive-stripped `terminalReportText`. Rather than
+   * leave the user the passive "type update?" notice, ask SwarmManager to surface
+   * the worker's outcome itself (web-only, single-voice, deduped — see
+   * `deliverTerminalObligationBackstop`). If it delivers, strip the passive
+   * `userFacingMessage` so the error still records telemetry without producing a
+   * second, redundant user-facing artifact.
+   */
+  private maybeApplyTerminalObligationBackstop(
+    agentId: string,
+    error: RuntimeErrorEvent
+  ): RuntimeErrorEvent {
+    if (error.phase !== "silent_turn" || error.details?.deliverOutcome !== true) {
+      return error;
+    }
+    const reportText = readStringDetail(error.details, "terminalReportText");
+    if (!reportText) {
+      return error;
+    }
+    const delivered = this.host.deliverTerminalObligationBackstop?.(agentId, reportText) ?? false;
+    if (!delivered) {
+      return error;
+    }
+    const { userFacingMessage: _suppressed, ...remainingDetails } = error.details ?? {};
+    return { ...error, details: { ...remainingDetails, backstopDelivered: true } };
   }
 
   async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {

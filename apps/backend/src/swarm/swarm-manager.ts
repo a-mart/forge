@@ -385,6 +385,7 @@ import {
   sanitizeAttachmentFileName,
   sanitizePathSegment,
   slugifySessionName,
+  summarizeTerminalWorkerReportForUser,
   toConversationAttachmentMetadata,
   toRuntimeDispatchAttachments,
   toRuntimeImageAttachments,
@@ -852,6 +853,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly activeWebAssistantOutputTurnByManagerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly activeMessageRouteContextByManagerId = new Map<string, ActiveMessageRouteContext>();
+  // Deterministic terminal-obligation backstop (docs/MANAGER_EMPTY_TURN_FIX.md):
+  // last report text surfaced per manager, so a re-entrant exhaustion event for
+  // the same report cannot double-deliver.
+  private readonly lastTerminalBackstopReportByManagerId = new Map<string, string>();
   private readonly messageRouter = new MessageRouter();
   private readonly pendingChoiceAssistantOutputContinuationByChoiceId = new Map<string, PendingChoiceAssistantOutputContinuation>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
@@ -7435,6 +7440,77 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         ...(sourceContext ? { sourceContext } : {}),
       },
     };
+  }
+
+  /**
+   * Deterministic delivery backstop for an unacknowledged terminal worker
+   * report (docs/MANAGER_EMPTY_TURN_FIX.md). Invoked once the runtime's
+   * resample ladder is exhausted — i.e. the manager stayed empty across every
+   * retry. Re-prompting gpt-5.x failed ~44% historically, so instead of asking
+   * the model again (or leaving the user a passive "type update?" notice) we
+   * surface the worker's outcome ourselves.
+   *
+   * Robustness / false-positive guards (mirrors the resample gate, plus the
+   * routing rule the passive projector backstop already uses):
+   * - Only fires for a running manager whose active route for this report
+   *   resolves to a VISIBLE WEB session transcript. `requiresVisibleCompletion`
+   *   alone is not enough: worker reports are `routed_required`, which also
+   *   covers peer/Telegram obligations — delivering those to the web user would
+   *   be a cross-channel leak. `resolveManagerAssistantFinalOutputRoute` returns
+   *   a web `target` only when the router decided visible && channel === "web".
+   * - Never echoes the raw report (it still carries the internal
+   *   `[assistantOutputTarget]` metadata line and internal framing). We surface
+   *   only the mechanically-parsed status, manager-attributed, with a pointer to
+   *   the worker view — the single-voice rule is preserved.
+   * - Deduplicated per (manager, report text) so a re-entrant exhaustion event
+   *   cannot double-deliver.
+   *
+   * Returns true iff a user-facing delivery was emitted (the caller then
+   * suppresses the passive silent_turn notice to avoid a double artifact).
+   */
+  deliverTerminalObligationBackstop(agentId: string, reportText: string): boolean {
+    const manager = this.descriptors.get(agentId);
+    if (!manager || manager.role !== "manager" || isNonRunningAgentStatus(manager.status)) {
+      return false;
+    }
+
+    const route = this.resolveManagerAssistantFinalOutputRoute(
+      agentId,
+      this.activeAssistantOutputTargetByManagerId.get(agentId),
+    );
+    const target = route.target;
+    if (!target || target.channel !== "web") {
+      // Non-web (peer/Telegram/internal) obligation — do not surface to the web
+      // user. Fall back to the existing passive notice.
+      return false;
+    }
+
+    if (this.lastTerminalBackstopReportByManagerId.get(agentId) === reportText) {
+      // Already surfaced this exact report for this manager.
+      return false;
+    }
+
+    const summary = summarizeTerminalWorkerReportForUser(reportText, route.sourceWorkerId);
+    const timestamp = this.now();
+    const payload: ConversationMessageEvent = {
+      type: "conversation_message",
+      agentId,
+      role: "assistant",
+      text: summary,
+      timestamp,
+      source: "assistant_output",
+      sourceContext: target.sourceContext ?? { channel: "web" },
+    };
+    this.emitConversationMessage(payload);
+    this.markSessionActivity(agentId, timestamp);
+    this.lastTerminalBackstopReportByManagerId.set(agentId, reportText);
+
+    this.logDebug("manager:terminal_obligation_backstop_delivered", {
+      agentId,
+      sourceWorkerId: route.sourceWorkerId,
+      textPreview: previewForLog(summary),
+    });
+    return true;
   }
 
   private buildMessageRouteProvenance(input: {

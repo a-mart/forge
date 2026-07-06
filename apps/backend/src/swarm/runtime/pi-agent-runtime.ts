@@ -2100,7 +2100,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
           reason: unhandledKind,
           resampleAttempts: previousAttempts,
           triggerPreview: previewForLog(trigger.text),
-          userFacingMessage: trigger.userFacingExhaustedMessage
+          userFacingMessage: trigger.userFacingExhaustedMessage,
+          // Deterministic delivery backstop (docs/MANAGER_EMPTY_TURN_FIX.md):
+          // re-prompting gpt-5.x failed ~44% historically, so once every
+          // resample is exhausted we hand the full directive-stripped report
+          // text to SwarmManager, which surfaces the worker's outcome itself
+          // rather than waiting on the model. Only terminal reports carry a
+          // deliverable outcome; a silent turn after direct user input keeps
+          // the passive notice (there is nothing server-known to surface).
+          ...(trigger.kind === "terminal_report"
+            ? { deliverOutcome: true, terminalReportText: trigger.text }
+            : {})
         }
       });
       return false;

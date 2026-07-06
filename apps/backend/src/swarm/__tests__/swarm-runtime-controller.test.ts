@@ -131,6 +131,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
   cortexHandleManagerStatus: ReturnType<typeof vi.fn>;
   applyManagerRuntimeRecyclePolicy: ReturnType<typeof vi.fn>;
   maybeRecoverWorkerWithSpecialistFallback: ReturnType<typeof vi.fn>;
+  deliverTerminalObligationBackstop: ReturnType<typeof vi.fn>;
 } {
   const descriptors = new Map<string, AgentDescriptor>();
   const emitStatus = vi.fn();
@@ -142,6 +143,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
   const cortexHandleManagerStatus = vi.fn();
   const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "none" as const);
   const maybeRecoverWorkerWithSpecialistFallback = vi.fn(async () => false);
+  const deliverTerminalObligationBackstop = vi.fn((_agentId: string, _reportText: string) => false);
   const forgeExtensionHost = new ForgeExtensionHost({ dataDir: config.paths.dataDir });
   const runtimeRecoveryState = new RuntimeRecoveryState();
 
@@ -250,7 +252,8 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
         return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
       }
       return undefined;
-    })
+    }),
+    deliverTerminalObligationBackstop
   };
 
   return {
@@ -258,13 +261,15 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     descriptors,
     emitStatus,
     emitConversationMessage,
+    deliverTerminalObligationBackstop,
     captureConversationEventFromRuntime,
     consumePendingManualManagerStopNoticeIfApplicable,
     stripManagerAbortErrorFromEvent,
     finalizeWorkerIdleTurn,
     cortexHandleManagerStatus,
     applyManagerRuntimeRecyclePolicy,
-    maybeRecoverWorkerWithSpecialistFallback
+    maybeRecoverWorkerWithSpecialistFallback,
+    deliverTerminalObligationBackstop
   };
 }
 
@@ -1616,5 +1621,64 @@ describe("SwarmRuntimeController", () => {
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
     expect(manager.listRuntimeExtensionSnapshots()).toEqual([]);
+  });
+
+  it("delivers the terminal-obligation backstop and suppresses the passive silent_turn notice when delivery succeeds", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitConversationMessage, deliverTerminalObligationBackstop } =
+      createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({ agentId: "mgr-1", role: "manager", managerId: "mgr-1", status: "streaming" });
+    descriptors.set(manager.agentId, { ...manager });
+    deliverTerminalObligationBackstop.mockReturnValue(true);
+
+    const reportText = "WORKER REPORT: status: blocked\nsummary: rerun failed.";
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeError(token, manager.agentId, {
+      phase: "silent_turn",
+      message: "Manager produced no visible response to a worker's final report",
+      details: {
+        deliverOutcome: true,
+        terminalReportText: reportText,
+        userFacingMessage: "⚠️ The manager processed a worker's final report but did not produce a visible response.",
+      },
+    });
+
+    expect(deliverTerminalObligationBackstop).toHaveBeenCalledWith(manager.agentId, reportText);
+    // The deterministic delivery is the host's job; the passive notice must NOT
+    // be projected on top of it (no double user-facing artifact).
+    expect(emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ role: "system", text: expect.stringContaining("did not produce a visible response") })
+    );
+  });
+
+  it("keeps the passive silent_turn notice when the backstop declines (e.g. non-web obligation)", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitConversationMessage, deliverTerminalObligationBackstop } =
+      createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({ agentId: "mgr-2", role: "manager", managerId: "mgr-2", status: "streaming" });
+    descriptors.set(manager.agentId, { ...manager });
+    deliverTerminalObligationBackstop.mockReturnValue(false);
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeError(token, manager.agentId, {
+      phase: "silent_turn",
+      message: "Manager produced no visible response to a worker's final report",
+      details: {
+        deliverOutcome: true,
+        terminalReportText: "WORKER REPORT: status: done\nsummary: shipped.",
+        userFacingMessage: "⚠️ did not produce a visible response",
+      },
+    });
+
+    expect(deliverTerminalObligationBackstop).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "system", text: expect.stringContaining("did not produce a visible response") })
+    );
   });
 });

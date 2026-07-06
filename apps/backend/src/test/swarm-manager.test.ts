@@ -1331,6 +1331,59 @@ describe('SwarmManager', () => {
     ])
   })
 
+  it('deterministically delivers a terminal worker outcome when the manager stays silent (backstop)', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('delegate the rerun')
+    const delegationRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_start' })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_start',
+      message: { role: 'user', content: delegationRuntimeMessage },
+    })
+    const worker = await manager.spawnAgent('manager', { agentId: 'Backstop Worker', initialMessage: 'Do the rerun.' })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    // Worker reports terminal; this establishes the manager's active web
+    // worker-report route context that the backstop reuses as its web gate.
+    await manager.sendMessage(worker.agentId, 'manager', 'status: blocked\nsummary: rerun failed before a Graph response', 'auto')
+    const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
+    expect(reportRuntimeMessage).toContain(workerReportMarker)
+
+    // The manager begins the report turn (activating the web worker-report route
+    // context, incl. the source worker id) but then stays silent — the runtime's
+    // resample ladder exhausts. The deterministic backstop surfaces the outcome
+    // instead of the passive notice.
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_start' })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_start',
+      message: { role: 'user', content: reportRuntimeMessage },
+    })
+    const delivered = manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)
+    expect(delivered).toBe(true)
+
+    const outputs = assistantOutputsFor(manager, 'manager')
+    expect(outputs).toHaveLength(1)
+    // Attribution is best-effort: when the active route context carries the
+    // source worker id the line names it (`Backstop Worker`); otherwise it
+    // gracefully falls back to "A background task". This harness does not drive
+    // the full inbound-projection path that populates the route context's
+    // worker id, so accept either form here — the attribution formatting itself
+    // is unit-tested in swarm-manager-utils.test.ts. The load-bearing guarantee
+    // (the outcome is delivered at all, with status + summary) is asserted below.
+    expect(outputs[0].text).toMatch(/`Backstop Worker`|A background task/)
+    expect(outputs[0].text).toContain('was blocked')
+    expect(outputs[0].text).toContain('rerun failed before a Graph response')
+    expect(outputs[0].text).not.toContain('assistantOutputTarget')
+
+    // Dedup: a re-entrant exhaustion for the same report must not double-deliver.
+    const redelivered = manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)
+    expect(redelivered).toBe(false)
+    expect(assistantOutputsFor(manager, 'manager')).toHaveLength(1)
+  })
+
   it('matches provider-selected queued turns by runtime message instead of FIFO order', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

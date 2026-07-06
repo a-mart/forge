@@ -875,6 +875,64 @@ export function buildWorkerCompletionFallbackReport(agentId: string): string {
   return buildWorkerCompletionReportMessage({ agentId, status: "done" });
 }
 
+const TERMINAL_REPORT_STATUS_PATTERN =
+  /(?:^|\n)\s*(?:WORKER REPORT|SYSTEM):\s*status:\s*(done|partial|blocked|completed)\b/i;
+const MAX_BACKSTOP_SUMMARY_CHARS = 400;
+
+/**
+ * Deterministic manager→user surface line for an unacknowledged terminal worker
+ * report (docs/MANAGER_EMPTY_TURN_FIX.md). The manager stayed silent through
+ * every resample, so the server surfaces the outcome itself.
+ *
+ * This intentionally does NOT echo the raw report: that text still carries the
+ * internal `[assistantOutputTarget]`/`[sourceContext]` routing metadata and the
+ * internal `WORKER REPORT:` framing. We mechanically parse the structured
+ * `status:` (and a metadata-stripped one-line `summary:` when present, capped)
+ * and attribute the line to the manager surface, preserving the single-voice
+ * rule while guaranteeing the outcome reaches the user.
+ */
+export function summarizeTerminalWorkerReportForUser(
+  reportText: string,
+  sourceWorkerId?: string
+): string {
+  const statusMatch = reportText.match(TERMINAL_REPORT_STATUS_PATTERN);
+  const rawStatus = statusMatch?.[1]?.toLowerCase();
+  const status = rawStatus === "completed" ? "done" : rawStatus;
+
+  const worker = sourceWorkerId ? `\`${sourceWorkerId}\`` : "A background task";
+  const outcome =
+    status === "blocked"
+      ? "was blocked"
+      : status === "partial"
+        ? "partially completed"
+        : "finished";
+
+  const summaryDetail = extractTerminalReportSummaryLine(reportText);
+  const detailSuffix = summaryDetail ? ` — ${summaryDetail}` : "";
+
+  return (
+    `${worker} ${outcome}${status ? ` (status: ${status})` : ""}${detailSuffix}. ` +
+    "The manager did not summarize it; full details are in the worker's report."
+  );
+}
+
+function extractTerminalReportSummaryLine(reportText: string): string | undefined {
+  for (const rawLine of reportText.split("\n")) {
+    const line = rawLine.trim();
+    const match = line.match(/^summary:\s*(.+)$/i);
+    if (!match) {
+      continue;
+    }
+    const summary = match[1].trim();
+    // Never surface a line that itself is (or embeds) internal routing metadata.
+    if (summary.length === 0 || summary.startsWith("[")) {
+      return undefined;
+    }
+    return truncateWorkerCompletionText(summary, MAX_BACKSTOP_SUMMARY_CHARS);
+  }
+  return undefined;
+}
+
 export function buildWorkerCompletionReport(
   agentId: string,
   history: ConversationEntryEvent[]

@@ -16,6 +16,7 @@ import {
   buildModelCapacityBlockKey,
   buildSessionMemoryRuntimeView,
   buildWorkerCompletionReport,
+  summarizeTerminalWorkerReportForUser,
   clampModelCapacityBlockDurationMs,
   cloneDescriptor,
   cloneProjectAgentInfoValue,
@@ -775,6 +776,43 @@ describe("buildWorkerCompletionReport", () => {
     expect(r.message).toContain("WORKER REPORT: status: done");
     expect(r.message).toContain("Last assistant message:\nDone with files.");
     expect(r.message).toContain("Attachments: 2 generated attachments.");
+  });
+});
+
+describe("summarizeTerminalWorkerReportForUser", () => {
+  const ROUTED_MARKER = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}';
+
+  it("surfaces status and a clean summary attributed to the worker, never the raw report", () => {
+    const report = `WORKER REPORT: status: blocked\n${ROUTED_MARKER}\nsummary: rerun failed before a Graph response.`;
+    const line = summarizeTerminalWorkerReportForUser(report, "mammo-rerun");
+    expect(line).toContain("`mammo-rerun`");
+    expect(line).toContain("was blocked");
+    expect(line).toContain("status: blocked");
+    expect(line).toContain("rerun failed before a Graph response.");
+    // The internal routing metadata must never leak to the user.
+    expect(line).not.toContain("assistantOutputTarget");
+    expect(line).not.toContain("WORKER REPORT:");
+  });
+
+  it("normalizes completed to done and works without a source worker id", () => {
+    const line = summarizeTerminalWorkerReportForUser("WORKER REPORT: status: completed\nsummary: clean reset finished.");
+    expect(line).toContain("A background task");
+    expect(line).toContain("finished");
+    expect(line).toContain("status: done");
+    expect(line).toContain("clean reset finished.");
+  });
+
+  it("drops a summary line that itself is internal metadata rather than leaking it", () => {
+    const report = `WORKER REPORT: status: done\nsummary: ${ROUTED_MARKER}`;
+    const line = summarizeTerminalWorkerReportForUser(report, "w-1");
+    expect(line).not.toContain("assistantOutputTarget");
+    expect(line).toContain("status: done");
+  });
+
+  it("still surfaces an outcome pointer when no parsable status is present", () => {
+    const line = summarizeTerminalWorkerReportForUser("SYSTEM: Worker w-1 completed its turn.", "w-1");
+    expect(line).toContain("`w-1`");
+    expect(line).toContain("full details are in the worker's report");
   });
 });
 
