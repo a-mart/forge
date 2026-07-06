@@ -303,7 +303,7 @@ function buildReviewHistory(overrides?: Partial<CortexFileReviewHistoryResult>):
     blockers: [],
     watermarksAdvanced: true,
     trigger: 'scheduled' as const,
-    scopeLabel: 'nightly review run',
+    scopeLabel: 'nightly consolidation run',
     sessionAgentId: 'review-session-1',
     scheduleName: 'nightly-cortex',
     manifestPath: '/tmp/review-1.md',
@@ -340,7 +340,7 @@ function buildCommitDetail(overrides?: Partial<GitCommitDetail>): GitCommitDetai
 }
 
 describe('CortexHistoryPanel', () => {
-  it('renders the simplified history view with a subtle review line and compact timeline', async () => {
+  it('renders the simplified history view with a subtle consolidation line and compact timeline', async () => {
     renderPanel({ canOpenSession: () => true })
     await flushPromises()
 
@@ -350,8 +350,8 @@ describe('CortexHistoryPanel', () => {
     expect(queryByTestId(container, 'cortex-inline-history-diff')).toBeNull()
 
     const reviewLine = getByTestId(container, 'cortex-last-review-run-card')
-    expect(reviewLine.textContent).toContain('Last review run')
-    expect(reviewLine.textContent).toContain('nightly review run')
+    expect(reviewLine.textContent).toContain('Last consolidation run')
+    expect(reviewLine.textContent).toContain('nightly consolidation run')
     expect(reviewLine.textContent).toContain('2h ago')
     expect(reviewLine.textContent).toContain('session review-session-1')
 

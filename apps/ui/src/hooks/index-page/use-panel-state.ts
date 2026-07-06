@@ -47,7 +47,7 @@ export function usePanelState({
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
   const [artifactsPanelTab, setArtifactsPanelTab] = useState<ArtifactsPanelTab>('artifacts')
-  const [cortexDashboardTab, setCortexDashboardTab] = useState<CortexDashboardTab>('knowledge')
+  const [cortexDashboardTab, setCortexDashboardTab] = useState<CortexDashboardTab>('index')
   const [cortexDashboardTabRequest, setCortexDashboardTabRequest] = useState<{
     tab: CortexDashboardTab
     nonce: number
@@ -70,7 +70,7 @@ export function usePanelState({
     setActiveArtifact(null)
     setIsArtifactsPanelOpen(false)
     setArtifactsPanelTab('artifacts')
-    setCortexDashboardTab('knowledge')
+    setCortexDashboardTab('index')
     setIsFileBrowserOpen(false)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])

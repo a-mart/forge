@@ -137,19 +137,19 @@ describe('PromptSurfaceEditor', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('renders scratch surfaces as read-only supplemental files', async () => {
+  it('renders generated knowledge surfaces as read-only supplemental files', async () => {
     const surface: CortexPromptSurfaceListEntry = {
-      surfaceId: 'cortex-notes',
-      title: 'Cortex Notes',
-      description: 'Scratch notes file for tentative Cortex observations.',
-      group: 'scratch',
+      surfaceId: 'knowledge-index',
+      title: 'Knowledge Index',
+      description: 'Generated Cortex knowledge index.',
+      group: 'live',
       kind: 'file',
       editable: false,
       resetMode: 'none',
-      runtimeEffect: 'scratchOnly',
-      warning: 'Scratch only — referenced by Cortex for tentative notes; not injected into the manager system prompt.',
-      filePath: '/tmp/data/shared/knowledge/.cortex-notes.md',
-      sourcePath: '/tmp/data/shared/knowledge/.cortex-notes.md',
+      runtimeEffect: 'liveInjected',
+      warning: 'Generated from knowledge entries; edit entries instead.',
+      filePath: '/tmp/data/shared/knowledge/INDEX.md',
+      sourcePath: '/tmp/data/shared/knowledge/INDEX.md',
       seedPrompt: null,
     }
 
@@ -157,7 +157,7 @@ describe('PromptSurfaceEditor', () => {
       ok: true,
       json: async () => ({
         ...surface,
-        content: '# Cortex Notes\n\nTentative note\n',
+        content: '# Knowledge Index\n\n- Durable preference\n',
       }),
     }) as typeof fetch
 
@@ -175,10 +175,10 @@ describe('PromptSurfaceEditor', () => {
 
     await flushPromises()
 
-    expect(getByText(container, 'Scratch / supplemental')).toBeTruthy()
-    expect(getByText(container, 'Scratch / not injected')).toBeTruthy()
+    expect(getByText(container, 'Live Cortex file')).toBeTruthy()
+    expect(getByText(container, 'Live injected context')).toBeTruthy()
     expect((container.querySelector('textarea') as HTMLTextAreaElement | null)?.value).toBe(
-      '# Cortex Notes\n\nTentative note\n',
+      '# Knowledge Index\n\n- Durable preference\n',
     )
     expect(queryByRole(container, 'button', { name: 'Reseed from Template' })).toBeNull()
     expect(queryByRole(container, 'button', { name: 'Save' })).toBeNull()

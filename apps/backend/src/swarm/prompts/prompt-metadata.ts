@@ -136,15 +136,6 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
   },
   {
     category: 'operational',
-    promptId: 'cortex-worker-prompts',
-    displayName: 'Cortex Worker Prompt Templates',
-    description:
-      'Templates Cortex uses when spawning extraction/review/synthesis workers.',
-    profileScope: 'cortex',
-    variables: [],
-  },
-  {
-    category: 'operational',
     promptId: 'forked-session-header',
     displayName: 'Forked Session Memory Header',
     description: 'Header written to new session memory file when forking a session.',

@@ -13,14 +13,14 @@ import { renameWithRetry } from './retry-rename.js'
 
 const SETTINGS_FILE_VERSION = 1
 const CORTEX_PROFILE_ID = 'cortex'
-const CORTEX_AUTO_REVIEW_SCHEDULE_NAME = 'Cortex Auto-Review'
-const CORTEX_AUTO_REVIEW_SCHEDULE_MESSAGE = 'Review all sessions that need attention'
+const CORTEX_AUTO_REVIEW_SCHEDULE_NAME = 'Cortex Consolidation'
+const CORTEX_AUTO_REVIEW_SCHEDULE_MESSAGE = 'Consolidate knowledge entries'
 const CORTEX_AUTO_REVIEW_SCHEDULE_TIMEZONE = 'UTC'
 
 export const CORTEX_AUTO_REVIEW_SCHEDULE_ID = 'cortex-auto-review'
 const DEFAULT_CORTEX_AUTO_REVIEW_ENABLED = true
-const DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 120
-const SUPPORTED_INTERVAL_MINUTES = [15, 30, 60, 120, 240, 480, 720, 1440] as const
+const DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 1440
+const SUPPORTED_INTERVAL_MINUTES = [1440] as const
 
 interface CortexAutoReviewSettingsFile {
   version: 1

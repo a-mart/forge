@@ -9,7 +9,7 @@ import { AuthStorage } from '@mariozechner/pi-coding-agent'
 import type { AgentDescriptor } from '../swarm/types.js'
 import { DAEMONIZED_ENV_VAR, getControlPidFilePath } from '../reboot/control-pid.js'
 import { CliAccessService } from '../swarm/cli-access-service.js'
-import { getCommonKnowledgePath, getProfileUnreadStatePath } from '../swarm/data-paths.js'
+import { getProfileUnreadStatePath } from '../swarm/data-paths.js'
 import { getSessionTasksPath } from '../swarm/storage/data-paths.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
@@ -1265,67 +1265,6 @@ describe('SwarmWebSocketServer', () => {
       }
     }
   })
-
-  it('emits a Cortex prompt surface change event when POST /api/write-file updates a tracked Cortex file', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port)
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-      promptRegistry: manager.promptRegistry,
-    })
-
-    await server.start()
-
-    const client = new WebSocket(`ws://${config.host}:${config.port}`)
-    const events: ServerEvent[] = []
-    client.on('message', (raw) => {
-      events.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-
-    await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe' }))
-    await waitForEvent(events, (event) => event.type === 'ready')
-
-    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
-    const content = '# Common Knowledge\n\nUpdated through /api/write-file\n'
-
-    try {
-      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          path: commonKnowledgePath,
-          content,
-        }),
-      })
-
-      expect(response.status).toBe(200)
-      expect(await readFile(commonKnowledgePath, 'utf8')).toBe(content)
-
-      await expect(
-        waitForEvent(
-          events,
-          (event) =>
-            event.type === 'cortex_prompt_surface_changed' &&
-            event.surfaceId === 'common-knowledge-live' &&
-            event.filePath === commonKnowledgePath,
-        ),
-      ).resolves.toBeTruthy()
-    } finally {
-      client.close()
-      await server.stop()
-    }
-  })
-
 
   it('returns onboarding state through GET /api/onboarding/state', async () => {
     const port = await getAvailablePort()

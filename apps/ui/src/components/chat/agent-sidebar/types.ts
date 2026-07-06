@@ -22,14 +22,6 @@ export type AgentLiveStatus = {
   pendingCount: number
 }
 
-export interface CortexScanBadgeResponse {
-  scan?: {
-    summary?: {
-      needsReview?: number
-    }
-  }
-}
-
 export type StatusMap = Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean }>
 
 export interface AgentSidebarProps {
@@ -56,7 +48,6 @@ export interface AgentSidebarProps {
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
-  onOpenCortexReview?: (agentId: string) => void
   onOpenStats?: () => void
   onOpenArchive?: () => void
   onCreateSession?: (profileId: string, name?: string) => void
@@ -212,8 +203,6 @@ export interface CortexSectionProps {
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onOpenSettings: () => void
-  onOpenCortexReview?: (agentId: string) => void
-  outstandingReviewCount?: number | null
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void

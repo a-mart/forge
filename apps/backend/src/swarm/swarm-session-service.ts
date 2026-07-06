@@ -356,7 +356,7 @@ export class SwarmSessionService {
 
   async forkSession(
     sourceAgentId: string,
-    options?: { label?: string; fromMessageId?: string }
+    options?: { label?: string; fromMessageId?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const sourceDescriptor = this.options.getRequiredSessionDescriptor(sourceAgentId);
     assertBuilderSession(sourceDescriptor, "fork Builder sessions");
@@ -368,7 +368,8 @@ export class SwarmSessionService {
 
     const prepared = this.options.prepareSessionCreation(profile.profileId, {
       label: options?.label,
-      name: options?.label
+      name: options?.label,
+      sessionPurpose: options?.sessionPurpose
     });
     const forkedDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
     forkedDescriptor.model = { ...sourceDescriptor.model };

@@ -10,8 +10,6 @@ import {
   getCommonKnowledgePath,
   getCortexPromotionManifestsDir,
   getCortexReviewLogPath,
-  getCortexReviewRunsPath,
-  getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
   getProfilePiSkillsDir,
@@ -306,41 +304,6 @@ function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) 
   })
 
   return { promise, resolve }
-}
-
-function expectStartedReviewRun<T>(run: T | null): T {
-  expect(run).not.toBeNull()
-  if (!run) {
-    throw new Error('Expected Cortex review run to be created')
-  }
-  return run
-}
-
-async function seedNeedsReviewSession(
-  config: SwarmConfig,
-  profileId = 'alpha',
-  sessionId = 'alpha--s1',
-): Promise<void> {
-  const sessionDir = getSessionDir(config.paths.dataDir, profileId, sessionId)
-  const sessionFileContent = '{"type":"message","role":"user","content":[{"type":"text","text":"needs review"}]}\n'
-
-  await mkdir(sessionDir, { recursive: true })
-  await writeFile(join(sessionDir, 'session.jsonl'), sessionFileContent, 'utf8')
-  await writeFile(
-    join(sessionDir, 'meta.json'),
-    `${JSON.stringify(
-      {
-        profileId,
-        sessionId,
-        stats: {
-          sessionFileSize: Buffer.byteLength(sessionFileContent, 'utf8'),
-        },
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  )
 }
 
 function isEnoentError(error: unknown): boolean {

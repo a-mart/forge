@@ -10,8 +10,6 @@ describe("versioned-paths", () => {
 
   it("tracks the durable allowlisted knowledge, memory, reference, and prompt paths", () => {
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/common.md`)).toBe(true);
-    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-notes.md`)).toBe(true);
-    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-worker-prompts.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/INDEX.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/entries/pref-pnpm.md`)).toBe(true);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/archive/pref-old.md`)).toBe(true);
@@ -29,7 +27,7 @@ describe("versioned-paths", () => {
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/sessions/alpha/session.jsonl`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/sessions/alpha/meta.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-review-log.jsonl`)).toBe(false);
-    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-review-runs.json`)).toBe(false);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-consolidation-runs.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-lock.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-worker-prompts.md.bak.1`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/profiles/alpha.md`)).toBe(false);

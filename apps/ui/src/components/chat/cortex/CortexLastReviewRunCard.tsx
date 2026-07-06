@@ -29,8 +29,8 @@ export function CortexLastReviewRunCard({
   if (!run) {
     return (
       <div className="rounded-md border border-dashed border-border/60 bg-muted/10 px-3 py-2 text-[10px] text-muted-foreground" data-testid="cortex-last-review-run-card">
-        <span className="font-medium text-foreground">Last review run</span>
-        <span className="ml-1.5">No review run has touched this file yet.</span>
+        <span className="font-medium text-foreground">Last consolidation run</span>
+        <span className="ml-1.5">No consolidation run has touched this file yet.</span>
       </div>
     )
   }
@@ -51,7 +51,7 @@ export function CortexLastReviewRunCard({
       )}
       data-testid="cortex-last-review-run-card"
     >
-      <span className="font-medium text-foreground">Last review run</span>
+      <span className="font-medium text-foreground">Last consolidation run</span>
       <span className="min-w-0 flex-1 truncate text-muted-foreground">{summaryParts.join(' • ')}</span>
       <div className="flex shrink-0 items-center gap-1">
         <Button
@@ -88,12 +88,12 @@ export function CortexLastReviewRunCard({
 
 function describeTrigger(run: CortexFileReviewHistoryEntry): string {
   if (run.trigger === 'scheduled') {
-    return run.scheduleName || 'scheduled review'
+    return run.scheduleName || 'scheduled consolidation'
   }
 
   if (run.trigger === 'manual') {
-    return 'manual review'
+    return 'manual consolidation'
   }
 
-  return 'review run'
+  return 'consolidation run'
 }

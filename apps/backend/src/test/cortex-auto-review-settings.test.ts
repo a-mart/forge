@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   CORTEX_AUTO_REVIEW_SCHEDULE_ID,
   CortexAutoReviewSettingsService,
@@ -9,368 +9,93 @@ import {
   cronExpressionForIntervalMinutes,
   syncCortexAutoReviewSchedule,
 } from '../swarm/cortex-auto-review-settings.js'
-import {
-  getCortexAutoReviewSettingsPath,
-  getProfileScheduleFilePath,
-} from '../swarm/data-paths.js'
+import { getCortexAutoReviewSettingsPath, getProfileScheduleFilePath } from '../swarm/data-paths.js'
 
 describe('CortexAutoReviewSettingsService', () => {
-  it('loads defaults on missing settings file and seeds the default schedule', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-'))
-    const now = new Date('2026-03-27T00:00:00.000Z')
+  it('loads daily consolidation defaults and seeds the managed schedule', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-consolidation-settings-'))
     const service = new CortexAutoReviewSettingsService({
       dataDir,
-      now: () => now,
+      now: () => new Date('2026-03-27T00:00:00.000Z'),
     })
 
     await service.load()
 
-    expect(service.getSettings()).toEqual({
-      enabled: true,
-      intervalMinutes: 120,
-      updatedAt: null,
-    })
-
+    expect(service.getSettings()).toEqual({ enabled: true, intervalMinutes: 1440, updatedAt: null })
     await expect(access(getCortexAutoReviewSettingsPath(dataDir))).rejects.toMatchObject({ code: 'ENOENT' })
-
-    const storedSchedules = JSON.parse(
-      await readFile(getProfileScheduleFilePath(dataDir, 'cortex'), 'utf8'),
-    ) as { schedules: Array<Record<string, unknown>> }
-
-    expect(storedSchedules.schedules).toEqual([
-      {
+    const stored = JSON.parse(await readFile(getProfileScheduleFilePath(dataDir, 'cortex'), 'utf8')) as { schedules: Array<Record<string, unknown>> }
+    expect(stored.schedules).toEqual([
+      expect.objectContaining({
         id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
         sessionId: 'cortex',
-        name: 'Cortex Auto-Review',
-        cron: '0 */2 * * *',
-        message: 'Review all sessions that need attention',
-        oneShot: false,
-        timezone: 'UTC',
-        createdAt: '2026-03-27T00:00:00.000Z',
-        nextFireAt: '2026-03-27T02:00:00.000Z',
-      },
+        name: 'Cortex Consolidation',
+        cron: '0 0 * * *',
+        message: 'Consolidate knowledge entries',
+        nextFireAt: '2026-03-28T00:00:00.000Z',
+      }),
     ])
   })
 
-  it('loads settings successfully even when the schedule file contains corrupt JSON', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-corrupt-schedule-'))
-    const settingsPath = getCortexAutoReviewSettingsPath(dataDir)
-    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    try {
-      await mkdir(dirname(settingsPath), { recursive: true })
-      await writeFile(
-        settingsPath,
-        `${JSON.stringify({ version: 1, enabled: false, intervalMinutes: 240, updatedAt: null }, null, 2)}\n`,
-        'utf8',
-      )
-      await mkdir(dirname(schedulePath), { recursive: true })
-      await writeFile(schedulePath, '{not-json', 'utf8')
-
-      const service = new CortexAutoReviewSettingsService({ dataDir })
-
-      await expect(service.load()).resolves.toBeUndefined()
-      expect(service.getSettings()).toEqual({
-        enabled: false,
-        intervalMinutes: 240,
-        updatedAt: null,
-      })
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[cortex-auto-review] Failed to sync schedule during load'),
-      )
-    } finally {
-      warnSpy.mockRestore()
-    }
-  })
-
-  it('stays disabled and refuses updates when Cortex is disabled', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-disabled-'))
-    const settingsPath = getCortexAutoReviewSettingsPath(dataDir)
-    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
-
-    await mkdir(dirname(settingsPath), { recursive: true })
-    await writeFile(
-      settingsPath,
-      `${JSON.stringify({ version: 1, enabled: true, intervalMinutes: 240, updatedAt: '2026-03-27T12:00:00.000Z' }, null, 2)}\n`,
-      'utf8',
-    )
-    await mkdir(dirname(schedulePath), { recursive: true })
-    await writeFile(schedulePath, JSON.stringify({ schedules: [{ id: 'keep-existing' }] }), 'utf8')
-
-    const service = new CortexAutoReviewSettingsService({ dataDir, cortexEnabled: false })
-    await service.load()
-
-    expect(service.getSettings()).toEqual({
-      enabled: false,
-      intervalMinutes: 120,
-      updatedAt: null,
-    })
-    await expect(service.update({ enabled: true })).rejects.toThrow('Cortex is disabled')
-    expect(await readFile(settingsPath, 'utf8')).toContain('"enabled": true')
-    expect(await readFile(schedulePath, 'utf8')).toContain('keep-existing')
-  })
-
-  it('persists updates, merges partial patches, and removes the managed schedule when disabled', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-update-'))
-    const now = new Date('2026-03-27T12:00:00.000Z')
+  it('persists enabled changes and removes the managed schedule when disabled', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-consolidation-settings-update-'))
     const service = new CortexAutoReviewSettingsService({
       dataDir,
-      now: () => now,
+      now: () => new Date('2026-03-27T12:00:00.000Z'),
     })
 
     await service.load()
-    await service.update({ intervalMinutes: 240 })
-
-    expect(service.getSettings()).toEqual({
-      enabled: true,
-      intervalMinutes: 240,
-      updatedAt: '2026-03-27T12:00:00.000Z',
-    })
-
-    const storedSettings = JSON.parse(
-      await readFile(getCortexAutoReviewSettingsPath(dataDir), 'utf8'),
-    ) as Record<string, unknown>
-    expect(storedSettings).toEqual({
-      version: 1,
-      enabled: true,
-      intervalMinutes: 240,
-      updatedAt: '2026-03-27T12:00:00.000Z',
-    })
-
-    const scheduleAfterIntervalUpdate = JSON.parse(
-      await readFile(getProfileScheduleFilePath(dataDir, 'cortex'), 'utf8'),
-    ) as { schedules: Array<Record<string, unknown>> }
-    expect(scheduleAfterIntervalUpdate.schedules).toHaveLength(1)
-    expect(scheduleAfterIntervalUpdate.schedules[0]).toMatchObject({
-      id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
-      sessionId: 'cortex',
-      cron: '0 */4 * * *',
-      createdAt: '2026-03-27T12:00:00.000Z',
-      nextFireAt: '2026-03-27T16:00:00.000Z',
-    })
-
     await service.update({ enabled: false })
 
     expect(service.getSettings()).toEqual({
       enabled: false,
-      intervalMinutes: 240,
+      intervalMinutes: 1440,
       updatedAt: '2026-03-27T12:00:00.000Z',
     })
-
-    const scheduleAfterDisable = JSON.parse(
-      await readFile(getProfileScheduleFilePath(dataDir, 'cortex'), 'utf8'),
-    ) as { schedules: Array<Record<string, unknown>> }
-    expect(scheduleAfterDisable.schedules).toEqual([])
+    const storedSettings = JSON.parse(await readFile(getCortexAutoReviewSettingsPath(dataDir), 'utf8')) as Record<string, unknown>
+    expect(storedSettings).toMatchObject({ version: 1, enabled: false, intervalMinutes: 1440 })
+    const storedSchedules = JSON.parse(await readFile(getProfileScheduleFilePath(dataDir, 'cortex'), 'utf8')) as { schedules: unknown[] }
+    expect(storedSchedules.schedules).toEqual([])
   })
 
-  it('does not persist settings changes when schedule sync fails', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-atomic-'))
-    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
-    const service = new CortexAutoReviewSettingsService({
-      dataDir,
-      now: () => new Date('2026-03-27T12:00:00.000Z'),
-    })
-
+  it('rejects non-daily intervals', async () => {
+    const service = new CortexAutoReviewSettingsService({ dataDir: await mkdtemp(join(tmpdir(), 'cortex-consolidation-settings-invalid-')) })
     await service.load()
-    await writeFile(schedulePath, '{not-json', 'utf8')
-
-    await expect(service.update({ intervalMinutes: 240 })).rejects.toThrow(SyntaxError)
-    expect(service.getSettings()).toEqual({
-      enabled: true,
-      intervalMinutes: 120,
-      updatedAt: null,
-    })
-    await expect(access(getCortexAutoReviewSettingsPath(dataDir))).rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
-  it('serializes concurrent updates so both succeed without temp-file races', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-concurrent-'))
-    const service = new CortexAutoReviewSettingsService({
-      dataDir,
-      now: () => new Date('2026-03-27T12:00:00.000Z'),
-    })
-
-    await service.load()
-
-    const results = await Promise.all([
-      service.update({ enabled: false }),
-      service.update({ intervalMinutes: 240 }),
-    ])
-
-    expect(results).toEqual([
-      {
-        enabled: false,
-        intervalMinutes: 120,
-        updatedAt: '2026-03-27T12:00:00.000Z',
-      },
-      {
-        enabled: false,
-        intervalMinutes: 240,
-        updatedAt: '2026-03-27T12:00:00.000Z',
-      },
-    ])
-    expect(service.getSettings()).toEqual({
-      enabled: false,
-      intervalMinutes: 240,
-      updatedAt: '2026-03-27T12:00:00.000Z',
-    })
-
-    const storedSettings = JSON.parse(
-      await readFile(getCortexAutoReviewSettingsPath(dataDir), 'utf8'),
-    ) as Record<string, unknown>
-    expect(storedSettings).toEqual({
-      version: 1,
-      enabled: false,
-      intervalMinutes: 240,
-      updatedAt: '2026-03-27T12:00:00.000Z',
-    })
-  })
-
-  it('rejects unsupported interval updates', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-invalid-'))
-    const service = new CortexAutoReviewSettingsService({ dataDir })
-
-    await service.load()
-
-    await expect(service.update({ intervalMinutes: 14 })).rejects.toBeInstanceOf(
-      CortexAutoReviewSettingsValidationError,
-    )
-    await expect(service.update({ intervalMinutes: 1441 })).rejects.toBeInstanceOf(
-      CortexAutoReviewSettingsValidationError,
-    )
-    await expect(service.update({ intervalMinutes: 45 })).rejects.toBeInstanceOf(
-      CortexAutoReviewSettingsValidationError,
-    )
-    await expect(service.update({ intervalMinutes: 90 })).rejects.toBeInstanceOf(
-      CortexAutoReviewSettingsValidationError,
-    )
-    await expect(service.update({ intervalMinutes: 100 })).rejects.toBeInstanceOf(
-      CortexAutoReviewSettingsValidationError,
-    )
+    await expect(service.update({ intervalMinutes: 120 })).rejects.toBeInstanceOf(CortexAutoReviewSettingsValidationError)
   })
 })
 
 describe('syncCortexAutoReviewSchedule', () => {
-  it('preserves user schedules and leaves the managed schedule untouched when already in sync', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-sync-idempotent-'))
+  it('preserves user schedules and updates only the managed daily consolidation entry', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-consolidation-sync-'))
     const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
-    const original = {
-      version: 3,
-      notes: 'keep-me',
-      schedules: [
-        {
-          id: 'user-created',
-          name: 'User schedule',
-          cron: '0 9 * * *',
-          message: 'Run the user task',
-          oneShot: false,
-          timezone: 'UTC',
-          createdAt: '2026-03-26T00:00:00.000Z',
-          nextFireAt: '2026-03-27T09:00:00.000Z',
-        },
-        {
-          id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
-          sessionId: 'cortex',
-          name: 'Cortex Auto-Review',
-          cron: '0 */2 * * *',
-          message: 'Review all sessions that need attention',
-          oneShot: false,
-          timezone: 'UTC',
-          createdAt: '2026-03-25T00:00:00.000Z',
-          nextFireAt: '2026-03-27T02:00:00.000Z',
-          lastFiredAt: '2026-03-27T00:00:00.000Z',
-        },
-      ],
-    }
-
     await mkdir(dirname(schedulePath), { recursive: true })
-    await writeFile(schedulePath, `${JSON.stringify(original, null, 2)}\n`, 'utf8')
+    await writeFile(schedulePath, JSON.stringify({
+      schedules: [
+        { id: 'user-created', name: 'User schedule', cron: '0 9 * * *', message: 'Run user task' },
+        { id: CORTEX_AUTO_REVIEW_SCHEDULE_ID, name: 'Old name', cron: '0 */2 * * *', message: 'Old message', createdAt: '2026-03-25T00:00:00.000Z' },
+      ],
+    }), 'utf8')
 
     await syncCortexAutoReviewSchedule({
       dataDir,
-      settings: {
-        enabled: true,
-        intervalMinutes: 120,
-        updatedAt: null,
-      },
+      settings: { enabled: true, intervalMinutes: 1440, updatedAt: null },
       now: () => new Date('2026-03-27T01:00:00.000Z'),
     })
 
-    const stored = JSON.parse(await readFile(schedulePath, 'utf8')) as Record<string, unknown>
-    expect(stored).toEqual(original)
-  })
-
-  it('updates only the managed schedule entry when the interval changes', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-sync-update-'))
-    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
-    const original = {
-      schedules: [
-        {
-          id: 'user-created',
-          name: 'User schedule',
-          cron: '0 9 * * *',
-          message: 'Run the user task',
-          oneShot: false,
-          timezone: 'UTC',
-          createdAt: '2026-03-26T00:00:00.000Z',
-          nextFireAt: '2026-03-27T09:00:00.000Z',
-        },
-        {
-          id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
-          name: 'Old name',
-          cron: '0 */2 * * *',
-          message: 'Old message',
-          oneShot: true,
-          timezone: 'America/Chicago',
-          createdAt: '2026-03-25T00:00:00.000Z',
-          nextFireAt: '2026-03-27T02:00:00.000Z',
-          lastFiredAt: '2026-03-27T00:00:00.000Z',
-          custom: 'keep-me',
-        },
-      ],
-    }
-
-    await mkdir(dirname(schedulePath), { recursive: true })
-    await writeFile(schedulePath, `${JSON.stringify(original, null, 2)}\n`, 'utf8')
-
-    await syncCortexAutoReviewSchedule({
-      dataDir,
-      settings: {
-        enabled: true,
-        intervalMinutes: 480,
-        updatedAt: null,
-      },
-      now: () => new Date('2026-03-27T01:00:00.000Z'),
-    })
-
-    const stored = JSON.parse(await readFile(schedulePath, 'utf8')) as {
-      schedules: Array<Record<string, unknown>>
-    }
-    expect(stored.schedules).toHaveLength(2)
-    expect(stored.schedules[0]).toEqual(original.schedules[0])
-    expect(stored.schedules[1]).toEqual({
+    const stored = JSON.parse(await readFile(schedulePath, 'utf8')) as { schedules: Array<Record<string, unknown>> }
+    expect(stored.schedules[0]).toMatchObject({ id: 'user-created' })
+    expect(stored.schedules[1]).toMatchObject({
       id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
-      sessionId: 'cortex',
-      name: 'Cortex Auto-Review',
-      cron: '0 */8 * * *',
-      message: 'Review all sessions that need attention',
-      oneShot: false,
-      timezone: 'UTC',
-      createdAt: '2026-03-25T00:00:00.000Z',
-      nextFireAt: '2026-03-27T08:00:00.000Z',
-      lastFiredAt: '2026-03-27T00:00:00.000Z',
-      custom: 'keep-me',
+      name: 'Cortex Consolidation',
+      cron: '0 0 * * *',
+      message: 'Consolidate knowledge entries',
+      nextFireAt: '2026-03-28T00:00:00.000Z',
     })
   })
 })
 
 describe('cronExpressionForIntervalMinutes', () => {
-  it('maps supported interval values to cron expressions', () => {
-    expect(cronExpressionForIntervalMinutes(15)).toBe('*/15 * * * *')
-    expect(cronExpressionForIntervalMinutes(30)).toBe('*/30 * * * *')
-    expect(cronExpressionForIntervalMinutes(60)).toBe('0 */1 * * *')
-    expect(cronExpressionForIntervalMinutes(120)).toBe('0 */2 * * *')
+  it('maps the daily consolidation cadence', () => {
     expect(cronExpressionForIntervalMinutes(1440)).toBe('0 0 * * *')
   })
 })

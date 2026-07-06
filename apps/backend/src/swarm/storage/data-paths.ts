@@ -351,28 +351,16 @@ export function getCommonKnowledgePath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), "common.md");
 }
 
-export function getCortexNotesPath(dataDir: string): string {
-  return join(getSharedKnowledgeDir(dataDir), ".cortex-notes.md");
-}
-
-export function getCortexWorkerPromptsPath(dataDir: string): string {
-  return join(getSharedKnowledgeDir(dataDir), ".cortex-worker-prompts.md");
-}
-
 export function getCortexReviewLogPath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ".cortex-review-log.jsonl");
 }
 
+export function getCortexConsolidationRunsPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".cortex-consolidation-runs.json");
+}
+
 export function getCortexPromotionManifestsDir(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ".cortex-promotion-manifests");
-}
-
-export function getCortexReviewLockPath(dataDir: string): string {
-  return join(getSharedKnowledgeDir(dataDir), ".cortex-lock.json");
-}
-
-export function getCortexReviewRunsPath(dataDir: string): string {
-  return join(getSharedKnowledgeDir(dataDir), ".cortex-review-runs.json");
 }
 
 export function getSharedAuthDir(dataDir: string): string {

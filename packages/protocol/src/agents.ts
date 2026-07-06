@@ -138,7 +138,7 @@ export interface ManagerProfile {
   sortOrder?: number
 }
 
-export type AgentSessionPurpose = 'cortex_review' | 'agent_creator'
+export type AgentSessionPurpose = 'cortex_review' | 'agent_creator' | 'capture_check'
 export type AgentSessionSurface = 'builder' | 'collab'
 
 export interface AgentCollaborationLink {

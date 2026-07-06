@@ -1,17 +1,51 @@
-import type { GitFileSectionProvenanceEntry } from '@forge/protocol'
+import type { CortexKnowledgeEntry, GitFileSectionProvenanceEntry } from '@forge/protocol'
 
 interface CortexSectionProvenanceProps {
-  provenance: GitFileSectionProvenanceEntry
+  entry?: CortexKnowledgeEntry
+  provenance?: GitFileSectionProvenanceEntry
   testId?: string
 }
 
-export function CortexSectionProvenance({ provenance, testId }: CortexSectionProvenanceProps) {
+export function CortexSectionProvenance({ entry, provenance, testId }: CortexSectionProvenanceProps) {
+  if (!entry && provenance) {
+    return <FileProvenancePill provenance={provenance} testId={testId} />
+  }
+  if (!entry) {
+    return null
+  }
+
+  const timeLabel = formatInlineTimestamp(entry.last_confirmed)
+  const sourceLabel = entry.sources.length > 0 ? `${entry.sources.length} source${entry.sources.length === 1 ? '' : 's'}` : 'no sources'
+  const title = [
+    `First seen: ${formatFullTimestamp(entry.first_seen)}`,
+    `Last confirmed: ${formatFullTimestamp(entry.last_confirmed)}`,
+    `Support: ${entry.support_count}`,
+    entry.supersedes.length > 0 ? `Supersedes: ${entry.supersedes.join(', ')}` : null,
+    entry.source_entry_ids.length > 0 ? `Merged from: ${entry.source_entry_ids.join(', ')}` : null,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' • ')
+
+  return (
+    <span
+      className="ml-2 inline-flex max-w-full items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-1.5 py-0.5 align-middle text-[10px] font-normal text-muted-foreground"
+      title={title || undefined}
+      data-testid={testId ?? 'cortex-section-provenance'}
+    >
+      <span className="truncate">{timeLabel}</span>
+      <span className="truncate text-muted-foreground/80">• {sourceLabel}</span>
+      <span className="truncate text-muted-foreground/80">• x{entry.support_count}</span>
+    </span>
+  )
+}
+
+function FileProvenancePill({ provenance, testId }: { provenance: GitFileSectionProvenanceEntry; testId?: string }) {
   const timeLabel = formatInlineTimestamp(provenance.lastModifiedAt)
-  const reviewLabel = provenance.reviewRunId ? formatReviewRunLabel(provenance.reviewRunId) : null
+  const reviewLabel = provenance.reviewRunId ? formatShortLabel(provenance.reviewRunId) : null
   const title = [
     provenance.lastModifiedSummary || 'Last modified',
     provenance.lastModifiedAt ? formatFullTimestamp(provenance.lastModifiedAt) : null,
-    provenance.reviewRunId ? `Review run: ${provenance.reviewRunId}` : null,
+    provenance.reviewRunId ? `Run: ${provenance.reviewRunId}` : null,
   ]
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     .join(' • ')
@@ -56,11 +90,7 @@ function formatFullTimestamp(isoString: string): string {
   }).format(new Date(parsed))
 }
 
-function formatReviewRunLabel(reviewRunId: string): string {
-  const trimmed = reviewRunId.trim()
-  if (trimmed.length <= 18) {
-    return trimmed
-  }
-
-  return `${trimmed.slice(0, 16)}…`
+function formatShortLabel(value: string): string {
+  const trimmed = value.trim()
+  return trimmed.length <= 18 ? trimmed : `${trimmed.slice(0, 16)}...`
 }

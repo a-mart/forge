@@ -78,6 +78,9 @@ export interface SessionMeta {
   lastFeedbackAt?: string | null
   cortexReviewedFeedbackBytes?: number
   cortexReviewedFeedbackAt?: string | null
+  cortexCaptureLastCheckedAt?: string | null
+  cortexCaptureForksDay?: string | null
+  cortexCaptureForksToday?: number
   memoryMergeAttemptCount?: number
   lastMemoryMergeAttemptId?: string | null
   lastMemoryMergeAttemptAt?: string | null

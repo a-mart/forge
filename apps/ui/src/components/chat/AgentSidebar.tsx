@@ -56,7 +56,7 @@ import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsS
 import { ActivateRepoProjectAgentSheet } from './project-agent/ActivateRepoProjectAgentSheet'
 import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDialog'
 import { findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
-import { useCortexReviewBadge, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
+import { useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { AgentSidebarProps } from './agent-sidebar/types'
@@ -83,7 +83,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onDeleteAgent,
   onDeleteManager,
   onOpenSettings,
-  onOpenCortexReview,
   onOpenStats,
   onOpenArchive,
   onCreateSession,
@@ -121,7 +120,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     getArchivedProfileRows(agents, profiles).length > 0
     || getDirectlyArchivedSessionRows(agents, profiles).length > 0
   ), [agents, profiles])
-  const hasCortexProfile = useMemo(() => profiles.some((profile) => profile.profileId === 'cortex'), [profiles])
 
   // DnD sensors
   const sensors = useSensors(
@@ -159,7 +157,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     searchQuery,
     onRequestSessionWorkers,
   })
-  const cortexOutstandingReviewCount = useCortexReviewBadge({ connected, hasCortexProfile, wsUrl })
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
   const handleToggleUsagePanel = useCallback(() => setUsagePanelOpen(prev => !prev), [])
   const handleCloseUsagePanel = useCallback(() => setUsagePanelOpen(false), [])
@@ -291,11 +288,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onOpenSettings()
     onMobileClose?.()
   }, [onOpenSettings, onMobileClose])
-
-  const handleOpenCortexReview = useCallback((agentId: string) => {
-    onOpenCortexReview?.(agentId)
-    onMobileClose?.()
-  }, [onOpenCortexReview, onMobileClose])
 
   const handleOpenStats = useCallback(() => {
     onOpenStats?.()
@@ -663,8 +655,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}
               onOpenSettings={handleOpenSettings}
-              onOpenCortexReview={handleOpenCortexReview}
-              outstandingReviewCount={cortexOutstandingReviewCount}
               onStopSession={onStopSession}
               onResumeSession={onResumeSession}
               onMarkUnread={onMarkUnread}

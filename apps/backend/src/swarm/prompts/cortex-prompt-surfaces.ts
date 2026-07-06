@@ -8,11 +8,6 @@ import type {
   ServerEvent,
 } from "@forge/protocol";
 import type { VersioningMutationSink } from "../../versioning/versioning-types.js";
-import {
-  getCommonKnowledgePath,
-  getCortexNotesPath,
-  getCortexWorkerPromptsPath,
-} from "../data-paths.js";
 import type { PromptRegistryForRoutes } from "../prompt-contracts.js";
 
 const CORTEX_PROFILE_ID = "cortex";
@@ -58,58 +53,6 @@ const CORTEX_PROMPT_SURFACES: readonly CortexPromptSurfaceDefinition[] = [
     warning: "Boot seed only — changing this does not rewrite an existing shared/knowledge/common.md live file.",
     category: "operational",
     promptId: "common-knowledge-template",
-  },
-  {
-    surfaceId: "common-knowledge-live",
-    title: "Common Knowledge",
-    description: "Live injected shared knowledge used in Cortex memory injection.",
-    group: "live",
-    kind: "file",
-    editable: true,
-    resetMode: "none",
-    runtimeEffect: "liveInjected",
-    warning: "Live injected context — edits affect the current shared/knowledge/common.md used across agents.",
-    seedPrompt: { category: "operational", promptId: "common-knowledge-template" },
-    resolveFilePath: getCommonKnowledgePath,
-  },
-  {
-    surfaceId: "cortex-worker-prompts-template",
-    title: "Cortex Worker Prompt Templates",
-    description: "Boot seed template for the live Cortex worker prompt file.",
-    group: "seed",
-    kind: "registry",
-    editable: true,
-    resetMode: "profileOverride",
-    runtimeEffect: "futureSeedOnly",
-    warning:
-      "Boot seed only — changing this does not rewrite an existing shared/knowledge/.cortex-worker-prompts.md live file.",
-    category: "operational",
-    promptId: "cortex-worker-prompts",
-  },
-  {
-    surfaceId: "cortex-worker-prompts-live",
-    title: "Cortex Worker Prompt Templates (Live File)",
-    description: "Live Cortex worker prompt file read when Cortex delegates review and synthesis work.",
-    group: "live",
-    kind: "file",
-    editable: true,
-    resetMode: "reseedFromTemplate",
-    runtimeEffect: "liveImmediate",
-    warning: "Live Cortex file — Cortex reads this file when spawning workers.",
-    seedPrompt: { category: "operational", promptId: "cortex-worker-prompts" },
-    resolveFilePath: getCortexWorkerPromptsPath,
-  },
-  {
-    surfaceId: "cortex-notes",
-    title: "Cortex Notes",
-    description: "Scratch notes file for tentative Cortex observations.",
-    group: "scratch",
-    kind: "file",
-    editable: false,
-    resetMode: "none",
-    runtimeEffect: "scratchOnly",
-    warning: "Scratch only — referenced by Cortex for tentative notes; not injected into the manager system prompt.",
-    resolveFilePath: getCortexNotesPath,
   },
 ];
 

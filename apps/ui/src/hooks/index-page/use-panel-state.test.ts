@@ -150,7 +150,7 @@ describe('usePanelState', () => {
 
       // Request cortex dashboard tab — sets pendingCortexDashboardOpen
       act(() => {
-        capturedRef.current!.panelState.requestCortexDashboardTab('knowledge')
+        capturedRef.current!.panelState.requestCortexDashboardTab('index')
       })
       // Panel should not open yet because archetype is not cortex
       expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
@@ -166,7 +166,7 @@ describe('usePanelState', () => {
       render()
 
       act(() => {
-        capturedRef.current!.panelState.requestCortexDashboardTab('knowledge')
+        capturedRef.current!.panelState.requestCortexDashboardTab('index')
       })
 
       act(() => {
@@ -181,11 +181,11 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.cortexDashboardTabRequest).toBeNull()
 
       act(() => {
-        capturedRef.current!.panelState.requestCortexDashboardTab('knowledge')
+        capturedRef.current!.panelState.requestCortexDashboardTab('index')
       })
 
       expect(capturedRef.current!.panelState.cortexDashboardTabRequest).not.toBeNull()
-      expect(capturedRef.current!.panelState.cortexDashboardTabRequest!.tab).toBe('knowledge')
+      expect(capturedRef.current!.panelState.cortexDashboardTabRequest!.tab).toBe('index')
       expect(typeof capturedRef.current!.panelState.cortexDashboardTabRequest!.nonce).toBe('number')
     })
 
@@ -205,7 +205,7 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBe('/tmp/example.ts')
 
       act(() => {
-        capturedRef.current!.panelState.requestCortexDashboardTab('schedules')
+        capturedRef.current!.panelState.requestCortexDashboardTab('consolidation')
       })
 
       expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
@@ -225,7 +225,7 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
 
       act(() => {
-        capturedRef.current!.panelState.toggleCortexDashboardTab('knowledge')
+        capturedRef.current!.panelState.toggleCortexDashboardTab('index')
       })
 
       expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)

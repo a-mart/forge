@@ -52,14 +52,6 @@ export function resolveVersionedPathMetadata(
     return { relativePath, surface: "knowledge", profileId: "cortex" };
   }
 
-  if (relativePath === "shared/knowledge/.cortex-notes.md") {
-    return { relativePath, surface: "knowledge", profileId: "cortex" };
-  }
-
-  if (relativePath === "shared/knowledge/.cortex-worker-prompts.md") {
-    return { relativePath, surface: "knowledge", profileId: "cortex" };
-  }
-
   if (relativePath === "shared/knowledge/INDEX.md") {
     return { relativePath, profileId: "cortex", surface: "index" };
   }
@@ -156,8 +148,6 @@ export async function enumerateExistingTrackedPaths(
 
   for (const candidate of [
     join(knowledgeDir, "common.md"),
-    join(knowledgeDir, ".cortex-notes.md"),
-    join(knowledgeDir, ".cortex-worker-prompts.md"),
     getKnowledgeIndexPath(dataDir)
   ]) {
     await addTrackedPathIfPresent(dataDir, candidate, tracked, options);
