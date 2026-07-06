@@ -29,6 +29,12 @@ import {
   type SessionTranscriptAssistantOutputTarget,
 } from "./manager-assistant-output-tracker.js";
 import { extractCleanManagerAssistantFinalMessage } from "./manager-assistant-final-message.js";
+import {
+  appendMessageRoutingReceipt,
+  buildMessageRoutingReceipt,
+  type MessageRoutingReceiptRecord,
+} from "../session/message-routing-receipts.js";
+import type { MessageRouteDecision } from "../message-router.js";
 
 export type RuntimeEventProjectorRecoveryState = Pick<
   RuntimeRecoveryState,
@@ -44,7 +50,7 @@ export interface RuntimeEventProjectorDeps {
   now: () => string;
   conversationProjector: {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void;
-    emitConversationMessage(event: ConversationMessageEvent): void;
+    emitConversationMessage(event: ConversationMessageEvent, options?: { routingReceipt?: MessageRoutingReceiptRecord }): void;
   };
   markSessionActivity(agentId: string, timestamp: string): void;
   maybeRecordModelCapacityBlock(
@@ -79,6 +85,17 @@ export interface RuntimeEventProjectorDeps {
     descriptor: AgentDescriptor,
     activeTarget: AssistantOutputTarget | undefined
   ): SessionTranscriptAssistantOutputTarget | undefined;
+  resolveManagerAssistantFinalOutputRoute?(
+    agentId: string,
+    descriptor: AgentDescriptor,
+    activeTarget: AssistantOutputTarget | undefined
+  ): ManagerAssistantOutputRouteResult | undefined;
+}
+
+export interface ManagerAssistantOutputRouteResult {
+  target?: SessionTranscriptAssistantOutputTarget;
+  decision: MessageRouteDecision;
+  sourceWorkerId?: string;
 }
 
 export interface RuntimeEventProjectionInput {
@@ -91,12 +108,34 @@ export interface RuntimeEventProjectionInput {
 export class RuntimeEventProjector {
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
   private readonly managerAssistantOutputTracker: ManagerAssistantOutputTracker;
+  private readonly visibleManagerOutputTurnIds = new Set<string>();
 
   constructor(private readonly deps: RuntimeEventProjectorDeps) {
     this.managerAssistantOutputTracker = new ManagerAssistantOutputTracker({
       now: deps.now,
-      emitConversationMessage: (event) => deps.conversationProjector.emitConversationMessage(event),
+      emitConversationMessage: (event) => {
+        this.markVisibleManagerOutput(event);
+        deps.conversationProjector.emitConversationMessage(event);
+      },
       markSessionActivity: (agentId, timestamp) => deps.markSessionActivity(agentId, timestamp),
+      resolveRoute: (agentId, target) => {
+        const descriptor = deps.descriptors.get(agentId);
+        return descriptor?.role === "manager"
+          ? deps.resolveManagerAssistantFinalOutputRoute?.(agentId, descriptor, target)
+          : undefined;
+      },
+      recordRoutingDecision: (agentId, turnId, decision, timestamp) => {
+        const descriptor = deps.descriptors.get(agentId);
+        if (!descriptor || descriptor.role !== "manager") {
+          return;
+        }
+        this.appendRoutingReceiptBestEffort(descriptor, buildMessageRoutingReceipt({
+          agentId,
+          timestamp,
+          decision,
+          ...(turnId ? { turnId } : {}),
+        }));
+      },
     });
   }
 
@@ -117,6 +156,10 @@ export class RuntimeEventProjector {
   }
 
   markExplicitManagerAssistantOutput(agentId: string): void {
+    const turnId = this.deps.getActiveTurnId(agentId);
+    if (turnId) {
+      this.visibleManagerOutputTurnIds.add(turnId);
+    }
     this.managerAssistantOutputTracker.markExplicitAssistantOutput(agentId);
   }
 
@@ -277,11 +320,14 @@ export class RuntimeEventProjector {
     } else {
       this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
     }
+    this.maybeEmitWorkerReportConversationMessage(agentId, descriptor, effectiveEvent, activeTurnId);
+    const activeAssistantTarget = this.managerAssistantOutputTracker.getActiveTarget(agentId);
     if (shouldSurfaceManualStopNotice || isContextRecoveryAbort) {
       this.managerAssistantOutputTracker.clearTurn(agentId);
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
       this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent, activeTurnId);
+      this.maybeEmitSilentManagerBackstop(agentId, descriptor, effectiveEvent, activeTurnId, activeAssistantTarget);
       this.maybeEmitModelCacheObservation(agentId, descriptor, effectiveEvent);
     }
     if (shouldSurfaceManualStopNotice) {
@@ -320,17 +366,41 @@ export class RuntimeEventProjector {
       return;
     }
 
-    const target = this.deps.resolveManagerAssistantFinalOutputTarget(
+    const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(
       agentId,
       descriptor,
       this.managerAssistantOutputTracker.getActiveTarget(agentId)
     );
+    const target = route
+      ? route.target
+      : this.deps.resolveManagerAssistantFinalOutputTarget(
+          agentId,
+          descriptor,
+          this.managerAssistantOutputTracker.getActiveTarget(agentId)
+        );
+    const timestamp = this.deps.now();
+    const decision = route?.decision;
     if (!target || target.channel !== "web") {
+      if (decision) {
+        this.appendRoutingReceiptBestEffort(descriptor, buildMessageRoutingReceipt({
+          agentId,
+          timestamp,
+          decision,
+          ...(turnId ? { turnId } : {}),
+        }));
+      }
       return;
     }
 
-    const timestamp = this.deps.now();
-    this.deps.conversationProjector.emitConversationMessage({
+    const routingReceipt = decision
+      ? buildMessageRoutingReceipt({
+          agentId,
+          timestamp,
+          decision,
+          ...(turnId ? { turnId } : {}),
+        })
+      : undefined;
+    const outputEvent: ConversationMessageEvent = {
       type: "conversation_message",
       agentId,
       ...(turnId ? { turnId } : {}),
@@ -339,8 +409,127 @@ export class RuntimeEventProjector {
       timestamp,
       source: "assistant_output",
       sourceContext: target.sourceContext ?? { channel: target.channel },
-    });
+    };
+    this.markVisibleManagerOutput(outputEvent);
+    if (routingReceipt) {
+      this.deps.conversationProjector.emitConversationMessage(outputEvent, { routingReceipt });
+    } else {
+      this.deps.conversationProjector.emitConversationMessage(outputEvent);
+    }
     this.deps.markSessionActivity(agentId, timestamp);
+  }
+
+  private maybeEmitSilentManagerBackstop(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    effectiveEvent: RuntimeSessionEvent,
+    turnId: string | undefined,
+    activeTarget: AssistantOutputTarget | undefined,
+  ): void {
+    if (!descriptor || descriptor.role !== "manager" || !turnId) {
+      return;
+    }
+
+    if (effectiveEvent.type !== "turn_end" && effectiveEvent.type !== "agent_end") {
+      return;
+    }
+
+    if (this.visibleManagerOutputTurnIds.has(turnId)) {
+      this.visibleManagerOutputTurnIds.delete(turnId);
+      return;
+    }
+
+    const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(agentId, descriptor, activeTarget);
+    const reasonCode = route?.decision.reasonCode;
+    if (
+      reasonCode !== "render:user_web" &&
+      reasonCode !== "render:scheduled_web" &&
+      reasonCode !== "render:terminal_worker_report_closeout"
+    ) {
+      return;
+    }
+
+    const timestamp = this.deps.now();
+    const text = route?.sourceWorkerId
+      ? `Worker \`${route.sourceWorkerId}\` completed and reported back; the manager did not summarize it. View worker report in All.`
+      : "The manager completed this turn without a visible response.";
+    const notice: ConversationMessageEvent = {
+      type: "conversation_message",
+      agentId,
+      turnId,
+      role: "system",
+      text,
+      timestamp,
+      source: "system",
+    };
+    this.deps.conversationProjector.emitConversationMessage(notice);
+  }
+
+  private markVisibleManagerOutput(event: ConversationMessageEvent): void {
+    if (
+      event.turnId &&
+      event.role === "assistant" &&
+      (event.source === "speak_to_user" || event.source === "assistant_output" || event.source === "assistant_progress")
+    ) {
+      this.visibleManagerOutputTurnIds.add(event.turnId);
+    }
+  }
+
+  private maybeEmitWorkerReportConversationMessage(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    effectiveEvent: RuntimeSessionEvent,
+    turnId?: string,
+  ): void {
+    if (descriptor?.role !== "worker" || effectiveEvent.type !== "message_end") {
+      return;
+    }
+
+    const role = extractRole(effectiveEvent.message);
+    if (role !== "assistant" && role !== "system") {
+      return;
+    }
+
+    const text = extractMessageText(effectiveEvent.message)?.trim();
+    if (!text) {
+      return;
+    }
+
+    const timestamp = this.deps.now();
+    this.deps.conversationProjector.emitConversationMessage({
+      type: "conversation_message",
+      agentId: descriptor.managerId,
+      ...(turnId ? { turnId } : {}),
+      role: "system",
+      text,
+      timestamp,
+      source: "worker_report",
+      terminal: true,
+      sourceWorkerId: agentId,
+      excludeFromModelContext: true,
+    }, {
+      routingReceipt: {
+        type: "message_routing",
+        timestamp,
+        ...(turnId ? { turnId } : {}),
+        agentId: descriptor.managerId,
+        decision: "route",
+        reasonCode: "route:worker_report_all_view",
+        targetKind: "session_transcript",
+        sourceWorkerId: agentId,
+      },
+    });
+  }
+
+  private appendRoutingReceiptBestEffort(descriptor: AgentDescriptor, receipt: MessageRoutingReceiptRecord): void {
+    try {
+      appendMessageRoutingReceipt({ sessionFile: descriptor.sessionFile, record: receipt });
+    } catch (error) {
+      this.deps.logDebug("message_routing:receipt:error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private maybeEmitModelCacheObservation(

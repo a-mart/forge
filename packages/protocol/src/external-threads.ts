@@ -24,8 +24,17 @@ export function isCodexAppServerExternalThreadDescriptor(
 }
 
 export function shouldExcludeConversationMessageFromModelContext(
-  message: Pick<ConversationMessageEvent, 'externalThreadContext'>,
+  message: Pick<ConversationMessageEvent, 'externalThreadContext'> &
+    Partial<Pick<ConversationMessageEvent, 'source' | 'excludeFromModelContext'>>,
 ): boolean {
+  if (message.excludeFromModelContext === true) {
+    return true
+  }
+
+  if (message.source === 'worker_report') {
+    return true
+  }
+
   const context = message.externalThreadContext
   if (!context) {
     return false

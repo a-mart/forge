@@ -635,7 +635,24 @@ describe("SwarmRuntimeController", () => {
 
     expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
     expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, sessionEvent);
-    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledTimes(2);
+    expect(emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: worker.managerId,
+        role: "system",
+        source: "worker_report",
+        sourceWorkerId: worker.agentId,
+        excludeFromModelContext: true,
+        text: "done",
+      }),
+      expect.objectContaining({
+        routingReceipt: expect.objectContaining({
+          decision: "route",
+          reasonCode: "route:worker_report_all_view",
+          sourceWorkerId: worker.agentId,
+        }),
+      }),
+    );
     expect(emitConversationMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: worker.agentId,

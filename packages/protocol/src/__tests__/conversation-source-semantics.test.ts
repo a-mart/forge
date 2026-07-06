@@ -22,8 +22,10 @@ describe('conversation source semantics', () => {
   it('recognizes assistant output sources as first-class conversation message sources', () => {
     expect(CONVERSATION_MESSAGE_SOURCES).toContain('assistant_output')
     expect(CONVERSATION_MESSAGE_SOURCES).toContain('assistant_progress')
+    expect(CONVERSATION_MESSAGE_SOURCES).toContain('worker_report')
     expect(isConversationMessageSource('assistant_output')).toBe(true)
     expect(isConversationMessageSource('assistant_progress')).toBe(true)
+    expect(isConversationMessageSource('worker_report')).toBe(true)
     expect(isConversationMessageSource('not_real')).toBe(false)
   })
 
@@ -53,6 +55,13 @@ describe('conversation source semantics', () => {
     const inbound = { ...base, role: 'user', source: 'user_input' } satisfies ConversationEntry
     const projectAgent = { ...base, role: 'user', source: 'project_agent_input' } satisfies ConversationEntry
     const system = { ...base, role: 'system', source: 'system' } satisfies ConversationEntry
+    const workerReport = {
+      ...base,
+      role: 'system',
+      source: 'worker_report',
+      terminal: true,
+      sourceWorkerId: 'worker-1',
+    } satisfies ConversationEntry
     const runtimeLog = {
       type: 'conversation_log',
       agentId: 'manager-1',
@@ -66,6 +75,8 @@ describe('conversation source semantics', () => {
     expect(isUserVisibleAssistantConversationMessage(inbound)).toBe(false)
     expect(isUserVisibleAssistantConversationMessage(projectAgent)).toBe(false)
     expect(isUserVisibleAssistantConversationMessage(system)).toBe(false)
+    expect(isUserVisibleAssistantConversationMessage(workerReport)).toBe(false)
+    expect(isUserVisibleConversationMessage(workerReport)).toBe(false)
     expect(isUserVisibleAssistantConversationMessage(runtimeLog)).toBe(false)
   })
 })

@@ -1,3 +1,6 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtime/runtime-event-projector.js";
 import {
@@ -8,6 +11,7 @@ import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contract
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "../runtime/worker-health-types.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor } from "../types.js";
+import { getMessageRoutingReceiptsPath } from "../session/message-routing-receipts.js";
 
 function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "role" | "managerId">): AgentDescriptor {
   const now = "2026-05-06T00:00:00.000Z";
@@ -186,6 +190,136 @@ describe("clean manager assistant final message detection", () => {
       expect(extractCleanManagerAssistantFinalMessage(event)).toBeUndefined();
     }
   });
+});
+
+describe("RuntimeEventProjector message routing receipts and backstops", () => {
+  it("writes a routing receipt when clean manager final text is not rendered", async () => {
+    const root = await mkdtemp(join(tmpdir(), "runtime-projector-"));
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({
+      agentId: "manager-1",
+      role: "manager",
+      managerId: "manager-1",
+      sessionFile: join(root, "session.jsonl"),
+    });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: false,
+        decision: "route",
+        reasonCode: "route:internal_origin",
+        targetKind: "explicit_tool_required",
+      },
+    }));
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: assistantEnd("Internal-only final.", { stopReason: "stop" }),
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+    const receipts = (await readFile(getMessageRoutingReceiptsPath(manager.sessionFile), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(receipts).toEqual([
+      expect.objectContaining({
+        type: "message_routing",
+        agentId: manager.agentId,
+        turnId: "manager-1:1",
+        decision: "route",
+        reasonCode: "route:internal_origin",
+        targetKind: "explicit_tool_required",
+      }),
+    ]);
+  });
+
+  it("emits worker_report on the manager session for worker terminal message_end", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager-1",
+    });
+    descriptors.set(worker.agentId, worker);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("worker-1:1");
+
+    await projector.projectEvent({
+      agentId: worker.agentId,
+      event: assistantEnd("status: done\nsummary: finished", { stopReason: "stop" }),
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "conversation_message",
+        agentId: "manager-1",
+        turnId: "worker-1:1",
+        role: "system",
+        source: "worker_report",
+        terminal: true,
+        sourceWorkerId: "worker-1",
+        excludeFromModelContext: true,
+        text: "status: done\nsummary: finished",
+      }),
+      expect.objectContaining({
+        routingReceipt: expect.objectContaining({
+          decision: "route",
+          reasonCode: "route:worker_report_all_view",
+          sourceWorkerId: "worker-1",
+        }),
+      }),
+    );
+  });
+
+  it.each(["openai-codex", "claude-sdk", "cursor-sdk"])(
+    "emits a silent-manager backstop for %s empty turns",
+    async (provider) => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({
+        agentId: "manager-1",
+        role: "manager",
+        managerId: "manager-1",
+        model: { provider, modelId: "model", thinkingLevel: "medium" },
+      });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+      deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+        decision: {
+          visible: true,
+          decision: "render",
+          channel: "web",
+          reasonCode: "render:terminal_worker_report_closeout",
+          targetKind: "explicit_tool_required",
+        },
+        target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+        sourceWorkerId: "worker-1",
+      }));
+      projector.activateManagerAssistantOutputTurn("manager-1", { kind: "explicit_tool_required", reason: "worker_report" }, {
+        turnId: "manager-1:1",
+      });
+
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: assistantEnd("   ", { stopReason: "stop" }),
+      });
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: { type: "turn_end", toolResults: [] },
+      });
+
+      expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "conversation_message",
+          agentId: "manager-1",
+          turnId: "manager-1:1",
+          role: "system",
+          source: "system",
+          text: expect.stringContaining("Worker `worker-1` completed and reported back"),
+        }),
+      );
+    },
+  );
 });
 
 describe("RuntimeEventProjector", () => {
@@ -470,7 +604,7 @@ describe("RuntimeEventProjector", () => {
     expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
   });
 
-  it("does not project manager or worker finals when the server-owned surface resolver denies web output", async () => {
+  it("does not render denied manager finals but persists worker finals as worker_report", async () => {
     const { projector, deps, descriptors } = createHarness();
     const collabManager = baseDescriptor({
       agentId: "collab-manager",
@@ -504,7 +638,25 @@ describe("RuntimeEventProjector", () => {
       });
     }
 
-    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "conversation_message",
+        agentId: worker.managerId,
+        role: "system",
+        source: "worker_report",
+        sourceWorkerId: worker.agentId,
+        excludeFromModelContext: true,
+        text: "Hidden final.",
+      }),
+      expect.objectContaining({
+        routingReceipt: expect.objectContaining({
+          decision: "route",
+          reasonCode: "route:worker_report_all_view",
+          sourceWorkerId: worker.agentId,
+        }),
+      }),
+    );
   });
 
   it("projects clean manager assistant output using the default web surface even without an active turn", async () => {

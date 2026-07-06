@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCacheObservationEntry } from '@/lib/ws-state'
 import { createInitialManagerWsState } from '@/lib/ws-state'
-import type { ChoiceRequestEvent } from '@forge/protocol'
+import type { ChoiceRequestEvent, ConversationMessageEvent } from '@forge/protocol'
 import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state'
 import { handleConversationEvent } from './conversation-event-handlers'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -46,6 +46,18 @@ function makeChoice(overrides: Partial<ChoiceRequestEvent> = {}): ChoiceRequestE
   }
 }
 
+function makeMessage(id: string, text: string): ConversationMessageEvent {
+  return {
+    type: 'conversation_message',
+    agentId: 'manager',
+    id,
+    role: 'assistant',
+    text,
+    timestamp: '2026-06-02T12:00:00.000Z',
+    source: 'assistant_output',
+  }
+}
+
 function runHandler(
   state: ManagerWsState,
   event: Parameters<typeof handleConversationEvent>[0],
@@ -59,6 +71,31 @@ function runHandler(
   })
   return next
 }
+
+describe('handleConversationEvent conversation history merge', () => {
+  it('merges bootstrap history by id without overwriting live entries', () => {
+    const liveMessage = makeMessage('msg-1', 'live text')
+    const state = {
+      ...createInitialManagerWsState('manager'),
+      messages: [liveMessage, makeMessage('msg-live-only', 'arrived during bootstrap')],
+    }
+
+    const next = runHandler(state, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [
+        makeMessage('msg-1', 'stale bootstrap text'),
+        makeMessage('msg-bootstrap-only', 'from bootstrap'),
+      ],
+    })
+
+    expect(next.messages.map((entry) => entry.type === 'conversation_message' ? [entry.id, entry.text] : null)).toEqual([
+      ['msg-1', 'live text'],
+      ['msg-bootstrap-only', 'from bootstrap'],
+      ['msg-live-only', 'arrived during bootstrap'],
+    ])
+  })
+})
 
 describe('handleConversationEvent choice requests', () => {
   it('accepts live worker-origin choices targeted at the active session', () => {

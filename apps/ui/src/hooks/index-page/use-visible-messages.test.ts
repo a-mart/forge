@@ -107,6 +107,39 @@ describe('deriveVisibleMessages', () => {
     expect(allResult.visibleMessages).toEqual([choice])
   })
 
+  it('hides worker_report rows in the default manager view and keeps them in All', () => {
+    const workerReport: ConversationEntry = {
+      type: 'conversation_message',
+      agentId: 'manager',
+      id: 'worker-report-1',
+      role: 'system',
+      text: 'raw worker output',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'worker_report',
+      terminal: true,
+      sourceWorkerId: 'worker-1',
+      excludeFromModelContext: true,
+    }
+
+    const webResult = deriveVisibleMessages({
+      messages: [workerReport],
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'web',
+    })
+    const allResult = deriveVisibleMessages({
+      messages: [workerReport],
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(webResult.visibleMessages).toEqual([])
+    expect(allResult.visibleMessages).toEqual([workerReport])
+  })
+
   it('preserves all-view merge behavior for manager-scoped timelines', () => {
     const messages: ConversationEntry[] = [
       {

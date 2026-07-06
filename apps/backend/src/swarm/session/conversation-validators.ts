@@ -102,6 +102,18 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
     return false;
   }
 
+  if (maybe.terminal !== undefined && typeof maybe.terminal !== "boolean") {
+    return false;
+  }
+
+  if (maybe.sourceWorkerId !== undefined && (typeof maybe.sourceWorkerId !== "string" || maybe.sourceWorkerId.trim().length === 0)) {
+    return false;
+  }
+
+  if (maybe.excludeFromModelContext !== undefined && maybe.excludeFromModelContext !== true) {
+    return false;
+  }
+
   if (maybe.pinned !== undefined && typeof maybe.pinned !== "boolean") {
     return false;
   }
@@ -173,6 +185,8 @@ function isConversationMessageRoleSourcePair(
       return role === "user";
     case "system":
       return role === "system" || role === "assistant";
+    case "worker_report":
+      return role === "system";
     default:
       return false;
   }

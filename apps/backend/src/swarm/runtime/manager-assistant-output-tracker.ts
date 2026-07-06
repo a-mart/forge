@@ -1,6 +1,7 @@
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import type { ConversationMessageEvent, MessageSourceContext } from "../types.js";
 import { extractMessageText, extractRole } from "../message-utils.js";
+import type { MessageRouteDecision } from "../message-router.js";
 import {
   getToolLikeMessageBlocks,
   messageHasIneligibleStopOrError,
@@ -44,6 +45,11 @@ export interface ManagerAssistantOutputTrackerOptions {
   now(): string;
   emitConversationMessage(event: ConversationMessageEvent): void;
   markSessionActivity(agentId: string, timestamp: string): void;
+  resolveRoute?(
+    agentId: string,
+    target: AssistantOutputTarget,
+  ): { target?: SessionTranscriptAssistantOutputTarget; decision?: MessageRouteDecision } | undefined;
+  recordRoutingDecision?(agentId: string, turnId: string | undefined, decision: MessageRouteDecision, timestamp: string): void;
 }
 
 export class ManagerAssistantOutputTracker {
@@ -168,20 +174,16 @@ export class ManagerAssistantOutputTracker {
       return;
     }
 
-    const textAfterAlreadyEmittedProgress =
-      !options?.provisional && activeTurn.progressEmitted && activeTurn.lastProgressText
-        ? removeAlreadyEmittedProgressPrefix(text, activeTurn.lastProgressText)
-        : text;
+    if (activeTurn.progressEmitted && text === activeTurn.lastProgressText) {
+      return;
+    }
 
     const toolBlocks = getToolLikeMessageBlocks(event.message);
     const onlyPresentChoicesToolBlocks =
       toolBlocks.length > 0 && toolBlocks.every((block) => readToolBlockName(block) === "present_choices");
     if (toolBlocks.length > 0 && !onlyPresentChoicesToolBlocks) {
-      if (!textAfterAlreadyEmittedProgress) {
-        return;
-      }
       activeTurn.candidate = {
-        text: textAfterAlreadyEmittedProgress,
+        text,
         kind: "progress",
         sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
         expectedToolCallIds: collectUniqueStrings(toolBlocks.map(readToolBlockId)),
@@ -196,11 +198,8 @@ export class ManagerAssistantOutputTracker {
     }
 
     if (activeTurn.openToolCalls.size > 0 && !onlyPresentChoicesToolBlocks) {
-      if (!textAfterAlreadyEmittedProgress) {
-        return;
-      }
       activeTurn.candidate = {
-        text: textAfterAlreadyEmittedProgress,
+        text,
         kind: "progress",
         sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
       };
@@ -213,13 +212,6 @@ export class ManagerAssistantOutputTracker {
       completedToolBlocksHaveError(activeTurn.completedToolCalls, toolBlocks)
     ) {
       return;
-    }
-
-    if (textAfterAlreadyEmittedProgress !== text) {
-      text = textAfterAlreadyEmittedProgress;
-      if (!text) {
-        return;
-      }
     }
 
     if (!onlyPresentChoicesToolBlocks) {
@@ -258,10 +250,15 @@ export class ManagerAssistantOutputTracker {
       return false;
     }
 
+    const timestamp = this.options.now();
+    const routed = this.resolveVisibleTranscriptTarget(agentId, activeTurn, timestamp);
+    if (!routed) {
+      return false;
+    }
+
     const candidate = activeTurn.candidate;
     activeTurn.candidate = undefined;
 
-    const timestamp = this.options.now();
     this.options.emitConversationMessage({
       type: "conversation_message",
       agentId,
@@ -270,7 +267,7 @@ export class ManagerAssistantOutputTracker {
       text: candidate.text,
       timestamp,
       source: "assistant_output",
-      sourceContext: candidate.sourceContext,
+      sourceContext: routed.sourceContext ?? candidate.sourceContext,
     });
     this.options.markSessionActivity(agentId, timestamp);
     return true;
@@ -299,10 +296,15 @@ export class ManagerAssistantOutputTracker {
       return false;
     }
 
+    const timestamp = this.options.now();
+    const routed = this.resolveVisibleTranscriptTarget(agentId, activeTurn, timestamp);
+    if (!routed) {
+      return false;
+    }
+
     const candidate = activeTurn.candidate;
     activeTurn.candidate = undefined;
 
-    const timestamp = this.options.now();
     this.options.emitConversationMessage({
       type: "conversation_message",
       agentId,
@@ -311,12 +313,32 @@ export class ManagerAssistantOutputTracker {
       text: candidate.text,
       timestamp,
       source: "assistant_progress",
-      sourceContext: candidate.sourceContext,
+      sourceContext: routed.sourceContext ?? candidate.sourceContext,
     });
     this.options.markSessionActivity(agentId, timestamp);
     activeTurn.progressEmitted = true;
     activeTurn.lastProgressText = candidate.text;
     return true;
+  }
+
+  private resolveVisibleTranscriptTarget(
+    agentId: string,
+    activeTurn: ActiveManagerAssistantOutputTurn,
+    timestamp: string,
+  ): SessionTranscriptAssistantOutputTarget | undefined {
+    const route = this.options.resolveRoute?.(agentId, activeTurn.target);
+    if (!route) {
+      return activeTurn.target.kind === "session_transcript" && activeTurn.target.channel === "web"
+        ? activeTurn.target
+        : undefined;
+    }
+
+    if (route.decision && (!route.target || route.target.channel !== "web")) {
+      this.options.recordRoutingDecision?.(agentId, activeTurn.turnId, route.decision, timestamp);
+      return undefined;
+    }
+
+    return route.target && route.target.channel === "web" ? route.target : undefined;
   }
 }
 
@@ -404,26 +426,4 @@ function completedToolBlocksHaveError(
     }
   }
   return false;
-}
-
-function removeAlreadyEmittedProgressPrefix(text: string, progressText: string): string | undefined {
-  if (text === progressText) {
-    return undefined;
-  }
-
-  if (!text.startsWith(progressText)) {
-    return text;
-  }
-
-  const rawRemainder = text.slice(progressText.length);
-  const remainder = rawRemainder.trimStart();
-  if (!remainder) {
-    return undefined;
-  }
-
-  if (/^\s/.test(rawRemainder) && !/[.!?:;)\]]$/.test(progressText) && /^[a-z]/.test(remainder)) {
-    return text;
-  }
-
-  return remainder.replace(/^[.!?:;]+\s*/, "").trim() || undefined;
 }

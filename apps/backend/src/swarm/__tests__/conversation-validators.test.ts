@@ -250,6 +250,38 @@ describe("conversation validators", () => {
     ).toBe(false);
   });
 
+  it("accepts worker_report conversation messages with additive fields", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        id: "worker-report-1",
+        role: "system",
+        text: "Worker completed.",
+        timestamp: FIXED_NOW,
+        source: "worker_report",
+        terminal: true,
+        sourceWorkerId: "worker-1",
+        excludeFromModelContext: true,
+      })
+    ).toBe(true);
+  });
+
+  it("rejects worker_report messages with non-system roles", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "assistant",
+        text: "Worker completed.",
+        timestamp: FIXED_NOW,
+        source: "worker_report",
+        terminal: true,
+        sourceWorkerId: "worker-1",
+      })
+    ).toBe(false);
+  });
+
   it("accepts CLI source context on persisted agent message activity", () => {
     expect(
       isConversationEntryEvent({

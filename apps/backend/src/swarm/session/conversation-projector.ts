@@ -14,6 +14,10 @@ import {
   shouldPersistConversationEntry,
   trimConversationHistory
 } from "./history-policy.js";
+import {
+  appendMessageRoutingReceipt,
+  type MessageRoutingReceiptRecord
+} from "./message-routing-receipts.js";
 import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
@@ -170,8 +174,8 @@ export class ConversationProjector {
     this.historyCacheStore.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
-  emitConversationMessage(event: ConversationMessageEvent): void {
-    this.emitConversationEntry(event);
+  emitConversationMessage(event: ConversationMessageEvent, options?: { routingReceipt?: MessageRoutingReceiptRecord }): void {
+    this.emitConversationEntry(event, options);
     this.deps.emitServerEvent("conversation_message", event satisfies ServerEvent);
   }
 
@@ -261,7 +265,7 @@ export class ConversationProjector {
 
   private emitConversationEntry(
     event: ConversationEntryEvent,
-    options?: { historyAgentId?: string },
+    options?: { historyAgentId?: string; routingReceipt?: MessageRoutingReceiptRecord },
   ): void {
     const historyAgentId = resolveHistoryAgentId(event, options?.historyAgentId);
     const descriptor = this.deps.descriptors.get(historyAgentId);
@@ -273,6 +277,9 @@ export class ConversationProjector {
     history.push(event);
     trimConversationHistory(history, resolveManagerContextId(descriptor, historyAgentId));
     this.deps.conversationEntriesByAgentId.set(historyAgentId, history);
+    if (options?.routingReceipt && descriptor?.sessionFile) {
+      this.appendRoutingReceiptBestEffort(descriptor.sessionFile, options.routingReceipt);
+    }
 
     // Runtime logs are valuable for the live in-memory transcript and cache, but
     // they are high-volume JSONL noise during replay/fork/recovery. Forks may omit
@@ -319,6 +326,16 @@ export class ConversationProjector {
 
   private loadConversationHistoryForDescriptor(descriptor: AgentDescriptor): ConversationEntryEvent[] {
     return this.loadConversationHistoryForDescriptorWithDiagnostics(descriptor).history;
+  }
+
+  private appendRoutingReceiptBestEffort(sessionFile: string, receipt: MessageRoutingReceiptRecord): void {
+    try {
+      appendMessageRoutingReceipt({ sessionFile, record: receipt });
+    } catch (error) {
+      this.deps.logDebug("message_routing:receipt:error", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private loadConversationHistoryForDescriptorWithDiagnostics(
