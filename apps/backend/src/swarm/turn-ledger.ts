@@ -119,6 +119,7 @@ async function rotateTurnLedgerIfNeeded(filePath: string): Promise<void> {
     return;
   }
   try {
+    // eslint-disable-next-line no-restricted-syntax -- file rotation (move), not a temp+rename content write
     await rename(filePath, `${filePath}.1`);
   } catch (error) {
     if (!isEnoentError(error)) {

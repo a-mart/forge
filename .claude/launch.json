@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "forge-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev:ui"],
+      "port": 47188,
+      "autoPort": true
+    }
+  ]
+}

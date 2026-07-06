@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
 import { getSessionFilePath } from "../data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
-import { SwarmSessionMetaService, TURN_SEQ_RESTART_GAP } from "../swarm-session-meta-service.js";
+import { SwarmSessionMetaService } from "../swarm-session-meta-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
 const repoRoot = resolve(process.cwd(), "../..");

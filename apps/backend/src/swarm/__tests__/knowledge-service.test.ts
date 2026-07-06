@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { buildSwarmTools } from "../swarm-tools.js";
 import {
   KnowledgeService,
-  KnowledgeServiceError,
   type KnowledgeEntryScope,
   type KnowledgeEntrySource,
 } from "../knowledge-service.js";

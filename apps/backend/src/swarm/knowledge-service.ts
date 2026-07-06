@@ -273,6 +273,7 @@ export class KnowledgeService {
         path: this.entryPath(existing.frontmatter.scope, existing.frontmatter.id, true),
       };
       await mkdir(dirname(archived.path), { recursive: true });
+      // eslint-disable-next-line no-restricted-syntax -- archive move, not a temp+rename content write
       await rename(existing.path, archived.path).catch(async (error) => {
         if (!isEnoentError(error)) throw error;
         await writeKnowledgeEntryFile(archived.path, archived.frontmatter, archived.body);
@@ -580,6 +581,7 @@ function dedupeSources(sources: KnowledgeEntrySource[]): KnowledgeEntrySource[] 
 
 async function archiveOldPath(path: string): Promise<void> {
   await mkdir(join(dirname(path), ".replaced"), { recursive: true });
+  // eslint-disable-next-line no-restricted-syntax -- move to .replaced, not a temp+rename content write
   await rename(path, join(dirname(path), ".replaced", basename(path)));
 }
 
