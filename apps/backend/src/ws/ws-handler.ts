@@ -358,6 +358,35 @@ export class WsHandler {
       return;
     }
 
+    if (command.type === "resume_restart_recovery") {
+      try {
+        const snapshot = await this.swarmManager.resumeRestartRecovery();
+        this.broadcastToSubscribed({
+          type: "restart_recovery_snapshot",
+          snapshot,
+          requestId: command.requestId,
+        });
+      } catch (error) {
+        this.send(socket, {
+          type: "error",
+          code: "RESUME_RESTART_RECOVERY_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+          requestId: command.requestId,
+        });
+      }
+      return;
+    }
+
+    if (command.type === "dismiss_restart_recovery") {
+      const snapshot = this.swarmManager.dismissRestartRecovery();
+      this.broadcastToSubscribed({
+        type: "restart_recovery_snapshot",
+        snapshot,
+        requestId: command.requestId,
+      });
+      return;
+    }
+
     if (command.type === "pin_message") {
       if (subscribedAgentId !== command.agentId) {
         this.send(socket, {

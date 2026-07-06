@@ -13,6 +13,14 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     return ok({ type: "ping" });
   }
 
+  if (maybe.type === "resume_restart_recovery" || maybe.type === "dismiss_restart_recovery") {
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail(`${maybe.type}.requestId must be a string when provided`);
+    }
+    return ok({ type: maybe.type, requestId });
+  }
+
   if (maybe.type === "subscribe") {
     if (maybe.agentId !== undefined && typeof maybe.agentId !== "string") {
       return fail("subscribe.agentId must be a string when provided");

@@ -148,6 +148,23 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   isRuntimeRecoveryActive(agentId: string): boolean;
   beforeRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   getActiveTurnId?(agentId: string, runtimeToken?: number): string | undefined;
+  recordManagerTurnWatchdogStatus?(
+    agentId: string,
+    runtimeToken: number | undefined,
+    status: AgentStatus,
+    pendingCount: number
+  ): void;
+  recordManagerTurnWatchdogEvent?(
+    agentId: string,
+    runtimeToken: number | undefined,
+    event: RuntimeSessionEvent
+  ): void;
+  recordManagerTurnWatchdogRuntimeError?(
+    agentId: string,
+    runtimeToken: number | undefined,
+    error: RuntimeErrorEvent
+  ): void;
+  recordManagerTurnWatchdogTerminal?(agentId: string, outcome: "agent_end" | "idle" | "error"): void;
   afterRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   onAcceptedRuntimeSessionEvent?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   incrementSessionCompactionCount(
@@ -595,6 +612,7 @@ export class SwarmRuntimeController {
       return;
     }
 
+    this.host.recordManagerTurnWatchdogStatus?.(agentId, runtimeToken, status, pendingCount);
     await this.getRuntimeStatusProjector().projectStatus({ agentId, status, pendingCount, contextUsage });
   }
 
@@ -618,6 +636,7 @@ export class SwarmRuntimeController {
       return false;
     }
 
+    this.host.recordManagerTurnWatchdogEvent?.(agentId, runtimeToken, event);
     this.host.beforeRuntimeEventProjection?.(agentId, runtimeToken, event);
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
     if (this.host.afterRuntimeEventProjection) {
@@ -648,6 +667,7 @@ export class SwarmRuntimeController {
       return;
     }
 
+    this.host.recordManagerTurnWatchdogRuntimeError?.(agentId, runtimeToken, error);
     this.clearManagerAssistantOutputTurn(agentId);
     this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
@@ -672,6 +692,7 @@ export class SwarmRuntimeController {
     const descriptor = this.descriptors.get(agentId);
     if (descriptor?.role === "manager") {
       this.flushManagerAssistantOutputTurn(agentId);
+      this.host.recordManagerTurnWatchdogTerminal?.(agentId, "agent_end");
     }
     if (!descriptor || descriptor.role !== "worker") {
       return;

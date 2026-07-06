@@ -4,6 +4,7 @@ import type { PromptCategory } from "../prompt-registry.js";
 import {
   SwarmWorkerHealthService,
   TRANSIENT_WORKER_TERMINATED_GRACE_MS,
+  WATCHDOG_CIRCUIT_MAX_MS,
   type SwarmWorkerHealthServiceOptions
 } from "../swarm-worker-health-service.js";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
@@ -66,6 +67,29 @@ describe("SwarmWorkerHealthService", () => {
 
     const seq = svc.getWorkerReportDispatchTurnSeq(worker, manager);
     expect(seq).toBe(4);
+  });
+
+  it("force-clears an expired idle-watchdog circuit suppression with a receipt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T00:00:00.000Z"));
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "idle" });
+    const logDebug = vi.fn();
+    const svc = new SwarmWorkerHealthService(baseHealthOptions({
+      descriptors: new Map([[worker.agentId, worker]]),
+      logDebug,
+    }));
+    const state = svc.getOrCreateWorkerWatchdogState("w1");
+    state.circuitOpen = true;
+    state.suppressedUntilMs = Date.now() + WATCHDOG_CIRCUIT_MAX_MS;
+
+    vi.advanceTimersByTime(WATCHDOG_CIRCUIT_MAX_MS + 1);
+    await svc.checkForStalledWorkers();
+
+    expect(svc.workerWatchdogState.get("w1")?.circuitOpen).toBe(false);
+    expect(logDebug).toHaveBeenCalledWith("watchdog:suppression_expired", {
+      workerAgentId: "w1",
+      receipt: "watchdog_suppression_force_cleared",
+    });
   });
 
   it("handleRuntimeAgentEnd skips idle watchdog finalization while context recovery is in progress", async () => {

@@ -12,6 +12,10 @@ export function handleSystemEvent(
       context.rejectPendingFromError(event.code, event.message, event.requestId)
       return true
 
+    case 'restart_recovery_snapshot':
+      context.updateState({ restartRecovery: event.snapshot })
+      return true
+
     default:
       return false
   }

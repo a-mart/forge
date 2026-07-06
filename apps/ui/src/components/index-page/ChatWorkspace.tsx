@@ -9,11 +9,15 @@ import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { cn } from '@/lib/utils'
+import type { RestartRecoverySnapshot } from '@forge/protocol'
 
 interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
   lastError: string | null
   lastSuccess: string | null
+  restartRecovery: RestartRecoverySnapshot | null
+  onResumeRestartRecovery: () => void
+  onDismissRestartRecovery: () => void
   chatSearchBarProps: ComponentPropsWithoutRef<typeof ChatSearchBar>
   showWelcomeForm: boolean
   showCreateManagerState: boolean
@@ -33,6 +37,9 @@ export function ChatWorkspace({
   headerProps,
   lastError,
   lastSuccess,
+  restartRecovery,
+  onResumeRestartRecovery,
+  onDismissRestartRecovery,
   chatSearchBarProps,
   showWelcomeForm,
   showCreateManagerState,
@@ -69,6 +76,12 @@ export function ChatWorkspace({
         sessionAgentId={showSessionAudit ? headerProps.activeAgentId : null}
         sessionLabel={headerProps.activeAgentLabel}
         wsUrl={headerProps.wsUrl}
+      />
+
+      <RestartRecoveryBanner
+        snapshot={restartRecovery}
+        onResume={onResumeRestartRecovery}
+        onDismiss={onDismissRestartRecovery}
       />
 
       {lastError ? (
@@ -111,5 +124,50 @@ export function ChatWorkspace({
         </>
       )}
     </>
+  )
+}
+
+function RestartRecoveryBanner({
+  snapshot,
+  onResume,
+  onDismiss,
+}: {
+  snapshot: RestartRecoverySnapshot | null
+  onResume: () => void
+  onDismiss: () => void
+}) {
+  if (!snapshot || snapshot.dismissedAt || snapshot.resumedAt) {
+    return null
+  }
+
+  const sessionIds = new Set<string>([
+    ...snapshot.interruptedManagers,
+    ...snapshot.undeliveredReports.map((report) => report.toAgentId),
+  ])
+  const workerCount = snapshot.interruptedWorkers.length
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+      <span className="font-medium">
+        Restart interrupted {sessionIds.size} {sessionIds.size === 1 ? 'session' : 'sessions'} / {workerCount}{' '}
+        {workerCount === 1 ? 'worker' : 'workers'}
+      </span>
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          className="rounded border border-amber-300/40 px-2 py-1 text-amber-50 hover:bg-amber-300/15"
+          onClick={onResume}
+        >
+          Resume all
+        </button>
+        <button
+          type="button"
+          className="rounded border border-transparent px-2 py-1 text-amber-100/80 hover:bg-amber-300/10"
+          onClick={onDismiss}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
   )
 }

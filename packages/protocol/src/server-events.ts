@@ -111,6 +111,7 @@ import type {
   PendingChoicesSnapshotEvent,
   ReadyEvent,
 } from './transport-events.js'
+import type { RestartRecoverySnapshotEvent } from './restart-recovery.js'
 
 // Compatibility re-exports from leaf modules
 export * from './conversation-events.js'
@@ -126,6 +127,7 @@ export * from './integration-events.js'
 export * from './config-events.js'
 export * from './tasks.js'
 export * from './transport-events.js'
+export * from './restart-recovery.js'
 
 export type ServerEvent =
   | CliServerEvent
@@ -154,6 +156,7 @@ export type ServerEvent =
   | ConversationResetEvent
   | ConversationHistoryEvent
   | PendingChoicesSnapshotEvent
+  | RestartRecoverySnapshotEvent
   | SessionTaskStateSnapshotEvent
   | ConversationEntry
   | AgentStatusEvent
@@ -215,4 +218,3 @@ export type ServerEvent =
   | ApiProxyResponseEvent
   | MessagePinnedEvent
   | ErrorEvent
-

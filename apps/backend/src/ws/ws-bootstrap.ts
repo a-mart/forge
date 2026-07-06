@@ -225,6 +225,11 @@ export async function sendSubscriptionBootstrap(options: {
   });
   metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
 
+  sendMeasured("restartRecoverySnapshot", {
+    type: "restart_recovery_snapshot",
+    snapshot: swarmManager.getRestartRecoverySnapshot?.() ?? null,
+  });
+
   const taskSnapshotSessionAgentId = resolveTaskSnapshotSessionAgentId(targetAgentId);
   metricFields.taskSnapshotSessionAgentId = taskSnapshotSessionAgentId ?? null;
   if (taskSnapshotSessionAgentId) {

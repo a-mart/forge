@@ -35,6 +35,8 @@ type ManagerModelSelectionInput = {
 
 export type ClientCommand =
   | { type: 'subscribe'; agentId?: string; messageCount?: number }
+  | { type: 'resume_restart_recovery'; requestId?: string }
+  | { type: 'dismiss_restart_recovery'; requestId?: string }
   | {
       type: 'user_message'
       text: string

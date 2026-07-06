@@ -30,6 +30,7 @@ import {
   buildRenameProfileCommand,
   buildRenameSessionCommand,
   buildReorderProfilesCommand,
+  buildRestartRecoveryActionCommand,
   buildRequestProjectAgentRecommendationsCommand,
   buildSessionActionCommand,
   buildSetProjectAgentReferenceCommand,
@@ -230,6 +231,14 @@ export class ManagerWsClient {
       this.updateState({ unreadCounts: nextUnread })
     }
     this.send(buildMarkAllReadCommand(profileId))
+  }
+
+  resumeRestartRecovery(): void {
+    this.send(buildRestartRecoveryActionCommand('resume_restart_recovery'))
+  }
+
+  dismissRestartRecovery(): void {
+    this.send(buildRestartRecoveryActionCommand('dismiss_restart_recovery'))
   }
 
   hasExplicitSelection(): boolean {

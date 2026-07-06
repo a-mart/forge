@@ -83,6 +83,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "pick_directory":
     case "mark_unread":
     case "mark_all_read":
+    case "resume_restart_recovery":
+    case "dismiss_restart_recovery":
       return command.requestId;
 
     case "pin_message":
