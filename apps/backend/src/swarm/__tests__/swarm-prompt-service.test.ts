@@ -610,6 +610,37 @@ Custom project instruction: always mention the release train when summarizing de
     expect(prompt).not.toContain("private.md");
   });
 
+  it("gives a lens-less (bare-tier) worker the structured report-back contract", async () => {
+    // Regression guard for BUG-1 (WP-S1): retiring `scout` to a bare `light` tier with no lens must
+    // NOT strip the report-back protocol. A worker with no specialist lens falls through to the base
+    // `worker` archetype (resolveSystemPromptForDescriptor), which must carry the explicit
+    // report-to-manager directive and the structured completion block that every surviving lens
+    // still embeds — otherwise small light-tier models finish silently and lean on the auto-report
+    // failsafe (which then fires the confusing synthetic "completed without an explicit callback").
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: "light-worker",
+        managerId: "manager",
+        profileId: "manager",
+        sessionSurface: "collab",
+        collab: { workspaceId: "workspace-1", channelId: "channel-1" },
+      }),
+      role: "worker" as const,
+      archetypeId: "worker",
+    } as AgentDescriptor;
+
+    const service = createPromptServiceForDescriptor(config, worker);
+    const prompt = await service.resolveSystemPromptForDescriptor(worker);
+
+    expect(prompt).toContain("Report progress and outcomes back to the manager using send_message_to_agent");
+    expect(prompt).toContain(
+      "Always end your turn by reporting to your manager with send_message_to_agent — never finish silently."
+    );
+    expect(prompt).toContain("When reporting completion, use this structure in your send_message_to_agent call:");
+    expect(prompt).toContain("status: done | partial | blocked");
+  });
+
   it("previewManagerSystemPromptForAgent uses the requested collab session and appends session context overlays", async () => {
     const { config } = await makeConfig();
     const dataDir = config.paths.dataDir;
