@@ -5,6 +5,7 @@ import {
   BUILDER_COMMAND_ACCESS,
   MEMBER_ALLOWED_TIERS,
   canUseBuilder,
+  evaluateApiProxyMemberAccess,
   evaluateBuilderCommandAccess,
 } from "../ws/builder-command-access.js";
 
@@ -129,5 +130,74 @@ describe("builder command access policy", () => {
         remoteBuildEnabled: true,
       }),
     ).toMatchObject({ ok: false, reason: "account_disabled" });
+  });
+});
+
+describe("api_proxy member access", () => {
+  const member = createAuthContext("member");
+  const admin = createAuthContext("admin");
+
+  it("admins and local sockets pass every proxied path", () => {
+    for (const authContext of [admin, null]) {
+      expect(
+        evaluateApiProxyMemberAccess({
+          pathname: "/api/auth/tokens",
+          method: "GET",
+          authContext,
+          terminalsEnabled: false,
+        }).ok,
+      ).toBe(true);
+    }
+  });
+
+  it("members get the allowlisted project surfaces and nothing else", () => {
+    const allowed: Array<[string, string]> = [
+      ["/api/read-file", "GET"],
+      ["/api/read-file", "POST"],
+      ["/api/unread", "GET"],
+      ["/api/unread", "POST"],
+      ["/api/slash-commands", "GET"],
+      ["/api/feedback", "POST"],
+      ["/api/agents/agent-1/smart-compact", "POST"],
+      ["/api/terminals", "GET"],
+      ["/api/terminals", "POST"],
+      ["/api/terminals/term-1", "DELETE"],
+      ["/api/terminals/term-1/ticket", "POST"],
+      ["/api/terminals/term-1/resize", "POST"],
+    ];
+    for (const [pathname, method] of allowed) {
+      expect(
+        evaluateApiProxyMemberAccess({ pathname, method, authContext: member, terminalsEnabled: true }).ok,
+        `${method} ${pathname}`,
+      ).toBe(true);
+    }
+
+    const denied: Array<[string, string]> = [
+      ["/api/auth/tokens", "GET"],
+      ["/api/mobile/notification-preferences", "GET"],
+      ["/api/mobile/devices/register", "POST"],
+      ["/api/mobile/push/register", "POST"],
+      ["/api/mobile/push/test", "POST"],
+      ["/api/slash-commands", "POST"],
+      ["/api/anything-else", "GET"],
+    ];
+    for (const [pathname, method] of denied) {
+      expect(
+        evaluateApiProxyMemberAccess({ pathname, method, authContext: member, terminalsEnabled: true }).ok,
+        `${method} ${pathname}`,
+      ).toBe(false);
+    }
+  });
+
+  it("terminal mutations honor the terminalsEnabled lever; reads do not", () => {
+    expect(
+      evaluateApiProxyMemberAccess({ pathname: "/api/terminals", method: "POST", authContext: member, terminalsEnabled: false }).ok,
+    ).toBe(false);
+    expect(
+      evaluateApiProxyMemberAccess({ pathname: "/api/terminals/t/ticket", method: "POST", authContext: member, terminalsEnabled: false }).ok,
+    ).toBe(false);
+    expect(
+      evaluateApiProxyMemberAccess({ pathname: "/api/terminals", method: "GET", authContext: member, terminalsEnabled: false }).ok,
+    ).toBe(true);
   });
 });

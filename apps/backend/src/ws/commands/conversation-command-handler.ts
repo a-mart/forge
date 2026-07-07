@@ -231,6 +231,16 @@ export async function handleConversationCommand(context: ConversationCommandRout
       sourceContext: authContext
         ? { channel: "web", userId: authContext.userId }
         : { channel: "web" },
+      // Accepted-inbound attribution (SPEC §4.5): identity without channel
+      // context — absence of channelId marks this as a builder message.
+      collaborationAuthor: authContext
+        ? {
+            userId: authContext.userId,
+            displayName: authContext.name,
+            role: authContext.role,
+          }
+        : undefined,
+      clientRequestId: command.clientRequestId,
     });
 
     logDebug("user_message:dispatch:complete", {

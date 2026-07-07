@@ -83,6 +83,36 @@ const MEMBER_PROJECT_RESOURCES_PATH = "/api/settings/project-resources";
 const MEMBER_TERMINALS_COLLECTION_PATH = "/api/terminals";
 const MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH = "/api/terminals/available-shells";
 
+// --- R2 write surfaces (all kill-switched; terminals also honor
+// `terminalsEnabled`) -------------------------------------------------------
+
+/** File writes (R2). */
+const MEMBER_WRITE_FILE_PATH = "/api/write-file";
+const MEMBER_FILE_CONTENT_PATH = "/api/files/content";
+/** Git mutations (R2) — shell-equivalent access per the D6 trust model. */
+const MEMBER_GIT_WRITE_PATHS = new Set([
+  "/api/git/fetch",
+  "/api/git/switch-branch",
+  "/api/git/create-branch",
+  "/api/git/pull-ff-only",
+]);
+const MEMBER_GIT_PULL_REQUEST_MERGE_PATH = /^\/api\/git\/pull-requests\/\d+\/merge$/;
+/** Terminal lifecycle + HMAC ticket issuance (R2, honoring terminalsEnabled). */
+const MEMBER_TERMINAL_ITEM_PATH = /^\/api\/terminals\/[^/]+$/;
+const MEMBER_TERMINAL_RESIZE_PATH = /^\/api\/terminals\/[^/]+\/resize$/;
+const MEMBER_TERMINAL_TICKET_PATH = /^\/api\/terminals\/[^/]+\/ticket$/;
+/** Voice transcription for the composer (R2; uses the server's provider key). */
+const MEMBER_TRANSCRIBE_PATH = "/api/transcribe";
+/** Session context operations (R2). */
+const MEMBER_AGENT_SESSION_OP_PATH = /^\/api\/agents\/[^/]+\/(?:compact|smart-compact|clear)$/;
+/** Project resource writes (R2). */
+const MEMBER_PROJECT_RESOURCE_WRITE_PATHS = new Set([
+  "/api/settings/project-resources/override",
+  "/api/settings/project-resources/trust",
+  "/api/settings/project-resources/seed",
+  "/api/settings/project-resources/project-agents/activate",
+]);
+
 interface CollaborationRequestAuthRow {
   user_id: string;
   email: string;
@@ -253,7 +283,7 @@ export function classifyCollaborationHttpRequest(
     return "public";
   }
 
-  if (isMemberProjectRoute(pathname, normalizedMethod)) {
+  if (isMemberProjectRoute(pathname, normalizedMethod, policy)) {
     // Kill switch (SPEC §4.3.5): member project routes require the
     // remoteBuild.enabled instance setting; otherwise they stay admin.
     return policy?.remoteBuildEnabled ? "member" : "admin";
@@ -272,7 +302,11 @@ export function classifyCollaborationHttpRequest(
  * grants reads; R2 extends to project-scoped writes. Anything not matched
  * here falls through to the default `admin` classification.
  */
-function isMemberProjectRoute(pathname: string, normalizedMethod: string): boolean {
+function isMemberProjectRoute(
+  pathname: string,
+  normalizedMethod: string,
+  policy?: CollaborationHttpAccessPolicy,
+): boolean {
   const isReadMethod = normalizedMethod === "GET" || normalizedMethod === "HEAD";
 
   if (isReadMethod) {
@@ -309,6 +343,68 @@ function isMemberProjectRoute(pathname: string, normalizedMethod: string): boole
   // POST /api/read-file is a read (path parameters travel in the body).
   if (pathname === MEMBER_READ_FILE_PATH && (isReadMethod || normalizedMethod === "POST")) {
     return true;
+  }
+
+  // ---- R2 project-scoped writes -----------------------------------------
+
+  if (pathname === MEMBER_WRITE_FILE_PATH && normalizedMethod === "POST") {
+    return true;
+  }
+
+  if (pathname === MEMBER_FILE_CONTENT_PATH && (normalizedMethod === "PUT" || normalizedMethod === "DELETE")) {
+    return true;
+  }
+
+  if (normalizedMethod === "POST" && (MEMBER_GIT_WRITE_PATHS.has(pathname) || MEMBER_GIT_PULL_REQUEST_MERGE_PATH.test(pathname))) {
+    return true;
+  }
+
+  if (pathname === MEMBER_TRANSCRIBE_PATH && normalizedMethod === "POST") {
+    return true;
+  }
+
+  // Session-scoped feedback votes (the /state suffix is read-only).
+  if (
+    normalizedMethod === "POST" &&
+    MEMBER_SESSION_FEEDBACK_PATH.test(pathname) &&
+    !pathname.endsWith("/state")
+  ) {
+    return true;
+  }
+
+  if (normalizedMethod === "POST" && MEMBER_AGENT_SESSION_OP_PATH.test(pathname)) {
+    return true;
+  }
+
+  if (
+    (normalizedMethod === "PUT" || normalizedMethod === "POST") &&
+    MEMBER_PROJECT_RESOURCE_WRITE_PATHS.has(pathname)
+  ) {
+    return true;
+  }
+
+  // Terminal lifecycle and ticket issuance are member surfaces only while
+  // the instance permits remote terminals (D6's one lever).
+  if (policy?.terminalsEnabled) {
+    if (pathname === MEMBER_TERMINALS_COLLECTION_PATH && normalizedMethod === "POST") {
+      return true;
+    }
+
+    if (
+      (normalizedMethod === "PATCH" || normalizedMethod === "DELETE") &&
+      MEMBER_TERMINAL_ITEM_PATH.test(pathname) &&
+      pathname !== MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH &&
+      pathname !== "/api/terminals/settings"
+    ) {
+      return true;
+    }
+
+    if (
+      normalizedMethod === "POST" &&
+      (MEMBER_TERMINAL_RESIZE_PATH.test(pathname) || MEMBER_TERMINAL_TICKET_PATH.test(pathname))
+    ) {
+      return true;
+    }
   }
 
   return false;

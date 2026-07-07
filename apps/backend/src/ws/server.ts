@@ -520,6 +520,7 @@ export class SwarmWebSocketServer {
       collaborationReadinessService: options.collaborationReadinessService ?? undefined,
       feedbackService: this.feedbackService,
       isRemoteBuildEnabled: () => this.remoteBuildSettingsService.isRemoteBuildEnabled(),
+      areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
     });
     this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;

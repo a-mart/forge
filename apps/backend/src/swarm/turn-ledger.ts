@@ -19,6 +19,8 @@ export type TurnLedgerRecord =
       role: AgentDescriptor["role"];
       inboundId?: string;
       kind: TurnLedgerInboundKind;
+      /** Collaboration user id that initiated the turn, or "local" (Wave R). */
+      initiatedBy?: string;
       at: string;
     }
   | { t: "delivery_pending"; turnId?: string; deliveryId: string; from: string; to: string; message?: string; at: string }

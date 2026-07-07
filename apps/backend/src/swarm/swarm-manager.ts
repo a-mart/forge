@@ -471,6 +471,8 @@ interface PreparedInboundConversationPayload {
   source: "user_input" | "project_agent_input";
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
+  /** Sender-supplied id echoed on the broadcast event (Wave R dedup). */
+  clientRequestId?: string;
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
   attachments?: ConversationAttachment[];
   replyTo?: ConversationReplyTarget;
@@ -5594,6 +5596,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       attachments?: ConversationAttachment[];
       sourceContext?: MessageSourceContext;
       replyTo?: ConversationReplyTargetInput;
+      /** Authenticated author identity for attribution (Wave R). */
+      collaborationAuthor?: CollaborationAuthor;
+      /** Sender-supplied id echoed on the broadcast event (Wave R dedup). */
+      clientRequestId?: string;
     }
   ): Promise<void> {
     const trimmed = text.trim();
@@ -5660,8 +5666,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       trimmed,
       attachments,
       sourceContext,
-      undefined,
+      options?.collaborationAuthor,
       resolvedReplyTo,
+      options?.clientRequestId,
     );
 
     if (target.role === "manager") {
@@ -5697,7 +5704,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       appendedMessage.persistedAttachments.length,
       appendedMessage.event.id,
       options?.delivery,
-      undefined,
+      options?.collaborationAuthor,
       codexClassification,
       codexPluginDelegationContext,
       codexPluginRetryAuthorizationContext,
@@ -6460,6 +6467,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext: MessageSourceContext,
     collaborationAuthor?: CollaborationAuthor,
     replyTo?: ConversationReplyTarget,
+    clientRequestId?: string,
   ): Promise<AppendConversationUserMessageResult> {
     const receivedAt = this.now();
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
@@ -6486,6 +6494,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source: "user_input",
       sourceContext,
       collaborationAuthor,
+      clientRequestId,
       attachments,
       replyTo,
     });
@@ -6525,6 +6534,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source: payload.source,
       sourceContext: payload.source === "user_input" ? payload.sourceContext : undefined,
       collaborationAuthor: payload.source === "user_input" ? payload.collaborationAuthor : undefined,
+      clientRequestId: payload.source === "user_input" ? payload.clientRequestId : undefined,
       projectAgentContext: payload.source === "project_agent_input" ? payload.projectAgentContext : undefined,
       replyTo: payload.source === "user_input" ? payload.replyTo : undefined,
     };
@@ -6731,7 +6741,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       metadata: {
         attachmentCount: persistedAttachmentCount,
         codexPluginDelegation: Boolean(codexPluginDelegationContext),
-        collaboration: Boolean(collaborationAuthor),
+        collaboration: Boolean(collaborationAuthor?.channelId),
       },
     });
     const rollbackInboundTurnContext = await this.enqueueInboundTurnContext(managerContextId, {
@@ -6752,7 +6762,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.completeObservabilityRuntimeInput(observabilityInput, receipt, {
         attachmentCount: persistedAttachmentCount,
         codexPluginDelegation: Boolean(codexPluginDelegationContext),
-        collaboration: Boolean(collaborationAuthor),
+        collaboration: Boolean(collaborationAuthor?.channelId),
       });
       if (codexMcpToolGate) {
         this.codexMcpToolTurnGateByManagerId.set(managerContextId, codexMcpToolGate);
@@ -7023,7 +7033,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext: MessageSourceContext,
     collaborationAuthor?: CollaborationAuthor,
   ): AssistantOutputTarget {
-    if (collaborationAuthor) {
+    if (collaborationAuthor?.channelId) {
       return { kind: "explicit_tool_required", reason: "collaboration_channel" };
     }
 
@@ -7084,6 +7094,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         agentId,
         role: descriptor.role,
         kind: classifyTurnLedgerInboundKind(queuedContext),
+        initiatedBy: queuedContext.collaborationAuthor?.userId ?? "local",
         at: this.now(),
       }).catch((error) => {
         this.logDebug("turn_ledger:dispatch:error", {

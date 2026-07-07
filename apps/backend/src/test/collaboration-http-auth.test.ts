@@ -196,19 +196,48 @@ describe("collaboration HTTP auth middleware", () => {
       expect(classifyCollaborationHttpRequest(pathname, method), `${method} ${pathname} (no policy)`).toBe("admin");
     }
 
-    // Write methods on member-read surfaces stay admin in R1.
-    expect(classifyCollaborationHttpRequest("/api/files/content", "PUT", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/files/content", "DELETE", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/write-file", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/git/fetch", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/git/pull-requests/42/merge", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/terminals", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/terminals/term-1/ticket", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/transcribe", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/agents/agent-1/compact", "POST", REMOTE_BUILD_ON)).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/settings/project-resources/override", "PUT", REMOTE_BUILD_ON)).toBe(
-      "admin",
-    );
+    // R2: project-scoped writes are member routes while the switch is on and
+    // fall back to admin when it is off (or when no policy is supplied).
+    const memberWriteRoutes: Array<[string, string]> = [
+      ["/api/files/content", "PUT"],
+      ["/api/files/content", "DELETE"],
+      ["/api/write-file", "POST"],
+      ["/api/git/fetch", "POST"],
+      ["/api/git/switch-branch", "POST"],
+      ["/api/git/create-branch", "POST"],
+      ["/api/git/pull-ff-only", "POST"],
+      ["/api/git/pull-requests/42/merge", "POST"],
+      ["/api/transcribe", "POST"],
+      ["/api/agents/agent-1/compact", "POST"],
+      ["/api/agents/agent-1/smart-compact", "POST"],
+      ["/api/agents/agent-1/clear", "POST"],
+      ["/api/settings/project-resources/override", "PUT"],
+      ["/api/settings/project-resources/trust", "PUT"],
+      ["/api/settings/project-resources/seed", "POST"],
+      ["/api/settings/project-resources/project-agents/activate", "POST"],
+      ["/api/terminals", "POST"],
+      ["/api/terminals/term-1", "PATCH"],
+      ["/api/terminals/term-1", "DELETE"],
+      ["/api/terminals/term-1/resize", "POST"],
+      ["/api/terminals/term-1/ticket", "POST"],
+    ];
+    for (const [pathname, method] of memberWriteRoutes) {
+      expect(classifyCollaborationHttpRequest(pathname, method, REMOTE_BUILD_ON), `${method} ${pathname} (on)`).toBe("member");
+      expect(classifyCollaborationHttpRequest(pathname, method, REMOTE_BUILD_OFF), `${method} ${pathname} (off)`).toBe("admin");
+      expect(classifyCollaborationHttpRequest(pathname, method), `${method} ${pathname} (no policy)`).toBe("admin");
+    }
+
+    // Terminal mutations/tickets additionally honor terminalsEnabled (D6).
+    const TERMINALS_DISABLED = { remoteBuildEnabled: true, terminalsEnabled: false };
+    expect(classifyCollaborationHttpRequest("/api/terminals", "POST", TERMINALS_DISABLED)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/terminals/term-1", "DELETE", TERMINALS_DISABLED)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/terminals/term-1/resize", "POST", TERMINALS_DISABLED)).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/terminals/term-1/ticket", "POST", TERMINALS_DISABLED)).toBe("admin");
+    // Terminal reads stay member-readable regardless of the terminals lever.
+    expect(classifyCollaborationHttpRequest("/api/terminals", "GET", TERMINALS_DISABLED)).toBe("member");
+    expect(classifyCollaborationHttpRequest("/api/terminals/available-shells", "GET", TERMINALS_DISABLED)).toBe("member");
+    // The terminal-settings instance surface never becomes a member route.
+    expect(classifyCollaborationHttpRequest("/api/terminals/settings", "PATCH", REMOTE_BUILD_ON)).toBe("admin");
 
     // Instance-scoped surfaces never become member routes, whatever the policy.
     expect(classifyCollaborationHttpRequest("/api/settings/env", "GET", REMOTE_BUILD_ON)).toBe("admin");

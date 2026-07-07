@@ -86,7 +86,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   list_directories: "write",
   validate_directory: "write",
   // Proxied HTTP surface; members are additionally gated per proxied path
-  // (default admin) via classifyApiProxyPathForMember.
+  // (default deny) via evaluateApiProxyMemberAccess.
   api_proxy: "write",
 
   // Instance-scoped or local-machine operations — admin only.
@@ -97,9 +97,11 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
 };
 
 /**
- * Tiers currently granted to members. R1 ships `read`; R2 extends to `write`.
+ * Tiers granted to members. R1 shipped `read`; R2 extends to `write` —
+ * members are operators of this instance (D6), gated only by the
+ * remoteBuild.enabled kill switch and the admin-only tier.
  */
-export const MEMBER_ALLOWED_TIERS: ReadonlySet<BuilderCommandAccessTier> = new Set(["read"]);
+export const MEMBER_ALLOWED_TIERS: ReadonlySet<BuilderCommandAccessTier> = new Set(["read", "write"]);
 
 export interface BuilderCommandAccessDecision {
   ok: boolean;
@@ -179,5 +181,76 @@ export function evaluateBuilderCommandAccess(options: {
       tier === "admin"
         ? `The ${commandType} command requires admin access.`
         : `Members currently have read-only builder access; ${commandType} is not permitted.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// api_proxy member classification (R2)
+// ---------------------------------------------------------------------------
+
+const API_PROXY_MEMBER_READ_PATHS = new Set(["/api/read-file", "/api/unread", "/api/slash-commands"]);
+const API_PROXY_MEMBER_WRITE_PATHS = new Set(["/api/read-file", "/api/unread", "/api/feedback"]);
+const API_PROXY_MEMBER_SMART_COMPACT_PATH = /^\/api\/agents\/[^/]+\/smart-compact$/;
+const API_PROXY_TERMINALS_COLLECTION_PATH = "/api/terminals";
+const API_PROXY_TERMINAL_MUTATION_PATH = /^\/api\/terminals\/[^/]+(?:\/(?:ticket|resize))?$/;
+
+export interface ApiProxyAccessDecision {
+  ok: boolean;
+  /** HTTP-shaped status carried back through the proxy response. */
+  statusCode?: 403;
+  message?: string;
+}
+
+/**
+ * Member allowlist for the WS `api_proxy` surface, mirroring the HTTP
+ * default-admin discipline: anything unlisted is denied for members.
+ * Admins and local (builder-runtime) sockets pass everything.
+ */
+export function evaluateApiProxyMemberAccess(options: {
+  pathname: string;
+  method: string;
+  authContext: CollaborationAuthContext | null;
+  terminalsEnabled: boolean;
+}): ApiProxyAccessDecision {
+  const { pathname, method, authContext, terminalsEnabled } = options;
+
+  if (!authContext || authContext.role === "admin") {
+    return { ok: true };
+  }
+
+  const normalizedMethod = method.toUpperCase();
+  const isRead = normalizedMethod === "GET" || normalizedMethod === "HEAD";
+
+  if (isRead && API_PROXY_MEMBER_READ_PATHS.has(pathname)) {
+    return { ok: true };
+  }
+
+  if (!isRead && API_PROXY_MEMBER_WRITE_PATHS.has(pathname)) {
+    return { ok: true };
+  }
+
+  if (!isRead && API_PROXY_MEMBER_SMART_COMPACT_PATH.test(pathname)) {
+    return { ok: true };
+  }
+
+  if (pathname === API_PROXY_TERMINALS_COLLECTION_PATH) {
+    if (isRead) {
+      return { ok: true };
+    }
+    return terminalsEnabled
+      ? { ok: true }
+      : { ok: false, statusCode: 403, message: "Remote terminals are disabled on this instance." };
+  }
+
+  if (API_PROXY_TERMINAL_MUTATION_PATH.test(pathname)) {
+    return terminalsEnabled
+      ? { ok: true }
+      : { ok: false, statusCode: 403, message: "Remote terminals are disabled on this instance." };
+  }
+
+  return {
+    ok: false,
+    statusCode: 403,
+    message: `Members may not access ${pathname} through the API proxy.`,
   };
 }

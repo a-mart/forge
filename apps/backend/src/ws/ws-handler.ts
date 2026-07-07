@@ -36,7 +36,7 @@ import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
-import { evaluateBuilderCommandAccess } from "./builder-command-access.js";
+import { evaluateApiProxyMemberAccess, evaluateBuilderCommandAccess } from "./builder-command-access.js";
 import { handleAgentCommand } from "./commands/agent-command-handler.js";
 import {
   CollabCommandHandler,
@@ -56,6 +56,7 @@ export class WsHandler {
   private readonly swarmManager: SwarmManager;
   private readonly allowNonManagerSubscriptions: boolean;
   private readonly isRemoteBuildEnabled: () => boolean;
+  private readonly areRemoteTerminalsEnabled: () => boolean;
   private readonly unreadTracker: UnreadTracker | null;
   private readonly subscriptionManager: WsSubscriptions;
   private readonly apiProxy: WsApiProxy;
@@ -77,12 +78,14 @@ export class WsHandler {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     feedbackService?: FeedbackService;
     isRemoteBuildEnabled?: () => boolean;
+    areRemoteTerminalsEnabled?: () => boolean;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     // Default off: without the instance setting wired in, members get no
     // builder access (the remote-projects kill switch fails closed).
     this.isRemoteBuildEnabled = options.isRemoteBuildEnabled ?? (() => false);
+    this.areRemoteTerminalsEnabled = options.areRemoteTerminalsEnabled ?? (() => true);
     this.unreadTracker = options.unreadTracker ?? null;
 
     const feedbackService = options.feedbackService ?? new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
@@ -376,6 +379,27 @@ export class WsHandler {
     }
 
     if (command.type === "api_proxy") {
+      // Second gate for members: the proxy fronts HTTP-shaped surfaces, so it
+      // gets the HTTP discipline — per-path allowlist with default deny.
+      if (collaborationEnabled && authContext && authContext.role !== "admin") {
+        const proxyAccess = evaluateApiProxyMemberAccess({
+          pathname: resolveApiProxyPathname(command.path),
+          method: command.method,
+          authContext,
+          terminalsEnabled: this.areRemoteTerminalsEnabled(),
+        });
+        if (!proxyAccess.ok) {
+          this.send(socket, {
+            type: "api_proxy_response",
+            requestId: command.requestId,
+            status: proxyAccess.statusCode ?? 403,
+            body: JSON.stringify({ error: proxyAccess.message ?? "Forbidden" }),
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+          return;
+        }
+      }
+
       await this.handleApiProxyCommand(socket, command, subscribedAgentId);
       return;
     }
@@ -659,5 +683,13 @@ export class WsHandler {
     } catch {
       // best effort
     }
+  }
+}
+
+function resolveApiProxyPathname(path: string): string {
+  try {
+    return new URL(path, "http://api-proxy.local").pathname;
+  } catch {
+    return path;
   }
 }

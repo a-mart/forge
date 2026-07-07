@@ -10,13 +10,16 @@ import { startServer, type StartedServer } from "../server.js";
 import { createTempConfig, type TempConfigHandle } from "../test-support/temp-config.js";
 
 /**
- * WS member-access matrix (SPEC §10.2, R1 scope).
+ * WS member-access matrix + attribution/echo fixtures (SPEC §10.2–10.4).
  *
  * - Kill switch off (default): members get no builder WS access at all.
- * - Kill switch on: members can subscribe/read; mutating and admin-tier
- *   commands stay denied in R1.
+ * - Kill switch on (R2): members read AND write project surfaces; admin-tier
+ *   commands stay denied.
  * - Admins pass the gate unconditionally (existing behavior preserved).
  * - The setting takes effect live — no restart.
+ * - Two-client fixture: interleaved sends from two authenticated clients
+ *   broadcast attributed, clientRequestId-echoed messages with no dupes,
+ *   across live events and the bootstrap-history path.
  */
 
 const ADMIN_EMAIL = "remote-ws-admin@example.com";
@@ -111,7 +114,7 @@ afterEach(async () => {
   }
 });
 
-async function startCollaborationServer(): Promise<{ baseUrl: string }> {
+async function startCollaborationServer(): Promise<{ baseUrl: string; defaultCwd: string }> {
   const tempRootDir = await mkdtemp(join(tmpdir(), "forge-remote-ws-access-"));
   const tempConfigHandle = await createTempConfig({
     runtimeTarget: "collaboration-server",
@@ -129,7 +132,10 @@ async function startCollaborationServer(): Promise<{ baseUrl: string }> {
   });
   activeServer = server;
 
-  return { baseUrl: `http://${server.host}:${server.port}` };
+  return {
+    baseUrl: `http://${server.host}:${server.port}`,
+    defaultCwd: tempConfigHandle.config.defaultCwd,
+  };
 }
 
 function readSetCookieHeaders(response: Response): string[] {
@@ -206,6 +212,33 @@ async function openAuthenticatedWs(baseUrl: string, cookie: string): Promise<WsE
     socket.once("error", reject);
   });
   return new WsEventHarness(socket);
+}
+
+function harnessCollectDenials(harness: WsEventHarness): () => string[] {
+  const startIndex = harness.events.length;
+  return () =>
+    harness.events
+      .slice(startIndex)
+      .filter(
+        (event): event is Extract<ServerEvent, { type: "error" }> =>
+          event.type === "error" && event.code === "COLLABORATION_COMMAND_NOT_ALLOWED",
+      )
+      .map((event) => event.message);
+}
+
+async function fetchCurrentUser(
+  baseUrl: string,
+  cookie: string,
+): Promise<{ userId: string; name: string; role: string }> {
+  const response = await fetch(`${baseUrl}/api/collaboration/me`, { headers: { cookie } });
+  expect(response.status).toBe(200);
+  const body = await response.json() as {
+    authenticated: boolean;
+    user?: { userId: string; name: string; role: string };
+  };
+  expect(body.authenticated).toBe(true);
+  expect(body.user).toBeTruthy();
+  return body.user!;
 }
 
 async function expectCommandDenied(
@@ -289,7 +322,7 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
   }, 30_000);
 });
 
-describe("remote build WS access matrix (R1)", () => {
+describe("remote build WS access matrix", () => {
   it("denies members all builder commands while the kill switch is off", async () => {
     const { baseUrl } = await startCollaborationServer();
     const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
@@ -305,7 +338,7 @@ describe("remote build WS access matrix (R1)", () => {
     expect(bootstrap.currentUser.email).toBe(MEMBER_EMAIL);
   }, 30_000);
 
-  it("grants members reads but not mutations when remote build is enabled", async () => {
+  it("grants members reads and project writes; admin-tier commands stay denied (R2)", async () => {
     const { baseUrl } = await startCollaborationServer();
     const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
     const memberCookie = await createMember(baseUrl, adminCookie);
@@ -318,18 +351,113 @@ describe("remote build WS access matrix (R1)", () => {
     const snapshot = await member.waitForEvent("agents_snapshot");
     expect(Array.isArray(snapshot.agents)).toBe(true);
 
-    // R1: mutating commands stay denied for members.
-    await expectCommandDenied(member, { type: "user_message", text: "hello" }, "read-only");
-    await expectCommandDenied(
-      member,
-      { type: "create_manager", name: "proj", cwd: "/tmp" },
-      "read-only",
+    // R2: mutating commands pass the access gate for members. Targeting an
+    // unknown agent proves the command reached the handler (UNKNOWN_AGENT)
+    // instead of being rejected by the gate.
+    const gateDenied = harnessCollectDenials(member);
+    member.send({ type: "user_message", text: "hello", agentId: "no-such-agent" });
+    const unknownAgent = await member.waitForEvent(
+      "error",
+      (event) => event.code === "UNKNOWN_AGENT",
     );
-    await expectCommandDenied(member, { type: "delete_session", agentId: "agent-1" }, "read-only");
+    expect(unknownAgent.code).toBe("UNKNOWN_AGENT");
+    expect(gateDenied()).toEqual([]);
 
-    // Admin-tier commands are denied for members regardless of phase.
+    // Admin-tier commands are denied for members in every phase.
     await expectCommandDenied(member, { type: "pick_directory" }, "admin");
     await expectCommandDenied(member, { type: "resume_restart_recovery" }, "admin");
+  }, 30_000);
+
+  it("broadcasts attributed, clientRequestId-echoed messages to both clients without dupes (R2 fixture)", async () => {
+    const { baseUrl, defaultCwd } = await startCollaborationServer();
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const memberCookie = await createMember(baseUrl, adminCookie);
+    await setRemoteBuildEnabled(baseUrl, adminCookie, true);
+
+    const memberUser = await fetchCurrentUser(baseUrl, memberCookie);
+    const adminUser = await fetchCurrentUser(baseUrl, adminCookie);
+
+    const admin = await openAuthenticatedWs(baseUrl, adminCookie);
+    const member = await openAuthenticatedWs(baseUrl, memberCookie);
+
+    admin.send({ type: "subscribe" });
+    await admin.waitForEvent("agents_snapshot");
+
+    // A fresh collaboration server has no plain projects; create one over the
+    // remote socket (the R2 remote create-project path).
+    admin.send({ type: "create_manager", name: "Fixture Project", cwd: defaultCwd, requestId: "create-1" });
+    const created = await admin.waitForEvent("manager_created", (event) => event.requestId === "create-1");
+    const targetAgentId = created.manager.agentId;
+    expect(targetAgentId).toBeTruthy();
+    admin.send({ type: "subscribe", agentId: targetAgentId });
+    await admin.waitForEvent("conversation_history", (event) => event.agentId === targetAgentId);
+
+    member.send({ type: "subscribe", agentId: targetAgentId });
+    await member.waitForEvent("agents_snapshot");
+
+    // Interleaved sends from two authenticated clients.
+    member.send({
+      type: "user_message",
+      agentId: targetAgentId,
+      text: "hello from the member",
+      clientRequestId: "member-req-1",
+    });
+    const memberEchoAtMember = await member.waitForEvent(
+      "conversation_message",
+      (event) => event.clientRequestId === "member-req-1",
+    );
+    const memberEchoAtAdmin = await admin.waitForEvent(
+      "conversation_message",
+      (event) => event.clientRequestId === "member-req-1",
+    );
+
+    expect(memberEchoAtMember.collaborationAuthor).toMatchObject({
+      userId: memberUser.userId,
+      displayName: memberUser.name,
+      role: "member",
+    });
+    expect(memberEchoAtAdmin.collaborationAuthor?.userId).toBe(memberUser.userId);
+    expect(memberEchoAtMember.text).toBe("hello from the member");
+
+    admin.send({
+      type: "user_message",
+      agentId: targetAgentId,
+      text: "hello from the admin",
+      clientRequestId: "admin-req-1",
+    });
+    const adminEchoAtMember = await member.waitForEvent(
+      "conversation_message",
+      (event) => event.clientRequestId === "admin-req-1",
+    );
+    expect(adminEchoAtMember.collaborationAuthor).toMatchObject({
+      userId: adminUser.userId,
+      role: "admin",
+    });
+
+    // No duplicates: each clientRequestId appears exactly once per client.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const harness of [admin, member]) {
+      const memberCopies = harness.events.filter(
+        (event) => event.type === "conversation_message" && event.clientRequestId === "member-req-1",
+      );
+      const adminCopies = harness.events.filter(
+        (event) => event.type === "conversation_message" && event.clientRequestId === "admin-req-1",
+      );
+      expect(memberCopies).toHaveLength(1);
+      expect(adminCopies).toHaveLength(1);
+    }
+
+    // Bootstrap-replace path: a fresh client's history carries both messages
+    // exactly once, attribution intact.
+    const late = await openAuthenticatedWs(baseUrl, memberCookie);
+    late.send({ type: "subscribe", agentId: targetAgentId });
+    const history = await late.waitForEvent("conversation_history");
+    const fromMember = history.messages.filter((message) => message.clientRequestId === "member-req-1");
+    const fromAdmin = history.messages.filter((message) => message.clientRequestId === "admin-req-1");
+    expect(fromMember).toHaveLength(1);
+    expect(fromAdmin).toHaveLength(1);
+    expect(fromMember[0]?.collaborationAuthor?.userId).toBe(memberUser.userId);
+    expect(fromAdmin[0]?.collaborationAuthor?.userId).toBe(adminUser.userId);
   }, 30_000);
 
   it("applies kill-switch changes live and never gates admins", async () => {

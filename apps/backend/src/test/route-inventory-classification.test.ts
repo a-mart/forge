@@ -92,13 +92,13 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   // --- files (member project reads, R1) ------------------------------------
   { sample: "/api/attachments/file-1", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/read-file", expect: { GET: "member", POST: "member" }, killSwitched: true },
-  { sample: "/api/write-file", expect: { POST: "admin" } },
+  { sample: "/api/write-file", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/files/list", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/count", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/search", expect: { GET: "member" }, killSwitched: true },
   {
     sample: "/api/files/content",
-    expect: { GET: "member", PUT: "admin", DELETE: "admin" },
+    expect: { GET: "member", PUT: "member", DELETE: "member" },
     killSwitched: true,
   },
   { sample: "/api/files/raw", expect: { GET: "member", HEAD: "member" }, killSwitched: true },
@@ -114,19 +114,19 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/git/worktrees", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/branches", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/mutation-preflight", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/git/fetch", expect: { POST: "admin" } },
-  { sample: "/api/git/switch-branch", expect: { POST: "admin" } },
-  { sample: "/api/git/create-branch", expect: { POST: "admin" } },
-  { sample: "/api/git/pull-ff-only", expect: { POST: "admin" } },
+  { sample: "/api/git/fetch", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/git/switch-branch", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/git/create-branch", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/git/pull-ff-only", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/provider/status", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests/42", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/git/pull-requests/42/merge", expect: { POST: "admin" } },
+  { sample: "/api/git/pull-requests/42/merge", expect: { POST: "member" }, killSwitched: true },
 
   // --- feedback -------------------------------------------------------------
   {
     sample: "/api/v1/profiles/prof-1/sessions/sess-1/feedback",
-    expect: { GET: "member", POST: "admin" },
+    expect: { GET: "member", POST: "member" },
     killSwitched: true,
   },
   {
@@ -171,10 +171,10 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
 
   // --- project resources (member project reads, R1) -------------------------
   { sample: "/api/settings/project-resources", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/settings/project-resources/override", expect: { PUT: "admin" } },
-  { sample: "/api/settings/project-resources/trust", expect: { PUT: "admin" } },
-  { sample: "/api/settings/project-resources/seed", expect: { POST: "admin" } },
-  { sample: "/api/settings/project-resources/project-agents/activate", expect: { POST: "admin" } },
+  { sample: "/api/settings/project-resources/override", expect: { PUT: "member" }, killSwitched: true },
+  { sample: "/api/settings/project-resources/trust", expect: { PUT: "member" }, killSwitched: true },
+  { sample: "/api/settings/project-resources/seed", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/settings/project-resources/project-agents/activate", expect: { POST: "member" }, killSwitched: true },
 
   // --- debug / stats / telemetry (instance-scoped) ---------------------------
   { sample: "/api/debug/codex-transport", expect: { GET: "admin" }, optional: true },
@@ -188,16 +188,16 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/provider-usage", expect: { GET: "admin" } },
   { sample: "/api/telemetry/send-now", expect: { POST: "admin" }, optional: true },
 
-  // --- transcription (member in R2; admin during R1) -------------------------
-  { sample: "/api/transcribe", expect: { POST: "admin" } },
+  // --- transcription (member from R2) ----------------------------------------
+  { sample: "/api/transcribe", expect: { POST: "member" }, killSwitched: true },
 
   // --- project-scoped session surfaces ---------------------------------------
   { sample: "/api/managers/mgr-1/schedules", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/restart-recovery", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/slash-commands", expect: { GET: "admin", POST: "admin" } },
-  { sample: "/api/agents/agent-1/compact", expect: { POST: "admin" } },
-  { sample: "/api/agents/agent-1/smart-compact", expect: { POST: "admin" } },
-  { sample: "/api/agents/agent-1/clear", expect: { POST: "admin" } },
+  { sample: "/api/agents/agent-1/compact", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/agents/agent-1/smart-compact", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/agents/agent-1/clear", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/agents/agent-1/system-prompt", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/sessions/sess-1/audit", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/sessions/sess-1/audit/entry", expect: { GET: "member" }, killSwitched: true },
@@ -212,10 +212,10 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   // --- terminals (list/shells member-read R1; mutations/tickets R2) ----------
   { sample: "/api/terminals/settings", expect: { GET: "admin", PUT: "admin" }, optional: true },
   { sample: "/api/terminals/available-shells", expect: { GET: "member" }, killSwitched: true, optional: true },
-  { sample: "/api/terminals", expect: { GET: "member", POST: "admin" }, killSwitched: true, optional: true },
-  { sample: "/api/terminals/term-1", expect: { PATCH: "admin", DELETE: "admin" }, optional: true },
-  { sample: "/api/terminals/term-1/resize", expect: { POST: "admin" }, optional: true },
-  { sample: "/api/terminals/term-1/ticket", expect: { POST: "admin" }, optional: true },
+  { sample: "/api/terminals", expect: { GET: "member", POST: "member" }, killSwitched: true, optional: true },
+  { sample: "/api/terminals/term-1", expect: { PATCH: "member", DELETE: "member" }, killSwitched: true, optional: true },
+  { sample: "/api/terminals/term-1/resize", expect: { POST: "member" }, killSwitched: true, optional: true },
+  { sample: "/api/terminals/term-1/ticket", expect: { POST: "member" }, killSwitched: true, optional: true },
 
   // --- integrations / prompts (instance prompt registry — admin forever) -----
   { sample: "/api/managers/mgr-1/integrations/telegram", expect: { GET: "admin", PUT: "admin" }, optional: true },
