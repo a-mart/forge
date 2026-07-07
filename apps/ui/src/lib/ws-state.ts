@@ -4,6 +4,7 @@ import type {
   AgentStatus,
   ConversationEntry,
   ManagerProfile,
+  ProjectPresenceViewer,
   SessionTaskStateSnapshotEvent,
   RestartRecoverySnapshot,
   TelegramStatusEvent,
@@ -45,6 +46,8 @@ export interface ManagerWsState {
   lastSuccess: string | null
   telegramStatus: TelegramStatusEvent | null
   unreadCounts: Record<string, number>
+  /** Wave R presence: connected member identities per session (SPEC §4.7). */
+  projectPresence: Record<string, ProjectPresenceViewer[]>
   terminals: TerminalDescriptor[]
   terminalSessionScopeId: string | null
   taskSnapshots: Record<string, SessionTaskStateSnapshotEvent>
@@ -83,6 +86,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     lastSuccess: null,
     telegramStatus: null,
     unreadCounts: {},
+    projectPresence: {},
     terminals: [],
     terminalSessionScopeId: null,
     taskSnapshots: {},

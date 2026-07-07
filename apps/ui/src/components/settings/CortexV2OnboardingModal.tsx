@@ -27,6 +27,7 @@ import { CORTEX_V2_COPY, CORTEX_V2_ONBOARDING_SEEN_KEY } from './cortex-v2-copy'
  *   simply closes.  Either action sets the seen marker.
  */
 
+// eslint-disable-next-line react-refresh/only-export-components -- tiny seen-marker helpers colocated with the modal they gate
 export function hasSeenCortexV2Onboarding(): boolean {
   try {
     return localStorage.getItem(CORTEX_V2_ONBOARDING_SEEN_KEY) === 'true'
@@ -36,6 +37,7 @@ export function hasSeenCortexV2Onboarding(): boolean {
   }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- tiny seen-marker helpers colocated with the modal they gate
 export function markCortexV2OnboardingSeen(): void {
   try {
     localStorage.setItem(CORTEX_V2_ONBOARDING_SEEN_KEY, 'true')
@@ -76,7 +78,6 @@ export function CortexV2OnboardingModal({ source }: CortexV2OnboardingModalProps
         setOpen(true)
       })
       .catch(() => {
-        if (cancelled) return
         // On load failure, don't nag now, but leave the marker unset so a later
         // launch (once the backend is reachable) can still offer it.
       })

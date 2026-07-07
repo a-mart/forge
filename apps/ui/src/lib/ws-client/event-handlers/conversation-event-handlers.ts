@@ -253,6 +253,19 @@ export function handleConversationEvent(
       handleUnreadNotification(event.agentId, context.state, event.reason, event.sessionAgentId, event.cliOriginated)
       return true
 
+    case 'project_presence': {
+      // Full per-session viewer snapshot (Wave R R3). Kept for every session
+      // (bounded by session count) so future sidebar badges can read it.
+      const nextPresence = { ...context.state.projectPresence }
+      if (event.viewers.length > 0) {
+        nextPresence[event.sessionAgentId] = event.viewers
+      } else {
+        delete nextPresence[event.sessionAgentId]
+      }
+      context.updateState({ projectPresence: nextPresence })
+      return true
+    }
+
     case 'unread_counts_snapshot': {
       const counts = { ...event.counts }
       if (context.state.targetAgentId) {

@@ -596,6 +596,15 @@ export function BuilderSurface({
 
   const showActivityRail = activeView === 'chat'
 
+  // Wave R presence: other members viewing the active session (self excluded).
+  const presenceViewers = useMemo(() => {
+    const viewers =
+      (activeAgentId ? state.projectPresence[activeAgentId] : undefined) ??
+      (activeManagerId ? state.projectPresence[activeManagerId] : undefined) ??
+      []
+    return viewers.filter((viewer) => viewer.userId !== activeOriginCurrentUserId)
+  }, [activeAgentId, activeManagerId, activeOriginCurrentUserId, state.projectPresence])
+
   // ── Wave R: origin-aware sidebar selection ──
   const handleSelectSidebarAgent = useCallback((agentId: string) => {
     if (activeOriginId === LOCAL_ORIGIN_ID) {
@@ -851,6 +860,7 @@ export function BuilderSurface({
                   connected: state.connected,
                   activeAgentId,
                   activeAgentLabel,
+                  presenceViewers,
                   wsUrl,
                   activeAgentProfileName,
                   activeAgentSessionLabel,

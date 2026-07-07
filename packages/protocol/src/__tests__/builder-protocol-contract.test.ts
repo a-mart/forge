@@ -6,6 +6,7 @@ import {
 import type { CollaborationAuthor, CollaborationStatus } from '../collaboration.js'
 import type { ClientCommand } from '../client-commands.js'
 import type { ConversationMessageEvent } from '../conversation-events.js'
+import type { ProjectPresenceEvent } from '../presence.js'
 
 /**
  * Wave R contract fixtures (SPEC §6): every wire change is additive-optional,
@@ -104,5 +105,28 @@ describe('builder protocol contract', () => {
     expect(event.clientRequestId).toBeTruthy()
     expect(legacyEvent.collaborationAuthor).toBeUndefined()
     expect(legacyEvent.clientRequestId).toBeUndefined()
+  })
+})
+
+describe('project_presence contract (R3)', () => {
+  it('carries a full viewer snapshot per session and tolerates empty sets', () => {
+    const populated = {
+      type: 'project_presence',
+      sessionAgentId: 'agent-1',
+      profileId: 'profile-1',
+      viewers: [
+        { userId: 'u1', displayName: 'Ada', role: 'member' },
+        { userId: 'u2', displayName: 'Root', role: 'admin' },
+      ],
+    } satisfies ProjectPresenceEvent
+
+    const empty = {
+      type: 'project_presence',
+      sessionAgentId: 'agent-1',
+      viewers: [],
+    } satisfies ProjectPresenceEvent
+
+    expect(populated.viewers).toHaveLength(2)
+    expect(empty.profileId).toBeUndefined()
   })
 })

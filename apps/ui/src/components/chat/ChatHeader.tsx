@@ -31,6 +31,8 @@ interface ChatHeaderProps {
   wsUrl?: string
   activeAgentProfileName?: string
   activeAgentSessionLabel?: string
+  /** Wave R presence: other members currently viewing this session. */
+  presenceViewers?: Array<{ userId: string; displayName: string; role: 'admin' | 'member' }>
   totalUnreadCount?: number
   activeAgentArchetypeId?: string | null
   activeAgentSessionPurpose?: AgentSessionPurpose | null
@@ -151,6 +153,7 @@ export function ChatHeader({
   wsUrl,
   activeAgentProfileName,
   activeAgentSessionLabel,
+  presenceViewers,
   totalUnreadCount = 0,
   activeAgentArchetypeId,
   activeAgentSessionPurpose,
@@ -313,6 +316,28 @@ export function ChatHeader({
             >
               <span className="truncate">{archetypeLabel}</span>
             </Badge>
+          ) : null}
+          {presenceViewers && presenceViewers.length > 0 ? (
+            <span
+              className="hidden shrink-0 items-center -space-x-1 md:inline-flex"
+              title={`Also here: ${presenceViewers.map((viewer) => viewer.displayName).join(', ')}`}
+              data-testid="presence-avatars"
+            >
+              {presenceViewers.slice(0, 4).map((viewer) => (
+                <span
+                  key={viewer.userId}
+                  aria-label={viewer.displayName}
+                  className="inline-flex size-5 items-center justify-center rounded-full border border-background bg-primary/20 text-[9px] font-semibold uppercase text-primary"
+                >
+                  {presenceInitials(viewer.displayName)}
+                </span>
+              ))}
+              {presenceViewers.length > 4 ? (
+                <span className="inline-flex size-5 items-center justify-center rounded-full border border-background bg-muted text-[9px] font-semibold text-muted-foreground">
+                  +{presenceViewers.length - 4}
+                </span>
+              ) : null}
+            </span>
           ) : null}
           <span aria-hidden="true" className="hidden shrink-0 text-muted-foreground md:inline">
             ·
@@ -700,4 +725,11 @@ export function ChatHeader({
       ) : null}
     </header>
   )
+}
+
+function presenceInitials(displayName: string): string {
+  const parts = displayName.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0]!.slice(0, 2)
+  return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`
 }

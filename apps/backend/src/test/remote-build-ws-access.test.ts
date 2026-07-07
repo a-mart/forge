@@ -322,6 +322,53 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
   }, 30_000);
 });
 
+describe("project presence (R3)", () => {
+  it("flips viewer snapshots as members subscribe and disconnect", async () => {
+    const { baseUrl } = await startCollaborationServer();
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const memberCookie = await createMember(baseUrl, adminCookie);
+    await setRemoteBuildEnabled(baseUrl, adminCookie, true);
+
+    const adminUser = await fetchCurrentUser(baseUrl, adminCookie);
+    const memberUser = await fetchCurrentUser(baseUrl, memberCookie);
+
+    const admin = await openAuthenticatedWs(baseUrl, adminCookie);
+    admin.send({ type: "subscribe" });
+    const readyPresence = await admin.waitForEvent("project_presence");
+    const sessionAgentId = readyPresence.sessionAgentId;
+    expect(readyPresence.viewers.map((viewer) => viewer.userId)).toEqual([adminUser.userId]);
+
+    const member = await openAuthenticatedWs(baseUrl, memberCookie);
+    member.send({ type: "subscribe", agentId: sessionAgentId });
+    const joined = await admin.waitForEvent(
+      "project_presence",
+      (event) => event.sessionAgentId === sessionAgentId && event.viewers.length === 2,
+    );
+    const joinedIds = joined.viewers.map((viewer) => viewer.userId).sort();
+    expect(joinedIds).toEqual([adminUser.userId, memberUser.userId].sort());
+    expect(joined.viewers.find((viewer) => viewer.userId === memberUser.userId)?.role).toBe("member");
+
+    // The member also learns who is here on subscribe.
+    const memberView = await member.waitForEvent(
+      "project_presence",
+      (event) => event.sessionAgentId === sessionAgentId && event.viewers.length === 2,
+    );
+    expect(memberView.viewers).toHaveLength(2);
+
+    // Disconnect flips presence for the remaining viewer.
+    member.socket.close();
+    const departed = await admin.waitForEvent(
+      "project_presence",
+      (event) =>
+        event.sessionAgentId === sessionAgentId &&
+        event.viewers.length === 1 &&
+        event.viewers[0]?.userId === adminUser.userId,
+      10_000,
+    );
+    expect(departed.viewers.map((viewer) => viewer.userId)).toEqual([adminUser.userId]);
+  }, 30_000);
+});
+
 describe("remote build WS access matrix", () => {
   it("denies members all builder commands while the kill switch is off", async () => {
     const { baseUrl } = await startCollaborationServer();
