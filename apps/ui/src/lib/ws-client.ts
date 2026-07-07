@@ -55,6 +55,9 @@ import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
 } from './ws-client/runtime-types'
+
+/** Server close code for a permanently invalidated collaboration session. */
+const SESSION_INVALIDATED_CLOSE_CODE = 4001
 import {
   reduceAgentStatus,
   reduceAgentsSnapshot,
@@ -135,6 +138,7 @@ export class ManagerWsClient {
 
   private hasExplicitAgentSelection = false
   private explicitAgentSelectionAgentId: string | null = null
+  private sessionInvalidatedObserver: (() => void) | null = null
 
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
@@ -173,10 +177,20 @@ export class ManagerWsClient {
       url,
       reconnectDelayMs: RECONNECT_MS,
       onOpen: () => this.handleTransportOpen(),
-      onClose: () => this.handleTransportClose(),
+      onClose: (event) => this.handleTransportClose(event),
       onMessage: (data) => this.handleServerEvent(data),
       onError: () => this.handleTransportError(),
     })
+  }
+
+  /**
+   * Observe permanent session invalidation (server close code 4001 on remote
+   * collaboration origins — role change, disable, sign-out). The client stops
+   * reconnecting when it fires; the origin manager flips the origin to
+   * `unauthorized`. Local builder sockets never receive 4001.
+   */
+  setSessionInvalidatedObserver(observer: (() => void) | null): void {
+    this.sessionInvalidatedObserver = observer
   }
 
   getState(): ManagerWsState {
@@ -733,7 +747,7 @@ export class ManagerWsClient {
     this.send(buildSubscribeCommand(this.desiredAgentId))
   }
 
-  private handleTransportClose(): void {
+  private handleTransportClose(event?: CloseEvent): void {
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
     this.bootstrapBuffer.clear()
@@ -747,6 +761,17 @@ export class ManagerWsClient {
 
     this.sessionWorkerCache.clearQueuedRefetches()
     this.requestDispatcher.rejectAllPendingRequests('WebSocket disconnected before request completed.')
+
+    // Remote collaboration origins: 4001 means the session is permanently
+    // invalid — reconnecting would 401 forever. Stop the transport and let
+    // the origin manager surface the sign-in state.
+    if (event?.code === SESSION_INVALIDATED_CLOSE_CODE) {
+      this.transport.disconnect()
+      this.updateState({
+        lastError: 'Your session has been invalidated. Please sign in again.',
+      })
+      this.sessionInvalidatedObserver?.()
+    }
   }
 
   private handleTransportError(): void {

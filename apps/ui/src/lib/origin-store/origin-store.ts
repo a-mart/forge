@@ -90,6 +90,7 @@ export class OriginStore {
   private readonly metaListeners = new Set<() => void>()
 
   private readonly detachClient: Unsubscribe
+  private transportStarted = false
 
   constructor(options: OriginStoreOptions) {
     this.originId = options.originId
@@ -109,9 +110,26 @@ export class OriginStore {
     })
 
     if (!options.offline) {
-      this.meta = { ...this.meta, connectionStatus: 'connecting' }
-      this.client.start()
+      this.startTransport()
     }
+  }
+
+  /**
+   * Open the live WebSocket for this origin. Idempotent. Wave R remote
+   * origins are created with `offline: true` so the section (meta) renders
+   * while the handshake/auth probe runs; the origin manager calls this once
+   * the origin is authenticated and version-compatible.
+   */
+  startTransport(): void {
+    if (this.transportStarted) return
+    this.transportStarted = true
+    this.patchMeta({ connectionStatus: 'connecting' })
+    this.client.start()
+  }
+
+  /** Whether {@link startTransport} has been called on this store. */
+  hasStartedTransport(): boolean {
+    return this.transportStarted
   }
 
   // -----------------------------------------------------------------------

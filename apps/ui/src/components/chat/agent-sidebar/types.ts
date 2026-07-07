@@ -79,6 +79,13 @@ export interface AgentSidebarProps {
   onDeleteProjectAgentReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string }>
   onRequestProjectAgentRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
   onCreateAgentCreator?: (profileId: string) => void
+  /** Remote origin sections (Wave R): non-local origin ids to render below the local tree. */
+  remoteOriginIds?: string[]
+  /** The origin whose builder surface is active (selection highlight scoping). */
+  activeOriginId?: string
+  onSelectRemoteAgent?: (originId: string, agentId: string) => void
+  onRemoteOriginSignIn?: (originId: string) => void
+  onRemoteOriginRetry?: (originId: string) => void
 }
 
 export interface WorkerRowProps {

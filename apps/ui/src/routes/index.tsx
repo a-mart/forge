@@ -17,6 +17,7 @@ import type { AgentDescriptor } from '@forge/protocol'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
 import { resolveCollaborationWsUrl } from '@/lib/collaboration-endpoints'
 import { getCollaborationConnectionOptions, getDefaultConnectionIdFromTargets, subscribeToRegistryChanges, type CollaborationEndpointTarget } from '@/lib/collaboration-connections'
+import { forgeOriginManager } from '@/lib/origin-store/forge-origin-manager'
 import { isElectron } from '@/lib/electron-bridge'
 import { getConfiguredDefaultSurface } from '@/lib/web-runtime-flags'
 import { useBackendHealthPoll } from '@/hooks/index-page/use-backend-health-poll'
@@ -42,6 +43,7 @@ type RouteSearch = {
   surface?: string
   channel?: string
   collab?: string
+  origin?: string
   statsTab?: string
   settingsTab?: string
   collabApiBaseUrl?: string
@@ -51,6 +53,13 @@ type RouteSearch = {
 export function IndexPage() {
   const wsUrl = resolveBackendWsUrl()
   const collabWsUrl = resolveCollaborationWsUrl()
+
+  // Wave R: manage remote origins (probe → version gate → auth → connect) for
+  // registry connections with remote projects enabled. Module-level manager;
+  // idempotent start.
+  useEffect(() => {
+    forgeOriginManager.start()
+  }, [])
 
   // Track registry mutations so collabTargets recomputes when connections
   // are added, removed, renamed, or edited (not just when default wsUrl changes).
@@ -365,6 +374,9 @@ function useOptionalNavigate(): NavigateFn {
     if (search?.collab) {
       params.set('collab', search.collab)
     }
+    if (search?.origin) {
+      params.set('origin', search.origin)
+    }
     if (search?.statsTab) {
       params.set('statsTab', search.statsTab)
     }
@@ -416,6 +428,7 @@ export function parseWindowRouteSearch(search: string): RouteSearch {
     surface: params.get('surface') ?? undefined,
     channel: params.get('channel') ?? undefined,
     collab: params.get('collab') ?? undefined,
+    origin: params.get('origin') ?? undefined,
     statsTab: params.get('statsTab') ?? undefined,
     settingsTab: params.get('settingsTab') ?? undefined,
     collabApiBaseUrl: params.get('collabApiBaseUrl') ?? undefined,

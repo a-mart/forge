@@ -36,9 +36,17 @@ import {
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
+import {
+  LOCAL_ORIGIN_ID,
+  forgeOriginManager,
+  useOriginSlice,
+  type OriginId,
+} from '@/lib/origin-store'
+import { resolveCollaborationTarget } from '@/lib/collaboration-connections'
+import type { ManagerWsState } from '@/lib/ws-state'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
-import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
+import { useOriginConnection } from '@/hooks/index-page/use-origin-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useActiveAgent } from '@/hooks/index-page/use-active-agent'
 import { useWorkspacePanels } from '@/hooks/index-page/use-workspace-panels'
@@ -60,6 +68,8 @@ import type {
 
 type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
 
+const selectLocalConnected = (s: ManagerWsState): boolean => s.connected
+
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
   return Boolean(
     agent &&
@@ -70,7 +80,12 @@ function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): b
 }
 
 type BuilderNavigationState =
-  | { view: 'chat'; agentId: string }
+  | {
+      view: 'chat'
+      agentId: string
+      /** Target origin; omitted = stay on the currently active origin. */
+      origin?: OriginId
+    }
   | { view: 'settings'; surface: ActiveSurface }
   | { view: 'stats'; statsTab?: StatsTab }
   | { view: 'archive'; surface: ActiveSurface }
@@ -93,17 +108,28 @@ export function BuilderSurface({
   navigateToRoute: navigateToOuterRoute,
   collaborationModeSwitch,
 }: BuilderSurfaceProps) {
+  // Wave R: the route's `origin` selects which origin's state/client feed the
+  // chat surface. Absent = the local origin. Non-chat views always render
+  // against local.
+  const activeOriginId: OriginId =
+    routeState.view === 'chat' && routeState.origin ? routeState.origin : LOCAL_ORIGIN_ID
+
   const navigateToRoute = useCallback((nextRouteState: BuilderNavigationState, replace = false) => {
     if (nextRouteState.view === 'chat') {
+      // Internal chat navigations stay on the active origin unless the caller
+      // targets one explicitly (sidebar cross-origin selects).
+      const resolvedOrigin = nextRouteState.origin ?? activeOriginId
       navigateToOuterRoute({
-        ...nextRouteState,
+        view: 'chat',
+        agentId: nextRouteState.agentId,
         surface: 'builder',
+        origin: resolvedOrigin === LOCAL_ORIGIN_ID ? undefined : resolvedOrigin,
       }, replace)
       return
     }
 
     navigateToOuterRoute(nextRouteState, replace)
-  }, [navigateToOuterRoute])
+  }, [activeOriginId, navigateToOuterRoute])
 
   // Shell-level refs shared across the extracted controllers.  Keeping these at
   // the shell (not inside a hook) is what breaks the apparent ordering cycle
@@ -118,13 +144,17 @@ export function BuilderSurface({
   const fileEditorCoordinatorRef = useRef<FileEditorCoordinator | null>(null)
   const archiveHydrationRequestedRef = useRef(false)
 
-  const { clientRef, httpClientRef, state, setState } = useWsConnection(wsUrl)
+  const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, wsUrl)
 
   // Sync builder WS health to the module-level store so ModeSwitch can
-  // display the builder connection dot even from the collab surface.
+  // display the builder connection dot even from the collab surface. Always
+  // reflects the LOCAL origin — remote origin health lives in origin meta.
+  const localConnected = useOriginSlice(LOCAL_ORIGIN_ID, selectLocalConnected, {
+    selectorKey: 'builder.localConnected',
+  })
   useEffect(() => {
-    reportBuilderConnected(state.connected)
-  }, [state.connected])
+    reportBuilderConnected(localConnected)
+  }, [localConnected])
 
   useEffect(() => {
     let cancelled = false
@@ -290,7 +320,7 @@ export function BuilderSurface({
     sessionAgentId: terminalSessionAgentId,
     sessionCwd: activeManagerAgent?.cwd ?? activeAgent?.cwd ?? null,
     terminals: state.terminals,
-    enabled: activeView === 'chat',
+    enabled: activeView === 'chat' && activeOriginId === LOCAL_ORIGIN_ID,
     onError: (message) => {
       setState((previous) => ({
         ...previous,
@@ -413,10 +443,12 @@ export function BuilderSurface({
 
   const shouldShowWelcomeForm =
     routeState.view === 'chat' &&
+    activeOriginId === LOCAL_ORIGIN_ID &&
     !hasCreatedProjectManager &&
     onboardingState?.status === 'pending'
   const shouldShowCreateManagerState =
     routeState.view === 'chat' &&
+    activeOriginId === LOCAL_ORIGIN_ID &&
     !hasCreatedProjectManager &&
     Boolean(onboardingState && onboardingState.status !== 'pending')
 
@@ -542,6 +574,39 @@ export function BuilderSurface({
 
   const showActivityRail = activeView === 'chat'
 
+  // ── Wave R: origin-aware sidebar selection ──
+  const handleSelectSidebarAgent = useCallback((agentId: string) => {
+    if (activeOriginId === LOCAL_ORIGIN_ID) {
+      panels.handleSelectAgent(agentId)
+      return
+    }
+    // Cross-origin select back to local: route change flips the active origin;
+    // the route→subscription sync subscribes on the local client.
+    navigateToRoute({ view: 'chat', agentId, origin: LOCAL_ORIGIN_ID })
+  }, [activeOriginId, navigateToRoute, panels])
+
+  const handleSelectRemoteAgent = useCallback((originId: string, agentId: string) => {
+    if (originId === activeOriginId) {
+      panels.handleSelectAgent(agentId)
+      return
+    }
+    navigateToRoute({ view: 'chat', agentId, origin: originId })
+  }, [activeOriginId, navigateToRoute, panels])
+
+  const handleRemoteOriginSignIn = useCallback((originId: string) => {
+    const target = resolveCollaborationTarget(originId)
+    navigateToOuterRoute({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+      collabApiBaseUrl: target.apiBaseUrl,
+    })
+  }, [navigateToOuterRoute])
+
+  const handleRemoteOriginRetry = useCallback((originId: string) => {
+    forgeOriginManager.retryOrigin(originId)
+  }, [])
+
   const feedbackProfileId = transcript.feedbackProfileId
 
   return (
@@ -552,13 +617,18 @@ export function BuilderSurface({
         wsUrl={wsUrl}
         collaborationModeSwitch={collaborationModeSwitch}
         selectedAgentId={activeAgentId}
+        localTreeReadOnly={activeOriginId !== LOCAL_ORIGIN_ID}
+        activeOriginId={activeOriginId}
+        onSelectRemoteAgent={handleSelectRemoteAgent}
+        onRemoteOriginSignIn={handleRemoteOriginSignIn}
+        onRemoteOriginRetry={handleRemoteOriginRetry}
         isSettingsActive={activeView === 'settings'}
         isStatsActive={activeView === 'stats'}
         isArchiveActive={activeView === 'archive'}
         isMobileOpen={panels.isMobileSidebarOpen}
         onMobileClose={() => panels.setIsMobileSidebarOpen(false)}
         onAddManager={handleOpenCreateManagerDialog}
-        onSelectAgent={panels.handleSelectAgent}
+        onSelectAgent={handleSelectSidebarAgent}
         onDeleteAgent={session.handleDeleteAgent}
         onDeleteManager={handleRequestDeleteManager}
         onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
