@@ -248,6 +248,7 @@ describe('ManagerWsClient', () => {
 
     expect(JSON.parse(socket.sentPayloads[1])).toEqual({
       type: 'user_message',
+      clientRequestId: expect.any(String),
       text: 'hello manager',
       agentId: 'manager',
     })
@@ -295,6 +296,7 @@ describe('ManagerWsClient', () => {
 
     expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
       type: 'user_message',
+      clientRequestId: expect.any(String),
       text: 'reply body',
       agentId: 'manager',
       replyTo: {
@@ -761,6 +763,7 @@ describe('ManagerWsClient', () => {
 
     expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
       type: 'user_message',
+      clientRequestId: expect.any(String),
       text: '',
       attachments: [
         {
@@ -809,6 +812,7 @@ describe('ManagerWsClient', () => {
 
     expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
       type: 'user_message',
+      clientRequestId: expect.any(String),
       text: '',
       attachments: [
         {
@@ -873,6 +877,7 @@ describe('ManagerWsClient', () => {
 
     expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
       type: 'user_message',
+      clientRequestId: expect.any(String),
       text: 'hello worker',
       agentId: 'worker-1',
     })
@@ -1357,6 +1362,7 @@ describe('ManagerWsClient', () => {
 
     expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
       type: 'user_message',
+      clientRequestId: expect.any(String),
       text: 'queued update',
       agentId: 'worker-1',
       delivery: 'followUp',

@@ -39,10 +39,12 @@ import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model
 import {
   LOCAL_ORIGIN_ID,
   forgeOriginManager,
+  originRegistry,
+  useOriginMeta,
   useOriginSlice,
   type OriginId,
 } from '@/lib/origin-store'
-import { resolveCollaborationTarget } from '@/lib/collaboration-connections'
+import { getCollaborationConnectionOptions, resolveCollaborationTarget } from '@/lib/collaboration-connections'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
@@ -102,7 +104,7 @@ interface BuilderSurfaceProps {
 }
 
 export function BuilderSurface({
-  wsUrl,
+  wsUrl: localWsUrl,
   routeState,
   activeView,
   navigateToRoute: navigateToOuterRoute,
@@ -113,6 +115,26 @@ export function BuilderSurface({
   // against local.
   const activeOriginId: OriginId =
     routeState.view === 'chat' && routeState.origin ? routeState.origin : LOCAL_ORIGIN_ID
+  const isRemoteOriginActive = activeOriginId !== LOCAL_ORIGIN_ID
+  // Identity behind the active origin's connection (null on local): author
+  // chips render only for authors other than this user (SPEC §5.5).
+  const activeOriginMeta = useOriginMeta(activeOriginId)
+  const activeOriginCurrentUserId = isRemoteOriginActive
+    ? activeOriginMeta?.currentUser?.userId ?? null
+    : null
+  // The ACTIVE origin's backend URL. Every project-scoped surface below
+  // (files/git/terminals/attachments/audit/model availability) derives its
+  // HTTP endpoints from this — instance-local surfaces (settings, stats,
+  // onboarding, cortex, sidebar usage) explicitly use `localWsUrl`.
+  const wsUrl = useMemo(() => {
+    if (!isRemoteOriginActive) return localWsUrl
+    const store = originRegistry.getOrigin(activeOriginId)
+    if (store) return store.wsUrl
+    const target = getCollaborationConnectionOptions().find(
+      (candidate) => candidate.connectionId === activeOriginId,
+    )
+    return target?.wsUrl ?? localWsUrl
+  }, [activeOriginId, isRemoteOriginActive, localWsUrl])
 
   const navigateToRoute = useCallback((nextRouteState: BuilderNavigationState, replace = false) => {
     if (nextRouteState.view === 'chat') {
@@ -144,7 +166,7 @@ export function BuilderSurface({
   const fileEditorCoordinatorRef = useRef<FileEditorCoordinator | null>(null)
   const archiveHydrationRequestedRef = useRef(false)
 
-  const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, wsUrl)
+  const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, localWsUrl)
 
   // Sync builder WS health to the module-level store so ModeSwitch can
   // display the builder connection dot even from the collab surface. Always
@@ -191,7 +213,7 @@ export function BuilderSurface({
     error: onboardingError,
     savePreferences: saveOnboardingPreferences,
     skip: skipOnboarding,
-  } = useOnboardingState(wsUrl)
+  } = useOnboardingState(localWsUrl)
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
@@ -320,7 +342,7 @@ export function BuilderSurface({
     sessionAgentId: terminalSessionAgentId,
     sessionCwd: activeManagerAgent?.cwd ?? activeAgent?.cwd ?? null,
     terminals: state.terminals,
-    enabled: activeView === 'chat' && activeOriginId === LOCAL_ORIGIN_ID,
+    enabled: activeView === 'chat',
     onError: (message) => {
       setState((previous) => ({
         ...previous,
@@ -614,7 +636,7 @@ export function BuilderSurface({
       <FileDirtyConfirmDialog state={panels.fileEditorCoordinator.dialogState} />
 
       <AgentSidebarConnected
-        wsUrl={wsUrl}
+        wsUrl={localWsUrl}
         collaborationModeSwitch={collaborationModeSwitch}
         selectedAgentId={activeAgentId}
         localTreeReadOnly={activeOriginId !== LOCAL_ORIGIN_ID}
@@ -773,7 +795,7 @@ export function BuilderSurface({
               </div>
             ) : activeView === 'settings' ? (
               <SettingsPanel
-                wsUrl={wsUrl}
+                wsUrl={localWsUrl}
                 managers={settingsManagers}
                 profiles={state.profiles}
                 telegramStatus={state.telegramStatus}
@@ -798,7 +820,7 @@ export function BuilderSurface({
               />
             ) : activeView === 'stats' ? (
               <StatsPage
-                wsUrl={wsUrl}
+                wsUrl={localWsUrl}
                 routeState={routeState as { view: 'stats'; statsTab?: StatsTab }}
                 onBack={() =>
                   navigateToRoute({
@@ -923,6 +945,7 @@ export function BuilderSurface({
                   isLoading,
                   wsUrl,
                   activeAgentId,
+                  currentCollabUserId: activeOriginCurrentUserId ?? undefined,
                   projectAgent: activeAgent?.projectAgent,
                   onSuggestionClick: session.handleSuggestionClick,
                   onArtifactClick: panels.handleOpenArtifact,
@@ -1026,7 +1049,7 @@ export function BuilderSurface({
             <ChatSidePanels
               isCortexSession={activeAgent?.archetypeId === 'cortex'}
               cortexDashboardProps={{
-                wsUrl,
+                wsUrl: localWsUrl,
                 managerId: activeManagerId,
                 isOpen: panels.isArtifactsPanelOpen,
                 onClose: panels.handleGuardedArtifactsClose,
@@ -1119,9 +1142,13 @@ export function BuilderSurface({
           onModelSelectionChange: handleNewManagerModelSelectionChange,
           onReasoningLevelChange: handleNewManagerReasoningLevelChange,
           onScaffoldForgeResourcesChange: handleScaffoldForgeResourcesChange,
-          onBrowseDirectory: () => {
-            void handleBrowseDirectory()
-          },
+          // Remote origins have no local-machine dialogs: the picker is
+          // hidden and paths are typed + validated over the origin's socket.
+          onBrowseDirectory: isRemoteOriginActive
+            ? undefined
+            : () => {
+                void handleBrowseDirectory()
+              },
           onSubmit: (event) => {
             void handleCreateManager(event)
           },
@@ -1164,7 +1191,7 @@ export function BuilderSurface({
         }}
       />
 
-      <CortexV2OnboardingModal source={wsUrl} />
+      <CortexV2OnboardingModal source={localWsUrl} />
     </>
   )
 }

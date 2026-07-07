@@ -18,7 +18,8 @@ interface ChangeCwdDialogProps {
   currentCwd: string
   onConfirm: (profileId: string, cwd: string) => Promise<void>
   onClose: () => void
-  onBrowseDirectory: (defaultPath: string) => Promise<string | null>
+  /** Native directory picker; omit for remote origins (no local dialogs). */
+  onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
   onValidateDirectory: (path: string) => Promise<DirectoryValidationResult>
 }
 
@@ -97,6 +98,7 @@ export function ChangeCwdDialog({
   }, [cwd, currentCwd, onValidateDirectory])
 
   const handleBrowse = useCallback(async () => {
+    if (!onBrowseDirectory) return
     setBrowseError(null)
     setIsPickingDirectory(true)
 
@@ -182,17 +184,19 @@ export function ChangeCwdDialog({
                   </div>
                 )}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleBrowse}
-                disabled={isPickingDirectory}
-                className="shrink-0 gap-1.5"
-              >
-                <FolderOpen className="size-3.5" />
-                {isPickingDirectory ? 'Browsing...' : 'Browse'}
-              </Button>
+              {onBrowseDirectory ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBrowse}
+                  disabled={isPickingDirectory}
+                  className="shrink-0 gap-1.5"
+                >
+                  <FolderOpen className="size-3.5" />
+                  {isPickingDirectory ? 'Browsing...' : 'Browse'}
+                </Button>
+              ) : null}
             </div>
 
             {browseError ? (

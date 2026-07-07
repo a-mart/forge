@@ -62,7 +62,7 @@ export async function fetchFeedbackStates(
     `/api/v1/profiles/${encodeURIComponent(profileId)}/sessions/${encodeURIComponent(sessionId)}/feedback/state`,
   )
 
-  const response = await fetch(endpoint)
+  const response = await fetch(endpoint, { credentials: 'include' })
 
   if (!response.ok) {
     throw new Error(await readApiError(response))

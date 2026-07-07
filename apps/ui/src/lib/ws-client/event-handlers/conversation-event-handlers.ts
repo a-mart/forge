@@ -87,18 +87,41 @@ function conversationEntryMergeKey(entry: ServerEvent): string | undefined {
   }
 }
 
+/**
+ * True for a locally-appended optimistic send that has not been confirmed by
+ * the server yet: it carries the sender's `clientRequestId` but no
+ * server-assigned `id` (every server entry has one).
+ */
+function isOptimisticConversationEntry(entry: ServerEvent): boolean {
+  return entry.type === 'conversation_message' && !entry.id && typeof entry.clientRequestId === 'string'
+}
+
 function mergeBootstrapEntries<T extends ServerEvent>(bootstrapEntries: T[], currentEntries: T[]): T[] {
   const merged = [...bootstrapEntries]
   const indexByKey = new Map<string, number>()
+  // clientRequestIds already confirmed by the server in this bootstrap —
+  // pending optimistic entries matching one are reconciled (dropped in favor
+  // of the server copy) instead of ghost-duplicated (SPEC §4.6.3).
+  const confirmedClientRequestIds = new Set<string>()
 
   merged.forEach((entry, index) => {
     const key = conversationEntryMergeKey(entry)
     if (key) {
       indexByKey.set(key, index)
     }
+    if (entry.type === 'conversation_message' && entry.id && entry.clientRequestId) {
+      confirmedClientRequestIds.add(entry.clientRequestId)
+    }
   })
 
   for (const currentEntry of currentEntries) {
+    if (
+      isOptimisticConversationEntry(currentEntry) &&
+      confirmedClientRequestIds.has((currentEntry as Extract<ServerEvent, { type: 'conversation_message' }>).clientRequestId!)
+    ) {
+      continue
+    }
+
     const key = conversationEntryMergeKey(currentEntry)
     if (!key) {
       merged.push(currentEntry)
@@ -136,6 +159,39 @@ export function handleConversationEvent(
     case 'work_plan_created': {
       if (event.agentId !== context.state.targetAgentId) {
         return true
+      }
+
+      // Multi-writer echo/dedup (SPEC §4.6): a broadcast carrying the
+      // sender's clientRequestId REPLACES that sender's optimistic entry in
+      // place; a re-delivered server entry (same id) upserts instead of
+      // duplicating. Other clients simply append.
+      if (event.type === 'conversation_message') {
+        if (event.clientRequestId) {
+          const optimisticIndex = context.state.messages.findIndex(
+            (message) =>
+              message.type === 'conversation_message' &&
+              !message.id &&
+              message.clientRequestId === event.clientRequestId,
+          )
+          if (optimisticIndex >= 0) {
+            const nextMessages = [...context.state.messages]
+            nextMessages[optimisticIndex] = event
+            context.updateState({ messages: nextMessages })
+            return true
+          }
+        }
+
+        if (event.id) {
+          const existingIndex = context.state.messages.findIndex(
+            (message) => message.type === 'conversation_message' && message.id === event.id,
+          )
+          if (existingIndex >= 0) {
+            const nextMessages = [...context.state.messages]
+            nextMessages[existingIndex] = event
+            context.updateState({ messages: nextMessages })
+            return true
+          }
+        }
       }
 
       context.updateState({ messages: [...context.state.messages, event] })

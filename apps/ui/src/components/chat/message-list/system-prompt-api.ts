@@ -16,7 +16,7 @@ export async function fetchAgentSystemPrompt(
     wsUrl,
     `/api/agents/${encodeURIComponent(agentId)}/system-prompt`,
   )
-  const response = await fetch(endpoint)
+  const response = await fetch(endpoint, { credentials: 'include' })
   if (!response.ok) {
     throw new Error(await formatSystemPromptFetchError(response))
   }

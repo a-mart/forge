@@ -123,7 +123,7 @@ async function fetchDirectoryListing(
     params.set('worktreeId', worktreeId)
   }
   const url = resolveApiEndpoint(wsUrl, `/api/files/list?${params.toString()}`)
-  const response = await fetch(url)
+  const response = await fetch(url, { credentials: 'include' })
 
   if (!response.ok) {
     const body = await response

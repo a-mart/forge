@@ -60,7 +60,7 @@ export async function fetchSessionAuditPage(
 
   const queryString = params.toString()
   const path = `/api/sessions/${encodeURIComponent(trimmedSessionAgentId)}/audit${queryString ? `?${queryString}` : ''}`
-  const response = await fetch(resolveApiEndpoint(wsUrl, path), { signal: query.signal })
+  const response = await fetch(resolveApiEndpoint(wsUrl, path), { signal: query.signal, credentials: 'include' })
   const payload = await readJson(response)
 
   if (!response.ok) {
@@ -94,7 +94,7 @@ export async function fetchSessionAuditEntryDetail(
   appendNumber(params, 'nextByteOffset', query.nextByteOffset)
 
   const path = `/api/sessions/${encodeURIComponent(trimmedSessionAgentId)}/audit/entry?${params.toString()}`
-  const response = await fetch(resolveApiEndpoint(wsUrl, path), { signal: query.signal })
+  const response = await fetch(resolveApiEndpoint(wsUrl, path), { signal: query.signal, credentials: 'include' })
   const payload = await readJson(response)
 
   if (!response.ok) {
