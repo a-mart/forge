@@ -109,6 +109,25 @@ export class RuntimeEventProjector {
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
   private readonly managerAssistantOutputTracker: ManagerAssistantOutputTracker;
   private readonly visibleManagerOutputTurnIds = new Set<string>();
+  /**
+   * Silent-turn notices armed at `turn_end` but not yet delivered.  A runtime
+   * "turn" is one model-call cycle, and a manager run routinely spans several
+   * cycles (tool-call cycle -> tool results -> final-text cycle), so at any
+   * single `turn_end` we cannot yet know whether visible output is still
+   * coming.  The notice is therefore armed here and only emitted at
+   * `agent_end` — the run's terminal event — unless user-visible output (or a
+   * `present_choices` prompt) lands first and cancels it.  Keyed by agentId;
+   * cleared on delivery, cancellation, or the next `agent_end`.
+   */
+  private readonly pendingSilentManagerNotices = new Map<string, ConversationMessageEvent>();
+  /**
+   * Managers that have produced user-visible output during the current run.
+   * Needed in addition to the per-turn set above because the final text of a
+   * multi-cycle run is projected after its ledger turn has already closed
+   * (turnId is null by then), so per-turn marking alone cannot suppress the
+   * armed notice.  Reset at `agent_end`.
+   */
+  private readonly visibleManagerOutputAgentIds = new Set<string>();
 
   constructor(private readonly deps: RuntimeEventProjectorDeps) {
     this.managerAssistantOutputTracker = new ManagerAssistantOutputTracker({
@@ -156,10 +175,7 @@ export class RuntimeEventProjector {
   }
 
   markExplicitManagerAssistantOutput(agentId: string): void {
-    const turnId = this.deps.getActiveTurnId(agentId);
-    if (turnId) {
-      this.visibleManagerOutputTurnIds.add(turnId);
-    }
+    this.markUserFacingManagerActivity(agentId, this.deps.getActiveTurnId(agentId));
     this.managerAssistantOutputTracker.markExplicitAssistantOutput(agentId);
   }
 
@@ -327,6 +343,16 @@ export class RuntimeEventProjector {
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
       this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent, activeTurnId);
+      // Presenting choices IS a visible response: the user sees an
+      // interactive prompt even though no assistant text is emitted, so it
+      // must suppress the silent-turn notice for this run.
+      if (
+        descriptor?.role === "manager" &&
+        effectiveEvent.type === "tool_execution_start" &&
+        effectiveEvent.toolName === "present_choices"
+      ) {
+        this.markUserFacingManagerActivity(agentId, activeTurnId);
+      }
       this.maybeEmitSilentManagerBackstop(agentId, descriptor, effectiveEvent, activeTurnId, activeAssistantTarget);
       this.maybeEmitModelCacheObservation(agentId, descriptor, effectiveEvent);
     }
@@ -419,6 +445,26 @@ export class RuntimeEventProjector {
     this.deps.markSessionActivity(agentId, timestamp);
   }
 
+  /**
+   * Two-phase silent-manager detection (arm at `turn_end`, decide at
+   * `agent_end`).
+   *
+   * The previous single-phase version emitted the notice directly at
+   * `turn_end`, which produced a steady stream of false positives: a manager
+   * run is a sequence of model-call cycles, and the runtime emits `turn_end`
+   * after EACH cycle.  A tool-only cycle (queueing worker messages, presenting
+   * choices) looks "silent" at its own `turn_end` even though the run's final
+   * text lands seconds later in a later cycle — after the ledger turn has
+   * closed, so that text also carries no turnId and could never mark the turn
+   * visible retroactively.  Observed in production: notice at 17:40:20.089,
+   * real `assistant_output` at 17:40:26.377 with `turnId: null`.
+   *
+   * Phase 1 (turn_end): if the run has produced no user-visible output so
+   * far and the output route says a visible response was expected, ARM the
+   * notice (latest silent cycle wins).
+   * Phase 2 (agent_end): if the armed notice survived — i.e. no visible text
+   * and no `present_choices` prompt arrived in any later cycle — emit it.
+   */
   private maybeEmitSilentManagerBackstop(
     agentId: string,
     descriptor: AgentDescriptor | undefined,
@@ -426,7 +472,7 @@ export class RuntimeEventProjector {
     turnId: string | undefined,
     activeTarget: AssistantOutputTarget | undefined,
   ): void {
-    if (!descriptor || descriptor.role !== "manager" || !turnId) {
+    if (!descriptor || descriptor.role !== "manager") {
       return;
     }
 
@@ -434,45 +480,64 @@ export class RuntimeEventProjector {
       return;
     }
 
-    if (this.visibleManagerOutputTurnIds.has(turnId)) {
+    if (turnId && this.visibleManagerOutputTurnIds.has(turnId)) {
       this.visibleManagerOutputTurnIds.delete(turnId);
-      return;
+      this.pendingSilentManagerNotices.delete(agentId);
+    } else if (turnId && !this.visibleManagerOutputAgentIds.has(agentId)) {
+      const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(agentId, descriptor, activeTarget);
+      const reasonCode = route?.decision.reasonCode;
+      if (
+        reasonCode === "render:user_web" ||
+        reasonCode === "render:scheduled_web" ||
+        reasonCode === "render:terminal_worker_report_closeout"
+      ) {
+        const text = route?.sourceWorkerId
+          ? `Worker \`${route.sourceWorkerId}\` completed and reported back; the manager did not summarize it. View worker report in All.`
+          : "The manager completed this turn without a visible response.";
+        this.pendingSilentManagerNotices.set(agentId, {
+          type: "conversation_message",
+          agentId,
+          turnId,
+          role: "system",
+          text,
+          timestamp: this.deps.now(),
+          source: "system",
+        });
+      }
     }
 
-    const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(agentId, descriptor, activeTarget);
-    const reasonCode = route?.decision.reasonCode;
-    if (
-      reasonCode !== "render:user_web" &&
-      reasonCode !== "render:scheduled_web" &&
-      reasonCode !== "render:terminal_worker_report_closeout"
-    ) {
-      return;
+    if (effectiveEvent.type === "agent_end") {
+      const armed = this.pendingSilentManagerNotices.get(agentId);
+      this.pendingSilentManagerNotices.delete(agentId);
+      this.visibleManagerOutputAgentIds.delete(agentId);
+      if (armed) {
+        this.deps.conversationProjector.emitConversationMessage({ ...armed, timestamp: this.deps.now() });
+      }
     }
-
-    const timestamp = this.deps.now();
-    const text = route?.sourceWorkerId
-      ? `Worker \`${route.sourceWorkerId}\` completed and reported back; the manager did not summarize it. View worker report in All.`
-      : "The manager completed this turn without a visible response.";
-    const notice: ConversationMessageEvent = {
-      type: "conversation_message",
-      agentId,
-      turnId,
-      role: "system",
-      text,
-      timestamp,
-      source: "system",
-    };
-    this.deps.conversationProjector.emitConversationMessage(notice);
   }
 
   private markVisibleManagerOutput(event: ConversationMessageEvent): void {
     if (
-      event.turnId &&
       event.role === "assistant" &&
       (event.source === "speak_to_user" || event.source === "assistant_output" || event.source === "assistant_progress")
     ) {
-      this.visibleManagerOutputTurnIds.add(event.turnId);
+      this.markUserFacingManagerActivity(event.agentId, event.turnId);
     }
+  }
+
+  /**
+   * Record that the manager put something in front of the user (assistant
+   * text on any channel, or an interactive `present_choices` prompt) and
+   * cancel any armed silent-turn notice.  Deliberately does NOT require a
+   * turnId: the final text of a multi-cycle run arrives after its ledger turn
+   * closed, and choice prompts are emitted outside turn context entirely.
+   */
+  private markUserFacingManagerActivity(agentId: string, turnId?: string): void {
+    if (turnId) {
+      this.visibleManagerOutputTurnIds.add(turnId);
+    }
+    this.visibleManagerOutputAgentIds.add(agentId);
+    this.pendingSilentManagerNotices.delete(agentId);
   }
 
   private maybeEmitWorkerReportConversationMessage(

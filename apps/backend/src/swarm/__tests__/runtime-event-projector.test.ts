@@ -308,6 +308,15 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
         event: { type: "turn_end", toolResults: [] },
       });
 
+      // Armed at turn_end, delivered at agent_end (the run's terminal event).
+      expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ role: "system", source: "system" }),
+      );
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: { type: "agent_end" },
+      });
+
       expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "conversation_message",
@@ -320,6 +329,88 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
       );
     },
   );
+
+  it("does not emit a silent-manager backstop when the final text lands in a later cycle after the ledger turn closed", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    // Cycle 1 ends while the ledger turn is active; the final text arrives in
+    // a later cycle AFTER the turn closed (getActiveTurnId -> undefined), as
+    // observed in production (notice at :20.089, assistant_output with
+    // turnId null at :26.377).
+    vi.mocked(deps.getActiveTurnId)
+      .mockReturnValueOnce("manager-1:1")
+      .mockReturnValue(undefined);
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+
+    // Tool-only cycle ends: the backstop arms but must not fire yet.
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "turn_end", toolResults: [] },
+    });
+    // Final text lands in a later cycle, with no active ledger turn.
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Here is the real summary.", stopReason: "stop" } },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "agent_end" },
+    });
+
+    const emitted = vi.mocked(deps.conversationProjector.emitConversationMessage).mock.calls.map(([event]) => event);
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ source: "assistant_output", text: "Here is the real summary." }),
+    );
+    expect(emitted).not.toContainEqual(
+      expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
+    );
+  });
+
+  it("does not emit a silent-manager backstop when the manager presented choices to the user", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+
+    // The interactive prompt IS the visible response for this run.
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "present_choices", toolCallId: "choice-1", args: {} },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "turn_end", toolResults: [] },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "agent_end" },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
+    );
+  });
 });
 
 describe("RuntimeEventProjector", () => {
