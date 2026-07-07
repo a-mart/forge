@@ -228,6 +228,39 @@ describe("CodexMcpCatalog", () => {
     expect(staleSnapshot.tools.map((tool) => tool.selector)).toEqual(["fireflies/list_recent"]);
   });
 
+  it("does not replace a prior good plugin catalog when plugin/list refresh fails", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+    const initialSnapshot = await catalog.listCatalog(true);
+    expect(initialSnapshot.plugins.map((plugin) => plugin.selector)).toContain("fireflies");
+
+    client.request = async <T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> => {
+      client.requests.push({ method, params, timeoutMs });
+      if (method === "plugin/list") {
+        throw new Error("JSON-RPC request timed out: plugin/list");
+      }
+      return new FakeCatalogClient().request(method, params, timeoutMs);
+    };
+
+    const staleSnapshot = await catalog.listCatalog(true);
+    expect(staleSnapshot).toBe(initialSnapshot);
+    expect(staleSnapshot.plugins.map((plugin) => plugin.selector)).toContain("fireflies");
+  });
+
+  it("surfaces plugin/list failure instead of caching an empty picker catalog when no prior snapshot exists", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> => {
+      client.requests.push({ method, params, timeoutMs });
+      if (method === "plugin/list") {
+        throw new Error("JSON-RPC request timed out: plugin/list");
+      }
+      return new FakeCatalogClient().request(method, params, timeoutMs);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    await expect(catalog.listCatalog(true)).rejects.toThrow(/plugin\/list/);
+  });
+
   it("parses live-shaped plugin/list marketplaces and maps codex_apps tools to plugins", async () => {
     const client = new FakeCatalogClient();
     client.request = async <T>(method: string): Promise<T> => {

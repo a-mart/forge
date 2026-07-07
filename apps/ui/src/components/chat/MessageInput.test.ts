@@ -1101,16 +1101,26 @@ describe('MessageInput', () => {
       expect(getTextarea().value).toBe('please [@Codex:fireflies]')
     })
 
-    it('uses preloaded catalog immediately when cache is warm', async () => {
-      fetchCodexCatalogMock.mockResolvedValue({
-        status: 'ok',
-        snapshot: {
-          apps: [],
-          plugins: [{ selector: 'fireflies', displayName: 'Fireflies' }],
-          tools: [],
-          fetchedAt: '2026-01-01T00:00:00.000Z',
-        },
-      })
+    it('uses preloaded catalog immediately when cache is warm and refreshes on picker open', async () => {
+      fetchCodexCatalogMock
+        .mockResolvedValueOnce({
+          status: 'ok',
+          snapshot: {
+            apps: [],
+            plugins: [{ selector: 'fireflies', displayName: 'Fireflies' }],
+            tools: [],
+            fetchedAt: '2026-01-01T00:00:00.000Z',
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          snapshot: {
+            apps: [],
+            plugins: [{ selector: 'fireflies', displayName: 'Fireflies refreshed' }],
+            tools: [],
+            fetchedAt: '2026-01-01T00:00:01.000Z',
+          },
+        })
 
       renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
       await flush()
@@ -1121,6 +1131,36 @@ describe('MessageInput', () => {
 
       expect(container.textContent).toContain('Fireflies')
       expect(container.textContent).not.toContain('Loading Codex plugins')
+      expect(fetchCodexCatalogMock).toHaveBeenCalledTimes(2)
+
+      await flush()
+      expect(container.textContent).toContain('Fireflies refreshed')
+    })
+
+    it('keeps a known-good plugin catalog visible when picker refresh fails', async () => {
+      fetchCodexCatalogMock
+        .mockResolvedValueOnce({
+          status: 'ok',
+          snapshot: {
+            apps: [],
+            plugins: [{ selector: 'fireflies', displayName: 'Fireflies' }],
+            tools: [],
+            fetchedAt: '2026-01-01T00:00:00.000Z',
+          },
+        })
+        .mockResolvedValueOnce({ status: 'error' })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-refresh-error' })
+      await flush()
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Fireflies')
+      expect(container.textContent).not.toContain('Could not load Codex plugins')
+      expect(container.textContent).not.toContain('No Codex plugins available')
     })
 
     it('shows loading state while Codex plugin catalog is fetching', async () => {

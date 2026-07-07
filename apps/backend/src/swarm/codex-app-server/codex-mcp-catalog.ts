@@ -136,7 +136,17 @@ export class CodexMcpCatalog {
 
     const client = await this.getClient();
     const apps = await this.fetchApps(client);
-    const plugins = enrichPluginsFromApps(await this.fetchPlugins(client), apps);
+    let plugins: CodexCatalogPlugin[];
+    try {
+      plugins = enrichPluginsFromApps(await this.fetchPlugins(client), apps);
+    } catch (error) {
+      if (this.cache) {
+        return this.cache.snapshot;
+      }
+
+      throw new Error(formatCatalogDiscoveryError("plugin/list", error));
+    }
+
     let tools: CodexCatalogMcpTool[];
     try {
       tools = await this.fetchMcpTools(client, apps);
@@ -380,11 +390,7 @@ export class CodexMcpCatalog {
   }
 
   private async fetchPlugins(client: CodexAppServerClientPort): Promise<CodexCatalogPlugin[]> {
-    try {
-      return await this.fetchPaginated(client, "plugin/list", parsePluginsResponse);
-    } catch {
-      return [];
-    }
+    return await this.fetchPaginated(client, "plugin/list", parsePluginsResponse);
   }
 
   private async fetchApps(client: CodexAppServerClientPort): Promise<CodexCatalogApp[]> {

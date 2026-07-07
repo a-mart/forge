@@ -116,7 +116,7 @@ export function useMentions({
       setCodexCatalogError(false)
     }
 
-    void fetchCodexCatalogWithCache(wsUrl, managerAgentId).then((result) => {
+    void fetchCodexCatalogWithCache(wsUrl, managerAgentId, { forceRefresh: true }).then((result) => {
       if (cancelled) {
         return
       }
