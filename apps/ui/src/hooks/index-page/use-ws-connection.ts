@@ -61,29 +61,35 @@ export function useWsConnection(wsUrl: string): {
   // in an effect, not during render) and tear the local origin down when the
   // surface unmounts or the backend URL changes.  Lifecycle-driven teardown
   // (requirement 1), not GC-by-effect.
+  //
+  // Keyed on `store` (identity), with an IDENTITY-guarded cleanup.  Both halves
+  // matter:
+  //
+  //  - `store` must be a dep so that if the origin is ever destroyed and
+  //    recreated (an unmount/remount of the surface, a mistimed teardown during
+  //    dev-mode render churn), the refs are re-pointed at the LIVE client.  A
+  //    `[wsUrl]`-only version left `clientRef` aimed at the first, destroyed
+  //    client after a startup churn — every client action (subscribeToAgent on
+  //    session click, worker loads) silently hit a closed socket while the
+  //    sidebar kept rendering from the fresh store ("clicks do nothing",
+  //    "WebSocket is disconnected" on worker expand).
+  //
+  //  - The cleanup destroys the origin ONLY if the registered store is still
+  //    THIS closure's store.  Checking wsUrl equality here instead was a
+  //    feedback loop: a stale cleanup would tear down the NEWER store for the
+  //    same URL, whose replacement re-fired the effect → destroy → recreate →
+  //    notify → render, ad infinitum ("Maximum update depth exceeded").  With
+  //    the identity check a stale cleanup is a no-op and the loop cannot form.
   useEffect(() => {
     clientRef.current = store.getClient()
     httpClientRef.current = store.getHttpClient()
     return () => {
-      // Only destroy if this wsUrl is still the live one — a URL change already
-      // recreated the store under createOrigin, and destroying then would kill
-      // the fresh connection.
       const current = originRegistry.getOrigin(LOCAL_ORIGIN_ID)
-      if (current && current.wsUrl === wsUrl) {
+      if (current === store) {
         originRegistry.destroyOrigin(LOCAL_ORIGIN_ID)
       }
     }
-    // Keyed on `wsUrl` ONLY, deliberately NOT on `store`.  `store` is a pure
-    // function of `wsUrl` (createOrigin is idempotent per URL), so it changes
-    // identity *only* when `wsUrl` does — and the effect closure captures the
-    // matching store either way.  Adding `store` to the deps is not just
-    // redundant, it is a feedback loop: this cleanup DESTROYS the origin, so if
-    // a mistimed re-render (e.g. the registry-notify microtask landing between
-    // commit and passive-effect flush) ever tears the store down, the next
-    // render's createOrigin mints a fresh instance, whose new identity would
-    // re-fire this effect → destroy → recreate → notify → render, ad infinitum.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl])
+  }, [store])
 
   // Compatibility `setState`: apply a React-style updater against the current
   // local-origin snapshot and ingest the result as a snapshot patch.  Existing

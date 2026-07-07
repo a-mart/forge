@@ -102,7 +102,7 @@ function formatProjectAgentPeerRuntimeMessage(
   return `[projectAgentContext] ${JSON.stringify(context)}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\n${message}`
 }
 
-function enqueueProjectAgentPeerInput(
+async function enqueueProjectAgentPeerInput(
   manager: TestSwarmManager,
   agentId: string,
   context: {
@@ -113,9 +113,9 @@ function enqueueProjectAgentPeerInput(
     fromProjectName?: string
   },
   message: string,
-): string {
+): Promise<string> {
   const runtimeMessage = formatProjectAgentPeerRuntimeMessage(context, message)
-  ;(manager as any).enqueueInboundTurnContext(agentId, {
+  await (manager as any).enqueueInboundTurnContext(agentId, {
     source: 'project_agent_input',
     runtimeMessageText: runtimeMessage,
     projectAgentContext: context,
@@ -1727,7 +1727,7 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const runtimeMessage = enqueueProjectAgentPeerInput(
+    const runtimeMessage = await enqueueProjectAgentPeerInput(
       manager,
       'manager',
       {
@@ -1757,7 +1757,7 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const externalRuntimeMessage = enqueueProjectAgentPeerInput(
+    const externalRuntimeMessage = await enqueueProjectAgentPeerInput(
       manager,
       'manager',
       {
@@ -1773,7 +1773,7 @@ describe('SwarmManager', () => {
 
     const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
     state.descriptors.get('manager')!.sessionSurface = 'collab'
-    const collabRuntimeMessage = enqueueProjectAgentPeerInput(
+    const collabRuntimeMessage = await enqueueProjectAgentPeerInput(
       manager,
       'manager',
       { fromAgentId: 'collab-peer', fromDisplayName: 'Collab Peer', external: false },
@@ -1783,7 +1783,7 @@ describe('SwarmManager', () => {
 
     state.descriptors.get('manager')!.sessionSurface = undefined
     state.descriptors.get('manager')!.profileId = 'cortex'
-    const cortexRuntimeMessage = enqueueProjectAgentPeerInput(
+    const cortexRuntimeMessage = await enqueueProjectAgentPeerInput(
       manager,
       'manager',
       { fromAgentId: 'cortex-peer', fromDisplayName: 'Cortex Peer', external: false },

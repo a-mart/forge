@@ -7422,6 +7422,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }));
 
     if (!decision.visible || decision.channel !== "web") {
+      if (
+        decision.reasonCode === "route:peer_agent" &&
+        !this.activeExternalProjectAgentTurnByAgentId.has(agentId) &&
+        !manager.projectAgent &&
+        !manager.creatorAgentId
+      ) {
+        return {
+          decision: {
+            ...decision,
+            visible: true,
+            decision: "render",
+            channel: "web",
+            reasonCode: "render:user_web",
+          },
+          ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
+          target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+        };
+      }
+
       return {
         decision,
         ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
