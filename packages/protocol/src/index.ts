@@ -1,6 +1,7 @@
 export * from './agents.js'
 export * from './agent-events.js'
 export * from './attachments.js'
+export * from './builder-protocol.js'
 export * from './choices.js'
 export * from './chrome-cdp.js'
 export * from './cli.js'

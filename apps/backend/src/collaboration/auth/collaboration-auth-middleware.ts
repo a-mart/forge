@@ -27,6 +27,62 @@ const COLLABORATION_CATEGORIES_PATH = "/api/collaboration/categories";
 const COLLABORATION_ME_PASSWORD_PATH = "/api/collaboration/me/password";
 const SETTINGS_SPECIALISTS_PATH = "/api/settings/specialists";
 
+// --- Member-class routes (Wave R remote projects, SPEC §4.3) ---------------
+//
+// Member access is allowlist-only: every entry below is an individually
+// reviewed, project-scoped surface. The default classification for anything
+// not listed anywhere in this file stays `admin` — permanently.
+//
+// Member PROJECT routes are additionally gated by the `remoteBuild.enabled`
+// instance setting (the kill switch): when it is off they classify as
+// `admin`. Member COLLAB routes (the audited former `authenticated` class)
+// are collaboration-surface features and are not kill-switched.
+
+/** Former `authenticated`-class route, audited to `member` (collab surface). */
+const MEMBER_COLLAB_CHANNEL_PROMPT_PREVIEW_PATH = COLLABORATION_CHANNEL_PROMPT_PREVIEW_PATH;
+
+/** File browser reads (R1). */
+const MEMBER_FILE_BROWSER_READ_PATHS = new Set([
+  "/api/files/list",
+  "/api/files/count",
+  "/api/files/search",
+  "/api/files/content",
+  "/api/files/raw",
+]);
+/** Transcript file reads; POST /api/read-file is a read with body params. */
+const MEMBER_READ_FILE_PATH = "/api/read-file";
+/** Conversation attachment downloads (R1). */
+const MEMBER_ATTACHMENTS_PATH_PREFIX = "/api/attachments/";
+/** Git read surfaces (R1). */
+const MEMBER_GIT_READ_PATHS = new Set([
+  "/api/git/status",
+  "/api/git/diff",
+  "/api/git/log",
+  "/api/git/file-log",
+  "/api/git/file-section-provenance",
+  "/api/git/commit",
+  "/api/git/commit-diff",
+  "/api/git/worktrees",
+  "/api/git/branches",
+  "/api/git/mutation-preflight",
+  "/api/git/provider/status",
+  "/api/git/pull-requests",
+]);
+const MEMBER_GIT_PULL_REQUEST_DETAIL_PATH = /^\/api\/git\/pull-requests\/\d+$/;
+/** Session-audit reads (R1). */
+const MEMBER_SESSION_AUDIT_PATH = /^\/api\/sessions\/[^/]+\/audit(?:\/entry)?$/;
+/** Project-scoped schedule reads (R1). */
+const MEMBER_MANAGER_SCHEDULES_PATH = /^\/api\/managers\/[^/]+\/schedules$/;
+/** Session system-prompt read for the audit drawer (R1). */
+const MEMBER_AGENT_SYSTEM_PROMPT_PATH = /^\/api\/agents\/[^/]+\/system-prompt$/;
+/** Per-session feedback reads (R1). */
+const MEMBER_SESSION_FEEDBACK_PATH = /^\/api\/v1\/profiles\/[^/]+\/sessions\/[^/]+\/feedback(?:\/state)?$/;
+/** Project resource reads (R1). */
+const MEMBER_PROJECT_RESOURCES_PATH = "/api/settings/project-resources";
+/** Terminal list/shell reads (R1); mutations and tickets are R2 surfaces. */
+const MEMBER_TERMINALS_COLLECTION_PATH = "/api/terminals";
+const MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH = "/api/terminals/available-shells";
+
 interface CollaborationRequestAuthRow {
   user_id: string;
   email: string;
@@ -48,7 +104,23 @@ export interface CollaborationAuthContext {
 
 export type CollaborationRequestAuthContext = CollaborationAuthContext;
 
-export type CollaborationHttpAccessClass = "public" | "authenticated" | "admin";
+/**
+ * HTTP access classes. `member` grants any active signed-in user (member or
+ * admin); `admin` requires the admin role. There is deliberately no broader
+ * "authenticated" bucket — the old class of that name was audited into
+ * `member` during Wave R (SPEC §4.3).
+ */
+export type CollaborationHttpAccessClass = "public" | "member" | "admin";
+
+/**
+ * Instance policy consulted for member PROJECT routes. When absent (or
+ * `remoteBuildEnabled` is false) those routes classify as `admin` — the
+ * remote-projects kill switch fails closed.
+ */
+export interface CollaborationHttpAccessPolicy {
+  remoteBuildEnabled: boolean;
+  terminalsEnabled: boolean;
+}
 
 export type CollaborationHttpOriginValidationResult =
   | { ok: true; allowedOrigin: string | null }
@@ -123,6 +195,7 @@ export async function resolveCollaborationAuthContextForUserId(
 export function classifyCollaborationHttpRequest(
   pathname: string,
   method: string | undefined,
+  policy?: CollaborationHttpAccessPolicy,
 ): CollaborationHttpAccessClass {
   const normalizedMethod = method?.toUpperCase() ?? "GET";
 
@@ -156,8 +229,9 @@ export function classifyCollaborationHttpRequest(
     return "public";
   }
 
-  if (normalizedMethod === "GET" && COLLABORATION_CHANNEL_PROMPT_PREVIEW_PATH.test(pathname)) {
-    return "authenticated";
+  if (normalizedMethod === "GET" && MEMBER_COLLAB_CHANNEL_PROMPT_PREVIEW_PATH.test(pathname)) {
+    // Collaboration-surface member route; intentionally not kill-switched.
+    return "member";
   }
 
   if (
@@ -179,12 +253,65 @@ export function classifyCollaborationHttpRequest(
     return "public";
   }
 
+  if (isMemberProjectRoute(pathname, normalizedMethod)) {
+    // Kill switch (SPEC §4.3.5): member project routes require the
+    // remoteBuild.enabled instance setting; otherwise they stay admin.
+    return policy?.remoteBuildEnabled ? "member" : "admin";
+  }
+
   // Settings specialist routes — all operations require admin on the collab server
   if (pathname === SETTINGS_SPECIALISTS_PATH || pathname.startsWith(`${SETTINGS_SPECIALISTS_PATH}/`)) {
     return "admin";
   }
 
   return "admin";
+}
+
+/**
+ * Allowlist of project-scoped surfaces members may reach (SPEC §4.3). R1
+ * grants reads; R2 extends to project-scoped writes. Anything not matched
+ * here falls through to the default `admin` classification.
+ */
+function isMemberProjectRoute(pathname: string, normalizedMethod: string): boolean {
+  const isReadMethod = normalizedMethod === "GET" || normalizedMethod === "HEAD";
+
+  if (isReadMethod) {
+    if (MEMBER_FILE_BROWSER_READ_PATHS.has(pathname)) {
+      return true;
+    }
+
+    if (pathname.startsWith(MEMBER_ATTACHMENTS_PATH_PREFIX)) {
+      return true;
+    }
+
+    if (MEMBER_GIT_READ_PATHS.has(pathname) || MEMBER_GIT_PULL_REQUEST_DETAIL_PATH.test(pathname)) {
+      return true;
+    }
+
+    if (
+      MEMBER_SESSION_AUDIT_PATH.test(pathname) ||
+      MEMBER_MANAGER_SCHEDULES_PATH.test(pathname) ||
+      MEMBER_AGENT_SYSTEM_PROMPT_PATH.test(pathname) ||
+      MEMBER_SESSION_FEEDBACK_PATH.test(pathname)
+    ) {
+      return true;
+    }
+
+    if (pathname === MEMBER_PROJECT_RESOURCES_PATH) {
+      return true;
+    }
+
+    if (pathname === MEMBER_TERMINALS_COLLECTION_PATH || pathname === MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH) {
+      return true;
+    }
+  }
+
+  // POST /api/read-file is a read (path parameters travel in the body).
+  if (pathname === MEMBER_READ_FILE_PATH && (isReadMethod || normalizedMethod === "POST")) {
+    return true;
+  }
+
+  return false;
 }
 
 export function validateCollaborationHttpOrigin(
@@ -260,7 +387,8 @@ export function getCollaborationRequestCorsContext(
   return requestCorsContextMap.get(request) ?? null;
 }
 
-export function evaluateCollaborationAuthenticatedAccess(
+/** Any active signed-in user — member or admin. */
+export function evaluateCollaborationMemberAccess(
   authContext: CollaborationRequestAuthContext | null,
 ):
   | { ok: true; authContext: CollaborationRequestAuthContext }
@@ -285,16 +413,16 @@ export function evaluateCollaborationAdminAccess(
 ):
   | { ok: true; authContext: CollaborationRequestAuthContext }
   | { ok: false; statusCode: 401 | 403; error: string } {
-  const authenticatedAccess = evaluateCollaborationAuthenticatedAccess(authContext);
-  if (!authenticatedAccess.ok) {
-    return authenticatedAccess;
+  const memberAccess = evaluateCollaborationMemberAccess(authContext);
+  if (!memberAccess.ok) {
+    return memberAccess;
   }
 
-  if (authenticatedAccess.authContext.role !== "admin") {
+  if (memberAccess.authContext.role !== "admin") {
     return { ok: false, statusCode: 403, error: "Admin access required" };
   }
 
-  return authenticatedAccess;
+  return memberAccess;
 }
 
 export function evaluateCollaborationPasswordChangeAccess(

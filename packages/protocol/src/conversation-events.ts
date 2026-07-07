@@ -153,6 +153,11 @@ export interface ConversationMessageEvent {
   source: ConversationMessageSource
   sourceContext?: MessageSourceContext
   collaborationAuthor?: CollaborationAuthor
+  /**
+   * Echo of the sender-provided `user_message.clientRequestId`, when one was
+   * supplied. Lets the originating client reconcile its optimistic entry.
+   */
+  clientRequestId?: string
   projectAgentContext?: ProjectAgentMessageContext
   externalThreadContext?: ExternalThreadMessageContext
   terminal?: boolean

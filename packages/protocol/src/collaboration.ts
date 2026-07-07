@@ -1,5 +1,6 @@
 import type { ConversationAttachment, ConversationMessageAttachment } from './attachments.js'
 import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus, ManagerReasoningLevel } from './agents.js'
+import type { BuilderInstanceCapabilities } from './builder-protocol.js'
 import type { AgentMessageEvent, AgentToolCallEvent, ConversationMessageSource, ProjectAgentMessageContext } from './conversation-events.js'
 import type { MessageSourceContext } from './messaging.js'
 import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestStatus } from './shared-types.js'
@@ -26,6 +27,14 @@ export interface CollaborationStatus {
   /** Present when the backend reports storage root session existence. */
   storageRootSessionExists?: boolean
   baseUrl?: string
+  /** Admin-configured display name for this instance (handshake, additive). */
+  instanceName?: string
+  /** App version of the serving instance (handshake, additive). */
+  forgeVersion?: string
+  /** Builder protocol version of the serving instance (handshake, additive). */
+  protocolVersion?: number
+  /** Capability flags for this instance (handshake, additive). */
+  capabilities?: BuilderInstanceCapabilities
 }
 
 export interface CollaborationUser {
@@ -203,8 +212,13 @@ export interface CollaborationAuthor {
   userId: string
   displayName: string
   role: CollaborationRole
-  workspaceId: string
-  channelId: string
+  /**
+   * Present only for messages that entered through a collaboration channel.
+   * Builder (remote-project) messages carry author identity without channel
+   * context — absence of `channelId` is the "not a collab channel" signal.
+   */
+  workspaceId?: string
+  channelId?: string
 }
 
 export interface CollaborationBootstrapCurrentUser {

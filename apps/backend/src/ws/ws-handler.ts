@@ -36,6 +36,7 @@ import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
+import { evaluateBuilderCommandAccess } from "./builder-command-access.js";
 import { handleAgentCommand } from "./commands/agent-command-handler.js";
 import {
   CollabCommandHandler,
@@ -54,6 +55,7 @@ import { WsSubscriptions } from "./ws-subscriptions.js";
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
   private readonly allowNonManagerSubscriptions: boolean;
+  private readonly isRemoteBuildEnabled: () => boolean;
   private readonly unreadTracker: UnreadTracker | null;
   private readonly subscriptionManager: WsSubscriptions;
   private readonly apiProxy: WsApiProxy;
@@ -74,9 +76,13 @@ export class WsHandler {
     perf: SidebarPerfRecorder;
     collaborationReadinessService?: CollaborationReadinessRequestService;
     feedbackService?: FeedbackService;
+    isRemoteBuildEnabled?: () => boolean;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
+    // Default off: without the instance setting wired in, members get no
+    // builder access (the remote-projects kill switch fails closed).
+    this.isRemoteBuildEnabled = options.isRemoteBuildEnabled ?? (() => false);
     this.unreadTracker = options.unreadTracker ?? null;
 
     const feedbackService = options.feedbackService ?? new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
@@ -243,13 +249,16 @@ export class WsHandler {
     });
 
     if (command.type === "ping") {
+      // Members may hold builder subscriptions (remote projects); prefer the
+      // builder subscription when present, else fall back to the collab one.
+      const builderSubscribedAgentId = this.subscriptionManager.getSubscribedAgentId(socket);
       this.send(socket, {
         type: "ready",
         serverTime: new Date().toISOString(),
         subscribedAgentId:
           collaborationEnabled && authContext?.role !== "admin"
-            ? this.collabSubscriptionManager.getReadySubscriptionId(socket)
-            : this.subscriptionManager.getSubscribedAgentId(socket) ?? this.resolveDefaultSubscriptionAgentId(),
+            ? builderSubscribedAgentId ?? this.collabSubscriptionManager.getReadySubscriptionId(socket)
+            : builderSubscribedAgentId ?? this.resolveDefaultSubscriptionAgentId(),
       });
       return;
     }
@@ -275,12 +284,24 @@ export class WsHandler {
       return;
     }
 
-    if (collaborationEnabled && authContext?.role !== "admin") {
-      this.send(socket, toCollaborationCommandError(
-        "COLLABORATION_COMMAND_NOT_ALLOWED",
-        "Members may only use collab_* WebSocket commands.",
-      ));
-      return;
+    if (collaborationEnabled) {
+      const access = evaluateBuilderCommandAccess({
+        commandType: command.type,
+        authContext,
+        remoteBuildEnabled: this.isRemoteBuildEnabled(),
+      });
+      if (!access.ok) {
+        this.logDebug("command:rejected:builder_access", {
+          type: command.type,
+          reason: access.reason,
+          role: authContext?.role,
+        });
+        this.send(socket, toCollaborationCommandError(
+          "COLLABORATION_COMMAND_NOT_ALLOWED",
+          access.message ?? "This command is not permitted for this account.",
+        ));
+        return;
+      }
     }
 
     if (command.type === "subscribe") {

@@ -44,6 +44,12 @@ export type ClientCommand =
       agentId?: string
       delivery?: DeliveryMode
       replyTo?: ConversationReplyTargetInput
+      /**
+       * Client-generated id echoed back on the resulting broadcast
+       * `conversation_message` so the sender can replace its optimistic
+       * entry instead of appending a duplicate (multi-writer dedup).
+       */
+      clientRequestId?: string
     }
   | CollaborationBootstrapCommand
   | CollaborationSubscribeChannelCommand

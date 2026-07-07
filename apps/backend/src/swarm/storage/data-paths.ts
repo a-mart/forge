@@ -439,6 +439,10 @@ export function getNotificationSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "notification-settings.json");
 }
 
+export function getRemoteBuildSettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "remote-build-settings.json");
+}
+
 export function getTerminalSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "terminal-settings.json");
 }
