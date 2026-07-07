@@ -97,8 +97,24 @@ export class OriginRegistry {
     this.notifyRegistry()
   }
 
+  /**
+   * Notify registry subscribers of an add/remove.
+   *
+   * Deferred to a microtask on purpose. `createOrigin` is called lazily during
+   * render (the local origin is created inside `useWsConnection`'s render body).
+   * Notifying `subscribeRegistry` listeners (e.g. `useAllOrigins` in the sidebar)
+   * synchronously there triggers React's "Cannot update a component while
+   * rendering a different component" — which, under the dev build, wedges into a
+   * setState-during-render loop that hangs the app. A microtask defers the
+   * notification to just after the current render completes; `useSyncExternalStore`
+   * re-reads the snapshot on the scheduled re-render, so no update is lost.
+   * Tests that assert notification must flush microtasks first.
+   */
   private notifyRegistry(): void {
-    for (const listener of this.listeners) listener()
+    const listeners = [...this.listeners]
+    queueMicrotask(() => {
+      for (const listener of listeners) listener()
+    })
   }
 }
 

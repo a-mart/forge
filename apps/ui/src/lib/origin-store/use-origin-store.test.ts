@@ -50,6 +50,14 @@ function render(node: ReactNode): Harness {
   }
 }
 
+// Registry add/remove notifications are deferred to a microtask (they can
+// originate during render — see OriginRegistry.notifyRegistry). Flush the
+// microtask, then let React process the scheduled re-render synchronously.
+async function flushRegistryNotify(): Promise<void> {
+  await Promise.resolve()
+  flushSync(() => {})
+}
+
 afterEach(() => {
   originRegistry.destroyAll()
   vi.restoreAllMocks()
@@ -161,7 +169,7 @@ describe('useOriginSlice render reduction', () => {
 // ---------------------------------------------------------------------------
 
 describe('useAllOrigins', () => {
-  it('returns per-origin results and reacts to origin add/remove', () => {
+  it('returns per-origin results and reacts to origin add/remove', async () => {
     originRegistry.createOrigin({ originId: LOCAL_ORIGIN_ID, wsUrl: 'ws://local', offline: true })
 
     let lastResult: Array<{ originId: string; value: number }> = []
@@ -174,14 +182,12 @@ describe('useAllOrigins', () => {
 
     expect(lastResult.map((r) => r.originId)).toEqual([LOCAL_ORIGIN_ID])
 
-    flushSync(() => {
-      originRegistry.createOrigin({ originId: 'remote-a', wsUrl: 'ws://remote', offline: true })
-    })
+    originRegistry.createOrigin({ originId: 'remote-a', wsUrl: 'ws://remote', offline: true })
+    await flushRegistryNotify()
     expect(lastResult.map((r) => r.originId)).toEqual([LOCAL_ORIGIN_ID, 'remote-a'])
 
-    flushSync(() => {
-      originRegistry.destroyOrigin('remote-a')
-    })
+    originRegistry.destroyOrigin('remote-a')
+    await flushRegistryNotify()
     expect(lastResult.map((r) => r.originId)).toEqual([LOCAL_ORIGIN_ID])
 
     harness.cleanup()
@@ -233,7 +239,7 @@ describe('useOriginMeta', () => {
 // ---------------------------------------------------------------------------
 
 describe('useOriginSlice when the origin is created after mount', () => {
-  it('starts delivering slice notifications once the origin appears', () => {
+  it('starts delivering slice notifications once the origin appears', async () => {
     let renders = 0
     let lastLength = -1
     function AgentsView() {
@@ -249,10 +255,8 @@ describe('useOriginSlice when the origin is created after mount', () => {
     expect(lastLength).toBe(0)
 
     // Now the origin connects.
-    let store!: ReturnType<typeof originRegistry.createOrigin>
-    flushSync(() => {
-      store = originRegistry.createOrigin({ originId: 'remote-late', wsUrl: 'ws://late', offline: true })
-    })
+    const store = originRegistry.createOrigin({ originId: 'remote-late', wsUrl: 'ws://late', offline: true })
+    await flushRegistryNotify()
     expect(renders).toBeGreaterThan(baseline)
 
     // A subsequent slice change must re-render the component (the subscription
@@ -269,7 +273,7 @@ describe('useOriginSlice when the origin is created after mount', () => {
 })
 
 describe('useAllOrigins when a store is added after mount', () => {
-  it('tracks slice changes on origins created after mount', () => {
+  it('tracks slice changes on origins created after mount', async () => {
     originRegistry.createOrigin({ originId: LOCAL_ORIGIN_ID, wsUrl: 'ws://local', offline: true })
 
     let renders = 0
@@ -281,10 +285,8 @@ describe('useAllOrigins when a store is added after mount', () => {
     }
     const harness = render(createElement(AllView))
 
-    let remote!: ReturnType<typeof originRegistry.createOrigin>
-    flushSync(() => {
-      remote = originRegistry.createOrigin({ originId: 'remote-b', wsUrl: 'ws://remote', offline: true })
-    })
+    const remote = originRegistry.createOrigin({ originId: 'remote-b', wsUrl: 'ws://remote', offline: true })
+    await flushRegistryNotify()
     expect(lastResult.map((r) => r.originId)).toEqual([LOCAL_ORIGIN_ID, 'remote-b'])
 
     // A slice change on the LATE-added origin must wake the hook.

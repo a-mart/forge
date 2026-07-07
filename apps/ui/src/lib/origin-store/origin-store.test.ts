@@ -275,14 +275,18 @@ describe('requirement 10 — second-origin acceptance', () => {
     }
   })
 
-  it('registry notifies on origin add/remove', () => {
+  it('registry notifies on origin add/remove', async () => {
     const registry = new OriginRegistry()
     const spy = vi.fn()
     const unsub = registry.subscribeRegistry(spy)
     try {
       registry.createOrigin({ originId: 'remote-x', wsUrl: 'ws://x', offline: true })
+      // Registry notifications are deferred to a microtask (they may originate
+      // during render) — flush it before asserting.
+      await Promise.resolve()
       expect(spy).toHaveBeenCalledTimes(1)
       registry.destroyOrigin('remote-x')
+      await Promise.resolve()
       expect(spy).toHaveBeenCalledTimes(2)
     } finally {
       unsub()
