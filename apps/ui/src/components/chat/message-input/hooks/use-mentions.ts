@@ -50,6 +50,7 @@ interface UseMentionsReturn {
   hasMentionTokens: boolean
   codexCatalogLoading: boolean
   codexCatalogError: boolean
+  codexCatalogErrorMessage?: string
   codexToolMode: boolean
   mentionMenuStatus: MentionMenuStatus | null
   mentionMenuBlocksQuickSend: boolean
@@ -73,6 +74,7 @@ export function useMentions({
   const [codexPluginSuggestions, setCodexPluginSuggestions] = useState<CodexPluginMentionSuggestion[]>([])
   const [codexCatalogLoading, setCodexCatalogLoading] = useState(false)
   const [codexCatalogError, setCodexCatalogError] = useState(false)
+  const [codexCatalogErrorMessage, setCodexCatalogErrorMessage] = useState<string | undefined>(undefined)
   const mentionMenuRef = useRef<HTMLDivElement | null>(null)
 
   const hasMentionTokens = useMemo(() => hasComposerMentionTokens(input), [input])
@@ -110,10 +112,12 @@ export function useMentions({
     if (cached) {
       setCodexPluginSuggestions(mapPluginsToSuggestions(cached.plugins ?? []))
       setCodexCatalogError(false)
+      setCodexCatalogErrorMessage(undefined)
       setCodexCatalogLoading(false)
     } else {
       setCodexCatalogLoading(true)
       setCodexCatalogError(false)
+      setCodexCatalogErrorMessage(undefined)
     }
 
     void fetchCodexCatalogWithCache(wsUrl, managerAgentId, { forceRefresh: true }).then((result) => {
@@ -125,6 +129,7 @@ export function useMentions({
         if (!cached) {
           setCodexPluginSuggestions([])
           setCodexCatalogError(true)
+          setCodexCatalogErrorMessage(result.error)
         }
         setCodexCatalogLoading(false)
         return
@@ -132,6 +137,7 @@ export function useMentions({
 
       setCodexPluginSuggestions(mapPluginsToSuggestions(result.snapshot.plugins ?? []))
       setCodexCatalogError(false)
+      setCodexCatalogErrorMessage(undefined)
       setCodexCatalogLoading(false)
     })
 
@@ -374,6 +380,7 @@ export function useMentions({
     hasMentionTokens,
     codexCatalogLoading,
     codexCatalogError,
+    codexCatalogErrorMessage,
     codexToolMode,
     mentionMenuStatus,
     mentionMenuBlocksQuickSend,

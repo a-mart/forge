@@ -344,6 +344,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           onHover={mentions.setMentionSelectedIndex}
           enableCodexMention={enableCodexMention}
           codexToolPicker={mentions.codexToolMode}
+          codexCatalogErrorMessage={mentions.codexCatalogErrorMessage}
         />
       ) : null}
 

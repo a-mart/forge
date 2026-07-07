@@ -1190,6 +1190,24 @@ describe('MessageInput', () => {
       expect(container.textContent).not.toContain('No matching mentions')
     })
 
+    it('shows actionable Codex config guidance when catalog refresh reports config failure', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'error',
+        error:
+          'Codex MCP catalog discovery failed for plugin/list: failed to reload config: /Users/example/.codex/config.toml:10:16: unknown variant `priority`, expected `fast` or `flex`',
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-catalog-config-error' })
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Codex rejected ~/.codex/config.toml')
+      expect(container.textContent).not.toContain('/Users/example')
+    })
+
     it('does not quick-send while Codex tool picker is loading', async () => {
       fetchCodexCatalogMock.mockReturnValue(new Promise(() => {}))
       const onSend = vi.fn()

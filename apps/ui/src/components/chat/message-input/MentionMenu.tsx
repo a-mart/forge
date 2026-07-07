@@ -20,18 +20,32 @@ interface MentionMenuProps {
   onHover: (index: number) => void
   enableCodexMention?: boolean
   codexToolPicker?: boolean
+  codexCatalogErrorMessage?: string
+}
+
+function codexCatalogFailureMessage(errorMessage: string | undefined): string {
+  if (!errorMessage) {
+    return 'Could not load Codex plugins. Try again in a moment.'
+  }
+
+  if (/failed to reload config|config\.toml|unknown variant/i.test(errorMessage)) {
+    return 'Could not load Codex plugins: Codex rejected ~/.codex/config.toml. Check the Codex config and try again.'
+  }
+
+  return 'Could not load Codex plugins. Try again in a moment.'
 }
 
 function emptyMessage(
   status: MentionMenuStatus,
   enableCodexMention: boolean,
   codexToolPicker: boolean,
+  codexCatalogErrorMessage?: string,
 ): string {
   if (status === 'loading') {
     return 'Loading Codex plugins…'
   }
   if (status === 'error') {
-    return 'Could not load Codex plugins. Try again in a moment.'
+    return codexCatalogFailureMessage(codexCatalogErrorMessage)
   }
   if (status === 'empty-catalog') {
     return 'No Codex plugins available'
@@ -52,6 +66,7 @@ export function MentionMenu({
   onHover,
   enableCodexMention = false,
   codexToolPicker = false,
+  codexCatalogErrorMessage,
 }: MentionMenuProps) {
   if (status === 'list' && mentions.length > 0) {
     return (
@@ -154,7 +169,7 @@ export function MentionMenu({
         className="mb-1 rounded-lg border border-border bg-popover px-3 py-2 shadow-lg"
       >
         <p className="text-xs text-muted-foreground" role="status">
-          {emptyMessage(status, enableCodexMention, codexToolPicker)}
+          {emptyMessage(status, enableCodexMention, codexToolPicker, codexCatalogErrorMessage)}
         </p>
       </div>
     )
