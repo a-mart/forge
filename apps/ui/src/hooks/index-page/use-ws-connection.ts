@@ -73,7 +73,17 @@ export function useWsConnection(wsUrl: string): {
         originRegistry.destroyOrigin(LOCAL_ORIGIN_ID)
       }
     }
-  }, [store, wsUrl])
+    // Keyed on `wsUrl` ONLY, deliberately NOT on `store`.  `store` is a pure
+    // function of `wsUrl` (createOrigin is idempotent per URL), so it changes
+    // identity *only* when `wsUrl` does — and the effect closure captures the
+    // matching store either way.  Adding `store` to the deps is not just
+    // redundant, it is a feedback loop: this cleanup DESTROYS the origin, so if
+    // a mistimed re-render (e.g. the registry-notify microtask landing between
+    // commit and passive-effect flush) ever tears the store down, the next
+    // render's createOrigin mints a fresh instance, whose new identity would
+    // re-fire this effect → destroy → recreate → notify → render, ad infinitum.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsUrl])
 
   // Compatibility `setState`: apply a React-style updater against the current
   // local-origin snapshot and ingest the result as a snapshot patch.  Existing
