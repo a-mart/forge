@@ -122,6 +122,10 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
     return false;
   }
 
+  if (maybe.systemNoticeKind !== undefined && maybe.systemNoticeKind !== "worker_outcome_backstop") {
+    return false;
+  }
+
   return true;
 }
 

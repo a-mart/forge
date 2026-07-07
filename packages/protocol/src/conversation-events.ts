@@ -133,6 +133,14 @@ export interface ConversationReplyTargetInput {
   attachmentCount?: number
 }
 
+/**
+ * Discriminates system notices that deserve their own presentation. A
+ * `worker_outcome_backstop` notice is the deterministic delivery of a worker's
+ * final outcome when the manager did not summarize it — informational, not an
+ * error, and must not masquerade as manager prose.
+ */
+export type SystemNoticeKind = 'worker_outcome_backstop'
+
 export interface ConversationMessageEvent {
   type: 'conversation_message'
   agentId: string
@@ -152,6 +160,7 @@ export interface ConversationMessageEvent {
   excludeFromModelContext?: true
   pinned?: boolean
   replyTo?: ConversationReplyTarget
+  systemNoticeKind?: SystemNoticeKind
 }
 
 export interface MessagePinnedEvent {

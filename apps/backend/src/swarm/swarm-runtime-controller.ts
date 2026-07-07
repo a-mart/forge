@@ -281,7 +281,9 @@ export class SwarmRuntimeController {
         },
         onRuntimeExtensionSnapshot: async (runtimeToken, agentId, snapshot) => {
           this.handleRuntimeExtensionSnapshot(runtimeToken, agentId, snapshot);
-        }
+        },
+        getLastUserFacingManagerOutputAt: (agentId) =>
+          this.getRuntimeEventProjector().getLastUserFacingManagerOutputAt(agentId)
       }
     });
   }
@@ -715,6 +717,10 @@ export class SwarmRuntimeController {
     if (!delivered) {
       return error;
     }
+    // The delivery IS the user-facing artifact for this obligation: advance
+    // the projector's visibility watermark (cancels any armed silent-turn
+    // notice) so no other layer stacks a second message on top of it.
+    this.getRuntimeEventProjector().noteUserFacingManagerDelivery(agentId);
     const { userFacingMessage: _suppressed, ...remainingDetails } = error.details ?? {};
     return { ...error, details: { ...remainingDetails, backstopDelivered: true } };
   }

@@ -912,7 +912,7 @@ export function summarizeTerminalWorkerReportForUser(
 
   return (
     `${worker} ${outcome}${status ? ` (status: ${status})` : ""}${detailSuffix}. ` +
-    "The manager did not summarize it; full details are in the worker's report."
+    "Auto-surfaced from the worker's final report — full details in the All view."
   );
 }
 

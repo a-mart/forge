@@ -182,6 +182,15 @@ export interface SwarmRuntimeCallbacks {
   onSessionEvent?: (agentId: string, event: RuntimeSessionEvent) => void | Promise<void>;
   onAgentEnd?: (agentId: string) => void | Promise<void>;
   onRuntimeError?: (agentId: string, error: RuntimeErrorEvent) => void | Promise<void>;
+  /**
+   * Epoch-ms of the last user-facing manager output actually PROJECTED to the
+   * conversation (assistant text on any cycle, a choices prompt, a backstop
+   * delivery) — ground truth from the runtime event projector.  Runtimes must
+   * consult this before treating a run as silent/hidden: the projector, not a
+   * runtime-side text-marker policy, decides what the user saw.  Undefined when
+   * nothing user-facing has been projected for the agent yet.
+   */
+  getLastUserFacingManagerOutputAt?: (agentId: string) => number | undefined;
 }
 
 export type SmartCompactResult =

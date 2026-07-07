@@ -7511,13 +7511,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const summary = summarizeTerminalWorkerReportForUser(reportText, route.sourceWorkerId);
     const timestamp = this.now();
+    // Delivered as a SYSTEM notice with an explicit kind, never as assistant
+    // prose: the text is server-generated, and presenting it in the manager's
+    // voice misattributes it (and reads absurd next to a real manager reply).
+    // The UI styles worker_outcome_backstop notices as informational.
     const payload: ConversationMessageEvent = {
       type: "conversation_message",
       agentId,
-      role: "assistant",
+      role: "system",
       text: summary,
       timestamp,
-      source: "assistant_output",
+      source: "system",
+      systemNoticeKind: "worker_outcome_backstop",
+      ...(route.sourceWorkerId ? { sourceWorkerId: route.sourceWorkerId } : {}),
       sourceContext: target.sourceContext ?? { channel: "web" },
     };
     this.emitConversationMessage(payload);

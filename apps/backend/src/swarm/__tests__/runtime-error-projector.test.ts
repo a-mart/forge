@@ -73,6 +73,42 @@ describe("RuntimeErrorProjector", () => {
     expect(deps.emitConversationMessage).not.toHaveBeenCalled();
   });
 
+  it("emits no user-facing artifact for a silent_turn whose outcome the backstop already delivered", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    descriptors.set("manager-1", baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" }));
+
+    await projector.projectError({
+      agentId: "manager-1",
+      error: defaultError({
+        phase: "silent_turn",
+        message: "Manager produced no visible response to a worker's final report",
+        details: { backstopDelivered: true },
+      }),
+    });
+
+    // The delivery IS the resolution — no "Agent error … may need to be
+    // resent" stacked on top of it.
+    expect(deps.emitConversationMessage).not.toHaveBeenCalled();
+  });
+
+  it("still emits the silent_turn guidance when no backstop delivery happened", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    descriptors.set("manager-1", baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" }));
+
+    await projector.projectError({
+      agentId: "manager-1",
+      error: defaultError({
+        phase: "silent_turn",
+        message: "Manager produced no visible response to a direct user message",
+        details: {
+          userFacingMessage: "⚠️ The manager received your message but did not produce a visible response after automatic retries. Send a follow-up message to continue.",
+        },
+      }),
+    });
+
+    expect(emittedText(deps)).toContain("did not produce a visible response after automatic retries");
+  });
+
   it("normalizes blank messages before capacity recording, extension dispatch, fallback, logging, and emitted text", async () => {
     const { projector, deps, descriptors } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-1", role: "worker", managerId: "manager-1" });

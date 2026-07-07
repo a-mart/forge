@@ -1626,7 +1626,12 @@ describe('manager empty-turn retry after worker terminal report', () => {
     }
   }
 
-  function makeRuntime(options: { descriptor?: AgentDescriptor } = {}) {
+  function makeRuntime(
+    options: {
+      descriptor?: AgentDescriptor
+      getLastUserFacingManagerOutputAt?: (agentId: string) => number | undefined
+    } = {},
+  ) {
     const session = new FakeSession()
     const onAgentEnd = vi.fn()
     const onRuntimeError = vi.fn()
@@ -1637,6 +1642,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
         onStatusChange: () => {},
         onAgentEnd,
         onRuntimeError,
+        ...(options.getLastUserFacingManagerOutputAt
+          ? { getLastUserFacingManagerOutputAt: options.getLastUserFacingManagerOutputAt }
+          : {}),
       },
     })
     return { session, runtime, onAgentEnd, onRuntimeError }
@@ -1651,6 +1659,41 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
     expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
     expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('skips the resample when the projector reports user-facing output during this run', async () => {
+    // Regression (ortho-hr/checkr 2026-07-07): the manager answered a worker
+    // report with rendered text, but the static [assistantOutputTarget] policy
+    // judged it hidden — the ladder deleted the good answer from model
+    // context, re-prompted for duplicates the user already read, then reported
+    // a false silent-turn error. The projector's watermark is ground truth for
+    // what the user saw and must win over the text-marker policy.
+    const { session, runtime, onAgentEnd } = makeRuntime({
+      getLastUserFacingManagerOutputAt: () => Date.now() + 60_000,
+    })
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toHaveLength(0)
+    // The run completes normally and nothing is deleted from model context.
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+    expect(session.state.messages).toHaveLength(2)
+  })
+
+  it('still resamples when the last user-facing output predates this run', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime({
+      getLastUserFacingManagerOutputAt: () => 1,
+    })
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
     expect(onAgentEnd).not.toHaveBeenCalled()
   })
 

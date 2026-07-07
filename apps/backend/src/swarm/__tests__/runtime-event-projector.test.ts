@@ -411,6 +411,86 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
       expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
     );
   });
+
+  it("advances the user-facing watermark on visible output and via noteUserFacingManagerDelivery", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+
+    expect(projector.getLastUserFacingManagerOutputAt("manager-1")).toBeUndefined();
+
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Visible reply.", stopReason: "stop" } },
+    });
+
+    const afterText = projector.getLastUserFacingManagerOutputAt("manager-1");
+    expect(afterText).toBe(Date.parse("2026-05-06T00:00:01.000Z"));
+
+    // An armed silent-turn notice is canceled by an out-of-band delivery
+    // (the terminal-obligation backstop path calls this after it emits).
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "turn_end", toolResults: [] },
+    });
+    projector.noteUserFacingManagerDelivery(manager.agentId);
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "agent_end" },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
+    );
+  });
+
+  it("collapses consecutive identical silent-turn notices across resample attempts", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+
+    // The pi resample ladder replays a silent trigger as fresh runs: each one
+    // is turn_end + agent_end with no visible output. Only the FIRST notice
+    // may reach the user.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: { type: "turn_end", toolResults: [] },
+      });
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: { type: "agent_end" },
+      });
+    }
+
+    const notices = vi.mocked(deps.conversationProjector.emitConversationMessage).mock.calls
+      .map(([event]) => event)
+      .filter((event) => typeof event.text === "string" && event.text.includes("without a visible response"));
+    expect(notices).toHaveLength(1);
+  });
 });
 
 describe("RuntimeEventProjector", () => {

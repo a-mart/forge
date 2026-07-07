@@ -214,6 +214,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private autoCompactionTimeout: NodeJS.Timeout | undefined;
   private lastActivityAtMs = Date.now();
   private hiddenOutputResampleState: { triggerKey: string; attempts: number } | undefined;
+  /** Epoch-ms of the current run's agent_start, for the projector-watermark visibility gate. */
+  private currentRunStartedAt = 0;
   private readonly promptDispatchRestoreOptions = new WeakMap<RuntimeUserMessage, PromptDispatchRestoreOptions>();
 
   constructor(options: {
@@ -985,6 +987,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "agent_start") {
       this.promptDispatchPending = false;
+      this.currentRunStartedAt = Date.now();
       if (this.ignoreNextAgentStart) {
         this.ignoreNextAgentStart = false;
         if (this.status !== "terminated") {
@@ -2070,6 +2073,19 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     const trigger = classifyHiddenOutputTrigger(extractTextFromMessageRecord(triggerMessage));
     if (!trigger) {
+      return false;
+    }
+
+    // Ground-truth gate: the runtime event projector records exactly what the
+    // user saw (it processes this run's session events BEFORE this check runs,
+    // including finals it renders via the worker-report closeout carve-out
+    // that the static [assistantOutputTarget] policy below cannot see).  If
+    // anything user-facing was projected during this run, the obligation is
+    // fulfilled — resampling would delete a good answer from model context and
+    // re-prompt for a duplicate the user already read.
+    const lastVisibleAt = this.callbacks.getLastUserFacingManagerOutputAt?.(this.descriptor.agentId);
+    if (lastVisibleAt !== undefined && this.currentRunStartedAt > 0 && lastVisibleAt >= this.currentRunStartedAt) {
+      this.hiddenOutputResampleState = undefined;
       return false;
     }
 

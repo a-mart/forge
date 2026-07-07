@@ -201,6 +201,32 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   }
 
   if (message.role === 'system') {
+    // Informational notices (auto-surfaced worker outcomes) get a calm,
+    // neutral presentation; the amber styling stays reserved for warnings and
+    // errors so its signal is not diluted.
+    const isWorkerOutcomeNotice = message.systemNoticeKind === 'worker_outcome_backstop'
+    if (isWorkerOutcomeNotice) {
+      return (
+        <div className="rounded-lg border border-sky-300/60 bg-sky-50/60 px-3 py-2 text-sm text-sky-950 dark:border-sky-400/25 dark:bg-sky-500/10 dark:text-sky-100">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300/90">
+            Worker outcome · auto-surfaced
+          </div>
+          <div className="mt-1 space-y-2">
+            {hasText ? (
+              <p className="whitespace-pre-wrap break-words leading-relaxed">
+                {normalizedText}
+              </p>
+            ) : null}
+          </div>
+          {timestampLabel ? (
+            <div className="mt-1 text-[11px] text-sky-700/80 dark:text-sky-300/80">
+              <span>{timestampLabel}</span>
+            </div>
+          ) : null}
+        </div>
+      )
+    }
+
     return (
       <div className="rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-sm text-amber-950 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">
         <div className="text-[11px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300/90">

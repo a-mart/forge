@@ -1364,8 +1364,15 @@ describe('SwarmManager', () => {
     const delivered = manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)
     expect(delivered).toBe(true)
 
-    const outputs = assistantOutputsFor(manager, 'manager')
-    expect(outputs).toHaveLength(1)
+    // The delivery is a SYSTEM notice with an explicit kind — never assistant
+    // prose (server-generated text must not speak in the manager's voice).
+    const notices = manager
+      .getConversationHistory('manager')
+      .filter((entry: any) => entry.type === 'conversation_message' && entry.systemNoticeKind === 'worker_outcome_backstop')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].role).toBe('system')
+    expect(notices[0].source).toBe('system')
+    expect(assistantOutputsFor(manager, 'manager')).toHaveLength(0)
     // Attribution is best-effort: when the active route context carries the
     // source worker id the line names it (`Backstop Worker`); otherwise it
     // gracefully falls back to "A background task". This harness does not drive
@@ -1373,15 +1380,19 @@ describe('SwarmManager', () => {
     // worker id, so accept either form here — the attribution formatting itself
     // is unit-tested in swarm-manager-utils.test.ts. The load-bearing guarantee
     // (the outcome is delivered at all, with status + summary) is asserted below.
-    expect(outputs[0].text).toMatch(/`Backstop Worker`|A background task/)
-    expect(outputs[0].text).toContain('was blocked')
-    expect(outputs[0].text).toContain('rerun failed before a Graph response')
-    expect(outputs[0].text).not.toContain('assistantOutputTarget')
+    expect(notices[0].text).toMatch(/`Backstop Worker`|A background task/)
+    expect(notices[0].text).toContain('was blocked')
+    expect(notices[0].text).toContain('rerun failed before a Graph response')
+    expect(notices[0].text).not.toContain('assistantOutputTarget')
 
     // Dedup: a re-entrant exhaustion for the same report must not double-deliver.
     const redelivered = manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)
     expect(redelivered).toBe(false)
-    expect(assistantOutputsFor(manager, 'manager')).toHaveLength(1)
+    expect(
+      manager
+        .getConversationHistory('manager')
+        .filter((entry: any) => entry.type === 'conversation_message' && entry.systemNoticeKind === 'worker_outcome_backstop'),
+    ).toHaveLength(1)
   })
 
   it('matches provider-selected queued turns by runtime message instead of FIFO order', async () => {

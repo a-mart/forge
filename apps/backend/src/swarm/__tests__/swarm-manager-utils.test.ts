@@ -812,7 +812,7 @@ describe("summarizeTerminalWorkerReportForUser", () => {
   it("still surfaces an outcome pointer when no parsable status is present", () => {
     const line = summarizeTerminalWorkerReportForUser("SYSTEM: Worker w-1 completed its turn.", "w-1");
     expect(line).toContain("`w-1`");
-    expect(line).toContain("full details are in the worker's report");
+    expect(line).toContain("full details in the All view");
   });
 });
 

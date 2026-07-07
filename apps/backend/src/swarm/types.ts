@@ -296,6 +296,8 @@ export interface ConversationMessageEvent {
   excludeFromModelContext?: true;
   pinned?: boolean;
   replyTo?: ConversationReplyTarget;
+  /** Presentation discriminator for system notices (see protocol SystemNoticeKind). */
+  systemNoticeKind?: "worker_outcome_backstop";
 }
 
 export type ConversationLogKind =

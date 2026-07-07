@@ -102,6 +102,8 @@ interface PiRuntimeCreatorDependencies {
       agentId: string,
       snapshot: AgentRuntimeExtensionSnapshot
     ) => Promise<void>;
+    /** Projector ground truth: epoch-ms of last user-facing manager output (see SwarmRuntimeCallbacks). */
+    getLastUserFacingManagerOutputAt?: (agentId: string) => number | undefined;
   };
 }
 
@@ -398,7 +400,9 @@ export class PiRuntimeCreator {
         },
         onRuntimeError: async (agentId, error) => {
           await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
-        }
+        },
+        getLastUserFacingManagerOutputAt: (agentId) =>
+          this.deps.callbacks.getLastUserFacingManagerOutputAt?.(agentId)
       },
       now: this.deps.now
     });

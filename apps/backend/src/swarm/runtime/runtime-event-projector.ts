@@ -128,6 +128,23 @@ export class RuntimeEventProjector {
    * armed notice.  Reset at `agent_end`.
    */
   private readonly visibleManagerOutputAgentIds = new Set<string>();
+  /**
+   * Monotonic watermark: epoch-ms of the last user-facing manager output this
+   * projector actually emitted, per agent.  This is the single source of truth
+   * for "did the user see something" — the pi runtime's hidden-output resample
+   * ladder consults it (via SwarmRuntimeCallbacks.getLastUserFacingManagerOutputAt)
+   * before judging a run silent, so runtime-side text-marker policy can never
+   * again contradict what actually rendered.  Never cleared (bounded by agent
+   * count), unlike the per-run set above.
+   */
+  private readonly lastUserFacingOutputAtByAgentId = new Map<string, number>();
+  /**
+   * Text of the most recent silent-turn notice delivered per agent, cleared as
+   * soon as any user-facing output appears.  The pi resample ladder re-runs a
+   * silent trigger as a fresh run, so without this an identical notice would be
+   * emitted once per attempt; consecutive duplicates are collapsed to one.
+   */
+  private readonly lastEmittedSilentNoticeTextByAgentId = new Map<string, string>();
 
   constructor(private readonly deps: RuntimeEventProjectorDeps) {
     this.managerAssistantOutputTracker = new ManagerAssistantOutputTracker({
@@ -511,6 +528,14 @@ export class RuntimeEventProjector {
       this.pendingSilentManagerNotices.delete(agentId);
       this.visibleManagerOutputAgentIds.delete(agentId);
       if (armed) {
+        // The pi resample ladder re-dispatches a silent trigger as a fresh
+        // run, so a genuinely silent obligation would otherwise emit this same
+        // notice once per attempt.  Collapse consecutive identical notices;
+        // the memo clears the moment any user-facing output lands.
+        if (this.lastEmittedSilentNoticeTextByAgentId.get(agentId) === armed.text) {
+          return;
+        }
+        this.lastEmittedSilentNoticeTextByAgentId.set(agentId, armed.text);
         this.deps.conversationProjector.emitConversationMessage({ ...armed, timestamp: this.deps.now() });
       }
     }
@@ -538,6 +563,28 @@ export class RuntimeEventProjector {
     }
     this.visibleManagerOutputAgentIds.add(agentId);
     this.pendingSilentManagerNotices.delete(agentId);
+    this.lastEmittedSilentNoticeTextByAgentId.delete(agentId);
+    const at = Date.parse(this.deps.now());
+    this.lastUserFacingOutputAtByAgentId.set(agentId, Number.isNaN(at) ? Date.now() : at);
+  }
+
+  /**
+   * Ground truth for "when did the user last see manager output" — consulted
+   * by the pi runtime's hidden-output resample ladder so it never re-prompts
+   * (or reports a silent-turn error) over a response that actually rendered.
+   */
+  getLastUserFacingManagerOutputAt(agentId: string): number | undefined {
+    return this.lastUserFacingOutputAtByAgentId.get(agentId);
+  }
+
+  /**
+   * Record an out-of-band user-facing delivery (e.g. the terminal-obligation
+   * backstop surfacing a worker outcome via SwarmManager).  Cancels any armed
+   * silent-turn notice and advances the visibility watermark so no other layer
+   * piles a second artifact on top of the delivery.
+   */
+  noteUserFacingManagerDelivery(agentId: string): void {
+    this.markUserFacingManagerActivity(agentId);
   }
 
   private maybeEmitWorkerReportConversationMessage(

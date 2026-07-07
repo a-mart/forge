@@ -76,6 +76,8 @@ interface RuntimeFactoryDependencies {
       agentId: string,
       snapshot: AgentRuntimeExtensionSnapshot
     ) => Promise<void>;
+    /** Projector ground truth: epoch-ms of last user-facing manager output (see SwarmRuntimeCallbacks). */
+    getLastUserFacingManagerOutputAt?: (agentId: string) => number | undefined;
   };
 }
 
