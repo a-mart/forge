@@ -73,9 +73,9 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
     helpUrl: 'https://openrouter.ai/keys',
   },
   'cursor-sdk': {
-    label: 'Cursor API key',
-    description: 'Used by Cursor SDK Composer specialists.',
-    placeholder: 'key_... or Cursor API key',
+    label: 'Cursor SDK auth',
+    description: 'Used by Cursor SDK Composer and Grok 4.5 sessions.',
+    placeholder: 'key_... or Cursor SDK token',
     helpUrl: 'https://cursor.com/dashboard?tab=api-keys',
   },
 }

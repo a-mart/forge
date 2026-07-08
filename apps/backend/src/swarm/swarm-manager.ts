@@ -283,6 +283,7 @@ import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
   normalizePersistedSwarmModelDescriptor,
+  normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
   parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset
@@ -375,7 +376,6 @@ import {
   normalizeOptionalAttachmentPath,
   normalizeOptionalModelId,
   nowIso,
-  normalizeThinkingLevelForProvider,
   parseCompactSlashCommand,
   parseSessionNumberFromAgentId,
   previewForLog,
@@ -3272,18 +3272,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             ? resolveModelDescriptorFromPreset(preset)
             : { ...creatorDescriptor.model };
 
-          if (parsedReasoningLevel) {
-            resolvedModel.thinkingLevel = parsedReasoningLevel;
-          }
-
-          return {
+          const normalizedDescriptor = {
             ...resolvedModel,
             provider: normalizeOptionalAgentId(resolvedModel.provider)?.toLowerCase() ?? resolvedModel.provider,
             modelId: normalizeOptionalModelId(resolvedModel.modelId)?.toLowerCase() ?? resolvedModel.modelId,
-            thinkingLevel: normalizeThinkingLevelForProvider(
-              resolvedModel.provider,
-              resolvedModel.thinkingLevel
-            )
+          };
+
+          return {
+            ...normalizedDescriptor,
+            thinkingLevel: normalizeThinkingLevelForModelDescriptor(normalizedDescriptor, parsedReasoningLevel)
           };
         })()
       : undefined;

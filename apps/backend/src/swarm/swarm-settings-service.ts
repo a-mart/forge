@@ -32,7 +32,7 @@ import {
 import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
-import { resolveModelDescriptorFromPreset } from "./model-presets.js";
+import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset } from "./model-presets.js";
 import {
   appendModelChangeContinuityRequest,
   createModelChangeContinuityRequest,
@@ -1199,9 +1199,7 @@ function resolveModelDescriptor(
   reasoningLevel?: SwarmReasoningLevel
 ): AgentDescriptor["model"] {
   const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
-  if (reasoningLevel) {
-    modelDescriptor.thinkingLevel = reasoningLevel;
-  }
+  modelDescriptor.thinkingLevel = normalizeThinkingLevelForModelDescriptor(modelDescriptor, reasoningLevel);
   return modelDescriptor;
 }
 

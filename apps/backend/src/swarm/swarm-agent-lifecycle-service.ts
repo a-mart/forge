@@ -1,6 +1,6 @@
 import type { EffortTier, ManagerExactModelSelection, SpecialistTargetSpace, TierConfig } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
-import { resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
+import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import type {
   RuntimeCreationOptions,
@@ -35,7 +35,6 @@ import {
   normalizeAgentId,
   normalizeOptionalAgentId,
   normalizeOptionalModelId,
-  normalizeThinkingLevelForProvider,
   resolveNextCapacityFallbackModelId,
   shouldRetrySpecialistSpawnWithFallback,
   isCollabSession
@@ -614,7 +613,7 @@ export class SwarmAgentLifecycleService {
         modelId: modelConfig.modelId,
         thinkingLevel: reasoningLevelOverride ?? modelConfig.reasoningLevel ?? "xhigh",
       };
-      model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+      model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
       model = this.resolveSpawnModelWithCapacityFallback(model);
 
       if (modelConfig.fallbackModelId) {
@@ -625,10 +624,7 @@ export class SwarmAgentLifecycleService {
             modelId: modelConfig.fallbackModelId,
             thinkingLevel: modelConfig.fallbackReasoningLevel ?? model.thinkingLevel
           };
-          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
-            specialistFallbackModel.provider,
-            specialistFallbackModel.thinkingLevel
-          );
+          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForModelDescriptor(specialistFallbackModel);
           specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
         }
       }
@@ -676,7 +672,7 @@ export class SwarmAgentLifecycleService {
           modelId: tierConfig.modelId,
           thinkingLevel: reasoningLevelOverride ?? tierConfig.reasoningLevel ?? "xhigh",
         };
-        model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+        model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
         model = this.resolveSpawnModelWithCapacityFallback(model);
         if (tierConfig.fallbackModelId) {
           specialistFallbackModel = {
@@ -684,10 +680,7 @@ export class SwarmAgentLifecycleService {
             modelId: tierConfig.fallbackModelId,
             thinkingLevel: tierConfig.fallbackReasoningLevel ?? model.thinkingLevel,
           };
-          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
-            specialistFallbackModel.provider,
-            specialistFallbackModel.thinkingLevel
-          );
+          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForModelDescriptor(specialistFallbackModel);
           specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
         }
         archetypeId = undefined;
@@ -713,7 +706,7 @@ export class SwarmAgentLifecycleService {
         modelId: specialist.modelId,
         thinkingLevel: reasoningLevelOverride ?? specialist.reasoningLevel ?? "xhigh"
       };
-        model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+        model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
         model = this.resolveSpawnModelWithCapacityFallback(model);
 
         if (specialist.fallbackModelId) {
@@ -724,10 +717,7 @@ export class SwarmAgentLifecycleService {
             modelId: specialist.fallbackModelId,
             thinkingLevel: specialist.fallbackReasoningLevel ?? model.thinkingLevel
           };
-          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
-            specialistFallbackModel.provider,
-            specialistFallbackModel.thinkingLevel
-          );
+          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForModelDescriptor(specialistFallbackModel);
           specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
         }
       }
@@ -1169,8 +1159,8 @@ export class SwarmAgentLifecycleService {
           })
         : this.options.resolveDefaultModelDescriptor();
 
-    if (!input.modelSelection && requestedReasoningLevel) {
-      initialModel.thinkingLevel = requestedReasoningLevel;
+    if (!input.modelSelection) {
+      initialModel.thinkingLevel = normalizeThinkingLevelForModelDescriptor(initialModel, requestedReasoningLevel);
     }
 
     const descriptor: AgentDescriptor = {
@@ -1422,10 +1412,7 @@ export class SwarmAgentLifecycleService {
       descriptor.thinkingLevel = requestedReasoningLevel;
     }
 
-    descriptor.thinkingLevel = normalizeThinkingLevelForProvider(
-      descriptor.provider,
-      descriptor.thinkingLevel
-    );
+    descriptor.thinkingLevel = normalizeThinkingLevelForModelDescriptor(descriptor);
 
     return descriptor;
   }

@@ -5,6 +5,7 @@ import {
   inferSwarmModelPresetFromDescriptor,
   normalizePersistedSwarmModelDescriptor,
   normalizeSwarmModelDescriptor,
+  normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
   resolveModelDescriptorFromPreset,
   resolveRemovedSwarmModelPresetAlias,
@@ -106,7 +107,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "sdk-opus", "sdk-sonnet", "cursor-composer"] as const) {
+    for (const presetId of ["pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -155,7 +156,7 @@ describe("model-presets", () => {
     })).toEqual({
       provider: "cursor-sdk",
       modelId: "composer-2.5",
-      thinkingLevel: "high",
+      thinkingLevel: "none",
     });
     expect(normalizePersistedSwarmModelDescriptor({
       provider: " Cursor-ACP ",
@@ -164,13 +165,66 @@ describe("model-presets", () => {
     })).toEqual({
       provider: "cursor-sdk",
       modelId: "composer-2.5",
-      thinkingLevel: "high",
+      thinkingLevel: "none",
     });
     expect(normalizePersistedSwarmModelDescriptor({
       provider: "cursor-acp",
       modelId: "default",
       thinkingLevel: "none",
-    })?.thinkingLevel).toBe("low");
+    })?.thinkingLevel).toBe("none");
+  });
+
+  it("exposes Cursor SDK Grok 4.5 with provider-scoped variants", () => {
+    const presets = getModelPresetInfoList();
+    const cursorGrok = presets.find((preset) => preset.presetId === "cursor-grok-45");
+
+    expect(inferSwarmModelPresetFromDescriptor({ provider: "cursor-sdk", modelId: "grok-4.5" })).toBe("cursor-grok-45");
+    expect(inferSwarmModelPresetFromDescriptor({ provider: "cursor-sdk", modelId: "grok-4.5-fast" })).toBe("cursor-grok-45");
+    expect(resolveModelDescriptorFromPreset("cursor-grok-45")).toEqual({
+      provider: "cursor-sdk",
+      modelId: "grok-4.5",
+      thinkingLevel: "high",
+    });
+    expect(cursorGrok).toMatchObject({
+      provider: "cursor-sdk",
+      modelId: "grok-4.5",
+      defaultReasoningLevel: "high",
+      supportedReasoningLevels: ["low", "medium", "high"],
+    });
+    expect(cursorGrok?.variants?.map((variant) => variant.modelId)).toEqual(["grok-4.5-fast"]);
+    expect(modelCatalogService.isKnownModelId("grok-4.5", "cursor-sdk")).toBe(true);
+    expect(inferProviderFromModelId("grok-4.5")).toBe("xai");
+  });
+
+  it("normalizes Cursor SDK reasoning levels against model-specific catalog support", () => {
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "high",
+    })).toBe("none");
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "none",
+    })).toBe("none");
+
+    for (const level of ["low", "medium", "high"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "cursor-sdk",
+        modelId: "grok-4.5",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "cursor-sdk",
+      modelId: "grok-4.5",
+      thinkingLevel: "none",
+    })).toBe("low");
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "cursor-sdk",
+      modelId: "grok-4.5-fast",
+      thinkingLevel: "xhigh",
+    })).toBe("high");
   });
 
   it("uses the catalog-backed known model list", () => {

@@ -187,6 +187,20 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     expect(session.model).toMatchObject(resolved);
   });
 
+  it("normalizes Cursor preset reasoning overrides before persisting manager settings", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager");
+    const service = createService({ rootDir: root, sessions: [session] });
+
+    await service.updateManagerModel(session.agentId, "cursor-composer", "high");
+
+    expect(session.model).toEqual({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "none",
+    });
+  });
+
   it("strips stale service-tier fields when inheriting the project default model", async () => {
     const root = await createTempRoot();
     const staleDefaultModel = {

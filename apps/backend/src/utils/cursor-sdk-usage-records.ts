@@ -17,6 +17,8 @@ export interface CursorSdkUsageRecordV1 {
   source: typeof CURSOR_SDK_USAGE_SOURCE;
   provider: typeof CURSOR_SDK_PROVIDER_ID;
   modelId: string;
+  sdkModelId?: string;
+  fast?: boolean | null;
   reasoningLevel: string | null;
   usage: CursorSdkUsageTotals;
   sdkRunId: string | null;
@@ -31,6 +33,8 @@ export interface CursorSdkUsageRecordV1 {
 
 export interface ParsedCursorSdkUsageEntry {
   modelId: string;
+  sdkModelId: string | null;
+  fast: boolean | null;
   reasoningLevel: string | null;
   usage: CursorSdkUsageTotals;
   capturedAt: string | null;
@@ -89,6 +93,8 @@ export function parseCursorSdkUsageCustomEntry(entry: unknown): ParsedCursorSdkU
 
   return {
     modelId,
+    sdkModelId: readNonEmptyString(data.sdkModelId),
+    fast: readOptionalBoolean(data.fast),
     reasoningLevel: readNonEmptyString(data.reasoningLevel),
     usage,
     capturedAt: readNonEmptyString(data.capturedAt),
@@ -136,6 +142,10 @@ function readNonEmptyString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function readCursorSdkUsageOutcome(value: unknown): CursorSdkUsageOutcome {

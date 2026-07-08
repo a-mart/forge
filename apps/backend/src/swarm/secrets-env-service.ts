@@ -406,7 +406,7 @@ export async function resolveCursorSdkApiKey(config: SwarmConfig): Promise<Curso
     return { apiKey: envValue.trim(), source: "env" };
   }
 
-  throw new Error("Cursor SDK API key not configured. Add CURSOR_API_KEY in Settings → Authentication.");
+  throw new Error("Cursor SDK auth not configured. Add Cursor SDK auth in Settings → Authentication.");
 }
 
 export async function getManagedModelProviderCredentialAvailability(
