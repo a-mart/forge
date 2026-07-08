@@ -13,7 +13,7 @@ Selecting a worktree changes the Source Control and Files context only. You can 
 
 ## Branch and remote actions
 
-Source Control can fetch from origin, switch branches, create branches, and run fast-forward-only pulls. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background. Manual **Fetch** remains explicit and reports errors if it cannot complete. Write actions use a confirmation flow with a preflight check, including the expected head and status state, before Forge sends the git command. If the matching Files worktree has unsaved inline edits, Forge guards the transition, mutation, or affected file/folder delete instead of discarding the draft.
+Source Control can fetch from origin, switch branches, create branches, and pull from upstream. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background. Manual **Fetch** remains explicit and reports errors if it cannot complete. Write actions use a confirmation flow with a preflight check, including the expected head and status state, before Forge sends the git command. If the matching Files worktree has unsaved inline edits, Forge guards the transition, mutation, or affected file/folder delete instead of discarding the draft.
 
 Forge does not provide force push, stash, discard, rebase, branch deletion, or worktree create/remove actions from this workspace.
 

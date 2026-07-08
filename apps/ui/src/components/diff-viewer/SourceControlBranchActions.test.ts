@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, getByText, queryByText } from '@testing-library/dom'
+import { fireEvent, getByRole, getByText } from '@testing-library/dom'
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -83,25 +83,25 @@ describe('SourceControlBranchActions', () => {
     renderActions({ isDirty: false })
 
     expect(getByText(container, 'Fetch origin')).toBeTruthy()
-    expect(getByText(container, 'Pull FF only')).toBeTruthy()
+    expect(getByText(container, 'Pull')).toBeTruthy()
   })
 
   it('disables pull when the worktree is dirty', () => {
     renderActions({ isDirty: true })
 
-    const pullButton = getByRole(container, 'button', { name: /Pull FF only/i }) as HTMLButtonElement
+    const pullButton = getByRole(container, 'button', { name: /Pull/i }) as HTMLButtonElement
     expect(pullButton.disabled).toBe(true)
   })
 
-  it('opens a confirmation dialog before fast-forward pull', () => {
+  it('opens a confirmation dialog before pull', () => {
     renderActions({ isDirty: false })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
     })
 
-    expect(getByText(document.body, 'Fast-forward pull?')).toBeTruthy()
-    expect(getByRole(document.body, 'button', { name: 'Pull fast-forward' })).toBeTruthy()
+    expect(getByText(document.body, 'Pull?')).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Pull' })).toBeTruthy()
   })
 
   it('runs Source Control mutation guard before opening pull confirmation', () => {
@@ -112,7 +112,7 @@ describe('SourceControlBranchActions', () => {
     renderActions({ isDirty: false, worktreeId: 'feature-linked', onRequestMutation })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
     })
 
     expect(onRequestMutation).toHaveBeenCalledWith(
@@ -120,13 +120,13 @@ describe('SourceControlBranchActions', () => {
       { agentId: 'agent-1', worktreeId: 'feature-linked' },
       expect.any(Function),
     )
-    expect(document.body.textContent ?? '').not.toContain('Fast-forward pull?')
+    expect(document.body.textContent ?? '').not.toContain('Pull?')
 
     flushSync(() => {
       runRef.current?.()
     })
 
-    expect(getByText(document.body, 'Fast-forward pull?')).toBeTruthy()
+    expect(getByText(document.body, 'Pull?')).toBeTruthy()
   })
 
   it('runs Source Control mutation guard before opening switch and create confirmations', () => {
@@ -174,7 +174,7 @@ describe('SourceControlBranchActions', () => {
     )
   })
 
-  it('shows idle attached-session warnings from mutation preflight', async () => {
+  it('suppresses idle attached-session warnings from pull preflight', async () => {
     fetchMutationPreflightMock.mockResolvedValue({
       allowed: true,
       issues: [
@@ -192,44 +192,14 @@ describe('SourceControlBranchActions', () => {
     renderActions({ isDirty: false })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
     })
 
     await vi.waitFor(() => {
-      expect(getByText(document.body, 'Idle sessions are attached to this worktree (Builder).')).toBeTruthy()
-    })
-  })
-
-  it('summarizes huge idle attached-session warnings from mutation preflight', async () => {
-    const sessionNames = Array.from({ length: 312 }, (_, index) => `Session ${index + 1}`)
-    const hugeWarning = `Idle sessions are attached to this worktree (${sessionNames.join(', ')}).`
-    fetchMutationPreflightMock.mockResolvedValue({
-      allowed: true,
-      issues: [
-        {
-          code: 'idle_agents_attached',
-          message: hugeWarning,
-          severity: 'warn',
-        },
-      ],
-      currentBranch: 'main',
-      currentHead: 'abc123',
-      statusHash: 'status123',
+      expect(fetchMutationPreflightMock).toHaveBeenCalled()
     })
 
-    renderActions({ isDirty: false })
-
-    flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
-    })
-
-    await vi.waitFor(() => {
-      expect(getByText(document.body, '312 idle sessions are attached to this worktree.')).toBeTruthy()
-    })
-
-    expect(queryByText(document.body, hugeWarning)).toBeNull()
-    expect(getByRole(document.body, 'button', { name: 'Cancel' })).toBeTruthy()
-    expect(getByRole(document.body, 'button', { name: 'Pull fast-forward' })).toBeTruthy()
+    expect(document.body.textContent ?? '').not.toContain('Idle sessions are attached to this worktree')
   })
 
   it('shows blocking mutation-preflight issues inside the confirmation dialog', async () => {
@@ -238,7 +208,7 @@ describe('SourceControlBranchActions', () => {
       issues: [
         {
           code: 'ignored_untracked_would_be_overwritten',
-          message: 'Fast-forward pull from "origin/main" would overwrite ignored local files: "ignored.txt".',
+          message: 'Pull from "origin/main" would overwrite ignored local files: "ignored.txt".',
           severity: 'block',
         },
       ],
@@ -250,14 +220,14 @@ describe('SourceControlBranchActions', () => {
     renderActions({ isDirty: false })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
     })
 
     await vi.waitFor(() => {
-      expect(getByText(document.body, 'Fast-forward pull from "origin/main" would overwrite ignored local files: "ignored.txt".')).toBeTruthy()
+      expect(getByText(document.body, 'Pull from "origin/main" would overwrite ignored local files: "ignored.txt".')).toBeTruthy()
     })
 
-    expect((getByRole(document.body, 'button', { name: 'Pull fast-forward' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((getByRole(document.body, 'button', { name: 'Pull' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('auto-fetches origin when Source Control becomes active and fetch history is stale', async () => {
@@ -397,11 +367,11 @@ describe('SourceControlBranchActions', () => {
     renderActions({ isDirty: false, worktreeId: 'feature-linked' })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull' }))
     })
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Pull fast-forward' }))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Pull' }))
     })
 
     await vi.waitFor(() => {
