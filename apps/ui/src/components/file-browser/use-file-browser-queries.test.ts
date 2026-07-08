@@ -3,9 +3,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileContentResult, FileSaveRequest, FileSaveSuccessResponse } from './use-file-browser-queries'
 import {
+  applySuccessfulFileCreateToCaches,
   applySuccessfulFileDeleteToCaches,
+  applySuccessfulFileRenameToCaches,
   applySuccessfulFileSaveToCaches,
+  createFilePath,
   deleteFilePath,
+  renameFilePath,
   invalidateFileBrowserCaches,
   saveFileContent,
 } from './use-file-browser-queries'
@@ -176,6 +180,45 @@ describe('file save cache helpers', () => {
   })
 })
 
+describe('createFilePath and renameFilePath', () => {
+  it('creates through POST /api/files/create', async () => {
+    const success = { success: true, path: 'src/new.ts', entryType: 'file' as const }
+    const fetchSpy = mockFetchResponse(200, success)
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(createFilePath('ws://127.0.0.1:47187', {
+      agentId: 'session-a',
+      worktreeId: 'worktree-1',
+      directoryPath: 'src',
+      name: 'new.ts',
+      type: 'file',
+    })).resolves.toEqual(success)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/files/create',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('renames through PATCH /api/files/rename', async () => {
+    const success = { success: true, path: 'src/old.ts', newPath: 'src/new.ts', entryType: 'file' as const }
+    const fetchSpy = mockFetchResponse(200, success)
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(renameFilePath('ws://127.0.0.1:47187', {
+      agentId: 'session-a',
+      worktreeId: 'worktree-1',
+      path: 'src/old.ts',
+      newName: 'new.ts',
+    })).resolves.toEqual(success)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/files/rename',
+      expect.objectContaining({ method: 'PATCH' }),
+    )
+  })
+})
+
 describe('deleteFilePath', () => {
   it('deletes through DELETE /api/files/content with query params', async () => {
     const success = {
@@ -199,7 +242,20 @@ describe('deleteFilePath', () => {
   })
 })
 
-describe('file delete cache helpers', () => {
+describe('file mutation cache helpers', () => {
+  it('invalidates git caches after create and rename', () => {
+    applySuccessfulFileCreateToCaches({ agentId: 'session-a', worktreeId: null })
+    applySuccessfulFileRenameToCaches({
+      agentId: 'session-a',
+      worktreeId: null,
+      path: 'src/old.ts',
+      newPath: 'src/new.ts',
+      entryType: 'file',
+    })
+
+    expect(invalidateGitCaches).toHaveBeenCalledWith({ agentId: 'session-a', repoTarget: 'workspace' })
+  })
+
   it('invalidates git caches after delete', () => {
     applySuccessfulFileDeleteToCaches({
       agentId: 'session-a',

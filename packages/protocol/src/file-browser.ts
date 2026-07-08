@@ -127,3 +127,31 @@ export interface FileDeleteResponse {
   path: string
   entryType: 'file' | 'directory'
 }
+
+export interface FileCreateRequest {
+  agentId: string
+  directoryPath: string
+  name: string
+  type: 'file'
+  worktreeId?: string | null
+}
+
+export interface FileCreateResponse {
+  success: true
+  path: string
+  entryType: 'file'
+}
+
+export interface FileRenameRequest {
+  agentId: string
+  path: string
+  newName: string
+  worktreeId?: string | null
+}
+
+export interface FileRenameResponse {
+  success: true
+  path: string
+  newPath: string
+  entryType: 'file' | 'directory'
+}

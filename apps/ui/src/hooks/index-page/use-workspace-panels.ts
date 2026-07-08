@@ -37,8 +37,12 @@ import { useFileEditSessions } from '@/components/file-browser/use-file-edit-ses
 import { fileBrowserTabId } from '@/components/file-browser/use-file-browser-workspace-state'
 import { useFileEditorCoordinator, type FileEditorSessionKey } from '@/components/file-browser/use-file-editor-coordinator'
 import {
+  applySuccessfulFileCreateToCaches,
   applySuccessfulFileDeleteToCaches,
+  applySuccessfulFileRenameToCaches,
+  createFilePath,
   deleteFilePath,
+  renameFilePath,
   type FileContentResult,
 } from '@/components/file-browser/use-file-browser-queries'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
@@ -122,6 +126,7 @@ export function useWorkspacePanels({
     updateFileBrowserTreeSnapshot,
     updateActiveFileBrowserContentScrollSnapshot,
     removeFileBrowserTabsAffectedByDelete,
+    renameFileBrowserTabsAffectedByRename,
     navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
     fileBrowserWorktreeContext,
     browseWorktreeFiles: handleBrowseWorktreeFiles,
@@ -219,6 +224,78 @@ export function useWorkspacePanels({
   const handleFileBrowserOpenStickyFile = useCallback((path: string) => {
     handleOpenStickyFileBrowserFile(path)
   }, [handleOpenStickyFileBrowserFile])
+
+  const handleFileBrowserCreateFile = useCallback(async (directoryPath: string, name: string): Promise<string | null> => {
+    if (!activeAgentId) return null
+    const result = await createFilePath(wsUrl, {
+      agentId: activeAgentId,
+      worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+      directoryPath,
+      name,
+      type: 'file',
+    })
+    applySuccessfulFileCreateToCaches({
+      agentId: activeAgentId,
+      worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+    })
+    setFileBrowserRefreshNonce((previous) => previous + 1)
+    setSourceControlRefreshNonce((previous) => previous + 1)
+    handleOpenStickyFileBrowserFile(result.path)
+    return result.path
+  }, [activeAgentId, fileBrowserWorktreeContext?.worktreeId, handleOpenStickyFileBrowserFile, wsUrl])
+
+  const handleFileBrowserRenameEntry = useCallback((path: string, entryType: 'file' | 'directory', newName: string): Promise<boolean> => {
+    if (!activeAgentId) return Promise.resolve(false)
+
+    const runRename = async (): Promise<boolean> => {
+      const result = await renameFilePath(wsUrl, {
+        agentId: activeAgentId,
+        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        path,
+        newName,
+      })
+      applySuccessfulFileRenameToCaches({
+        agentId: activeAgentId,
+        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        path,
+        newPath: result.newPath,
+        entryType,
+      })
+      renameFileBrowserTabsAffectedByRename(path, result.newPath, entryType)
+      fileEditSessions.removeSessionsAffectedByDelete({
+        agentId: activeAgentId,
+        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        path,
+        entryType,
+      })
+      setFileBrowserRefreshNonce((previous) => previous + 1)
+      setSourceControlRefreshNonce((previous) => previous + 1)
+      return true
+    }
+
+    return new Promise<boolean>((resolve, reject) => {
+      fileEditorCoordinator.requestFileEditorTransition(
+        {
+          type: 'rename-entry',
+          path,
+          entryType,
+          agentId: activeAgentId,
+          worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        },
+        () => {
+          void runRename().then(resolve, reject)
+        },
+        () => resolve(false),
+      )
+    })
+  }, [
+    activeAgentId,
+    fileBrowserWorktreeContext?.worktreeId,
+    fileEditorCoordinator,
+    fileEditSessions,
+    renameFileBrowserTabsAffectedByRename,
+    wsUrl,
+  ])
 
   const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory'): Promise<boolean> => {
     if (!activeAgentId) return Promise.resolve(false)
@@ -635,6 +712,8 @@ export function useWorkspacePanels({
     handleFileEditorContentLoaded,
     handleGuardedFileBrowserSelectFile,
     handleFileBrowserOpenStickyFile,
+    handleFileBrowserCreateFile,
+    handleFileBrowserRenameEntry,
     handleFileBrowserDeleteEntry,
     handleRequestCloseFileBrowserTab,
     handleGuardedFileBrowserClosePanel,

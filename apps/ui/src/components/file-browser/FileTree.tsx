@@ -106,6 +106,8 @@ interface FileTreeProps {
   fileCountMethod: string | null
   worktreeId?: string | null
   onRequestDelete?: (path: string, entryType: 'file' | 'directory') => void
+  onRequestCreateFile?: (directoryPath: string) => void
+  onRequestRename?: (path: string, entryType: 'file' | 'directory') => void
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,7 +146,7 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, cwd, selectedFile, onSelectFile, onOpenStickyFile, treeSnapshot, onTreeSnapshotChange, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, onOpenStickyFile, treeSnapshot, onTreeSnapshotChange, fileCount, fileCountMethod, worktreeId = null, onRequestDelete, onRequestCreateFile, onRequestRename },
     ref,
   ) {
     const [filterText, setFilterText] = useState(treeSnapshot?.filterText ?? '')
@@ -602,6 +604,12 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                         onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
                         onRequestDelete={onRequestDelete
                           ? () => onRequestDelete(itemId, itemData.type)
+                          : undefined}
+                        onRequestCreateFile={onRequestCreateFile && itemData.type === 'directory'
+                          ? () => onRequestCreateFile(itemId)
+                          : undefined}
+                        onRequestRename={onRequestRename
+                          ? () => onRequestRename(itemId, itemData.type)
                           : undefined}
                       />
                     </div>

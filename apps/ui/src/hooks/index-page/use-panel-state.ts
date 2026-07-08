@@ -275,6 +275,7 @@ export function usePanelState({
     updateFileBrowserTreeSnapshot: fileBrowserWorkspace.updateTreeSnapshot,
     updateActiveFileBrowserContentScrollSnapshot: fileBrowserWorkspace.updateActiveContentScrollSnapshot,
     removeFileBrowserTabsAffectedByDelete: fileBrowserWorkspace.removeTabsAffectedByDelete,
+    renameFileBrowserTabsAffectedByRename: fileBrowserWorkspace.renameTabsAffectedByRename,
     closeFileBrowserPanel,
     navigateFileBrowserToDirectory,
     fileBrowserWorktreeContext,

@@ -74,6 +74,19 @@ function contentScrollSnapshotsEqual(a: FileContentScrollSnapshot | undefined, b
   return a?.kind === b.kind && a.scrollTop === b.scrollTop && (a.scrollLeft ?? 0) === (b.scrollLeft ?? 0)
 }
 
+function renamedFilePath(path: string, newPath: string, entryType: 'file' | 'directory', filePath: string): string | null {
+  const normalizedPath = path.replace(/^\/+|\/+$/g, '')
+  const normalizedNewPath = newPath.replace(/^\/+|\/+$/g, '')
+  const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
+  if (!normalizedPath || !normalizedNewPath) return null
+  if (entryType === 'file') return normalizedFilePath === normalizedPath ? normalizedNewPath : null
+  if (normalizedFilePath === normalizedPath) return normalizedNewPath
+  if (normalizedFilePath.startsWith(`${normalizedPath}/`)) {
+    return `${normalizedNewPath}/${normalizedFilePath.slice(normalizedPath.length + 1)}`
+  }
+  return null
+}
+
 function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
   const normalizedDeletePath = deletePath.replace(/^\/+|\/+$/g, '')
   const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
@@ -195,6 +208,30 @@ export function useFileBrowserWorkspaceState({
     if (activeState.activeTabId) closeTab(activeState.activeTabId)
   }, [activeState.activeTabId, closeTab])
 
+  const renameTabsAffectedByRename = useCallback((path: string, newPath: string, entryType: 'file' | 'directory') => {
+    updateActiveScope((previous, scope) => {
+      let changed = false
+      const tabs = previous.tabs.map((tab) => {
+        const renamed = renamedFilePath(path, newPath, entryType, tab.filePath)
+        if (!renamed) return tab
+        changed = true
+        return createTab(scope, renamed, tab.sticky)
+      })
+      if (!changed) return previous
+
+      const idMap = new Map(previous.tabs.map((tab, index) => [tab.id, tabs[index]?.id ?? tab.id]))
+      return {
+        ...previous,
+        tabs,
+        activeTabId: previous.activeTabId ? (idMap.get(previous.activeTabId) ?? previous.activeTabId) : null,
+        previewTabId: previous.previewTabId ? (idMap.get(previous.previewTabId) ?? previous.previewTabId) : null,
+        contentScrollByTabId: Object.fromEntries(
+          Object.entries(previous.contentScrollByTabId).map(([id, snapshot]) => [idMap.get(id) ?? id, snapshot]),
+        ),
+      }
+    })
+  }, [updateActiveScope])
+
   const removeTabsAffectedByDelete = useCallback((path: string, entryType: 'file' | 'directory') => {
     updateActiveScope((previous) => {
       const tabs = previous.tabs.filter((tab) => !doesDeleteAffectFile(path, entryType, tab.filePath))
@@ -254,5 +291,6 @@ export function useFileBrowserWorkspaceState({
     closeTab,
     closeActiveTab,
     removeTabsAffectedByDelete,
+    renameTabsAffectedByRename,
   }
 }
