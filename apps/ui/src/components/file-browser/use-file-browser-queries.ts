@@ -2,8 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   FileContentResult,
   FileCountResult,
+  FileCreateRequest,
+  FileCreateResponse,
   FileDeleteResponse,
   FileListResult,
+  FileRenameRequest,
+  FileRenameResponse,
   FileSaveRequest,
   FileSaveResponse,
   FileSaveSuccessResponse,
@@ -17,8 +21,12 @@ import { invalidateGitCaches } from '@/components/diff-viewer/use-diff-queries'
 
 export type {
   FileContentResult,
+  FileCreateRequest,
+  FileCreateResponse,
   FileDeleteResponse,
   FileListResult,
+  FileRenameRequest,
+  FileRenameResponse,
   FileSaveRequest,
   FileSaveResponse,
   FileSaveSuccessResponse,
@@ -365,6 +373,28 @@ export function seedProjectResources(
   })
 }
 
+export async function createFilePath(
+  wsUrl: string,
+  request: FileCreateRequest,
+): Promise<FileCreateResponse> {
+  return fetchJson<FileCreateResponse>(wsUrl, '/api/files/create', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
+export async function renameFilePath(
+  wsUrl: string,
+  request: FileRenameRequest,
+): Promise<FileRenameResponse> {
+  return fetchJson<FileRenameResponse>(wsUrl, '/api/files/rename', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
 export async function deleteFilePath(
   wsUrl: string,
   request: { agentId: string; path: string; worktreeId?: string | null },
@@ -384,6 +414,30 @@ export async function deleteFilePath(
   }
 
   return payload as FileDeleteResponse
+}
+
+export interface ApplySuccessfulFileCreateOptions {
+  agentId: string
+  worktreeId?: string | null
+}
+
+export function applySuccessfulFileCreateToCaches(options: ApplySuccessfulFileCreateOptions): void {
+  invalidateFileBrowserMetadataCaches()
+  invalidateGitCaches({ agentId: options.agentId, repoTarget: 'workspace' })
+}
+
+export interface ApplySuccessfulFileRenameOptions {
+  agentId: string
+  worktreeId?: string | null
+  path: string
+  newPath: string
+  entryType: 'file' | 'directory'
+}
+
+export function applySuccessfulFileRenameToCaches(options: ApplySuccessfulFileRenameOptions): void {
+  invalidateFileContentCachesForDelete(options.agentId, options.worktreeId, options.path, options.entryType)
+  invalidateFileBrowserMetadataCaches()
+  invalidateGitCaches({ agentId: options.agentId, repoTarget: 'workspace' })
 }
 
 export interface ApplySuccessfulFileDeleteOptions {

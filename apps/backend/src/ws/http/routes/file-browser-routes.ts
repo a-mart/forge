@@ -2,8 +2,12 @@ import type {
   FileBrowserSourceContext,
   FileContentResult,
   FileCountResult,
+  FileCreateRequest,
+  FileCreateResponse,
   FileDeleteResponse,
   FileListResult,
+  FileRenameRequest,
+  FileRenameResponse,
   FileSaveRequest,
   FileSaveResponse,
   FileSearchResult,
@@ -26,6 +30,7 @@ import {
 
 const FILE_BROWSER_GET_METHODS = "GET, OPTIONS";
 const FILE_CONTENT_METHODS = "GET, PUT, DELETE, OPTIONS";
+const FILE_MUTATION_METHODS = "POST, PATCH, OPTIONS";
 const FILE_RAW_METHODS = "GET, HEAD, OPTIONS";
 const FILE_RAW_CORS_ALLOWED_HEADERS = "content-type, range";
 const FILE_RAW_CORS_EXPOSE_HEADERS = "Accept-Ranges, Content-Length, Content-Range, Content-Type";
@@ -138,6 +143,33 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
 
         applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
         response.setHeader("Allow", FILE_CONTENT_METHODS);
+        sendJson(response, 405, { error: "Method Not Allowed" });
+      }
+    },
+    {
+      methods: FILE_MUTATION_METHODS,
+      matches: (pathname) => pathname === "/api/files/create" || pathname === "/api/files/rename",
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, FILE_MUTATION_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        applyCorsHeaders(request, response, FILE_MUTATION_METHODS);
+
+        if (requestUrl.pathname === "/api/files/create" && request.method === "POST") {
+          await handleCreateFile(request, response, swarmManager, service);
+          return;
+        }
+
+        if (requestUrl.pathname === "/api/files/rename" && request.method === "PATCH") {
+          await handleRenamePath(request, response, swarmManager, service);
+          return;
+        }
+
+        response.setHeader("Allow", FILE_MUTATION_METHODS);
         sendJson(response, 405, { error: "Method Not Allowed" });
       }
     },
@@ -366,6 +398,121 @@ async function handleDeleteFileContent(
   }
 }
 
+async function handleCreateFile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  swarmManager: SwarmManager,
+  service: FileBrowserService
+): Promise<void> {
+  try {
+    const payload = await parseJsonBody(request, 64 * 1024);
+    if (!payload || typeof payload !== "object") {
+      sendJson(response, 400, { error: "Request body must be a JSON object." });
+      return;
+    }
+
+    const createRequest = payload as Partial<FileCreateRequest>;
+    if (typeof createRequest.agentId !== "string" || createRequest.agentId.trim().length === 0) {
+      sendJson(response, 400, { error: "agentId must be a non-empty string." });
+      return;
+    }
+    if (typeof createRequest.directoryPath !== "string") {
+      sendJson(response, 400, { error: "directoryPath must be a string." });
+      return;
+    }
+    if (typeof createRequest.name !== "string" || createRequest.name.length === 0) {
+      sendJson(response, 400, { error: "name must be a non-empty string." });
+      return;
+    }
+    if (createRequest.type !== "file") {
+      sendJson(response, 400, { error: "type must be 'file'." });
+      return;
+    }
+
+    const agentId = createRequest.agentId.trim();
+    const { cwd } = await resolveFileBrowserContextByWorktree(swarmManager, agentId, createRequest.worktreeId);
+    const result: FileCreateResponse = await service.createFile({
+      cwd,
+      directoryPath: createRequest.directoryPath,
+      name: createRequest.name,
+      onCreated: ({ resolvedPath }) => recordFileBrowserMutation(swarmManager, resolvedPath, "write", agentId),
+    });
+    sendJson(response, 200, result as unknown as Record<string, unknown>);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to create file.";
+    sendJson(response, resolveHttpStatusCode(message), { error: message });
+  }
+}
+
+async function handleRenamePath(
+  request: IncomingMessage,
+  response: ServerResponse,
+  swarmManager: SwarmManager,
+  service: FileBrowserService
+): Promise<void> {
+  try {
+    const payload = await parseJsonBody(request, 64 * 1024);
+    if (!payload || typeof payload !== "object") {
+      sendJson(response, 400, { error: "Request body must be a JSON object." });
+      return;
+    }
+
+    const renameRequest = payload as Partial<FileRenameRequest>;
+    if (typeof renameRequest.agentId !== "string" || renameRequest.agentId.trim().length === 0) {
+      sendJson(response, 400, { error: "agentId must be a non-empty string." });
+      return;
+    }
+    if (typeof renameRequest.path !== "string" || renameRequest.path.length === 0) {
+      sendJson(response, 400, { error: "path must be a non-empty string." });
+      return;
+    }
+    if (typeof renameRequest.newName !== "string" || renameRequest.newName.length === 0) {
+      sendJson(response, 400, { error: "newName must be a non-empty string." });
+      return;
+    }
+
+    const agentId = renameRequest.agentId.trim();
+    const { cwd } = await resolveFileBrowserContextByWorktree(swarmManager, agentId, renameRequest.worktreeId);
+    const result: FileRenameResponse = await service.renamePath({
+      cwd,
+      relativePath: renameRequest.path,
+      newName: renameRequest.newName,
+      onRenamed: ({ newResolvedPath }) => recordFileBrowserMutation(swarmManager, newResolvedPath, "write", agentId),
+    });
+    sendJson(response, 200, result as unknown as Record<string, unknown>);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to rename path.";
+    sendJson(response, resolveHttpStatusCode(message), { error: message });
+  }
+}
+
+function recordFileBrowserMutation(
+  swarmManager: SwarmManager,
+  resolvedPath: string,
+  action: "write" | "delete",
+  agentId: string
+): void {
+  try {
+    const versioningService = swarmManager.getVersioningService();
+    if (!versioningService) return;
+    let tracked = false;
+    try {
+      tracked = versioningService.isTrackedPath(resolvedPath);
+    } catch {
+      return;
+    }
+    if (!tracked) return;
+    void versioningService.recordMutation({
+      path: resolvedPath,
+      action,
+      source: "api-write-file",
+      agentId,
+    }).catch(() => {});
+  } catch {
+    // Fail open: file browser mutations succeed even when versioning cannot record them.
+  }
+}
+
 async function resolveFileBrowserContext(
   swarmManager: SwarmManager,
   agentId: string,
@@ -489,12 +636,18 @@ function resolveHttpStatusCode(message: string): number {
 
   if (
     normalized.includes("must be") ||
+    normalized.includes("must not") ||
     normalized.includes("invalid") ||
     normalized.includes("cannot delete") ||
+    normalized.includes("cannot rename") ||
     normalized.includes("unknown or invalid worktreeid") ||
     normalized.includes("no cwd")
   ) {
     return 400;
+  }
+
+  if (normalized.includes("destination already exists")) {
+    return 409;
   }
 
   if (normalized.includes("only supports pdf")) {

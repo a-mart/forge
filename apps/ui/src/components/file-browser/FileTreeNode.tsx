@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { ChevronRight, Copy, Trash2 } from 'lucide-react'
+import { ChevronRight, Copy, FilePlus, Pencil, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from './FileIcon'
 import {
@@ -22,6 +22,8 @@ interface FileTreeNodeProps {
   onClick: () => void
   onDoubleClick?: () => void
   onRequestDelete?: () => void
+  onRequestCreateFile?: () => void
+  onRequestRename?: () => void
 }
 
 export function FileTreeNode({
@@ -37,6 +39,8 @@ export function FileTreeNode({
   onClick,
   onDoubleClick,
   onRequestDelete,
+  onRequestCreateFile,
+  onRequestRename,
 }: FileTreeNodeProps) {
   const handleCopyPath = useCallback(() => {
     navigator.clipboard.writeText(cwd ? `${cwd.replace(/\/+$/, '')}/${path}` : path)
@@ -84,6 +88,18 @@ export function FileTreeNode({
           <Copy className="size-3.5" />
           Copy Path
         </ContextMenuItem>
+        {type === 'directory' && onRequestCreateFile ? (
+          <ContextMenuItem onClick={onRequestCreateFile} className="gap-2 text-xs">
+            <FilePlus className="size-3.5" />
+            New File
+          </ContextMenuItem>
+        ) : null}
+        {onRequestRename ? (
+          <ContextMenuItem onClick={onRequestRename} className="gap-2 text-xs">
+            <Pencil className="size-3.5" />
+            Rename
+          </ContextMenuItem>
+        ) : null}
         {onRequestDelete ? (
           <ContextMenuItem
             onClick={onRequestDelete}
