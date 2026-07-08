@@ -9,6 +9,7 @@ import {
   type CompactionBoundingStats,
 } from "./forge-pi-compaction-bounds.js";
 import type { AgentDescriptor } from "../types.js";
+import type { ResolvedForgePiCompactionAuth } from "./forge-pi-compaction-auth.js";
 
 type PiCompactionThinkingLevel = NonNullable<Parameters<typeof runPiCompaction>[6]>;
 
@@ -60,6 +61,7 @@ export interface ForgeCompactionStartInstrumentation {
   pinnedInstructionsMerged: boolean;
   providerOptions: ForgeCompactionProviderOptionsPresence;
   bounding: CompactionBoundingStats;
+  authSource?: string;
   /**
    * Deferred parity gaps (not passed through Pi compact helper today):
    * - Cross-provider canonical auth resolver outside the active Pi runtime registry
@@ -77,6 +79,7 @@ export function buildForgeCompactionStartInstrumentation(options: {
   pinnedInstructionsMerged: boolean;
   providerOptions: ForgeCompactionProviderOptionsPresence;
   bounding: CompactionBoundingStats;
+  authSource?: string;
 }): ForgeCompactionStartInstrumentation {
   return {
     sourcePath: "forge_session_before_compact",
@@ -90,6 +93,7 @@ export function buildForgeCompactionStartInstrumentation(options: {
     pinnedInstructionsMerged: options.pinnedInstructionsMerged,
     providerOptions: options.providerOptions,
     bounding: options.bounding,
+    authSource: options.authSource,
     deferredProviderParity: [
       "cross_provider_canonical_auth_resolver",
       "catalog_before_provider_request_behaviors",
@@ -135,61 +139,19 @@ export async function runForgePiCompaction(options: {
   compactionSettings: CompactionRuntimeSettingsSnapshot;
   combinedInstructions: string | undefined;
   pinnedInstructionsMerged: boolean;
+  compactionAuth?: ResolvedForgePiCompactionAuth;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
 }): Promise<CompactionResult> {
   const sessionModel = options.ctx.model;
-  const compactionModel = resolveForgeCompactionModel(
-    options.ctx.modelRegistry,
-    options.compactionSettings.model,
-  );
+  const resolvedAuth = options.compactionAuth ?? await resolveActiveRuntimeCompactionAuth({
+    modelRegistry: options.ctx.modelRegistry,
+    descriptor: options.descriptor,
+    modelSelection: options.compactionSettings.model,
+    sessionModel,
+  });
+  const compactionModel = resolvedAuth.model;
 
-  if (!compactionModel) {
-    throw new ForgePiCompactionError(
-      `Configured compaction model is unavailable in the active runtime registry for ${options.descriptor.agentId}`,
-      {
-        recoveryStage: "forge_compaction_model_unavailable",
-        authPolicy: "active_runtime_registry_only",
-        fallbackPolicy: "reject_without_default_compaction_fallback",
-        configuredProvider: options.compactionSettings.model.provider,
-        configuredModelId: options.compactionSettings.model.modelId,
-        runtimeSessionProvider: sessionModel?.provider,
-        runtimeSessionModelId: sessionModel?.id,
-      },
-    );
-  }
-
-  const auth = await options.ctx.modelRegistry.getApiKeyAndHeaders(compactionModel);
-  if (!auth.ok) {
-    throw new ForgePiCompactionError(
-      `Compaction auth unavailable in the active runtime registry for configured model on ${options.descriptor.agentId}: ${auth.error}`,
-      {
-        recoveryStage: "forge_compaction_auth_unavailable",
-        authPolicy: "active_runtime_registry_only",
-        fallbackPolicy: "reject_without_default_compaction_fallback",
-        configuredProvider: options.compactionSettings.model.provider,
-        configuredModelId: options.compactionSettings.model.modelId,
-        runtimeSessionProvider: sessionModel?.provider,
-        runtimeSessionModelId: sessionModel?.id,
-      },
-    );
-  }
-
-  if (!auth.apiKey) {
-    throw new ForgePiCompactionError(
-      `Compaction auth for ${options.descriptor.agentId} does not expose a raw API key for the configured compaction model`,
-      {
-        recoveryStage: "forge_compaction_auth_mode_unsupported",
-        authPolicy: "active_runtime_registry_only",
-        fallbackPolicy: "reject_without_default_compaction_fallback",
-        configuredProvider: options.compactionSettings.model.provider,
-        configuredModelId: options.compactionSettings.model.modelId,
-        runtimeSessionProvider: sessionModel?.provider,
-        runtimeSessionModelId: sessionModel?.id,
-      },
-    );
-  }
-
-  const providerOptions = detectCompactionProviderOptionsPresence(auth.headers);
+  const providerOptions = detectCompactionProviderOptionsPresence(resolvedAuth.headers);
   const thinkingLevel = mapCompactionReasoningToPiThinkingLevel(
     options.compactionSettings.model.provider,
     options.compactionSettings.reasoningLevel,
@@ -227,14 +189,16 @@ export async function runForgePiCompaction(options: {
       pinnedInstructionsMerged: options.pinnedInstructionsMerged,
       providerOptions,
       bounding: bounded.stats,
+      authSource: resolvedAuth.authSource,
     }) as unknown as Record<string, unknown>,
   );
 
+  resolvedAuth.markExecutionAttempted?.();
   const result = await runPiCompaction(
     bounded.preparation,
     compactionModel,
-    auth.apiKey,
-    auth.headers,
+    resolvedAuth.apiKey,
+    resolvedAuth.headers,
     options.combinedInstructions,
     options.event.signal,
     thinkingLevel,
@@ -249,6 +213,68 @@ export async function runForgePiCompaction(options: {
         bounding: bounded.stats,
       },
     },
+  };
+}
+
+async function resolveActiveRuntimeCompactionAuth(options: {
+  modelRegistry: ModelRegistry;
+  descriptor: AgentDescriptor;
+  modelSelection: ManagerExactModelSelection;
+  sessionModel: Model<Api> | undefined;
+}): Promise<ResolvedForgePiCompactionAuth> {
+  const compactionModel = resolveForgeCompactionModel(options.modelRegistry, options.modelSelection);
+
+  if (!compactionModel) {
+    throw new ForgePiCompactionError(
+      `Configured compaction model is unavailable in the active runtime registry for ${options.descriptor.agentId}`,
+      {
+        recoveryStage: "forge_compaction_model_unavailable",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+        configuredProvider: options.modelSelection.provider,
+        configuredModelId: options.modelSelection.modelId,
+        runtimeSessionProvider: options.sessionModel?.provider,
+        runtimeSessionModelId: options.sessionModel?.id,
+      },
+    );
+  }
+
+  const auth = await options.modelRegistry.getApiKeyAndHeaders(compactionModel);
+  if (!auth.ok) {
+    throw new ForgePiCompactionError(
+      `Compaction auth unavailable in the active runtime registry for configured model on ${options.descriptor.agentId}: ${auth.error}`,
+      {
+        recoveryStage: "forge_compaction_auth_unavailable",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+        configuredProvider: options.modelSelection.provider,
+        configuredModelId: options.modelSelection.modelId,
+        runtimeSessionProvider: options.sessionModel?.provider,
+        runtimeSessionModelId: options.sessionModel?.id,
+      },
+    );
+  }
+
+  if (!auth.apiKey) {
+    throw new ForgePiCompactionError(
+      `Compaction auth for ${options.descriptor.agentId} does not expose a raw API key for the configured compaction model`,
+      {
+        recoveryStage: "forge_compaction_auth_mode_unsupported",
+        authPolicy: "active_runtime_registry_only",
+        fallbackPolicy: "reject_without_default_compaction_fallback",
+        configuredProvider: options.modelSelection.provider,
+        configuredModelId: options.modelSelection.modelId,
+        runtimeSessionProvider: options.sessionModel?.provider,
+        runtimeSessionModelId: options.sessionModel?.id,
+      },
+    );
+  }
+
+  return {
+    model: compactionModel,
+    apiKey: auth.apiKey,
+    headers: auth.headers,
+    authSource: "active_runtime_registry",
   };
 }
 

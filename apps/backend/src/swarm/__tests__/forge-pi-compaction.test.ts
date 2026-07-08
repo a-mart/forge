@@ -146,6 +146,55 @@ describe("forge pi compaction", () => {
     expect(runPiCompactionMock.mock.calls[0]?.[1]).not.toEqual(sessionModel);
   });
 
+  it("marks configured auth as execution-attempted immediately before calling Pi compaction", async () => {
+    const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
+    const markExecutionAttempted = vi.fn();
+
+    await runForgePiCompaction({
+      event: {
+        preparation: {
+          firstKeptEntryId: "entry-1",
+          messagesToSummarize: [],
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 100,
+          fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+          settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
+        },
+      },
+      ctx: {
+        model: { provider: "anthropic", id: "claude-opus-4-5" } as never,
+        modelRegistry: { find: vi.fn(), getApiKeyAndHeaders: vi.fn() } as unknown as ModelRegistry,
+      },
+      descriptor: makeCompactionGuardDescriptor(),
+      compactionSettings: createStaticCompactionRuntimeSettingsProvider({
+        timeoutMs: 300_000,
+        model: { provider: "openai-codex", modelId: "gpt-5.5" },
+        reasoningLevel: "low",
+      }).getCompactionRuntimeSettings(),
+      combinedInstructions: undefined,
+      pinnedInstructionsMerged: false,
+      compactionAuth: {
+        model: compactionModel as never,
+        apiKey: "broker-compaction-key",
+        authSource: "broker",
+        markExecutionAttempted,
+      },
+      logDebug: vi.fn(),
+    });
+
+    expect(markExecutionAttempted).toHaveBeenCalledTimes(1);
+    expect(runPiCompactionMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      compactionModel,
+      "broker-compaction-key",
+      undefined,
+      undefined,
+      undefined,
+      "low",
+    );
+  });
+
   it("passes bounded preparation to Pi compaction while preserving combined pin instructions", async () => {
     const compactionModel = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
     const modelRegistry = {

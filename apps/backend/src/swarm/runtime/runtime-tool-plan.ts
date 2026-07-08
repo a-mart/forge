@@ -1,15 +1,18 @@
 import { getCatalogProvider } from "@forge/protocol";
 import type { ExtensionFactory, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
+import { createConfiguredForgePiCompactionAuthResolver } from "../compaction/forge-pi-compaction-auth.js";
 import { createForgePiCompactionExtensionFactory } from "../compaction/forge-pi-compaction-extension.js";
 import { buildCreateProjectAgentTool } from "../agent-creator-tool.js";
 import { buildCreateSessionTool } from "../agents/create-session-tool.js";
+import type { CredentialPoolService } from "../credential-pool.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
 import type { ForgePreparedRuntimeBindings } from "../forge-extension-types.js";
 import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js";
 import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { normalizeArchetypeId } from "../prompt-registry.js";
+import type { OpenAIAuthBrokerRuntimeService } from "../openai-auth/openai-auth-broker-runtime-service.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { buildSwarmTools } from "../swarm-tools.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -90,6 +93,9 @@ interface PlanPiExtensionFactoriesOptions {
   config: SwarmConfig;
   logDebug: (message: string, details?: unknown) => void;
   getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
+  getPiModelsJsonPath?: () => string;
+  getCredentialPoolService?: () => CredentialPoolService;
+  getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   forgePiToolBridgeFactory?: ExtensionFactory;
   compactionFailureScopeKey?: string;
 }
@@ -104,6 +110,15 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
       config: options.config,
       logDebug: options.logDebug,
       getCompactionRuntimeSettingsProvider: options.getCompactionRuntimeSettingsProvider,
+      resolveCompactionAuth: options.getPiModelsJsonPath
+        ? createConfiguredForgePiCompactionAuthResolver({
+            config: options.config,
+            descriptor,
+            getPiModelsJsonPath: options.getPiModelsJsonPath,
+            getCredentialPoolService: options.getCredentialPoolService,
+            getOpenAIAuthBrokerRuntimeService: options.getOpenAIAuthBrokerRuntimeService,
+          })
+        : undefined,
       failureScopeKey: options.compactionFailureScopeKey,
     }));
   }

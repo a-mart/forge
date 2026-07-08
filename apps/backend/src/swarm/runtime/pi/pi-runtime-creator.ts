@@ -211,6 +211,9 @@ export class PiRuntimeCreator {
       config: this.deps.config,
       logDebug: this.deps.logDebug,
       getCompactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider,
+      getPiModelsJsonPath: this.deps.getPiModelsJsonPath,
+      getCredentialPoolService: this.deps.getCredentialPoolService,
+      getOpenAIAuthBrokerRuntimeService: this.deps.getOpenAIAuthBrokerRuntimeService,
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
         preparedForgeBindings,
