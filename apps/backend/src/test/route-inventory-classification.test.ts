@@ -102,6 +102,9 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
     killSwitched: true,
   },
   { sample: "/api/files/raw", expect: { GET: "member", HEAD: "member" }, killSwitched: true },
+  // File browser create/rename (R2) — project-scoped mutations, same category as write-file.
+  { sample: "/api/files/create", expect: { POST: "member" }, killSwitched: true },
+  { sample: "/api/files/rename", expect: { PATCH: "member" }, killSwitched: true },
 
   // --- git (member project reads, R1; mutations remain admin until R2) -----
   { sample: "/api/git/status", expect: { GET: "member" }, killSwitched: true },

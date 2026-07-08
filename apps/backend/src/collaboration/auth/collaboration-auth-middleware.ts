@@ -96,6 +96,14 @@ const MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH = "/api/terminals/available-shells"
 /** File writes (R2). */
 const MEMBER_WRITE_FILE_PATH = "/api/write-file";
 const MEMBER_FILE_CONTENT_PATH = "/api/files/content";
+/**
+ * File browser create/rename — project-scoped file mutations (paths resolved
+ * within the session cwd by file-browser-service), the same category as
+ * write-file/content writes above and member-accessible under the same R2 kill
+ * switch.
+ */
+const MEMBER_FILE_CREATE_PATH = "/api/files/create";
+const MEMBER_FILE_RENAME_PATH = "/api/files/rename";
 /** Git mutations (R2) — shell-equivalent access per the D6 trust model. */
 const MEMBER_GIT_WRITE_PATHS = new Set([
   "/api/git/fetch",
@@ -363,6 +371,14 @@ function isMemberProjectRoute(
   }
 
   if (pathname === MEMBER_FILE_CONTENT_PATH && (normalizedMethod === "PUT" || normalizedMethod === "DELETE")) {
+    return true;
+  }
+
+  if (pathname === MEMBER_FILE_CREATE_PATH && normalizedMethod === "POST") {
+    return true;
+  }
+
+  if (pathname === MEMBER_FILE_RENAME_PATH && normalizedMethod === "PATCH") {
     return true;
   }
 
