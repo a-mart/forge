@@ -12,7 +12,7 @@ import {
   resetCursorSdkErrorContainmentForTests
 } from "../runtime/cursor-sdk/cursor-sdk-error-containment.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../../utils/cursor-sdk-usage-records.js";
-import type { CursorSdkAgent, CursorSdkModule, CursorSdkRun, CursorSdkSendOptions } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
+import type { CursorSdkAgent, CursorSdkModelSelection, CursorSdkModule, CursorSdkRun, CursorSdkSendOptions } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { RuntimeUserMessage, SwarmRuntimeCallbacks } from "../runtime-contracts.js";
 import type { AgentDescriptor } from "../types.js";
 
@@ -132,6 +132,7 @@ async function setupRuntime(options: {
   skipInitialSessionResume?: boolean;
   onStartupRecoveryConsumed?: () => void | Promise<void>;
   promptHash?: string;
+  model?: CursorSdkModelSelection;
   callbacks?: Partial<SwarmRuntimeCallbacks>;
 } = {}) {
   const rootDir = options.rootDir ?? await mkdtemp(join(tmpdir(), "forge-cursor-sdk-runtime-"));
@@ -158,7 +159,7 @@ async function setupRuntime(options: {
     now: () => "2026-01-01T00:00:00.000Z",
     sdk,
     apiKey: "cursor-key",
-    model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+    model: options.model ?? { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
     systemPrompt: options.systemPrompt ?? "Forge worker instructions",
     startupSystemPromptOverride: options.startupSystemPromptOverride,
     skipInitialSessionResume: options.skipInitialSessionResume,
@@ -206,7 +207,7 @@ describe("CursorSdkAgentRuntime", () => {
     expect(sendText).toContain("Forge worker instructions");
     expect(sendText).toContain("<forge_user_message>\nhello");
     expect(sendOptions).toMatchObject({
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       mcpServers: { forge: { type: "http", url: "http://127.0.0.1:1/mcp" } },
     });
     expect(typeof sendOptions?.onDelta).toBe("function");
@@ -250,7 +251,7 @@ describe("CursorSdkAgentRuntime", () => {
         source: "cursor_sdk_on_delta_turn_ended",
         provider: "cursor-sdk",
         modelId: "composer-2.5",
-        reasoningLevel: "medium",
+        reasoningLevel: null,
         usage: { input: 10, output: 4, cacheRead: 2, cacheWrite: 1, total: 17 },
         sdkRunId: "run-usage-1",
         sdkAgentId: "sdk-agent-1",
@@ -262,6 +263,53 @@ describe("CursorSdkAgentRuntime", () => {
         capturedAt: "2026-01-01T00:00:00.000Z"
       })
     ]);
+  });
+
+  it("preserves Forge fast variant attribution in usage records and turn metadata", async () => {
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ id: "run-fast-1", streamItems: [statusMessage("FINISHED"), assistantText("ok")] });
+    });
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-cursor-sdk-runtime-"));
+    const descriptor = createDescriptor(rootDir, {
+      model: { provider: "cursor-sdk", modelId: "grok-4.5-fast", thinkingLevel: "high" },
+      sessionFile: join(rootDir, "worker.jsonl"),
+    });
+    const { runtime, callbacks } = await setupRuntime({
+      rootDir,
+      descriptor,
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      model: {
+        id: "grok-4.5",
+        params: [
+          { id: "effort", value: "high" },
+          { id: "fast", value: "true" },
+        ],
+      },
+    });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({
+        modelId: "grok-4.5-fast",
+        sdkModelId: "grok-4.5",
+        fast: true,
+        reasoningLevel: "high",
+        usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 },
+      }),
+    ]);
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({
+      type: "turn_end",
+      meta: expect.objectContaining({
+        provider: "cursor-sdk",
+        modelId: "grok-4.5-fast",
+        responseModelId: "grok-4.5",
+        invocationParameters: expect.objectContaining({ sdkModelId: "grok-4.5", fast: true, reasoningLevel: "high" }),
+        metadata: expect.objectContaining({ sdkModelId: "grok-4.5", fast: true }),
+      }),
+    }));
   });
 
   it("does not relabel completed usage as cancelled if stop arrives during finalization", async () => {
@@ -489,7 +537,7 @@ describe("CursorSdkAgentRuntime", () => {
     });
 
     expect(resume).toHaveBeenCalledWith("persisted-agent", expect.objectContaining({
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       mcpServers: { forge: { type: "http", url: "http://127.0.0.1:1/mcp" } },
       platform: { stateRoot: join(rootDir, "cursor-sdk-state", "worker-1"), workspaceRef: rootDir },
     }));
@@ -1025,7 +1073,7 @@ describe("CursorSdkAgentRuntime", () => {
       now: () => "2026-01-01T00:00:00.000Z",
       sdk: { Agent: { create: vi.fn(async () => { throw createError; }), resume: vi.fn() }, Cursor: { models: { list: vi.fn() } } },
       apiKey: "cursor-key",
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       systemPrompt: "Forge worker instructions",
       mcpServers: {},
       stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
@@ -1067,7 +1115,7 @@ describe("CursorSdkAgentRuntime", () => {
       now: () => "2026-01-01T00:00:00.000Z",
       sdk: { Agent: { create, resume }, Cursor: { models: { list: vi.fn() } } },
       apiKey: "cursor-key",
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       systemPrompt: "Forge worker instructions",
       mcpServers: {},
       stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
@@ -1123,7 +1171,7 @@ describe("CursorSdkAgentRuntime", () => {
       now: () => "2026-01-01T00:00:00.000Z",
       sdk: { Agent: { create, resume }, Cursor: { models: { list: vi.fn() } } },
       apiKey: "cursor-key",
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       systemPrompt: "Base Cursor prompt",
       startupSystemPromptOverride: "Base Cursor prompt\n\n# Recovered Forge Conversation Context\nRecovered history",
       skipInitialSessionResume: true,

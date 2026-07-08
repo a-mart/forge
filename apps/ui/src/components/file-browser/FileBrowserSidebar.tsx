@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FolderOpen, FolderPlus, GitBranch, HardDrive, Loader2, RefreshCw, X } from 'lucide-react'
+import { FilePlus, FolderOpen, FolderPlus, GitBranch, HardDrive, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { useLatestRef } from '@/hooks/useLatestRef'
 import { FileTree } from './FileTree'
 import type { FileTreeHandle, FileTreeStateSnapshot } from './FileTree'
 import { FileDeleteConfirmDialog } from './FileDeleteConfirmDialog'
+import { FileNameDialog } from './FileNameDialog'
 import {
   useDirectoryListing,
   useFileCount,
@@ -39,6 +40,8 @@ interface FileBrowserSidebarProps {
   mobileOnly?: boolean
   refreshNonce?: number
   onDeleteEntry?: (path: string, entryType: 'file' | 'directory') => Promise<boolean>
+  onCreateFile?: (directoryPath: string, name: string) => Promise<string | null>
+  onRenameEntry?: (path: string, entryType: 'file' | 'directory', newName: string) => Promise<boolean>
 }
 
 export function FileBrowserSidebar({
@@ -60,6 +63,8 @@ export function FileBrowserSidebar({
   mobileOnly = false,
   refreshNonce = 0,
   onDeleteEntry,
+  onCreateFile,
+  onRenameEntry,
 }: FileBrowserSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null)
   const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
@@ -67,6 +72,14 @@ export function FileBrowserSidebar({
   const [pendingDelete, setPendingDelete] = useState<{ path: string; entryType: 'file' | 'directory' } | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [mutationError, setMutationError] = useState<string | null>(null)
+  const [pendingNameAction, setPendingNameAction] = useState<
+    | { type: 'create'; directoryPath: string }
+    | { type: 'rename'; path: string; entryType: 'file' | 'directory'; currentName: string }
+    | null
+  >(null)
+  const [nameDialogError, setNameDialogError] = useState<string | null>(null)
+  const [isNaming, setIsNaming] = useState(false)
 
   const gatedAgentId = isOpen ? agentId : null
   const worktreeId = worktreeContext?.worktreeId ?? null
@@ -141,6 +154,76 @@ export function FileBrowserSidebar({
         setSeedError(error instanceof Error ? error.message : 'Could not create .forge resources')
       })
   }, [handleRefresh, projectResourceProfileId, projectResourceSessionAgentId, seedStatus, wsUrl])
+
+  const handleRequestCreateFile = useCallback((directoryPath: string) => {
+    if (!onCreateFile) return
+    setMutationError(null)
+    setNameDialogError(null)
+    setPendingNameAction({ type: 'create', directoryPath })
+  }, [onCreateFile])
+
+  const handleRequestRename = useCallback((path: string, entryType: 'file' | 'directory') => {
+    if (!onRenameEntry) return
+    setMutationError(null)
+    setNameDialogError(null)
+    setPendingNameAction({
+      type: 'rename',
+      path,
+      entryType,
+      currentName: path.split('/').pop() ?? path,
+    })
+  }, [onRenameEntry])
+
+  const handleCloseNameDialog = useCallback(() => {
+    if (isNaming) return
+    setPendingNameAction(null)
+    setNameDialogError(null)
+  }, [isNaming])
+
+  const handleSubmitNameDialog = useCallback((name: string) => {
+    if (!pendingNameAction || isNaming) return
+
+    if (pendingNameAction.type === 'rename' && name === pendingNameAction.currentName) {
+      setPendingNameAction(null)
+      setNameDialogError(null)
+      return
+    }
+
+    setIsNaming(true)
+    setMutationError(null)
+    setNameDialogError(null)
+
+    const mutation = pendingNameAction.type === 'create'
+      ? onCreateFile?.(pendingNameAction.directoryPath, name)
+      : onRenameEntry?.(pendingNameAction.path, pendingNameAction.entryType, name)
+
+    if (!mutation) {
+      setIsNaming(false)
+      return
+    }
+
+    void mutation
+      .then((result) => {
+        if (pendingNameAction.type === 'create') {
+          const createdPath = typeof result === 'string' ? result : null
+          if (!createdPath) return
+          void fileTreeRef.current?.selectFile(createdPath)
+          setPendingNameAction(null)
+          return
+        }
+
+        if (result === false) return
+        setPendingNameAction(null)
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : pendingNameAction.type === 'create' ? 'Could not create file' : 'Could not rename item'
+        setMutationError(message)
+        setNameDialogError(message)
+      })
+      .finally(() => {
+        setIsNaming(false)
+      })
+  }, [isNaming, onCreateFile, onRenameEntry, pendingNameAction])
 
   const handleRequestDelete = useCallback((path: string, entryType: 'file' | 'directory') => {
     if (!onDeleteEntry) return
@@ -242,6 +325,25 @@ export function FileBrowserSidebar({
             </Tooltip>
           ) : null}
 
+          {onCreateFile ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                  onClick={() => handleRequestCreateFile('')}
+                  aria-label="New file"
+                >
+                  <FilePlus className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                New file
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -271,6 +373,12 @@ export function FileBrowserSidebar({
           <X className="size-3.5" />
         </Button>
       </div>
+
+      {mutationError ? (
+        <div className="border-b border-border/80 px-3 py-2 text-[11px] text-destructive">
+          {mutationError}
+        </div>
+      ) : null}
 
       {seedError || seedStatus === 'success' ? (
         <div className={cn(
@@ -350,6 +458,8 @@ export function FileBrowserSidebar({
             fileCountMethod={fileCount.data?.method ?? null}
             worktreeId={worktreeId}
             onRequestDelete={onDeleteEntry ? handleRequestDelete : undefined}
+            onRequestCreateFile={onCreateFile ? handleRequestCreateFile : undefined}
+            onRequestRename={onRenameEntry ? handleRequestRename : undefined}
           />
         ) : null}
       </div>
@@ -372,6 +482,18 @@ export function FileBrowserSidebar({
         isDeleting={isDeleting}
         onConfirm={handleConfirmDelete}
         onClose={handleCloseDeleteDialog}
+      />
+
+      <FileNameDialog
+        open={Boolean(pendingNameAction)}
+        mode={pendingNameAction?.type ?? 'create'}
+        initialValue={pendingNameAction?.type === 'rename' ? pendingNameAction.currentName : ''}
+        directoryPath={pendingNameAction?.type === 'create' ? pendingNameAction.directoryPath : undefined}
+        entryType={pendingNameAction?.type === 'rename' ? pendingNameAction.entryType : undefined}
+        errorMessage={nameDialogError}
+        isSubmitting={isNaming}
+        onSubmit={handleSubmitNameDialog}
+        onClose={handleCloseNameDialog}
       />
     </>
   )

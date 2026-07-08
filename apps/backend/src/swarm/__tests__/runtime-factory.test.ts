@@ -2108,7 +2108,7 @@ describe("RuntimeFactory", () => {
     expect(runtime.runtimeType).toBe("cursor-sdk");
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       apiKey: "cursor-test-key",
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       platform: { stateRoot: join(rootDir, "cursor-sdk-state", "manager-1"), workspaceRef: rootDir },
     }));
 
@@ -2146,12 +2146,52 @@ describe("RuntimeFactory", () => {
     expect(buildCursorSdkRuntimeSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({ agentId: "worker-1" }), "Base Cursor prompt");
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       apiKey: "cursor-test-key",
-      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      model: { id: "composer-2.5", params: [{ id: "fast", value: "true" }] },
       local: { cwd: rootDir, settingSources: [] },
       platform: { stateRoot: join(rootDir, "cursor-sdk-state", "worker-1"), workspaceRef: rootDir },
       mcpServers: expect.objectContaining({ "forge-swarm-worker-1": expect.objectContaining({ type: "http" }) }),
     }));
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+    await runtime.terminate();
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("maps Cursor SDK Grok 4.5 Fast descriptors to the SDK id plus effort and fast params", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    const close = vi.fn();
+    const create = vi.fn(async () => ({
+      agentId: "sdk-agent-1",
+      close,
+      send: vi.fn(),
+    }));
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create, resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir);
+    const runtime = await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: { provider: "cursor-sdk", modelId: "grok-4.5-fast", thinkingLevel: "medium" },
+      }),
+      "Base Cursor prompt",
+      3
+    );
+
+    expect(runtime.runtimeType).toBe("cursor-sdk");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: "cursor-test-key",
+      model: {
+        id: "grok-4.5",
+        params: [
+          { id: "effort", value: "medium" },
+          { id: "fast", value: "true" },
+        ],
+      },
+    }));
     await runtime.terminate();
     expect(close).toHaveBeenCalled();
   });
@@ -2169,7 +2209,7 @@ describe("RuntimeFactory", () => {
 
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir, {
       model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
-    }), "Base Cursor prompt", 3)).rejects.toThrow(/Cursor SDK API key/);
+    }), "Base Cursor prompt", 3)).rejects.toThrow(/Cursor SDK auth/);
     expect(cursorMcpMockState.createMcpBridge).not.toHaveBeenCalled();
   });
 

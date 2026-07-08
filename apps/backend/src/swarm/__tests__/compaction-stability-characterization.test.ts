@@ -154,14 +154,14 @@ describe("compaction stability characterization", () => {
       rememberForgePiCompactionFailure(runtime.descriptor.agentId, {
         kind: "configured_auth_unavailable",
         message: "Compaction auth unavailable in the active runtime registry for configured model on guard-worker: provider unavailable",
-        userFacingMessage: "Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.",
+        userFacingMessage: "Configured compaction auth is unavailable. Check Authentication or choose a different compaction model.",
         cancelledByUser: false,
         details: {
           recoveryStage: "forge_compaction_auth_unavailable",
           compactionCancelled: true,
           compactionRetryPlanned: false,
           cancelKind: "configured_auth_unavailable",
-          userFacingMessage: "Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.",
+          userFacingMessage: "Configured compaction auth is unavailable. Check Authentication or choose a different compaction model.",
         },
       });
 

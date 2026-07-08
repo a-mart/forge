@@ -74,7 +74,7 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     color: "#2563eb",
     provider: "cursor-sdk",
     modelId: "composer-2.5",
-    reasoningLevel: "medium",
+    reasoningLevel: "none",
     fallbackProvider: "openai-codex",
     fallbackModelId: "gpt-5.4",
     fallbackReasoningLevel: "high",
@@ -1393,8 +1393,12 @@ function normalizeLegacyCursorAcpSpecialistModel(model: {
     return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
   }
 
-  if (normalizedProvider === "cursor-sdk" && normalizedModelId === "composer-2.5") {
-    return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
+  if (normalizedProvider === "cursor-sdk" && normalizedModelId && modelCatalogService.isKnownModelId(normalizedModelId, "cursor-sdk")) {
+    return {
+      provider: "cursor-sdk",
+      modelId: normalizedModelId,
+      reasoningLevel: normalizeCursorSdkThinkingLevel(model.reasoningLevel, normalizedModelId),
+    };
   }
 
   return {
@@ -1408,7 +1412,7 @@ function normalizeCursorSdkSpecialistModel(reasoningLevel: string | undefined): 
   return {
     provider: "cursor-sdk",
     modelId: "composer-2.5",
-    reasoningLevel: normalizeCursorSdkThinkingLevel(reasoningLevel),
+    reasoningLevel: normalizeCursorSdkThinkingLevel(reasoningLevel, "composer-2.5"),
   };
 }
 

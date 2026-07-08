@@ -16,8 +16,14 @@ import {
 } from '@headless-tree/core'
 import type { TreeConfig, TreeInstance, TreeState } from '@headless-tree/core'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Search, X, Loader2, FileText } from 'lucide-react'
+import { Search, X, Loader2, FileText, FilePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import '@/styles/file-browser.css'
 import { FileTreeNode } from './FileTreeNode'
 import { FileIcon } from './FileIcon'
@@ -106,6 +112,8 @@ interface FileTreeProps {
   fileCountMethod: string | null
   worktreeId?: string | null
   onRequestDelete?: (path: string, entryType: 'file' | 'directory') => void
+  onRequestCreateFile?: (directoryPath: string) => void
+  onRequestRename?: (path: string, entryType: 'file' | 'directory') => void
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,18 +152,28 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, cwd, selectedFile, onSelectFile, onOpenStickyFile, treeSnapshot, onTreeSnapshotChange, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, onOpenStickyFile, treeSnapshot, onTreeSnapshotChange, fileCount, fileCountMethod, worktreeId = null, onRequestDelete, onRequestCreateFile, onRequestRename },
     ref,
   ) {
     const [filterText, setFilterText] = useState(treeSnapshot?.filterText ?? '')
     const [searchQuery, setSearchQuery] = useState(treeSnapshot?.searchQuery ?? '')
     const [searchMode, setSearchMode] = useState(treeSnapshot?.searchMode ?? false)
+    const initialTreeScrollTopRef = useRef(treeSnapshot?.treeScrollTop ?? 0)
+    const initialSearchScrollTopRef = useRef(treeSnapshot?.searchScrollTop ?? 0)
+    const latestTreeScrollTopRef = useRef(treeSnapshot?.treeScrollTop ?? 0)
+    const latestSearchScrollTopRef = useRef(treeSnapshot?.searchScrollTop ?? 0)
+    const didRestoreTreeScrollRef = useRef(false)
+    const didRestoreSearchScrollRef = useRef(false)
+    const treeScrollRestoreFrameRef = useRef<number | null>(null)
+    const searchScrollRestoreFrameRef = useRef<number | null>(null)
     // Use useState (not useRef) for the scroll container so that when the
     // DOM element mounts via the callback ref, the re-render lets the
     // virtualizer pick up the real element from getScrollElement().
     const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
     const searchScrollRef = useRef<HTMLDivElement>(null)
     const filterInputRef = useRef<HTMLInputElement>(null)
+    latestTreeScrollTopRef.current = treeSnapshot?.treeScrollTop ?? latestTreeScrollTopRef.current
+    latestSearchScrollTopRef.current = treeSnapshot?.searchScrollTop ?? latestSearchScrollTopRef.current
 
     // Deep search hook
     const searchResult = useFileSearch(wsUrl, agentId, searchQuery, 50, worktreeId)
@@ -228,15 +246,19 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     )
 
     const emitTreeSnapshot = useCallback((nextTreeState?: Record<string, unknown> | null) => {
+      const treeScrollTop = scrollEl?.scrollTop ?? latestTreeScrollTopRef.current
+      const searchScrollTop = searchScrollRef.current?.scrollTop ?? latestSearchScrollTopRef.current
+      latestTreeScrollTopRef.current = treeScrollTop
+      latestSearchScrollTopRef.current = searchScrollTop
       onTreeSnapshotChange?.({
         filterText,
         searchMode,
         searchQuery,
-        treeScrollTop: scrollEl?.scrollTop ?? treeSnapshot?.treeScrollTop ?? 0,
-        searchScrollTop: searchScrollRef.current?.scrollTop ?? treeSnapshot?.searchScrollTop ?? 0,
+        treeScrollTop,
+        searchScrollTop,
         treeState: nextTreeState ?? treeSnapshot?.treeState ?? null,
       })
-    }, [filterText, onTreeSnapshotChange, scrollEl, searchMode, searchQuery, treeSnapshot?.searchScrollTop, treeSnapshot?.treeScrollTop, treeSnapshot?.treeState])
+    }, [filterText, onTreeSnapshotChange, scrollEl, searchMode, searchQuery, treeSnapshot?.treeState])
 
     const tree = useStableTree<FileTreeItem>({
       rootItemId: ROOT_ID,
@@ -258,34 +280,74 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       setState: (nextState) => emitTreeSnapshot(nextState as Record<string, unknown>),
     })
 
+    // Restore persisted scroll positions only once for this mounted tree. Live
+    // scroll events also update treeSnapshot; replaying those snapshots would
+    // fight user scrolling with stale requestAnimationFrame callbacks.
     useEffect(() => {
-      emitTreeSnapshot()
-    }, [emitTreeSnapshot])
+      if (!scrollEl || didRestoreTreeScrollRef.current || treeScrollRestoreFrameRef.current !== null) return
+      const initialScrollTop = initialTreeScrollTopRef.current
+      if (initialScrollTop <= 0) {
+        didRestoreTreeScrollRef.current = true
+        return
+      }
+
+      treeScrollRestoreFrameRef.current = requestAnimationFrame(() => {
+        scrollEl.scrollTop = initialScrollTop
+        latestTreeScrollTopRef.current = initialScrollTop
+        didRestoreTreeScrollRef.current = true
+        treeScrollRestoreFrameRef.current = null
+      })
+      return () => {
+        if (treeScrollRestoreFrameRef.current !== null) {
+          cancelAnimationFrame(treeScrollRestoreFrameRef.current)
+          treeScrollRestoreFrameRef.current = null
+        }
+      }
+    }, [scrollEl])
+
+    useEffect(() => {
+      const searchEl = searchScrollRef.current
+      if (!searchMode || !searchEl || didRestoreSearchScrollRef.current || searchScrollRestoreFrameRef.current !== null) return
+      const initialScrollTop = initialSearchScrollTopRef.current
+      if (initialScrollTop <= 0) {
+        didRestoreSearchScrollRef.current = true
+        return
+      }
+
+      searchScrollRestoreFrameRef.current = requestAnimationFrame(() => {
+        searchEl.scrollTop = initialScrollTop
+        latestSearchScrollTopRef.current = initialScrollTop
+        didRestoreSearchScrollRef.current = true
+        searchScrollRestoreFrameRef.current = null
+      })
+      return () => {
+        if (searchScrollRestoreFrameRef.current !== null) {
+          cancelAnimationFrame(searchScrollRestoreFrameRef.current)
+          searchScrollRestoreFrameRef.current = null
+        }
+      }
+    }, [searchMode])
+
+    useEffect(() => {
+      if ((searchMode || didRestoreTreeScrollRef.current) && (!searchMode || didRestoreSearchScrollRef.current)) {
+        emitTreeSnapshot()
+      }
+    }, [emitTreeSnapshot, searchMode])
 
     useEffect(() => {
       if (!scrollEl) return
-      if (treeSnapshot?.treeScrollTop) {
-        requestAnimationFrame(() => {
-          scrollEl.scrollTop = treeSnapshot.treeScrollTop
-        })
-      }
       const handleScroll = () => emitTreeSnapshot()
       scrollEl.addEventListener('scroll', handleScroll, { passive: true })
       return () => scrollEl.removeEventListener('scroll', handleScroll)
-    }, [emitTreeSnapshot, scrollEl, treeSnapshot?.treeScrollTop])
+    }, [emitTreeSnapshot, scrollEl])
 
     useEffect(() => {
       const searchEl = searchScrollRef.current
       if (!searchEl) return
-      if (treeSnapshot?.searchScrollTop) {
-        requestAnimationFrame(() => {
-          searchEl.scrollTop = treeSnapshot.searchScrollTop
-        })
-      }
       const handleScroll = () => emitTreeSnapshot()
       searchEl.addEventListener('scroll', handleScroll, { passive: true })
       return () => searchEl.removeEventListener('scroll', handleScroll)
-    }, [emitTreeSnapshot, treeSnapshot?.searchScrollTop])
+    }, [emitTreeSnapshot, searchMode])
 
     // Wire search feature to filter input (only when NOT in deep search mode)
     useEffect(() => {
@@ -407,6 +469,11 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       overscan: 15,
     })
 
+    const handleTreeScrollRef = useCallback((el: HTMLDivElement | null) => {
+      tree.registerElement(el)
+      setScrollEl((previous) => previous === el ? previous : el)
+    }, [tree])
+
     // Keyboard: focus filter input on "/"
     useEffect(() => {
       const el = tree.getElement()
@@ -421,6 +488,90 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       el.addEventListener('keydown', handler)
       return () => el.removeEventListener('keydown', handler)
     }, [tree])
+
+    const treeScrollContent = (
+      <div
+        {...tree.getContainerProps('File tree')}
+        ref={handleTreeScrollRef}
+        className="file-browser-scroll min-h-0 flex-1 overflow-auto focus:outline-none"
+        tabIndex={0}
+      >
+        <div
+          style={{
+            height: virtualizer.getTotalSize(),
+            position: 'relative',
+            width: '100%',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const treeItem = allItems[virtualItem.index]
+            if (!treeItem) return null
+
+            const itemData = treeItem.getItemData()
+            const itemId = treeItem.getId()
+            const isFolder = treeItem.isFolder()
+            const isExpanded = treeItem.isExpanded()
+            const isFocused = treeItem.isFocused()
+            const isSelected = selectedFile === itemId
+            const isLoading = isFolder && treeItem.isLoading()
+            const meta = treeItem.getItemMeta()
+
+            return (
+              <div
+                key={itemId}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                {...treeItem.getProps()}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                <FileTreeNode
+                  name={itemData.name}
+                  path={itemId}
+                  cwd={cwd}
+                  type={itemData.type}
+                  depth={meta.level - 1}
+                  isExpanded={isExpanded}
+                  isSelected={isSelected}
+                  isFocused={isFocused}
+                  isLoading={isLoading}
+                  onClick={() =>
+                    handleItemClick(itemId, isFolder)
+                  }
+                  onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
+                  onRequestDelete={onRequestDelete
+                    ? () => onRequestDelete(itemId, itemData.type)
+                    : undefined}
+                  onRequestCreateFile={onRequestCreateFile && itemData.type === 'directory'
+                    ? () => onRequestCreateFile(itemId)
+                    : undefined}
+                  onRequestRename={onRequestRename
+                    ? () => onRequestRename(itemId, itemData.type)
+                    : undefined}
+                />
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+
+    const treeScrollArea = onRequestCreateFile ? (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{treeScrollContent}</ContextMenuTrigger>
+        <ContextMenuContent className="min-w-[160px]">
+          <ContextMenuItem onSelect={() => onRequestCreateFile('')} className="gap-2 text-xs">
+            <FilePlus className="size-3.5" />
+            New File
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    ) : treeScrollContent
 
     return (
       <div className="flex h-full flex-col">
@@ -543,72 +694,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
         ) : (
           <>
             {/* Tree */}
-            <div
-              {...tree.getContainerProps('File tree')}
-              ref={(el) => {
-                setScrollEl(el)
-                tree.registerElement(el)
-              }}
-              className="file-browser-scroll min-h-0 flex-1 overflow-auto focus:outline-none"
-              tabIndex={0}
-            >
-              <div
-                style={{
-                  height: virtualizer.getTotalSize(),
-                  position: 'relative',
-                  width: '100%',
-                }}
-              >
-                {virtualizer.getVirtualItems().map((virtualItem) => {
-                  const treeItem = allItems[virtualItem.index]
-                  if (!treeItem) return null
-
-                  const itemData = treeItem.getItemData()
-                  const itemId = treeItem.getId()
-                  const isFolder = treeItem.isFolder()
-                  const isExpanded = treeItem.isExpanded()
-                  const isFocused = treeItem.isFocused()
-                  const isSelected = selectedFile === itemId
-                  const isLoading = isFolder && treeItem.isLoading()
-                  const meta = treeItem.getItemMeta()
-
-                  return (
-                    <div
-                      key={itemId}
-                      ref={virtualizer.measureElement}
-                      data-index={virtualItem.index}
-                      {...treeItem.getProps()}
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        transform: `translateY(${virtualItem.start}px)`,
-                      }}
-                    >
-                      <FileTreeNode
-                        name={itemData.name}
-                        path={itemId}
-                        cwd={cwd}
-                        type={itemData.type}
-                        depth={meta.level - 1}
-                        isExpanded={isExpanded}
-                        isSelected={isSelected}
-                        isFocused={isFocused}
-                        isLoading={isLoading}
-                        onClick={() =>
-                          handleItemClick(itemId, isFolder)
-                        }
-                        onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
-                        onRequestDelete={onRequestDelete
-                          ? () => onRequestDelete(itemId, itemData.type)
-                          : undefined}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+            {treeScrollArea}
 
             {/* File count footer */}
             {fileCount !== null && fileCountMethod !== 'none' ? (

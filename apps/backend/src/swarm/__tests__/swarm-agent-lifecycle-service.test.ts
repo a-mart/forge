@@ -215,6 +215,41 @@ describe("SwarmAgentLifecycleService", () => {
     expect(resolved.thinkingLevel).toBe("high");
   });
 
+  it("resolveSpawnModel normalizes Cursor SDK reasoning levels per selected model", () => {
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions());
+    const fallback = { provider: "anthropic", modelId: "claude-sonnet", thinkingLevel: "low" };
+
+    expect(svc.resolveSpawnModel({
+      agentId: "composer-worker",
+      model: "cursor-composer",
+      reasoningLevel: "high",
+    } satisfies SpawnAgentInput, fallback)).toEqual({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "none",
+    });
+
+    expect(svc.resolveSpawnModel({
+      agentId: "grok-worker",
+      model: "cursor-grok-45",
+      reasoningLevel: "xhigh",
+    } satisfies SpawnAgentInput, fallback)).toEqual({
+      provider: "cursor-sdk",
+      modelId: "grok-4.5",
+      thinkingLevel: "high",
+    });
+
+    expect(svc.resolveSpawnModel({
+      agentId: "grok-worker-2",
+      model: "cursor-grok-45",
+      reasoningLevel: "none",
+    } satisfies SpawnAgentInput, fallback)).toEqual({
+      provider: "cursor-sdk",
+      modelId: "grok-4.5",
+      thinkingLevel: "low",
+    });
+  });
+
   it("resolveSpawnModelWithCapacityFallback reroutes to the next OpenAI Codex model when the primary is blocked", () => {
     const modelCapacityBlocks = new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
     const key = buildModelCapacityBlockKey("openai-codex", "gpt-5.3-codex-spark");
@@ -1516,6 +1551,45 @@ describe("SwarmAgentLifecycleService", () => {
     expect(sendManagerBootstrapMessage).toHaveBeenCalledWith(created.agentId);
   });
 
+  it("createManager normalizes Cursor preset reasoning before persisting descriptor and profile default", async () => {
+    const descriptors = new Map<string, AgentDescriptor>();
+    const profiles = new Map<string, ManagerProfile>();
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const sessionProvisioner = {
+      provisionSession: vi.fn(
+        async (opts: {
+          profile?: ManagerProfile;
+          initializeRuntime?: () => Promise<void>;
+        }) => {
+          if (opts.profile) {
+            profiles.set(opts.profile.profileId, opts.profile);
+          }
+          await opts.initializeRuntime?.();
+        }
+      )
+    } as unknown as SessionProvisioner;
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        profiles,
+        runtimes,
+        hasRunningManagers: () => false,
+        sessionProvisioner
+      })
+    );
+
+    const created = await svc.createManager("bootstrap", {
+      name: "cursor-composer",
+      cwd: "/tmp/proj",
+      model: "cursor-composer",
+      reasoningLevel: "high",
+    });
+
+    expect(created.model).toEqual({ provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "none" });
+    expect(profiles.get(created.agentId)?.defaultModel).toEqual(created.model);
+  });
+
   it("createManager inserts new profiles at the top of sortOrder", async () => {
     const descriptors = new Map<string, AgentDescriptor>();
     const profiles = new Map<string, ManagerProfile>([
@@ -1867,7 +1941,7 @@ describe("SwarmAgentLifecycleService", () => {
     expect(spawned.model).toMatchObject({
       provider: "cursor-sdk",
       modelId: "composer-2.5",
-      thinkingLevel: "medium"
+      thinkingLevel: "none"
     });
     expect(spawned.specialistId).toBe("fast:planner");
     expect(spawned.specialistTier).toBe("fast");

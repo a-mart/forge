@@ -426,9 +426,7 @@ export class GitSourceControlService {
     const idleAgents = activeAgents.filter((agent) => !isBlockingAgentStatus(agent.status));
     if (
       idleAgents.length > 0 &&
-      (options.action === "switch-branch" ||
-        options.action === "create-branch" ||
-        options.action === "pull-ff-only")
+      (options.action === "switch-branch" || options.action === "create-branch")
     ) {
       issues.push({
         code: "idle_agents_attached",
@@ -461,7 +459,7 @@ export class GitSourceControlService {
       if (!upstream) {
         issues.push({
           code: "missing_upstream",
-          message: "The current branch has no upstream configured for a fast-forward pull.",
+          message: "The current branch has no upstream configured for pull.",
           severity: "block"
         });
       } else if (options.remote && upstream.remote !== options.remote) {
@@ -677,7 +675,7 @@ export class GitSourceControlService {
           ...preflight.issues,
           {
             code: "missing_upstream",
-            message: "The current branch has no upstream configured for a fast-forward pull.",
+            message: "The current branch has no upstream configured for pull.",
             severity: "block"
           }
         ]
@@ -842,7 +840,7 @@ export class GitSourceControlService {
       return {
         ref: upstream.ref,
         refLabel: `upstream "${upstream.ref}"`,
-        actionLabel: `Fast-forward pull from "${upstream.ref}"`
+        actionLabel: `Pull from "${upstream.ref}"`
       };
     }
 

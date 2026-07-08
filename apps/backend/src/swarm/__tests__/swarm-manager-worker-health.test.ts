@@ -51,7 +51,7 @@ class TestSwarmManager extends TestSwarmManagerBase {
 function expectedWorkerReport(status: 'done' | 'blocked', body: string): string {
   return [
     `WORKER REPORT: status: ${status}`,
-    '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}',
+    '[assistantOutputTarget] {"mode":"internal_only"}',
     body,
   ].join('\n')
 }

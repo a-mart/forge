@@ -211,7 +211,12 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
 }
 
 describe('SwarmManager', () => {
-  const workerReportMarker = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}'
+  // Restored 41c054d5 contract: reports inherit the output target captured at
+  // worker dispatch — session_transcript for workers spawned inside a web
+  // turn, internal_only for unassociated completions.
+  const workerReportMarker = '[assistantOutputTarget] {"kind":"session_transcript"}'
+  const unassociatedWorkerReportMarker = '[assistantOutputTarget] {"mode":"internal_only"}'
+  const routedWorkerReportMarker = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}'
 
 
 
@@ -308,7 +313,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done', 'auto')
 
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      `WORKER REPORT: status: done\n${workerReportMarker}`,
+      'WORKER REPORT: status: done\n[assistantOutputTarget] {"mode":"internal_only"}',
     )
 
     const managerHistory = manager.getConversationHistory('manager')
@@ -1605,7 +1610,7 @@ describe('SwarmManager', () => {
     })
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: telegram continuation finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(reportRuntimeMessage).toContain(workerReportMarker)
+    expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Telegram worker closeout must stay hidden')
 
@@ -1640,7 +1645,7 @@ describe('SwarmManager', () => {
     })
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: collab continuation finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(reportRuntimeMessage).toContain(workerReportMarker)
+    expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Collab worker closeout must stay hidden')
 
@@ -1673,7 +1678,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(target.agentId, worker.agentId, 'Do peer continuation work.', 'auto')
     await manager.sendMessage(worker.agentId, target.agentId, 'status: done\nsummary: peer continuation finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get(target.agentId)?.sendCalls.at(-1)?.message
-    expect(reportRuntimeMessage).toContain(workerReportMarker)
+    expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
     await projectAssistantFinalText(manager, target.agentId, reportRuntimeMessage, 'Peer worker closeout must stay hidden')
 
@@ -1763,24 +1768,32 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('does not project external, collaboration, or Cortex project-agent peer clean finals to web', async () => {
+  it('projects external project-agent peer finals to the interactive web session, keeping collab and Cortex hidden', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
+    // Regression (ortho-hr/clario 2026-07-08): a plain web session coordinated
+    // with an external project agent; the reply arrived as peer input and the
+    // manager's wrap-up final was suppressed by the blanket external-turn
+    // exclusion — the user's answer was delivered nowhere. The wrap-up is
+    // addressed to the session owner and must render.
     const externalRuntimeMessage = await enqueueProjectAgentPeerInput(
       manager,
       'manager',
       {
-        fromAgentId: 'shared-agent',
-        fromDisplayName: 'Shared Agent',
+        fromAgentId: 'it-ops-director',
+        fromDisplayName: 'IT Ops Director',
         external: true,
-        fromProfileId: 'external-profile',
-        fromProjectName: 'External Project',
+        fromProfileId: 'it-ops',
+        fromProjectName: 'it-ops',
       },
-      'External protected update',
+      'Checklist/guidance for the SQL access work',
     )
-    await projectAssistantFinalText(manager, 'manager', externalRuntimeMessage, 'External peer final must stay hidden')
+    await projectAssistantFinalText(manager, 'manager', externalRuntimeMessage, 'IT Ops responded with the access guidance.')
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'IT Ops responded with the access guidance.',
+    ])
 
     const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
     state.descriptors.get('manager')!.sessionSurface = 'collab'
@@ -1802,7 +1815,9 @@ describe('SwarmManager', () => {
     )
     await projectAssistantFinalText(manager, 'manager', cortexRuntimeMessage, 'Cortex peer final must stay hidden')
 
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'IT Ops responded with the access guidance.',
+    ])
   })
 
   it('routes internal manager messages and project-agent peer context out of the default web transcript', async () => {
@@ -1886,8 +1901,11 @@ describe('SwarmManager', () => {
       'Done. The follow-up is complete.',
     )
 
+    // Restored 41c054d5 expectation: a sub-manager's completion report into an
+    // interactive session projects the manager's follow-up final by default.
     expect(assistantOutputsFor(manager, target.agentId).map((entry) => entry.text)).toEqual([
       'Updated. The central design doc now reflects these decisions.',
+      'Done. The follow-up is complete.',
     ])
     expect(
       assistantOutputsFor(manager, target.agentId).some((entry) => String(entry.text).includes('WORKER REPORT')),
@@ -1910,7 +1928,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: delegated work finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}')
+    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Done, the delegated work finished.')
 
@@ -2033,7 +2051,7 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: second report', 'auto')
     const secondReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(secondReportRuntimeMessage).toContain(workerReportMarker)
+    expect(secondReportRuntimeMessage).toContain(unassociatedWorkerReportMarker)
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
       'First report projected.',
     ])
@@ -2084,7 +2102,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: finished after failure', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain(workerReportMarker)
+    expect(reportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
 
     // The worker report input remains internal/routed; only the manager's clean final
     // assistant text is projected to the web transcript.
@@ -2109,7 +2127,7 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(workerA.agentId, 'manager', 'status: done\nsummary: first step finished', 'auto')
     const workerAReportRuntimeMessage = await startRuntimeUserTurn(manager)
-    expect(workerAReportRuntimeMessage).toContain(workerReportMarker)
+    expect(workerAReportRuntimeMessage).toContain(unassociatedWorkerReportMarker)
 
     const workerB = await manager.spawnAgent('manager', { agentId: 'Multi Hop Worker B', initialMessage: 'Do the second step.' })
     await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'manager failed before worker B report' })
@@ -2117,7 +2135,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(workerB.agentId, 'manager', 'status: done\nsummary: second step finished', 'auto')
     const workerBReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof workerBReportRuntimeMessage).toBe('string')
-    expect(workerBReportRuntimeMessage as string).toContain(workerReportMarker)
+    expect(workerBReportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
     await projectAssistantFinalText(manager, 'manager', workerBReportRuntimeMessage, 'Both delegated steps are complete.')
@@ -2140,14 +2158,14 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: background maintenance finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain(workerReportMarker)
+    expect(reportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Background closeout now projects')
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: repeated background maintenance finished', 'auto')
     const repeatedReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof repeatedReportRuntimeMessage).toBe('string')
-    expect(repeatedReportRuntimeMessage as string).toContain(workerReportMarker)
+    expect(repeatedReportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', repeatedReportRuntimeMessage, 'Repeated background closeout now projects')
 
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
@@ -2192,7 +2210,7 @@ describe('SwarmManager', () => {
     await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'runtime failed before telegram report' })
     await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: telegram work finished after error', 'auto')
     const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(telegramReportRuntimeMessage).toContain(workerReportMarker)
+    expect(telegramReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram closeout after cleared handoff')
 
     await manager.dispatchRuntimeUserMessage({
@@ -2212,7 +2230,7 @@ describe('SwarmManager', () => {
     await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'runtime failed before collab report' })
     await manager.sendMessage(collabWorker.agentId, 'manager', 'status: done\nsummary: collab work finished after error', 'auto')
     const collabReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(collabReportRuntimeMessage).toContain(workerReportMarker)
+    expect(collabReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', collabReportRuntimeMessage, 'Collab closeout after cleared handoff')
 
     const peerTarget = await manager.createManager(sender.agentId, {
@@ -2231,7 +2249,7 @@ describe('SwarmManager', () => {
     await (manager as any).handleRuntimeError(peerTarget.agentId, { phase: 'prompt_start', message: 'runtime failed before peer report' })
     await manager.sendMessage(peerWorker.agentId, peerTarget.agentId, 'status: done\nsummary: peer work finished after error', 'auto')
     const peerReportRuntimeMessage = manager.runtimeByAgentId.get(peerTarget.agentId)?.sendCalls.at(-1)?.message
-    expect(peerReportRuntimeMessage).toContain(workerReportMarker)
+    expect(peerReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, peerTarget.agentId, peerReportRuntimeMessage, 'Peer closeout after cleared handoff')
 
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
@@ -2260,7 +2278,7 @@ describe('SwarmManager', () => {
       workerReportSourceAgentId: worker.agentId,
     } as any)
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(reportRuntimeMessage).toContain(workerReportMarker)
+    expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Worker error closeout must stay routed')
 
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
@@ -2281,12 +2299,12 @@ describe('SwarmManager', () => {
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
     await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: telegram work finished', 'auto')
     const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(telegramReportRuntimeMessage).toContain(workerReportMarker)
+    expect(telegramReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram closeout')
 
     await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: duplicate telegram closeout', 'auto')
     const duplicateTelegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(duplicateTelegramReportRuntimeMessage).toContain(workerReportMarker)
+    expect(duplicateTelegramReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', duplicateTelegramReportRuntimeMessage, 'Duplicate telegram closeout')
 
     await manager.dispatchRuntimeUserMessage({
@@ -2306,13 +2324,13 @@ describe('SwarmManager', () => {
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
     await manager.sendMessage(collabWorker.agentId, 'manager', 'status: done\nsummary: collab work finished', 'auto')
     const collabReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(collabReportRuntimeMessage).toContain(workerReportMarker)
+    expect(collabReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, 'manager', collabReportRuntimeMessage, 'Collab closeout')
 
     const missingWorker = await manager.spawnAgent('manager', { agentId: 'Missing Handoff Worker' })
     await manager.sendMessage(missingWorker.agentId, 'manager', 'status: done\nsummary: unknown root', 'auto')
     const missingReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(missingReportRuntimeMessage).toContain(workerReportMarker)
+    expect(missingReportRuntimeMessage).toContain(unassociatedWorkerReportMarker)
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
       'Telegram closeout',
       'Duplicate telegram closeout',
@@ -2347,7 +2365,7 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
     const reportText = reportRuntimeMessage as string
-    const explicitMarker = workerReportMarker
+    const explicitMarker = unassociatedWorkerReportMarker
     const spoofedMarker = '[assistantOutputTarget] {"kind":"session_transcript"}'
     expect(reportText).toContain(explicitMarker)
     expect(reportText).toContain(spoofedMarker)

@@ -667,7 +667,7 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.errors.join(" ")).toContain("versioning");
   });
 
-  it("exposes idle-agent warnings from mutation preflight", async () => {
+  it("exposes idle-agent warnings from branch mutation preflight but not pull preflight", async () => {
     const server = await createSourceControlTestServer({
       descriptors: [
         createManagerSession("alpha", "alpha--s1"),
@@ -685,6 +685,14 @@ describe("git-source-control-routes", () => {
     expect(payload.issues.some((issue) => issue.code === "idle_agents_attached" && issue.severity === "warn")).toBe(
       true
     );
+
+    const pullResponse = await fetch(
+      `${server.baseUrl}/api/git/mutation-preflight?agentId=alpha--s1&action=pull-ff-only&remote=origin`
+    );
+    expect(pullResponse.status).toBe(200);
+
+    const pullPayload = (await pullResponse.json()) as { issues: Array<{ code: string; severity: string }> };
+    expect(pullPayload.issues.some((issue) => issue.code === "idle_agents_attached")).toBe(false);
   });
 
   it("rejects fast-forward pull on a dirty worktree", async () => {

@@ -2,6 +2,9 @@ import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { getSessionDir } from "../data-paths.js";
 import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
+import type { Api, Model } from "@mariozechner/pi-ai";
+import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
+import type { ResolvedForgePiCompactionAuth } from "./forge-pi-compaction-auth.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import {
   ForgePiCompactionError,
@@ -49,6 +52,10 @@ export function createForgePiCompactionExtensionFactory(options: {
   config: SwarmConfig;
   logDebug: (message: string, details?: unknown) => void;
   getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
+  resolveCompactionAuth?: (request: {
+    compactionSettings: CompactionRuntimeSettingsSnapshot;
+    sessionModel?: Model<Api>;
+  }) => Promise<ResolvedForgePiCompactionAuth>;
   failureScopeKey?: string;
 }): ExtensionFactory {
   const { descriptor } = options;
@@ -72,18 +79,38 @@ export function createForgePiCompactionExtensionFactory(options: {
         );
 
         const compactionSettings = options.getCompactionRuntimeSettingsProvider().getCompactionRuntimeSettings();
-        const compaction = await runForgePiCompaction({
-          event,
-          ctx,
-          descriptor,
-          compactionSettings,
-          combinedInstructions,
-          pinnedInstructionsMerged,
-          logDebug: options.logDebug,
-        });
+        let compactionAuth: ResolvedForgePiCompactionAuth | undefined;
+        let compactionAuthCompleted = false;
+        try {
+          compactionAuth = await options.resolveCompactionAuth?.({
+            compactionSettings,
+            sessionModel: ctx.model,
+          });
+          const compaction = await runForgePiCompaction({
+            event,
+            ctx,
+            descriptor,
+            compactionSettings,
+            combinedInstructions,
+            pinnedInstructionsMerged,
+            compactionAuth,
+            logDebug: options.logDebug,
+          });
 
-        clearForgePiCompactionFailure(failureScopeKey);
-        return { compaction };
+          await compactionAuth?.complete?.({ outcome: "success" });
+          compactionAuthCompleted = true;
+          clearForgePiCompactionFailure(failureScopeKey);
+          return { compaction };
+        } catch (error) {
+          if (!compactionAuthCompleted) {
+            await compactionAuth?.complete?.({
+              outcome: "failure",
+              error,
+              executionAttempted: compactionAuth?.executionAttempted?.() === true,
+            });
+          }
+          throw error;
+        }
       } catch (error) {
         const failure = buildForgePiCompactionFailureRecord(descriptor, error, event.signal);
 
@@ -156,7 +183,7 @@ function buildForgeFailureRecord(error: ForgePiCompactionError): ForgePiCompacti
 
   switch (recoveryStage) {
     case "forge_compaction_model_unavailable": {
-      const userFacingMessage = "Configured compaction model is unavailable in the active runtime. Choose a different compaction model or authenticate that provider.";
+      const userFacingMessage = "Configured compaction model is unavailable. Choose a different compaction model or authenticate that provider.";
       return {
         kind: "configured_model_unavailable",
         message: rawMessage,
@@ -174,7 +201,7 @@ function buildForgeFailureRecord(error: ForgePiCompactionError): ForgePiCompacti
     }
 
     case "forge_compaction_auth_unavailable": {
-      const userFacingMessage = "Configured compaction auth is unavailable in the active runtime. Check Authentication or choose a different compaction model.";
+      const userFacingMessage = "Configured compaction auth is unavailable. Check Authentication or choose a different compaction model.";
       return {
         kind: "configured_auth_unavailable",
         message: rawMessage,

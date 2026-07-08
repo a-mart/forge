@@ -162,9 +162,7 @@ export function normalizePersistedSwarmModelDescriptor(
     return {
       provider: descriptor.provider,
       modelId: descriptor.modelId,
-      thinkingLevel: provider === "cursor-sdk" && modelId === "composer-2.5"
-        ? normalizeCursorSdkThinkingLevel(descriptor.thinkingLevel)
-        : normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
+      thinkingLevel: normalizeThinkingLevelForModelDescriptor(descriptor),
     };
   }
 
@@ -176,29 +174,80 @@ export function normalizePersistedSwarmModelDescriptor(
 }
 
 function normalizeDescriptorThinkingLevelForPreset(level: string | undefined, preset: SwarmModelPreset): string {
-  if (preset === "cursor-composer") {
-    return normalizeCursorSdkThinkingLevel(level);
-  }
-
-  return normalizeDescriptorThinkingLevel(level);
+  const presetDescriptor = resolveModelDescriptorFromPreset(preset);
+  return normalizeThinkingLevelForModelDescriptor(presetDescriptor, level);
 }
 
-export function normalizeCursorSdkThinkingLevel(level: string | undefined): string {
+export function normalizeThinkingLevelForModelDescriptor(
+  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string },
+  overrideLevel?: string,
+): string {
+  const provider = descriptor.provider.trim().toLowerCase();
+  const modelId = descriptor.modelId.trim().toLowerCase();
+  const requestedLevel = overrideLevel ?? descriptor.thinkingLevel;
+  if (provider === "cursor-sdk") {
+    return normalizeCursorSdkThinkingLevel(requestedLevel, modelId);
+  }
+
+  const catalogModel = modelCatalogService.getModel(modelId, provider);
+  if (catalogModel && !catalogModel.supportsReasoning) {
+    return catalogModel.defaultReasoningLevel;
+  }
+
+  const normalized = provider === "anthropic"
+    ? normalizeAnthropicThinkingLevel(requestedLevel)
+    : normalizeDescriptorThinkingLevel(requestedLevel);
+
+  if (!catalogModel) {
+    return normalized;
+  }
+  const supportedReasoningLevels: readonly string[] = catalogModel.supportedReasoningLevels;
+  if (supportedReasoningLevels.includes(normalized)) {
+    return normalized;
+  }
+  if (normalized === "none" && supportedReasoningLevels.includes("low")) {
+    return "low";
+  }
+  if (normalized === "xhigh" && supportedReasoningLevels.includes("high")) {
+    return "high";
+  }
+  return catalogModel.defaultReasoningLevel;
+}
+
+export function normalizeCursorSdkThinkingLevel(level: string | undefined, modelId = "grok-4.5"): string {
+  const model = modelCatalogService.getModel(modelId, "cursor-sdk");
+  const defaultLevel = model?.defaultReasoningLevel ?? (modelId === "composer-2.5" ? "none" : "high");
+  if (model && !model.supportsReasoning) {
+    return defaultLevel;
+  }
+
   const normalized = typeof level === "string" ? level.trim().toLowerCase() : "";
   switch (normalized) {
     case "none":
+      return (model?.supportedReasoningLevels as readonly string[] | undefined)?.includes("none") ? "none" : "low";
     case "low":
-      return "low";
+    case "medium":
     case "high":
+      return (model?.supportedReasoningLevels as readonly string[] | undefined)?.includes(normalized) ? normalized : defaultLevel;
     case "xhigh":
     case "x-high":
-      return "high";
-    case "medium":
+      return (model?.supportedReasoningLevels as readonly string[] | undefined)?.includes("xhigh") ? "xhigh" : "high";
     case "":
-      return "medium";
+      return defaultLevel;
     default:
-      return "medium";
+      return defaultLevel;
   }
+}
+
+function normalizeAnthropicThinkingLevel(level: string | undefined): string {
+  const normalized = normalizeDescriptorThinkingLevel(level);
+  if (normalized === "none") {
+    return "low";
+  }
+  if (normalized === "xhigh") {
+    return "high";
+  }
+  return normalized;
 }
 
 function normalizeDescriptorThinkingLevel(level: string | undefined): string {

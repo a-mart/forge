@@ -105,6 +105,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
+  'cursor-grok-45': {
+    provider: 'cursor-sdk',
+    defaultModelId: 'grok-4.5',
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
+    visibleInSpecialists: true,
+  },
 } as const
 
 const EXPECTED_MODELS = {
@@ -273,8 +281,24 @@ const EXPECTED_MODELS = {
     familyId: 'cursor-composer',
     contextWindow: 200_000,
     maxOutputTokens: 16_384,
-    supportsReasoning: true,
+    supportsReasoning: false,
     inputModes: ['text'],
+  },
+  'cursor-sdk/grok-4.5': {
+    provider: 'cursor-sdk',
+    familyId: 'cursor-grok-45',
+    contextWindow: 500_000,
+    maxOutputTokens: 64_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'cursor-sdk/grok-4.5-fast': {
+    provider: 'cursor-sdk',
+    familyId: 'cursor-grok-45',
+    contextWindow: 500_000,
+    maxOutputTokens: 64_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
   },
 } as const
 
@@ -290,7 +314,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(21)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(23)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
@@ -359,7 +383,20 @@ describe('model-catalog', () => {
       modelId: 'composer-2.5',
       provider: 'cursor-sdk',
       familyId: 'cursor-composer',
+      supportsReasoning: false,
     })
+    expect(getCatalogModel('cursor-sdk/grok-4.5')).toMatchObject({
+      catalogId: 'cursor-sdk/grok-4.5',
+      modelId: 'grok-4.5',
+      provider: 'cursor-sdk',
+      familyId: 'cursor-grok-45',
+      supportsReasoning: true,
+    })
+    expect(getCatalogModel('grok-4.5', 'cursor-sdk')).toMatchObject({
+      catalogId: 'cursor-sdk/grok-4.5',
+      provider: 'cursor-sdk',
+    })
+    expect(getCatalogModel('grok-4.5')).toBeUndefined()
   })
 
   it('makes Cursor SDK accessible across manager and specialist surfaces', () => {
@@ -370,11 +407,21 @@ describe('model-catalog', () => {
       visibleInSpawnPreset: true,
       visibleInSpecialists: true,
     })
+    expect(getCatalogFamily('cursor-grok-45')).toMatchObject({
+      visibleInCreateManager: true,
+      visibleInChangeManager: true,
+      visibleInSpawnPreset: true,
+      visibleInSpecialists: true,
+    })
     expect(getCatalogFamily('cursor-acp')).toBeUndefined()
     expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getCreateManagerFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getChangeManagerFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getSpawnPresetFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
   })
 
   it('ensures all models reference valid families', () => {
@@ -454,7 +501,13 @@ describe('model-catalog', () => {
       provider: 'cursor-sdk',
       familyId: 'cursor-composer',
     })
+    expect(getCatalogModel('grok-4.5-fast', 'cursor-sdk')).toMatchObject({
+      catalogId: 'cursor-sdk/grok-4.5-fast',
+      provider: 'cursor-sdk',
+      familyId: 'cursor-grok-45',
+    })
     expect(inferCatalogFamily('cursor-sdk', 'composer-2.5')).toBe('cursor-composer')
+    expect(inferCatalogFamily('cursor-sdk', 'grok-4.5')).toBe('cursor-grok-45')
     expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
@@ -530,6 +583,7 @@ describe('model-catalog', () => {
       'sdk-opus',
       'sdk-sonnet',
       'cursor-composer',
+      'cursor-grok-45',
     ])
 
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
@@ -541,6 +595,7 @@ describe('model-catalog', () => {
       'sdk-opus',
       'sdk-sonnet',
       'cursor-composer',
+      'cursor-grok-45',
     ])
 
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
@@ -553,6 +608,7 @@ describe('model-catalog', () => {
       'sdk-sonnet',
       'pi-grok',
       'cursor-composer',
+      'cursor-grok-45',
     ])
 
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
@@ -565,6 +621,7 @@ describe('model-catalog', () => {
       'sdk-sonnet',
       'pi-grok',
       'cursor-composer',
+      'cursor-grok-45',
     ])
   })
 })

@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { ChevronRight, Copy, Trash2 } from 'lucide-react'
+import { ChevronRight, Copy, FilePlus, Pencil, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from './FileIcon'
 import {
@@ -22,6 +22,8 @@ interface FileTreeNodeProps {
   onClick: () => void
   onDoubleClick?: () => void
   onRequestDelete?: () => void
+  onRequestCreateFile?: () => void
+  onRequestRename?: () => void
 }
 
 export function FileTreeNode({
@@ -37,6 +39,8 @@ export function FileTreeNode({
   onClick,
   onDoubleClick,
   onRequestDelete,
+  onRequestCreateFile,
+  onRequestRename,
 }: FileTreeNodeProps) {
   const handleCopyPath = useCallback(() => {
     navigator.clipboard.writeText(cwd ? `${cwd.replace(/\/+$/, '')}/${path}` : path)
@@ -55,7 +59,9 @@ export function FileTreeNode({
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={onClick}
           onDoubleClick={onDoubleClick}
+          onContextMenu={(event) => event.stopPropagation()}
           title={name}
+          data-file-tree-node="true"
         >
       {type === 'directory' ? (
         <ChevronRight
@@ -80,13 +86,25 @@ export function FileTreeNode({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="min-w-[160px]">
-        <ContextMenuItem onClick={handleCopyPath} className="gap-2 text-xs">
+        <ContextMenuItem onSelect={handleCopyPath} className="gap-2 text-xs">
           <Copy className="size-3.5" />
           Copy Path
         </ContextMenuItem>
+        {type === 'directory' && onRequestCreateFile ? (
+          <ContextMenuItem onSelect={onRequestCreateFile} className="gap-2 text-xs">
+            <FilePlus className="size-3.5" />
+            New File
+          </ContextMenuItem>
+        ) : null}
+        {onRequestRename ? (
+          <ContextMenuItem onSelect={onRequestRename} className="gap-2 text-xs">
+            <Pencil className="size-3.5" />
+            Rename
+          </ContextMenuItem>
+        ) : null}
         {onRequestDelete ? (
           <ContextMenuItem
-            onClick={onRequestDelete}
+            onSelect={onRequestDelete}
             className="gap-2 text-xs text-destructive focus:text-destructive"
           >
             <Trash2 className="size-3.5" />

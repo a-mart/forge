@@ -752,6 +752,8 @@ export function BuilderSurface({
               desktopOnly
               refreshNonce={panels.fileBrowserRefreshNonce}
               onDeleteEntry={panels.handleFileBrowserDeleteEntry}
+              onCreateFile={panels.handleFileBrowserCreateFile}
+              onRenameEntry={panels.handleFileBrowserRenameEntry}
             />
           ) : null}
 
@@ -1120,6 +1122,8 @@ export function BuilderSurface({
                 mobileOnly: true,
                 refreshNonce: panels.fileBrowserRefreshNonce,
                 onDeleteEntry: panels.handleFileBrowserDeleteEntry,
+                onCreateFile: panels.handleFileBrowserCreateFile,
+                onRenameEntry: panels.handleFileBrowserRenameEntry,
               }}
             />
           ) : null}

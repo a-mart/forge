@@ -67,7 +67,7 @@ describe("repo project agent definitions", () => {
     expect(inventory.items[0].recommendedModel).toEqual({
       provider: "cursor-sdk",
       modelId: "composer-2.5",
-      thinkingLevel: "high"
+      thinkingLevel: "none"
     });
     expect(inventory.definitions[0].config.model).toEqual(inventory.items[0].recommendedModel);
   });

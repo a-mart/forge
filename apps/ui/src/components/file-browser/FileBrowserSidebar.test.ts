@@ -61,7 +61,11 @@ vi.mock('./use-file-browser-queries', () => ({
 
 const fileTreeMock = vi.hoisted(() => ({
   renderCount: 0,
-  FileTree: vi.fn((props: { onRequestDelete?: (path: string, entryType: 'file' | 'directory') => void }) => {
+  FileTree: vi.fn((props: {
+    onRequestDelete?: (path: string, entryType: 'file' | 'directory') => void
+    onRequestCreateFile?: (directoryPath: string) => void
+    onRequestRename?: (path: string, entryType: 'file' | 'directory') => void
+  }) => {
     fileTreeMock.renderCount += 1
     return createElement('div', { 'data-testid': 'file-tree' },
       'file tree',
@@ -70,6 +74,18 @@ const fileTreeMock = vi.hoisted(() => ({
             type: 'button',
             onClick: () => props.onRequestDelete?.('src', 'directory'),
           }, 'Request delete folder')
+        : null,
+      props.onRequestCreateFile
+        ? createElement('button', {
+            type: 'button',
+            onClick: () => props.onRequestCreateFile?.('src'),
+          }, 'Request create in folder')
+        : null,
+      props.onRequestRename
+        ? createElement('button', {
+            type: 'button',
+            onClick: () => props.onRequestRename?.('old.txt', 'file'),
+          }, 'Request rename file')
         : null,
     )
   }),
@@ -179,6 +195,51 @@ describe('FileBrowserSidebar project resource scaffold action', () => {
     await flushPromises()
 
     expect(queryByText(container, 'Created .forge project resources.')).toBeNull()
+  })
+})
+
+describe('FileBrowserSidebar create and rename dialogs', () => {
+  it('submits toolbar New File through the in-app dialog', async () => {
+    const onCreateFile = vi.fn().mockResolvedValue('new-root-file.ts')
+    renderSidebar({ onCreateFile })
+
+    flushSync(() => fireEvent.click(getByLabelText(container, 'New file')))
+    const input = getByLabelText(document.body, 'File name') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'new-root-file.ts' } })
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Create file', hidden: true }))
+    await flushPromises()
+
+    expect(onCreateFile).toHaveBeenCalledWith('', 'new-root-file.ts')
+    expect(queryByRole(document.body, 'dialog', { hidden: true })).toBeNull()
+  })
+
+  it('submits folder New File requests through the in-app dialog', async () => {
+    const onCreateFile = vi.fn().mockResolvedValue('src/new-child.ts')
+    renderSidebar({ onCreateFile })
+
+    flushSync(() => fireEvent.click(getByText(container, 'Request create in folder')))
+    const input = getByLabelText(document.body, 'File name') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'new-child.ts' } })
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Create file', hidden: true }))
+    await flushPromises()
+
+    expect(onCreateFile).toHaveBeenCalledWith('src', 'new-child.ts')
+    expect(queryByRole(document.body, 'dialog', { hidden: true })).toBeNull()
+  })
+
+  it('submits file rename requests through the in-app dialog', async () => {
+    const onRenameEntry = vi.fn().mockResolvedValue(true)
+    renderSidebar({ onRenameEntry })
+
+    flushSync(() => fireEvent.click(getByText(container, 'Request rename file')))
+    const input = getByLabelText(document.body, 'New name') as HTMLInputElement
+    expect(input.value).toBe('old.txt')
+    fireEvent.change(input, { target: { value: 'renamed.txt' } })
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Rename', hidden: true }))
+    await flushPromises()
+
+    expect(onRenameEntry).toHaveBeenCalledWith('old.txt', 'file', 'renamed.txt')
+    expect(queryByRole(document.body, 'dialog', { hidden: true })).toBeNull()
   })
 })
 

@@ -25,7 +25,7 @@ Claude SDK uses the local Claude Code CLI OAuth session instead of an API key. I
 
 ## Cursor SDK
 
-Cursor SDK uses `CURSOR_API_KEY` and exposes Composer 2.5 for specialist workers only. It is native to the Cursor runtime, and background auth/transport failures stay contained in the worker runtime and show up as worker failures, not app crashes. Codex selector mentions are separate from model selection and do not make Codex a manager model; they scope the turn to a plugin and delegate it through the visible Codex Plugin specialist worker instead.
+Cursor SDK uses Forge's Cursor SDK auth entry and exposes Composer 2.5 plus Cursor Grok 4.5 (`grok-4.5` and `grok-4.5-fast`). It is native to the Cursor runtime, and background auth/transport failures stay contained in the worker runtime and show up as worker failures, not app crashes. Codex selector mentions are separate from model selection and do not make Codex a manager model; they scope the turn to a plugin and delegate it through the visible Codex Plugin specialist worker instead.
 
 ## xAI / Grok
 
@@ -35,4 +35,4 @@ xAI provides the Grok model family. Grok models are available for specialist wor
 - **Grok 4 Fast** — Optimized for speed at some quality tradeoff.
 - **Grok 4.20** — A newer variant with expanded capabilities.
 
-You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. For OpenAI/Codex, those credentials can come from local auth or Forge Auth broker mode. Claude SDK uses Claude Code CLI OAuth, Cursor SDK uses `CURSOR_API_KEY`, and SDK models can be disabled in Settings > Models if you do not want to see them. Manager-facing availability is also controlled there, so only enabled models show up in manager create/change/override selectors; Codex selector mentions are plugin-scoped turns that delegate to the visible Codex Plugin specialist, not the manager model selector list. Compaction settings apply only to supported Pi-backed manager compaction runtimes, currently OpenAI/Codex and Anthropic; they do not apply to Claude SDK/native runtimes or xAI/Grok.
+You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. For OpenAI/Codex, those credentials can come from local auth or Forge Auth broker mode. Claude SDK uses Claude Code CLI OAuth, Cursor SDK uses Forge's Cursor SDK auth entry, and SDK models can be disabled in Settings > Models if you do not want to see them. Manager-facing availability is also controlled there, so only enabled models show up in manager create/change/override selectors; Codex selector mentions are plugin-scoped turns that delegate to the visible Codex Plugin specialist, not the manager model selector list. Compaction settings apply only to supported Pi-backed manager compaction runtimes, currently OpenAI/Codex and Anthropic; they do not apply to Claude SDK/native runtimes or xAI/Grok.
