@@ -853,6 +853,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly activeAssistantOutputTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly activeWebAssistantOutputTurnByManagerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly activeMessageRouteContextByManagerId = new Map<string, ActiveMessageRouteContext>();
+  // Output target captured at worker-dispatch time, consumed when that
+  // worker's terminal report is injected back into the manager. This is what
+  // makes worker-report markers truthful: a worker spawned during a direct-web
+  // turn reports back as `session_transcript` (bare manager final renders), an
+  // unassociated completion reports as `internal_only` (stays quiet). Restored
+  // from 41c054d5 — the v2 rebase dropped this subsystem, which stamped every
+  // report `explicit_tool_required` and made the runtime treat rendered
+  // finals as hidden (checkr resample loop, hidden peer-context finals).
+  private readonly inheritedAssistantOutputTargetByWorkerId = new Map<string, AssistantOutputTarget>();
   // Deterministic terminal-obligation backstop (docs/MANAGER_EMPTY_TURN_FIX.md):
   // last report text surfaced per manager, so a re-entrant exhaustion event for
   // the same report cannot double-deliver.
@@ -5061,6 +5070,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+    // Worker-report target inheritance (restored from 41c054d5): a consumed
+    // web handoff is single-use, and a manager->worker dispatch snapshots the
+    // manager's current output target for that worker's eventual report.
+    this.consumeWorkerAssistantOutputInheritanceAfterReportDispatch(assistantOutputInput);
+    this.rememberWorkerAssistantOutputInheritanceAfterDispatch(sender, target);
     if (deliveryLedgerTarget) {
       await appendTurnLedgerRecord(deliveryLedgerTarget, {
         t: "delivery_acked",
@@ -7422,11 +7436,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }));
 
     if (!decision.visible || decision.channel !== "web") {
+      // Peer-routed finals on an interactive session render to its web
+      // transcript: the only way a plain web manager receives peer input is as
+      // a reply to an exchange it initiated (project-agent references), and
+      // its wrap-up is addressed to the session owner — hiding it loses the
+      // answer entirely (replies TO the peer go through the explicit send
+      // tool). The guard keeps project agents, creator agents, collab
+      // surfaces, Cortex, and system profiles denied — including during
+      // external project-agent turns, which previously blanket-suppressed
+      // these finals (ortho-hr incident 2026-07-08: IT-Ops reply summarized
+      // by the manager, summary delivered nowhere).
       if (
         decision.reasonCode === "route:peer_agent" &&
-        !this.activeExternalProjectAgentTurnByAgentId.has(agentId) &&
-        !manager.projectAgent &&
-        !manager.creatorAgentId
+        this.canProjectManagerFinalTextToWebByDefault({ sender: manager, target: manager }, targetForRouting)
       ) {
         return {
           decision: {
@@ -7438,6 +7460,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           },
           ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
           target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+        };
+      }
+
+      // A remembered session_transcript/web target was already vetted by the
+      // dispatch-time projection resolver (user web turns, tool continuations,
+      // inherited worker-report handoffs — all pass the web-projection guard
+      // before the turn activates). The router re-deriving "not visible" from
+      // provenance origin here (e.g. route:internal_origin for a self
+      // continuation) must not override that vetting — restored 41c054d5
+      // semantics, where the remembered target was authoritative for finals.
+      // Surface policy still gates: collab/Cortex/system contexts stay denied.
+      if (
+        rememberedTarget?.kind === "session_transcript" &&
+        rememberedTarget.channel === "web" &&
+        this.canProjectManagerFinalTextToWebByDefault({ sender: manager, target: manager }, rememberedTarget)
+      ) {
+        return {
+          decision: {
+            ...decision,
+            visible: true,
+            decision: "render",
+            channel: "web",
+            reasonCode: "render:user_web",
+          },
+          ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
+          target: cloneSessionTranscriptAssistantOutputTarget(rememberedTarget),
         };
       }
 
@@ -7604,9 +7652,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
-    return sourceWorkerId
+    if (!sourceWorkerId) {
+      return { kind: "internal_only", reason: "missing_worker_report_provenance" };
+    }
+
+    // Truthful markers (restored from 41c054d5, narrowed to compose with the
+    // v2 pipeline): a report continuing a direct-web turn says
+    // `session_transcript` — the runtime's hidden-output policy then agrees
+    // bare finals are visible, so it never resamples a rendered answer — and a
+    // report with no captured handoff stays `internal_only`. Protected
+    // contexts (telegram/collab/peer spawns) keep the v2 explicit contract:
+    // the closeout route still renders the manager's summary to the web
+    // transcript without replaying channel output.
+    const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
+    if (inheritedTarget?.kind === "session_transcript" || inheritedTarget?.kind === "internal_only") {
+      return cloneAssistantOutputTarget(inheritedTarget);
+    }
+    return inheritedTarget
       ? { kind: "explicit_tool_required", reason: "worker_report" }
-      : { kind: "internal_only", reason: "missing_worker_report_provenance" };
+      : { kind: "internal_only", reason: "missing_worker_report_handoff" };
   }
 
   private resolveAssistantOutputProjectionTargetForAgentMessage(
@@ -7620,11 +7684,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     },
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
+    // Only proper WORKER REPORT dispatches ride the captured handoff — a
+    // worker's non-report chatter must not inherit the web turn it was
+    // spawned in.
+    const inheritedRoutingTarget =
+      this.isAssistantOutputEligibleWorkerReportMessage(input) && isWorkerReportRuntimeMessage(input.modelMessage)
+        ? this.resolveInheritedAssistantOutputRoutingTarget(input)
+        : undefined;
+    if (inheritedRoutingTarget) {
+      return inheritedRoutingTarget;
+    }
+
     const activeWebContinuationTarget = this.resolveActiveWebAssistantOutputContinuationTarget(input, inputTarget);
     if (activeWebContinuationTarget) {
       return activeWebContinuationTarget;
     }
 
+    // Worker-report closeouts on interactive sessions always default to the
+    // web transcript, even when the captured handoff is missing or stale
+    // (fix-lineage behavior, and what the v2 "closeouts … even without an
+    // active root / without handoff provenance" tests pin). The guard keeps
+    // project-agent/collab/Cortex/system contexts quiet.
+    if (
+      this.isAssistantOutputEligibleWorkerReportMessage(input) &&
+      isWorkerReportRuntimeMessage(input.modelMessage) &&
+      this.canProjectManagerFinalTextToWebByDefault(input, inputTarget)
+    ) {
+      return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+    }
 
     const defaultWebTarget = this.resolveDefaultManagerFinalTextWebProjectionTarget(input, inputTarget);
     if (defaultWebTarget) {
@@ -7695,6 +7782,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         },
       }));
       if (!explicitTranscriptDecision.visible || explicitTranscriptDecision.channel !== "web") {
+        // Restored 41c054d5 allowance: a direct-web turn's session_transcript
+        // target stays projectable for interactive sessions (including a
+        // project agent the user is talking to directly) even when the router
+        // declines the internal-origin provenance. The deny-list guard keeps
+        // collab/Cortex/system contexts suppressed.
+        if (this.canProjectManagerFinalTextToWebByDefault(input, inputTarget)) {
+          return cloneSessionTranscriptAssistantOutputTarget(inputTarget);
+        }
         return undefined;
       }
 
@@ -7713,10 +7808,192 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
     }));
     if (!decision.visible || decision.channel !== "web") {
+      // Restored 41c054d5 allowance, scoped to the two inbound classes whose
+      // finals belong to the session owner:
+      //  - peer_agent inbounds: an external project agent's reply landing back
+      //    in the interactive session that initiated the exchange (the user is
+      //    the principal; replies TO the peer go through the explicit send
+      //    tool);
+      //  - cross-manager completion messages (a sub-manager reporting up to
+      //    an interactive session).
+      // Everything else the router suppressed stays suppressed: worker
+      // chatter that is not a proper WORKER REPORT, and a manager's plain
+      // self-sends (legitimate self-continuations arrive via the send-tool
+      // continuation path above). Protected surfaces (project agents, collab,
+      // Cortex, system profiles) are denied inside the guard itself.
+      const restoredDefaultWebAllowance =
+        inputTarget.kind === "peer_agent" ||
+        (inputTarget.kind === "explicit_tool_required" &&
+          inputTarget.reason === "agent_message" &&
+          input.sender.role === "manager" &&
+          input.sender.agentId !== input.target.agentId);
+      if (restoredDefaultWebAllowance && this.canProjectManagerFinalTextToWebByDefault(input, inputTarget)) {
+        return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+      }
       return undefined;
     }
 
     return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
+  }
+
+  /**
+   * Route a worker report's manager-final through the target captured at
+   * worker dispatch (restored from 41c054d5, narrowed to web targets only).
+   * Protected contexts (telegram/collab/peer spawns) intentionally fall
+   * through to the v2 pipeline's closeout routing, which renders the
+   * manager's summary without replaying channel output.
+   */
+  private resolveInheritedAssistantOutputRoutingTarget(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    workerReportSourceAgentId?: string;
+  }): AssistantOutputTarget | undefined {
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
+    if (!sourceWorkerId) {
+      return undefined;
+    }
+
+    const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
+    if (inheritedTarget?.kind !== "session_transcript") {
+      return undefined;
+    }
+
+    if (inheritedTarget.channel === "web" && !this.canProjectManagerFinalTextToWebByDefault(input, inheritedTarget)) {
+      return undefined;
+    }
+    return cloneAssistantOutputTarget(inheritedTarget);
+  }
+
+  /**
+   * Deny-list guard for defaulting a manager's bare final text to the web
+   * transcript (restored from 41c054d5 / 7cd61ca0). Project agents, creator
+   * agents, collab surfaces, Cortex, and system profiles never default to
+   * web; everything interactive does.
+   */
+  private canProjectManagerFinalTextToWebByDefault(
+    input: {
+      sender: AgentDescriptor;
+      target: AgentDescriptor;
+      workerReportSourceAgentId?: string;
+    },
+    inputTarget: AssistantOutputTarget,
+  ): boolean {
+    const { sender, target } = input;
+    if (target.role !== "manager") {
+      return false;
+    }
+
+    if (
+      (target.projectAgent !== undefined || target.creatorAgentId !== undefined) &&
+      inputTarget.kind !== "session_transcript"
+    ) {
+      return false;
+    }
+
+    if (
+      sender.role === "manager" &&
+      sender.agentId !== target.agentId &&
+      (target.projectAgent !== undefined || target.creatorAgentId === sender.agentId)
+    ) {
+      return false;
+    }
+
+    if (
+      sender.role === "worker" &&
+      (target.projectAgent !== undefined || target.creatorAgentId !== undefined) &&
+      inputTarget.kind !== "session_transcript"
+    ) {
+      return false;
+    }
+
+    if (target.sessionSurface === "collab" || target.collab) {
+      return false;
+    }
+
+    if (
+      target.agentId === COLLABORATION_PROFILE_ID ||
+      target.profileId === COLLABORATION_PROFILE_ID ||
+      target.agentId === CORTEX_PROFILE_ID ||
+      target.profileId === CORTEX_PROFILE_ID
+    ) {
+      return false;
+    }
+
+    const profile = target.profileId ? this.profiles.get(target.profileId) : undefined;
+    if (profile && isSystemProfile(profile)) {
+      return false;
+    }
+
+    const archetypeId = normalizeArchetypeId(target.archetypeId ?? "");
+    if (target.sessionPurpose === "cortex_review" || archetypeId === CORTEX_ARCHETYPE_ID || archetypeId === "collaboration-channel") {
+      return false;
+    }
+
+    return true;
+  }
+
+  private consumeWorkerAssistantOutputInheritanceAfterReportDispatch(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    modelMessage: string | RuntimeUserMessage;
+    rawMessage?: string;
+    workerReportSourceAgentId?: string;
+  }): void {
+    if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
+      return;
+    }
+
+    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
+    if (sourceWorkerId) {
+      this.clearWorkerReportConsumedAssistantOutputTarget(sourceWorkerId);
+    }
+  }
+
+  private clearWorkerReportConsumedAssistantOutputTarget(agentId: string): void {
+    const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
+    if (!target) {
+      return;
+    }
+
+    if (target.kind === "session_transcript") {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    }
+  }
+
+  private rememberWorkerAssistantOutputInheritanceAfterDispatch(
+    sender: AgentDescriptor,
+    target: AgentDescriptor,
+  ): void {
+    if (sender.role !== "manager" || target.role !== "worker" || target.managerId !== sender.agentId) {
+      return;
+    }
+
+    // Keep this as server-owned input routing guidance for worker reports. The
+    // manager's later clean final text is projected by the manager/session context,
+    // not by this worker handoff; protected targets here still hard-deny projection.
+    const inheritedTarget = this.getActiveAssistantOutputTargetForDelegation(sender.agentId);
+    this.inheritedAssistantOutputTargetByWorkerId.set(target.agentId, inheritedTarget);
+  }
+
+  private getActiveAssistantOutputTargetForDelegation(managerId: string): AssistantOutputTarget {
+    const target = this.activeAssistantOutputTargetByManagerId.get(managerId);
+    return target ? cloneAssistantOutputTarget(target) : { kind: "internal_only", reason: "no_active_root" };
+  }
+
+  private clearInheritedAssistantOutputTargetsForManager(managerId: string): void {
+    this.clearRuntimeResettableInheritedAssistantOutputTarget(managerId);
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role === "worker" && descriptor.managerId === managerId) {
+        this.clearRuntimeResettableInheritedAssistantOutputTarget(descriptor.agentId);
+      }
+    }
+  }
+
+  private clearRuntimeResettableInheritedAssistantOutputTarget(agentId: string): void {
+    const target = this.inheritedAssistantOutputTargetByWorkerId.get(agentId);
+    if (target?.kind === "session_transcript") {
+      this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    }
   }
 
   private isAssistantOutputEligibleWorkerReportMessage(input: {
@@ -9828,6 +10105,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
     this.activeMessageRouteContextByManagerId.delete(agentId);
     this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
+    this.inheritedAssistantOutputTargetByWorkerId.delete(agentId);
+    this.clearInheritedAssistantOutputTargetsForManager(agentId);
     this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
     this.activeCodexPluginDelegationByManagerId.delete(agentId);
@@ -9877,11 +10156,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.activeMessageRouteContextByManagerId.delete(agentId);
       this.clearPendingChoiceAssistantOutputContinuationsForAgent(agentId);
+      // A manager runtime error invalidates web handoffs captured for its
+      // in-flight workers — a later report must not claim a turn that died.
+      this.clearInheritedAssistantOutputTargetsForManager(agentId);
       this.runtimeController.clearManagerAssistantOutputTurn(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.clearCodexPluginRetryContextForManager(agentId);
       this.codexPluginScopeService.closeScopesForManager(agentId);
     } else {
+      this.clearRuntimeResettableInheritedAssistantOutputTarget(agentId);
       if (isCodexPluginWorkerDescriptor(descriptor)) {
         this.codexPluginScopeService.closeScopeForWorker(agentId);
       }
@@ -10902,6 +11185,21 @@ function cloneSessionTranscriptAssistantOutputTarget(
     channel: target.channel,
     ...(target.sourceContext ? { sourceContext: { ...target.sourceContext } } : {}),
   };
+}
+
+function cloneAssistantOutputTarget(target: AssistantOutputTarget): AssistantOutputTarget {
+  switch (target.kind) {
+    case "session_transcript":
+      return cloneSessionTranscriptAssistantOutputTarget(target);
+    case "external_channel":
+      return { kind: "external_channel", sourceContext: { ...target.sourceContext } };
+    case "peer_agent":
+      return { kind: "peer_agent", fromAgentId: target.fromAgentId };
+    case "explicit_tool_required":
+      return { kind: "explicit_tool_required", reason: target.reason };
+    case "internal_only":
+      return { kind: "internal_only", ...(target.reason ? { reason: target.reason } : {}) };
+  }
 }
 
 function isWorkerReportRuntimeMessage(message: string | RuntimeUserMessage): boolean {
