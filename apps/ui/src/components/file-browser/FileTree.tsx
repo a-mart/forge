@@ -150,12 +150,22 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const [filterText, setFilterText] = useState(treeSnapshot?.filterText ?? '')
     const [searchQuery, setSearchQuery] = useState(treeSnapshot?.searchQuery ?? '')
     const [searchMode, setSearchMode] = useState(treeSnapshot?.searchMode ?? false)
+    const initialTreeScrollTopRef = useRef(treeSnapshot?.treeScrollTop ?? 0)
+    const initialSearchScrollTopRef = useRef(treeSnapshot?.searchScrollTop ?? 0)
+    const latestTreeScrollTopRef = useRef(treeSnapshot?.treeScrollTop ?? 0)
+    const latestSearchScrollTopRef = useRef(treeSnapshot?.searchScrollTop ?? 0)
+    const didRestoreTreeScrollRef = useRef(false)
+    const didRestoreSearchScrollRef = useRef(false)
+    const treeScrollRestoreFrameRef = useRef<number | null>(null)
+    const searchScrollRestoreFrameRef = useRef<number | null>(null)
     // Use useState (not useRef) for the scroll container so that when the
     // DOM element mounts via the callback ref, the re-render lets the
     // virtualizer pick up the real element from getScrollElement().
     const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
     const searchScrollRef = useRef<HTMLDivElement>(null)
     const filterInputRef = useRef<HTMLInputElement>(null)
+    latestTreeScrollTopRef.current = treeSnapshot?.treeScrollTop ?? latestTreeScrollTopRef.current
+    latestSearchScrollTopRef.current = treeSnapshot?.searchScrollTop ?? latestSearchScrollTopRef.current
 
     // Deep search hook
     const searchResult = useFileSearch(wsUrl, agentId, searchQuery, 50, worktreeId)
@@ -228,15 +238,19 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     )
 
     const emitTreeSnapshot = useCallback((nextTreeState?: Record<string, unknown> | null) => {
+      const treeScrollTop = scrollEl?.scrollTop ?? latestTreeScrollTopRef.current
+      const searchScrollTop = searchScrollRef.current?.scrollTop ?? latestSearchScrollTopRef.current
+      latestTreeScrollTopRef.current = treeScrollTop
+      latestSearchScrollTopRef.current = searchScrollTop
       onTreeSnapshotChange?.({
         filterText,
         searchMode,
         searchQuery,
-        treeScrollTop: scrollEl?.scrollTop ?? treeSnapshot?.treeScrollTop ?? 0,
-        searchScrollTop: searchScrollRef.current?.scrollTop ?? treeSnapshot?.searchScrollTop ?? 0,
+        treeScrollTop,
+        searchScrollTop,
         treeState: nextTreeState ?? treeSnapshot?.treeState ?? null,
       })
-    }, [filterText, onTreeSnapshotChange, scrollEl, searchMode, searchQuery, treeSnapshot?.searchScrollTop, treeSnapshot?.treeScrollTop, treeSnapshot?.treeState])
+    }, [filterText, onTreeSnapshotChange, scrollEl, searchMode, searchQuery, treeSnapshot?.treeState])
 
     const tree = useStableTree<FileTreeItem>({
       rootItemId: ROOT_ID,
@@ -258,34 +272,74 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       setState: (nextState) => emitTreeSnapshot(nextState as Record<string, unknown>),
     })
 
+    // Restore persisted scroll positions only once for this mounted tree. Live
+    // scroll events also update treeSnapshot; replaying those snapshots would
+    // fight user scrolling with stale requestAnimationFrame callbacks.
     useEffect(() => {
-      emitTreeSnapshot()
-    }, [emitTreeSnapshot])
+      if (!scrollEl || didRestoreTreeScrollRef.current || treeScrollRestoreFrameRef.current !== null) return
+      const initialScrollTop = initialTreeScrollTopRef.current
+      if (initialScrollTop <= 0) {
+        didRestoreTreeScrollRef.current = true
+        return
+      }
+
+      treeScrollRestoreFrameRef.current = requestAnimationFrame(() => {
+        scrollEl.scrollTop = initialScrollTop
+        latestTreeScrollTopRef.current = initialScrollTop
+        didRestoreTreeScrollRef.current = true
+        treeScrollRestoreFrameRef.current = null
+      })
+      return () => {
+        if (treeScrollRestoreFrameRef.current !== null) {
+          cancelAnimationFrame(treeScrollRestoreFrameRef.current)
+          treeScrollRestoreFrameRef.current = null
+        }
+      }
+    }, [scrollEl])
+
+    useEffect(() => {
+      const searchEl = searchScrollRef.current
+      if (!searchMode || !searchEl || didRestoreSearchScrollRef.current || searchScrollRestoreFrameRef.current !== null) return
+      const initialScrollTop = initialSearchScrollTopRef.current
+      if (initialScrollTop <= 0) {
+        didRestoreSearchScrollRef.current = true
+        return
+      }
+
+      searchScrollRestoreFrameRef.current = requestAnimationFrame(() => {
+        searchEl.scrollTop = initialScrollTop
+        latestSearchScrollTopRef.current = initialScrollTop
+        didRestoreSearchScrollRef.current = true
+        searchScrollRestoreFrameRef.current = null
+      })
+      return () => {
+        if (searchScrollRestoreFrameRef.current !== null) {
+          cancelAnimationFrame(searchScrollRestoreFrameRef.current)
+          searchScrollRestoreFrameRef.current = null
+        }
+      }
+    }, [searchMode])
+
+    useEffect(() => {
+      if ((searchMode || didRestoreTreeScrollRef.current) && (!searchMode || didRestoreSearchScrollRef.current)) {
+        emitTreeSnapshot()
+      }
+    }, [emitTreeSnapshot, searchMode])
 
     useEffect(() => {
       if (!scrollEl) return
-      if (treeSnapshot?.treeScrollTop) {
-        requestAnimationFrame(() => {
-          scrollEl.scrollTop = treeSnapshot.treeScrollTop
-        })
-      }
       const handleScroll = () => emitTreeSnapshot()
       scrollEl.addEventListener('scroll', handleScroll, { passive: true })
       return () => scrollEl.removeEventListener('scroll', handleScroll)
-    }, [emitTreeSnapshot, scrollEl, treeSnapshot?.treeScrollTop])
+    }, [emitTreeSnapshot, scrollEl])
 
     useEffect(() => {
       const searchEl = searchScrollRef.current
       if (!searchEl) return
-      if (treeSnapshot?.searchScrollTop) {
-        requestAnimationFrame(() => {
-          searchEl.scrollTop = treeSnapshot.searchScrollTop
-        })
-      }
       const handleScroll = () => emitTreeSnapshot()
       searchEl.addEventListener('scroll', handleScroll, { passive: true })
       return () => searchEl.removeEventListener('scroll', handleScroll)
-    }, [emitTreeSnapshot, treeSnapshot?.searchScrollTop])
+    }, [emitTreeSnapshot, searchMode])
 
     // Wire search feature to filter input (only when NOT in deep search mode)
     useEffect(() => {
