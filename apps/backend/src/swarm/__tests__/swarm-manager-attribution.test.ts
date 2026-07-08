@@ -81,6 +81,29 @@ describe('swarm manager builder attribution', () => {
       const dispatched = ledger.records.filter((record) => record.t === 'turn_dispatched')
       expect(dispatched.length).toBeGreaterThan(0)
       expect(dispatched.at(-1)).toMatchObject({ kind: 'user', initiatedBy: 'user-ada' })
+
+      // The assistant's final text must project into the SESSION TRANSCRIPT:
+      // a builder-attributed turn (author without channelId) must not be
+      // routed down the collab-channel path (regression: route:collab
+      // swallowed replies for member turns).
+      await manager.handleRuntimeSessionEvent(descriptor.agentId, {
+        type: 'message_start',
+        message: { role: 'user', content: 'hello from a member' },
+      })
+      await manager.handleRuntimeSessionEvent(descriptor.agentId, {
+        type: 'message_end',
+        message: { role: 'assistant', content: 'pong from the manager', stopReason: 'stop' },
+      })
+      const assistantEntries = manager
+        .getConversationHistory(descriptor.agentId)
+        .filter(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'assistant' &&
+            entry.source === 'assistant_output',
+        )
+        .map((entry) => (entry as ConversationMessageEvent).text)
+      expect(assistantEntries).toContain('pong from the manager')
       expect(getSessionTurnLedgerPath(handle.config.paths.dataDir, descriptor.profileId ?? descriptor.agentId, descriptor.agentId)).toBeTruthy()
     } finally {
       await handle.cleanup()

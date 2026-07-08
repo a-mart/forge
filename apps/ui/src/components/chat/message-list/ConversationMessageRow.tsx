@@ -167,9 +167,13 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   const timestampLabel = formatTimestamp(message.timestamp)
   const sourceContext = message.sourceContext
 
-  // Collab remote user: left-aligned with avatar/name
+  // Attributed message from ANOTHER user: left-aligned with avatar/name.
+  // Applies on the collab surface and on builder transcripts whose origin
+  // has a signed-in identity (Wave R remote origins, SPEC §5.5). The local
+  // origin passes no currentCollabUserId and its messages carry no author,
+  // so local transcripts never render chips.
   if (
-    surface === 'collab' &&
+    (surface === 'collab' || currentCollabUserId !== undefined) &&
     message.role === 'user' &&
     message.collaborationAuthor &&
     message.collaborationAuthor.userId !== currentCollabUserId

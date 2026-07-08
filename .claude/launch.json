@@ -2,11 +2,22 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "forge-dev",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev:ui"],
-      "port": 47188,
-      "autoPort": true
+      "name": "forge-e2e-ui",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_FORGE_WS_URL=ws://127.0.0.1:47187",
+        "FORGE_DISABLE_TANSTACK_DEVTOOLS=1",
+        "pnpm",
+        "--filter",
+        "@forge/ui",
+        "exec",
+        "vite",
+        "dev",
+        "--port",
+        "47189",
+        "--strictPort"
+      ],
+      "port": 47189
     }
   ]
 }

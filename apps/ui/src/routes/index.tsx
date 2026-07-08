@@ -150,7 +150,17 @@ export function IndexPage() {
     const stickyAgentId = normalizeStickyAgentId(routeSearch.agent)
     const stickyChannel = normalizeOptionalSearchValue(routeSearch.channel)
     const stickyCollabConn = normalizeOptionalSearchValue(routeSearch.collab)
-    const isMemberOnly = !inElectron && collabSession.hasLoaded && collabSession.isMember && !collabSession.isAdmin
+    // Members browsing the HOSTED (same-origin) UI stay on the collab
+    // surface (D5 — browser-direct builder access is deferred). A member
+    // session on a REMOTE connection means this is someone's local client
+    // connecting out (Wave R D4): they keep their local builder surface,
+    // where remote origins render as sidebar sections.
+    const isMemberOnly =
+      !inElectron &&
+      collabSession.hasLoaded &&
+      collabSession.isMember &&
+      !collabSession.isAdmin &&
+      !resolvedCollabTarget?.isRemote
 
     if (isMemberOnly) {
       // Allow forced collab settings route for members — they see admin-required state
@@ -202,6 +212,7 @@ export function IndexPage() {
     effectiveSurface,
     inElectron,
     navigateToRoute,
+    resolvedCollabTarget,
     routeSearch.agent,
     routeSearch.channel,
     routeSearch.collab,

@@ -7227,7 +7227,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         origin: nextContext?.routeOrigin ?? "internal",
         ...(nextContext?.internalDeliveryKind ? { internalDeliveryKind: nextContext.internalDeliveryKind } : {}),
         ...(nextContext?.workerReportSourceAgentId ? { workerReportSourceAgentId: nextContext.workerReportSourceAgentId } : {}),
-        ...(nextContext?.collaborationAuthor ? { collaboration: true } : {}),
+        // Collab-CHANNEL turns only: builder-attributed turns carry an author
+        // without channelId and must keep session-transcript routing (Wave R).
+        ...(nextContext?.collaborationAuthor?.channelId ? { collaboration: true } : {}),
       });
       this.runtimeController.activateManagerAssistantOutputTurn(agentId, assistantOutputProjectionTarget, {
         turnId: nextContext?.turnId,

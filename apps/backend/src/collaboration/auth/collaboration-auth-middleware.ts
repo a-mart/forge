@@ -79,6 +79,13 @@ const MEMBER_AGENT_SYSTEM_PROMPT_PATH = /^\/api\/agents\/[^/]+\/system-prompt$/;
 const MEMBER_SESSION_FEEDBACK_PATH = /^\/api\/v1\/profiles\/[^/]+\/sessions\/[^/]+\/feedback(?:\/state)?$/;
 /** Project resource reads (R1). */
 const MEMBER_PROJECT_RESOURCES_PATH = "/api/settings/project-resources";
+/**
+ * Available-model listing (R2): feeds the create-project and session model
+ * pickers, which are member surfaces. Model CONFIG writes stay admin-only.
+ */
+const MEMBER_MODELS_LIST_PATH = "/api/settings/models";
+/** Model availability matrix read (R2) — feeds the same pickers; writes stay admin. */
+const MEMBER_MODEL_OVERRIDES_PATH = "/api/settings/model-overrides";
 /** Terminal list/shell reads (R1); mutations and tickets are R2 surfaces. */
 const MEMBER_TERMINALS_COLLECTION_PATH = "/api/terminals";
 const MEMBER_TERMINALS_AVAILABLE_SHELLS_PATH = "/api/terminals/available-shells";
@@ -332,6 +339,10 @@ function isMemberProjectRoute(
     }
 
     if (pathname === MEMBER_PROJECT_RESOURCES_PATH) {
+      return true;
+    }
+
+    if (pathname === MEMBER_MODELS_LIST_PATH || pathname === MEMBER_MODEL_OVERRIDES_PATH) {
       return true;
     }
 
