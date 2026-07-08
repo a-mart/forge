@@ -8,6 +8,7 @@ import { useLatestRef } from '@/hooks/useLatestRef'
 import { FileTree } from './FileTree'
 import type { FileTreeHandle, FileTreeStateSnapshot } from './FileTree'
 import { FileDeleteConfirmDialog } from './FileDeleteConfirmDialog'
+import { FileNameDialog } from './FileNameDialog'
 import {
   useDirectoryListing,
   useFileCount,
@@ -72,6 +73,13 @@ export function FileBrowserSidebar({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [mutationError, setMutationError] = useState<string | null>(null)
+  const [pendingNameAction, setPendingNameAction] = useState<
+    | { type: 'create'; directoryPath: string }
+    | { type: 'rename'; path: string; entryType: 'file' | 'directory'; currentName: string }
+    | null
+  >(null)
+  const [nameDialogError, setNameDialogError] = useState<string | null>(null)
+  const [isNaming, setIsNaming] = useState(false)
 
   const gatedAgentId = isOpen ? agentId : null
   const worktreeId = worktreeContext?.worktreeId ?? null
@@ -149,31 +157,73 @@ export function FileBrowserSidebar({
 
   const handleRequestCreateFile = useCallback((directoryPath: string) => {
     if (!onCreateFile) return
-    const name = window.prompt('New file name')
-    if (!name) return
     setMutationError(null)
-    void onCreateFile(directoryPath, name)
-      .then((createdPath) => {
-        if (createdPath) {
-          void fileTreeRef.current?.selectFile(createdPath)
-        }
-      })
-      .catch((error: unknown) => {
-        setMutationError(error instanceof Error ? error.message : 'Could not create file')
-      })
+    setNameDialogError(null)
+    setPendingNameAction({ type: 'create', directoryPath })
   }, [onCreateFile])
 
   const handleRequestRename = useCallback((path: string, entryType: 'file' | 'directory') => {
     if (!onRenameEntry) return
-    const currentName = path.split('/').pop() ?? path
-    const newName = window.prompt('Rename to', currentName)
-    if (!newName || newName === currentName) return
     setMutationError(null)
-    void onRenameEntry(path, entryType, newName)
-      .catch((error: unknown) => {
-        setMutationError(error instanceof Error ? error.message : 'Could not rename item')
-      })
+    setNameDialogError(null)
+    setPendingNameAction({
+      type: 'rename',
+      path,
+      entryType,
+      currentName: path.split('/').pop() ?? path,
+    })
   }, [onRenameEntry])
+
+  const handleCloseNameDialog = useCallback(() => {
+    if (isNaming) return
+    setPendingNameAction(null)
+    setNameDialogError(null)
+  }, [isNaming])
+
+  const handleSubmitNameDialog = useCallback((name: string) => {
+    if (!pendingNameAction || isNaming) return
+
+    if (pendingNameAction.type === 'rename' && name === pendingNameAction.currentName) {
+      setPendingNameAction(null)
+      setNameDialogError(null)
+      return
+    }
+
+    setIsNaming(true)
+    setMutationError(null)
+    setNameDialogError(null)
+
+    const mutation = pendingNameAction.type === 'create'
+      ? onCreateFile?.(pendingNameAction.directoryPath, name)
+      : onRenameEntry?.(pendingNameAction.path, pendingNameAction.entryType, name)
+
+    if (!mutation) {
+      setIsNaming(false)
+      return
+    }
+
+    void mutation
+      .then((result) => {
+        if (pendingNameAction.type === 'create') {
+          const createdPath = typeof result === 'string' ? result : null
+          if (!createdPath) return
+          void fileTreeRef.current?.selectFile(createdPath)
+          setPendingNameAction(null)
+          return
+        }
+
+        if (result === false) return
+        setPendingNameAction(null)
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : pendingNameAction.type === 'create' ? 'Could not create file' : 'Could not rename item'
+        setMutationError(message)
+        setNameDialogError(message)
+      })
+      .finally(() => {
+        setIsNaming(false)
+      })
+  }, [isNaming, onCreateFile, onRenameEntry, pendingNameAction])
 
   const handleRequestDelete = useCallback((path: string, entryType: 'file' | 'directory') => {
     if (!onDeleteEntry) return
@@ -432,6 +482,18 @@ export function FileBrowserSidebar({
         isDeleting={isDeleting}
         onConfirm={handleConfirmDelete}
         onClose={handleCloseDeleteDialog}
+      />
+
+      <FileNameDialog
+        open={Boolean(pendingNameAction)}
+        mode={pendingNameAction?.type ?? 'create'}
+        initialValue={pendingNameAction?.type === 'rename' ? pendingNameAction.currentName : ''}
+        directoryPath={pendingNameAction?.type === 'create' ? pendingNameAction.directoryPath : undefined}
+        entryType={pendingNameAction?.type === 'rename' ? pendingNameAction.entryType : undefined}
+        errorMessage={nameDialogError}
+        isSubmitting={isNaming}
+        onSubmit={handleSubmitNameDialog}
+        onClose={handleCloseNameDialog}
       />
     </>
   )

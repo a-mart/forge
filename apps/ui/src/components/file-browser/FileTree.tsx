@@ -16,8 +16,14 @@ import {
 } from '@headless-tree/core'
 import type { TreeConfig, TreeInstance, TreeState } from '@headless-tree/core'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Search, X, Loader2, FileText } from 'lucide-react'
+import { Search, X, Loader2, FileText, FilePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import '@/styles/file-browser.css'
 import { FileTreeNode } from './FileTreeNode'
 import { FileIcon } from './FileIcon'
@@ -463,6 +469,11 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       overscan: 15,
     })
 
+    const handleTreeScrollRef = useCallback((el: HTMLDivElement | null) => {
+      tree.registerElement(el)
+      setScrollEl((previous) => previous === el ? previous : el)
+    }, [tree])
+
     // Keyboard: focus filter input on "/"
     useEffect(() => {
       const el = tree.getElement()
@@ -477,6 +488,90 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       el.addEventListener('keydown', handler)
       return () => el.removeEventListener('keydown', handler)
     }, [tree])
+
+    const treeScrollContent = (
+      <div
+        {...tree.getContainerProps('File tree')}
+        ref={handleTreeScrollRef}
+        className="file-browser-scroll min-h-0 flex-1 overflow-auto focus:outline-none"
+        tabIndex={0}
+      >
+        <div
+          style={{
+            height: virtualizer.getTotalSize(),
+            position: 'relative',
+            width: '100%',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const treeItem = allItems[virtualItem.index]
+            if (!treeItem) return null
+
+            const itemData = treeItem.getItemData()
+            const itemId = treeItem.getId()
+            const isFolder = treeItem.isFolder()
+            const isExpanded = treeItem.isExpanded()
+            const isFocused = treeItem.isFocused()
+            const isSelected = selectedFile === itemId
+            const isLoading = isFolder && treeItem.isLoading()
+            const meta = treeItem.getItemMeta()
+
+            return (
+              <div
+                key={itemId}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                {...treeItem.getProps()}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                <FileTreeNode
+                  name={itemData.name}
+                  path={itemId}
+                  cwd={cwd}
+                  type={itemData.type}
+                  depth={meta.level - 1}
+                  isExpanded={isExpanded}
+                  isSelected={isSelected}
+                  isFocused={isFocused}
+                  isLoading={isLoading}
+                  onClick={() =>
+                    handleItemClick(itemId, isFolder)
+                  }
+                  onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
+                  onRequestDelete={onRequestDelete
+                    ? () => onRequestDelete(itemId, itemData.type)
+                    : undefined}
+                  onRequestCreateFile={onRequestCreateFile && itemData.type === 'directory'
+                    ? () => onRequestCreateFile(itemId)
+                    : undefined}
+                  onRequestRename={onRequestRename
+                    ? () => onRequestRename(itemId, itemData.type)
+                    : undefined}
+                />
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+
+    const treeScrollArea = onRequestCreateFile ? (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{treeScrollContent}</ContextMenuTrigger>
+        <ContextMenuContent className="min-w-[160px]">
+          <ContextMenuItem onSelect={() => onRequestCreateFile('')} className="gap-2 text-xs">
+            <FilePlus className="size-3.5" />
+            New File
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    ) : treeScrollContent
 
     return (
       <div className="flex h-full flex-col">
@@ -599,78 +694,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
         ) : (
           <>
             {/* Tree */}
-            <div
-              {...tree.getContainerProps('File tree')}
-              ref={(el) => {
-                setScrollEl(el)
-                tree.registerElement(el)
-              }}
-              className="file-browser-scroll min-h-0 flex-1 overflow-auto focus:outline-none"
-              tabIndex={0}
-            >
-              <div
-                style={{
-                  height: virtualizer.getTotalSize(),
-                  position: 'relative',
-                  width: '100%',
-                }}
-              >
-                {virtualizer.getVirtualItems().map((virtualItem) => {
-                  const treeItem = allItems[virtualItem.index]
-                  if (!treeItem) return null
-
-                  const itemData = treeItem.getItemData()
-                  const itemId = treeItem.getId()
-                  const isFolder = treeItem.isFolder()
-                  const isExpanded = treeItem.isExpanded()
-                  const isFocused = treeItem.isFocused()
-                  const isSelected = selectedFile === itemId
-                  const isLoading = isFolder && treeItem.isLoading()
-                  const meta = treeItem.getItemMeta()
-
-                  return (
-                    <div
-                      key={itemId}
-                      ref={virtualizer.measureElement}
-                      data-index={virtualItem.index}
-                      {...treeItem.getProps()}
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        transform: `translateY(${virtualItem.start}px)`,
-                      }}
-                    >
-                      <FileTreeNode
-                        name={itemData.name}
-                        path={itemId}
-                        cwd={cwd}
-                        type={itemData.type}
-                        depth={meta.level - 1}
-                        isExpanded={isExpanded}
-                        isSelected={isSelected}
-                        isFocused={isFocused}
-                        isLoading={isLoading}
-                        onClick={() =>
-                          handleItemClick(itemId, isFolder)
-                        }
-                        onDoubleClick={!isFolder && onOpenStickyFile ? () => onOpenStickyFile(itemId) : undefined}
-                        onRequestDelete={onRequestDelete
-                          ? () => onRequestDelete(itemId, itemData.type)
-                          : undefined}
-                        onRequestCreateFile={onRequestCreateFile && itemData.type === 'directory'
-                          ? () => onRequestCreateFile(itemId)
-                          : undefined}
-                        onRequestRename={onRequestRename
-                          ? () => onRequestRename(itemId, itemData.type)
-                          : undefined}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+            {treeScrollArea}
 
             {/* File count footer */}
             {fileCount !== null && fileCountMethod !== 'none' ? (

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent } from '@testing-library/dom'
-import { createElement } from 'react'
+import { fireEvent, getByText } from '@testing-library/dom'
+import { createElement, type ComponentProps } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -101,7 +101,11 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-function renderTree(snapshot: FileTreeStateSnapshot = baseSnapshot, onTreeSnapshotChange = vi.fn()) {
+function renderTree(
+  snapshot: FileTreeStateSnapshot = baseSnapshot,
+  onTreeSnapshotChange = vi.fn(),
+  props: Partial<ComponentProps<typeof FileTree>> = {},
+) {
   root ??= createRoot(container)
   flushSync(() => {
     root?.render(createElement(FileTree, {
@@ -114,9 +118,31 @@ function renderTree(snapshot: FileTreeStateSnapshot = baseSnapshot, onTreeSnapsh
       onTreeSnapshotChange,
       fileCount: null,
       fileCountMethod: null,
+      ...props,
     }))
   })
 }
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  flushSync(() => {})
+}
+
+describe('FileTree create context menu', () => {
+  it('opens an empty-space New File context menu for the workspace root', async () => {
+    const onRequestCreateFile = vi.fn()
+    renderTree(baseSnapshot, vi.fn(), { onRequestCreateFile })
+
+    const scroller = container.querySelector('[aria-label="File tree"]') as HTMLDivElement | null
+    expect(scroller).not.toBeNull()
+    fireEvent.contextMenu(scroller!)
+    await flushPromises()
+    fireEvent.click(getByText(document.body, 'New File'))
+
+    expect(onRequestCreateFile).toHaveBeenCalledWith('')
+  })
+})
 
 describe('FileTree scroll restoration', () => {
   it('restores the saved tree scroll once instead of replaying live scroll snapshots', () => {

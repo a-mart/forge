@@ -59,7 +59,9 @@ export function FileTreeNode({
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={onClick}
           onDoubleClick={onDoubleClick}
+          onContextMenu={(event) => event.stopPropagation()}
           title={name}
+          data-file-tree-node="true"
         >
       {type === 'directory' ? (
         <ChevronRight
@@ -84,25 +86,25 @@ export function FileTreeNode({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="min-w-[160px]">
-        <ContextMenuItem onClick={handleCopyPath} className="gap-2 text-xs">
+        <ContextMenuItem onSelect={handleCopyPath} className="gap-2 text-xs">
           <Copy className="size-3.5" />
           Copy Path
         </ContextMenuItem>
         {type === 'directory' && onRequestCreateFile ? (
-          <ContextMenuItem onClick={onRequestCreateFile} className="gap-2 text-xs">
+          <ContextMenuItem onSelect={onRequestCreateFile} className="gap-2 text-xs">
             <FilePlus className="size-3.5" />
             New File
           </ContextMenuItem>
         ) : null}
         {onRequestRename ? (
-          <ContextMenuItem onClick={onRequestRename} className="gap-2 text-xs">
+          <ContextMenuItem onSelect={onRequestRename} className="gap-2 text-xs">
             <Pencil className="size-3.5" />
             Rename
           </ContextMenuItem>
         ) : null}
         {onRequestDelete ? (
           <ContextMenuItem
-            onClick={onRequestDelete}
+            onSelect={onRequestDelete}
             className="gap-2 text-xs text-destructive focus:text-destructive"
           >
             <Trash2 className="size-3.5" />
