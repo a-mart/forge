@@ -723,10 +723,17 @@ export class ManagerWsClient {
     // `window.location.reload()` here: it re-runs the entire bootstrap from
     // scratch and, under a large session on a backpressured socket, fuels a
     // reconnect→reload loop (see UI-RELOAD-LOOP-INVESTIGATION.md).
+    //
+    // `loadedSessionIds` must survive the reconnect: the re-bootstrap
+    // agents_snapshot is managers-only, and reduceAgentsSnapshot both preserves
+    // cached workers and queues drift refetches ONLY for sessions in
+    // `loadedSessionIds`. Clearing it here silently dropped every worker row
+    // (sidebar + pill bar) after any reconnect, with no refetch, until a full
+    // page reload. Stale entries are safe — a workerCount mismatch in the
+    // fresh snapshot invalidates and refetches per session.
     this.updateState({
       connected: true,
       hasReceivedAgentsSnapshot: false,
-      loadedSessionIds: new Set(),
       lastError: null,
     })
 
@@ -738,10 +745,10 @@ export class ManagerWsClient {
     this.explicitAgentSelectionAgentId = null
     this.bootstrapBuffer.clear()
 
+    // Keep `loadedSessionIds` — see handleTransportOpen.
     this.updateState({
       connected: false,
       hasReceivedAgentsSnapshot: false,
-      loadedSessionIds: new Set(),
       subscribedAgentId: null,
     })
 

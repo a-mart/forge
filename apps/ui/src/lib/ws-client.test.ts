@@ -77,6 +77,45 @@ function makeModelCacheObservation(agentId = 'manager', id = 'cache-obs-1') {
   }
 }
 
+function makeManagerDescriptor(overrides: Record<string, unknown> = {}) {
+  return {
+    agentId: 'manager',
+    managerId: 'manager',
+    displayName: 'Manager',
+    role: 'manager' as const,
+    status: 'idle' as const,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    cwd: '/tmp',
+    model: {
+      provider: 'openai-codex' as const,
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium' as const,
+    },
+    sessionFile: '/tmp/manager.jsonl',
+    ...overrides,
+  }
+}
+
+function makeWorkerDescriptor(agentId: string, managerId = 'manager') {
+  return {
+    agentId,
+    managerId,
+    displayName: agentId,
+    role: 'worker' as const,
+    status: 'streaming' as const,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    cwd: '/tmp',
+    model: {
+      provider: 'openai-codex' as const,
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium' as const,
+    },
+    sessionFile: `/tmp/${agentId}.jsonl`,
+  }
+}
+
 function makeWorkPlanCreatedEvent(agentId = 'manager', id = 'work-plan-created-1'): WorkPlanCreatedEvent {
   const timestamp = new Date().toISOString()
   return {
@@ -730,6 +769,134 @@ describe('ManagerWsClient', () => {
     })
     expect(client.getState().subscribedAgentId).toBe('manager')
     expect(reload).not.toHaveBeenCalled()
+
+    client.destroy()
+  })
+
+  it('preserves loaded session workers across a reconnect when workerCount is unchanged', async () => {
+    // Regression: reconnect cleared `loadedSessionIds`, so the post-reconnect
+    // managers-only agents_snapshot dropped every cached worker descriptor and
+    // queued no refetch — sidebar worker rows and the pill bar went empty while
+    // the manager's workerCount badge still showed the true count, until a full
+    // page reload re-ran the on-demand fetch.
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor({ workerCount: 2, activeWorkerCount: 2 })],
+    })
+
+    const fetch = client.getSessionWorkers('manager')
+    const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      requestId: fetchPayload.requestId,
+      workers: [makeWorkerDescriptor('worker-1'), makeWorkerDescriptor('worker-2')],
+    })
+    await expect(fetch).resolves.toMatchObject({ sessionAgentId: 'manager' })
+    expect(client.getState().agents.filter((agent) => agent.role === 'worker')).toHaveLength(2)
+
+    // Backend restart drops the socket; the client reconnects and re-bootstraps.
+    socket.close()
+    vi.advanceTimersByTime(1200)
+    const reconnectedSocket = FakeWebSocket.instances[1]
+    reconnectedSocket.emit('open')
+    emitServerEvent(reconnectedSocket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    // The re-bootstrap agents_snapshot is managers-only, with an unchanged
+    // workerCount hint. The cached workers must survive it.
+    emitServerEvent(reconnectedSocket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor({ workerCount: 2, activeWorkerCount: 2 })],
+    })
+
+    const workers = client.getState().agents.filter((agent) => agent.role === 'worker')
+    expect(workers.map((worker) => worker.agentId).sort()).toEqual(['worker-1', 'worker-2'])
+
+    client.destroy()
+  })
+
+  it('refetches session workers after a reconnect when workerCount drifted while disconnected', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor({ workerCount: 1, activeWorkerCount: 1 })],
+    })
+
+    const fetch = client.getSessionWorkers('manager')
+    const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      requestId: fetchPayload.requestId,
+      workers: [makeWorkerDescriptor('worker-1')],
+    })
+    await expect(fetch).resolves.toMatchObject({ sessionAgentId: 'manager' })
+
+    socket.close()
+    vi.advanceTimersByTime(1200)
+    const reconnectedSocket = FakeWebSocket.instances[1]
+    reconnectedSocket.emit('open')
+    emitServerEvent(reconnectedSocket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    // While disconnected a second worker spawned: the re-bootstrap snapshot
+    // advertises workerCount 2 against 1 cached worker, so the client must
+    // invalidate and refetch the session workers.
+    emitServerEvent(reconnectedSocket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor({ workerCount: 2, activeWorkerCount: 2 })],
+    })
+    vi.advanceTimersByTime(250)
+
+    const refetchPayload = JSON.parse(reconnectedSocket.sentPayloads.at(-1) ?? '{}')
+    expect(refetchPayload).toMatchObject({
+      type: 'get_session_workers',
+      sessionAgentId: 'manager',
+    })
+
+    emitServerEvent(reconnectedSocket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      requestId: refetchPayload.requestId,
+      workers: [makeWorkerDescriptor('worker-1'), makeWorkerDescriptor('worker-2')],
+    })
+
+    const workers = client.getState().agents.filter((agent) => agent.role === 'worker')
+    expect(workers.map((worker) => worker.agentId).sort()).toEqual(['worker-1', 'worker-2'])
 
     client.destroy()
   })
