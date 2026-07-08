@@ -554,18 +554,25 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
   private buildCursorTurnMeta(active: ActivePromptState): RuntimeTurnMeta | undefined {
     const usage = active.cursorUsage;
     const run = active.run;
+    const reasoningLevel = resolveCursorReasoningLevelSent(this.model);
+    const fast = resolveCursorFastParamSent(this.model);
     const meta: RuntimeTurnMeta = {
       provider: CURSOR_SDK_PROVIDER_ID,
-      modelId: this.model.id,
+      modelId: this.descriptor.model.modelId,
+      responseModelId: this.model.id,
       usage: usage ? { ...usage } : undefined,
       providerRequestId: run?.id,
       outcome: active.outcome,
       stopReason: active.terminalStatus ?? active.providerStatus ?? active.runStatus ?? active.waitStatus ?? undefined,
       requestPayloadFidelity: "delta_only",
       invocationParameters: {
-        reasoningLevel: resolveCursorReasoningLevelSent(this.model),
+        reasoningLevel,
+        sdkModelId: this.model.id,
+        fast,
       },
       metadata: {
+        sdkModelId: this.model.id,
+        fast,
         sdkAgentId: run?.agentId ?? this.sdkAgent.agentId ?? null,
         providerStatus: active.providerStatus ?? null,
         runStatus: active.runStatus ?? null,
@@ -589,7 +596,9 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       version: 1,
       source: CURSOR_SDK_USAGE_SOURCE,
       provider: CURSOR_SDK_PROVIDER_ID,
-      modelId: this.model.id,
+      modelId: this.descriptor.model.modelId,
+      sdkModelId: this.model.id,
+      fast: resolveCursorFastParamSent(this.model),
       reasoningLevel: resolveCursorReasoningLevelSent(this.model),
       usage: { ...active.cursorUsage },
       sdkRunId: active.run?.id ?? null,
@@ -934,8 +943,21 @@ function isVisibleCursorPromptEvent(event: RuntimeSessionEvent): boolean {
 }
 
 function resolveCursorReasoningLevelSent(model: CursorSdkModelSelection): string | null {
+  const effort = model.params?.find((param) => param.id === "effort")?.value;
+  if (typeof effort === "string" && effort.trim().length > 0) {
+    return effort.trim();
+  }
+
   const thinking = model.params?.find((param) => param.id === "thinking")?.value;
   return typeof thinking === "string" && thinking.trim().length > 0 ? thinking.trim() : null;
+}
+
+function resolveCursorFastParamSent(model: CursorSdkModelSelection): boolean | null {
+  const fast = model.params?.find((param) => param.id === "fast")?.value;
+  if (typeof fast !== "string" || fast.trim().length === 0) {
+    return null;
+  }
+  return fast.trim().toLowerCase() === "true";
 }
 
 function freezeCursorUsageOutcome(active: ActivePromptState, fallback: CursorSdkUsageOutcome = "unknown"): CursorSdkUsageOutcome {

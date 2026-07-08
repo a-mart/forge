@@ -50,7 +50,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | Tier | Default Model | Reasoning | Fallback |
 |---|---|---|---|
 | `light` | `openai-codex/gpt-5.4-mini` | low | `openai-codex/gpt-5.5` low |
-| `fast` | `cursor-sdk/composer-2.5` | medium | `openai-codex/gpt-5.4` high |
+| `fast` | `cursor-sdk/composer-2.5` | none | `openai-codex/gpt-5.4` high |
 | `standard` | `openai-codex/gpt-5.5` | medium | `openai-codex/gpt-5.5` medium |
 | `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
 | `max` | `openai-codex/gpt-5.5` | xhigh | `openai-codex/gpt-5.5` medium |
@@ -85,7 +85,9 @@ Older builtin handles are rewritten for compatibility: `backend`, `frontend`, an
 | `claude-sonnet-5` | Claude Sonnet 5 (SDK) | Claude SDK (`provider: claude-sdk`) | low, medium, high |
 | `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 (SDK) | Claude SDK (`provider: claude-sdk`) | low, medium, high |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Anthropic | low, medium, high |
-| `composer-2.5` | Composer 2.5 | Cursor SDK | low, medium, high |
+| `composer-2.5` | Composer 2.5 | Cursor SDK | none |
+| `grok-4.5` | Grok 4.5 | Cursor SDK | low, medium, high |
+| `grok-4.5-fast` | Grok 4.5 Fast | Cursor SDK | low, medium, high |
 | `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
 | `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
 | `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
@@ -97,7 +99,7 @@ Older builtin handles are rewritten for compatibility: `backend`, `frontend`, an
 - Anthropic Pi managers/workers use the `anthropic` provider. Claude Agent SDK variants reuse the same `modelId` strings but require `provider: claude-sdk` in specialist frontmatter or exact manager selection so Forge routes to the native SDK runtime instead of Pi.
 - Manager and specialist selectors expose dedicated presets: `pi-sonnet` for Anthropic Sonnet and `sdk-sonnet` for Claude SDK Sonnet. Choosing the preset selects Sonnet 5 by default; Sonnet 4.5 remains available as a variant.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
-- Cursor SDK models are tier/specialist-only. The default `fast` tier targets Composer 2.5 with a Codex fallback. Manager selectors do not offer Cursor SDK models. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
+- Cursor SDK models can appear in manager and specialist selectors when credentials and model visibility allow them. The default `fast` tier targets Composer 2.5 with a Codex fallback; Composer exposes only Cursor's `fast` toggle and stores reasoning as `none`. Cursor Grok 4.5 uses the SDK model id `grok-4.5` plus curated-from-live-discovery `effort` and `fast` params; Forge keeps `grok-4.5-fast` as a separate catalog id for attribution. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt

@@ -1,6 +1,6 @@
 import type { SpecialistTargetSpace } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
-import { inferProviderFromModelId } from "./model-presets.js";
+import { inferProviderFromModelId, normalizeThinkingLevelForModelDescriptor } from "./model-presets.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -17,7 +17,6 @@ import {
   createDeferred,
   extractRuntimeMessageText,
   normalizeOptionalAgentId,
-  normalizeThinkingLevelForProvider,
   previewForLog,
   shouldRetrySpecialistSpawnWithFallback,
   isCollabSession
@@ -468,11 +467,9 @@ export class SwarmSpecialistFallbackManager {
       const fallbackModel: AgentModelDescriptor = {
         provider: inferredFallbackProvider,
         modelId: tierConfig.fallbackModelId,
-        thinkingLevel: normalizeThinkingLevelForProvider(
-          inferredFallbackProvider,
-          tierConfig.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
-        )
+        thinkingLevel: tierConfig.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
       };
+      fallbackModel.thinkingLevel = normalizeThinkingLevelForModelDescriptor(fallbackModel);
       return this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
     }
 
@@ -499,11 +496,9 @@ export class SwarmSpecialistFallbackManager {
     const fallbackModel: AgentModelDescriptor = {
       provider: inferredFallbackProvider,
       modelId: specialist.fallbackModelId,
-      thinkingLevel: normalizeThinkingLevelForProvider(
-        inferredFallbackProvider,
-        specialist.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
-      )
+      thinkingLevel: specialist.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
     };
+    fallbackModel.thinkingLevel = normalizeThinkingLevelForModelDescriptor(fallbackModel);
     return this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
   }
 

@@ -4678,7 +4678,7 @@ describe('SwarmWebSocketServer', () => {
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
         event.message.includes(
-          'create_manager.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer',
+          'create_manager.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
         ),
     )
 

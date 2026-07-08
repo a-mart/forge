@@ -1759,7 +1759,7 @@ describe('SwarmManager', () => {
       model: {
         provider: 'cursor-sdk',
         modelId: 'composer-2.5',
-        thinkingLevel: 'high',
+        thinkingLevel: 'none',
       },
     })
     expect(secondBoot.listWorkersForSession('manager').map((worker) => worker.agentId)).toEqual([workerId])
@@ -2135,15 +2135,10 @@ describe('SwarmManager', () => {
     const expectedHighModel = {
       provider: 'cursor-sdk',
       modelId: 'composer-2.5',
-      thinkingLevel: 'high',
+      thinkingLevel: 'none',
     }
-    const expectedLowModel = {
-      ...expectedHighModel,
-      thinkingLevel: 'low',
-    }
-
     expect(manager.getAgent('manager')).toMatchObject({ model: expectedHighModel })
-    expect(manager.getAgent('worker')).toMatchObject({ model: expectedLowModel })
+    expect(manager.getAgent('worker')).toMatchObject({ model: expectedHighModel })
     expect(manager.listProfiles().find((profile) => profile.profileId === 'manager')?.defaultModel).toEqual(
       expectedHighModel,
     )
@@ -2156,7 +2151,7 @@ describe('SwarmManager', () => {
       expect.objectContaining({ model: expectedHighModel }),
     )
     expect(persistedStore.agents.find((agent) => agent.agentId === 'worker')).toEqual(
-      expect.objectContaining({ model: expectedLowModel }),
+      expect.objectContaining({ model: expectedHighModel }),
     )
     expect(persistedStore.profiles.find((profile) => profile.profileId === 'manager')).toEqual(
       expect.objectContaining({ defaultModel: expectedHighModel }),

@@ -1188,6 +1188,59 @@ Never use plain assistant text for user communication.`
     })
   })
 
+  it('createSessionFromAgent normalizes Cursor SDK reasoning against the selected model', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', {
+      handle: 'session-maker',
+      whenToUse: 'Create child sessions.',
+      capabilities: ['create_session'],
+    })
+
+    const composer = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Cursor Composer Child',
+      model: 'cursor-composer',
+      reasoningLevel: 'high',
+    })
+    const grokNone = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Cursor Grok None Child',
+      model: 'cursor-grok-45',
+      reasoningLevel: 'none',
+    })
+    const grokXhigh = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Cursor Grok XHigh Child',
+      model: 'cursor-grok-45',
+      reasoningLevel: 'xhigh',
+    })
+
+    expect(manager.getAgent(composer.sessionAgentId)).toMatchObject({
+      model: {
+        provider: 'cursor-sdk',
+        modelId: 'composer-2.5',
+        thinkingLevel: 'none',
+      },
+      modelOrigin: 'session_override',
+    })
+    expect(manager.getAgent(grokNone.sessionAgentId)).toMatchObject({
+      model: {
+        provider: 'cursor-sdk',
+        modelId: 'grok-4.5',
+        thinkingLevel: 'low',
+      },
+      modelOrigin: 'session_override',
+    })
+    expect(manager.getAgent(grokXhigh.sessionAgentId)).toMatchObject({
+      model: {
+        provider: 'cursor-sdk',
+        modelId: 'grok-4.5',
+        thinkingLevel: 'high',
+      },
+      modelOrigin: 'session_override',
+    })
+  })
+
   it('createSessionFromAgent creates a session override when only reasoning is provided', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1283,7 +1336,7 @@ Never use plain assistant text for user communication.`
     expect(cursorAliasManager.model).toEqual({
       provider: 'cursor-sdk',
       modelId: 'composer-2.5',
-      thinkingLevel: 'medium',
+      thinkingLevel: 'none',
     })
   })
 
@@ -1396,7 +1449,7 @@ Never use plain assistant text for user communication.`
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'create_manager.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer',
+      'create_manager.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
     )
   })
 

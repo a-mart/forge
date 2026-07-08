@@ -14,7 +14,8 @@ These work well for everyday development tasks.
 
 - **GPT-5.5** — The standard full coding model. Good balance of speed and quality for implementation work.
 - **GPT-5.5 at low reasoning** — A practical middle ground for documentation tasks where higher-reasoning models would be wasteful.
-- **Grok 4 Fast** — Quick Grok variant for specialist tasks.
+- **Grok 4 Fast** — Quick xAI Grok variant for specialist tasks.
+- **Cursor Grok 4.5 Fast** — Cursor SDK fast-pool variant for Grok 4.5 sessions.
 
 ## Thorough but expensive
 
@@ -23,6 +24,7 @@ Reserve these for work where quality matters most.
 - **GPT-5.5** — OpenAI's strongest full coding model. Best for complex backend work and multi-file refactors.
 - **GPT-5.5 at medium reasoning** — The strongest Codex default for specialist work. Best for frontend work, nuanced code review, and tasks that need careful judgment.
 - **Grok 4** — xAI's flagship for specialist use.
+- **Cursor Grok 4.5** — Cursor SDK Grok 4.5 for high-quality Cursor runtime sessions; the fast variant trades higher price for lower latency.
 
 ## Reasoning level adds cost too
 

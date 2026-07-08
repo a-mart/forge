@@ -97,10 +97,10 @@ describe("specialist-registry", () => {
     expect(parsed?.frontmatter).toMatchObject({
       provider: "cursor-sdk",
       modelId: "composer-2.5",
-      reasoningLevel: "high",
+      reasoningLevel: "none",
       fallbackProvider: "cursor-sdk",
       fallbackModelId: "composer-2.5",
-      fallbackReasoningLevel: "low",
+      fallbackReasoningLevel: "none",
     });
 
     await writeFile(presetFilePath, [
@@ -119,7 +119,7 @@ describe("specialist-registry", () => {
     expect((await parseSpecialistFile(presetFilePath))?.frontmatter).toMatchObject({
       provider: "cursor-sdk",
       modelId: "composer-2.5",
-      reasoningLevel: "low",
+      reasoningLevel: "none",
     });
   });
 

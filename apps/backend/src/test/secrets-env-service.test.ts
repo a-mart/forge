@@ -216,7 +216,7 @@ describe('SecretsEnvService path migration', () => {
 
     try {
       await expect(resolveCursorSdkApiKey(config)).rejects.toThrow(
-        'Cursor SDK API key not configured. Add CURSOR_API_KEY in Settings → Authentication.',
+        'Cursor SDK auth not configured. Add Cursor SDK auth in Settings → Authentication.',
       )
 
       const missingError = await resolveCursorSdkApiKey(config).catch((error: unknown) => error)
@@ -305,7 +305,7 @@ describe('SecretsEnvService path migration', () => {
     })
 
     await expect(resolveCursorSdkApiKey(config)).rejects.toThrow(
-      'Cursor SDK API key not configured. Add CURSOR_API_KEY in Settings → Authentication.',
+      'Cursor SDK auth not configured. Add Cursor SDK auth in Settings → Authentication.',
     )
     const summaries = await getManagedModelProviderCredentialSummaries(config)
     expect(summaries.get('cursor-sdk')).toEqual({
