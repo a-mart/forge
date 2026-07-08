@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FolderOpen, FolderPlus, GitBranch, HardDrive, Loader2, RefreshCw, X } from 'lucide-react'
+import { FilePlus, FolderOpen, FolderPlus, GitBranch, HardDrive, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -39,6 +39,8 @@ interface FileBrowserSidebarProps {
   mobileOnly?: boolean
   refreshNonce?: number
   onDeleteEntry?: (path: string, entryType: 'file' | 'directory') => Promise<boolean>
+  onCreateFile?: (directoryPath: string, name: string) => Promise<string | null>
+  onRenameEntry?: (path: string, entryType: 'file' | 'directory', newName: string) => Promise<boolean>
 }
 
 export function FileBrowserSidebar({
@@ -60,6 +62,8 @@ export function FileBrowserSidebar({
   mobileOnly = false,
   refreshNonce = 0,
   onDeleteEntry,
+  onCreateFile,
+  onRenameEntry,
 }: FileBrowserSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null)
   const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
@@ -67,6 +71,7 @@ export function FileBrowserSidebar({
   const [pendingDelete, setPendingDelete] = useState<{ path: string; entryType: 'file' | 'directory' } | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [mutationError, setMutationError] = useState<string | null>(null)
 
   const gatedAgentId = isOpen ? agentId : null
   const worktreeId = worktreeContext?.worktreeId ?? null
@@ -141,6 +146,34 @@ export function FileBrowserSidebar({
         setSeedError(error instanceof Error ? error.message : 'Could not create .forge resources')
       })
   }, [handleRefresh, projectResourceProfileId, projectResourceSessionAgentId, seedStatus, wsUrl])
+
+  const handleRequestCreateFile = useCallback((directoryPath: string) => {
+    if (!onCreateFile) return
+    const name = window.prompt('New file name')
+    if (!name) return
+    setMutationError(null)
+    void onCreateFile(directoryPath, name)
+      .then((createdPath) => {
+        if (createdPath) {
+          void fileTreeRef.current?.selectFile(createdPath)
+        }
+      })
+      .catch((error: unknown) => {
+        setMutationError(error instanceof Error ? error.message : 'Could not create file')
+      })
+  }, [onCreateFile])
+
+  const handleRequestRename = useCallback((path: string, entryType: 'file' | 'directory') => {
+    if (!onRenameEntry) return
+    const currentName = path.split('/').pop() ?? path
+    const newName = window.prompt('Rename to', currentName)
+    if (!newName || newName === currentName) return
+    setMutationError(null)
+    void onRenameEntry(path, entryType, newName)
+      .catch((error: unknown) => {
+        setMutationError(error instanceof Error ? error.message : 'Could not rename item')
+      })
+  }, [onRenameEntry])
 
   const handleRequestDelete = useCallback((path: string, entryType: 'file' | 'directory') => {
     if (!onDeleteEntry) return
@@ -242,6 +275,25 @@ export function FileBrowserSidebar({
             </Tooltip>
           ) : null}
 
+          {onCreateFile ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                  onClick={() => handleRequestCreateFile('')}
+                  aria-label="New file"
+                >
+                  <FilePlus className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                New file
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -271,6 +323,12 @@ export function FileBrowserSidebar({
           <X className="size-3.5" />
         </Button>
       </div>
+
+      {mutationError ? (
+        <div className="border-b border-border/80 px-3 py-2 text-[11px] text-destructive">
+          {mutationError}
+        </div>
+      ) : null}
 
       {seedError || seedStatus === 'success' ? (
         <div className={cn(
@@ -350,6 +408,8 @@ export function FileBrowserSidebar({
             fileCountMethod={fileCount.data?.method ?? null}
             worktreeId={worktreeId}
             onRequestDelete={onDeleteEntry ? handleRequestDelete : undefined}
+            onRequestCreateFile={onCreateFile ? handleRequestCreateFile : undefined}
+            onRequestRename={onRenameEntry ? handleRequestRename : undefined}
           />
         ) : null}
       </div>

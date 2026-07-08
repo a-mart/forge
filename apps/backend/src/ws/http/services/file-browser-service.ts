@@ -1,14 +1,16 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, rm, stat, lstat, unlink, writeFile } from "node:fs/promises";
+import { open, readdir, readFile, realpath, rename as renamePathOnDisk, rm, stat, lstat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   FileContentResult,
   FileCountResult,
   FileEditability,
+  FileCreateResponse,
   FileEntry,
   FileListResult,
   FileSaveConflictReason,
   FileDeleteResponse,
+  FileRenameResponse,
   FileSaveResponse,
   FileSearchResult,
   FileVersionToken,
@@ -440,6 +442,142 @@ export class FileBrowserService {
     };
   }
 
+  async createFile(options: {
+    cwd: string;
+    directoryPath: string;
+    name: string;
+    onCreated?: (created: { resolvedPath: string }) => Promise<void> | void;
+  }): Promise<FileCreateResponse> {
+    const normalizedDirectoryPath = normalizeRelativePath(options.directoryPath);
+    const fileName = validateNewEntryName(options.name);
+    const workspaceRoot = resolve(await realpath(options.cwd).catch(() => options.cwd));
+    const parentPath = normalizedDirectoryPath ? resolve(workspaceRoot, normalizedDirectoryPath) : workspaceRoot;
+
+    if (!isLexicallyWithinRootOrSame(workspaceRoot, parentPath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    if (parentPath !== workspaceRoot) {
+      await this.ensureSymlinkSafePathWithinCwd(workspaceRoot, parentPath);
+    }
+
+    let parentStats;
+    try {
+      parentStats = await stat(parentPath);
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) {
+        throw new Error("Directory not found.");
+      }
+      rethrowPermissionDenied(error, "read");
+    }
+
+    if (!parentStats.isDirectory()) {
+      throw new Error("Parent path must be a directory.");
+    }
+
+    const targetPath = resolve(parentPath, fileName);
+    if (!isLexicallyWithinRoot(workspaceRoot, targetPath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(targetPath, "wx");
+    } catch (error) {
+      if (isErrorCode(error, "EEXIST")) {
+        throw new Error("Destination already exists.");
+      }
+      rethrowPermissionDenied(error, "write");
+    } finally {
+      await handle?.close();
+    }
+
+    try {
+      await options.onCreated?.({ resolvedPath: targetPath });
+    } catch {
+      // Fail open: editor creates succeed even when versioning cannot record them.
+    }
+
+    const path = normalizedDirectoryPath ? `${normalizedDirectoryPath}/${fileName}` : fileName;
+    return { success: true, path, entryType: "file" };
+  }
+
+  async renamePath(options: {
+    cwd: string;
+    relativePath: string;
+    newName: string;
+    onRenamed?: (renamed: { resolvedPath: string; newResolvedPath: string; entryType: "file" | "directory" }) => Promise<void> | void;
+  }): Promise<FileRenameResponse> {
+    const normalizedRelativePath = normalizeRelativePath(options.relativePath);
+    if (!normalizedRelativePath) {
+      throw new Error("Cannot rename workspace root.");
+    }
+
+    const newName = validateNewEntryName(options.newName);
+    const workspaceRoot = resolve(await realpath(options.cwd).catch(() => options.cwd));
+    const sourcePath = resolve(workspaceRoot, normalizedRelativePath);
+
+    if (!isLexicallyWithinRoot(workspaceRoot, sourcePath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    const parentPath = dirname(sourcePath);
+    if (parentPath !== workspaceRoot) {
+      await this.ensureSymlinkSafePathWithinCwd(workspaceRoot, parentPath);
+    }
+
+    let sourceStats;
+    try {
+      sourceStats = await lstat(sourcePath);
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) {
+        throw new Error("Path not found.");
+      }
+      rethrowPermissionDenied(error, "read");
+    }
+
+    const targetPath = resolve(parentPath, newName);
+    if (!isLexicallyWithinRoot(workspaceRoot, targetPath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    try {
+      await lstat(targetPath);
+      throw new Error("Destination already exists.");
+    } catch (error) {
+      if (!isErrorCode(error, "ENOENT")) {
+        throw error;
+      }
+    }
+
+    let entryType: "file" | "directory" = sourceStats.isDirectory() ? "directory" : "file";
+    if (sourceStats.isSymbolicLink()) {
+      try {
+        const followedStats = await stat(sourcePath);
+        entryType = followedStats.isDirectory() ? "directory" : "file";
+      } catch {
+        entryType = "file";
+      }
+    }
+
+    try {
+      await renamePathOnDisk(sourcePath, targetPath);
+    } catch (error) {
+      rethrowPermissionDenied(error, "write");
+    }
+
+    try {
+      await options.onRenamed?.({ resolvedPath: sourcePath, newResolvedPath: targetPath, entryType });
+    } catch {
+      // Fail open: editor renames succeed even when versioning cannot record them.
+    }
+
+    const newPath = normalizedRelativePath.includes("/")
+      ? `${normalizedRelativePath.split("/").slice(0, -1).join("/")}/${newName}`
+      : newName;
+    return { success: true, path: normalizedRelativePath, newPath, entryType };
+  }
+
   private async ensureSymlinkSafePathWithinCwd(workspaceRoot: string, absolutePath: string): Promise<void> {
     if (!isLexicallyWithinRoot(workspaceRoot, absolutePath)) {
       throw new Error("Path is outside CWD.");
@@ -859,6 +997,22 @@ function isLexicallyWithinRoot(root: string, target: string): boolean {
   const relativePath = relative(root, target);
   const normalizedRelativePath = normalizePlatformRelativePath(relativePath);
   return normalizedRelativePath.length > 0 && !normalizedRelativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function isLexicallyWithinRootOrSame(root: string, target: string): boolean {
+  return target === root || isLexicallyWithinRoot(root, target);
+}
+
+function validateNewEntryName(name: string): string {
+  if (name.length === 0 || name === "." || name === "..") {
+    throw new Error("name must be a non-empty file name.");
+  }
+
+  if (name.includes("/") || name.includes("\\") || name.includes("\0")) {
+    throw new Error("name must not contain path separators.");
+  }
+
+  return name;
 }
 
 function normalizePlatformRelativePath(relativePath: string): string {

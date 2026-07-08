@@ -21,6 +21,7 @@ export interface FileEditorGuardApi {
 
 export type FileEditorTransitionAction =
   | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory'; agentId: string; worktreeId: string | null }
+  | { type: 'rename-entry'; path: string; entryType: 'file' | 'directory'; agentId: string; worktreeId: string | null }
   | { type: 'select-file'; nextPath: string }
   | { type: 'close-viewer' }
   | { type: 'close-tab'; key: FileEditorSessionKey }
@@ -69,9 +70,9 @@ function snapshotsMatchSourceControlMutation(
   return snapshot.key.agentId === action.agentId && snapshot.key.worktreeId === action.worktreeId
 }
 
-function doesDeleteAffectSnapshot(
+function doesEntryMutationAffectSnapshot(
   snapshot: FileEditorDirtySnapshot,
-  action: Extract<FileEditorTransitionAction, { type: 'delete-entry' }>,
+  action: Extract<FileEditorTransitionAction, { type: 'delete-entry' | 'rename-entry' }>,
 ): boolean {
   if (snapshot.key.agentId !== action.agentId || (snapshot.key.worktreeId ?? null) !== (action.worktreeId ?? null)) return false
 
@@ -176,7 +177,7 @@ export function useFileEditorCoordinator(
 
     const snapshots = getDirtySnapshots().filter((candidate) => {
       if (action.type === 'source-control-mutation') return snapshotsMatchSourceControlMutation(candidate, action)
-      if (action.type === 'delete-entry') return doesDeleteAffectSnapshot(candidate, action)
+      if (action.type === 'delete-entry' || action.type === 'rename-entry') return doesEntryMutationAffectSnapshot(candidate, action)
       if (action.type === 'close-tab') return keysEqual(candidate.key, action.key)
       return true
     })
