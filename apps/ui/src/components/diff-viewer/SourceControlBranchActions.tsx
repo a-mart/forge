@@ -138,13 +138,17 @@ export function SourceControlBranchActions({
           return
         }
 
+        const visibleIssues = pendingMutation.kind === 'pull'
+          ? preflight.issues.filter((issue) => issue.code !== 'idle_agents_attached')
+          : preflight.issues
+
         setPreflightWarnings(
-          preflight.issues
+          visibleIssues
             .filter((issue) => issue.severity === 'warn')
             .map((issue) => issue.message),
         )
         setPreflightBlockedReasons(
-          preflight.issues
+          visibleIssues
             .filter((issue) => issue.severity === 'block')
             .map((issue) => issue.message),
         )
@@ -353,8 +357,12 @@ export function SourceControlBranchActions({
         return
       }
 
-      if (result.warnings.length > 0) {
-        setActionWarning(result.warnings.join(' '))
+      const visibleWarnings = pendingMutation.kind === 'pull'
+        ? result.warnings.filter((warning) => !isIdleAttachedSessionWarning(warning))
+        : result.warnings
+
+      if (visibleWarnings.length > 0) {
+        setActionWarning(visibleWarnings.join(' '))
       }
 
       setPendingMutation(null)
@@ -413,9 +421,9 @@ export function SourceControlBranchActions({
     }
 
     return {
-      title: 'Fast-forward pull?',
-      description: `${worktreeCopy} Forge will fetch origin and merge only when a fast-forward is possible. Merge commits and autostash are never used.`,
-      confirmLabel: 'Pull fast-forward',
+      title: 'Pull?',
+      description: `${worktreeCopy} Forge will fetch origin and pull only when it can update cleanly. Merge commits and autostash are never used.`,
+      confirmLabel: 'Pull',
       blockedReasons: uniqueStrings([
         ...pullBlockedReasons,
         ...preflightBlockedReasons,
@@ -549,7 +557,7 @@ export function SourceControlBranchActions({
           title={pullBlockedReasons[0]}
         >
           <ArrowDown className="mr-1 size-3.5" />
-          Pull FF only
+          Pull
         </Button>
       </div>
 
@@ -584,4 +592,8 @@ export function SourceControlBranchActions({
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values))
+}
+
+function isIdleAttachedSessionWarning(message: string): boolean {
+  return /^Idle sessions are attached to this worktree \(.*\)\.$/s.test(message.trim())
 }

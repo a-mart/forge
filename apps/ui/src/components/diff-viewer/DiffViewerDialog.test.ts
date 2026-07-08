@@ -974,7 +974,7 @@ describe('DiffViewerDialog', () => {
 
     expect(getByText(document.body, 'Failed to load worktrees: worktree inventory unavailable')).toBeTruthy()
     expect(getByRole(document.body, 'button', { name: 'Fetch origin' })).toBeTruthy()
-    expect(getByRole(document.body, 'button', { name: 'Pull FF only' })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Pull' })).toBeTruthy()
     fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
     await flushEffects()
     expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
