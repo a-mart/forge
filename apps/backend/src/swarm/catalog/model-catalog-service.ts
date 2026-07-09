@@ -23,7 +23,7 @@ import { readModelOverrides } from "./model-overrides.js";
 import { readOpenRouterModels } from "./openrouter-models.js";
 import type { AgentModelDescriptor } from "../types.js";
 
-const REASONING_LEVELS: ManagerReasoningLevel[] = ["none", "low", "medium", "high", "xhigh"];
+const REASONING_LEVELS: ManagerReasoningLevel[] = ["none", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 export class ModelCatalogService {
   private readonly catalog: ForgeModelCatalog;

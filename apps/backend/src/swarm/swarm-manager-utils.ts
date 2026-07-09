@@ -53,6 +53,9 @@ const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
 
 const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "openai-codex": {
+    "gpt-5.6-sol": "gpt-5.4",
+    "gpt-5.6-terra": "gpt-5.4",
+    "gpt-5.6-luna": "gpt-5.4",
     "gpt-5.5": "gpt-5.4"
   }
 };
@@ -67,7 +70,7 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "error",
   "stopped_on_restart"
 ]);
-const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.5", "gpt-5.4"];
+const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.3-codex-spark", "gpt-5.5", "gpt-5.4"];
 const MAX_WORKER_COMPLETION_REPORT_CHARS = 4_000;
 const WORKER_COMPLETION_TRUNCATION_SUFFIX = "\n\n[truncated]";
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
@@ -769,7 +772,7 @@ export function normalizeThinkingLevelForProvider(provider: string, thinkingLeve
     return "low";
   }
 
-  if (normalized === "xhigh" || normalized === "x-high") {
+  if (normalized === "xhigh" || normalized === "x-high" || normalized === "max" || normalized === "ultra") {
     return "high";
   }
 

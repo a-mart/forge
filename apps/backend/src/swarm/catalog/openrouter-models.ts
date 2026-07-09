@@ -8,7 +8,7 @@ import { readJsonFileIfExists, writeJsonFileAtomic } from "../../utils/atomic-fi
 import { getOpenRouterModelsPath } from "../data-paths.js";
 
 const OPENROUTER_MODELS_VERSION = 1 as const;
-const VALID_REASONING_LEVELS = new Set<ForgeReasoningLevel>(["none", "low", "medium", "high", "xhigh"]);
+const VALID_REASONING_LEVELS = new Set<ForgeReasoningLevel>(["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const VALID_INPUT_MODES = new Set<ForgeInputMode>(["text", "image"]);
 let openRouterModelsWriteMutex: Promise<void> = Promise.resolve();
 

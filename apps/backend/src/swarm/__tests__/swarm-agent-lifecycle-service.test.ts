@@ -274,6 +274,43 @@ describe("SwarmAgentLifecycleService", () => {
     expect(out.modelId).toBe("gpt-5.5");
   });
 
+  it("resolveSpawnModelWithCapacityFallback normalizes Sol max/ultra when rerouting to GPT-5.6 variants", () => {
+    const modelCapacityBlocks = new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
+    const block = (modelId: string) => {
+      const key = buildModelCapacityBlockKey("openai-codex", modelId);
+      expect(key).toBeDefined();
+      modelCapacityBlocks.set(key!, {
+        provider: "openai-codex",
+        modelId,
+        blockedUntilMs: Date.now() + 60_000,
+      });
+    };
+    block("gpt-5.6-sol");
+
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({ modelCapacityBlocks }));
+
+    expect(svc.resolveSpawnModelWithCapacityFallback({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      thinkingLevel: "max",
+    })).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-terra",
+      thinkingLevel: "high",
+    });
+
+    block("gpt-5.6-terra");
+    expect(svc.resolveSpawnModelWithCapacityFallback({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      thinkingLevel: "ultra",
+    })).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-luna",
+      thinkingLevel: "high",
+    });
+  });
+
   it("getOrCreateRuntimeForDescriptor preserves manager runtime attach ordering", async () => {
     const order: string[] = [];
     const manager = createAgentDescriptor({

@@ -58,6 +58,8 @@ export const REASONING_LEVEL_LABELS: Record<string, string> = {
   medium: 'Medium',
   high: 'High',
   xhigh: 'Max',
+  max: 'Max',
+  ultra: 'Ultra',
 }
 
 /** Human-friendly provider labels for Select group headers. */

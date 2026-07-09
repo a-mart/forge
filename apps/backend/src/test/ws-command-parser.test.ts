@@ -326,10 +326,10 @@ describe('ws command parser session commands', () => {
       name: 'Manager A',
       cwd: '/tmp/project',
       model: 'pi-5.4',
-      reasoningLevel: 'ultra',
+      reasoningLevel: 'galaxy',
     })).toEqual({
       ok: false,
-      error: 'create_manager.reasoningLevel must be one of none|low|medium|high|xhigh',
+      error: 'create_manager.reasoningLevel must be one of none|low|medium|high|xhigh|max|ultra',
     })
   })
 

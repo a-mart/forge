@@ -33,6 +33,8 @@ const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
   medium: 'Medium',
   high: 'High',
   xhigh: 'Max',
+  max: 'Max',
+  ultra: 'Ultra',
 }
 
 export function SessionModelDialog({

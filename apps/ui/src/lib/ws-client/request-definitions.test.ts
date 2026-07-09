@@ -44,7 +44,7 @@ describe('buildCreateManagerCommand', () => {
       name: 'Bad Reasoning Manager',
       cwd: '/tmp/project',
       model: 'pi-codex',
-      reasoningLevel: 'ultra' as never,
+      reasoningLevel: 'galaxy' as never,
     }, 'req-3')).toThrow('Invalid reasoning level.')
   })
 })

@@ -37,11 +37,13 @@ export const spawnReasoningLevelSchema = Type.Union(
     Type.Literal("low"),
     Type.Literal("medium"),
     Type.Literal("high"),
-    Type.Literal("xhigh")
+    Type.Literal("xhigh"),
+    Type.Literal("max"),
+    Type.Literal("ultra")
   ],
   {
     description:
-      "Reasoning effort level. 'none'/'low' for simple tasks, 'medium' for balanced, 'high'/'xhigh' for complex analysis. Note: Claude Code supports low/medium/high only; 'none' maps to 'low' and 'xhigh' maps to 'high' for Claude models."
+      "Reasoning effort level. 'none'/'low' for simple tasks, 'medium' for balanced, 'high'/'xhigh' for complex analysis, and GPT-5.6 Sol additionally supports 'max' and 'ultra'. Note: Claude Code supports low/medium/high only; 'none' maps to 'low' and 'xhigh'/'max'/'ultra' map to 'high' for Claude models."
   }
 );
 

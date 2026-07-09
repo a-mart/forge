@@ -4,6 +4,7 @@ import type { CollaborationChannel, CollaborationSkillSelectionInput, Collaborat
 import { getSessionContextDir } from "../swarm/data-paths.js";
 import {
   inferSwarmModelPresetFromDescriptor,
+  normalizeThinkingLevelForModelDescriptor,
   resolveModelDescriptorFromPreset,
 } from "../swarm/model-presets.js";
 import { isCollabSession, slugifySessionName } from "../swarm/swarm-manager-utils.js";
@@ -759,11 +760,11 @@ function resolveChannelModel(
   workspaceId: string,
 ): AgentModelDescriptor {
   if (category?.defaultModelProvider && category.defaultModelId && category.defaultModelThinkingLevel) {
-    return {
+    return normalizeChannelModelDescriptor({
       provider: category.defaultModelProvider,
       modelId: category.defaultModelId,
       thinkingLevel: category.defaultModelThinkingLevel,
-    };
+    });
   }
 
   if (category?.defaultModelId) {
@@ -771,11 +772,11 @@ function resolveChannelModel(
   }
 
   if (workspace.defaultModelProvider && workspace.defaultModelId && workspace.defaultModelThinkingLevel) {
-    return {
+    return normalizeChannelModelDescriptor({
       provider: workspace.defaultModelProvider,
       modelId: workspace.defaultModelId,
       thinkingLevel: workspace.defaultModelThinkingLevel,
-    };
+    });
   }
 
   throw new CollaborationChannelServiceError(
@@ -833,18 +834,15 @@ export function resolveRequestedChannelModelSettings(
   }
 
   const descriptor = resolveModelDescriptorFromPreset(currentModelId);
-  const reasoningLevel =
-    params.reasoningLevel === undefined
-      ? (params.modelId === undefined ? existingChannel.reasoningLevel : undefined) ??
-        normalizeChannelReasoningLevel(descriptor.thinkingLevel) ??
-        "xhigh"
-      : params.reasoningLevel === null
-        ? normalizeChannelReasoningLevel(descriptor.thinkingLevel) ?? "xhigh"
-        : params.reasoningLevel;
+  const requestedReasoningLevel = params.reasoningLevel === undefined
+    ? (params.modelId === undefined ? existingChannel.reasoningLevel : undefined)
+    : params.reasoningLevel === null
+      ? undefined
+      : params.reasoningLevel;
 
   return {
     modelId: currentModelId,
-    reasoningLevel,
+    reasoningLevel: normalizeChannelReasoningLevelForDescriptor(descriptor, requestedReasoningLevel),
   };
 }
 
@@ -860,12 +858,34 @@ function normalizeChannelReasoningLevel(value: string | null | undefined): Swarm
     case "medium":
     case "high":
     case "xhigh":
+    case "max":
+    case "ultra":
       return normalized;
     case "x-high":
       return "xhigh";
     default:
       return undefined;
   }
+}
+
+function normalizeChannelModelDescriptor(model: AgentModelDescriptor): AgentModelDescriptor {
+  const descriptor = {
+    provider: model.provider.trim(),
+    modelId: model.modelId.trim(),
+    thinkingLevel: model.thinkingLevel.trim(),
+  };
+  return {
+    ...descriptor,
+    thinkingLevel: normalizeChannelReasoningLevelForDescriptor(descriptor, descriptor.thinkingLevel),
+  };
+}
+
+function normalizeChannelReasoningLevelForDescriptor(
+  descriptor: AgentModelDescriptor,
+  requestedReasoningLevel?: string | null,
+): SwarmReasoningLevel {
+  const normalized = normalizeThinkingLevelForModelDescriptor(descriptor, requestedReasoningLevel ?? undefined);
+  return normalizeChannelReasoningLevel(normalized) ?? "xhigh";
 }
 
 function normalizeRequiredString(value: string, fieldName: string): string {

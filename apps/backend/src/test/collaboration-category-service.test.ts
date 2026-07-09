@@ -170,4 +170,25 @@ describe("collaboration category service", () => {
     expect(changedModel.defaultReasoningLevel).toBe(codexDefaultReasoning);
     expect(changedModel.channelCreationDefaults?.model.thinkingLevel).toBe(codexDefaultReasoning);
   });
+
+  it("preserves GPT-5.6 max reasoning as the category default", async () => {
+    const { service, workspace } = await createCategoryHarness();
+
+    const created = service.createCategory({
+      workspaceId: workspace.workspaceId,
+      name: "Zero Day",
+      defaultModelId: "pi-5.6",
+    });
+
+    expect(created.defaultModelId).toBe("pi-5.6");
+    expect(created.defaultReasoningLevel).toBe("max");
+    expect(created.channelCreationDefaults?.model).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      thinkingLevel: "max",
+    });
+
+    const reset = service.updateCategory(created.categoryId, { defaultReasoningLevel: null });
+    expect(reset.defaultReasoningLevel).toBe("max");
+  });
 });

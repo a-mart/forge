@@ -77,6 +77,33 @@ describe("manager model selection", () => {
     });
   });
 
+  it("normalizes unsupported exact GPT-5.6 Terra/Luna reasoning to model-supported high", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "openai-codex", modelId: "gpt-5.6-terra" },
+        { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "max" },
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-terra",
+      thinkingLevel: "high",
+    });
+
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "openai-codex", modelId: "gpt-5.6-luna" },
+        { surface: "create", providerAvailability: new Map([["openai-codex", true]]), reasoningLevel: "ultra" },
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-luna",
+      thinkingLevel: "high",
+    });
+  });
+
   it("rejects exact manager selection when provider availability is explicitly false", async () => {
     const dataDir = await makeTempDataDir();
     await modelCatalogService.loadOverrides(dataDir);

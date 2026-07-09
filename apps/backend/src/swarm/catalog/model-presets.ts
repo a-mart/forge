@@ -211,6 +211,25 @@ export function normalizeThinkingLevelForModelDescriptor(
   if (normalized === "xhigh" && supportedReasoningLevels.includes("high")) {
     return "high";
   }
+  if (normalized === "max") {
+    if (supportedReasoningLevels.includes("xhigh")) {
+      return "xhigh";
+    }
+    if (supportedReasoningLevels.includes("high")) {
+      return "high";
+    }
+  }
+  if (normalized === "ultra") {
+    if (supportedReasoningLevels.includes("max")) {
+      return "max";
+    }
+    if (supportedReasoningLevels.includes("xhigh")) {
+      return "xhigh";
+    }
+    if (supportedReasoningLevels.includes("high")) {
+      return "high";
+    }
+  }
   return catalogModel.defaultReasoningLevel;
 }
 
@@ -232,6 +251,9 @@ export function normalizeCursorSdkThinkingLevel(level: string | undefined, model
     case "xhigh":
     case "x-high":
       return (model?.supportedReasoningLevels as readonly string[] | undefined)?.includes("xhigh") ? "xhigh" : "high";
+    case "max":
+    case "ultra":
+      return defaultLevel;
     case "":
       return defaultLevel;
     default:
@@ -244,7 +266,7 @@ function normalizeAnthropicThinkingLevel(level: string | undefined): string {
   if (normalized === "none") {
     return "low";
   }
-  if (normalized === "xhigh") {
+  if (normalized === "xhigh" || normalized === "max" || normalized === "ultra") {
     return "high";
   }
   return normalized;

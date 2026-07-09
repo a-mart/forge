@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByRole, queryByRole, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -352,6 +352,47 @@ describe('SettingsGeneral', () => {
 
       expect(queryByRole(document.body, 'option', { name: 'Grok 4' })).toBeNull()
       expect(queryByRole(document.body, 'option', { name: 'Claude SDK Sonnet' })).toBeNull()
+    })
+
+    it('uses model-specific reasoning metadata for GPT-5.6 compaction variants', async () => {
+      modelPresetMock.fetchModelPresets.mockResolvedValueOnce([
+        {
+          presetId: 'pi-5.6',
+          displayName: 'GPT-5.6 Sol',
+          provider: 'openai-codex',
+          modelId: 'gpt-5.6-sol',
+          defaultReasoningLevel: 'max',
+          supportedReasoningLevels: ['low', 'medium', 'high', 'max', 'ultra'],
+          variants: [
+            { modelId: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+            { modelId: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+          ],
+        },
+      ])
+
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const modelTrigger = container.querySelector('[aria-label="Compaction model"]')
+      expect(modelTrigger).toBeTruthy()
+      flushSync(() => {
+        fireEvent.pointerDown(modelTrigger!, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'GPT-5.6 Terra' })).toBeTruthy())
+      flushSync(() => {
+        fireEvent.click(getByRole(document.body, 'option', { name: 'GPT-5.6 Terra' }))
+      })
+
+      await waitFor(() => expect(getByRole(container, 'combobox', { name: 'Compaction reasoning level' }).textContent).toContain('High'))
+
+      const reasoningTrigger = getByRole(container, 'combobox', { name: 'Compaction reasoning level' })
+      flushSync(() => {
+        fireEvent.pointerDown(reasoningTrigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      })
+      await waitFor(() => expect(getByRole(document.body, 'option', { name: 'Low' })).toBeTruthy())
+      const reasoningOptions = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
+      expect(reasoningOptions).toEqual(['Low', 'Medium', 'High'])
     })
 
     it('shows a warning when the configured compaction provider is unavailable', async () => {

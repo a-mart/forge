@@ -61,6 +61,7 @@ import {
 } from '@/components/settings/terminal-shell-api'
 import {
   MANAGER_REASONING_LEVELS,
+  getCatalogModel,
   isCompactionModelSelectionSupported,
   type CompactionSettings,
   type CortexAutoReviewSettings,
@@ -131,14 +132,15 @@ function buildCompactionModelOptions(presets: ModelPresetInfo[]): CompactionMode
       if (!isCompactionModelSelectionSupported(variant.modelId, preset.provider)) {
         continue
       }
+      const variantModel = getCatalogModel(variant.modelId, preset.provider)
       options.push({
         key: getCompactionModelKey({ provider: preset.provider, modelId: variant.modelId }),
         provider: preset.provider,
         providerLabel,
         modelId: variant.modelId,
         label: variant.label,
-        defaultReasoningLevel: preset.defaultReasoningLevel,
-        supportedReasoningLevels: preset.supportedReasoningLevels,
+        defaultReasoningLevel: (variantModel?.defaultReasoningLevel ?? preset.defaultReasoningLevel) as ManagerReasoningLevel,
+        supportedReasoningLevels: (variantModel?.supportedReasoningLevels ?? preset.supportedReasoningLevels) as ManagerReasoningLevel[],
       })
     }
   }
