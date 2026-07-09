@@ -6,6 +6,7 @@ import {
   type ManagerModelSurface,
 } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../types.js";
+import { normalizeThinkingLevelForModelDescriptor } from "./model-presets.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 
 export function resolveExactManagerModelSelection(
@@ -50,12 +51,14 @@ export function resolveExactManagerModelSelection(
     throw new Error(`Provider ${catalogModel.provider} is not configured for manager model selection`);
   }
 
-  const reasoningLevel = options.reasoningLevel ?? catalogModel.defaultReasoningLevel;
-  if (!catalogModel.supportedReasoningLevels.includes(reasoningLevel)) {
-    throw new Error(
-      `Reasoning level ${reasoningLevel} is not supported by ${catalogModel.displayName}; supported levels: ${catalogModel.supportedReasoningLevels.join(", ")}`
-    );
-  }
+  const reasoningLevel = normalizeThinkingLevelForModelDescriptor(
+    {
+      provider: catalogModel.provider,
+      modelId: catalogModel.modelId,
+      thinkingLevel: catalogModel.defaultReasoningLevel,
+    },
+    options.reasoningLevel,
+  );
 
   return {
     provider: catalogModel.provider,

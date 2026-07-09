@@ -815,7 +815,7 @@ describe('buildSwarmTools', () => {
         undefined as any,
       ),
     ).rejects.toThrow(
-      'spawn_agent.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
+      'spawn_agent.model must be one of pi-5.5|pi-5.6|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
     )
   })
 
@@ -831,13 +831,13 @@ describe('buildSwarmTools', () => {
         'tool-call',
         {
           agentId: 'Worker Invalid Reasoning',
-          reasoningLevel: 'ultra',
+          reasoningLevel: 'galaxy',
         } as any,
         undefined,
         undefined,
         undefined as any,
       ),
-    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh')
+    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh|max|ultra')
   })
 
   it('forwards speak_to_user target metadata and returns resolved target context', async () => {

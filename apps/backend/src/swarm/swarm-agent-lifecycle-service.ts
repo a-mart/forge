@@ -1454,9 +1454,13 @@ export class SwarmAgentLifecycleService {
           selectedModelId: nextModelId,
           attemptedModelIds
         });
-        return {
+        const fallbackModel = {
           ...model,
           modelId: nextModelId
+        };
+        return {
+          ...fallbackModel,
+          thinkingLevel: normalizeThinkingLevelForModelDescriptor(fallbackModel)
         };
       }
 

@@ -107,9 +107,40 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
+    for (const presetId of ["pi-5.6", "pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
+  });
+
+  it("exposes GPT-5.6 Sol/Terra/Luna as visible Codex presets and variants", () => {
+    const presets = getModelPresetInfoList();
+    const preset = presets.find((entry) => entry.presetId === "pi-5.6");
+
+    expect(preset).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      displayName: "GPT-5.6 Sol",
+      defaultReasoningLevel: "max",
+      supportedReasoningLevels: ["low", "medium", "high", "max", "ultra"],
+    });
+    expect(preset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(resolveModelDescriptorFromPreset("pi-5.6")).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      thinkingLevel: "max",
+    });
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      thinkingLevel: "ultra",
+    })).toBe("ultra");
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-terra",
+      thinkingLevel: "max",
+    })).toBe("high");
+    expect(inferSwarmModelPresetFromDescriptor({ provider: "openai-codex", modelId: "gpt-5.6-luna" })).toBe("pi-5.6");
+    expect(modelCatalogService.isKnownModelId("gpt-5.6-sol", "openai-codex")).toBe(true);
   });
 
   it("maps removed full GPT-5.3 Codex descriptors to GPT-5.5 without exposing the legacy pi-codex alias", () => {

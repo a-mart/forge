@@ -420,7 +420,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
         model: 'invalid-model' as any,
       }),
      ).rejects.toThrow(
-      'spawn_agent.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
+      'spawn_agent.model must be one of pi-5.5|pi-5.6|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
       )
   })
 
@@ -432,8 +432,8 @@ describe("SwarmManager spawn_agent preset routing", () => {
     await expect(
       manager.spawnAgent('manager', {
         agentId: 'Invalid Reasoning Worker',
-        reasoningLevel: 'ultra' as any,
+        reasoningLevel: 'galaxy' as any,
       }),
-    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh')
+    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh|max|ultra')
   })
 });

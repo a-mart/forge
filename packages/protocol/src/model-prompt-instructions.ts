@@ -30,7 +30,8 @@ export function getBuiltInModelSpecificInstructions(familyId: string): string | 
   if (
     normalizedFamilyId.startsWith('pi-codex') ||
     normalizedFamilyId.startsWith('pi-5.4') ||
-    normalizedFamilyId.startsWith('pi-5.5')
+    normalizedFamilyId.startsWith('pi-5.5') ||
+    normalizedFamilyId.startsWith('pi-5.6')
   ) {
     return GPT5_MODEL_SPECIFIC_INSTRUCTIONS;
   }

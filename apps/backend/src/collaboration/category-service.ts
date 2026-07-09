@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { CollaborationCategory, CollaborationSkillSelectionInput, CollaborationSkillSelectionState } from "@forge/protocol";
-import { inferSwarmModelPresetFromDescriptor, resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
+import {
+  inferSwarmModelPresetFromDescriptor,
+  normalizeThinkingLevelForModelDescriptor,
+  resolveModelDescriptorFromPreset,
+} from "../swarm/model-presets.js";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
 import {
@@ -353,11 +357,11 @@ function toCategoryModelDescriptor(record: {
   defaultModelThinkingLevel: string | null;
 }): AgentModelDescriptor | null {
   if (record.defaultModelProvider && record.defaultModelId && record.defaultModelThinkingLevel) {
-    return {
+    return normalizeCategoryModelDescriptor({
       provider: record.defaultModelProvider,
       modelId: record.defaultModelId,
       thinkingLevel: record.defaultModelThinkingLevel,
-    };
+    });
   }
 
   return null;
@@ -412,22 +416,22 @@ function resolveUpdatedCategoryDefaults(
     params.defaultModelId === undefined || params.defaultModelId === currentModelPreset
       ? normalizeReasoningLevel(existing.defaultModelThinkingLevel)
       : undefined;
-  const defaultReasoningLevel = normalizeReasoningLevel(
+  const defaultReasoningLevel = normalizeReasoningLevelForDescriptor(
+    descriptor,
     requestedModelDescriptor?.thinkingLevel ??
       (currentModelPreset ? resolveModelDescriptorFromPreset(currentModelPreset).thinkingLevel : descriptor.thinkingLevel),
-  ) ?? descriptor.thinkingLevel;
-  const reasoningLevel =
-    params.defaultReasoningLevel === undefined
-      ? preservedReasoningLevel ?? defaultReasoningLevel
-      : params.defaultReasoningLevel === null
-        ? defaultReasoningLevel
-        : params.defaultReasoningLevel;
+  );
+  const requestedReasoningLevel = params.defaultReasoningLevel === undefined
+    ? preservedReasoningLevel ?? defaultReasoningLevel
+    : params.defaultReasoningLevel === null
+      ? defaultReasoningLevel
+      : params.defaultReasoningLevel;
   const cwd = normalizeOptionalString(existing.defaultCwd ?? undefined);
 
   return {
     model: {
       ...descriptor,
-      thinkingLevel: reasoningLevel,
+      thinkingLevel: normalizeReasoningLevelForDescriptor(descriptor, requestedReasoningLevel),
     },
     ...(cwd ? { cwd } : {}),
   };
@@ -449,11 +453,11 @@ function resolveCategoryDefaultsInput(
 
     const cwd = normalizeOptionalString(defaults.cwd);
     return {
-      model: {
+      model: normalizeCategoryModelDescriptor({
         provider: model.provider.trim(),
         modelId: model.modelId.trim(),
         thinkingLevel: model.thinkingLevel.trim(),
-      },
+      }),
       ...(cwd ? { cwd } : {}),
     };
   }
@@ -466,7 +470,7 @@ function resolveCategoryDefaultsInput(
   return {
     model: {
       ...descriptor,
-      thinkingLevel: params.defaultReasoningLevel ?? descriptor.thinkingLevel,
+      thinkingLevel: normalizeReasoningLevelForDescriptor(descriptor, params.defaultReasoningLevel ?? descriptor.thinkingLevel),
     },
   };
 }
@@ -474,6 +478,26 @@ function resolveCategoryDefaultsInput(
 function nextCategoryPosition(categories: Array<{ position: number }>): number {
   const highestPosition = categories.reduce((max, category) => Math.max(max, category.position), -1);
   return highestPosition + 1;
+}
+
+function normalizeCategoryModelDescriptor(model: AgentModelDescriptor): AgentModelDescriptor {
+  const descriptor = {
+    provider: model.provider.trim(),
+    modelId: model.modelId.trim(),
+    thinkingLevel: model.thinkingLevel.trim(),
+  };
+  return {
+    ...descriptor,
+    thinkingLevel: normalizeReasoningLevelForDescriptor(descriptor, descriptor.thinkingLevel),
+  };
+}
+
+function normalizeReasoningLevelForDescriptor(
+  descriptor: AgentModelDescriptor,
+  requestedReasoningLevel?: string | null,
+): SwarmReasoningLevel {
+  const normalized = normalizeThinkingLevelForModelDescriptor(descriptor, requestedReasoningLevel ?? undefined);
+  return normalizeReasoningLevel(normalized) ?? "xhigh";
 }
 
 function normalizeRequiredString(value: string, fieldName: string): string {
@@ -537,6 +561,8 @@ function normalizeReasoningLevel(value: string | null | undefined): SwarmReasoni
     case "medium":
     case "high":
     case "xhigh":
+    case "max":
+    case "ultra":
       return normalized;
     case "x-high":
       return "xhigh";

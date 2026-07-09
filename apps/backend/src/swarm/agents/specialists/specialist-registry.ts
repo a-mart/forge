@@ -1135,7 +1135,7 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
   const provider = data.provider?.trim();
   const reasoningLevel = data.reasoningLevel?.trim();
   if (reasoningLevel !== undefined && reasoningLevel.length > 0 && !isSwarmReasoningLevel(reasoningLevel)) {
-    throw new Error("reasoningLevel must be one of none|low|medium|high|xhigh");
+    throw new Error("reasoningLevel must be one of none|low|medium|high|xhigh|max|ultra");
   }
 
   const normalizedFallbackModelId = fallbackModelId && fallbackModelId.length > 0 ? fallbackModelId : undefined;
@@ -1147,7 +1147,7 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     fallbackReasoningLevel.length > 0 &&
     !isSwarmReasoningLevel(fallbackReasoningLevel)
   ) {
-    throw new Error("fallbackReasoningLevel must be one of none|low|medium|high|xhigh");
+    throw new Error("fallbackReasoningLevel must be one of none|low|medium|high|xhigh|max|ultra");
   }
 
   // Strip fallback reasoning level when there's no fallback model — it has no effect without one.

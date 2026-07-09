@@ -6,7 +6,7 @@ export type ForgeProjectionScope = 'catalog-only' | 'full-upstream-provider'
 export type ForgeRequestBehaviorId = 'xai-responses' | null
 export type ForgeWebSearchCapability = 'none' | 'native'
 export type ForgeInputMode = 'text' | 'image'
-export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type ForgeProviderCredentialAuthType = 'api_key' | 'oauth' | 'unknown'
 export type ForgeProviderCredentialSource = 'auth_file' | 'env' | 'secrets' | 'pool' | 'central_broker'
 

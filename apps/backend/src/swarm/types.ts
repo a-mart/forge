@@ -45,7 +45,7 @@ export const SWARM_MODEL_PRESETS = MANAGER_MODEL_PRESETS;
 
 export type SwarmModelPreset = string;
 
-export const SWARM_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh"] as const;
+export const SWARM_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 
 export type SwarmReasoningLevel = (typeof SWARM_REASONING_LEVELS)[number];
 

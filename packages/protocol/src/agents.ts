@@ -6,7 +6,7 @@ export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'err
 export const MANAGER_MODEL_PRESETS = CATALOG_FAMILY_IDS
 export type ManagerModelPreset = string
 
-export const MANAGER_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+export const MANAGER_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 export type ManagerReasoningLevel = (typeof MANAGER_REASONING_LEVELS)[number]
 
 export interface ManagerExactModelSelection {

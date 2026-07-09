@@ -30,6 +30,8 @@ const REASONING_OPACITY: Record<string, number> = {
   medium: 0.8,
   high: 1.0,
   xhigh: 1.0,
+  max: 1.0,
+  ultra: 1.0,
 }
 
 function formatTokens(count: number): string {
