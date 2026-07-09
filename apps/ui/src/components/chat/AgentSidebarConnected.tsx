@@ -42,13 +42,6 @@ export interface AgentSidebarConnectedProps
   extends Omit<AgentSidebarProps, StoreProvidedProps> {
   /** Origin whose sidebar slices to render.  Defaults to the local origin. */
   originId?: OriginId
-  /**
-   * Deprecated no-op kept for callers from the first remote-origin sidebar
-   * iteration. Local sidebar actions are now explicitly wired to the local
-   * origin, so the local tree keeps its normal menu even when a remote session
-   * is active.
-   */
-  localTreeReadOnly?: boolean
 }
 
 // Stable slice selectors (module-level so their identity is fixed and the store
@@ -63,7 +56,6 @@ const selectTerminalCount = (s: ManagerWsState): number => s.terminals.length
 
 export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   originId = LOCAL_ORIGIN_ID,
-  localTreeReadOnly: _localTreeReadOnly = false,
   ...rest
 }: AgentSidebarConnectedProps) {
   // Each slice is an independent subscription: the store only wakes this

@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
   type SetStateAction,
 } from 'react'
 import { reportBuilderConnected } from '@/lib/connection-health-store'
@@ -48,8 +47,8 @@ import {
   type OriginId,
 } from '@/lib/origin-store'
 import { getCollaborationConnectionOptions, resolveCollaborationTarget } from '@/lib/collaboration-connections'
-import type { ManagerWsState } from '@/lib/ws-state'
 import type { ManagerWsClient } from '@/lib/ws-client'
+import type { ManagerWsState } from '@/lib/ws-state'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
 import { useOriginConnection } from '@/hooks/index-page/use-origin-connection'
@@ -171,19 +170,21 @@ export function BuilderSurface({
   const archiveHydrationRequestedRef = useRef(false)
 
   const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, localWsUrl)
-  const localOriginState = useOriginSnapshot(LOCAL_ORIGIN_ID)
+  const localState = useOriginSnapshot(LOCAL_ORIGIN_ID)
   const localClientRef = useRef<ManagerWsClient | null>(null)
-  // eslint-disable-next-line -- keep local sidebar action handlers bound to the local origin during this render
+  // Keep local sidebar action handlers bound to the current local-origin client
+  // during render so callbacks created below do not observe a stale ref when the
+  // active origin changes.
+  // eslint-disable-next-line -- deliberate render-time assignment; see comment above
   localClientRef.current = originRegistry.getOrigin(LOCAL_ORIGIN_ID)?.getClient() ?? null
-
-  const setLocalOriginState = useCallback<Dispatch<SetStateAction<ManagerWsState>>>((nextState) => {
-    const localStore = originRegistry.getOrigin(LOCAL_ORIGIN_ID)
-    if (!localStore) return
-    const previousState = localStore.getSnapshot()
-    const resolvedState = typeof nextState === 'function'
-      ? (nextState as (prevState: ManagerWsState) => ManagerWsState)(previousState)
-      : nextState
-    localStore.ingest({ type: 'snapshot', state: resolvedState })
+  const setLocalState = useCallback((update: SetStateAction<ManagerWsState>) => {
+    const target = originRegistry.getOrigin(LOCAL_ORIGIN_ID)
+    if (!target) return
+    const previous = target.getSnapshot()
+    const next = typeof update === 'function'
+      ? (update as (prev: ManagerWsState) => ManagerWsState)(previous)
+      : update
+    if (next !== previous) target.ingest({ type: 'snapshot', state: next })
   }, [])
 
   // Sync builder WS health to the module-level store so ModeSwitch can
@@ -480,10 +481,15 @@ export function BuilderSurface({
   }, [activeAgentId, state.statuses])
 
   const hasCreatedProjectManager = useMemo(() => hasProjectManagers(state.agents), [state.agents])
-  const localActiveAgent = useMemo(() => {
-    if (activeOriginId !== LOCAL_ORIGIN_ID || !activeAgentId) return null
-    return localOriginState.agents.find((agent) => agent.agentId === activeAgentId) ?? null
-  }, [activeAgentId, activeOriginId, localOriginState.agents])
+  // The sidebar always renders the local tree, even while a remote origin is
+  // selected. Bind its context-menu actions to the local origin so local
+  // sessions/projects keep their normal menu without misrouting commands to the
+  // remote client.
+  const localActiveAgentId = activeOriginId === LOCAL_ORIGIN_ID ? activeAgentId : null
+  const localActiveAgent = localActiveAgentId
+    ? localState.agents.find((agent) => agent.agentId === localActiveAgentId) ?? null
+    : null
+  const localIsActiveManager = Boolean(localActiveAgent && localActiveAgent.role === 'manager')
 
   const shouldShowWelcomeForm =
     routeState.view === 'chat' &&
@@ -554,45 +560,40 @@ export function BuilderSurface({
     messageInputRef,
     messageListRef,
   })
-  const { replyTarget, setReplyTarget, messageForkTarget, setMessageForkTarget } = session
-
-  const localManagerActions = useManagerActions({
+  const localSidebarManager = useManagerActions({
     wsUrl: localWsUrl,
     clientRef: localClientRef,
-    agents: localOriginState.agents,
+    agents: localState.agents,
     activeAgent: localActiveAgent,
-    activeAgentId: activeOriginId === LOCAL_ORIGIN_ID ? activeAgentId : null,
-    isActiveManager: activeOriginId === LOCAL_ORIGIN_ID && localActiveAgent?.role === 'manager',
-    navigateToRoute: (nextRouteState, replace) => {
-      navigateToRoute(
-        nextRouteState.view === 'chat'
-          ? { ...nextRouteState, origin: LOCAL_ORIGIN_ID }
-          : nextRouteState,
-        replace,
-      )
-    },
-    setState: setLocalOriginState,
-    clearPendingResponseForAgent: transcript.clearPendingResponseForAgent,
+    activeAgentId: localActiveAgentId,
+    isActiveManager: localIsActiveManager,
+    navigateToRoute: navigateToOuterRoute,
+    setState: setLocalState,
+    clearPendingResponseForAgent: activeOriginId === LOCAL_ORIGIN_ID
+      ? transcript.clearPendingResponseForAgent
+      : () => {},
   })
 
   const localSidebarSession = useSessionActions({
     clientRef: localClientRef,
     fileEditorCoordinator: panels.fileEditorCoordinator,
-    state: localOriginState,
+    state: localState,
     activeAgent: localActiveAgent,
-    activeAgentId: activeOriginId === LOCAL_ORIGIN_ID ? activeAgentId : null,
-    isActiveManager: activeOriginId === LOCAL_ORIGIN_ID && localActiveAgent?.role === 'manager',
-    isLoading: false,
-    navigateToRoute: (nextRouteState, replace) => {
-      navigateToRoute({ ...nextRouteState, origin: LOCAL_ORIGIN_ID }, replace)
-    },
-    setState: setLocalOriginState,
+    activeAgentId: localActiveAgentId,
+    isActiveManager: localIsActiveManager,
+    isLoading: activeOriginId === LOCAL_ORIGIN_ID ? isLoading : false,
+    navigateToRoute: (nextRouteState, replace) => navigateToRoute({
+      ...nextRouteState,
+      origin: LOCAL_ORIGIN_ID,
+    }, replace),
+    setState: setLocalState,
     visibleMessages: activeOriginId === LOCAL_ORIGIN_ID ? transcript.visibleMessages : [],
-    markPendingResponse: transcript.markPendingResponse,
+    markPendingResponse: activeOriginId === LOCAL_ORIGIN_ID ? transcript.markPendingResponse : () => {},
     handleCompactManager: async () => {},
     messageInputRef,
     messageListRef,
   })
+  const { replyTarget, setReplyTarget, messageForkTarget, setMessageForkTarget } = session
 
   const {
     isDraggingFiles,
@@ -706,7 +707,6 @@ export function BuilderSurface({
         wsUrl={localWsUrl}
         collaborationModeSwitch={collaborationModeSwitch}
         selectedAgentId={activeAgentId}
-        localTreeReadOnly={activeOriginId !== LOCAL_ORIGIN_ID}
         activeOriginId={activeOriginId}
         onSelectRemoteAgent={handleSelectRemoteAgent}
         onReorderRemoteProfiles={handleReorderRemoteProfiles}
@@ -720,7 +720,7 @@ export function BuilderSurface({
         onAddManager={handleOpenCreateManagerDialog}
         onSelectAgent={handleSelectSidebarAgent}
         onDeleteAgent={localSidebarSession.handleDeleteAgent}
-        onDeleteManager={localManagerActions.handleRequestDeleteManager}
+        onDeleteManager={localSidebarManager.handleRequestDeleteManager}
         onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
           navigateToRoute({ view: 'settings', surface: 'builder' })
         })}
@@ -1227,12 +1227,12 @@ export function BuilderSurface({
           },
         }}
         deleteManagerDialogProps={{
-          managerToDelete: localManagerActions.managerToDelete,
-          deleteManagerError: localManagerActions.deleteManagerError,
-          isDeletingManager: localManagerActions.isDeletingManager,
-          onClose: localManagerActions.handleCloseDeleteManagerDialog,
+          managerToDelete: localSidebarManager.managerToDelete,
+          deleteManagerError: localSidebarManager.deleteManagerError,
+          isDeletingManager: localSidebarManager.isDeletingManager,
+          onClose: localSidebarManager.handleCloseDeleteManagerDialog,
           onConfirm: () => {
-            void localManagerActions.handleConfirmDeleteManager()
+            void localSidebarManager.handleConfirmDeleteManager()
           },
         }}
         forkSessionDialogProps={

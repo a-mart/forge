@@ -92,7 +92,6 @@ function renderConnectedSidebar(overrides: { onDeleteManager?: (managerId: strin
           wsUrl: 'ws://local.test',
           selectedAgentId: 'remote-session',
           activeOriginId: 'remote-a',
-          localTreeReadOnly: true,
           isSettingsActive: false,
           onAddManager: vi.fn(),
           onSelectAgent: vi.fn(),
