@@ -688,6 +688,10 @@ export function BuilderSurface({
     })
   }, [navigateToOuterRoute])
 
+  const handleReorderRemoteProfiles = useCallback((originId: string, profileIds: string[]) => {
+    originRegistry.getOrigin(originId)?.getClient().reorderProfiles(profileIds)
+  }, [])
+
   const handleRemoteOriginRetry = useCallback((originId: string) => {
     forgeOriginManager.retryOrigin(originId)
   }, [])
@@ -705,6 +709,7 @@ export function BuilderSurface({
         localTreeReadOnly={activeOriginId !== LOCAL_ORIGIN_ID}
         activeOriginId={activeOriginId}
         onSelectRemoteAgent={handleSelectRemoteAgent}
+        onReorderRemoteProfiles={handleReorderRemoteProfiles}
         onRemoteOriginSignIn={handleRemoteOriginSignIn}
         onRemoteOriginRetry={handleRemoteOriginRetry}
         isSettingsActive={activeView === 'settings'}

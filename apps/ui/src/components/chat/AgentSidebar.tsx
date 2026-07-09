@@ -118,6 +118,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   remoteOriginIds,
   activeOriginId,
   onSelectRemoteAgent,
+  onReorderRemoteProfiles,
   onRemoteOriginSignIn,
   onRemoteOriginRetry,
 }: AgentSidebarProps) {
@@ -760,6 +761,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             selectedAgentId={selectedAgentId}
             activeOriginId={activeOriginId ?? 'local'}
             onSelectAgent={onSelectRemoteAgent}
+            onReorderProfiles={onReorderRemoteProfiles}
             onSignIn={onRemoteOriginSignIn}
             onRetry={onRemoteOriginRetry}
           />

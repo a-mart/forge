@@ -84,6 +84,7 @@ export interface AgentSidebarProps {
   /** The origin whose builder surface is active (selection highlight scoping). */
   activeOriginId?: string
   onSelectRemoteAgent?: (originId: string, agentId: string) => void
+  onReorderRemoteProfiles?: (originId: string, profileIds: string[]) => void
   onRemoteOriginSignIn?: (originId: string) => void
   onRemoteOriginRetry?: (originId: string) => void
 }
