@@ -117,6 +117,57 @@ describe('sendWsEventWithBackpressure', () => {
     expect(fake.sendMock).toHaveBeenCalledTimes(1)
   })
 
+  it('awaits drain and sends a requestId-carrying response instead of dropping it', async () => {
+    // Regression: a session_workers_snapshot response dropped while a large
+    // session bootstrap saturated the socket left the client hanging on its
+    // pending get_session_workers promise (deduping every retry) and the
+    // sidebar/pill worker lists permanently empty.
+    resetWsLogThrottleForTest()
+    const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 500_000 })
+    const onDropSocket = vi.fn()
+
+    const pending = sendWsEventWithBackpressure({
+      socket: fake.socket,
+      event: {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager-1',
+        workers: [],
+        requestId: 'get_session_workers-1',
+      } as unknown as ServerEvent,
+      onDropSocket,
+    })
+
+    await Promise.resolve()
+    expect(fake.sendMock).not.toHaveBeenCalled()
+
+    fake.setBufferedAmount(0)
+
+    const bytes = await pending
+    expect(fake.sendMock).toHaveBeenCalledTimes(1)
+    expect(typeof bytes).toBe('number')
+    expect(onDropSocket).not.toHaveBeenCalled()
+  })
+
+  it('still drops a requestId-less broadcast of the same event type when over the cap', async () => {
+    resetWsLogThrottleForTest()
+    const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 1 })
+    const onDropSocket = vi.fn()
+
+    const result = await sendWsEventWithBackpressure({
+      socket: fake.socket,
+      event: {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager-1',
+        workers: [],
+      } as unknown as ServerEvent,
+      onDropSocket,
+    })
+
+    expect(result).toBeNull()
+    expect(fake.sendMock).not.toHaveBeenCalled()
+    expect(onDropSocket).not.toHaveBeenCalled()
+  })
+
   it('drops (does not send) a non-bootstrap event when over the buffer cap', async () => {
     resetWsLogThrottleForTest()
     const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 1 })

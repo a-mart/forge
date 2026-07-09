@@ -23,6 +23,7 @@ export class WsRequestTracker<RequestMap extends Record<string, unknown>> {
     requestId: string,
     resolve: (value: RequestMap[RequestType]) => void,
     reject: (error: Error) => void,
+    timeoutMs?: number,
   ): void {
     const timeout = setTimeout(() => {
       this.reject(
@@ -30,7 +31,7 @@ export class WsRequestTracker<RequestMap extends Record<string, unknown>> {
         requestId,
         new Error('Request timed out waiting for backend response.'),
       )
-    }, this.timeoutMs)
+    }, timeoutMs ?? this.timeoutMs)
 
     this.pendingMapFor(requestType).set(requestId, {
       resolve,

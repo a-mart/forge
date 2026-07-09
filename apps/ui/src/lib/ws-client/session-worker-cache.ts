@@ -1,7 +1,11 @@
 import type { AgentDescriptor } from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 import type { SessionWorkersResult } from './types'
-import { SESSION_WORKERS_REFETCH_DEBOUNCE_MS } from './runtime-types'
+import {
+  SESSION_WORKERS_MAX_FETCH_RETRIES,
+  SESSION_WORKERS_REFETCH_DEBOUNCE_MS,
+  SESSION_WORKERS_RETRY_BASE_MS,
+} from './runtime-types'
 import { reduceSessionWorkersSnapshot } from './snapshot-reducers'
 
 export interface SessionWorkerCacheDeps {
@@ -32,12 +36,15 @@ export interface SessionWorkerCacheDeps {
 export class SessionWorkerCache {
   private readonly deps: SessionWorkerCacheDeps
   private readonly refetchDebounceMs: number
+  private readonly retryBaseMs: number
   private readonly pendingFetches = new Map<string, Promise<SessionWorkersResult>>()
   private readonly refetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly consecutiveFetchFailures = new Map<string, number>()
 
-  constructor(deps: SessionWorkerCacheDeps) {
+  constructor(deps: SessionWorkerCacheDeps & { retryBaseMs?: number }) {
     this.deps = deps
     this.refetchDebounceMs = deps.refetchDebounceMs ?? SESSION_WORKERS_REFETCH_DEBOUNCE_MS
+    this.retryBaseMs = deps.retryBaseMs ?? SESSION_WORKERS_RETRY_BASE_MS
   }
 
   // ---------------------------------------------------------------------------
@@ -94,17 +101,45 @@ export class SessionWorkerCache {
     try {
       request = this.deps.requestSessionWorkers(trimmed)
     } catch (err) {
+      // Synchronous throw = dispatch failed outright (e.g. socket not
+      // connected). Count it toward the retry budget so the session is
+      // requeued on reconnect.
+      this.scheduleRetryAfterFailure(trimmed)
       return Promise.reject(err)
     }
     this.pendingFetches.set(trimmed, request)
 
-    // Clean up in-flight tracking after resolution (success or failure).
-    const cleanup = () => {
-      this.pendingFetches.delete(trimmed)
-    }
-    request.then(cleanup, cleanup)
+    // Clean up in-flight tracking after resolution. A success resets the
+    // failure backoff; a failure (timeout, dropped response, disconnect
+    // mid-flight) schedules a bounded retry — without it, a single lost
+    // response leaves the session's worker list empty with no remaining
+    // trigger to refetch it.
+    request.then(
+      () => {
+        this.pendingFetches.delete(trimmed)
+        this.consecutiveFetchFailures.delete(trimmed)
+      },
+      () => {
+        this.pendingFetches.delete(trimmed)
+        this.scheduleRetryAfterFailure(trimmed)
+      },
+    )
 
     return request
+  }
+
+  /**
+   * Called on transport reconnect: failures accumulated against the old socket
+   * no longer predict anything, so clear the backoff — and give every session
+   * with an unresolved failed fetch one debounced refetch on the new socket
+   * (without it, a fetch lost to a disconnect has no remaining trigger).
+   */
+  retryFailedFetchesAfterReconnect(): void {
+    const failedSessionIds = [...this.consecutiveFetchFailures.keys()]
+    this.consecutiveFetchFailures.clear()
+    for (const sessionAgentId of failedSessionIds) {
+      this.queueRefetch(sessionAgentId)
+    }
   }
 
   /**
@@ -144,6 +179,32 @@ export class SessionWorkerCache {
     this.refetchTimers.set(trimmed, timer)
   }
 
+  /**
+   * Schedules a bounded, linearly backed-off retry after a failed fetch.
+   * Reuses the refetch-timer map so `clearQueuedRefetch(es)`/`destroy` cancel
+   * retries too. Gives up after {@link SESSION_WORKERS_MAX_FETCH_RETRIES}
+   * consecutive failures (reset by a successful fetch or `resetFailureBackoff`).
+   */
+  private scheduleRetryAfterFailure(sessionAgentId: string): void {
+    const failures = (this.consecutiveFetchFailures.get(sessionAgentId) ?? 0) + 1
+    this.consecutiveFetchFailures.set(sessionAgentId, failures)
+
+    if (failures > SESSION_WORKERS_MAX_FETCH_RETRIES) {
+      return
+    }
+
+    this.clearQueuedRefetch(sessionAgentId)
+
+    const timer = setTimeout(() => {
+      this.refetchTimers.delete(sessionAgentId)
+      void this.getSessionWorkers(sessionAgentId).catch(() => {
+        // Failure re-enters scheduleRetryAfterFailure via the request handler.
+      })
+    }, failures * this.retryBaseMs)
+
+    this.refetchTimers.set(sessionAgentId, timer)
+  }
+
   /** Cancels a queued refetch for a specific session, if any. */
   clearQueuedRefetch(sessionAgentId: string): void {
     const trimmed = sessionAgentId.trim()
@@ -168,5 +229,6 @@ export class SessionWorkerCache {
   destroy(): void {
     this.clearQueuedRefetches()
     this.pendingFetches.clear()
+    this.consecutiveFetchFailures.clear()
   }
 }

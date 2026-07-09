@@ -54,6 +54,7 @@ import { applyLoadedModelCacheVisualizationSetting as reduceLoadedModelCacheVisu
 import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
+  SESSION_WORKERS_REQUEST_TIMEOUT_MS,
 } from './ws-client/runtime-types'
 
 /** Server close code for a permanently invalidated collaboration session. */
@@ -182,8 +183,13 @@ export class ManagerWsClient {
       updateState: (patch) => this.updateState(patch),
       requestSessionWorkers: (sessionAgentId) => {
         assertConnectedSocket(this.socket)
-        return this.requestDispatcher.enqueueRequest('get_session_workers', (requestId) =>
-          buildGetSessionWorkersCommand(sessionAgentId, requestId),
+        // Short timeout: a lost response must not hold the cache's in-flight
+        // dedupe for the full default request timeout — the cache retries with
+        // backoff on failure.
+        return this.requestDispatcher.enqueueRequest(
+          'get_session_workers',
+          (requestId) => buildGetSessionWorkersCommand(sessionAgentId, requestId),
+          { timeoutMs: SESSION_WORKERS_REQUEST_TIMEOUT_MS },
         )
       },
     })
@@ -812,6 +818,11 @@ export class ManagerWsClient {
       hasReceivedAgentsSnapshot: false,
       lastError: null,
     })
+
+    // Fetch failures accumulated against the old socket don't predict anything
+    // on the new one — reset the retry budget and requeue sessions whose
+    // worker fetch was lost to the disconnect.
+    this.sessionWorkerCache.retryFailedFetchesAfterReconnect()
 
     this.send(buildSubscribeCommand(this.desiredAgentId))
   }

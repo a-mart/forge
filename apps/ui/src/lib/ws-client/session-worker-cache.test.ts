@@ -509,6 +509,138 @@ describe('SessionWorkerCache', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // Bounded retry after failed fetches
+  // ---------------------------------------------------------------------------
+
+  function setupWithRejectingRequest(retryBaseMs = 1_000) {
+    const rejecters: Array<(error: Error) => void> = []
+    const resolvers: Array<(result: SessionWorkersResult) => void> = []
+
+    const requestSessionWorkers = vi.fn(() => {
+      return new Promise<SessionWorkersResult>((resolve, reject) => {
+        resolvers.push(resolve)
+        rejecters.push(reject)
+      })
+    })
+
+    const cache = new SessionWorkerCache({
+      getState: () => makeState(),
+      updateState: () => {},
+      requestSessionWorkers,
+      refetchDebounceMs: 250,
+      retryBaseMs,
+    })
+
+    return { cache, requestSessionWorkers, rejecters, resolvers }
+  }
+
+  it('retries a failed fetch with linear backoff, capped at the retry budget', async () => {
+    // Regression: a get_session_workers response lost in transit (e.g. dropped
+    // by backend backpressure during a large session bootstrap) rejected once
+    // and was never retried — no remaining trigger ever refetched, leaving the
+    // sidebar/pill worker lists permanently empty.
+    const { cache, requestSessionWorkers, rejecters } = setupWithRejectingRequest()
+
+    const p1 = cache.getSessionWorkers('mgr')
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(1)
+    rejecters[0](new Error('timeout'))
+    await expect(p1).rejects.toThrow('timeout')
+
+    // Retry 1 after 1×base
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(2)
+    rejecters[1](new Error('timeout'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Retry 2 after 2×base
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(3)
+    rejecters[2](new Error('timeout'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Retry 3 after 3×base
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(4)
+    rejecters[3](new Error('timeout'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Budget exhausted — no further automatic retries.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(4)
+
+    cache.destroy()
+  })
+
+  it('resets the retry budget after a successful fetch', async () => {
+    const { cache, requestSessionWorkers, rejecters, resolvers } = setupWithRejectingRequest()
+
+    const p1 = cache.getSessionWorkers('mgr')
+    rejecters[0](new Error('timeout'))
+    await expect(p1).rejects.toThrow('timeout')
+
+    // Retry fires and succeeds.
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(2)
+    resolvers[1]({ sessionAgentId: 'mgr', workers: [] })
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A later failure starts a fresh backoff at 1×base again.
+    const p2 = cache.getSessionWorkers('mgr')
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(3)
+    rejecters[2](new Error('timeout'))
+    await expect(p2).rejects.toThrow('timeout')
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(4)
+
+    cache.destroy()
+  })
+
+  it('requeues sessions with unresolved failed fetches on reconnect', async () => {
+    const { cache, requestSessionWorkers, rejecters } = setupWithRejectingRequest()
+
+    const p1 = cache.getSessionWorkers('mgr')
+    rejecters[0](new Error('WebSocket disconnected before request completed.'))
+    await expect(p1).rejects.toThrow('disconnected')
+
+    // Reconnect: budget cleared, session requeued on the debounce interval.
+    cache.retryFailedFetchesAfterReconnect()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(2)
+
+    cache.destroy()
+  })
+
+  it('counts synchronous dispatch failures toward the retry budget and recovers on reconnect', async () => {
+    let throwSync = true
+    const requestSessionWorkers = vi.fn(() => {
+      if (throwSync) {
+        throw new Error('WebSocket is reconnecting; command not sent.')
+      }
+      return Promise.resolve({ sessionAgentId: 'mgr', workers: [] })
+    })
+
+    const cache = new SessionWorkerCache({
+      getState: () => makeState(),
+      updateState: () => {},
+      requestSessionWorkers,
+      refetchDebounceMs: 250,
+      retryBaseMs: 1_000,
+    })
+
+    await expect(cache.getSessionWorkers('mgr')).rejects.toThrow('reconnecting')
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(1)
+
+    // Socket comes back; the reconnect requeue fetches successfully.
+    throwSync = false
+    cache.retryFailedFetchesAfterReconnect()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(requestSessionWorkers).toHaveBeenCalledTimes(2)
+
+    cache.destroy()
+  })
+
+  // ---------------------------------------------------------------------------
   // Edge: trims whitespace from session IDs
   // ---------------------------------------------------------------------------
 

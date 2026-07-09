@@ -903,6 +903,60 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('recovers when a get_session_workers response is lost — fast timeout, then automatic retry', async () => {
+    // Regression: the backend dropped session_workers_snapshot responses under
+    // socket backpressure (e.g. while a multi-MB conversation_history bootstrap
+    // was draining). The client then held the dead request for the default
+    // 5-minute timeout — deduping every other fetch trigger onto it — and never
+    // retried, leaving the sidebar rows and worker pill bar permanently empty
+    // while the manager's workerCount badge stayed correct.
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [makeManagerDescriptor({ workerCount: 1, activeWorkerCount: 1 })],
+    })
+
+    const fetch = client.getSessionWorkers('manager')
+    const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(fetchPayload).toMatchObject({ type: 'get_session_workers', sessionAgentId: 'manager' })
+
+    // The response never arrives. The request must fail fast (well under the
+    // 5-minute default request timeout).
+    await vi.advanceTimersByTimeAsync(15_000)
+    await expect(fetch).rejects.toThrow('timed out')
+
+    // The cache retries on its own after the backoff delay.
+    await vi.advanceTimersByTimeAsync(2_000)
+    const retryPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(retryPayload).toMatchObject({ type: 'get_session_workers', sessionAgentId: 'manager' })
+    expect(retryPayload.requestId).not.toBe(fetchPayload.requestId)
+
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      requestId: retryPayload.requestId,
+      workers: [makeWorkerDescriptor('worker-1')],
+    })
+
+    const workers = client.getState().agents.filter((agent) => agent.role === 'worker')
+    expect(workers.map((worker) => worker.agentId)).toEqual(['worker-1'])
+
+    client.destroy()
+  })
+
   it('sends attachment-only user messages when images are provided', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

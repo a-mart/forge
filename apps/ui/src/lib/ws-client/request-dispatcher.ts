@@ -47,11 +47,12 @@ export class RequestDispatcher {
   enqueueRequest<RequestType extends WsRequestType>(
     requestType: RequestType,
     buildCommand: (requestId: string) => ClientCommand,
+    options?: { timeoutMs?: number },
   ): Promise<WsRequestResultMap[RequestType]> {
     const requestId = this.nextRequestId(requestType)
 
     return new Promise<WsRequestResultMap[RequestType]>((resolve, reject) => {
-      this.tracker.track(requestType, requestId, resolve, reject)
+      this.tracker.track(requestType, requestId, resolve, reject, options?.timeoutMs)
 
       const sent = this.deps.send(buildCommand(requestId))
       if (!sent) {

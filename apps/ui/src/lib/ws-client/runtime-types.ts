@@ -7,6 +7,17 @@ export const INITIAL_CONNECT_DELAY_MS = 50
 export const RECONNECT_MS = 1200
 export const REQUEST_TIMEOUT_MS = 300_000
 export const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
+/**
+ * get_session_workers is a small, cheap fetch whose pending promise de-duplicates
+ * every other fetch trigger for the same session. If the response is lost, the
+ * default 5-minute timeout would strand the sidebar/pill worker lists — time out
+ * fast instead and let SessionWorkerCache's failure retry re-dispatch.
+ */
+export const SESSION_WORKERS_REQUEST_TIMEOUT_MS = 15_000
+/** Base delay for SessionWorkerCache's bounded retry after a failed fetch (grows linearly). */
+export const SESSION_WORKERS_RETRY_BASE_MS = 2_000
+/** Max consecutive failed fetches per session before the cache stops retrying automatically. */
+export const SESSION_WORKERS_MAX_FETCH_RETRIES = 3
 // Keep client-side activity retention aligned with backend history retention.
 export const MAX_CLIENT_CONVERSATION_HISTORY = 2000
 

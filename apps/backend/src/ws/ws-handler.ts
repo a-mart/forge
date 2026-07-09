@@ -49,7 +49,7 @@ import { handleSessionCommand } from "./commands/session-command-handler.js";
 import { CollabSubscriptionManager } from "./collab-subscription-manager.js";
 import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
 import { WsApiProxy } from "./ws-api-proxy.js";
-import { sendWsEvent, sendWsEventWithBackpressure } from "./ws-send.js";
+import { hasRequestId, sendWsEvent, sendWsEventWithBackpressure } from "./ws-send.js";
 import { WsSubscriptions } from "./ws-subscriptions.js";
 
 export class WsHandler {
@@ -656,6 +656,22 @@ export class WsHandler {
   }
 
   private send(socket: WebSocket, event: ServerEvent | CollaborationServerEvent): number | null {
+    // Request/response events (requestId present) must not be silently dropped
+    // under transient backpressure — the requesting client would hang on its
+    // pending promise until timeout, de-duplicating every retry onto the dead
+    // request. Route them through the drain-aware sender; other live events
+    // keep drop-on-backpressure. This includes broadcasts that echo a
+    // requestId (e.g. manager_created): for the originator they ARE the
+    // response. Two accepted tradeoffs: (1) bystander sockets get drain-await
+    // for such broadcasts too, and (2) a drain-awaited event can be overtaken
+    // on the wire by later synchronous sends to the same socket — clients
+    // correlate by requestId, not delivery order, and the alternative under
+    // backpressure was dropping the event entirely.
+    if (hasRequestId(event)) {
+      void this.sendWithBackpressure(socket, event);
+      return null;
+    }
+
     return sendWsEvent({
       socket,
       event,

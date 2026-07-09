@@ -20,6 +20,19 @@ export const BOOTSTRAP_CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   "unread_counts_snapshot",
 ]);
 
+/**
+ * An event carrying a `requestId` is a request/response: the requesting client holds a pending
+ * promise on it (and de-duplicates concurrent callers onto that promise) until the response
+ * arrives or its timeout fires. Silently dropping one under transient backpressure breaks that
+ * contract — e.g. a `session_workers_snapshot` response dropped while a large session bootstrap
+ * saturated the socket left the sidebar/pill worker lists empty with every retry de-duped onto
+ * the dead request. Treat these like bootstrap-critical: await drain instead of dropping.
+ */
+export function hasRequestId(event: ServerEvent | CollaborationServerEvent): boolean {
+  const requestId = (event as { requestId?: unknown }).requestId;
+  return typeof requestId === "string" && requestId.length > 0;
+}
+
 /** Max time to await a saturated socket buffer to drain before falling back to the drop path. */
 export const BOOTSTRAP_DRAIN_TIMEOUT_MS = 5_000;
 /** Poll interval while waiting for `bufferedAmount` to fall below the cap. */
@@ -127,7 +140,7 @@ export async function sendWsEventWithBackpressure(options: {
   const { socket, event, onDropSocket, timeoutMs = BOOTSTRAP_DRAIN_TIMEOUT_MS } = options;
 
   if (
-    BOOTSTRAP_CRITICAL_EVENT_TYPES.has(event.type) &&
+    (BOOTSTRAP_CRITICAL_EVENT_TYPES.has(event.type) || hasRequestId(event)) &&
     socket.readyState === WebSocket.OPEN &&
     socket.bufferedAmount > MAX_WS_BUFFERED_AMOUNT_BYTES
   ) {
