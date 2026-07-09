@@ -4,6 +4,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
+  type SetStateAction,
 } from 'react'
 import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebarConnected } from '@/components/chat/AgentSidebarConnected'
@@ -42,10 +44,12 @@ import {
   originRegistry,
   useOriginMeta,
   useOriginSlice,
+  useOriginSnapshot,
   type OriginId,
 } from '@/lib/origin-store'
 import { getCollaborationConnectionOptions, resolveCollaborationTarget } from '@/lib/collaboration-connections'
 import type { ManagerWsState } from '@/lib/ws-state'
+import type { ManagerWsClient } from '@/lib/ws-client'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
 import { useOriginConnection } from '@/hooks/index-page/use-origin-connection'
@@ -167,6 +171,20 @@ export function BuilderSurface({
   const archiveHydrationRequestedRef = useRef(false)
 
   const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, localWsUrl)
+  const localOriginState = useOriginSnapshot(LOCAL_ORIGIN_ID)
+  const localClientRef = useRef<ManagerWsClient | null>(null)
+  // eslint-disable-next-line -- keep local sidebar action handlers bound to the local origin during this render
+  localClientRef.current = originRegistry.getOrigin(LOCAL_ORIGIN_ID)?.getClient() ?? null
+
+  const setLocalOriginState = useCallback<Dispatch<SetStateAction<ManagerWsState>>>((nextState) => {
+    const localStore = originRegistry.getOrigin(LOCAL_ORIGIN_ID)
+    if (!localStore) return
+    const previousState = localStore.getSnapshot()
+    const resolvedState = typeof nextState === 'function'
+      ? (nextState as (prevState: ManagerWsState) => ManagerWsState)(previousState)
+      : nextState
+    localStore.ingest({ type: 'snapshot', state: resolvedState })
+  }, [])
 
   // Sync builder WS health to the module-level store so ModeSwitch can
   // display the builder connection dot even from the collab surface. Always
@@ -462,6 +480,10 @@ export function BuilderSurface({
   }, [activeAgentId, state.statuses])
 
   const hasCreatedProjectManager = useMemo(() => hasProjectManagers(state.agents), [state.agents])
+  const localActiveAgent = useMemo(() => {
+    if (activeOriginId !== LOCAL_ORIGIN_ID || !activeAgentId) return null
+    return localOriginState.agents.find((agent) => agent.agentId === activeAgentId) ?? null
+  }, [activeAgentId, activeOriginId, localOriginState.agents])
 
   const shouldShowWelcomeForm =
     routeState.view === 'chat' &&
@@ -497,12 +519,6 @@ export function BuilderSurface({
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,
     handleCreateManager,
-    managerToDelete,
-    deleteManagerError,
-    isDeletingManager,
-    handleRequestDeleteManager,
-    handleConfirmDeleteManager,
-    handleCloseDeleteManagerDialog,
     isCompactingManager,
     handleCompactManager,
     isSmartCompactingManager,
@@ -539,6 +555,44 @@ export function BuilderSurface({
     messageListRef,
   })
   const { replyTarget, setReplyTarget, messageForkTarget, setMessageForkTarget } = session
+
+  const localManagerActions = useManagerActions({
+    wsUrl: localWsUrl,
+    clientRef: localClientRef,
+    agents: localOriginState.agents,
+    activeAgent: localActiveAgent,
+    activeAgentId: activeOriginId === LOCAL_ORIGIN_ID ? activeAgentId : null,
+    isActiveManager: activeOriginId === LOCAL_ORIGIN_ID && localActiveAgent?.role === 'manager',
+    navigateToRoute: (nextRouteState, replace) => {
+      navigateToRoute(
+        nextRouteState.view === 'chat'
+          ? { ...nextRouteState, origin: LOCAL_ORIGIN_ID }
+          : nextRouteState,
+        replace,
+      )
+    },
+    setState: setLocalOriginState,
+    clearPendingResponseForAgent: transcript.clearPendingResponseForAgent,
+  })
+
+  const localSidebarSession = useSessionActions({
+    clientRef: localClientRef,
+    fileEditorCoordinator: panels.fileEditorCoordinator,
+    state: localOriginState,
+    activeAgent: localActiveAgent,
+    activeAgentId: activeOriginId === LOCAL_ORIGIN_ID ? activeAgentId : null,
+    isActiveManager: activeOriginId === LOCAL_ORIGIN_ID && localActiveAgent?.role === 'manager',
+    isLoading: false,
+    navigateToRoute: (nextRouteState, replace) => {
+      navigateToRoute({ ...nextRouteState, origin: LOCAL_ORIGIN_ID }, replace)
+    },
+    setState: setLocalOriginState,
+    visibleMessages: activeOriginId === LOCAL_ORIGIN_ID ? transcript.visibleMessages : [],
+    markPendingResponse: transcript.markPendingResponse,
+    handleCompactManager: async () => {},
+    messageInputRef,
+    messageListRef,
+  })
 
   const {
     isDraggingFiles,
@@ -660,8 +714,8 @@ export function BuilderSurface({
         onMobileClose={() => panels.setIsMobileSidebarOpen(false)}
         onAddManager={handleOpenCreateManagerDialog}
         onSelectAgent={handleSelectSidebarAgent}
-        onDeleteAgent={session.handleDeleteAgent}
-        onDeleteManager={handleRequestDeleteManager}
+        onDeleteAgent={localSidebarSession.handleDeleteAgent}
+        onDeleteManager={localManagerActions.handleRequestDeleteManager}
         onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
           navigateToRoute({ view: 'settings', surface: 'builder' })
         })}
@@ -671,35 +725,35 @@ export function BuilderSurface({
         onOpenArchive={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'archive' }, () => {
           navigateToRoute({ view: 'archive', surface: 'builder' })
         })}
-        onCreateSession={session.handleCreateSession}
-        onStopSession={session.handleStopSession}
-        onResumeSession={session.handleResumeSession}
-        onDeleteSession={session.handleDeleteSession}
-        onArchiveSession={session.handleArchiveSession}
-        onArchiveProfile={session.handleArchiveProfile}
-        onRenameSession={session.handleRenameSession}
-        onPinSession={session.handlePinSession}
-        onRenameProfile={session.handleRenameProfile}
-        onForkSession={session.handleForkSession}
-        onMarkUnread={session.handleMarkUnread}
-        onMarkAllRead={session.handleMarkAllRead}
-        onUpdateManagerModel={session.handleUpdateManagerModel}
-        onUpdateSessionModel={session.handleUpdateSessionModel}
-        onUpdateManagerCwd={session.handleUpdateManagerCwd}
-        onBrowseDirectory={session.handleBrowseDirectoryForCwd}
-        onValidateDirectory={session.handleValidateDirectoryForCwd}
-        onRequestSessionWorkers={session.handleRequestSessionWorkers}
-        onReorderProfiles={session.handleReorderProfiles}
-        onSetSessionProjectAgent={session.handleSetSessionProjectAgent}
-        onGetProjectAgentConfig={session.handleGetProjectAgentConfig}
-        onGetProjectAgentSharing={session.handleGetProjectAgentSharing}
-        onSetProjectAgentSharing={session.handleSetProjectAgentSharing}
-        onListProjectAgentReferences={session.handleListProjectAgentReferences}
-        onGetProjectAgentReference={session.handleGetProjectAgentReference}
-        onSetProjectAgentReference={session.handleSetProjectAgentReference}
-        onDeleteProjectAgentReference={session.handleDeleteProjectAgentReference}
-        onRequestProjectAgentRecommendations={session.handleRequestProjectAgentRecommendations}
-        onCreateAgentCreator={session.handleCreateAgentCreator}
+        onCreateSession={localSidebarSession.handleCreateSession}
+        onStopSession={localSidebarSession.handleStopSession}
+        onResumeSession={localSidebarSession.handleResumeSession}
+        onDeleteSession={localSidebarSession.handleDeleteSession}
+        onArchiveSession={localSidebarSession.handleArchiveSession}
+        onArchiveProfile={localSidebarSession.handleArchiveProfile}
+        onRenameSession={localSidebarSession.handleRenameSession}
+        onPinSession={localSidebarSession.handlePinSession}
+        onRenameProfile={localSidebarSession.handleRenameProfile}
+        onForkSession={localSidebarSession.handleForkSession}
+        onMarkUnread={localSidebarSession.handleMarkUnread}
+        onMarkAllRead={localSidebarSession.handleMarkAllRead}
+        onUpdateManagerModel={localSidebarSession.handleUpdateManagerModel}
+        onUpdateSessionModel={localSidebarSession.handleUpdateSessionModel}
+        onUpdateManagerCwd={localSidebarSession.handleUpdateManagerCwd}
+        onBrowseDirectory={localSidebarSession.handleBrowseDirectoryForCwd}
+        onValidateDirectory={localSidebarSession.handleValidateDirectoryForCwd}
+        onRequestSessionWorkers={localSidebarSession.handleRequestSessionWorkers}
+        onReorderProfiles={localSidebarSession.handleReorderProfiles}
+        onSetSessionProjectAgent={localSidebarSession.handleSetSessionProjectAgent}
+        onGetProjectAgentConfig={localSidebarSession.handleGetProjectAgentConfig}
+        onGetProjectAgentSharing={localSidebarSession.handleGetProjectAgentSharing}
+        onSetProjectAgentSharing={localSidebarSession.handleSetProjectAgentSharing}
+        onListProjectAgentReferences={localSidebarSession.handleListProjectAgentReferences}
+        onGetProjectAgentReference={localSidebarSession.handleGetProjectAgentReference}
+        onSetProjectAgentReference={localSidebarSession.handleSetProjectAgentReference}
+        onDeleteProjectAgentReference={localSidebarSession.handleDeleteProjectAgentReference}
+        onRequestProjectAgentRecommendations={localSidebarSession.handleRequestProjectAgentRecommendations}
+        onCreateAgentCreator={localSidebarSession.handleCreateAgentCreator}
       />
 
       {showActivityRail ? (
@@ -1168,12 +1222,12 @@ export function BuilderSurface({
           },
         }}
         deleteManagerDialogProps={{
-          managerToDelete,
-          deleteManagerError,
-          isDeletingManager,
-          onClose: handleCloseDeleteManagerDialog,
+          managerToDelete: localManagerActions.managerToDelete,
+          deleteManagerError: localManagerActions.deleteManagerError,
+          isDeletingManager: localManagerActions.isDeletingManager,
+          onClose: localManagerActions.handleCloseDeleteManagerDialog,
           onConfirm: () => {
-            void handleConfirmDeleteManager()
+            void localManagerActions.handleConfirmDeleteManager()
           },
         }}
         forkSessionDialogProps={
