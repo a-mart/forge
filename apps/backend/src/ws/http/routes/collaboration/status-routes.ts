@@ -7,6 +7,13 @@ const COLLABORATION_STATUS_METHODS = "GET, OPTIONS";
 
 export function createCollaborationStatusRoutes(options: {
   settingsService: CollaborationSettingsService;
+  /** Additive instance-handshake fields (SPEC §4.4) merged into the status. */
+  buildStatusHandshake?: () => {
+    instanceName: string;
+    forgeVersion: string;
+    protocolVersion: number;
+    capabilities: { collab: boolean; remoteBuild: boolean };
+  };
 }): HttpRoute[] {
   return [
     {
@@ -28,7 +35,11 @@ export function createCollaborationStatusRoutes(options: {
           return;
         }
 
-        sendJson(response, 200, options.settingsService.getCollaborationStatus() as unknown as Record<string, unknown>);
+        const status = {
+          ...options.settingsService.getCollaborationStatus(),
+          ...(options.buildStatusHandshake?.() ?? {}),
+        };
+        sendJson(response, 200, status as unknown as Record<string, unknown>);
       },
     },
   ];

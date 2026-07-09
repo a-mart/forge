@@ -36,9 +36,19 @@ import {
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
+import {
+  LOCAL_ORIGIN_ID,
+  forgeOriginManager,
+  originRegistry,
+  useOriginMeta,
+  useOriginSlice,
+  type OriginId,
+} from '@/lib/origin-store'
+import { getCollaborationConnectionOptions, resolveCollaborationTarget } from '@/lib/collaboration-connections'
+import type { ManagerWsState } from '@/lib/ws-state'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
-import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
+import { useOriginConnection } from '@/hooks/index-page/use-origin-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useActiveAgent } from '@/hooks/index-page/use-active-agent'
 import { useWorkspacePanels } from '@/hooks/index-page/use-workspace-panels'
@@ -60,6 +70,8 @@ import type {
 
 type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
 
+const selectLocalConnected = (s: ManagerWsState): boolean => s.connected
+
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
   return Boolean(
     agent &&
@@ -70,7 +82,12 @@ function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): b
 }
 
 type BuilderNavigationState =
-  | { view: 'chat'; agentId: string }
+  | {
+      view: 'chat'
+      agentId: string
+      /** Target origin; omitted = stay on the currently active origin. */
+      origin?: OriginId
+    }
   | { view: 'settings'; surface: ActiveSurface }
   | { view: 'stats'; statsTab?: StatsTab }
   | { view: 'archive'; surface: ActiveSurface }
@@ -87,23 +104,54 @@ interface BuilderSurfaceProps {
 }
 
 export function BuilderSurface({
-  wsUrl,
+  wsUrl: localWsUrl,
   routeState,
   activeView,
   navigateToRoute: navigateToOuterRoute,
   collaborationModeSwitch,
 }: BuilderSurfaceProps) {
+  // Wave R: the route's `origin` selects which origin's state/client feed the
+  // chat surface. Absent = the local origin. Non-chat views always render
+  // against local.
+  const activeOriginId: OriginId =
+    routeState.view === 'chat' && routeState.origin ? routeState.origin : LOCAL_ORIGIN_ID
+  const isRemoteOriginActive = activeOriginId !== LOCAL_ORIGIN_ID
+  // Identity behind the active origin's connection (null on local): author
+  // chips render only for authors other than this user (SPEC §5.5).
+  const activeOriginMeta = useOriginMeta(activeOriginId)
+  const activeOriginCurrentUserId = isRemoteOriginActive
+    ? activeOriginMeta?.currentUser?.userId ?? null
+    : null
+  // The ACTIVE origin's backend URL. Every project-scoped surface below
+  // (files/git/terminals/attachments/audit/model availability) derives its
+  // HTTP endpoints from this — instance-local surfaces (settings, stats,
+  // onboarding, cortex, sidebar usage) explicitly use `localWsUrl`.
+  const wsUrl = useMemo(() => {
+    if (!isRemoteOriginActive) return localWsUrl
+    const store = originRegistry.getOrigin(activeOriginId)
+    if (store) return store.wsUrl
+    const target = getCollaborationConnectionOptions().find(
+      (candidate) => candidate.connectionId === activeOriginId,
+    )
+    return target?.wsUrl ?? localWsUrl
+  }, [activeOriginId, isRemoteOriginActive, localWsUrl])
+
   const navigateToRoute = useCallback((nextRouteState: BuilderNavigationState, replace = false) => {
     if (nextRouteState.view === 'chat') {
+      // Internal chat navigations stay on the active origin unless the caller
+      // targets one explicitly (sidebar cross-origin selects).
+      const resolvedOrigin = nextRouteState.origin ?? activeOriginId
       navigateToOuterRoute({
-        ...nextRouteState,
+        view: 'chat',
+        agentId: nextRouteState.agentId,
         surface: 'builder',
+        origin: resolvedOrigin === LOCAL_ORIGIN_ID ? undefined : resolvedOrigin,
       }, replace)
       return
     }
 
     navigateToOuterRoute(nextRouteState, replace)
-  }, [navigateToOuterRoute])
+  }, [activeOriginId, navigateToOuterRoute])
 
   // Shell-level refs shared across the extracted controllers.  Keeping these at
   // the shell (not inside a hook) is what breaks the apparent ordering cycle
@@ -118,13 +166,17 @@ export function BuilderSurface({
   const fileEditorCoordinatorRef = useRef<FileEditorCoordinator | null>(null)
   const archiveHydrationRequestedRef = useRef(false)
 
-  const { clientRef, httpClientRef, state, setState } = useWsConnection(wsUrl)
+  const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, localWsUrl)
 
   // Sync builder WS health to the module-level store so ModeSwitch can
-  // display the builder connection dot even from the collab surface.
+  // display the builder connection dot even from the collab surface. Always
+  // reflects the LOCAL origin — remote origin health lives in origin meta.
+  const localConnected = useOriginSlice(LOCAL_ORIGIN_ID, selectLocalConnected, {
+    selectorKey: 'builder.localConnected',
+  })
   useEffect(() => {
-    reportBuilderConnected(state.connected)
-  }, [state.connected])
+    reportBuilderConnected(localConnected)
+  }, [localConnected])
 
   useEffect(() => {
     let cancelled = false
@@ -161,7 +213,7 @@ export function BuilderSurface({
     error: onboardingError,
     savePreferences: saveOnboardingPreferences,
     skip: skipOnboarding,
-  } = useOnboardingState(wsUrl)
+  } = useOnboardingState(localWsUrl)
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
@@ -413,10 +465,12 @@ export function BuilderSurface({
 
   const shouldShowWelcomeForm =
     routeState.view === 'chat' &&
+    activeOriginId === LOCAL_ORIGIN_ID &&
     !hasCreatedProjectManager &&
     onboardingState?.status === 'pending'
   const shouldShowCreateManagerState =
     routeState.view === 'chat' &&
+    activeOriginId === LOCAL_ORIGIN_ID &&
     !hasCreatedProjectManager &&
     Boolean(onboardingState && onboardingState.status !== 'pending')
 
@@ -542,6 +596,48 @@ export function BuilderSurface({
 
   const showActivityRail = activeView === 'chat'
 
+  // Wave R presence: other members viewing the active session (self excluded).
+  const presenceViewers = useMemo(() => {
+    const viewers =
+      (activeAgentId ? state.projectPresence[activeAgentId] : undefined) ??
+      (activeManagerId ? state.projectPresence[activeManagerId] : undefined) ??
+      []
+    return viewers.filter((viewer) => viewer.userId !== activeOriginCurrentUserId)
+  }, [activeAgentId, activeManagerId, activeOriginCurrentUserId, state.projectPresence])
+
+  // ── Wave R: origin-aware sidebar selection ──
+  const handleSelectSidebarAgent = useCallback((agentId: string) => {
+    if (activeOriginId === LOCAL_ORIGIN_ID) {
+      panels.handleSelectAgent(agentId)
+      return
+    }
+    // Cross-origin select back to local: route change flips the active origin;
+    // the route→subscription sync subscribes on the local client.
+    navigateToRoute({ view: 'chat', agentId, origin: LOCAL_ORIGIN_ID })
+  }, [activeOriginId, navigateToRoute, panels])
+
+  const handleSelectRemoteAgent = useCallback((originId: string, agentId: string) => {
+    if (originId === activeOriginId) {
+      panels.handleSelectAgent(agentId)
+      return
+    }
+    navigateToRoute({ view: 'chat', agentId, origin: originId })
+  }, [activeOriginId, navigateToRoute, panels])
+
+  const handleRemoteOriginSignIn = useCallback((originId: string) => {
+    const target = resolveCollaborationTarget(originId)
+    navigateToOuterRoute({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+      collabApiBaseUrl: target.apiBaseUrl,
+    })
+  }, [navigateToOuterRoute])
+
+  const handleRemoteOriginRetry = useCallback((originId: string) => {
+    forgeOriginManager.retryOrigin(originId)
+  }, [])
+
   const feedbackProfileId = transcript.feedbackProfileId
 
   return (
@@ -549,16 +645,21 @@ export function BuilderSurface({
       <FileDirtyConfirmDialog state={panels.fileEditorCoordinator.dialogState} />
 
       <AgentSidebarConnected
-        wsUrl={wsUrl}
+        wsUrl={localWsUrl}
         collaborationModeSwitch={collaborationModeSwitch}
         selectedAgentId={activeAgentId}
+        localTreeReadOnly={activeOriginId !== LOCAL_ORIGIN_ID}
+        activeOriginId={activeOriginId}
+        onSelectRemoteAgent={handleSelectRemoteAgent}
+        onRemoteOriginSignIn={handleRemoteOriginSignIn}
+        onRemoteOriginRetry={handleRemoteOriginRetry}
         isSettingsActive={activeView === 'settings'}
         isStatsActive={activeView === 'stats'}
         isArchiveActive={activeView === 'archive'}
         isMobileOpen={panels.isMobileSidebarOpen}
         onMobileClose={() => panels.setIsMobileSidebarOpen(false)}
         onAddManager={handleOpenCreateManagerDialog}
-        onSelectAgent={panels.handleSelectAgent}
+        onSelectAgent={handleSelectSidebarAgent}
         onDeleteAgent={session.handleDeleteAgent}
         onDeleteManager={handleRequestDeleteManager}
         onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
@@ -705,7 +806,7 @@ export function BuilderSurface({
               </div>
             ) : activeView === 'settings' ? (
               <SettingsPanel
-                wsUrl={wsUrl}
+                wsUrl={localWsUrl}
                 managers={settingsManagers}
                 profiles={state.profiles}
                 telegramStatus={state.telegramStatus}
@@ -730,7 +831,7 @@ export function BuilderSurface({
               />
             ) : activeView === 'stats' ? (
               <StatsPage
-                wsUrl={wsUrl}
+                wsUrl={localWsUrl}
                 routeState={routeState as { view: 'stats'; statsTab?: StatsTab }}
                 onBack={() =>
                   navigateToRoute({
@@ -761,6 +862,7 @@ export function BuilderSurface({
                   connected: state.connected,
                   activeAgentId,
                   activeAgentLabel,
+                  presenceViewers,
                   wsUrl,
                   activeAgentProfileName,
                   activeAgentSessionLabel,
@@ -855,6 +957,7 @@ export function BuilderSurface({
                   isLoading,
                   wsUrl,
                   activeAgentId,
+                  currentCollabUserId: activeOriginCurrentUserId ?? undefined,
                   projectAgent: activeAgent?.projectAgent,
                   onSuggestionClick: session.handleSuggestionClick,
                   onArtifactClick: panels.handleOpenArtifact,
@@ -958,7 +1061,7 @@ export function BuilderSurface({
             <ChatSidePanels
               isCortexSession={activeAgent?.archetypeId === 'cortex'}
               cortexDashboardProps={{
-                wsUrl,
+                wsUrl: localWsUrl,
                 managerId: activeManagerId,
                 isOpen: panels.isArtifactsPanelOpen,
                 onClose: panels.handleGuardedArtifactsClose,
@@ -1053,9 +1156,13 @@ export function BuilderSurface({
           onModelSelectionChange: handleNewManagerModelSelectionChange,
           onReasoningLevelChange: handleNewManagerReasoningLevelChange,
           onScaffoldForgeResourcesChange: handleScaffoldForgeResourcesChange,
-          onBrowseDirectory: () => {
-            void handleBrowseDirectory()
-          },
+          // Remote origins have no local-machine dialogs: the picker is
+          // hidden and paths are typed + validated over the origin's socket.
+          onBrowseDirectory: isRemoteOriginActive
+            ? undefined
+            : () => {
+                void handleBrowseDirectory()
+              },
           onSubmit: (event) => {
             void handleCreateManager(event)
           },
@@ -1098,7 +1205,7 @@ export function BuilderSurface({
         }}
       />
 
-      <CortexV2OnboardingModal source={wsUrl} />
+      <CortexV2OnboardingModal source={localWsUrl} />
     </>
   )
 }

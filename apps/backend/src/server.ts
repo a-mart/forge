@@ -59,6 +59,8 @@ export interface StartedServer extends ServerReadyInfo {
   stop(): Promise<void>;
   stopListening(): Promise<void>;
   startListening(): Promise<void>;
+  /** Test hook for the route-inventory classification gate. */
+  listRegisteredHttpRoutes(): ReadonlyArray<{ methods: string; matches: (pathname: string) => boolean }>;
 }
 
 let activeServer: BackendServer | null = null;
@@ -499,6 +501,10 @@ class BackendServer implements StartedServer {
 
     this.listening = false;
     await this.wsServer.stop();
+  }
+
+  listRegisteredHttpRoutes(): ReadonlyArray<{ methods: string; matches: (pathname: string) => boolean }> {
+    return this.wsServer.listRegisteredHttpRoutes();
   }
 
   async stop(): Promise<void> {

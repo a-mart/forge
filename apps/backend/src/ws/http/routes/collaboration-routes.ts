@@ -28,11 +28,20 @@ export function createCollaborationRoutes(options: {
   readinessService?: CollaborationReadinessRequestService;
   swarmManager?: CollaborationRouteSwarmManager;
   broadcasts?: CollaborationRouteBroadcasts;
+  buildStatusHandshake?: () => {
+    instanceName: string;
+    forgeVersion: string;
+    protocolVersion: number;
+    capabilities: { collab: boolean; remoteBuild: boolean };
+  };
 }): HttpRoute[] {
   const getServices = createCollaborationRouteServicesGetter(options);
 
   return [
-    ...createCollaborationStatusRoutes({ settingsService: options.settingsService }),
+    ...createCollaborationStatusRoutes({
+      settingsService: options.settingsService,
+      buildStatusHandshake: options.buildStatusHandshake,
+    }),
     ...createCollaborationMeRoutes({ getServices }),
     ...createCollaborationUserRoutes({ getServices }),
     ...createCollaborationInviteRoutes({ getServices }),

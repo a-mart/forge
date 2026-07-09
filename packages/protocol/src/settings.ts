@@ -40,6 +40,32 @@ export interface NotificationSettingsMutationResponse extends NotificationSettin
   ok: true
 }
 
+/**
+ * Remote-projects (Wave R) instance settings. `enabled` is the product kill
+ * switch: nothing member-facing activates while it is false. Admin-only writes.
+ */
+export interface RemoteBuildSettings {
+  enabled: boolean
+  terminalsEnabled: boolean
+  /** Admin-set display name; null falls back to the host name at read time. */
+  instanceName: string | null
+  updatedAt: string | null
+}
+
+export interface UpdateRemoteBuildSettingsRequest {
+  enabled?: boolean
+  terminalsEnabled?: boolean
+  instanceName?: string | null
+}
+
+export interface RemoteBuildSettingsResponse {
+  settings: RemoteBuildSettings
+}
+
+export interface RemoteBuildSettingsMutationResponse extends RemoteBuildSettingsResponse {
+  ok: true
+}
+
 export interface SettingsAuthProvider {
   provider: SettingsAuthProviderId
   configured: boolean

@@ -60,6 +60,7 @@ describe('terminal-api', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/terminals', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         sessionAgentId: 'manager-1',
         name: 'Build shell',
@@ -80,7 +81,7 @@ describe('terminal-api', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/terminals/term%2F1?sessionAgentId=manager-1',
-      { method: 'DELETE' },
+      { method: 'DELETE', credentials: 'include' },
     )
   })
 
@@ -116,6 +117,7 @@ describe('terminal-api', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/terminals/term-1', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ sessionAgentId: 'manager-1', name: 'Renamed terminal' }),
     })
     expect(response.terminal.name).toBe('Renamed terminal')
@@ -154,6 +156,7 @@ describe('terminal-api', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/terminals/term-1/resize', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ sessionAgentId: 'manager-1', cols: 132, rows: 48 }),
     })
     expect(response.terminal.cols).toBe(132)
@@ -177,6 +180,7 @@ describe('terminal-api', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/terminals/term-1/ticket', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ sessionAgentId: 'profile-1', requesterAgentId: 'manager-1' }),
     })
     expect(response.ticket).toBe('ticket-2')

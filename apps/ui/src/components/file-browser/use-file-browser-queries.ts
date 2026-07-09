@@ -79,7 +79,7 @@ async function fetchJson<T>(
   init?: RequestInit,
 ): Promise<T> {
   const url = resolveApiEndpoint(wsUrl, path)
-  const response = await fetch(url, init)
+  const response = await fetch(url, { credentials: 'include', ...init })
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }))
@@ -402,7 +402,7 @@ export async function deleteFilePath(
   const params = buildFileBrowserParams(request.agentId, { path: request.path }, request.worktreeId)
   const searchParams = new URLSearchParams(params)
   const url = resolveApiEndpoint(wsUrl, `/api/files/content?${searchParams.toString()}`)
-  const response = await fetch(url, { method: 'DELETE' })
+  const response = await fetch(url, { method: 'DELETE', credentials: 'include' })
 
   const payload = await parseResponseJson(response)
   if (!response.ok) {
@@ -488,6 +488,7 @@ export async function saveFileContent(
   const response = await fetch(url, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(request),
   })
 

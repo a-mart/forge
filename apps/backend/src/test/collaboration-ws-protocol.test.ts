@@ -1108,12 +1108,14 @@ describe("collaboration websocket protocol", () => {
     const adminWs = await openAuthenticatedWs(baseUrl, adminCookie);
     const memberWs = await openAuthenticatedWs(baseUrl, memberCookie);
 
+    // Wave R: with remoteBuild.enabled off (the default), members still get
+    // no builder WS access — the denial reason changed, the posture did not.
     memberWs.socket.send(JSON.stringify({ type: "subscribe", agentId: "workspace" }));
     const memberGateError = await memberWs.waitForEvent(
       "error",
       (event) =>
         event.code === "COLLABORATION_COMMAND_NOT_ALLOWED" &&
-        event.message === "Members may only use collab_* WebSocket commands.",
+        event.message === "Remote projects are disabled on this instance.",
     );
     expect(memberGateError.code).toBe("COLLABORATION_COMMAND_NOT_ALLOWED");
 

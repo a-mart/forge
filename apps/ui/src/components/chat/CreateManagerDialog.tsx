@@ -60,7 +60,8 @@ interface CreateManagerDialogProps {
   onModelSelectionChange: (value: ManagerExactModelSelection) => void
   onReasoningLevelChange: (value: ManagerReasoningLevel) => void
   onScaffoldForgeResourcesChange: (checked: boolean) => void
-  onBrowseDirectory: () => void
+  /** Native directory picker; omit for remote origins (no local dialogs). */
+  onBrowseDirectory?: () => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }
 
@@ -201,14 +202,16 @@ export function CreateManagerDialog({
                 value={newManagerCwd}
                 onChange={(event) => onCwdChange(event.target.value)}
               />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onBrowseDirectory}
-                disabled={isPickingDirectory || isCreatingManager}
-              >
-                {isPickingDirectory ? 'Browsing...' : 'Browse'}
-              </Button>
+              {onBrowseDirectory ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onBrowseDirectory}
+                  disabled={isPickingDirectory || isCreatingManager}
+                >
+                  {isPickingDirectory ? 'Browsing...' : 'Browse'}
+                </Button>
+              ) : null}
             </div>
 
             {browseError ? (

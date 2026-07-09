@@ -28,15 +28,36 @@ export type OriginAuthState =
   | 'authenticated'
   | 'unauthorized'
 
+/** The signed-in identity behind a remote origin's connection (Wave R). */
+export interface OriginCurrentUser {
+  userId: string
+  displayName: string
+  role: 'admin' | 'member'
+}
+
 export interface OriginMetaState {
   connectionStatus: OriginConnectionStatus
   authState: OriginAuthState
   /** Server-advertised capability flags (opaque today; populated by Wave R). */
   capabilities: Readonly<Record<string, boolean>>
-  /** Negotiated protocol version, or `null` before the handshake completes. */
-  protocolVersion: string | null
+  /** Server-advertised builder protocol version from the handshake. */
+  protocolVersion: number | null
   /** Last transport/connection error, separate from domain `lastError`. */
   lastError: string | null
+  /**
+   * Identity of the user this origin is connected as (`null` for the local
+   * origin and before the auth probe). Used for author-chip suppression:
+   * chips render only for authors other than this user.
+   */
+  currentUser?: OriginCurrentUser | null
+  /** Instance display name from the handshake (remote origins). */
+  instanceName?: string | null
+  /**
+   * Set when the server's builder protocol version exceeds this client's
+   * ceiling — the origin section renders "update Forge to connect" and the
+   * manager refuses to open a socket.
+   */
+  versionBlocked?: boolean
 }
 
 export function createInitialOriginMetaState(

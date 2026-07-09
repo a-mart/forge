@@ -111,6 +111,7 @@ import type {
   PendingChoicesSnapshotEvent,
   ReadyEvent,
 } from './transport-events.js'
+import type { ProjectPresenceEvent } from './presence.js'
 import type { RestartRecoverySnapshotEvent } from './restart-recovery.js'
 
 // Compatibility re-exports from leaf modules
@@ -157,6 +158,7 @@ export type ServerEvent =
   | ConversationHistoryEvent
   | PendingChoicesSnapshotEvent
   | RestartRecoverySnapshotEvent
+  | ProjectPresenceEvent
   | SessionTaskStateSnapshotEvent
   | ConversationEntry
   | AgentStatusEvent

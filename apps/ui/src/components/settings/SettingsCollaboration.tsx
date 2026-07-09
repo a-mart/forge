@@ -16,14 +16,17 @@ import { CollaborationMembers } from './collaboration/CollaborationMembers'
 import { CollaborationInvites } from './collaboration/CollaborationInvites'
 import { CollaborationAuthError } from './collaboration/CollaborationAuthError'
 import {
+  cacheCollaborationConnectionCapabilities,
   getCollaborationConnectionOptions,
   getDefaultCollaborationConnection,
   upsertCollaborationConnection,
   removeCollaborationConnection,
   renameCollaborationConnection,
+  setCollaborationConnectionRemoteProjects,
   subscribeToRegistryChanges,
   type CollaborationEndpointTarget,
 } from '@/lib/collaboration-connections'
+import { Switch } from '@/components/ui/switch'
 import type { CollaborationSessionInfo, CollaborationStatus } from '@forge/protocol'
 
 // ---------------------------------------------------------------------------
@@ -178,6 +181,15 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
       const data = await fetchCollaborationStatus(apiBaseUrl)
       if (signal?.aborted) return
       setStatus(data)
+      // Wave R: persist observed instance capabilities on the connection
+      // record so the Projects badge/toggle render from the cache.
+      if (selectedIdRef.current && typeof data.protocolVersion === 'number') {
+        cacheCollaborationConnectionCapabilities(selectedIdRef.current, {
+          collab: data.capabilities?.collab ?? data.enabled === true,
+          remoteBuild: data.capabilities?.remoteBuild ?? false,
+          protocolVersion: data.protocolVersion,
+        })
+      }
       if (data.enabled) {
         await fetchSession(apiBaseUrl, signal)
       } else {
@@ -534,6 +546,14 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
                   >
                     {conn.kind === 'same-origin' ? 'Local' : 'Remote'}
                   </Badge>
+                  {conn.capabilities?.remoteBuild ? (
+                    <Badge
+                      className="border-transparent bg-sky-500/15 px-2 py-0 text-[10px] uppercase text-sky-700 dark:text-sky-400"
+                      data-testid={`connection-projects-badge-${conn.connectionId}`}
+                    >
+                      Projects
+                    </Badge>
+                  ) : null}
                   {!isEditing && !conn.virtual && (
                     <TooltipProvider>
                       <Tooltip>
@@ -758,6 +778,27 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
                     <code className="text-xs text-muted-foreground">{status.baseUrl}</code>
                   </SettingsWithCTA>
                 )}
+
+                {selectedTarget.isRemote && (status.capabilities?.remoteBuild || selectedTarget.remoteProjectsEnabled) ? (
+                  <SettingsWithCTA
+                    label="Remote projects"
+                    description={
+                      status.capabilities?.remoteBuild
+                        ? 'Show this instance\'s projects in your sidebar and open them like local projects.'
+                        : 'Remote projects are currently disabled on this instance.'
+                    }
+                  >
+                    <Switch
+                      checked={selectedTarget.remoteProjectsEnabled === true}
+                      onCheckedChange={(checked) => {
+                        setCollaborationConnectionRemoteProjects(selectedTarget.connectionId, checked === true)
+                        refreshConnections()
+                      }}
+                      aria-label="Show projects from this instance"
+                      data-testid={`remote-projects-toggle-${selectedTarget.connectionId}`}
+                    />
+                  </SettingsWithCTA>
+                ) : null}
 
                 {session?.authenticated && session.user && (
                   <SettingsWithCTA

@@ -43,7 +43,7 @@ export type {
 async function fetchGitApi<T>(wsUrl: string, path: string, params: Record<string, string>): Promise<T> {
   const searchParams = new URLSearchParams(params)
   const url = resolveApiEndpoint(wsUrl, `${path}?${searchParams.toString()}`)
-  const response = await fetch(url)
+  const response = await fetch(url, { credentials: 'include' })
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }))
@@ -58,6 +58,7 @@ async function postGitApi<T>(wsUrl: string, path: string, body: object): Promise
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
 

@@ -23,7 +23,13 @@ export {
   type OriginMetaState,
   type OriginConnectionStatus,
   type OriginAuthState,
+  type OriginCurrentUser,
 } from './origin-meta'
+
+export {
+  ForgeOriginManager,
+  forgeOriginManager,
+} from './forge-origin-manager'
 
 export {
   OriginStore,
@@ -41,6 +47,7 @@ export {
   useOriginSnapshot,
   useOriginMeta,
   useAllOrigins,
+  useRemoteOriginIds,
   type UseOriginSliceOptions,
   type OriginSliceResult,
 } from './use-origin-store'

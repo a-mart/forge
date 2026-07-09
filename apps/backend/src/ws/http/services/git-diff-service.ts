@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
 import type {
   GitCommitDetail,
@@ -128,7 +128,7 @@ export class GitDiffService {
     const git = this.createGit(cwd);
 
     const oldResult = await git.run(["show", `HEAD:${safePath}`], { allowFailure: true });
-    const newResult = await readUtf8FileAllowMissing(resolve(cwd, safePath));
+    const newResult = await readWorkingTreeUtf8WithinRoot(cwd, safePath);
 
     if (oldResult.exitCode !== 0 && !newResult.exists) {
       throw new Error(`File not found: ${safePath}`);
@@ -162,7 +162,7 @@ export class GitDiffService {
 
   async getUntrackedFileContent(cwd: string, file: string): Promise<string> {
     const safePath = this.resolveSafeRepoPath(cwd, file);
-    const result = await readUtf8FileAllowMissing(resolve(cwd, safePath));
+    const result = await readWorkingTreeUtf8WithinRoot(cwd, safePath);
     if (!result.exists) {
       throw new Error(`File not found: ${safePath}`);
     }
@@ -235,7 +235,7 @@ export class GitDiffService {
       throw new Error("file must resolve to a tracked versioning path.");
     }
 
-    const fileResult = await readUtf8FileAllowMissing(resolve(cwd, normalized.gitPath));
+    const fileResult = await readWorkingTreeUtf8WithinRoot(cwd, normalized.gitPath);
     if (!fileResult.exists) {
       throw new Error(`File not found: ${normalized.gitPath}`);
     }
@@ -829,6 +829,35 @@ function isFenceClose(line: string, fenceChar: string, fenceLength: number): boo
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+async function readWorkingTreeUtf8WithinRoot(
+  cwd: string,
+  relativePath: string
+): Promise<{ exists: boolean; content: string; buffer: Buffer }> {
+  const absoluteRoot = resolve(cwd);
+  const absolutePath = resolve(absoluteRoot, relativePath);
+
+  // resolveSafeRepoPath only validates lexically. Resolve symlinks before reading and
+  // confirm the real target stays inside the repository root, so a symlink created or
+  // committed inside the repo cannot redirect a working-tree read outside it.
+  let realTargetPath: string;
+  try {
+    realTargetPath = await realpath(absolutePath);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return { exists: false, content: "", buffer: Buffer.alloc(0) };
+    }
+    throw error;
+  }
+
+  const realRoot = await realpath(absoluteRoot);
+  const realRootWithSep = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`;
+  if (realTargetPath !== realRoot && !realTargetPath.startsWith(realRootWithSep)) {
+    throw new Error("File path is outside repository root.");
+  }
+
+  return readUtf8FileAllowMissing(realTargetPath);
 }
 
 async function readUtf8FileAllowMissing(path: string): Promise<{ exists: boolean; content: string; buffer: Buffer }> {

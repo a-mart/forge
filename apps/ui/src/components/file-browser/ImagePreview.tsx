@@ -36,6 +36,7 @@ export function ImagePreview({ wsUrl, filePath, agentId, worktreeId = null }: Im
   return (
     <div className="file-browser-scroll flex h-full flex-col items-center justify-center gap-4 overflow-auto p-8">
       <img
+        crossOrigin="use-credentials"
         src={imageUrl}
         alt={fileName}
         className="max-h-[calc(100%-3rem)] max-w-full rounded-lg border border-border/50 bg-muted/20 object-contain"

@@ -135,6 +135,11 @@ async function createCollaborationBetterAuthService(
       disableSignUp: true,
     },
     session: {
+      // 21-day sliding window: better-auth refreshes expiry on use (updateAge),
+      // so an actively-used remote connection effectively never has to re-auth,
+      // and an idle user has a 3-week grace period before signing in again.
+      expiresIn: 60 * 60 * 24 * 21,
+      updateAge: 60 * 60 * 24,
       cookieCache: {
         enabled: false,
       },

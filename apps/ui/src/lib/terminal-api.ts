@@ -39,6 +39,7 @@ export async function createTerminal(
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(request),
   })
   if (!response.ok) throw new Error(await readApiError(response))
@@ -60,6 +61,7 @@ export async function renameTerminal(
   const response = await fetch(endpoint, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(request),
   })
   if (!response.ok) throw new Error(await readApiError(response))
@@ -81,6 +83,7 @@ export async function resizeTerminal(
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(request),
   })
   if (!response.ok) throw new Error(await readApiError(response))
@@ -103,7 +106,7 @@ export async function closeTerminal(
     wsUrl,
     `/api/terminals/${encodeURIComponent(terminalId)}?${params.toString()}`,
   )
-  const response = await fetch(endpoint, { method: 'DELETE' })
+  const response = await fetch(endpoint, { method: 'DELETE', credentials: 'include' })
   if (!response.ok) throw new Error(await readApiError(response))
 }
 
@@ -116,6 +119,7 @@ export async function issueTerminalTicket(
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(request),
   })
   if (!response.ok) throw new Error(await readApiError(response))

@@ -75,6 +75,7 @@ export function buildUserMessageCommand(input: {
   delivery?: DeliveryMode
   attachments?: ConversationAttachment[]
   replyTo?: ConversationReplyTargetInput
+  clientRequestId?: string
 }): ClientCommand {
   return {
     type: 'user_message',
@@ -83,6 +84,7 @@ export function buildUserMessageCommand(input: {
     replyTo: input.replyTo,
     agentId: input.agentId,
     delivery: input.delivery,
+    clientRequestId: input.clientRequestId,
   }
 }
 

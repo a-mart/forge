@@ -150,9 +150,9 @@ describe('origin meta slice', () => {
 
   it('accepts explicit meta patches (Wave R auth path)', () => {
     const store = makeStore(LOCAL_ORIGIN_ID)
-    store.patchMeta({ authState: 'pending', protocolVersion: 'v2' })
+    store.patchMeta({ authState: 'pending', protocolVersion: 2 })
     expect(store.getMetaSnapshot().authState).toBe('pending')
-    expect(store.getMetaSnapshot().protocolVersion).toBe('v2')
+    expect(store.getMetaSnapshot().protocolVersion).toBe(2)
   })
 })
 

@@ -409,20 +409,11 @@ describe('createConfig', () => {
     )
   })
 
-  it('warns and falls back to builder for invalid FORGE_RUNTIME_TARGET values', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    try {
-      await withEnv({ FORGE_RUNTIME_TARGET: 'ship-it' }, () => {
-        expect(resolveRuntimeTargetFromEnv()).toBe('builder')
-        expect(createConfig().runtimeTarget).toBe('builder')
-      })
-
-      expect(warnSpy).toHaveBeenCalledWith(
-        '[config] Ignoring invalid FORGE_RUNTIME_TARGET value: ship-it',
-      )
-    } finally {
-      warnSpy.mockRestore()
-    }
+  it('aborts instead of falling back to builder for an explicitly invalid FORGE_RUNTIME_TARGET', async () => {
+    await withEnv({ FORGE_RUNTIME_TARGET: 'ship-it' }, () => {
+      expect(() => resolveRuntimeTargetFromEnv()).toThrow(/Invalid FORGE_RUNTIME_TARGET value/)
+      expect(() => createConfig()).toThrow(/Invalid FORGE_RUNTIME_TARGET value/)
+    })
   })
 
   it('parses FORGE_DESKTOP as a boolean desktop flag', () => {

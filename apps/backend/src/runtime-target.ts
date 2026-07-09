@@ -14,10 +14,7 @@ export function isCollaborationServerRuntimeTarget(target: RuntimeTarget): boole
   return target === "collaboration-server";
 }
 
-export function resolveRuntimeTargetFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  warn: (message: string) => void = (message) => console.warn(message),
-): RuntimeTarget {
+export function resolveRuntimeTargetFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeTarget {
   const explicitValue = env.FORGE_RUNTIME_TARGET ?? env.MIDDLEMAN_RUNTIME_TARGET;
   const normalizedExplicitValue = explicitValue?.trim();
 
@@ -26,8 +23,13 @@ export function resolveRuntimeTargetFromEnv(
       return normalizedExplicitValue;
     }
 
-    warn(`[config] Ignoring invalid FORGE_RUNTIME_TARGET value: ${explicitValue}`);
-    return "builder";
+    // Fail closed: an explicitly-set-but-invalid target must abort startup, never
+    // silently fall back to builder. A typo like `collab-server` on a collaboration
+    // deployment would otherwise boot the unauthenticated builder surface.
+    throw new Error(
+      `Invalid FORGE_RUNTIME_TARGET value: ${JSON.stringify(explicitValue)}. ` +
+        `Valid values are ${RUNTIME_TARGETS.join(", ")}. Unset the variable to default to builder.`,
+    );
   }
 
   const legacyCollaborationEnabled = parseOptionalBooleanEnv(

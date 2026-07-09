@@ -42,6 +42,11 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
 
     const replyTo = parseConversationReplyTargetInput((maybe as { replyTo?: unknown }).replyTo);
 
+    const clientRequestId = (maybe as { clientRequestId?: unknown }).clientRequestId;
+    if (clientRequestId !== undefined && (typeof clientRequestId !== "string" || clientRequestId.length === 0 || clientRequestId.length > 128)) {
+      return fail("user_message.clientRequestId must be a non-empty string of at most 128 characters when provided");
+    }
+
     return ok({
       type: "user_message",
       text: normalizedText,
@@ -49,6 +54,7 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
       agentId: maybe.agentId,
       delivery: maybe.delivery,
       replyTo,
+      clientRequestId,
     });
   }
 

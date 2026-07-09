@@ -22,6 +22,7 @@ import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import {
   LOCAL_ORIGIN_ID,
   useOriginSlice,
+  useRemoteOriginIds,
   type OriginId,
 } from '@/lib/origin-store'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -35,12 +36,45 @@ type StoreProvidedProps =
   | 'unreadCounts'
   | 'terminalScopeId'
   | 'terminalCount'
+  | 'remoteOriginIds'
 
 export interface AgentSidebarConnectedProps
   extends Omit<AgentSidebarProps, StoreProvidedProps> {
   /** Origin whose sidebar slices to render.  Defaults to the local origin. */
   originId?: OriginId
+  /**
+   * Wave R: when a REMOTE origin is active, the local tree renders
+   * select-only — its row actions are bound to the active origin's client and
+   * would misroute. Row actions return when the local origin is active again.
+   */
+  localTreeReadOnly?: boolean
 }
+
+/** Optional mutation handlers stripped in read-only mode (Wave R R1). */
+const LOCAL_TREE_MUTATION_PROPS = [
+  'onCreateSession',
+  'onStopSession',
+  'onResumeSession',
+  'onDeleteSession',
+  'onArchiveSession',
+  'onArchiveProfile',
+  'onRenameSession',
+  'onPinSession',
+  'onRenameProfile',
+  'onForkSession',
+  'onMarkUnread',
+  'onMarkAllRead',
+  'onUpdateManagerModel',
+  'onUpdateSessionModel',
+  'onUpdateManagerCwd',
+  'onReorderProfiles',
+  'onSetSessionProjectAgent',
+  'onSetProjectAgentSharing',
+  'onSetProjectAgentReference',
+  'onDeleteProjectAgentReference',
+  'onRequestProjectAgentRecommendations',
+  'onCreateAgentCreator',
+] as const
 
 // Stable slice selectors (module-level so their identity is fixed and the store
 // can share the memoized selection across renders).
@@ -54,6 +88,7 @@ const selectTerminalCount = (s: ManagerWsState): number => s.terminals.length
 
 export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   originId = LOCAL_ORIGIN_ID,
+  localTreeReadOnly = false,
   ...rest
 }: AgentSidebarConnectedProps) {
   // Each slice is an independent subscription: the store only wakes this
@@ -67,10 +102,23 @@ export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   const connected = useOriginSlice(originId, selectConnected, { selectorKey: 'sidebar.connected' })
   const terminalScopeId = useOriginSlice(originId, selectTerminalScopeId, { selectorKey: 'sidebar.terminalScopeId' })
   const terminalCount = useOriginSlice(originId, selectTerminalCount, { selectorKey: 'sidebar.terminalCount' })
+  const remoteOriginIds = useRemoteOriginIds()
+
+  let effectiveProps: Omit<AgentSidebarProps, StoreProvidedProps> = rest
+  if (localTreeReadOnly) {
+    const stripped = { ...rest }
+    for (const key of LOCAL_TREE_MUTATION_PROPS) {
+      delete (stripped as Record<string, unknown>)[key]
+    }
+    // Required handlers cannot be omitted; neutralize them instead.
+    stripped.onDeleteAgent = noop
+    stripped.onDeleteManager = noop
+    effectiveProps = stripped
+  }
 
   return (
     <AgentSidebar
-      {...rest}
+      {...effectiveProps}
       connected={connected}
       agents={agents}
       profiles={profiles}
@@ -78,6 +126,9 @@ export const AgentSidebarConnected = memo(function AgentSidebarConnected({
       unreadCounts={unreadCounts}
       terminalScopeId={terminalScopeId}
       terminalCount={terminalCount}
+      remoteOriginIds={remoteOriginIds}
     />
   )
 })
+
+function noop(): void {}

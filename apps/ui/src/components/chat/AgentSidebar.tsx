@@ -42,6 +42,7 @@ import { SidebarSearch } from './agent-sidebar/SidebarSearch'
 import { SidebarFooter } from './agent-sidebar/SidebarFooter'
 import { ModeSwitch } from './collab-sidebar/ModeSwitch'
 import { ProfileGroup } from './agent-sidebar/ProfileGroup'
+import { RemoteOriginSections } from './agent-sidebar/RemoteOriginSections'
 import { CortexSection } from './agent-sidebar/CortexSection'
 import { SortableProfileGroup } from './agent-sidebar/SortableProfileGroup'
 import {
@@ -114,6 +115,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onDeleteProjectAgentReference,
   onRequestProjectAgentRecommendations,
   onCreateAgentCreator,
+  remoteOriginIds,
+  activeOriginId,
+  onSelectRemoteAgent,
+  onRemoteOriginSignIn,
+  onRemoteOriginRetry,
 }: AgentSidebarProps) {
   const treeRows = useMemo(() => buildProfileTreeRows(agents, profiles), [agents, profiles])
   const hasArchivedItems = useMemo(() => (
@@ -746,6 +752,18 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             </ul>
           )
         })()}
+
+        {/* Remote origin sections (Wave R): one per connected remote instance */}
+        {remoteOriginIds && remoteOriginIds.length > 0 && onSelectRemoteAgent ? (
+          <RemoteOriginSections
+            originIds={remoteOriginIds}
+            selectedAgentId={selectedAgentId}
+            activeOriginId={activeOriginId ?? 'local'}
+            onSelectAgent={onSelectRemoteAgent}
+            onSignIn={onRemoteOriginSignIn}
+            onRetry={onRemoteOriginRetry}
+          />
+        ) : null}
 
         {/* Archive button pinned to the bottom of the scrollable content when space allows */}
         {onOpenArchive && hasArchivedItems ? (

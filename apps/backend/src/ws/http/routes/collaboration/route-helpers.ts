@@ -24,7 +24,7 @@ import {
 } from "../../../../collaboration/user-service.js";
 import { sendJson } from "../../../http-utils.js";
 import type { CollaborationRouteServices } from "./route-services.js";
-import { evaluateCollaborationAdminAccess, evaluateCollaborationAuthenticatedAccess } from "../../../../collaboration/auth/collaboration-auth-middleware.js";
+import { evaluateCollaborationAdminAccess, evaluateCollaborationMemberAccess } from "../../../../collaboration/auth/collaboration-auth-middleware.js";
 
 export async function resolveRequestAuthContext(
   request: IncomingMessage,
@@ -63,7 +63,7 @@ export async function requireAuthenticatedRequestContext(
   getServices: () => Promise<CollaborationRouteServices>,
 ): Promise<CollaborationRequestAuthContext | null> {
   const authContext = await resolveRequestAuthContext(request, getServices);
-  const access = evaluateCollaborationAuthenticatedAccess(authContext);
+  const access = evaluateCollaborationMemberAccess(authContext);
   if (!access.ok) {
     sendJson(response, access.statusCode, { error: access.error });
     return null;

@@ -289,6 +289,8 @@ export interface ConversationMessageEvent {
   source: ConversationMessageSource;
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
+  /** Echo of the sender-provided `user_message.clientRequestId` (Wave R). */
+  clientRequestId?: string;
   projectAgentContext?: ProjectAgentMessageContext;
   externalThreadContext?: ExternalThreadMessageContext;
   terminal?: boolean;

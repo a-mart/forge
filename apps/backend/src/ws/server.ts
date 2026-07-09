@@ -11,12 +11,14 @@ import {
 } from "@forge/protocol";
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
+import { BUILDER_PROTOCOL_VERSION } from "@forge/protocol";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
+import { getForgeAppVersion } from "../utils/app-version.js";
 import {
   authenticateRequest,
   classifyCollaborationHttpRequest,
   evaluateCollaborationAdminAccess,
-  evaluateCollaborationAuthenticatedAccess,
+  evaluateCollaborationMemberAccess,
   evaluateCollaborationPasswordChangeAccess,
   resolveCollaborationAuthContextForUserId,
   setCollaborationRequestAuthContext,
@@ -27,6 +29,7 @@ import {
 } from "../collaboration/auth/collaboration-auth-middleware.js";
 import { getOrCreateCollaborationBetterAuthService } from "../collaboration/auth/better-auth-service.js";
 import type { CollaborationReadinessRequestService } from "../collaboration/readiness-service.js";
+import { RemoteBuildSettingsService } from "../collaboration/remote-build-settings-service.js";
 import type { CollaborationSettingsService } from "../collaboration/settings-service.js";
 
 import {
@@ -83,6 +86,7 @@ import { createMobileRoutes } from "./http/routes/mobile-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
 import { createOpenRouterRoutes } from "./http/routes/openrouter-routes.js";
 import { createProjectResourceRoutes } from "./http/routes/project-resource-routes.js";
+import { createRemoteBuildSettingsRoutes } from "./http/routes/remote-build-settings-routes.js";
 import { createPhoenixObservabilityRoutes } from "./http/routes/phoenix-observability-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createRestartRecoveryRoutes } from "./http/routes/restart-recovery-routes.js";
@@ -127,6 +131,7 @@ export class SwarmWebSocketServer {
   private readonly terminalWsProxy: TerminalWsProxy | null;
   private readonly unreadTracker: UnreadTracker;
   private readonly notificationSettingsService: NotificationSettingsService;
+  private readonly remoteBuildSettingsService: RemoteBuildSettingsService;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -420,6 +425,7 @@ export class SwarmWebSocketServer {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
     notificationSettingsService?: NotificationSettingsService;
+    remoteBuildSettingsService?: RemoteBuildSettingsService;
     knowledgeV2SettingsService?: KnowledgeV2SettingsService;
     compactionSettingsService?: CompactionSettingsService;
     observabilityService?: ObservabilityFacade;
@@ -447,6 +453,9 @@ export class SwarmWebSocketServer {
     this.notificationSettingsService =
       options.notificationSettingsService ??
       new NotificationSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
+    this.remoteBuildSettingsService =
+      options.remoteBuildSettingsService ??
+      new RemoteBuildSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
     this.terminalService = options.terminalService ?? null;
     this.terminalRuntimeConfig = options.terminalRuntimeConfig ?? null;
     this.terminalSettingsService =
@@ -510,6 +519,8 @@ export class SwarmWebSocketServer {
       perf: this.swarmManager.getSidebarPerfRecorder(),
       collaborationReadinessService: options.collaborationReadinessService ?? undefined,
       feedbackService: this.feedbackService,
+      isRemoteBuildEnabled: () => this.remoteBuildSettingsService.isRemoteBuildEnabled(),
+      areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
     });
     this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;
@@ -551,6 +562,15 @@ export class SwarmWebSocketServer {
             readinessService: this.collaborationReadinessService ?? undefined,
             swarmManager: this.swarmManager,
             broadcasts: this.wsHandler.getCollaborationSubscriptionManager(),
+            buildStatusHandshake: () => ({
+              instanceName: this.remoteBuildSettingsService.getInstanceDisplayName(),
+              forgeVersion: getForgeAppVersion(),
+              protocolVersion: BUILDER_PROTOCOL_VERSION,
+              capabilities: {
+                collab: true,
+                remoteBuild: this.remoteBuildSettingsService.isRemoteBuildEnabled(),
+              },
+            }),
           })
         : []),
       ...createHealthRoutes({
@@ -590,6 +610,10 @@ export class SwarmWebSocketServer {
             runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
           })
         : []),
+      ...createRemoteBuildSettingsRoutes({
+        settingsService: this.remoteBuildSettingsService,
+        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+      }),
       ...createDebugRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({
@@ -658,6 +682,15 @@ export class SwarmWebSocketServer {
     ];
   }
 
+  /**
+   * Enumerates the registered HTTP route table. Exists for the
+   * route-inventory classification gate: every registered route must map to
+   * an explicitly reviewed access class (see route-inventory tests).
+   */
+  listRegisteredHttpRoutes(): ReadonlyArray<Pick<HttpRoute, "methods" | "matches">> {
+    return this.httpRoutes;
+  }
+
   async start(): Promise<void> {
     if (this.httpServer || this.wss) {
       return;
@@ -671,6 +704,7 @@ export class SwarmWebSocketServer {
       await this.compactionSettingsService.load();
     }
     await this.notificationSettingsService.load();
+    await this.remoteBuildSettingsService.load();
     await this.unreadTracker.load();
     await this.swarmManager.loadWorkPlansSettings?.();
     await this.swarmManager.loadModelCacheVisualizationSettings?.();
@@ -982,9 +1016,12 @@ export class SwarmWebSocketServer {
           return;
         }
 
-        const accessClass = classifyCollaborationHttpRequest(requestUrl.pathname, request.method);
-        if (accessClass === "authenticated") {
-          const access = evaluateCollaborationAuthenticatedAccess(authContext);
+        const accessClass = classifyCollaborationHttpRequest(requestUrl.pathname, request.method, {
+          remoteBuildEnabled: this.remoteBuildSettingsService.isRemoteBuildEnabled(),
+          terminalsEnabled: this.remoteBuildSettingsService.areTerminalsEnabled(),
+        });
+        if (accessClass === "member") {
+          const access = evaluateCollaborationMemberAccess(authContext);
           if (!access.ok) {
             applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
             sendJson(response, access.statusCode, { error: access.error });

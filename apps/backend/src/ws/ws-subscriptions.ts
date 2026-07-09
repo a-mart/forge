@@ -1,5 +1,7 @@
-import { isSystemProfile, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
+import { isSystemProfile, type ProjectPresenceViewer, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
+import { getCollaborationSocketAuthContext } from "../collaboration/auth/collaboration-auth-middleware.js";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
+import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
@@ -69,7 +71,58 @@ export class WsSubscriptions {
     this.deliveredSnapshotVersions.clear();
   }
 
+  /**
+   * Wave R presence (SPEC §4.7): broadcast the full viewer snapshot for a
+   * session to every socket subscribed to it. Viewer identities come from
+   * the collaboration auth contexts attached at upgrade; builder-runtime
+   * sockets carry none, so local instances emit nothing.
+   */
+  private emitProjectPresence(sessionAgentId: string): void {
+    // Presence is a collaboration-server feature: local builder sockets have
+    // no member identities to report.
+    if (!isCollaborationServerRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
+      return;
+    }
+
+    const viewersByUserId = new Map<string, ProjectPresenceViewer>();
+    const subscribers: WebSocket[] = [];
+    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+      if (subscribedAgentId !== sessionAgentId || socket.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      subscribers.push(socket);
+      const authContext = getCollaborationSocketAuthContext(socket);
+      if (!authContext) {
+        continue;
+      }
+      viewersByUserId.set(authContext.userId, {
+        userId: authContext.userId,
+        displayName: authContext.name,
+        role: authContext.role,
+      });
+    }
+
+    const event: ServerEvent = {
+      type: "project_presence",
+      sessionAgentId,
+      profileId: this.resolveProfileIdForAgent(sessionAgentId),
+      viewers: [...viewersByUserId.values()],
+    };
+
+    for (const socket of subscribers) {
+      this.send(socket, event);
+    }
+  }
+
   remove(socket: WebSocket): void {
+    const previousAgentId = this.subscriptions.get(socket);
+    this.removeInternal(socket);
+    if (previousAgentId) {
+      this.emitProjectPresence(previousAgentId);
+    }
+  }
+
+  private removeInternal(socket: WebSocket): void {
     this.subscriptions.delete(socket);
     this.deliveredSnapshotVersions.delete(socket);
   }
@@ -262,7 +315,11 @@ export class WsSubscriptions {
       return;
     }
 
+    const previousAgentId = this.subscriptions.get(socket);
     this.subscriptions.set(socket, targetAgentId);
+    if (previousAgentId && previousAgentId !== targetAgentId) {
+      this.emitProjectPresence(previousAgentId);
+    }
 
     const readSessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, targetAgentId) ?? targetAgentId;
     const readProfileId = this.resolveProfileIdForAgent(readSessionAgentId);
@@ -274,6 +331,7 @@ export class WsSubscriptions {
     }
 
     await this.sendSubscriptionBootstrap(socket, targetAgentId, messageCount);
+    this.emitProjectPresence(targetAgentId);
   }
 
   resolveSubscribedAgentId(socket: WebSocket): string | undefined {

@@ -37,6 +37,7 @@ export async function transcribeVoice(blob: Blob, endpoint = '/api/transcribe'):
 
   const response = await fetch(endpoint, {
     method: 'POST',
+    credentials: 'include',
     body: payload,
   })
 

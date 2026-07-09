@@ -138,6 +138,7 @@ function MessageImageAttachments({
               aria-label={`View full size: ${altText}`}
             >
               <img
+                crossOrigin="use-credentials"
                 src={src}
                 alt={altText}
                 className={cn(
@@ -173,6 +174,7 @@ function MessageImageAttachments({
       >
         {zoomTarget ? (
           <img
+            crossOrigin="use-credentials"
             src={zoomTarget.src}
             alt={zoomTarget.alt}
             className="h-auto max-h-full w-auto max-w-full rounded-md"

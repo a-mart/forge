@@ -38,6 +38,17 @@ export const SAME_ORIGIN_CONNECTION_ID = 'conn_same_origin'
 
 export type CollaborationConnectionKind = 'remote' | 'same-origin'
 
+/**
+ * Instance capabilities cached from the last successful
+ * `/api/collaboration/status` handshake (Wave R). Absent until first probed —
+ * treat as collab-only.
+ */
+export interface CollaborationConnectionCapabilities {
+  collab: boolean
+  remoteBuild: boolean
+  protocolVersion: number
+}
+
 export interface CollaborationConnectionRecord {
   id: string
   kind: CollaborationConnectionKind
@@ -50,6 +61,10 @@ export interface CollaborationConnectionRecord {
   updatedAt: string
   lastUsedAt?: string
   source?: 'legacy' | 'manual' | 'same-origin'
+  /** Cached handshake capabilities (Wave R, additive). */
+  capabilities?: CollaborationConnectionCapabilities
+  /** Per-connection opt-in: surface this instance's projects as an origin. */
+  remoteProjectsEnabled?: boolean
 }
 
 export interface CollaborationConnectionRegistry {
@@ -70,6 +85,10 @@ export interface CollaborationEndpointTarget {
   isRemote: boolean
   /** True when this target is a virtual fallback not explicitly persisted in the registry. */
   virtual?: boolean
+  /** Cached handshake capabilities (Wave R, additive). */
+  capabilities?: CollaborationConnectionCapabilities
+  /** Per-connection opt-in: surface this instance's projects as an origin. */
+  remoteProjectsEnabled?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -650,6 +669,52 @@ export function renameCollaborationConnection(
 }
 
 /**
+ * Toggle whether this instance's projects surface as a remote origin
+ * (Wave R). Preserves its ID; no-ops for unknown connections.
+ */
+export function setCollaborationConnectionRemoteProjects(
+  connectionId: string,
+  enabled: boolean,
+): void {
+  const registry = loadRegistry()
+  const conn = registry.connections.find((c) => c.id === connectionId)
+  if (!conn || conn.remoteProjectsEnabled === enabled) return
+
+  conn.remoteProjectsEnabled = enabled
+  conn.updatedAt = new Date().toISOString()
+  persistRegistry(registry)
+  notifyRegistryChange()
+}
+
+/**
+ * Cache the instance capabilities observed in the latest status handshake
+ * (Wave R). Skips the write when nothing changed to avoid cross-tab churn.
+ */
+export function cacheCollaborationConnectionCapabilities(
+  connectionId: string,
+  capabilities: CollaborationConnectionCapabilities,
+): void {
+  const registry = loadRegistry()
+  const conn = registry.connections.find((c) => c.id === connectionId)
+  if (!conn) return
+
+  const current = conn.capabilities
+  if (
+    current &&
+    current.collab === capabilities.collab &&
+    current.remoteBuild === capabilities.remoteBuild &&
+    current.protocolVersion === capabilities.protocolVersion
+  ) {
+    return
+  }
+
+  conn.capabilities = { ...capabilities }
+  conn.updatedAt = new Date().toISOString()
+  persistRegistry(registry)
+  notifyRegistryChange()
+}
+
+/**
  * Remove a connection from the registry.
  */
 export function removeCollaborationConnection(connectionId: string): void {
@@ -718,6 +783,8 @@ function recordToTarget(record: CollaborationConnectionRecord): CollaborationEnd
     apiBaseUrl: record.apiBaseUrl,
     wsUrl: record.wsUrl,
     isRemote: isOriginRemote(record),
+    capabilities: record.capabilities,
+    remoteProjectsEnabled: record.remoteProjectsEnabled,
   }
 }
 

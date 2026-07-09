@@ -66,7 +66,7 @@ async function fetchSchedules(
   managerId: string,
   signal: AbortSignal,
 ): Promise<ScheduleRecord[]> {
-  const response = await fetch(resolveManagerSchedulesEndpoint(wsUrl, managerId), { signal })
+  const response = await fetch(resolveManagerSchedulesEndpoint(wsUrl, managerId), { signal, credentials: 'include' })
   if (!response.ok) throw new Error(`Unable to load schedules (${response.status})`)
 
   const payload = (await response.json()) as { schedules?: unknown }

@@ -55,6 +55,23 @@ import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
 } from './ws-client/runtime-types'
+
+/** Server close code for a permanently invalidated collaboration session. */
+const SESSION_INVALIDATED_CLOSE_CODE = 4001
+
+/** How long an optimistic send may wait for its server echo before expiring. */
+const OPTIMISTIC_SEND_EXPIRY_MS = 20_000
+
+function generateClientRequestId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+  } catch {
+    // fall through
+  }
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
 import {
   reduceAgentStatus,
   reduceAgentsSnapshot,
@@ -135,6 +152,8 @@ export class ManagerWsClient {
 
   private hasExplicitAgentSelection = false
   private explicitAgentSelectionAgentId: string | null = null
+  private sessionInvalidatedObserver: (() => void) | null = null
+  private readonly optimisticSendExpiryTimers = new Set<ReturnType<typeof setTimeout>>()
 
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
@@ -173,10 +192,20 @@ export class ManagerWsClient {
       url,
       reconnectDelayMs: RECONNECT_MS,
       onOpen: () => this.handleTransportOpen(),
-      onClose: () => this.handleTransportClose(),
+      onClose: (event) => this.handleTransportClose(event),
       onMessage: (data) => this.handleServerEvent(data),
       onError: () => this.handleTransportError(),
     })
+  }
+
+  /**
+   * Observe permanent session invalidation (server close code 4001 on remote
+   * collaboration origins — role change, disable, sign-out). The client stops
+   * reconnecting when it fires; the origin manager flips the origin to
+   * `unauthorized`. Local builder sockets never receive 4001.
+   */
+  setSessionInvalidatedObserver(observer: (() => void) | null): void {
+    this.sessionInvalidatedObserver = observer
   }
 
   getState(): ManagerWsState {
@@ -261,6 +290,10 @@ export class ManagerWsClient {
     this.requestDispatcher.rejectAllPendingRequests('Client destroyed before request completed.')
     this.sessionWorkerCache.destroy()
     this.bootstrapBuffer.clear()
+    for (const timer of this.optimisticSendExpiryTimers) {
+      clearTimeout(timer)
+    }
+    this.optimisticSendExpiryTimers.clear()
 
     this.transport.disconnect()
   }
@@ -349,6 +382,24 @@ export class ManagerWsClient {
       return
     }
 
+    // Optimistic multi-writer send (SPEC §4.6): append the message locally
+    // keyed by a clientRequestId; the server echoes the id on the broadcast
+    // and the shared reducer replaces this entry instead of duplicating it.
+    const clientRequestId = generateClientRequestId()
+    if (agentId === this.state.targetAgentId) {
+      const optimisticEntry = {
+        type: 'conversation_message' as const,
+        agentId,
+        role: 'user' as const,
+        text: trimmed,
+        timestamp: new Date().toISOString(),
+        source: 'user_input' as const,
+        clientRequestId,
+      }
+      this.updateState({ messages: [...this.state.messages, optimisticEntry] })
+      this.scheduleOptimisticSendExpiry(clientRequestId)
+    }
+
     this.send(
       buildUserMessageCommand({
         text: trimmed,
@@ -356,8 +407,33 @@ export class ManagerWsClient {
         replyTo: options?.replyTo,
         agentId,
         delivery: options?.delivery,
+        clientRequestId,
       }),
     )
+  }
+
+  /**
+   * Drop an optimistic entry the server never confirmed (send lost, denied,
+   * or the socket died) so it cannot persist as a ghost message.
+   */
+  private scheduleOptimisticSendExpiry(clientRequestId: string): void {
+    const timer = setTimeout(() => {
+      this.optimisticSendExpiryTimers.delete(timer)
+      const index = this.state.messages.findIndex(
+        (message) =>
+          message.type === 'conversation_message' &&
+          !message.id &&
+          message.clientRequestId === clientRequestId,
+      )
+      if (index < 0) return
+      const nextMessages = [...this.state.messages]
+      nextMessages.splice(index, 1)
+      this.updateState({
+        messages: nextMessages,
+        lastError: 'Message delivery was not confirmed. Please try again.',
+      })
+    }, OPTIMISTIC_SEND_EXPIRY_MS)
+    this.optimisticSendExpiryTimers.add(timer)
   }
 
   sendChoiceResponse(agentId: string, choiceId: string, answers: ChoiceAnswer[]): void {
@@ -740,7 +816,7 @@ export class ManagerWsClient {
     this.send(buildSubscribeCommand(this.desiredAgentId))
   }
 
-  private handleTransportClose(): void {
+  private handleTransportClose(event?: CloseEvent): void {
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
     this.bootstrapBuffer.clear()
@@ -754,6 +830,17 @@ export class ManagerWsClient {
 
     this.sessionWorkerCache.clearQueuedRefetches()
     this.requestDispatcher.rejectAllPendingRequests('WebSocket disconnected before request completed.')
+
+    // Remote collaboration origins: 4001 means the session is permanently
+    // invalid — reconnecting would 401 forever. Stop the transport and let
+    // the origin manager surface the sign-in state.
+    if (event?.code === SESSION_INVALIDATED_CLOSE_CODE) {
+      this.transport.disconnect()
+      this.updateState({
+        lastError: 'Your session has been invalidated. Please sign in again.',
+      })
+      this.sessionInvalidatedObserver?.()
+    }
   }
 
   private handleTransportError(): void {
