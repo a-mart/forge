@@ -40,22 +40,26 @@ vi.mock('./collaboration-settings-api', () => ({
 
 /* ── Connection registry mock ── */
 
+interface MockConnectionTarget {
+  connectionId: string
+  kind: 'remote' | 'same-origin'
+  label: string
+  serverUrl?: string
+  apiBaseUrl: string
+  wsUrl: string
+  isRemote: boolean
+  virtual?: boolean
+  capabilities?: { collab: boolean; remoteBuild: boolean; protocolVersion: number }
+  remoteProjectsEnabled?: boolean
+}
+
 const registryMock = vi.hoisted(() => ({
-  connections: [] as Array<{
-    connectionId: string
-    kind: 'remote' | 'same-origin'
-    label: string
-    serverUrl?: string
-    apiBaseUrl: string
-    wsUrl: string
-    isRemote: boolean
-    virtual?: boolean
-  }>,
+  connections: [] as MockConnectionTarget[],
   defaultConnectionId: 'conn_same_origin',
   subscribeCb: null as (() => void) | null,
 }))
 
-function remoteTarget(id: string, label: string, serverUrl: string) {
+function remoteTarget(id: string, label: string, serverUrl: string): MockConnectionTarget {
   return {
     connectionId: id,
     kind: 'remote' as const,
@@ -67,7 +71,7 @@ function remoteTarget(id: string, label: string, serverUrl: string) {
   }
 }
 
-function sameOriginTarget(opts?: { virtual?: boolean }) {
+function sameOriginTarget(opts?: { virtual?: boolean }): MockConnectionTarget {
   return {
     connectionId: 'conn_same_origin',
     kind: 'same-origin' as const,
@@ -80,7 +84,7 @@ function sameOriginTarget(opts?: { virtual?: boolean }) {
 }
 
 vi.mock('@/lib/collaboration-connections', () => ({
-  getCollaborationConnectionOptions: () => registryMock.connections,
+  getCollaborationConnectionOptions: () => registryMock.connections.map((conn) => ({ ...conn, capabilities: conn.capabilities ? { ...conn.capabilities } : undefined })),
   getDefaultCollaborationConnection: () => {
     const found = registryMock.connections.find(
       (c) => c.connectionId === registryMock.defaultConnectionId,
@@ -102,6 +106,14 @@ vi.mock('@/lib/collaboration-connections', () => ({
     const conn = registryMock.connections.find((c) => c.connectionId === connId)
     if (conn) conn.label = label
   }),
+  setCollaborationConnectionRemoteProjects: vi.fn((connId: string, enabled: boolean) => {
+    const conn = registryMock.connections.find((c) => c.connectionId === connId)
+    if (conn) conn.remoteProjectsEnabled = enabled
+  }),
+  cacheCollaborationConnectionCapabilities: vi.fn((connId: string, capabilities: { collab: boolean; remoteBuild: boolean; protocolVersion: number }) => {
+    const conn = registryMock.connections.find((c) => c.connectionId === connId)
+    if (conn) conn.capabilities = capabilities
+  }),
   subscribeToRegistryChanges: vi.fn((cb: () => void) => {
     registryMock.subscribeCb = cb
     return () => { registryMock.subscribeCb = null }
@@ -112,11 +124,15 @@ vi.mock('@/lib/collaboration-connections', () => ({
 /*  Fixtures                                                          */
 /* ------------------------------------------------------------------ */
 
-function statusEnabled() {
+function statusEnabled(overrides?: Partial<CollaborationStatus>): CollaborationStatus {
   return {
     enabled: true,
+    ready: true,
     adminExists: true,
     baseUrl: 'https://collab.test',
+    protocolVersion: 1,
+    capabilities: { collab: true, remoteBuild: false },
+    ...overrides,
   }
 }
 
@@ -366,6 +382,67 @@ describe('SettingsCollaboration', () => {
 
       const addForm = container.querySelector('[data-testid="add-connection-form"]')
       expect(addForm).not.toBeNull()
+    })
+
+    it('enables remote projects by default for a newly added server whose tested capabilities support remote build', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => statusEnabled({ capabilities: { collab: true, remoteBuild: true }, protocolVersion: 7 }),
+      }))
+      renderCollab()
+      await flush()
+
+      fireEvent.click(container.querySelector('[data-testid="add-connection-btn"]') as HTMLButtonElement)
+      await flush()
+      const input = container.querySelector('#add-collab-url') as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'https://remote-build.test' } })
+      fireEvent.click(getByRole(container, 'button', { name: 'Test' }))
+      await waitFor(() => expect(container.textContent).toContain('Connection successful'))
+      fireEvent.click(getByRole(container, 'button', { name: 'Add' }))
+      await flush()
+
+      const { setCollaborationConnectionRemoteProjects, cacheCollaborationConnectionCapabilities } = await import('@/lib/collaboration-connections')
+      const expectedId = 'conn_new_httpsremotebuildtest'
+      expect(setCollaborationConnectionRemoteProjects).toHaveBeenCalledWith(expectedId, true)
+      expect(cacheCollaborationConnectionCapabilities).toHaveBeenCalledWith(expectedId, {
+        collab: true,
+        remoteBuild: true,
+        protocolVersion: 7,
+      })
+      expect(registryMock.connections.find((conn) => conn.connectionId === expectedId)?.remoteProjectsEnabled).toBe(true)
+    })
+
+    it('does not change the remote projects preference when adding an already configured server', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      const existing = remoteTarget('conn_new_httpsremotebuildtest', 'remote-build.test', 'https://remote-build.test')
+      existing.remoteProjectsEnabled = false
+      registryMock.connections = [existing]
+      registryMock.defaultConnectionId = existing.connectionId
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => statusEnabled({ capabilities: { collab: true, remoteBuild: true }, protocolVersion: 7 }),
+      }))
+      renderCollab()
+      await flush()
+
+      fireEvent.click(container.querySelector('[data-testid="add-connection-btn"]') as HTMLButtonElement)
+      await flush()
+      fireEvent.change(container.querySelector('#add-collab-url') as HTMLInputElement, { target: { value: 'https://remote-build.test' } })
+      fireEvent.click(getByRole(container, 'button', { name: 'Test' }))
+      await waitFor(() => expect(container.textContent).toContain('Connection successful'))
+      fireEvent.click(getByRole(container, 'button', { name: 'Add' }))
+      await flush()
+
+      const { setCollaborationConnectionRemoteProjects } = await import('@/lib/collaboration-connections')
+      expect(setCollaborationConnectionRemoteProjects).not.toHaveBeenCalled()
+      expect(existing.remoteProjectsEnabled).toBe(false)
     })
   })
 

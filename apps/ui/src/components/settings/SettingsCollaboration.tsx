@@ -69,6 +69,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
   const [addUrl, setAddUrl] = useState('')
   const [addTestStatus, setAddTestStatus] = useState<ConnectionTestStatus>('idle')
   const [addTestError, setAddTestError] = useState<string | null>(null)
+  const [addTestResult, setAddTestResult] = useState<CollaborationStatus | null>(null)
 
   // ── Rename-connection inline edit ──
   const [editingNameId, setEditingNameId] = useState<string | null>(null)
@@ -261,13 +262,15 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
         throw new Error(`Server responded with ${response.status} ${response.statusText}`)
       }
 
-      const body = (await response.json()) as { enabled?: boolean }
+      const body = (await response.json()) as CollaborationStatus
       if (typeof body.enabled !== 'boolean') {
         throw new Error('Invalid response — not a Forge collaboration server')
       }
 
+      setAddTestResult(body)
       setAddTestStatus('success')
     } catch (err) {
+      setAddTestResult(null)
       setAddTestStatus('error')
       if (err instanceof Error) {
         if (err.name === 'TimeoutError' || err.name === 'AbortError') {
@@ -296,23 +299,37 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
 
     try {
       const id = upsertCollaborationConnection({ serverUrl: trimmed })
+      const wasExistingConnection = connections.some((conn) => conn.connectionId === id)
+      const supportsRemoteProjects = addTestResult?.capabilities?.remoteBuild === true
+      if (!wasExistingConnection && supportsRemoteProjects) {
+        setCollaborationConnectionRemoteProjects(id, true)
+        if (typeof addTestResult.protocolVersion === 'number') {
+          cacheCollaborationConnectionCapabilities(id, {
+            collab: addTestResult.capabilities?.collab ?? addTestResult.enabled === true,
+            remoteBuild: true,
+            protocolVersion: addTestResult.protocolVersion,
+          })
+        }
+      }
       refreshConnections()
       setSelectedId(id)
       setIsAdding(false)
       setAddUrl('')
       setAddTestStatus('idle')
       setAddTestError(null)
+      setAddTestResult(null)
     } catch (err) {
       setAddTestError(err instanceof Error ? err.message : 'Failed to save connection')
       setAddTestStatus('error')
     }
-  }, [addUrl, refreshConnections])
+  }, [addUrl, addTestResult, connections, refreshConnections])
 
   const handleCancelAdd = useCallback(() => {
     setIsAdding(false)
     setAddUrl('')
     setAddTestStatus('idle')
     setAddTestError(null)
+    setAddTestResult(null)
   }, [])
 
   // ── Remove connection ──
@@ -665,6 +682,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
                     setAddUrl(e.target.value)
                     setAddTestStatus('idle')
                     setAddTestError(null)
+                    setAddTestResult(null)
                   }}
                   className="flex-1"
                   autoFocus
