@@ -5,11 +5,27 @@
  * treatment. The origin-store slices remain scoped per origin — an event on one
  * origin never wakes another section (WP-U1 isolation).
  *
- * R1 scope: rows are SELECT-ONLY (no context menus, no DnD). Full row
- * interactions arrive with R2's per-origin action routing.
+ * Remote profile rows reuse Builder's profile reorder command against their
+ * owning origin; cross-origin/local intermixing remains out of scope because
+ * each origin persists its own profile order.
  */
 
-import { memo, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
 import { ChevronDown, ChevronRight, Globe } from 'lucide-react'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import { buildProfileTreeRows, isSessionRunning } from '@/lib/agent-hierarchy'
@@ -23,7 +39,8 @@ import {
 } from '@/lib/origin-store'
 import { cn } from '@/lib/utils'
 import { SessionStatusDot } from './shared'
-import { getRemoteVisibleProfileRows } from './RemoteOriginSections.utils'
+import { SortableProfileGroup } from './SortableProfileGroup'
+import { buildRemoteReorderProfileIds, getRemoteVisibleProfileRows } from './RemoteOriginSections.utils'
 import type { StatusMap } from './types'
 
 export interface RemoteOriginSectionsProps {
@@ -31,6 +48,7 @@ export interface RemoteOriginSectionsProps {
   selectedAgentId: string | null
   activeOriginId: OriginId
   onSelectAgent: (originId: OriginId, agentId: string) => void
+  onReorderProfiles?: (originId: OriginId, profileIds: string[]) => void
   onSignIn?: (originId: OriginId) => void
   onRetry?: (originId: OriginId) => void
 }
@@ -40,6 +58,7 @@ export function RemoteOriginSections({
   selectedAgentId,
   activeOriginId,
   onSelectAgent,
+  onReorderProfiles,
   onSignIn,
   onRetry,
 }: RemoteOriginSectionsProps) {
@@ -54,6 +73,7 @@ export function RemoteOriginSections({
           selectedAgentId={selectedAgentId}
           isActiveOrigin={originId === activeOriginId}
           onSelectAgent={onSelectAgent}
+          onReorderProfiles={onReorderProfiles}
           onSignIn={onSignIn}
           onRetry={onRetry}
         />
@@ -103,6 +123,7 @@ const RemoteOriginSection = memo(function RemoteOriginSection({
   selectedAgentId,
   isActiveOrigin,
   onSelectAgent,
+  onReorderProfiles,
   onSignIn,
   onRetry,
 }: {
@@ -110,6 +131,7 @@ const RemoteOriginSection = memo(function RemoteOriginSection({
   selectedAgentId: string | null
   isActiveOrigin: boolean
   onSelectAgent: (originId: OriginId, agentId: string) => void
+  onReorderProfiles?: (originId: OriginId, profileIds: string[]) => void
   onSignIn?: (originId: OriginId) => void
   onRetry?: (originId: OriginId) => void
 }) {
@@ -118,6 +140,11 @@ const RemoteOriginSection = memo(function RemoteOriginSection({
   const profiles = useOriginSlice(originId, selectProfiles, { selectorKey: 'sidebar.profiles' })
   const statuses = useOriginSlice(originId, selectStatuses, { selectorKey: 'sidebar.statuses' })
   const unreadCounts = useOriginSlice(originId, selectUnreadCounts, { selectorKey: 'sidebar.unreadCounts' })
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+  const [activeDragId, setActiveDragId] = useState<string | null>(null)
 
   const treeRows = useMemo(
     () => getRemoteVisibleProfileRows(buildProfileTreeRows(agents, profiles)),
@@ -127,22 +154,75 @@ const RemoteOriginSection = memo(function RemoteOriginSection({
   const headerState = deriveHeaderState(meta)
   const instanceName = meta?.instanceName?.trim() || 'Remote Forge'
 
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveDragId(null)
+    const { active, over } = event
+    if (!over || active.id === over.id || !onReorderProfiles) return
+
+    const nextIds = buildRemoteReorderProfileIds(treeRows, active.id as string, over.id as string)
+    if (!nextIds) return
+
+    onReorderProfiles(originId, nextIds)
+  }, [onReorderProfiles, originId, treeRows])
+
   if (headerState === 'connected' && treeRows.length > 0) {
+    const dndEnabled = Boolean(onReorderProfiles) && treeRows.length > 1
+    const sortableIds = treeRows.map((row) => row.profile.profileId)
+    const activeDragRow = activeDragId ? treeRows.find((row) => row.profile.profileId === activeDragId) : null
+    const renderRow = (
+      treeRow: ProfileTreeRow,
+      dragHandleRef?: (element: HTMLElement | null) => void,
+      dragHandleListeners?: Record<string, unknown>,
+    ) => (
+      <RemoteProfileRow
+        treeRow={treeRow}
+        statuses={statuses}
+        unreadCounts={unreadCounts}
+        selectedAgentId={selectedAgentId}
+        isActiveOrigin={isActiveOrigin}
+        instanceName={instanceName}
+        dragHandleRef={dragHandleRef}
+        dragHandleListeners={dragHandleListeners}
+        onSelectAgent={(agentId) => onSelectAgent(originId, agentId)}
+      />
+    )
+
+    if (dndEnabled) {
+      return (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={(event) => setActiveDragId(event.active.id as string)}
+          onDragCancel={() => setActiveDragId(null)}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+            <ul className="space-y-2" data-testid={`remote-origin-section-${originId}`}>
+              {treeRows.map((treeRow) => (
+                <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
+                  {(dragHandleRef, dragHandleListeners) => renderRow(treeRow, dragHandleRef, dragHandleListeners)}
+                </SortableProfileGroup>
+              ))}
+            </ul>
+          </SortableContext>
+          <DragOverlay>
+            {activeDragRow ? (
+              <div className="rounded-md border border-blue-400/25 bg-sidebar shadow-lg">
+                <div className="flex items-center gap-1.5 px-3 py-2">
+                  <Globe aria-hidden="true" className="size-3.5 shrink-0 text-blue-400" />
+                  <span className="text-sm font-semibold">{activeDragRow.profile.displayName}</span>
+                </div>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      )
+    }
+
     return (
       <ul className="space-y-2" data-testid={`remote-origin-section-${originId}`}>
         {treeRows.map((treeRow) => (
-          <RemoteProfileRow
-            key={treeRow.profile.profileId}
-            treeRow={treeRow}
-            statuses={statuses}
-            unreadCounts={unreadCounts}
-            selectedAgentId={selectedAgentId}
-            isActiveOrigin={isActiveOrigin}
-            instanceName={instanceName}
-            connectionLabel={HEADER_STATE_LABEL[headerState]}
-            connectionDotClass={HEADER_DOT_CLASS[headerState]}
-            onSelectAgent={(agentId) => onSelectAgent(originId, agentId)}
-          />
+          <li key={treeRow.profile.profileId}>{renderRow(treeRow)}</li>
         ))}
       </ul>
     )
@@ -166,8 +246,8 @@ function RemoteProfileRow({
   selectedAgentId,
   isActiveOrigin,
   instanceName,
-  connectionLabel,
-  connectionDotClass,
+  dragHandleRef,
+  dragHandleListeners,
   onSelectAgent,
 }: {
   treeRow: ProfileTreeRow
@@ -176,8 +256,8 @@ function RemoteProfileRow({
   selectedAgentId: string | null
   isActiveOrigin: boolean
   instanceName: string
-  connectionLabel: string
-  connectionDotClass: string
+  dragHandleRef?: (element: HTMLElement | null) => void
+  dragHandleListeners?: Record<string, unknown>
   onSelectAgent: (agentId: string) => void
 }) {
   const { profile, sessions } = treeRow
@@ -186,7 +266,7 @@ function RemoteProfileRow({
   const isHeaderSelected = isActiveOrigin && sessions.some((session) => session.sessionAgent.agentId === selectedAgentId)
 
   return (
-    <li data-testid={`remote-profile-row-${profile.profileId}`}>
+    <div data-testid={`remote-profile-row-${profile.profileId}`}>
       <div
         className={cn(
           'relative flex items-center rounded-lg border bg-blue-500/[0.035] transition-colors',
@@ -215,6 +295,8 @@ function RemoteProfileRow({
 
         <button
           type="button"
+          ref={dragHandleRef}
+          {...dragHandleListeners}
           onClick={() => {
             if (firstSession) onSelectAgent(firstSession.agentId)
           }}
@@ -222,17 +304,15 @@ function RemoteProfileRow({
             'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-5.5 pr-1.5 text-left transition-colors',
             'hover:bg-sidebar-accent/50',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+            dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',
           )}
+          style={dragHandleListeners ? { touchAction: 'none' } : undefined}
           title={`Remote project on ${instanceName}`}
         >
           <Globe aria-hidden="true" className="size-3.5 shrink-0 text-blue-400" />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
             {profile.displayName}
           </span>
-          <span
-            aria-label={`${instanceName}: ${connectionLabel}`}
-            className={cn('ml-1 size-2 shrink-0 rounded-full', connectionDotClass)}
-          />
         </button>
       </div>
 
@@ -250,7 +330,7 @@ function RemoteProfileRow({
           ))}
         </ul>
       ) : null}
-    </li>
+    </div>
   )
 }
 
