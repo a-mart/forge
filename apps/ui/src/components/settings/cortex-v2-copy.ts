@@ -25,6 +25,17 @@ export const CORTEX_V2_COPY = {
     migrationRequired: 'Migration required before New Cortex can be enabled. Activation is unavailable in the UI until the guarded migration has completed.',
     retry: 'Retry',
   },
+  /** Settings → General, Cortex consolidation schedule (cortex-auto-review API). */
+  consolidation: {
+    sectionDescription:
+      'Cortex maintains knowledge entries and a compact index used when Knowledge v2 is enabled.',
+    toggleLabel: 'Automatic Consolidation',
+    toggleDescription:
+      'When enabled, Cortex periodically merges, archives, and reindexes knowledge entries. Consolidation only runs while Knowledge v2 is enabled.',
+    cadenceLabel: 'Consolidation Cadence',
+    cadenceDescription: 'Consolidation runs once per day while Knowledge v2 is enabled.',
+    cadenceValue: 'Every 24 hours',
+  },
   /** First-launch onboarding modal. */
   onboarding: {
     title: 'Try the new Cortex',

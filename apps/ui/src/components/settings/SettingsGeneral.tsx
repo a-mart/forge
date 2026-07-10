@@ -714,26 +714,6 @@ export function SettingsGeneral({
     [cortexSource, cortexUpdating],
   )
 
-  const handleCortexIntervalChange = useCallback(
-    (intervalMinutes: number) => {
-      if (cortexUpdating) return
-      setCortexUpdating(true)
-      setCortexError(null)
-
-      void updateCortexAutoReviewSettings(cortexSource, { intervalMinutes })
-        .then((settings) => {
-          setCortexSettings(settings)
-        })
-        .catch((err) => {
-          setCortexError(err instanceof Error ? err.message : 'Failed to update setting')
-        })
-        .finally(() => {
-          setCortexUpdating(false)
-        })
-    },
-    [cortexSource, cortexUpdating],
-  )
-
   const handleKnowledgeV2Toggle = useCallback(
     (enabled: boolean) => {
       if (knowledgeV2Updating || (enabled && !knowledgeV2CanEnable)) return
@@ -1129,11 +1109,11 @@ export function SettingsGeneral({
       {!cortexDisabled && (
         <SettingsSection
           label="Cortex"
-          description="Cortex is the self-improvement system that reviews sessions and maintains knowledge"
+          description={CORTEX_V2_COPY.consolidation.sectionDescription}
         >
           <SettingsWithCTA
-            label="Automatic Reviews"
-            description="Cortex periodically reviews active sessions and updates knowledge, memory, and reference docs."
+            label={CORTEX_V2_COPY.consolidation.toggleLabel}
+            description={CORTEX_V2_COPY.consolidation.toggleDescription}
           >
             <div className="flex flex-col items-end gap-1.5">
               <HelpTooltip id="settings.cortex-auto-review" side="left">
@@ -1174,33 +1154,15 @@ export function SettingsGeneral({
           </SettingsWithCTA>
 
           <SettingsWithCTA
-            label="Review Interval"
-            description="How often Cortex checks for sessions that need review."
+            label={CORTEX_V2_COPY.consolidation.cadenceLabel}
+            description={CORTEX_V2_COPY.consolidation.cadenceDescription}
           >
-            <Select
-              value={String(cortexSettings?.intervalMinutes ?? 120)}
-              onValueChange={(value) => {
-                const minutes = parseInt(value, 10)
-                if (!isNaN(minutes)) handleCortexIntervalChange(minutes)
-              }}
-              disabled={!cortexSettings?.enabled || cortexUpdating}
+            <span
+              className={`text-sm text-muted-foreground ${!cortexSettings?.enabled ? 'opacity-50' : ''}`}
+              data-testid="cortex-consolidation-cadence"
             >
-              <SelectTrigger
-                className={`w-full sm:w-48 ${!cortexSettings?.enabled ? 'opacity-50' : ''}`}
-              >
-                <SelectValue placeholder="Select interval" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="15">Every 15 minutes</SelectItem>
-                <SelectItem value="30">Every 30 minutes</SelectItem>
-                <SelectItem value="60">Every hour</SelectItem>
-                <SelectItem value="120">Every 2 hours</SelectItem>
-                <SelectItem value="240">Every 4 hours</SelectItem>
-                <SelectItem value="480">Every 8 hours</SelectItem>
-                <SelectItem value="720">Every 12 hours</SelectItem>
-                <SelectItem value="1440">Every 24 hours</SelectItem>
-              </SelectContent>
-            </Select>
+              {CORTEX_V2_COPY.consolidation.cadenceValue}
+            </span>
           </SettingsWithCTA>
 
           {knowledgeV2Available && (
