@@ -188,6 +188,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
         cacheCollaborationConnectionCapabilities(selectedIdRef.current, {
           collab: data.capabilities?.collab ?? data.enabled === true,
           remoteBuild: data.capabilities?.remoteBuild ?? false,
+          createDirectory: data.capabilities?.createDirectory === true,
           protocolVersion: data.protocolVersion,
         })
       }

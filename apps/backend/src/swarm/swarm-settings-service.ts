@@ -22,13 +22,16 @@ import {
 } from "@forge/protocol";
 import type { CredentialPoolService } from "./credential-pool.js";
 import {
+  createDirectory as createDirectoryInput,
   listDirectories,
   normalizeAllowlistRoots,
   validateDirectory as validateDirectoryInput,
   validateDirectoryPath,
+  type CreateDirectoryResult,
   type DirectoryListingResult,
   type DirectoryValidationResult
 } from "./cwd-policy.js";
+import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
@@ -345,6 +348,17 @@ export class SwarmSettingsService {
 
   async validateDirectory(path: string): Promise<DirectoryValidationResult> {
     return validateDirectoryInput(path, this.getCwdPolicy());
+  }
+
+  async createDirectory(parentPath: string, name: string): Promise<CreateDirectoryResult> {
+    const result = await createDirectoryInput(parentPath, name, this.getCwdPolicy());
+    this.options.logDebug("directory:create", {
+      parentPath: result.parentPath,
+      name: result.name,
+      path: result.path,
+      roots: result.roots,
+    });
+    return result;
   }
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
@@ -1122,10 +1136,11 @@ export class SwarmSettingsService {
     return fallbackCallback();
   }
 
-  private getCwdPolicy(): { rootDir: string; allowlistRoots: string[] } {
+  private getCwdPolicy(): { rootDir: string; allowlistRoots: string[]; enforceAllowlist: boolean } {
     return {
       rootDir: this.options.config.paths.rootDir,
-      allowlistRoots: normalizeAllowlistRoots(this.options.config.cwdAllowlistRoots)
+      allowlistRoots: normalizeAllowlistRoots(this.options.config.cwdAllowlistRoots),
+      enforceAllowlist: isCollaborationServerRuntimeTarget(this.options.config.runtimeTarget),
     };
   }
 }

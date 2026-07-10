@@ -305,6 +305,19 @@ export function buildValidateDirectoryCommand(path: string, requestId: string): 
   }
 }
 
+export function buildCreateDirectoryCommand(
+  parentPath: string,
+  name: string,
+  requestId: string,
+): ClientCommand {
+  return {
+    type: 'create_directory',
+    parentPath: requireTrimmedValue(parentPath, 'Parent directory is required.'),
+    name: requireTrimmedValue(name, 'Folder name is required.'),
+    requestId,
+  }
+}
+
 export function buildPickDirectoryCommand(defaultPath: string | undefined, requestId: string): ClientCommand {
   return {
     type: 'pick_directory',

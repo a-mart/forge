@@ -14,6 +14,11 @@ import type { ManagerWsState } from '../ws-state'
 export interface DirectoriesListedResult {
   path: string
   directories: string[]
+  requestedPath?: string
+  resolvedPath?: string
+  parentPath?: string | null
+  roots?: string[]
+  entries?: Array<{ name: string; path: string }>
 }
 
 export interface DirectoryValidationResult {
@@ -21,6 +26,14 @@ export interface DirectoryValidationResult {
   valid: boolean
   message: string | null
   resolvedPath?: string
+  roots?: string[]
+}
+
+export interface DirectoryCreatedResult {
+  path: string
+  parentPath: string
+  name: string
+  roots?: string[]
 }
 
 export type Listener = (state: ManagerWsState) => void
@@ -112,6 +125,7 @@ export type WsRequestResultMap = {
   get_session_workers: SessionWorkersResult
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult
+  create_directory: DirectoryCreatedResult
   pick_directory: string | null
 }
 

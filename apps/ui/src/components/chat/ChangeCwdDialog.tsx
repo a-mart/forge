@@ -11,6 +11,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { FolderOpen, Check, Loader2, AlertCircle } from 'lucide-react'
 import type { DirectoryValidationResult } from '@/lib/ws-client'
+import {
+  ServerDirectoryBrowserDialog,
+  type ServerDirectoryBrowserClient,
+} from '@/components/chat/ServerDirectoryBrowserDialog'
 
 interface ChangeCwdDialogProps {
   profileId: string
@@ -20,6 +24,11 @@ interface ChangeCwdDialogProps {
   onClose: () => void
   /** Native directory picker; omit for remote origins (no local dialogs). */
   onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
+  /** Remote server folder browser; omit for local origins. */
+  serverDirectoryBrowser?: {
+    client: ServerDirectoryBrowserClient
+    canCreateDirectory?: boolean
+  }
   onValidateDirectory: (path: string) => Promise<DirectoryValidationResult>
 }
 
@@ -30,6 +39,7 @@ export function ChangeCwdDialog({
   onConfirm,
   onClose,
   onBrowseDirectory,
+  serverDirectoryBrowser,
   onValidateDirectory,
 }: ChangeCwdDialogProps) {
   const [cwd, setCwd] = useState(currentCwd)
@@ -43,6 +53,7 @@ export function ChangeCwdDialog({
   const [browseError, setBrowseError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [serverBrowserOpen, setServerBrowserOpen] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const validationSeqRef = useRef(0)
@@ -145,6 +156,7 @@ export function ChangeCwdDialog({
   )
 
   return (
+    <>
     <Dialog open onOpenChange={(open) => { if (!open && !isSubmitting) onClose() }}>
       <DialogContent className="max-w-md p-4">
         <DialogHeader className="mb-3">
@@ -184,7 +196,19 @@ export function ChangeCwdDialog({
                   </div>
                 )}
               </div>
-              {onBrowseDirectory ? (
+              {serverDirectoryBrowser ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setServerBrowserOpen(true)}
+                  disabled={isPickingDirectory}
+                  className="shrink-0 gap-1.5"
+                >
+                  <FolderOpen className="size-3.5" />
+                  Browse server…
+                </Button>
+              ) : onBrowseDirectory ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -236,5 +260,22 @@ export function ChangeCwdDialog({
         </form>
       </DialogContent>
     </Dialog>
+
+    {serverDirectoryBrowser ? (
+      <ServerDirectoryBrowserDialog
+        open={serverBrowserOpen}
+        onOpenChange={setServerBrowserOpen}
+        client={serverDirectoryBrowser.client}
+        canCreateDirectory={serverDirectoryBrowser.canCreateDirectory}
+        initialPath={cwd.trim() || currentCwd}
+        onSelect={(path) => {
+          validationSeqRef.current += 1
+          setCwd(path)
+          setValidationResult({ valid: true, message: null, resolvedPath: path })
+          setBrowseError(null)
+        }}
+      />
+    ) : null}
+    </>
   )
 }

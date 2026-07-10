@@ -26,6 +26,7 @@ import {
   isCortexProfile,
 } from '@/lib/agent-hierarchy'
 import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
+import { LOCAL_ORIGIN_ID, originRegistry, type OriginId } from '@/lib/origin-store'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
 import { toggleMute, getMutedAgents, setMutedAgents, MUTE_CHANGE_EVENT } from '@/lib/notification-service'
 import { cn } from '@/lib/utils'
@@ -63,7 +64,6 @@ import { useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { AgentSidebarProps, RemoteSidebarOrigin } from './agent-sidebar/types'
-import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
 import {
   builderSidebarOrderKey,
   reconcileBuilderSidebarOrder,
@@ -230,6 +230,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     profileId: string
     profileLabel: string
     currentCwd: string
+    originId?: OriginId
   } | null>(null)
   const [projectAgentTarget, setProjectAgentTarget] = useState<{
     agentId: string
@@ -504,14 +505,62 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       profileId,
       profileLabel: profile?.displayName || profileId,
       currentCwd: defaultSession?.cwd || '',
+      originId: LOCAL_ORIGIN_ID,
     })
   }, [agents, profiles])
 
+  const handleRequestRemoteChangeCwd = useCallback((originId: OriginId, profileId: string, profileLabel: string, currentCwd: string) => {
+    setChangeCwdTarget({
+      profileId,
+      profileLabel,
+      currentCwd,
+      originId,
+    })
+  }, [])
+
   const handleConfirmChangeCwd = useCallback(async (profileId: string, cwd: string) => {
+    const originId = changeCwdTarget?.originId
+    if (originId && originId !== LOCAL_ORIGIN_ID) {
+      const client = originRegistry.getOrigin(originId)?.getClient()
+      if (!client) throw new Error('Remote origin is not connected.')
+      await client.updateManagerCwd(profileId, cwd)
+      setChangeCwdTarget(null)
+      return
+    }
     if (!onUpdateManagerCwd) return
     await onUpdateManagerCwd(profileId, cwd)
     setChangeCwdTarget(null)
-  }, [onUpdateManagerCwd])
+  }, [changeCwdTarget?.originId, onUpdateManagerCwd])
+
+  const changeCwdValidateDirectory = useCallback(async (path: string) => {
+    const originId = changeCwdTarget?.originId
+    if (originId && originId !== LOCAL_ORIGIN_ID) {
+      const client = originRegistry.getOrigin(originId)?.getClient()
+      if (!client) throw new Error('Remote origin is not connected.')
+      return client.validateDirectory(path)
+    }
+    if (!onValidateDirectory) throw new Error('Directory validation is unavailable.')
+    return onValidateDirectory(path)
+  }, [changeCwdTarget?.originId, onValidateDirectory])
+
+  const changeCwdServerBrowser = useMemo(() => {
+    const originId = changeCwdTarget?.originId
+    if (!originId || originId === LOCAL_ORIGIN_ID) return undefined
+    const store = originRegistry.getOrigin(originId)
+    const client = store?.getClient()
+    if (!client) return undefined
+    const canCreate = store?.getMetaSnapshot().capabilities?.createDirectory === true
+    return {
+      client: {
+        listDirectories: (path?: string) => client.listDirectories(path),
+        validateDirectory: (path: string) => client.validateDirectory(path),
+        createDirectory: canCreate
+          ? (parentPath: string, name: string) => client.createDirectory(parentPath, name)
+          : undefined,
+      },
+      canCreateDirectory: canCreate,
+    }
+  }, [changeCwdTarget?.originId])
 
   const handlePromoteToProjectAgent = useCallback((agentId: string) => {
     const agent = agents.find((a) => a.agentId === agentId)
@@ -701,10 +750,12 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         dragHandleListeners={dragHandleListeners}
         dragHandleAttributes={dragHandleAttributes}
         onSelectAgent={handleSelectRemoteAgent}
+        onChangeCwd={handleRequestRemoteChangeCwd}
       />
     )
   }, [
     activeOriginId,
+    handleRequestRemoteChangeCwd,
     handleSelectRemoteAgent,
     profileGroupContent,
     selectedAgentId,
@@ -1067,15 +1118,16 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       ) : null}
 
       {/* Change CWD dialog */}
-      {changeCwdTarget && onUpdateManagerCwd && onBrowseDirectory && onValidateDirectory ? (
+      {changeCwdTarget && (onUpdateManagerCwd || changeCwdTarget.originId !== LOCAL_ORIGIN_ID) ? (
         <ChangeCwdDialog
           profileId={changeCwdTarget.profileId}
           profileLabel={changeCwdTarget.profileLabel}
           currentCwd={changeCwdTarget.currentCwd}
           onConfirm={handleConfirmChangeCwd}
           onClose={() => setChangeCwdTarget(null)}
-          onBrowseDirectory={onBrowseDirectory}
-          onValidateDirectory={onValidateDirectory}
+          onBrowseDirectory={changeCwdTarget.originId === LOCAL_ORIGIN_ID ? onBrowseDirectory : undefined}
+          serverDirectoryBrowser={changeCwdServerBrowser}
+          onValidateDirectory={changeCwdValidateDirectory}
         />
       ) : null}
 

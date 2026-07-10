@@ -270,7 +270,7 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
     expect((before.instanceName as string).length).toBeGreaterThan(0);
     expect(typeof before.forgeVersion).toBe("string");
     expect(before.protocolVersion).toBe(1);
-    expect(before.capabilities).toEqual({ collab: true, remoteBuild: false });
+    expect(before.capabilities).toEqual({ collab: true, remoteBuild: false, createDirectory: true });
 
     const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
     await setRemoteBuildEnabled(baseUrl, adminCookie, true);
@@ -278,7 +278,7 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
     const after = await fetch(`${baseUrl}/api/collaboration/status`).then(
       (response) => response.json() as Promise<Record<string, unknown>>,
     );
-    expect(after.capabilities).toEqual({ collab: true, remoteBuild: true });
+    expect(after.capabilities).toEqual({ collab: true, remoteBuild: true, createDirectory: true });
 
     // Admin-set instance name flows through the handshake.
     const renameResponse = await fetch(`${baseUrl}/api/settings/remote-build`, {
@@ -378,6 +378,11 @@ describe("remote build WS access matrix", () => {
     const member = await openAuthenticatedWs(baseUrl, memberCookie);
     await expectCommandDenied(member, { type: "subscribe" }, "Remote projects are disabled");
     await expectCommandDenied(member, { type: "user_message", text: "hello" }, "Remote projects are disabled");
+    await expectCommandDenied(
+      member,
+      { type: "create_directory", parentPath: "/tmp", name: "nope" },
+      "Remote projects are disabled",
+    );
 
     // The collaboration surface is unaffected by the kill switch.
     member.send({ type: "collab_bootstrap" });
@@ -386,7 +391,7 @@ describe("remote build WS access matrix", () => {
   }, 30_000);
 
   it("grants members reads and project writes; admin-tier commands stay denied (R2)", async () => {
-    const { baseUrl } = await startCollaborationServer();
+    const { baseUrl, defaultCwd } = await startCollaborationServer();
     const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
     const memberCookie = await createMember(baseUrl, adminCookie);
     await setRemoteBuildEnabled(baseUrl, adminCookie, true);
@@ -413,6 +418,26 @@ describe("remote build WS access matrix", () => {
     // Admin-tier commands are denied for members in every phase.
     await expectCommandDenied(member, { type: "pick_directory" }, "admin");
     await expectCommandDenied(member, { type: "resume_restart_recovery" }, "admin");
+
+    // create_directory is write-tier: members reach the handler when remoteBuild is on
+    // (not gate-denied). Success vs path/policy error is orthogonal to access.
+    const createDenied = harnessCollectDenials(member);
+    member.send({
+      type: "create_directory",
+      parentPath: defaultCwd,
+      name: "member-folder",
+      requestId: "mkdir-1",
+    });
+    const createdOrFailed = await Promise.race([
+      member.waitForEvent("directory_created", (event) => event.requestId === "mkdir-1"),
+      member.waitForEvent("error", (event) => event.requestId === "mkdir-1"),
+    ]);
+    expect(createDenied()).toEqual([]);
+    expect(createdOrFailed.type === "directory_created" || createdOrFailed.type === "error").toBe(true);
+    if (createdOrFailed.type === "error") {
+      expect(createdOrFailed.code).not.toMatch(/builder_access|FORBIDDEN|tier/i);
+      expect(createdOrFailed.message ?? "").not.toMatch(/Remote projects are disabled|requires admin/i);
+    }
   }, 30_000);
 
   it("broadcasts attributed, clientRequestId-echoed messages to both clients without dupes (R2 fixture)", async () => {

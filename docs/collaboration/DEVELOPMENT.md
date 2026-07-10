@@ -25,6 +25,7 @@ Keep collaboration changes isolated from Builder behavior unless the task explic
 | Specialists | `apps/backend/src/collaboration/specialist-selection.ts`, settings specialist UI/tests |
 | Skills | `apps/backend/src/collaboration/skill-selection.ts`, `skill-handle-provider.ts`, settings skills UI/tests |
 | Terminal caveat | `apps/backend/src/ws/server.ts`, `apps/backend/src/ws/http/routes/terminal-routes.ts` |
+| Remote project CWD browser | `apps/backend/src/swarm/cwd-policy.ts`, `FORGE_CWD_ALLOWLIST_ROOTS`, UI `ServerDirectoryBrowserDialog` |
 
 ## Builder vs Collaboration invariants
 
@@ -37,6 +38,7 @@ Keep collaboration changes isolated from Builder behavior unless the task explic
 | WS authorization | Normal app commands | Members use only `collab_*` commands |
 | Settings | Mutates local Builder backend | Mutates selected remote/backend connection |
 | Storage | Local Builder data | Dedicated collaboration data boundary |
+| Project CWD selection | Unrestricted local paths / native picker | Allowlisted roots via `FORGE_CWD_ALLOWLIST_ROOTS` (fail closed when unset); server folder browser + single-level `create_directory` |
 | Specialists | Builder target-space filtered | Collaboration target-space filtered |
 | Skills | Normal skill loading | Selected global handles plus always-on `memory`; no channel-local skill authoring v1 |
 | Builder-only surfaces | Project Agents, project resources, Codex, Phoenix, CLI, terminal UI | Excluded unless explicitly designed |

@@ -35,6 +35,7 @@ describe('ws command parser session commands', () => {
     const payloadByType = {
       list_directories: { type: 'list_directories', path: '/tmp/project' },
       validate_directory: { type: 'validate_directory', path: '/tmp/project' },
+      create_directory: { type: 'create_directory', parentPath: '/tmp/project', name: 'new-folder' },
       pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
       get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },

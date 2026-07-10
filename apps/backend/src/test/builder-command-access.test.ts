@@ -42,7 +42,32 @@ describe("builder command access policy", () => {
     expect(BUILDER_COMMAND_ACCESS.create_manager).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.delete_session).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.api_proxy).toBe("write");
+    expect(BUILDER_COMMAND_ACCESS.list_directories).toBe("write");
+    expect(BUILDER_COMMAND_ACCESS.validate_directory).toBe("write");
+    expect(BUILDER_COMMAND_ACCESS.create_directory).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.pick_directory).toBe("admin");
+    expect(MEMBER_ALLOWED_TIERS.has(BUILDER_COMMAND_ACCESS.create_directory)).toBe(true);
+    expect(
+      evaluateBuilderCommandAccess({
+        commandType: "create_directory",
+        authContext: createAuthContext("member"),
+        remoteBuildEnabled: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      evaluateBuilderCommandAccess({
+        commandType: "create_directory",
+        authContext: createAuthContext("member"),
+        remoteBuildEnabled: false,
+      }),
+    ).toMatchObject({ ok: false, reason: "remote_build_disabled" });
+    expect(
+      evaluateBuilderCommandAccess({
+        commandType: "pick_directory",
+        authContext: createAuthContext("member"),
+        remoteBuildEnabled: true,
+      }),
+    ).toMatchObject({ ok: false, reason: "tier_not_granted" });
     expect(BUILDER_COMMAND_ACCESS.resume_restart_recovery).toBe("admin");
     expect(BUILDER_COMMAND_ACCESS.dismiss_restart_recovery).toBe("admin");
     // Tier sets stay non-empty; a refactor emptying one is suspicious.

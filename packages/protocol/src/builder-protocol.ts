@@ -23,4 +23,9 @@ export interface BuilderInstanceCapabilities {
   collab: boolean
   /** Remote projects (member builder access) is enabled on this instance. */
   remoteBuild: boolean
+  /**
+   * Server can create a single directory level via `create_directory`.
+   * Absent/false on older servers — UI should hide "+ New folder".
+   */
+  createDirectory?: boolean
 }

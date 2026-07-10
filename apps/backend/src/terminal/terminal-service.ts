@@ -405,6 +405,9 @@ export class TerminalService extends EventEmitter {
       return validateDirectoryPath(input, {
         rootDir: fallbackRootDir,
         allowlistRoots: this.cwdPolicy.allowlistRoots,
+        // Existing project terminals must keep working even when the project
+        // CWD sits outside the remote selection allowlist.
+        enforceAllowlist: this.cwdPolicy.enforceAllowlist ?? false,
       });
     };
 

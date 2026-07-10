@@ -206,6 +206,7 @@ describe('ManagerWsClient', () => {
     expect(contractTypes).toEqual([
       'list_directories',
       'validate_directory',
+      'create_directory',
       'pick_directory',
       'get_session_workers',
       'rename_profile',

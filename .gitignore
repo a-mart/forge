@@ -12,6 +12,8 @@ node_modules/
 /.forge/
 .forge-collaboration-data/
 .forge-collaboration-data-secondary/
+.forge-collaboration-workspaces/
+.forge-collaboration-workspaces-secondary/
 .cta.json
 
 # Internal development artifacts

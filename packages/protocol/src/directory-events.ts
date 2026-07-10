@@ -7,6 +7,8 @@ export interface DirectoriesListedEvent {
   requestId?: string
   requestedPath?: string
   resolvedPath?: string
+  /** Parent directory for navigation; null at an allowlist root / roots view. */
+  parentPath?: string | null
   roots?: string[]
   entries?: DirectoryItem[]
 }
@@ -26,4 +28,13 @@ export interface DirectoryPickedEvent {
   type: 'directory_picked'
   path: string | null
   requestId?: string
+}
+
+export interface DirectoryCreatedEvent {
+  type: 'directory_created'
+  path: string
+  parentPath: string
+  name: string
+  requestId?: string
+  roots?: string[]
 }

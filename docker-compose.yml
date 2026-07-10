@@ -13,6 +13,11 @@ services:
       FORGE_PORT: 47287
       FORGE_RUNTIME_TARGET: collaboration-server
       FORGE_DATA_DIR: /var/lib/forge
+      # Remote New Project / Change CWD selection is allowlisted. Mount a host
+      # workspace directory at /workspaces (see volumes) — do not treat /app as
+      # a user workspace. Leave FORGE_WORKSPACES_HOST_PATH empty to skip the
+      # bind mount until an admin configures one.
+      FORGE_CWD_ALLOWLIST_ROOTS: ${FORGE_CWD_ALLOWLIST_ROOTS:-/workspaces}
       FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
       FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
       FORGE_COLLABORATION_BASE_URL: ${FORGE_COLLABORATION_BASE_URL:-http://127.0.0.1:47387}
@@ -27,6 +32,11 @@ services:
       # Visible host-side collaboration data. This directory is gitignored and
       # intentionally left on disk when containers are removed.
       - ./.forge-collaboration-data:/var/lib/forge
+      # Optional host workspace root for remote projects. Set FORGE_WORKSPACES_HOST_PATH
+      # to a real host directory (for example ./workspaces) before enabling remote
+      # project creation. An empty/default placeholder avoids binding an arbitrary
+      # host path by surprise; create the directory first when you enable it.
+      - ${FORGE_WORKSPACES_HOST_PATH:-./.forge-collaboration-workspaces}:/workspaces
     restart: unless-stopped
 
   forge-collaboration-server-secondary:
@@ -44,6 +54,7 @@ services:
       FORGE_PORT: 47287
       FORGE_RUNTIME_TARGET: collaboration-server
       FORGE_DATA_DIR: /var/lib/forge
+      FORGE_CWD_ALLOWLIST_ROOTS: ${FORGE_CWD_ALLOWLIST_ROOTS:-/workspaces}
       FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
       FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
       FORGE_COLLABORATION_BASE_URL: ${FORGE_SECONDARY_COLLABORATION_BASE_URL:-http://127.0.0.1:47388}
@@ -56,4 +67,5 @@ services:
       # Separate host-side data so auth, channels, and runtime files stay isolated
       # from the primary local collaboration server.
       - ./.forge-collaboration-data-secondary:/var/lib/forge
+      - ${FORGE_SECONDARY_WORKSPACES_HOST_PATH:-./.forge-collaboration-workspaces-secondary}:/workspaces
     restart: unless-stopped

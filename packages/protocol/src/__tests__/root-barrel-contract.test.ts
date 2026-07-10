@@ -91,6 +91,7 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'get_session_workers',
   'list_directories',
   'validate_directory',
+  'create_directory',
   'pick_directory',
   'rename_profile',
   'archive_profile',
@@ -140,6 +141,7 @@ const REQUEST_ID_COMMAND_TYPES = [
   'get_session_workers',
   'list_directories',
   'validate_directory',
+  'create_directory',
   'pick_directory',
   'rename_profile',
   'archive_profile',
@@ -420,6 +422,7 @@ const serverEventsByLeafModule = [
     requestId: 'request-task-snapshot',
   },
   { type: 'directories_listed', path: '/tmp', directories: [], requestId: 'request-4' },
+  { type: 'directory_created', path: '/tmp/folder', parentPath: '/tmp', name: 'folder', requestId: 'request-4b' },
   { type: 'telegram_status', state: 'disabled', enabled: false, updatedAt: now },
   { type: 'prompt_changed', category: 'archetype', promptId: 'default', layer: 'builtin', action: 'saved' },
   { type: 'terminal_created', sessionAgentId: agent.agentId, terminal },
@@ -466,6 +469,7 @@ const requestIdCommands = [
   { type: 'get_session_workers', sessionAgentId: agent.agentId, requestId: 'request-25' },
   { type: 'list_directories', path: '/tmp', requestId: 'request-26' },
   { type: 'validate_directory', path: '/tmp', requestId: 'request-27' },
+  { type: 'create_directory', parentPath: '/tmp', name: 'folder', requestId: 'request-27b' },
   { type: 'pick_directory', defaultPath: '/tmp', requestId: 'request-28' },
   { type: 'rename_profile', profileId: profile.profileId, displayName: 'Renamed', requestId: 'request-29' },
   { type: 'archive_profile', profileId: profile.profileId, requestId: 'request-archive-profile' },
@@ -503,6 +507,7 @@ describe('protocol root barrel contract', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
       'list_directories',
       'validate_directory',
+      'create_directory',
       'pick_directory',
       'get_session_workers',
       'rename_profile',
@@ -778,7 +783,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(56)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(57)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -789,7 +794,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(40)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(41)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)
@@ -821,6 +826,7 @@ describe('protocol root barrel contract', () => {
       'session_workers_snapshot',
       'session_task_state_snapshot',
       'directories_listed',
+      'directory_created',
       'telegram_status',
       'prompt_changed',
       'terminal_created',

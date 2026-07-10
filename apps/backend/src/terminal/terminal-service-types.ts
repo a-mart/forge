@@ -20,6 +20,8 @@ export interface TerminalServiceOptions {
   cwdPolicy: {
     rootDir: string;
     allowlistRoots: string[];
+    /** Terminals validate existing session CWDs without remote selection allowlist gates. */
+    enforceAllowlist?: boolean;
   };
   transport?: TerminalTransport;
   now?: () => Date;

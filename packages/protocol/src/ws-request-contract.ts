@@ -21,6 +21,7 @@ type ContractCommandType = Extract<
   ClientCommand['type'],
   | 'list_directories'
   | 'validate_directory'
+  | 'create_directory'
   | 'pick_directory'
   | 'get_session_workers'
   | 'rename_profile'
@@ -60,6 +61,7 @@ type ContractSuccessEventType = Extract<
   ServerEvent['type'],
   | 'directories_listed'
   | 'directory_validated'
+  | 'directory_created'
   | 'directory_picked'
   | 'session_workers_snapshot'
   | 'profile_renamed'
@@ -110,6 +112,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['directory_validated'],
     errorCodeFragments: ['validate_directory'],
+  },
+  {
+    commandType: 'create_directory',
+    resultFamily: 'directory_create',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['directory_created'],
+    errorCodeFragments: ['create_directory'],
   },
   {
     commandType: 'pick_directory',
