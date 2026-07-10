@@ -1,4 +1,4 @@
-General Settings covers editor integration, sidebar preferences, Active Work Plans, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
+General Settings covers editor integration, sidebar preferences, compaction, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
 
 ## Appearance
 
@@ -8,9 +8,9 @@ Open **Settings > Appearance** to choose Light, Dark, System, or a custom local 
 
 Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex, Anthropic Claude, and Cursor SDK when used, with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit/reserve pace and estimated runout times, and use the refresh button in the detail panel to re-poll immediately. Usage state is restored after backend restarts, and weekly estimates follow historical usage curves rather than simple linear interpolation. Pooled OAuth usage polling refreshes tokens first, and pooled auth errors can suppress usage display. When OpenAI/Codex uses Forge Auth broker mode, broker-backed status and usage appear when the broker provides them. The same usage data also feeds Dashboard stats and token analytics. The setting is stored in your browser and applies immediately.
 
-## Active Work Plans
+## Active Work Plans (currently parked)
 
-Use **Enable Active Work Plans** to turn the session coordination UI on or off. It is Builder-only and on by default. When enabled, managers get the `task` tool, Active Work guidance, and the live Active Work card in chat. When disabled, the live card hides and manager runtimes recycle or defer recycle so the change takes effect cleanly. Historical Work Plan receipts stay visible either way.
+Active Work Plans are currently unavailable, so General Settings has no Active Work Plans toggle. Managers do not receive the `task` tool or Active Work guidance, and the live Active Work card/header and task-snapshot hydration are unavailable. Older `work_plan_created` receipts may still render in chat as read-only records from their creation snapshots.
 
 ## Compaction
 

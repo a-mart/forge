@@ -59,9 +59,9 @@ If `FORGE_OPENAI_CODEX_AUTH_MODE` is set, the environment is authoritative: save
 
 The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate direct sidecar route: a plain leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. Selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin, reach the manager, and are delegated to the visible `Codex Plugin` specialist worker with server-owned scoped exact plugin tools. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history. Plugin-scoped normal tool calls return only bounded previews and metadata. Full redacted connector exports are written as JSON session artifacts under `artifacts/codex-plugin/<delegationId>/` with a manifest sidecar, and only artifact path/metadata plus a bounded preview returns to chat/model context.
 
-### Active Work Plans
+### Active Work Plans (currently parked)
 
-Settings → General includes a Builder-only, default-on **Enable Active Work Plans** toggle backed by `shared/config/work-plans.json`. When enabled, managers get the `task` tool, the Active Work skill/guidance/context, and the live Active Work UI. When disabled, those live surfaces are hidden and runtimes recycle or defer recycle as needed; historical read-only Work Plan receipts remain visible.
+Active Work Plans are currently unavailable. Settings → General has no Active Work Plans toggle, managers do not receive the `task` tool or Active Work guidance, and the live Active Work card/header and task-snapshot hydration are unavailable. Existing `shared/config/work-plans.json` files are preserved as compatibility data, but runtime reads stay disabled and setting writes are ignored. Older `work_plan_created` receipts may still render in chat as read-only records from their creation snapshots.
 
 ### Compaction
 
@@ -164,7 +164,7 @@ All persistent state lives in a single data directory:
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
-│   │   ├── work-plans.json                # Builder-only default-on Active Work Plans toggle
+│   │   ├── work-plans.json                # Preserved parked Active Work Plans compatibility data
 │   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
 │   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
 │   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
@@ -201,7 +201,7 @@ All persistent state lives in a single data directory:
 │       ├── meta.json          # Session metadata
 │       ├── feedback.jsonl     # User feedback
 │       ├── pinned-messages.json  # Pin state (up to 10 message IDs)
-│       ├── tasks.json         # Active Work Plans state
+│       ├── tasks.json         # Preserved parked Active Work Plans compatibility data
 │       ├── context/
 │       │   └── prompt.md      # Collaboration channel additional instructions
 │       ├── reference/         # Collaboration channel reference docs

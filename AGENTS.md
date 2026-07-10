@@ -172,7 +172,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
-│   │   ├── work-plans.json                # Preserved parked Active Work Plans setting; runtime ignores writes
+│   │   ├── work-plans.json                # Preserved parked Active Work Plans compatibility data; runtime ignores writes
 │   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
 │   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
 │   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
@@ -228,7 +228,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
         ├── meta.json                      # Session metadata (includes sessionPurpose: 'agent_creator' for Agent Architect sessions)
         ├── feedback.jsonl                 # User feedback
         ├── pinned-messages.json           # Pin state (up to 10 message IDs)
-        ├── tasks.json                     # Active Work Plans active/session sidecar state; creation receipts live in chat history
+        ├── tasks.json                     # Preserved parked Active Work Plans compatibility data; creation receipts live in chat history
         ├── specialists/<handle>.md        # Channel-local specialist definitions (under _collaboration sessions)
         ├── workers/<workerId>.jsonl       # Worker conversation logs
         └── terminals/<terminalId>/
