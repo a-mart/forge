@@ -8,6 +8,14 @@ Archiving a project suspends its running profile terminals and preserves them fo
 
 If you delete a session, the terminals are not affected as long as the profile still has other active sessions. Terminals are cleaned up when the entire manager session group is removed.
 
+## Remote Project terminals
+
+When a blue, globe-marked Remote Project is selected, its PTYs, shell processes, working directories, scrollback, and snapshots live on that Forge server host. Commands do not run on your local machine, and terminal data is not synchronized locally.
+
+The server operator can disable subsequent member terminal lifecycle actions and new terminal tickets. This prevents new member access through those paths, but it is not a full sandbox and does not terminate an already attached terminal WebSocket or existing PTY. Treat an attached remote terminal as live until it disconnects or is otherwise closed.
+
+Collaboration-channel terminal settings being hidden is a separate limitation; it does not imply that remote Builder terminals are local.
+
 ## Persistence
 
 Terminal state is saved periodically. If the backend restarts, your terminals restore from the most recent snapshot, including scrollback history and screen content. A brief "Restored" indicator appears in the tab to let you know the session was recovered rather than freshly started.

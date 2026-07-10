@@ -42,7 +42,7 @@ Edit the default preferences Forge shares with new manager sessions. These are t
 
 ## Collaboration
 
-Open **Settings > Collaboration** to manage one or more collaboration backend connections. Add a connection, enter its backend URL, and click **Save** and **Test** for that connection to confirm it is reachable. Use the Builder/Collab toggle to open the collaboration sign-in surface. For configured remote backends, the toggle can take you to sign-in before you are authenticated. Configured backends wait for sign-in before opening metadata or live subscriptions; unknown, network, and server errors remain retryable. After sign-in succeeds, that backend's channels become available.
+Open **Settings > Collaboration** to manage one or more server connections. Choose **Add connection**, enter the server URL, select **Test**, then select **Add**. Sign in to the saved connection with your collaboration account. The Builder/Collab switch opens that server's Collaboration channels; the separate per-connection **Remote projects** switch can show its normal Builder projects in the unified Builder sidebar.
 
 Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the selected collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the selected collaboration backend instead of copying or sharing the local Builder auth file.
 
@@ -50,7 +50,9 @@ Collab Settings also include members and invites, plus password management, all 
 
 Collaboration channels are session-backed and can carry per-channel instructions and reference docs. Channel guidance is labeled **Additional instructions**.
 
-The Collaboration status panel reflects the configured collaboration connection/backend, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
+The Collaboration status panel reflects the selected connection, not the local Builder backend. Terminal settings remain hidden for Collaboration channels. That is separate from Remote Projects: when the server operator allows remote Builder terminals, those PTYs run on the remote server host and follow its terminal policy.
+
+See **Collaboration and Remote Projects** for connection states, automatic opt-in rules, data locality, and security boundaries.
 
 ## Observability
 

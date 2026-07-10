@@ -50,6 +50,23 @@ If you use pooled OAuth credentials, Forge refreshes them through the shared aut
 
 You can fine-tune the app under **Settings → Appearance**. It supports Light, Dark, and System mode, appearance templates, editable accent/background/foreground colors, and UI/code font choices. Changes are drafted first, then saved with **Apply**. The browser renderer keeps those preferences locally in browser storage, so they do not travel with server-side profile config.
 
+### Connecting Remote Projects (Optional)
+
+Remote Projects lets this Builder open projects that remain on another Forge collaboration server. To connect one:
+
+1. Open **Settings → Collaboration** and choose **Add connection**.
+2. Enter the server URL, select **Test**, and confirm the connection succeeds.
+3. Select **Add**, then sign in to that connection with your collaboration email and password.
+4. Turn on **Remote projects** for the connection. A newly added connection is opted in automatically only when its successful Test response advertised Remote Projects support; an existing connection's preference is not silently changed.
+5. Return to Builder and select a blue, globe-marked remote project header or a nested session row beneath it. Nested session rows use status dots rather than the globe marker.
+
+The **Remote projects** switch is a browser-local display/connection preference, not an access control. The collaboration server must separately enable its Remote Projects policy. Remote paths, Files operations, Git and `gh` commands, terminals, agents, and session data run or remain on that server—there is no local clone or sync. When remote terminal access is disabled, existing terminal descriptors or read visibility may remain, but subsequent member terminal lifecycle mutations and new ticket issuance are denied; an already attached terminal socket is not terminated. Members should be trusted instance operators: Remote Projects provides broad Builder read/write access to exposed projects and has no per-project ACL.
+
+In remote chat, author chips identify messages from other users. The viewer indicator is a snapshot of authenticated people subscribed to that session; it is not typing presence, an edit lock, or proof that someone is actively reading.
+
+If you open Builder directly on a server-hosted Forge origin and its Builder cookie is missing or expired, Forge shows a non-dismissible email/password dialog before opening the Builder connection. Successful sign-in reloads the current URL, preserving the requested route. This is separate from signing in to a remote connection through local **Settings → Collaboration**.
+
+See the [Remote Projects guide](collaboration/REMOTE_PROJECTS.md) for server policy, security boundaries, status meanings, and troubleshooting.
 
 > **Tip:** You don't need all providers to get started. One is enough. But having multiple options gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
 
@@ -144,7 +161,7 @@ The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository doe
 
 ### Session Sidebar
 
-The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived projects and directly archived sessions. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
+The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Enabled remote project headers are mixed into this list with blue styling and a globe marker; their nested session rows use status dots. Remote actions are limited: **Change Working Directory** is available on a project header through the server directory browser, while local rename, archive, delete, fork, and model actions are absent. Their connection section can show connecting, sign-in required, unreachable, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. Selecting a remote project or session targets supported chat/workspace surfaces at that server; selecting a local row switches them back. Dragging local and remote project headers only changes the order saved by the local Builder instance—it does not grant remote access. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived local projects and directly archived sessions; Archive itself remains local when a remote project is selected. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
 
 **Pinning sessions:** Right-click any session and select "Pin" to keep it at the top of the sidebar. Pinned sessions appear below project agents but above regular sessions and are never hidden by the "Show N more" pagination. Click "Unpin" to return a session to regular sorting. Sessions are pinned per profile — forked sessions don't inherit pin state.
 
@@ -551,6 +568,14 @@ You can see exactly what Forge is telling your agents to do, and you can edit th
 **Settings → Slash Commands** lets you create auto-expander shortcuts. Type `/` in the chat, pick a command, press Tab, and the shortcut expands to your predefined text.
 
 Right now these are text snippets for commonly used prompts. Functional slash commands (that execute actions rather than expand text) are coming.
+
+### Remote Projects
+
+Use **Settings → Collaboration** to manage collaboration connections and their separate **Remote projects** preferences. Adding a connection uses **Add connection → URL → Test → Add**. After you sign in, the Builder/Collab switch opens collaboration channels, while the per-connection **Remote projects** switch controls whether that server's normal Builder projects appear in your unified Builder sidebar. These are two different controls and Remote Projects are not Collaboration channels.
+
+A remote selection makes supported project-scoped surfaces use the remote origin: chat and execution, Files, Source Control, attachments, Session Audit, model availability, and terminals. If the server disables member terminal access, existing descriptors or read visibility may remain while subsequent lifecycle mutations and ticket issuance are denied. Non-chat Settings, Stats, Archive, onboarding, Cortex, provider-usage data, and the mixed sidebar-order setting remain local. Remote New Project and Change Working Directory browse paths on the server rather than opening a local native folder picker.
+
+Turning the browser preference off does not revoke the collaboration session, stop remote agents, or change server policy. Likewise, a server disabling Remote Projects denies subsequent member Builder HTTP requests and commands but does not disconnect existing sockets or subscriptions. Disabling remote terminals blocks subsequent member terminal lifecycle and ticket access; it does not terminate an already attached terminal socket or make the server a full sandbox. See the [canonical Remote Projects guide](collaboration/REMOTE_PROJECTS.md).
 
 ### Observability
 

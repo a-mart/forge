@@ -33,6 +33,12 @@ Profile settings include:
 
 Most of these work well with defaults. Adjust them as you learn what your workflow needs.
 
+## Optional: connect Remote Projects
+
+To use projects hosted by another Forge server, open **Settings > Collaboration**, select **Add connection**, enter its URL, choose **Test**, then choose **Add**. Sign in to the saved connection and turn on its **Remote projects** switch. A new connection is automatically opted in only when the successful Test advertised support.
+
+Return to Builder and select a blue, globe-marked remote project header or a nested session row beneath it; nested sessions use status dots. Chat, agents, Files, Source Control, and remote terminals then target the remote server; the project is not cloned or synchronized locally. The Builder/Collab switch is separate—it opens Collaboration channels rather than remote Builder projects. See **Collaboration and Remote Projects** for trust and status details.
+
 ## What's next
 
 Start a conversation. The best way to configure Forge is to use it — the manager will ask for clarification when it needs it, and Cortex learns your preferences from how you work.
