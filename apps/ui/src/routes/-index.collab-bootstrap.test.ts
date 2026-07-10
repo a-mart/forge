@@ -220,6 +220,59 @@ describe('IndexPage collab bootstrap gating', () => {
     })
   })
 
+  it('marks same-origin hosted Builder for server directory browsing when remoteBuild is disabled', () => {
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      capabilities: { collab: true, remoteBuild: false, createDirectory: false },
+      isAdmin: true,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(builderSurfacePropsMock.value).toMatchObject({
+      directServerDirectoryBrowser: { canCreateDirectory: false },
+    })
+  })
+
+  it.each([
+    ['capabilities are missing', undefined],
+    ['collaboration capability is disabled', { collab: false, remoteBuild: true }],
+  ])('keeps same-origin Builder local when $0', (_label, capabilities) => {
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      capabilities,
+      isAdmin: true,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(builderSurfacePropsMock.value?.directServerDirectoryBrowser).toBeUndefined()
+  })
+
+  it('keeps a genuine local Builder in native directory-picker mode', () => {
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: false,
+      capabilities: { collab: true, remoteBuild: true },
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(builderSurfacePropsMock.value?.directServerDirectoryBrowser).toBeUndefined()
+  })
+
   it('redirects member-only users onto the collab surface even from the builder route', () => {
     const navigateToRoute = vi.fn()
     routeStateMock.value = {

@@ -143,6 +143,69 @@ describe('ServerDirectoryBrowserDialog', () => {
     })
   })
 
+  it('falls back to allowed roots when the initial cwd is outside the server allowlist', async () => {
+    const listDirectories = vi.fn(async (path?: string) => {
+      if (path === '/app') throw new Error('LIST_DIRECTORIES_FAILED: Directory is outside the configured workspace roots.')
+      return {
+        path: '/workspaces',
+        directories: ['/workspaces'],
+        resolvedPath: '/workspaces',
+        parentPath: null,
+        roots: ['/workspaces'],
+        entries: [{ name: 'workspaces', path: '/workspaces' }],
+      }
+    })
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(
+        createElement(ServerDirectoryBrowserDialog, {
+          open: true,
+          initialPath: '/app',
+          onOpenChange: () => {},
+          client: {
+            listDirectories,
+            validateDirectory: async (path) => ({ path, valid: true, message: null, resolvedPath: path }),
+          },
+          onSelect: () => {},
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(listDirectories).toHaveBeenNthCalledWith(1, '/app')
+      expect(listDirectories).toHaveBeenNthCalledWith(2)
+      expect(dialog()?.textContent).toContain('/workspaces')
+    })
+  })
+
+  it('keeps non-policy initial-path errors visible instead of falling back to roots', async () => {
+    const listDirectories = vi.fn(async () => {
+      throw new Error('DIRECTORY_LIST_FAILED: permission denied')
+    })
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(
+        createElement(ServerDirectoryBrowserDialog, {
+          open: true,
+          initialPath: '/app',
+          onOpenChange: () => {},
+          client: {
+            listDirectories,
+            validateDirectory: async (path) => ({ path, valid: false, message: 'denied' }),
+          },
+          onSelect: () => {},
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(dialog()?.textContent).toContain('DIRECTORY_LIST_FAILED: permission denied')
+    })
+    expect(listDirectories).toHaveBeenCalledTimes(1)
+  })
+
   it('hides New folder when createDirectory capability is absent', async () => {
     await act(async () => {
       root = createRoot(container)

@@ -126,6 +126,12 @@ export function IndexPage() {
     apiBaseUrl: resolvedCollabTarget?.apiBaseUrl,
   })
   const isCollabUnauthenticated = shouldLoadCollabSession && collabSession.hasLoaded && collabSession.isCollabEnabled && !collabSession.isAdmin && !collabSession.isMember
+  // A hosted collaboration server can serve Builder directly from the local
+  // origin. It has no remote-origin ID, but its filesystem remains server-side.
+  const isDirectCollaborationServerBuilder =
+    !resolvedCollabTarget?.isRemote &&
+    collabSession.isCollabEnabled &&
+    collabSession.capabilities?.collab === true
   // A collaboration server serves Builder directly at its own origin. Gate
   // that local Builder transport on the explicit `/me` probe so an expired or
   // missing session does not turn into an unactionable WebSocket retry loop.
@@ -313,6 +319,9 @@ export function IndexPage() {
             routeState={routeState}
             activeView={activeView}
             navigateToRoute={navigateToRoute}
+            directServerDirectoryBrowser={isDirectCollaborationServerBuilder
+              ? { canCreateDirectory: collabSession.capabilities?.createDirectory === true }
+              : undefined}
             collaborationModeSwitch={
               activeView === 'chat' && ((collabSession.isCollabEnabled && collabSession.isAdmin) || hasRemoteCollabServer)
                 ? {

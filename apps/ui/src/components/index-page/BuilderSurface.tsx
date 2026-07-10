@@ -103,6 +103,8 @@ interface BuilderSurfaceProps {
   routeState: AppRouteState
   activeView: ActiveView
   navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void
+  /** Same-origin hosted collaboration Builder still browses server directories. */
+  directServerDirectoryBrowser?: { canCreateDirectory: boolean }
   collaborationModeSwitch?: {
     activeSurface: ActiveSurface
     onSelectSurface: (surface: ActiveSurface) => void
@@ -114,6 +116,7 @@ export function BuilderSurface({
   routeState,
   activeView,
   navigateToRoute: navigateToOuterRoute,
+  directServerDirectoryBrowser,
   collaborationModeSwitch,
 }: BuilderSurfaceProps) {
   // This API is intentionally pinned to the local Builder URL. It must never
@@ -132,6 +135,7 @@ export function BuilderSurface({
   // Identity behind the active origin's connection (null on local): author
   // chips render only for authors other than this user (SPEC §5.5).
   const activeOriginMeta = useOriginMeta(activeOriginId)
+  const usesServerDirectoryBrowser = isRemoteOriginActive || Boolean(directServerDirectoryBrowser)
   const activeOriginCurrentUserId = isRemoteOriginActive
     ? activeOriginMeta?.currentUser?.userId ?? null
     : null
@@ -754,6 +758,7 @@ export function BuilderSurface({
         onUpdateManagerCwd={localSidebarSession.handleUpdateManagerCwd}
         onBrowseDirectory={localSidebarSession.handleBrowseDirectoryForCwd}
         onValidateDirectory={localSidebarSession.handleValidateDirectoryForCwd}
+        directServerDirectoryBrowser={directServerDirectoryBrowser}
         onRequestSessionWorkers={localSidebarSession.handleRequestSessionWorkers}
         onSetSessionProjectAgent={localSidebarSession.handleSetSessionProjectAgent}
         onGetProjectAgentConfig={localSidebarSession.handleGetProjectAgentConfig}
@@ -1221,35 +1226,39 @@ export function BuilderSurface({
           onModelSelectionChange: handleNewManagerModelSelectionChange,
           onReasoningLevelChange: handleNewManagerReasoningLevelChange,
           onScaffoldForgeResourcesChange: handleScaffoldForgeResourcesChange,
-          // Remote origins use the server folder browser over the origin socket.
-          // Local origins keep the native/Electron picker.
-          onBrowseDirectory: isRemoteOriginActive
+          // Remote origins and direct hosted collaboration Builder both use the
+          // active server socket. Only a true local Builder uses the native picker.
+          onBrowseDirectory: usesServerDirectoryBrowser
             ? undefined
             : () => {
                 void handleBrowseDirectory()
               },
-          serverDirectoryBrowser: isRemoteOriginActive
+          serverDirectoryBrowser: usesServerDirectoryBrowser
             ? {
                 client: {
                   listDirectories: (path) => {
                     const client = clientRef.current
-                    if (!client) return Promise.reject(new Error('Not connected to remote origin.'))
+                    if (!client) return Promise.reject(new Error('Not connected to active server.'))
                     return client.listDirectories(path)
                   },
                   validateDirectory: (path) => {
                     const client = clientRef.current
-                    if (!client) return Promise.reject(new Error('Not connected to remote origin.'))
+                    if (!client) return Promise.reject(new Error('Not connected to active server.'))
                     return client.validateDirectory(path)
                   },
-                  createDirectory: activeOriginMeta?.capabilities?.createDirectory
+                  createDirectory: (isRemoteOriginActive
+                    ? activeOriginMeta?.capabilities?.createDirectory
+                    : directServerDirectoryBrowser?.canCreateDirectory)
                     ? (parentPath, name) => {
                         const client = clientRef.current
-                        if (!client) return Promise.reject(new Error('Not connected to remote origin.'))
+                        if (!client) return Promise.reject(new Error('Not connected to active server.'))
                         return client.createDirectory(parentPath, name)
                       }
                     : undefined,
                 },
-                canCreateDirectory: activeOriginMeta?.capabilities?.createDirectory === true,
+                canCreateDirectory: isRemoteOriginActive
+                  ? activeOriginMeta?.capabilities?.createDirectory === true
+                  : directServerDirectoryBrowser?.canCreateDirectory === true,
               }
             : undefined,
           onSubmit: (event) => {
