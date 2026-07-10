@@ -23,7 +23,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-general',
     title: 'General Settings',
     category: 'settings',
-    summary: 'Editor choice, sidebar preferences, Cortex auto-review, and links to Appearance and diagnostics.',
+    summary: 'Editor, sidebar, compaction, Cortex consolidation, Knowledge v2 activation, and related settings.',
     content: settingsGeneralContent,
     keywords: [
       'theme',
@@ -33,7 +33,9 @@ export const settingsArticles: HelpArticle[] = [
       'vscode',
       'cursor',
       'cortex',
-      'auto-review',
+      'consolidation',
+      'knowledge v2',
+      'migration',
       'reboot',
       'appearance',
       'onboarding',
@@ -50,7 +52,7 @@ export const settingsArticles: HelpArticle[] = [
       'phoenix',
       'diagnostics',
     ],
-    relatedIds: ['settings-theme', 'settings-editor', 'settings-collaboration', 'settings-observability', 'settings-about', 'chat-compaction', 'models-providers'],
+    relatedIds: ['settings-theme', 'settings-editor', 'settings-collaboration', 'settings-observability', 'settings-about', 'chat-compaction', 'models-providers', 'cortex-overview', 'cortex-knowledge', 'cortex-onboarding'],
     contextKeys: ['settings.general'],
   },
   {

@@ -9,8 +9,8 @@ export const helpTooltips: HelpTooltipContent[] = [
   },
   {
     id: 'settings.cortex-auto-review',
-    text: 'While Knowledge v2 is enabled, Cortex runs a daily consolidator that merges, archives, and reindexes knowledge entries. It does not review transcripts, memory files, or reference docs.',
-    articleId: 'cortex-overview',
+    text: 'While Knowledge v2 is enabled, Cortex runs a daily consolidator that merges, archives, and reindexes existing entries. It does not review transcripts, memory files, or reference docs.',
+    articleId: 'cortex-auto-review',
     contextKey: 'settings.general',
   },
 ]

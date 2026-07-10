@@ -1,23 +1,28 @@
-Forge keeps three layers of memory so agents have the right context without you repeating yourself.
+Forge maintains session memory, profile memory, and Cortex knowledge as distinct layers. Which files enter a prompt depends on the Knowledge v2 mode.
 
 ## Profile memory
 
-Each profile has a memory file that stores durable facts — project conventions, tech stack details, decisions you have made. Every session in that profile can read this memory. Think of it as the shared knowledge base for a particular project or workflow.
+Each profile has a canonical `memory.md` for durable project facts, conventions, and decisions shared through the memory-merge lifecycle. Forge continues maintaining this file in both knowledge modes.
+
+Do not confuse profile memory with **profile-scoped Knowledge v2**. The latter is a set of provenance-bearing entries with its own generated `INDEX.md`.
 
 ## Session memory
 
-Each chat session has its own working memory. This is where the agent records things it learns during a conversation — what it tried, what worked, open questions. Session memory is private to that session. Other sessions in the same profile do not see it.
+Each chat session has its own `memory.md` for working state: what the agent tried, what worked, and open questions. It is private to that session and remains prompt-injected in both modes.
 
-This separation is useful because a session might explore a dead-end approach. You do not want that polluting the shared profile memory. When a session produces insights worth keeping, the memory can be merged up into the profile level.
+This separation keeps a session's exploratory or temporary state from automatically becoming shared profile context. Durable session insights can still be merged into canonical profile memory.
 
-## Common knowledge
+## Legacy common knowledge
 
-Common knowledge lives above profiles. It stores cross-project preferences — things like your name, how you prefer to communicate, and workflow habits. Cortex manages this file. Every profile and session can read it.
+`shared/knowledge/common.md` stores legacy cross-profile preferences, including the managed onboarding-preferences block. With v2 OFF, preference changes render and update that block. With v2 ON, those changes upsert global v2 preference entries instead; the legacy file is preserved during normal switching but is not maintained by those updates.
 
-## How they interact
+## Prompt sources by mode
 
-When an agent starts working, it loads all three layers: common knowledge, then profile memory, then session memory. More specific layers take precedence. If session memory says "use approach B" but profile memory says "use approach A," the agent follows the session.
+Knowledge v2 is an opt-in, default-off preview:
 
-You can ask the agent to remember something and it writes to session memory. Profile memory updates happen through explicit merges or Cortex reviews. Common knowledge updates when you tell Cortex about a cross-project preference.
+- **Knowledge v2 ON:** prompts receive the generated global and active-profile `INDEX.md` files plus session `memory.md`. Canonical profile `memory.md` and legacy `common.md` are not prompt-injected.
+- **Knowledge v2 OFF:** prompts receive legacy `common.md`, canonical profile `memory.md`, and session `memory.md`.
 
-Memory files are plain markdown stored on disk. You can read and edit them directly if you want.
+Normal switching preserves both stores. Turning v2 off restores the legacy sources while their original files remain; explicit confirmed legacy cleanup archives and removes those originals, so OFF alone cannot restore their prior content. The ordinary Settings toggle does not migrate data.
+
+These files are plain Markdown on disk and remain available for inspection. Managers can use the `knowledge` tool to search and read full v2 entries behind the compact indexes.

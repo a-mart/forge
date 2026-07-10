@@ -1,4 +1,4 @@
-General Settings covers editor integration, sidebar preferences, repository clone defaults, compaction, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
+General Settings covers editor integration, sidebar preferences, repository clone defaults, compaction, telemetry, the Cortex consolidation schedule, and the Knowledge v2 preview. Appearance has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
 
 ## Appearance
 
@@ -34,15 +34,21 @@ Anonymous telemetry is enabled by default and sends only aggregate counts such a
 
 To opt out, set `FORGE_TELEMETRY=false` in your environment. There is no telemetry setting in the UI.
 
-## Cortex Auto-Review
+## Cortex consolidation
 
-Cortex is Forge's self-improvement system. When automatic reviews are enabled, Cortex periodically checks your sessions and updates knowledge, memory, and reference docs. You can set the review interval from every 15 minutes up to every 24 hours. Disable it entirely if you want to run reviews manually.
+While Knowledge v2 is ON, the enabled daily Cortex schedule runs the consolidator over existing entries. It can merge duplicates, supersede conflicts, archive stale entries, and regenerate indexes, but it does not mine transcripts or create entries. Disable the schedule if you want to trigger consolidation manually from Cortex **Run**.
 
-Only reviewable transcript drift drives reviews; raw JSONL growth alone and internal/system entries do not.
+## New Cortex (Knowledge v2)
+
+Knowledge v2 is a default-off preview. When ON, prompts receive compact global and active-profile `INDEX.md` files plus current session `memory.md`. Canonical profile `memory.md` continues to be maintained; legacy shared `common.md` is preserved during normal switching, but neither is prompt-injected. OFF restores legacy context while the originals remain. Explicit confirmed cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
+
+The switch does not migrate data. A successful guarded migration commits a valid manifest and immediately activates v2. If activation persistence fails, the manifest remains an authorized recovery point with v2 OFF; it also permits ordinary re-enable after a later disable. Without a valid manifest, Settings shows migration-required guidance and does not issue an enable request.
+
+This mode switch is different from `FORGE_CORTEX_ENABLED=false`, which disables the entire Cortex subsystem.
 
 ## Welcome Preferences
 
-Edit the default preferences Forge shares with new manager sessions. These are the onboarding choices you made on first launch (name, technical level, workflow style). Changes here apply to future sessions.
+Edit the default preferences Forge shares with new manager sessions. These are the onboarding choices you made on first launch (name, technical level, workflow style). Forge always updates the structured onboarding state. Changes apply to future manager sessions through the active mode's store: the managed legacy `common.md` block with v2 OFF, or global v2 preference entries with v2 ON.
 
 ## Collaboration
 

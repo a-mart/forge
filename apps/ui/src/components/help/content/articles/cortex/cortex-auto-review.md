@@ -1,27 +1,30 @@
-Cortex consolidation periodically cleans up knowledge entries without manual intervention.
+While Knowledge v2 is ON, Cortex consolidation can periodically clean up existing knowledge entries.
 
 ## How it works
 
-When consolidation is enabled, Cortex runs on a daily schedule from Settings > General. Each cycle, it:
+When the daily consolidation schedule is enabled, each run:
 
 1. **Reads entries** across global and profile scopes.
 2. **Merges duplicates** while preserving support and provenance.
-3. **Supersedes conflicts** so the newest, best-supported entry wins.
+3. **Supersedes conflicts** using entry evidence.
 4. **Archives decayed entries** and regenerates indexes under token caps.
 
-## The Consolidation tab
+The consolidator reads entries only. It does not mine transcripts or create entries.
 
-Open the Cortex dashboard and go to the **Consolidation** tab to see the current state:
+## The Run tab
 
-- **Last run** — Shows the latest completed or failed consolidation run.
-- **Next trigger** — Shows the threshold and daily cadence used by the scheduler.
-- **Promotion queue** — Lists cross-project promotion candidates that still require user approval.
-- **Consolidate now** — Runs consolidation manually.
+Open Cortex and select **Run** to:
+
+- choose **Consolidate now** for a manual run,
+- see **Last run**, and
+- inspect the **Promotion review queue**.
+
+The **Log** tab shows verified consolidation log activity.
 
 ## Capture checks
 
-Capture checks are separate from consolidation. They run at bounded checkpoints, use restricted tools, and only save durable learning that was missed by the main manager turn.
+Capture checks are separate from consolidation. While v2 is ON, bounded cadence checks can run after compaction, a sufficient idle gap, or session archive. Feedback signals can trigger a restricted capture-check fork directly.
 
-## Enabling auto-review
+## Consolidation schedule
 
-Go to **Settings > General** and find the Cortex consolidation section. Toggle it on to keep the daily schedule active while Forge is running.
+Use the Cortex schedule control in **Settings > General** to enable or disable the daily cadence. Scheduled and manual consolidation operate only while Knowledge v2 is ON.

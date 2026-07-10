@@ -151,12 +151,14 @@ Remote Projects is not replication: remote profiles, sessions, files, repositori
 
 ### Cortex
 
-Cortex is Forge's persistent knowledge system. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. Knowledge is stored as small per-entry files, each carrying provenance — where it came from, when it was first seen, how many times it's been confirmed — across two scopes:
+Cortex is Forge's persistent knowledge system. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. The Knowledge v2 preview stores small provenance-bearing entries in two scopes:
 
-- **Common knowledge** — cross-project preferences and habits that apply everywhere. How you like code reviewed, your naming conventions, your communication style.
-- **Project knowledge** — per-project learned guidance. Architecture patterns, testing conventions, deployment quirks specific to each codebase.
+- **Global knowledge** — cross-project preferences and habits that apply everywhere, such as review, naming, and communication conventions.
+- **Profile-scoped knowledge** — learned guidance for one profile, such as architecture patterns, testing conventions, and deployment gotchas.
 
-Only a small, token-capped index of entry titles is injected into prompts; the agent pulls full entries on demand with a knowledge tool, so context stays lean no matter how much you've taught it. Knowledge is captured inline — when you correct the manager or state a durable preference, it's saved in the moment — and a background consolidator periodically merges duplicates, resolves contradictions, and retires stale entries. Every change is versioned in git with an entry-level changelog, so you can see exactly what changed, when, and why, and roll back anything. Cortex ships behind a switch (off by default) with a one-command migration from any earlier knowledge files.
+Knowledge v2 is **off by default**. When enabled, managers receive token-capped global and profile `INDEX.md` files plus the current session's `memory.md`; they pull full entries on demand with the `knowledge` tool. Canonical profile `memory.md` continues to be maintained in v2 mode. Legacy shared `common.md` is preserved during normal switching, but neither is prompt-injected in that mode. Normal switching preserves both stores, and turning v2 off restores legacy common + profile + session injection while those legacy originals remain. Explicit legacy cleanup archives and removes those originals, after which OFF alone cannot restore their prior content.
+
+Before a normal false→true activation, an operator must run the guarded migration. A successful migration commits a valid manifest and immediately activates v2. If activation persistence fails after that commit, the manifest remains an authorized recovery point with v2 OFF; it also permits ordinary re-enable after a later disable. Settings reports when migration is required, while first-launch v2 onboarding withholds unsafe activation. The backend fails closed if capability cannot be proven and rejects unsafe activation with HTTP 409 / `KNOWLEDGE_V2_MIGRATION_REQUIRED`. While v2 is ON, the consolidator reads entries—not transcripts—to merge duplicates, resolve contradictions, archive stale entries, and regenerate indexes. The Cortex dashboard exposes **Index**, read-only **Entries**, consolidation **Log**, and **Run** (Consolidate now, Last run, and Promotion review queue).
 
 ### Smart Compaction
 
@@ -185,7 +187,7 @@ You can also manually stop any agent from the UI, but you'll rarely need to.
 
 ### Feedback
 
-Message feedback is collected through a single feedback trigger and popover with **Good response**, **Needs work**, and **Add/update comment** actions. These aren't decorative. Your ratings feed into Cortex's review cycle to identify what's working and what isn't.
+Message feedback is collected through a single feedback trigger and popover with **Good response**, **Needs work**, and **Add/update comment** actions. These aren't decorative: feedback can trigger a bounded Cortex capture check so durable learning is not missed.
 
 You don't need to rate every message. Focus on the meaningful moments: when the manager does something clever, when a worker produces garbage, when you notice a recurring pattern. Sessions can also be rated holistically.
 
@@ -207,7 +209,7 @@ The web UI is designed to be the only window you need open.
 - **Archive** — open the Builder Archive view from the sidebar to see archived projects and directly archived sessions. Archive entries are sorted by last user-message activity and show the last-used date. Restore them with a single button; restoring can immediately reopen the restored target.
 - **Stats** — usage and activity summaries. Session totals are historical and include archived data, while active counts exclude archived projects and sessions. When Cursor SDK is used, its usage is included in dashboard stats, token analytics, and telemetry provider inference.
 - **Observability** — Settings → Observability can export Builder-only runtime traces to a local Arize Phoenix OTLP HTTP/protobuf endpoint. Rich traces cover runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback paths, with redaction, content caps, capture toggles, and loopback-only endpoint validation. Collaboration is unsupported in V1 and remains no-op/fail-closed.
-- **Notifications** — global notification defaults with per-manager overrides and custom sound uploads. Set baseline sounds once and all managers inherit them. Cortex is excluded from defaults so automated reviews stay quiet.
+- **Notifications** — global notification defaults with per-manager overrides and custom sound uploads. Set baseline sounds once and all managers inherit them. Cortex is excluded from defaults so scheduled consolidation and other Cortex activity do not inherit normal manager sounds.
 - **Prompt preview** — view the full effective system prompt being sent, including memory, knowledge, and skills.
 
 ## Skills

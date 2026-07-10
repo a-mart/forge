@@ -51,20 +51,22 @@ const conceptsMemory: HelpArticle = {
   id: 'concepts-memory',
   title: 'Memory System',
   category: 'concepts',
-  summary: 'How Forge remembers context across sessions using profile memory, session memory, and common knowledge.',
+  summary: 'How session memory, profile memory, legacy common knowledge, and Knowledge v2 prompt sources differ.',
   content: conceptsMemoryContent,
   keywords: [
     'memory',
     'profile memory',
     'session memory',
     'common knowledge',
+    'knowledge v2',
+    'index',
     'context',
     'remember',
     'persistence',
     'cortex',
   ],
   relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge'],
-  contextKeys: ['chat.main', 'cortex.knowledge'],
+  contextKeys: ['chat.main'],
 }
 
 const conceptsPromptResolution: HelpArticle = {

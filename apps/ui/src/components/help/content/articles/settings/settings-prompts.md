@@ -20,7 +20,7 @@ The editor shows the current prompt text with a source indicator showing where i
 
 ## Cortex surfaces
 
-If Cortex is enabled, a third category appears: **Cortex Surfaces**. These are grouped into system templates, seed templates, live files, and scratch surfaces. Cortex surfaces are managed separately because Cortex may update them during auto-reviews.
+If Cortex is enabled, a third category appears: **Cortex Surfaces**. These are grouped into system templates, seed templates, live files, and scratch surfaces. Cortex surfaces are managed separately because capture checks and entry consolidation can update Cortex-managed files while Knowledge v2 is on.
 
 When viewing the Cortex profile, the category picker is hidden and all items are shown in a single grouped dropdown.
 
