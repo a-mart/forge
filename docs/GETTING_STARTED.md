@@ -30,15 +30,11 @@ You'll see a short welcome form from Cortex, Forge's learning system. It asks fo
 
 ### Setting Up Authentication
 
-Before you can do anything, you need to connect at least one AI provider. Go to **Settings → Authentication**.
+To run agents, configure at least one supported model provider. Go to **Settings → Authentication**.
 
-The authentication pane shows one row per provider with a provider label and an auth-mode badge, so you can tell whether a row is using OAuth or an API key at a glance.
+The current pane uses OAuth account-pool cards for **Anthropic** and **OpenAI**, and masked key/token rows for **xAI**, **OpenRouter**, and **Cursor SDK**. Status and auth-type badges appear only on applicable cards. Claude SDK authentication is handled outside these rows: run `claude login` to use its native Claude Code CLI OAuth runtime.
 
-Forge supports three providers:
-
-- **Anthropic** — Claude models. Supports OAuth or API key auth.
-- **Claude SDK** — Native Claude Agent SDK access through Claude Code CLI OAuth. Use this when you want the SDK runtime instead of the Pi-proxied Anthropic path.
-- **OpenAI** — GPT and Codex models. Supports OAuth, API key auth, or Forge Auth broker mode for OpenAI/Codex in v1.
+Choose providers based on the models and runtimes you need. Anthropic covers Claude models, OpenAI covers GPT and Codex, xAI covers native Grok models, OpenRouter credentials support user-added OpenRouter models, and Cursor SDK credentials support its catalog models when visible. Existing local OpenAI or Anthropic credentials may still be reflected in provider status, but the current Settings cards add OAuth accounts rather than presenting a general API-key entry flow.
 
 Forge Auth broker mode lets Forge use a separate broker for OpenAI/Codex short-lived leases instead of local OpenAI credentials. For v1 setup, your broker administrator creates a one-time setup link for your name/email. Paste that link into **Settings → Authentication → OpenAI → Forge Auth broker** and redeem it. Forge sends the invite id/secret to the broker from the backend, stores only the returned broker runtime token in secrets, and masks broker status in the UI. Manual broker URL/token entry is still available under advanced setup for older deployments, but setup links are the normal path.
 
@@ -64,15 +60,15 @@ The **Remote projects** switch is a browser-local display/connection preference,
 
 In remote chat, author chips identify messages from other users. The viewer indicator is a snapshot of authenticated people subscribed to that session; it is not typing presence, an edit lock, or proof that someone is actively reading.
 
-If you open Builder directly on a server-hosted Forge origin and its Builder cookie is missing or expired, Forge shows a non-dismissible email/password dialog before opening the Builder connection. Successful sign-in reloads the current URL, preserving the requested route. This is separate from signing in to a remote connection through local **Settings → Collaboration**.
+If you open the UI directly on a collaboration-server origin and its collaboration session cookie is missing or expired, Forge shows a non-dismissible email/password dialog before opening the Builder connection. Successful sign-in reloads the current URL, preserves the requested route, and re-evaluates the account role: admins may continue to Builder, while members are routed to Collaboration. This direct-hosted flow is separate from a configured Remote Projects connection's sign-in and recovery flow under local **Settings → Collaboration**.
 
 See the [Remote Projects guide](collaboration/REMOTE_PROJECTS.md) for server policy, security boundaries, status meanings, and troubleshooting.
 
-> **Tip:** You don't need all providers to get started. One is enough. But having multiple options gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
+> **Tip:** You don't need every provider to get started. One configured provider is enough to run agents, while multiple providers give you more multi-model routing options (more on this in [Advanced Usage](#10-advanced-usage)).
 
 ### First Impressions
 
-Once authenticated, you'll see the main interface: a chat window in the center, a collapsible sidebar on the right, and a session list on the left. It looks like a chat app. Fundamentally, that's what it is. But the chat is with an AI manager that controls a pool of workers.
+Once provider credentials are configured, you'll see the main interface: a chat window in the center, a collapsible sidebar on the right, and a session list on the left. It looks like a chat app. Fundamentally, that's what it is. But the chat is with an AI manager that controls a pool of workers.
 
 ---
 
@@ -776,7 +772,7 @@ Once you're comfortable with the basics:
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Adjust review frequency** — Check **Settings → General** to configure how often automatic Cortex reviews run or turn them off if you prefer manual control.
-6. **Explore multi-model routing** — If you have OpenAI, Anthropic, or Claude SDK configured, teach your manager which providers and models to use for which kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
+6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
 7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."

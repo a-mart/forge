@@ -26,7 +26,7 @@ Core invariants:
 | Runtime/data origin | Local `builder` backend and data dir | Selected `collaboration-server` and its dedicated data/workspace mounts | Selected `collaboration-server` |
 | Profile/session model | Normal visible Builder profiles/sessions | Normal visible Builder profiles/sessions on the server | Hidden `_collaboration` profile with session-backed channels |
 | Navigation | Unified Builder sidebar | Blue/globe rows in the same Builder sidebar | Collaboration surface and channel sidebar |
-| Auth | Local app/provider credentials | Collaboration Better Auth member/admin session | Same collaboration session |
+| Auth | No normal browser app session; provider credentials are separate | Collaboration Better Auth member/admin session | Same collaboration session |
 | Protocol | Builder HTTP/WS | Reviewed Builder HTTP/WS allowlists plus builder protocol handshake | `collab_*` protocol and collaboration routes |
 | Files/Git/terminals | Local active origin | Selected remote active origin, subject to policy | Not inferred from route presence |
 | Non-chat Settings/Stats/Archive/onboarding/Cortex | Local | Still local | Separate Collaboration settings where designed |
@@ -34,6 +34,14 @@ Core invariants:
 | Data movement | Local | No clone or sync; state and execution remain remote | Channel history/content remain remote |
 
 Remote Projects has a dedicated canonical guide: [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md).
+
+### Browser authentication topologies
+
+- **Local Builder:** the normal `builder` runtime has no browser account/session gate. Its model-provider credentials authorize provider calls; they do not authenticate a person to the Builder web app.
+- **Builder served directly by a collaboration server:** the same-origin UI pauses Builder bootstrap behind an inline collaboration email/password sign-in when the collaboration session is missing or expired. Direct-hosted members are routed to the Collaboration surface rather than being promised direct Builder access; admin and member authorization remain governed by the collaboration route/command classifications.
+- **Configured Remote Projects:** a separate local Builder adds the server under **Settings → Collaboration**, then uses that connection's sign-in and recovery flow. The resulting collaboration session gates the reviewed remote Builder allowlists; it does not copy provider credentials or remote project data into the local Builder.
+
+These are app-session boundaries, not model-provider authentication modes. Provider credentials configured for a collaboration backend stay on that backend.
 
 ## Runtime target and boot shape
 
