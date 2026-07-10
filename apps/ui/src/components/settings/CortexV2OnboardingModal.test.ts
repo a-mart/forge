@@ -18,7 +18,7 @@ vi.mock('./knowledge-v2-api', () => ({
   updateKnowledgeV2Settings: (...args: unknown[]) => knowledgeV2ApiMock.updateKnowledgeV2Settings(...args),
 }))
 
-function settingsView(enabled: boolean) {
+function settingsView(enabled: boolean, canEnable = false) {
   return {
     settings: {
       enabled,
@@ -33,6 +33,7 @@ function settingsView(enabled: boolean) {
       updatedAt: null,
     },
     constraints: { indexCaps: { min: 0, max: 1000, defaults: { global: 200, profile: 100 } } },
+    activation: { canEnable, reason: canEnable ? null : 'migration_required' },
   }
 }
 
@@ -59,7 +60,7 @@ beforeEach(() => {
   document.body.appendChild(container)
   knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
     available: true,
-    response: settingsView(false),
+    response: settingsView(false, true),
   })
   knowledgeV2ApiMock.updateKnowledgeV2Settings.mockResolvedValue({ ok: true, ...settingsView(true) })
 })
@@ -130,7 +131,11 @@ describe('CortexV2OnboardingModal', () => {
     expect(localStorage.getItem(CORTEX_V2_ONBOARDING_SEEN_KEY)).toBe('true')
   })
 
-  it('enables via PUT and marks seen when "Enable new Cortex" is clicked', async () => {
+  it('enables via PUT and marks seen when migration is complete', async () => {
+    knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
+      available: true,
+      response: settingsView(false, true),
+    })
     render()
     await flush()
 
@@ -150,6 +155,19 @@ describe('CortexV2OnboardingModal', () => {
     )
     expect(localStorage.getItem(CORTEX_V2_ONBOARDING_SEEN_KEY)).toBe('true')
     expect(dialogText()).not.toContain('Try the new Cortex')
+  })
+
+  it('does not show or mark seen until migration makes activation available', async () => {
+    knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
+      available: true,
+      response: settingsView(false, false),
+    })
+    render()
+    await flush()
+
+    expect(dialogText()).not.toContain('Try the new Cortex')
+    expect(localStorage.getItem(CORTEX_V2_ONBOARDING_SEEN_KEY)).toBeNull()
+    expect(knowledgeV2ApiMock.updateKnowledgeV2Settings).not.toHaveBeenCalled()
   })
 
   it('marks seen without enabling when "Not now" is clicked', async () => {

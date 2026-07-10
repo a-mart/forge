@@ -6,6 +6,7 @@ import {
   getCommonKnowledgePath,
   getKnowledgeEntriesDir,
   getKnowledgeIndexPath,
+  getKnowledgeMigrationManifestPath,
   getProfileKnowledgeEntriesDir,
   getProfileKnowledgeIndexPath,
   getProfileMemoryPath,
@@ -31,6 +32,7 @@ describe("knowledge v2 migration service", () => {
     const manifest = await runKnowledgeV2Migration(harness);
 
     expect(harness.settingsService.getSettings().enabled).toBe(true);
+    expect(manifest.version).toBe(2);
     expect(manifest.preMigrationVersioningSha).toBeNull();
     expect(manifest.files).toHaveLength(3);
     expect(manifest.discards).toEqual([
@@ -53,6 +55,17 @@ describe("knowledge v2 migration service", () => {
     expect(await readFile(join(getProfileKnowledgeEntriesDir(harness.dataDir, "alpha"), pointer!), "utf8")).toContain("legacy: true");
   });
 
+  it("does not durably enable when the completed manifest write fails", async () => {
+    const harness = await createHarness();
+
+    await expect(runKnowledgeV2Migration({
+      ...harness,
+      writeManifest: async () => { throw new Error("manifest write failed"); },
+    })).rejects.toThrow("manifest write failed");
+
+    expect(harness.settingsService.getSettings().enabled).toBe(false);
+  });
+
   it("is idempotent on force re-run and keeps the same entry file set", async () => {
     const harness = await createHarness();
     await writeFixtureLegacyKnowledge(harness.dataDir);
@@ -71,7 +84,22 @@ describe("knowledge v2 migration service", () => {
   it("rolls back the kill switch and restores legacy files byte-identically", async () => {
     const harness = await createHarness();
     const original = await writeFixtureLegacyKnowledge(harness.dataDir);
-    await runKnowledgeV2Migration(harness);
+    const currentManifest = await runKnowledgeV2Migration(harness);
+    const { activation: _activation, ...commonManifest } = currentManifest;
+    const legacyV1Manifest = {
+      ...commonManifest,
+      version: 1,
+      settingsAfter: {
+        ...currentManifest.settingsBefore,
+        enabled: true,
+        updatedAt: currentManifest.completedAt,
+      },
+    };
+    await writeFile(
+      getKnowledgeMigrationManifestPath(harness.dataDir),
+      JSON.stringify(legacyV1Manifest),
+      "utf8",
+    );
 
     await writeFile(getCommonKnowledgePath(harness.dataDir), "# Common Knowledge\n\nchanged\n", "utf8");
     await writeFile(getProfileMemoryPath(harness.dataDir, "alpha"), "# Swarm Memory\n\nchanged\n", "utf8");
@@ -82,6 +110,20 @@ describe("knowledge v2 migration service", () => {
     expect(harness.settingsService.getSettings().enabled).toBe(false);
     expect(await readFile(getCommonKnowledgePath(harness.dataDir), "utf8")).toBe(original.common);
     expect(await readFile(getProfileMemoryPath(harness.dataDir, "alpha"), "utf8")).toBe(original.alpha);
+  });
+
+  it("rejects invalid manifests and traversal paths during rollback", async () => {
+    const harness = await createHarness();
+    await writeFixtureLegacyKnowledge(harness.dataDir);
+    const manifest = await runKnowledgeV2Migration(harness);
+    const manifestPath = getKnowledgeMigrationManifestPath(harness.dataDir);
+
+    await writeFile(manifestPath, JSON.stringify({ version: 1 }), "utf8");
+    await expect(rollbackKnowledgeV2Migration(harness)).rejects.toThrow("manifest is invalid");
+
+    manifest.legacyBackups[0]!.relativePath = "../../outside.md";
+    await writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+    await expect(rollbackKnowledgeV2Migration(harness)).rejects.toThrow("escapes the data directory");
   });
 
   it("blocks legacy writers during migration lock and cleanup archives legacy paths after confirmation", async () => {
@@ -111,7 +153,7 @@ describe("knowledge v2 migration service", () => {
 
   it("emits onboarding preferences as knowledge entries when knowledge v2 is enabled", async () => {
     const harness = await createHarness();
-    await harness.settingsService.update({ enabled: true });
+    await runKnowledgeV2Migration(harness);
     const snapshot = await saveOnboardingPreferences(harness.dataDir, {
       preferredName: "Ada",
       technicalLevel: "developer",

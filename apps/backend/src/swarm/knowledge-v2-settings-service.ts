@@ -6,7 +6,12 @@ import type {
 import { readFile } from "node:fs/promises";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
-import { getKnowledgeV2SettingsPath } from "./data-paths.js";
+import { getKnowledgeMigrationManifestPath, getKnowledgeV2SettingsPath } from "./data-paths.js";
+import { parseKnowledgeV2MigrationManifest } from "./knowledge-v2-migration-manifest.js";
+import {
+  acquireKnowledgeMigrationLock,
+  readKnowledgeMigrationLock,
+} from "./knowledge-v2-migration-lock.js";
 
 const SETTINGS_FILE_VERSION = 1;
 export const DEFAULT_GLOBAL_INDEX_TOKEN_CAP = 1_500;
@@ -25,14 +30,27 @@ export class KnowledgeV2SettingsValidationError extends Error {
   }
 }
 
+export class KnowledgeV2MigrationRequiredError extends Error {
+  readonly code = "KNOWLEDGE_V2_MIGRATION_REQUIRED";
+
+  constructor() {
+    super("Knowledge v2 cannot be enabled until the guarded migration has completed successfully.");
+    this.name = "KnowledgeV2MigrationRequiredError";
+  }
+}
+
 export class KnowledgeV2SettingsService {
+  private readonly dataDir: string;
   private readonly settingsPath: string;
+  private readonly migrationManifestPath: string;
   private readonly now: () => Date;
   private settings: KnowledgeV2Settings = createDefaultKnowledgeV2Settings();
   private updateMutex: Promise<void> = Promise.resolve();
 
   constructor(options: { dataDir: string; now?: () => Date }) {
+    this.dataDir = options.dataDir;
     this.settingsPath = getKnowledgeV2SettingsPath(options.dataDir);
+    this.migrationManifestPath = getKnowledgeMigrationManifestPath(options.dataDir);
     this.now = options.now ?? (() => new Date());
   }
 
@@ -69,6 +87,11 @@ export class KnowledgeV2SettingsService {
     };
   }
 
+  async getActivationCapability(): Promise<{ canEnable: boolean; reason: "migration_required" | null }> {
+    const canEnable = await hasCompletedKnowledgeV2Migration(this.dataDir, this.migrationManifestPath);
+    return { canEnable, reason: canEnable ? null : "migration_required" };
+  }
+
   async update(patch: UpdateKnowledgeV2SettingsRequest): Promise<KnowledgeV2Settings> {
     return this.withUpdateLock(async () => {
       const next: KnowledgeV2Settings = {
@@ -91,9 +114,34 @@ export class KnowledgeV2SettingsService {
         updatedAt: this.now().toISOString(),
       };
 
-      await writeSettingsFile(this.settingsPath, next);
-      this.settings = next;
-      return this.getSettings();
+      const enabling = this.settings.enabled === false && next.enabled === true;
+      let releaseActivationLock: (() => Promise<void>) | undefined;
+      if (enabling) {
+        try {
+          // Share the migration transaction's exclusive lock so another
+          // process cannot begin migration between authorization and commit.
+          releaseActivationLock = await acquireKnowledgeMigrationLock(
+            this.dataDir,
+            `knowledge-v2-activation-${process.pid}-${Date.now()}`,
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new KnowledgeV2MigrationRequiredError();
+          }
+          throw error;
+        }
+      }
+
+      try {
+        if (enabling && !(await readValidCompletedManifest(this.migrationManifestPath))) {
+          throw new KnowledgeV2MigrationRequiredError();
+        }
+        await writeSettingsFile(this.settingsPath, next);
+        this.settings = next;
+        return this.getSettings();
+      } finally {
+        await releaseActivationLock?.();
+      }
     });
   }
 
@@ -200,4 +248,25 @@ async function writeSettingsFile(targetPath: string, settings: KnowledgeV2Settin
     ...settings,
   };
   await writeJsonFileAtomic(targetPath, payload);
+}
+
+async function hasCompletedKnowledgeV2Migration(dataDir: string, manifestPath: string): Promise<boolean> {
+  try {
+    // A completed manifest is not visible as activation authorization until the
+    // owning migration transaction has released its cross-process lock.
+    if (await readKnowledgeMigrationLock(dataDir)) return false;
+    return await readValidCompletedManifest(manifestPath);
+  } catch (error) {
+    if (isEnoentError(error) || error instanceof SyntaxError) return false;
+    throw error;
+  }
+}
+
+async function readValidCompletedManifest(manifestPath: string): Promise<boolean> {
+  try {
+    return parseKnowledgeV2MigrationManifest(JSON.parse(await readFile(manifestPath, "utf8")) as unknown) !== null;
+  } catch (error) {
+    if (isEnoentError(error) || error instanceof SyntaxError) return false;
+    throw error;
+  }
 }

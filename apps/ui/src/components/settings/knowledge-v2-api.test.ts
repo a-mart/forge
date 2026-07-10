@@ -3,7 +3,7 @@ import { fetchKnowledgeV2Settings, updateKnowledgeV2Settings } from './knowledge
 
 const WS_URL = 'ws://127.0.0.1:8787'
 
-function settingsBody(enabled: boolean) {
+function settingsBody(enabled: boolean, canEnable = true) {
   return {
     settings: {
       enabled,
@@ -18,6 +18,7 @@ function settingsBody(enabled: boolean) {
       updatedAt: null,
     },
     constraints: { indexCaps: { min: 0, max: 1000, defaults: { global: 200, profile: 100 } } },
+    activation: { canEnable, reason: canEnable ? null : 'migration_required' },
   }
 }
 
@@ -38,6 +39,23 @@ describe('knowledge-v2-api', () => {
     if (result.available) {
       expect(result.response.settings.enabled).toBe(true)
     }
+  })
+
+  it.each([
+    ['missing', undefined],
+    ['malformed true', { canEnable: true, reason: 'migration_required' }],
+    ['malformed object', { canEnable: 'yes', reason: null }],
+  ])('conservatively rejects %s activation capability', async (_label, activation) => {
+    const body = settingsBody(false) as Record<string, unknown>
+    if (activation === undefined) delete body.activation
+    else body.activation = activation
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+
+    const result = await fetchKnowledgeV2Settings(WS_URL)
+    expect(result.available && result.response.activation).toEqual({
+      canEnable: false,
+      reason: 'migration_required',
+    })
   })
 
   it('reports unavailable (not an error) when the endpoint returns 404', async () => {

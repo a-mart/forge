@@ -24,10 +24,16 @@ export type UpdateKnowledgeV2SettingsRequest = Partial<
   indexCaps?: Partial<KnowledgeV2IndexCaps>
 }
 
+export interface KnowledgeV2ActivationCapability {
+  canEnable: boolean
+  reason: 'migration_required' | null
+}
+
 export interface GetKnowledgeV2SettingsResponse {
   settings: KnowledgeV2Settings
   defaults: KnowledgeV2Settings
   constraints: KnowledgeV2SettingsConstraints
+  activation: KnowledgeV2ActivationCapability
 }
 
 export interface UpdateKnowledgeV2SettingsResponse extends GetKnowledgeV2SettingsResponse {

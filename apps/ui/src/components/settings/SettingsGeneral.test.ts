@@ -88,7 +88,7 @@ vi.mock('@/components/settings/knowledge-v2-api', () => ({
   updateKnowledgeV2Settings: (...args: unknown[]) => knowledgeV2ApiMock.updateKnowledgeV2Settings(...args),
 }))
 
-function knowledgeV2SettingsView(enabled: boolean) {
+function knowledgeV2SettingsView(enabled: boolean, canEnable = true) {
   return {
     settings: {
       enabled,
@@ -103,6 +103,7 @@ function knowledgeV2SettingsView(enabled: boolean) {
       updatedAt: null,
     },
     constraints: { indexCaps: { min: 0, max: 1000, defaults: { global: 200, profile: 100 } } },
+    activation: { canEnable, reason: canEnable ? null : 'migration_required' },
   }
 }
 
@@ -495,7 +496,45 @@ describe('SettingsGeneral', () => {
       expect(toggle?.getAttribute('aria-checked')).toBe('false')
     })
 
-    it('writes enabled=true via PUT when toggled on', async () => {
+    it('shows migration guidance and does not PUT when activation is unavailable', async () => {
+      knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
+        available: true,
+        response: knowledgeV2SettingsView(false, false),
+      })
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const toggle = container.querySelector('#knowledge-v2-enabled-toggle') as HTMLInputElement | null
+      expect(toggle).toBeTruthy()
+      expect(container.textContent).toContain('Migration required')
+      flushSync(() => fireEvent.click(toggle!))
+      await flush()
+      expect(knowledgeV2ApiMock.updateKnowledgeV2Settings).not.toHaveBeenCalled()
+    })
+
+    it('clears and ignores stale activation capability when the backend source changes', async () => {
+      let resolveFirst!: (value: unknown) => void
+      const first = new Promise((resolve) => { resolveFirst = resolve })
+      knowledgeV2ApiMock.fetchKnowledgeV2Settings
+        .mockReturnValueOnce(first)
+        .mockResolvedValueOnce({ available: true, response: knowledgeV2SettingsView(false, false) })
+
+      root = createRoot(container)
+      flushSync(() => root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://first' })))
+      flushSync(() => root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://second' })))
+      await flush()
+      resolveFirst({ available: true, response: knowledgeV2SettingsView(false, true) })
+      await flush()
+
+      expect(container.textContent).toContain('Migration required')
+      const toggle = container.querySelector('#knowledge-v2-enabled-toggle') as HTMLInputElement | null
+      flushSync(() => fireEvent.click(toggle!))
+      await flush()
+      expect(knowledgeV2ApiMock.updateKnowledgeV2Settings).not.toHaveBeenCalled()
+    })
+
+    it('writes enabled=true via PUT when migration is complete', async () => {
       renderGeneral()
       await flush()
       await flush()
@@ -515,6 +554,36 @@ describe('SettingsGeneral', () => {
       await flush()
       const toggleAfter = container.querySelector('#knowledge-v2-enabled-toggle')
       expect(toggleAfter?.getAttribute('aria-checked')).toBe('true')
+      expect(container.textContent).not.toContain('Migration required')
+    })
+
+    it('allows turning off even when activation capability is unavailable', async () => {
+      knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
+        available: true,
+        response: knowledgeV2SettingsView(true, false),
+      })
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const toggle = container.querySelector('#knowledge-v2-enabled-toggle') as HTMLInputElement | null
+      flushSync(() => fireEvent.click(toggle!))
+      await flush()
+      expect(knowledgeV2ApiMock.updateKnowledgeV2Settings).toHaveBeenCalledWith(
+        expect.anything(),
+        { enabled: false },
+      )
+    })
+
+    it('shows a disabled error row on network/server failure', async () => {
+      knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockRejectedValue(new Error('backend offline'))
+      renderGeneral()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('New Cortex (Knowledge v2)')
+      expect(container.textContent).toContain('backend offline')
+      expect(container.querySelector('#knowledge-v2-enabled-toggle')).toBeTruthy()
     })
 
     it('hides the toggle when the knowledge-v2 endpoint is unavailable (404)', async () => {

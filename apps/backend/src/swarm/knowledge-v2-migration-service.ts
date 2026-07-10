@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
@@ -14,6 +14,13 @@ import {
   type KnowledgeIndexResult,
   type KnowledgeUpsertInput,
 } from "./knowledge-service.js";
+import {
+  KNOWLEDGE_V2_MIGRATION_CLASSIFIER,
+  KNOWLEDGE_V2_MIGRATION_MANIFEST_VERSION,
+  parseKnowledgeV2MigrationManifest,
+  type KnowledgeV2MigrationFileSummary,
+  type KnowledgeV2MigrationManifest,
+} from "./knowledge-v2-migration-manifest.js";
 import {
   getCommonKnowledgePath,
   getKnowledgeEntriesDir,
@@ -33,42 +40,17 @@ import {
 } from "./knowledge-v2-migration-lock.js";
 
 const execFileAsync = promisify(execFile);
-const MANIFEST_VERSION = 1;
-const MIGRATION_CLASSIFIER = "offline-heuristic-v1";
-
 export interface KnowledgeV2MigrationOptions {
   dataDir: string;
   knowledgeService: KnowledgeService;
   settingsService: KnowledgeV2SettingsService;
   force?: boolean;
   now?: () => Date;
+  /** Test seam for verifying the durable manifest commit boundary. */
+  writeManifest?: typeof writeJsonFileAtomic;
 }
 
-export interface KnowledgeV2MigrationManifest {
-  version: 1;
-  migrationId: string;
-  startedAt: string;
-  completedAt: string | null;
-  classifier: string;
-  force: boolean;
-  preMigrationVersioningSha: string | null;
-  settingsBefore: unknown;
-  settingsAfter: unknown;
-  files: KnowledgeV2MigrationFileSummary[];
-  legacyBackups: Array<{ relativePath: string; backupPath: string; sha256: string }>;
-  entries: Array<{ id: string; scope: KnowledgeEntryScope; type: KnowledgeEntryType; sourcePath: string }>;
-  discards: Array<{ sourcePath: string; text: string; reason: string }>;
-  indexResults: KnowledgeIndexResult[];
-}
-
-export interface KnowledgeV2MigrationFileSummary {
-  relativePath: string;
-  scope: KnowledgeEntryScope;
-  candidates: number;
-  entries: number;
-  discards: number;
-  pointers: number;
-}
+export type { KnowledgeV2MigrationFileSummary, KnowledgeV2MigrationManifest } from "./knowledge-v2-migration-manifest.js";
 
 interface LegacyKnowledgeFile {
   path: string;
@@ -96,6 +78,7 @@ export async function runKnowledgeV2Migration(
   const startedAt = now().toISOString();
   const migrationId = `knowledge-v2-${startedAt.replace(/[^0-9A-Za-z]/g, "").slice(0, 14)}`;
   const releaseLock = await acquireKnowledgeMigrationLock(options.dataDir, migrationId);
+  let completedManifest: KnowledgeV2MigrationManifest | undefined;
 
   try {
     await assertCleanMigrationState(options);
@@ -185,28 +168,34 @@ export async function runKnowledgeV2Migration(
       indexResults.push(result);
     }
 
-    const settingsAfter = await options.settingsService.update({ enabled: true });
+    const completedAt = now().toISOString();
     const manifest: KnowledgeV2MigrationManifest = {
-      version: MANIFEST_VERSION,
+      version: KNOWLEDGE_V2_MIGRATION_MANIFEST_VERSION,
       migrationId,
       startedAt,
-      completedAt: now().toISOString(),
-      classifier: MIGRATION_CLASSIFIER,
+      completedAt,
+      classifier: KNOWLEDGE_V2_MIGRATION_CLASSIFIER,
       force: options.force === true,
       preMigrationVersioningSha,
       settingsBefore,
-      settingsAfter,
+      activation: { targetEnabled: true, state: "authorized_pending" },
       files: Array.from(fileSummaries.values()),
       legacyBackups,
       entries,
       discards,
       indexResults,
     };
-    await writeJsonFileAtomic(getKnowledgeMigrationManifestPath(options.dataDir), manifest);
-    return manifest;
+    await (options.writeManifest ?? writeJsonFileAtomic)(getKnowledgeMigrationManifestPath(options.dataDir), manifest);
+    completedManifest = manifest;
   } finally {
     await releaseLock();
   }
+
+  // The completed manifest is the durable commit boundary. Activation happens
+  // only after it is atomically present and the migration lock is released.
+  if (!completedManifest) throw new Error("Knowledge v2 migration did not complete.");
+  await options.settingsService.update({ enabled: true });
+  return completedManifest;
 }
 
 function stableMigrationEntryId(type: KnowledgeEntryType, title: string): string {
@@ -224,15 +213,20 @@ export async function rollbackKnowledgeV2Migration(
 ): Promise<{ restoredFiles: string[]; settingsAfter: unknown; restartRequired: true }> {
   const releaseLock = await acquireKnowledgeMigrationLock(options.dataDir, `knowledge-v2-rollback-${Date.now()}`);
   try {
-    const manifest = JSON.parse(
+    const manifestValue = JSON.parse(
       await readFile(options.manifestPath ?? getKnowledgeMigrationManifestPath(options.dataDir), "utf8"),
-    ) as KnowledgeV2MigrationManifest;
+    ) as unknown;
+    const manifest = parseKnowledgeV2MigrationManifest(manifestValue);
+    if (!manifest) {
+      throw new Error("Knowledge v2 migration manifest is invalid; rollback aborted.");
+    }
     const restoredFiles: string[] = [];
     for (const backup of manifest.legacyBackups) {
-      const targetPath = join(options.dataDir, backup.relativePath);
+      const targetPath = resolveConfinedRollbackPath(options.dataDir, backup.relativePath);
+      const backupPath = resolveConfinedBackupPath(options.dataDir, backup.backupPath);
       await mkdir(dirname(targetPath), { recursive: true });
       const restored = await readLegacyFileFromVersioning(options.dataDir, manifest.preMigrationVersioningSha, backup.relativePath)
-        .catch(async () => readFile(backup.backupPath, "utf8"));
+        .catch(async () => readFile(backupPath, "utf8"));
       await writeFile(targetPath, restored, "utf8");
       restoredFiles.push(backup.relativePath);
     }
@@ -538,4 +532,26 @@ async function fileExists(path: string): Promise<boolean> {
     if (isEnoentError(error)) return false;
     throw error;
   }
+}
+
+function resolveConfinedRollbackPath(dataDir: string, relativePath: string): string {
+  if (!relativePath || isAbsolute(relativePath) || relativePath.includes("\0")) {
+    throw new Error(`Invalid rollback relative path: ${relativePath}`);
+  }
+  const root = resolve(dataDir);
+  const target = resolve(root, relativePath);
+  if (target === root || !target.startsWith(`${root}${sep}`)) {
+    throw new Error(`Rollback path escapes the data directory: ${relativePath}`);
+  }
+  return target;
+}
+
+function resolveConfinedBackupPath(dataDir: string, backupPath: string): string {
+  if (!backupPath || backupPath.includes("\0")) throw new Error("Invalid rollback backup path.");
+  const root = resolve(dataDir);
+  const target = resolve(root, backupPath);
+  if (!target.startsWith(`${root}${sep}`)) {
+    throw new Error("Rollback backup path escapes the data directory.");
+  }
+  return target;
 }

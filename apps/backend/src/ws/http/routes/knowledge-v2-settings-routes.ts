@@ -6,6 +6,7 @@ import type {
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isBuilderRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
 import {
+  KnowledgeV2MigrationRequiredError,
   KnowledgeV2SettingsService,
   KnowledgeV2SettingsValidationError,
 } from "../../../swarm/knowledge-v2-settings-service.js";
@@ -67,7 +68,10 @@ async function handleKnowledgeV2SettingsRequest(
   }
 
   if (request.method === "GET") {
-    const payload: GetKnowledgeV2SettingsResponse = settingsService.getSettingsView();
+    const payload: GetKnowledgeV2SettingsResponse = {
+      ...settingsService.getSettingsView(),
+      activation: await settingsService.getActivationCapability(),
+    };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
@@ -85,9 +89,14 @@ async function handleKnowledgeV2SettingsRequest(
       settings,
       defaults: settingsService.getDefaults(),
       constraints: settingsService.getSettingsView().constraints,
+      activation: await settingsService.getActivationCapability(),
     };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
   } catch (error) {
+    if (error instanceof KnowledgeV2MigrationRequiredError) {
+      sendJson(response, 409, { error: error.message, code: error.code });
+      return;
+    }
     if (error instanceof KnowledgeV2SettingsValidationError) {
       sendJson(response, 400, { error: error.message });
       return;
