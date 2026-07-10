@@ -1,6 +1,7 @@
 import type {
   AgentContextUsage,
   AgentDescriptor,
+  BuilderSidebarOrderRef,
   AgentStatus,
   ManagerExactModelSelection,
   ManagerReasoningLevel,
@@ -14,6 +15,7 @@ import type {
   SessionModelUpdateMode,
 } from '@forge/protocol'
 import type { DirectoryValidationResult } from '@/lib/ws-client'
+import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
 import type { ProfileTreeRow, SessionRow } from '@/lib/agent-hierarchy'
 import type { ActiveSurface } from '@/hooks/index-page/use-route-state'
 
@@ -24,11 +26,22 @@ export type AgentLiveStatus = {
 
 export type StatusMap = Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean }>
 
+export interface RemoteSidebarOrigin {
+  originId: string
+  connected: boolean
+  /** Prebuilt once from this origin's structural agents/profile slices. */
+  treeRows: ProfileTreeRow[]
+  /** Used only before origin meta is available (tests/connection bootstrap). */
+  instanceName?: string
+}
+
 export interface AgentSidebarProps {
   connected: boolean
   wsUrl?: string
   agents: AgentDescriptor[]
   profiles: ManagerProfile[]
+  /** Prebuilt structural rows supplied by AgentSidebarConnected. */
+  treeRows?: ProfileTreeRow[]
   statuses: StatusMap
   unreadCounts: Record<string, number>
   collaborationModeSwitch?: {
@@ -68,7 +81,9 @@ export interface AgentSidebarProps {
   onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
   onValidateDirectory?: (path: string) => Promise<DirectoryValidationResult>
   onRequestSessionWorkers?: (sessionId: string) => void
-  onReorderProfiles?: (profileIds: string[]) => void
+  /** Reconciled local-instance authority, including hidden/offline anchors. */
+  builderSidebarOrder?: BuilderSidebarOrderRef[]
+  onMoveBuilderProject?: (active: BuilderSidebarOrderRef, over: BuilderSidebarOrderRef) => void
   onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null) => Promise<void>
   onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[]; source?: ProjectAgentConfigSourceSnapshot }>
   onGetProjectAgentSharing?: (agentId: string) => Promise<{ agentId: string; grants: ProjectAgentShareGrantInfo[]; eligibleTargets: ProjectAgentShareEligibleTarget[] }>
@@ -79,12 +94,11 @@ export interface AgentSidebarProps {
   onDeleteProjectAgentReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string }>
   onRequestProjectAgentRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
   onCreateAgentCreator?: (profileId: string) => void
-  /** Remote origin sections (Wave R): non-local origin ids to render below the local tree. */
-  remoteOriginIds?: string[]
+  /** Remote origin snapshots used in the unified mixed project list. */
+  remoteOrigins?: RemoteSidebarOrigin[]
   /** The origin whose builder surface is active (selection highlight scoping). */
   activeOriginId?: string
   onSelectRemoteAgent?: (originId: string, agentId: string) => void
-  onReorderRemoteProfiles?: (originId: string, profileIds: string[]) => void
   onRemoteOriginSignIn?: (originId: string) => void
   onRemoteOriginRetry?: (originId: string) => void
 }
@@ -175,7 +189,8 @@ export interface ProfileGroupProps {
   showModelIcons?: boolean
   highlightQuery?: string
   dragHandleRef?: (element: HTMLElement | null) => void
-  dragHandleListeners?: Record<string, unknown> | undefined
+  dragHandleListeners?: DraggableSyntheticListeners
+  dragHandleAttributes?: DraggableAttributes
   onPinSession?: (agentId: string, pinned: boolean) => void
   onPromoteToProjectAgent?: (agentId: string) => void
   onOpenProjectAgentSharing?: (agentId: string) => void

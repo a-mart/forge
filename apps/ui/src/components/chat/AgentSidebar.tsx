@@ -1,4 +1,4 @@
-import { Archive, SquarePen, X } from 'lucide-react'
+import { Archive, Globe, SquarePen, X } from 'lucide-react'
 import { ChangeCwdDialog } from './ChangeCwdDialog'
 import { ForkSessionDialog } from './ForkSessionDialog'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
@@ -10,13 +10,14 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
   DragOverlay,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   verticalListSortingStrategy,
   sortableKeyboardCoordinates,
-  arrayMove,
 } from '@dnd-kit/sortable'
 import {
   buildProfileTreeRows,
@@ -31,6 +32,7 @@ import { cn } from '@/lib/utils'
 import type {
   AgentModelDescriptor,
   AgentModelOrigin,
+  BuilderSidebarOrderRef,
   ManagerExactModelSelection,
   ManagerReasoningLevel,
   ProjectAgentInfo,
@@ -42,7 +44,7 @@ import { SidebarSearch } from './agent-sidebar/SidebarSearch'
 import { SidebarFooter } from './agent-sidebar/SidebarFooter'
 import { ModeSwitch } from './collab-sidebar/ModeSwitch'
 import { ProfileGroup } from './agent-sidebar/ProfileGroup'
-import { RemoteOriginSections } from './agent-sidebar/RemoteOriginSections'
+import { RemoteOriginSections, RemoteProfileRow } from './agent-sidebar/RemoteOriginSections'
 import { CortexSection } from './agent-sidebar/CortexSection'
 import { SortableProfileGroup } from './agent-sidebar/SortableProfileGroup'
 import {
@@ -56,11 +58,30 @@ import {
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
 import { ActivateRepoProjectAgentSheet } from './project-agent/ActivateRepoProjectAgentSheet'
 import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDialog'
-import { findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
+import { filterTreeRows, findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
 import { useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
-import type { AgentSidebarProps } from './agent-sidebar/types'
+import type { AgentSidebarProps, RemoteSidebarOrigin } from './agent-sidebar/types'
+import { LOCAL_ORIGIN_ID } from '@/lib/origin-store'
+import {
+  builderSidebarOrderKey,
+  reconcileBuilderSidebarOrder,
+  resolveBuilderSidebarDragMove,
+} from '@/lib/builder-sidebar-order'
+
+type MixedProjectRow =
+  | {
+      kind: 'local'
+      ref: BuilderSidebarOrderRef
+      treeRow: ProfileTreeRow
+    }
+  | {
+      kind: 'remote'
+      ref: BuilderSidebarOrderRef
+      treeRow: ProfileTreeRow
+      origin: RemoteSidebarOrigin
+    }
 
 // Inject subtle glow pulse keyframes once
 injectGlowPulseStyle()
@@ -70,6 +91,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   wsUrl,
   agents,
   profiles,
+  treeRows: providedTreeRows,
   statuses,
   unreadCounts,
   collaborationModeSwitch,
@@ -104,7 +126,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onBrowseDirectory,
   onValidateDirectory,
   onRequestSessionWorkers,
-  onReorderProfiles,
+  builderSidebarOrder,
+  onMoveBuilderProject,
   onSetSessionProjectAgent,
   onGetProjectAgentConfig,
   onGetProjectAgentSharing,
@@ -115,14 +138,16 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onDeleteProjectAgentReference,
   onRequestProjectAgentRecommendations,
   onCreateAgentCreator,
-  remoteOriginIds,
+  remoteOrigins,
   activeOriginId,
   onSelectRemoteAgent,
-  onReorderRemoteProfiles,
   onRemoteOriginSignIn,
   onRemoteOriginRetry,
 }: AgentSidebarProps) {
-  const treeRows = useMemo(() => buildProfileTreeRows(agents, profiles), [agents, profiles])
+  const isLocalOriginActive = (activeOriginId ?? LOCAL_ORIGIN_ID) === LOCAL_ORIGIN_ID
+  const localSelectedAgentId = isLocalOriginActive ? selectedAgentId : null
+  const builtTreeRows = useMemo(() => buildProfileTreeRows(agents, profiles), [agents, profiles])
+  const treeRows = providedTreeRows ?? builtTreeRows
   const hasArchivedItems = useMemo(() => (
     getArchivedProfileRows(agents, profiles).length > 0
     || getDirectlyArchivedSessionRows(agents, profiles).length > 0
@@ -152,6 +177,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     regularRows,
     cortexRow,
     parsedSearch,
+    deferredSearchQuery,
     isSearchActive,
     matchCount,
     toggleSessionCollapsed,
@@ -262,6 +288,67 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     }
   }, [getEntriesForProfile, isSearchActive, matchCount, parsedSearch.term, regularRows, treeRows])
 
+  const {
+    rows: remoteProjectRows,
+    matchCount: remoteMatchCount,
+    originIdsWithProjects: remoteOriginIdsWithProjects,
+  } = useMemo<{
+    rows: MixedProjectRow[]
+    matchCount: number
+    originIdsWithProjects: Set<string>
+  }>(() => {
+    const rows: MixedProjectRow[] = []
+    const originIdsWithProjects = new Set<string>()
+    let remoteMatchCount = 0
+
+    for (const origin of remoteOrigins ?? []) {
+      if (!origin.connected) continue
+      const structuralRows = origin.treeRows
+      if (structuralRows.length > 0) originIdsWithProjects.add(origin.originId)
+      const filtered = isSearchActive
+        ? filterTreeRows(structuralRows, deferredSearchQuery)
+        : { filtered: structuralRows, matchCount: 0 }
+      remoteMatchCount += filtered.matchCount
+      for (const treeRow of filtered.filtered) {
+        rows.push({
+          kind: 'remote',
+          ref: { originId: origin.originId, profileId: treeRow.profile.profileId },
+          treeRow,
+          origin,
+        })
+      }
+    }
+
+    return { rows, matchCount: remoteMatchCount, originIdsWithProjects }
+  }, [deferredSearchQuery, isSearchActive, remoteOrigins])
+
+  const mixedProjectRows = useMemo<MixedProjectRow[]>(() => {
+    const visibleRows: MixedProjectRow[] = [
+      ...displayedRegularRows.map((treeRow) => ({
+        kind: 'local' as const,
+        ref: { originId: LOCAL_ORIGIN_ID, profileId: treeRow.profile.profileId },
+        treeRow,
+      })),
+      ...remoteProjectRows,
+    ]
+    const rowByKey = new Map(visibleRows.map((row) => [builderSidebarOrderKey(row.ref), row]))
+    const orderedRefs = reconcileBuilderSidebarOrder(
+      builderSidebarOrder ?? [],
+      visibleRows.map((row) => row.ref),
+    )
+    return orderedRefs.flatMap((ref) => {
+      const row = rowByKey.get(builderSidebarOrderKey(ref))
+      return row ? [row] : []
+    })
+  }, [builderSidebarOrder, displayedRegularRows, remoteProjectRows])
+
+  const remoteOriginsWithoutProjects = useMemo(() => (
+    (remoteOrigins ?? [])
+      .filter((origin) => !remoteOriginIdsWithProjects.has(origin.originId))
+      .map((origin) => origin.originId)
+  ), [remoteOriginIdsWithProjects, remoteOrigins])
+  const combinedMatchCount = displayedMatchCount + remoteMatchCount
+
   const handleForkSetTarget = useCallback((sourceAgentId: string) => setForkTarget({ sourceAgentId }), [])
 
   const getCreatorAttribution = useCallback((creatorAgentId: string): string | null => {
@@ -277,6 +364,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onSelectAgent(agentId)
     onMobileClose?.()
   }, [onSelectAgent, onMobileClose])
+
+  const handleSelectRemoteAgent = useCallback((originId: string, agentId: string) => {
+    onSelectRemoteAgent?.(originId, agentId)
+    onMobileClose?.()
+  }, [onMobileClose, onSelectRemoteAgent])
 
   const handleSelectInactiveRepoProjectAgent = useCallback((entry: RepoProjectAgentSidebarEntry) => {
     setSelectedInactiveRepoEntryKey(getInactiveRepoProjectAgentEntryKey(entry))
@@ -469,9 +561,9 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   // (project agents → pinned → regular), derived from the search-filtered
   // displayed rows rather than raw treeRows.
   const handleToggleHideCliSessions = useCallback(() => {
-    if (!hideCliSessions && selectedAgentId && !isSettingsActive) {
+    if (!hideCliSessions && localSelectedAgentId && !isSettingsActive) {
       const displayedRows = cortexRow ? [cortexRow, ...displayedRegularRows] : displayedRegularRows
-      const targetId = findCliHideNavigationTarget(selectedAgentId, agents, displayedRows)
+      const targetId = findCliHideNavigationTarget(localSelectedAgentId, agents, displayedRows)
       if (targetId) {
         onSelectAgent(targetId)
       }
@@ -479,7 +571,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       // existing isSelectedSessionOrWorker exception in ProfileGroup.
     }
     toggleHideCliSessions()
-  }, [hideCliSessions, selectedAgentId, isSettingsActive, agents, displayedRegularRows, cortexRow, onSelectAgent, toggleHideCliSessions])
+  }, [hideCliSessions, localSelectedAgentId, isSettingsActive, agents, displayedRegularRows, cortexRow, onSelectAgent, toggleHideCliSessions])
 
   const handleMuteAllSessions = useCallback((sessionAgentIds: string[], mute: boolean) => {
     const current = getMutedAgents()
@@ -496,23 +588,28 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     setActiveDragId(null)
     const { active, over } = event
-    if (!over || active.id === over.id || !onReorderProfiles) return
+    if (!over || active.id === over.id || !onMoveBuilderProject) return
 
-    const currentIds = displayedRegularRows.map((row) => row.profile.profileId)
-    const oldIndex = currentIds.indexOf(active.id as string)
-    const newIndex = currentIds.indexOf(over.id as string)
-    if (oldIndex === -1 || newIndex === -1) return
+    const move = resolveBuilderSidebarDragMove(
+      String(active.id),
+      String(over.id),
+      mixedProjectRows.map((row) => row.ref),
+    )
+    if (!move) return
+    onMoveBuilderProject(move.active, move.over)
+  }, [mixedProjectRows, onMoveBuilderProject, setActiveDragId])
 
-    const newOrder = arrayMove(currentIds, oldIndex, newIndex)
-    onReorderProfiles(newOrder)
-  }, [onReorderProfiles, displayedRegularRows, setActiveDragId])
-
-  const profileGroupContent = useCallback((treeRow: ProfileTreeRow, dragHandleRef?: (element: HTMLElement | null) => void, dragHandleListeners?: Record<string, unknown>) => (
+  const profileGroupContent = useCallback((
+    treeRow: ProfileTreeRow,
+    dragHandleRef?: (element: HTMLElement | null) => void,
+    dragHandleListeners?: DraggableSyntheticListeners,
+    dragHandleAttributes?: DraggableAttributes,
+  ) => (
     <ProfileGroup
       treeRow={treeRow}
       statuses={statuses}
       unreadCounts={unreadCounts}
-      selectedAgentId={selectedAgentId}
+      selectedAgentId={localSelectedAgentId}
       isSettingsActive={isSettingsActive}
       isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
       collapsedSessionIds={expandedSessionIds}
@@ -546,6 +643,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       highlightQuery={isSearchActive ? parsedSearch.term : undefined}
       dragHandleRef={dragHandleRef}
       dragHandleListeners={dragHandleListeners}
+      dragHandleAttributes={dragHandleAttributes}
       onPromoteToProjectAgent={onSetSessionProjectAgent ? handlePromoteToProjectAgent : undefined}
       onOpenProjectAgentSharing={onGetProjectAgentSharing && onSetProjectAgentSharing ? handleOpenProjectAgentSharing : undefined}
       onOpenProjectAgentSettings={onSetSessionProjectAgent ? handleOpenProjectAgentSettings : undefined}
@@ -563,7 +661,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onSelectInactiveRepoProjectAgent={wsUrl ? handleSelectInactiveRepoProjectAgent : undefined}
     />
   ), [
-    statuses, unreadCounts, selectedAgentId, isSettingsActive, isSearchActive,
+    statuses, unreadCounts, localSelectedAgentId, isSettingsActive, isSearchActive,
     collapsedProfileIds, expandedSessionIds, expandedWorkerListSessionIds,
     toggleProfileCollapsed, toggleSessionCollapsed, showMoreSessions, showLessSessions,
     toggleWorkerListExpanded, handleSelectAgent, onDeleteAgent, onDeleteManager, handleOpenSettings,
@@ -580,6 +678,36 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
     hideCliSessions, handleToggleHideCliSessions,
     getEntriesForProfile, selectedInactiveRepoEntryKey, wsUrl, handleSelectInactiveRepoProjectAgent,
+  ])
+
+  const mixedProjectContent = useCallback((
+    row: MixedProjectRow,
+    dragHandleRef?: (element: HTMLElement | null) => void,
+    dragHandleListeners?: DraggableSyntheticListeners,
+    dragHandleAttributes?: DraggableAttributes,
+  ) => {
+    if (row.kind === 'local') {
+      return profileGroupContent(row.treeRow, dragHandleRef, dragHandleListeners, dragHandleAttributes)
+    }
+    const isActiveOrigin = row.origin.originId === (activeOriginId ?? LOCAL_ORIGIN_ID)
+    return (
+      <RemoteProfileRow
+        originId={row.origin.originId}
+        treeRow={row.treeRow}
+        selectedAgentId={isActiveOrigin ? selectedAgentId : null}
+        isActiveOrigin={isActiveOrigin}
+        instanceName={row.origin.instanceName}
+        dragHandleRef={dragHandleRef}
+        dragHandleListeners={dragHandleListeners}
+        dragHandleAttributes={dragHandleAttributes}
+        onSelectAgent={handleSelectRemoteAgent}
+      />
+    )
+  }, [
+    activeOriginId,
+    handleSelectRemoteAgent,
+    profileGroupContent,
+    selectedAgentId,
   ])
 
   const sidebarContent = (
@@ -648,7 +776,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             cortexRow={cortexRow}
               statuses={statuses}
               unreadCounts={unreadCounts}
-              selectedAgentId={selectedAgentId}
+              selectedAgentId={localSelectedAgentId}
               isSettingsActive={isSettingsActive}
               isCollapsed={isSearchActive ? false : collapsedProfileIds.has('cortex')}
               collapsedSessionIds={expandedSessionIds}
@@ -694,47 +822,76 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         {isSearchActive ? (
           <div className="px-1 pb-1">
             <h2 className="text-xs font-semibold text-muted-foreground">
-              {displayedMatchCount} match{displayedMatchCount !== 1 ? 'es' : ''}
+              {combinedMatchCount} match{combinedMatchCount !== 1 ? 'es' : ''}
             </h2>
           </div>
         ) : null}
 
-        {isSearchActive && displayedRegularRows.length === 0 && !cortexRow ? (
+        {isSearchActive && mixedProjectRows.length === 0 && !cortexRow ? (
           <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
             No matches found.
           </p>
-        ) : displayedRegularRows.length === 0 && !isSearchActive ? (
+        ) : mixedProjectRows.length === 0 && !isSearchActive ? (
           <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
             No active agents.
           </p>
         ) : (() => {
-          const dndEnabled = !isSearchActive && onReorderProfiles && displayedRegularRows.length > 1
-          const sortableIds = displayedRegularRows.map((row) => row.profile.profileId)
-          const activeDragRow = activeDragId ? displayedRegularRows.find((row) => row.profile.profileId === activeDragId) : null
+          const dndEnabled = !isSearchActive && Boolean(onMoveBuilderProject) && mixedProjectRows.length > 1
+          const sortableIds = mixedProjectRows.map((row) => builderSidebarOrderKey(row.ref))
+          const activeDragRow = activeDragId
+            ? mixedProjectRows.find((row) => builderSidebarOrderKey(row.ref) === activeDragId)
+            : null
 
           if (dndEnabled) {
             return (
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCenter}
-                onDragStart={(event) => setActiveDragId(event.active.id as string)}
+                onDragStart={(event) => setActiveDragId(String(event.active.id))}
                 onDragCancel={() => setActiveDragId(null)}
                 onDragEnd={handleDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-                  <ul className="mt-2 space-y-1">
-                    {displayedRegularRows.map((treeRow) => (
-                      <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
-                        {(dragHandleRef, dragHandleListeners) => profileGroupContent(treeRow, dragHandleRef, dragHandleListeners)}
-                      </SortableProfileGroup>
-                    ))}
+                  <ul className="mt-2 space-y-1" data-testid="unified-project-list">
+                    {mixedProjectRows.map((row) => {
+                      const sortableId = builderSidebarOrderKey(row.ref)
+                      const remoteIsActive = row.kind === 'remote'
+                        && row.origin.originId === (activeOriginId ?? LOCAL_ORIGIN_ID)
+                      const remoteMemoDependencies = row.kind === 'remote'
+                        ? [
+                            row,
+                            remoteIsActive,
+                            remoteIsActive ? selectedAgentId : null,
+                            handleSelectRemoteAgent,
+                          ]
+                        : undefined
+                      return (
+                        <SortableProfileGroup
+                          key={sortableId}
+                          sortableId={sortableId}
+                          memoDependencies={remoteMemoDependencies}
+                        >
+                          {(dragHandleRef, dragHandleListeners, dragHandleAttributes) => (
+                            mixedProjectContent(
+                              row,
+                              dragHandleRef,
+                              dragHandleListeners,
+                              dragHandleAttributes,
+                            )
+                          )}
+                        </SortableProfileGroup>
+                      )
+                    })}
                   </ul>
                 </SortableContext>
                 <DragOverlay>
                   {activeDragRow ? (
                     <div className="rounded-md border border-sidebar-border bg-sidebar shadow-lg">
                       <div className="flex items-center gap-1.5 px-3 py-2">
-                        <span className="text-sm font-semibold">{activeDragRow.profile.displayName}</span>
+                        {activeDragRow.kind === 'remote' ? (
+                          <Globe aria-hidden="true" className="size-3.5 shrink-0 text-blue-400" />
+                        ) : null}
+                        <span className="text-sm font-semibold">{activeDragRow.treeRow.profile.displayName}</span>
                       </div>
                     </div>
                   ) : null}
@@ -744,28 +901,22 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           }
 
           return (
-            <ul className="mt-2 space-y-1">
-              {displayedRegularRows.map((treeRow) => (
-                <li key={treeRow.profile.profileId}>
-                  {profileGroupContent(treeRow)}
+            <ul className="mt-2 space-y-1" data-testid="unified-project-list">
+              {mixedProjectRows.map((row) => (
+                <li key={builderSidebarOrderKey(row.ref)}>
+                  {mixedProjectContent(row)}
                 </li>
               ))}
             </ul>
           )
         })()}
 
-        {/* Remote origin sections (Wave R): one per connected remote instance */}
-        {remoteOriginIds && remoteOriginIds.length > 0 && onSelectRemoteAgent ? (
-          <RemoteOriginSections
-            originIds={remoteOriginIds}
-            selectedAgentId={selectedAgentId}
-            activeOriginId={activeOriginId ?? 'local'}
-            onSelectAgent={onSelectRemoteAgent}
-            onReorderProfiles={onReorderRemoteProfiles}
-            onSignIn={onRemoteOriginSignIn}
-            onRetry={onRemoteOriginRetry}
-          />
-        ) : null}
+        {/* Status-only rows for remote origins without visible projects. */}
+        <RemoteOriginSections
+          originIds={isSearchActive ? [] : remoteOriginsWithoutProjects}
+          onSignIn={onRemoteOriginSignIn}
+          onRetry={onRemoteOriginRetry}
+        />
 
         {/* Archive button pinned to the bottom of the scrollable content when space allows */}
         {onOpenArchive && hasArchivedItems ? (

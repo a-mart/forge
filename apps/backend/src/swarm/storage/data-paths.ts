@@ -399,6 +399,10 @@ export function getProjectResourceSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "project-resources.json");
 }
 
+export function getBuilderSidebarOrderPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "builder-sidebar-order.json");
+}
+
 export function getPhoenixObservabilitySettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "phoenix-observability.json");
 }

@@ -17,6 +17,7 @@ interface UseSidebarTreeStateReturn {
   regularRows: ProfileTreeRow[]
   cortexRow: ProfileTreeRow | null
   parsedSearch: ReturnType<typeof parseSearchQuery>
+  deferredSearchQuery: string
   isSearchActive: boolean
   matchCount: number
   toggleSessionCollapsed: (sessionId: string) => void
@@ -116,6 +117,7 @@ export function useSidebarTreeState({
     regularRows,
     cortexRow,
     parsedSearch,
+    deferredSearchQuery,
     isSearchActive,
     matchCount,
     toggleSessionCollapsed,

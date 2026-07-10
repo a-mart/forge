@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import type { ProfileTreeRow, SessionRow } from '@/lib/agent-hierarchy'
 import { originRegistry, type OriginId } from '@/lib/origin-store'
-import { RemoteOriginSections } from './RemoteOriginSections'
-import { buildRemoteReorderProfileIds, getRemoteVisibleProfileRows, getRemoteReorderProfileIds, isRemoteCortexSession } from './RemoteOriginSections.utils'
+import { RemoteOriginSections, RemoteProfileRow } from './RemoteOriginSections'
+import { getRemoteVisibleProfileRows, isRemoteCortexSession } from './RemoteOriginSections.utils'
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -71,120 +71,54 @@ describe('remote Cortex filtering', () => {
     expect(isRemoteCortexSession(makeAgent({ profileId: 'ops', archetypeId: 'manager' }))).toBe(false)
   })
 
-  it('drops a dedicated Cortex profile row', () => {
-    const rows = [
-      makeRow(
-        makeProfile({ profileId: 'cortex', displayName: 'Cortex' }),
-        [makeSession(makeAgent({ agentId: 'cortex', profileId: 'cortex' }))],
-      ),
-    ]
-
-    expect(getRemoteVisibleProfileRows(rows)).toEqual([])
-  })
-
-  it('keeps empty user profile rows visible and reorderable after filtering sessions', () => {
-    const rows = [
+  it('drops remote Cortex/system rows but keeps empty user rows', () => {
+    const visibleRows = getRemoteVisibleProfileRows([
       makeRow(makeProfile({ profileId: 'empty', displayName: 'Empty Project' }), []),
       makeRow(
         makeProfile({ profileId: 'capture-only', displayName: 'Capture Only' }),
-        [makeSession(makeAgent({ agentId: 'capture-1', profileId: 'capture-only', sessionPurpose: 'capture_check' }))],
+        [makeSession(makeAgent({ profileId: 'capture-only', sessionPurpose: 'capture_check' }))],
       ),
-    ]
-
-    const visibleRows = getRemoteVisibleProfileRows(rows)
+      makeRow(makeProfile({ profileId: 'cortex', displayName: 'Cortex' }), []),
+      makeRow(makeProfile({ profileId: 'system', displayName: 'System', profileType: 'system' }), []),
+    ])
 
     expect(visibleRows.map((row) => row.profile.profileId)).toEqual(['empty', 'capture-only'])
     expect(visibleRows.map((row) => row.sessions)).toEqual([[], []])
-    expect(getRemoteReorderProfileIds(rows)).toEqual(['empty', 'capture-only'])
   })
 
-  it('drops system profile rows while preserving user rows', () => {
-    const rows = [
-      makeRow(makeProfile({ profileId: 'user', displayName: 'User Project' }), []),
-      makeRow(makeProfile({ profileId: 'system', displayName: 'System Project', profileType: 'system' }), []),
-    ]
-
-    expect(getRemoteVisibleProfileRows(rows).map((row) => row.profile.profileId)).toEqual(['user'])
-  })
-
-  it('builds reorder payloads from all visible user profile rows without other origins', () => {
-    const originARows = [
-      makeRow(makeProfile({ profileId: 'a-empty', displayName: 'A Empty' }), []),
-      makeRow(makeProfile({ profileId: 'a-normal', displayName: 'A Normal' }), [makeSession(makeAgent({ agentId: 'a-session', profileId: 'a-normal' }))]),
-      makeRow(makeProfile({ profileId: 'a-capture', displayName: 'A Capture' }), [makeSession(makeAgent({ agentId: 'a-capture-session', profileId: 'a-capture', sessionPurpose: 'capture_check' }))]),
-    ]
-    const originBRows = [
-      makeRow(makeProfile({ profileId: 'b-normal', displayName: 'B Normal' }), [makeSession(makeAgent({ agentId: 'b-session', profileId: 'b-normal' }))]),
-    ]
-
-    expect(buildRemoteReorderProfileIds(originARows, 'a-capture', 'a-empty')).toEqual(['a-capture', 'a-empty', 'a-normal'])
-    expect(buildRemoteReorderProfileIds(originARows, 'b-normal', 'a-empty')).toBeNull()
-    expect(getRemoteReorderProfileIds(originBRows)).toEqual(['b-normal'])
-  })
-
-  it('keeps a mixed normal profile when the representative session is normal and filters only Cortex sessions', () => {
+  it('filters only Cortex sessions from a mixed normal profile', () => {
     const normal = makeSession(makeAgent({ agentId: 'normal-1', sessionLabel: 'Normal Session' }), true)
-    const review = makeSession(makeAgent({ agentId: 'review-1', sessionLabel: 'Cortex Review', sessionPurpose: 'cortex_review' }), false)
-    const [row] = getRemoteVisibleProfileRows([makeRow(makeProfile({ defaultSessionAgentId: 'normal-1' }), [normal, review])])
-
-    expect(row?.sessions.map((session) => session.sessionAgent.agentId)).toEqual(['normal-1'])
-  })
-
-  it('keeps a mixed normal profile when the representative/default session is Cortex and preserves normal sessions', () => {
-    const review = makeSession(makeAgent({ agentId: 'review-1', sessionLabel: 'Cortex Review', sessionPurpose: 'cortex_review' }), true)
-    const normal = makeSession(makeAgent({ agentId: 'normal-1', sessionLabel: 'Normal Session' }), false)
-    const [row] = getRemoteVisibleProfileRows([makeRow(makeProfile({ defaultSessionAgentId: 'review-1' }), [review, normal])])
-
-    expect(row?.sessions.map((session) => session.sessionAgent.agentId)).toEqual(['normal-1'])
-  })
-
-  it('filters Cortex capture-check sessions from mixed normal profile rows', () => {
-    const normal = makeSession(makeAgent({ agentId: 'normal-1', sessionLabel: 'Normal Session' }), true)
-    const captureCheck = makeSession(makeAgent({ agentId: 'capture-1', sessionLabel: 'Capture check', sessionPurpose: 'capture_check' }), false)
-    const [row] = getRemoteVisibleProfileRows([makeRow(makeProfile({ defaultSessionAgentId: 'normal-1' }), [normal, captureCheck])])
+    const review = makeSession(makeAgent({ agentId: 'review-1', sessionPurpose: 'cortex_review' }), false)
+    const capture = makeSession(makeAgent({ agentId: 'capture-1', sessionPurpose: 'capture_check' }), false)
+    const [row] = getRemoteVisibleProfileRows([
+      makeRow(makeProfile({ defaultSessionAgentId: 'normal-1' }), [normal, review, capture]),
+    ])
 
     expect(row?.sessions.map((session) => session.sessionAgent.agentId)).toEqual(['normal-1'])
   })
 })
 
-describe('RemoteOriginSections', () => {
-  it('renders connected remote project rows without a connection dot, hides remote Cortex rows/sessions, and selects by origin', () => {
-    const originId = 'remote:test' as OriginId
+describe('remote row/status rendering without nested DnD', () => {
+  it('renders a remote row with globe styling, filters Cortex sessions, and selects its session', () => {
     const onSelectAgent = vi.fn()
-    const normalSession = makeAgent({
-      agentId: 'normal-1',
-      profileId: 'project-1',
-      sessionLabel: 'Normal Session',
-      updatedAt: '2026-01-03T00:00:00.000Z',
-    })
-    const reviewSession = makeAgent({
-      agentId: 'review-1',
-      profileId: 'project-1',
-      sessionLabel: 'Cortex Review',
-      sessionPurpose: 'cortex_review',
-      updatedAt: '2026-01-02T00:00:00.000Z',
-    })
-    const cortexSession = makeAgent({
-      agentId: 'cortex',
-      profileId: 'cortex',
-      sessionLabel: 'Cortex Root',
-      archetypeId: 'cortex',
-    })
-    const profiles = [
-      makeProfile({ profileId: 'project-1', displayName: 'Remote Project', defaultSessionAgentId: 'normal-1' }),
-      makeProfile({ profileId: 'cortex', displayName: 'Cortex', defaultSessionAgentId: 'cortex' }),
-    ]
-    const agents = [normalSession, reviewSession, cortexSession]
-    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://remote.example/ws', offline: true })
-    store.ingest({ type: 'snapshot', state: { agents, profiles } })
-    store.patchMeta({ connectionStatus: 'connected', authState: 'authenticated', instanceName: 'Remote Forge' })
+    const [treeRow] = getRemoteVisibleProfileRows([
+      makeRow(
+        makeProfile({ profileId: 'project-1', displayName: 'Remote Project', defaultSessionAgentId: 'normal-1' }),
+        [
+          makeSession(makeAgent({ agentId: 'normal-1', sessionLabel: 'Normal Session' })),
+          makeSession(makeAgent({ agentId: 'review-1', sessionLabel: 'Cortex Review', sessionPurpose: 'cortex_review' }), false),
+        ],
+      ),
+    ])
 
     root = createRoot(container)
     flushSync(() => {
-      root?.render(createElement(RemoteOriginSections, {
-        originIds: [originId],
+      root?.render(createElement(RemoteProfileRow, {
+        originId: 'remote:test',
+        treeRow: treeRow!,
         selectedAgentId: null,
-        activeOriginId: originId,
+        isActiveOrigin: true,
+        instanceName: 'Remote Forge',
         onSelectAgent,
       }))
     })
@@ -192,84 +126,131 @@ describe('RemoteOriginSections', () => {
     expect(container.textContent).toContain('Remote Project')
     expect(container.textContent).toContain('Normal Session')
     expect(container.textContent).not.toContain('Cortex Review')
-    expect(container.textContent).not.toContain('Cortex Root')
-    expect(container.querySelector('[aria-label="Remote Forge: Connected"]')).toBeNull()
-
-    const button = Array.from(container.querySelectorAll('button'))
+    expect(container.querySelector('[data-testid="remote-profile-row-remote:test::project-1"]')).not.toBeNull()
+    const sessionButton = Array.from(container.querySelectorAll('button'))
       .find((candidate) => candidate.textContent?.includes('Normal Session'))
-    expect(button).toBeTruthy()
-    button?.click()
-
-    expect(onSelectAgent).toHaveBeenCalledWith(originId, 'normal-1')
+    sessionButton?.click()
+    expect(onSelectAgent).toHaveBeenCalledWith('remote:test', 'normal-1')
   })
 
-  it('renders an empty remote user project row and enables it as a drag handle', () => {
-    const originId = 'remote:test' as OriginId
-    const profiles = [
-      makeProfile({ profileId: 'empty-project', displayName: 'Empty Remote Project', defaultSessionAgentId: 'missing-session' }),
-      makeProfile({ profileId: 'normal-project', displayName: 'Normal Remote Project', defaultSessionAgentId: 'normal-1' }),
-    ]
-    const agents = [makeAgent({ agentId: 'normal-1', profileId: 'normal-project', sessionLabel: 'Normal Session' })]
-    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://remote.example/ws', offline: true })
-    store.ingest({ type: 'snapshot', state: { agents, profiles } })
-    store.patchMeta({ connectionStatus: 'connected', authState: 'authenticated', instanceName: 'Remote Forge' })
-
+  it('puts keyboard/pointer DnD semantics on the actual, instance-identified activator', () => {
+    const pointerDown = vi.fn()
+    const keyDown = vi.fn()
     root = createRoot(container)
     flushSync(() => {
-      root?.render(createElement(RemoteOriginSections, {
-        originIds: [originId],
+      root?.render(createElement(RemoteProfileRow, {
+        originId: 'remote:test',
+        treeRow: makeRow(makeProfile({ displayName: 'Empty Remote Project' }), []),
         selectedAgentId: null,
-        activeOriginId: originId,
+        isActiveOrigin: false,
+        instanceName: 'Remote East',
+        dragHandleListeners: { onPointerDown: pointerDown, onKeyDown: keyDown },
+        dragHandleAttributes: {
+          role: 'button',
+          tabIndex: 0,
+          'aria-disabled': false,
+          'aria-pressed': undefined,
+          'aria-roledescription': 'sortable',
+          'aria-describedby': 'dnd-description',
+        },
         onSelectAgent: vi.fn(),
-        onReorderProfiles: vi.fn(),
-      }))
-    })
-
-    const emptyProjectButton = Array.from(container.querySelectorAll('button'))
-      .find((candidate) => candidate.textContent?.includes('Empty Remote Project')) as HTMLButtonElement | undefined
-
-    expect(container.textContent).toContain('Empty Remote Project')
-    expect(emptyProjectButton).toBeTruthy()
-    expect(emptyProjectButton?.style.touchAction).toBe('none')
-    expect(emptyProjectButton?.className).toContain('cursor-grab')
-  })
-
-  it('enables the remote project row drag handle when remote reorder is available', () => {
-    const originId = 'remote:test' as OriginId
-    const normalSession = makeAgent({
-      agentId: 'normal-1',
-      profileId: 'project-1',
-      sessionLabel: 'Normal Session',
-    })
-    const secondSession = makeAgent({
-      agentId: 'normal-2',
-      profileId: 'project-2',
-      sessionLabel: 'Second Session',
-    })
-    const profiles = [
-      makeProfile({ profileId: 'project-1', displayName: 'Remote Project', defaultSessionAgentId: 'normal-1' }),
-      makeProfile({ profileId: 'project-2', displayName: 'Second Project', defaultSessionAgentId: 'normal-2' }),
-    ]
-    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://remote.example/ws', offline: true })
-    store.ingest({ type: 'snapshot', state: { agents: [normalSession, secondSession], profiles } })
-    store.patchMeta({ connectionStatus: 'connected', authState: 'authenticated', instanceName: 'Remote Forge' })
-
-    root = createRoot(container)
-    flushSync(() => {
-      root?.render(createElement(RemoteOriginSections, {
-        originIds: [originId],
-        selectedAgentId: null,
-        activeOriginId: originId,
-        onSelectAgent: vi.fn(),
-        onReorderProfiles: vi.fn(),
       }))
     })
 
     const projectButton = Array.from(container.querySelectorAll('button'))
-      .find((candidate) => candidate.textContent?.includes('Remote Project')) as HTMLButtonElement | undefined
+      .find((candidate) => candidate.textContent?.includes('Empty Remote Project')) as HTMLButtonElement
+    expect(projectButton.style.touchAction).toBe('none')
+    expect(projectButton.className).toContain('cursor-grab')
+    expect(projectButton.getAttribute('aria-roledescription')).toBe('sortable')
+    expect(projectButton.getAttribute('aria-describedby')).toBe('dnd-description')
+    expect(projectButton.getAttribute('aria-label')).toBe(
+      'Open or drag remote project Empty Remote Project on Remote East',
+    )
+    projectButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    expect(keyDown).toHaveBeenCalledOnce()
+  })
 
-    expect(projectButton).toBeTruthy()
-    expect(projectButton?.style.touchAction).toBe('none')
-    expect(projectButton?.className).toContain('cursor-grab')
+  it('updates status and unread from the owning origin row subscription', () => {
+    const originId = 'remote:live' as OriginId
+    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://live.test', offline: true })
+    const session = makeAgent({ agentId: 'live-session', sessionLabel: 'Live Session' })
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(RemoteProfileRow, {
+        originId,
+        treeRow: makeRow(makeProfile(), [makeSession(session)]),
+        selectedAgentId: null,
+        isActiveOrigin: false,
+        onSelectAgent: vi.fn(),
+      }))
+    })
+
+    expect(container.querySelector('[aria-label="Manager streaming"]')).toBeNull()
+    flushSync(() => {
+      store.ingest({
+        type: 'snapshot',
+        state: {
+          statuses: { 'live-session': { status: 'streaming', pendingCount: 1 } },
+          unreadCounts: { 'live-session': 4 },
+        },
+      })
+    })
+
+    expect(container.querySelector('[aria-label="Manager streaming"]')).not.toBeNull()
+    expect(container.textContent).toContain('4')
+  })
+
+  it('distinguishes duplicate remote project names by instance in accessible labels', () => {
+    for (const [originId, instanceName] of [['remote:east', 'Forge East'], ['remote:west', 'Forge West']] as const) {
+      const store = originRegistry.createOrigin({
+        originId,
+        wsUrl: `ws://${originId.replace(':', '-')}.test`,
+        offline: true,
+      })
+      store.patchMeta({ connectionStatus: 'connected', instanceName })
+    }
+    const duplicateRow = makeRow(makeProfile({ displayName: 'Shared Project' }), [])
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement('div', null,
+        createElement(RemoteProfileRow, {
+          originId: 'remote:east',
+          treeRow: duplicateRow,
+          selectedAgentId: null,
+          isActiveOrigin: false,
+          onSelectAgent: vi.fn(),
+        }),
+        createElement(RemoteProfileRow, {
+          originId: 'remote:west',
+          treeRow: duplicateRow,
+          selectedAgentId: null,
+          isActiveOrigin: false,
+          onSelectAgent: vi.fn(),
+        }),
+      ))
+    })
+
+    const labels = Array.from(container.querySelectorAll('button'))
+      .map((button) => button.getAttribute('aria-label'))
+      .filter((label) => label?.startsWith('Open remote'))
+    expect(labels).toEqual([
+      'Open remote project Shared Project on Forge East',
+      'Open remote project Shared Project on Forge West',
+    ])
+  })
+
+  it('renders connected-empty status without restoring the removed green dot', () => {
+    const originId = 'remote:test' as OriginId
+    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://remote.example/ws', offline: true })
+    store.patchMeta({ connectionStatus: 'connected', authState: 'authenticated', instanceName: 'Remote Forge' })
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(RemoteOriginSections, { originIds: [originId] }))
+    })
+
+    expect(container.textContent).toContain('No remote projects yet.')
+    expect(container.querySelector('[aria-label="Connected"]')).toBeNull()
   })
 })

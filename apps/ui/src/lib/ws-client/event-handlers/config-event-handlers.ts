@@ -8,7 +8,10 @@ export function handleConfigEvent(
 ): boolean {
   switch (event.type) {
     case 'profiles_snapshot':
-      context.updateState({ profiles: event.profiles })
+      context.updateState({
+        profiles: event.profiles,
+        hasReceivedProfilesSnapshot: true,
+      })
       return true
 
     case 'telegram_status':

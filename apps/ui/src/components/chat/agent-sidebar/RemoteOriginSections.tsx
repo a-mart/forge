@@ -1,37 +1,16 @@
 /**
- * Remote origin sidebar sections (Wave R R1, SPEC §5.4).
+ * Remote project rows and origin status cards for the unified Builder list.
  *
- * Connected remote origins render as normal project rows with a subtle remote
- * treatment. The origin-store slices remain scoped per origin — an event on one
- * origin never wakes another section (WP-U1 isolation).
- *
- * Remote profile rows reuse Builder's profile reorder command against their
- * owning origin; cross-origin/local intermixing remains out of scope because
- * each origin persists its own profile order.
+ * DnD deliberately does not live here: AgentSidebar owns one DndContext across
+ * every local and remote project, and persistence always targets the local
+ * Builder preference.
  */
 
-import { memo, useCallback, useMemo, useState } from 'react'
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
+import { memo, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Globe } from 'lucide-react'
-import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
-import { buildProfileTreeRows, isSessionRunning } from '@/lib/agent-hierarchy'
-import type { ProfileTreeRow, SessionRow } from '@/lib/agent-hierarchy'
-import type { ManagerWsState } from '@/lib/ws-state'
+import type { SessionRow } from '@/lib/agent-hierarchy'
 import {
+  compositeKey,
   useOriginMeta,
   useOriginSlice,
   type OriginId,
@@ -39,26 +18,21 @@ import {
 } from '@/lib/origin-store'
 import { cn } from '@/lib/utils'
 import { SessionStatusDot } from './shared'
-import { SortableProfileGroup } from './SortableProfileGroup'
-import { buildRemoteReorderProfileIds, getRemoteVisibleProfileRows } from './RemoteOriginSections.utils'
-import type { StatusMap } from './types'
+import type { ManagerWsState } from '@/lib/ws-state'
+import {
+  equalRemoteProfileRowProps,
+  type RemoteProfileRowProps,
+} from './remote-profile-row-props'
 
 export interface RemoteOriginSectionsProps {
+  /** Origins which currently have no renderable project row. */
   originIds: OriginId[]
-  selectedAgentId: string | null
-  activeOriginId: OriginId
-  onSelectAgent: (originId: OriginId, agentId: string) => void
-  onReorderProfiles?: (originId: OriginId, profileIds: string[]) => void
   onSignIn?: (originId: OriginId) => void
   onRetry?: (originId: OriginId) => void
 }
 
 export function RemoteOriginSections({
   originIds,
-  selectedAgentId,
-  activeOriginId,
-  onSelectAgent,
-  onReorderProfiles,
   onSignIn,
   onRetry,
 }: RemoteOriginSectionsProps) {
@@ -67,13 +41,9 @@ export function RemoteOriginSections({
   return (
     <div className="mt-3 space-y-2" data-testid="remote-origin-sections">
       {originIds.map((originId) => (
-        <RemoteOriginSection
+        <RemoteOriginStatusSection
           key={originId}
           originId={originId}
-          selectedAgentId={selectedAgentId}
-          isActiveOrigin={originId === activeOriginId}
-          onSelectAgent={onSelectAgent}
-          onReorderProfiles={onReorderProfiles}
           onSignIn={onSignIn}
           onRetry={onRetry}
         />
@@ -81,12 +51,6 @@ export function RemoteOriginSections({
     </div>
   )
 }
-
-// Stable module-level selectors — shared memoized selection per origin.
-const selectAgents = (s: ManagerWsState): AgentDescriptor[] => s.agents
-const selectProfiles = (s: ManagerWsState): ManagerProfile[] => s.profiles
-const selectStatuses = (s: ManagerWsState): StatusMap => s.statuses
-const selectUnreadCounts = (s: ManagerWsState): Record<string, number> => s.unreadCounts
 
 type OriginHeaderState = 'connected' | 'connecting' | 'auth-required' | 'version-blocked' | 'unreachable' | 'disabled'
 
@@ -100,8 +64,7 @@ function deriveHeaderState(meta: OriginMetaState | null): OriginHeaderState {
   return 'unreachable'
 }
 
-const HEADER_DOT_CLASS: Record<OriginHeaderState, string> = {
-  connected: 'bg-emerald-500',
+const HEADER_DOT_CLASS: Omit<Record<OriginHeaderState, string>, 'connected'> = {
   connecting: 'bg-amber-400 animate-pulse',
   'auth-required': 'bg-amber-500',
   'version-blocked': 'bg-red-500',
@@ -118,155 +81,47 @@ const HEADER_STATE_LABEL: Record<OriginHeaderState, string> = {
   disabled: 'Remote projects disabled',
 }
 
-const RemoteOriginSection = memo(function RemoteOriginSection({
+const RemoteOriginStatusSection = memo(function RemoteOriginStatusSection({
   originId,
-  selectedAgentId,
-  isActiveOrigin,
-  onSelectAgent,
-  onReorderProfiles,
   onSignIn,
   onRetry,
 }: {
   originId: OriginId
-  selectedAgentId: string | null
-  isActiveOrigin: boolean
-  onSelectAgent: (originId: OriginId, agentId: string) => void
-  onReorderProfiles?: (originId: OriginId, profileIds: string[]) => void
   onSignIn?: (originId: OriginId) => void
   onRetry?: (originId: OriginId) => void
 }) {
   const meta = useOriginMeta(originId)
-  const agents = useOriginSlice(originId, selectAgents, { selectorKey: 'sidebar.agents' })
-  const profiles = useOriginSlice(originId, selectProfiles, { selectorKey: 'sidebar.profiles' })
-  const statuses = useOriginSlice(originId, selectStatuses, { selectorKey: 'sidebar.statuses' })
-  const unreadCounts = useOriginSlice(originId, selectUnreadCounts, { selectorKey: 'sidebar.unreadCounts' })
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
-
-  const treeRows = useMemo(
-    () => getRemoteVisibleProfileRows(buildProfileTreeRows(agents, profiles)),
-    [agents, profiles],
-  )
-
-  const headerState = deriveHeaderState(meta)
-  const instanceName = meta?.instanceName?.trim() || 'Remote Forge'
-
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    setActiveDragId(null)
-    const { active, over } = event
-    if (!over || active.id === over.id || !onReorderProfiles) return
-
-    const nextIds = buildRemoteReorderProfileIds(treeRows, active.id as string, over.id as string)
-    if (!nextIds) return
-
-    onReorderProfiles(originId, nextIds)
-  }, [onReorderProfiles, originId, treeRows])
-
-  if (headerState === 'connected' && treeRows.length > 0) {
-    const dndEnabled = Boolean(onReorderProfiles) && treeRows.length > 1
-    const sortableIds = treeRows.map((row) => row.profile.profileId)
-    const activeDragRow = activeDragId ? treeRows.find((row) => row.profile.profileId === activeDragId) : null
-    const renderRow = (
-      treeRow: ProfileTreeRow,
-      dragHandleRef?: (element: HTMLElement | null) => void,
-      dragHandleListeners?: Record<string, unknown>,
-    ) => (
-      <RemoteProfileRow
-        treeRow={treeRow}
-        statuses={statuses}
-        unreadCounts={unreadCounts}
-        selectedAgentId={selectedAgentId}
-        isActiveOrigin={isActiveOrigin}
-        instanceName={instanceName}
-        dragHandleRef={dragHandleRef}
-        dragHandleListeners={dragHandleListeners}
-        onSelectAgent={(agentId) => onSelectAgent(originId, agentId)}
-      />
-    )
-
-    if (dndEnabled) {
-      return (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={(event) => setActiveDragId(event.active.id as string)}
-          onDragCancel={() => setActiveDragId(null)}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-            <ul className="space-y-2" data-testid={`remote-origin-section-${originId}`}>
-              {treeRows.map((treeRow) => (
-                <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
-                  {(dragHandleRef, dragHandleListeners) => renderRow(treeRow, dragHandleRef, dragHandleListeners)}
-                </SortableProfileGroup>
-              ))}
-            </ul>
-          </SortableContext>
-          <DragOverlay>
-            {activeDragRow ? (
-              <div className="rounded-md border border-blue-400/25 bg-sidebar shadow-lg">
-                <div className="flex items-center gap-1.5 px-3 py-2">
-                  <Globe aria-hidden="true" className="size-3.5 shrink-0 text-blue-400" />
-                  <span className="text-sm font-semibold">{activeDragRow.profile.displayName}</span>
-                </div>
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      )
-    }
-
-    return (
-      <ul className="space-y-2" data-testid={`remote-origin-section-${originId}`}>
-        {treeRows.map((treeRow) => (
-          <li key={treeRow.profile.profileId}>{renderRow(treeRow)}</li>
-        ))}
-      </ul>
-    )
-  }
-
   return (
     <RemoteOriginStatusCard
       originId={originId}
-      state={headerState}
-      instanceName={instanceName}
+      state={deriveHeaderState(meta)}
+      instanceName={meta?.instanceName?.trim() || 'Remote Forge'}
       onSignIn={onSignIn}
       onRetry={onRetry}
     />
   )
 })
 
-function RemoteProfileRow({
+export const RemoteProfileRow = memo(function RemoteProfileRow({
+  originId,
   treeRow,
-  statuses,
-  unreadCounts,
   selectedAgentId,
   isActiveOrigin,
-  instanceName,
+  instanceName: fallbackInstanceName,
   dragHandleRef,
   dragHandleListeners,
+  dragHandleAttributes,
   onSelectAgent,
-}: {
-  treeRow: ProfileTreeRow
-  statuses: StatusMap
-  unreadCounts: Record<string, number>
-  selectedAgentId: string | null
-  isActiveOrigin: boolean
-  instanceName: string
-  dragHandleRef?: (element: HTMLElement | null) => void
-  dragHandleListeners?: Record<string, unknown>
-  onSelectAgent: (agentId: string) => void
-}) {
+}: RemoteProfileRowProps) {
   const { profile, sessions } = treeRow
   const [collapsed, setCollapsed] = useState(false)
+  const meta = useOriginMeta(originId)
+  const instanceName = meta?.instanceName?.trim() || fallbackInstanceName?.trim() || 'Remote Forge'
   const firstSession = sessions[0]?.sessionAgent
   const isHeaderSelected = isActiveOrigin && sessions.some((session) => session.sessionAgent.agentId === selectedAgentId)
 
   return (
-    <div data-testid={`remote-profile-row-${profile.profileId}`}>
+    <div data-testid={`remote-profile-row-${compositeKey(originId, profile.profileId)}`}>
       <div
         className={cn(
           'relative flex items-center rounded-lg border bg-blue-500/[0.035] transition-colors',
@@ -278,7 +133,7 @@ function RemoteProfileRow({
         <button
           type="button"
           onClick={() => setCollapsed((value) => !value)}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} remote project ${profile.displayName}`}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} remote project ${profile.displayName} on ${instanceName}`}
           aria-expanded={!collapsed}
           className={cn(
             'group absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-blue-300/80 transition',
@@ -296,9 +151,11 @@ function RemoteProfileRow({
         <button
           type="button"
           ref={dragHandleRef}
+          {...dragHandleAttributes}
           {...dragHandleListeners}
+          aria-label={`${dragHandleListeners ? 'Open or drag' : 'Open'} remote project ${profile.displayName} on ${instanceName}`}
           onClick={() => {
-            if (firstSession) onSelectAgent(firstSession.agentId)
+            if (firstSession) onSelectAgent(originId, firstSession.agentId)
           }}
           className={cn(
             'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-5.5 pr-1.5 text-left transition-colors',
@@ -320,37 +177,48 @@ function RemoteProfileRow({
         <ul className="mt-1 space-y-0.5">
           {sessions.map((session) => (
             <RemoteSessionRow
-              key={session.sessionAgent.agentId}
+              key={compositeKey(originId, session.sessionAgent.agentId)}
+              originId={originId}
               session={session}
-              statuses={statuses}
-              unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
               isSelected={isActiveOrigin && selectedAgentId === session.sessionAgent.agentId}
-              onSelect={() => onSelectAgent(session.sessionAgent.agentId)}
+              onSelect={() => onSelectAgent(originId, session.sessionAgent.agentId)}
             />
           ))}
         </ul>
       ) : null}
     </div>
   )
-}
+}, equalRemoteProfileRowProps)
 
-function RemoteSessionRow({
+const RemoteSessionRow = memo(function RemoteSessionRow({
+  originId,
   session,
-  statuses,
-  unreadCount,
   isSelected,
   onSelect,
 }: {
+  originId: OriginId
   session: SessionRow
-  statuses: StatusMap
-  unreadCount: number
   isSelected: boolean
   onSelect: () => void
 }) {
   const { sessionAgent, isDefault } = session
-  const running = isSessionRunning(sessionAgent)
   const label = sessionAgent.sessionLabel || (isDefault ? 'Main' : sessionAgent.displayName || sessionAgent.agentId)
-  const liveStatus = statuses[sessionAgent.agentId]?.status ?? sessionAgent.status
+  const selectLiveStatus = useMemo(
+    () => (state: ManagerWsState) => state.statuses[sessionAgent.agentId]?.status,
+    [sessionAgent.agentId],
+  )
+  const selectUnreadCount = useMemo(
+    () => (state: ManagerWsState) => state.unreadCounts[sessionAgent.agentId] ?? 0,
+    [sessionAgent.agentId],
+  )
+  const selectedLiveStatus = useOriginSlice(originId, selectLiveStatus, {
+    selectorKey: `sidebar.remote-session-status.${sessionAgent.agentId}`,
+  })
+  const liveStatus = selectedLiveStatus ?? sessionAgent.status
+  const unreadCount = useOriginSlice(originId, selectUnreadCount, {
+    selectorKey: `sidebar.remote-session-unread.${sessionAgent.agentId}`,
+  })
+  const running = liveStatus === 'idle' || liveStatus === 'streaming'
 
   return (
     <li>
@@ -385,7 +253,7 @@ function RemoteSessionRow({
       </button>
     </li>
   )
-}
+})
 
 function RemoteOriginStatusCard({
   originId,
@@ -412,10 +280,12 @@ function RemoteOriginStatusCard({
       <div className="flex items-center gap-1.5 text-xs font-semibold text-sidebar-foreground">
         <Globe aria-hidden="true" className="size-3.5 shrink-0 text-blue-400" />
         <span className="min-w-0 flex-1 truncate">{instanceName}</span>
-        <span
-          aria-label={HEADER_STATE_LABEL[state]}
-          className={cn('size-2 shrink-0 rounded-full', HEADER_DOT_CLASS[state])}
-        />
+        {state !== 'connected' ? (
+          <span
+            aria-label={HEADER_STATE_LABEL[state]}
+            className={cn('size-2 shrink-0 rounded-full', HEADER_DOT_CLASS[state])}
+          />
+        ) : null}
       </div>
       <p className={cn('mt-1 text-xs text-muted-foreground', state === 'connecting' ? 'animate-pulse' : undefined)}>
         {state === 'auth-required'

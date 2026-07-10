@@ -302,6 +302,11 @@ describe("route inventory classification gate", () => {
     const server = await startCollaborationServer();
     const routes = server.listRegisteredHttpRoutes();
 
+    expect(
+      routes.some((route) => route.matches("/api/settings/builder-sidebar-order")),
+      "The local Builder sidebar preference must never be mounted on collaboration-server instances.",
+    ).toBe(false);
+
     const unmatchedRoutes: string[] = [];
     for (const route of routes) {
       const matched = ROUTE_INVENTORY.some((entry) => route.matches(entry.sample));

@@ -40,6 +40,7 @@ import {
 import {
   CortexAutoReviewSettingsService
 } from "../swarm/cortex-auto-review-settings.js";
+import { BuilderSidebarOrderService } from "../swarm/builder-sidebar-order-service.js";
 import { CompactionSettingsService } from "../swarm/compaction-settings-service.js";
 import { KnowledgeV2SettingsService } from "../swarm/knowledge-v2-settings-service.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
@@ -63,6 +64,7 @@ import {
 } from "./cli-auth.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
+import { createBuilderSidebarOrderRoutes } from "./http/routes/builder-sidebar-order-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
 import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
@@ -123,6 +125,7 @@ export class SwarmWebSocketServer {
   private actualPort: number | null = null;
   private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly cortexAutoReviewSettingsService: CortexAutoReviewSettingsService;
+  private readonly builderSidebarOrderService: BuilderSidebarOrderService | null;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService | null;
   private readonly compactionSettingsService: CompactionSettingsService | null;
   private readonly terminalService: TerminalService | null;
@@ -426,6 +429,7 @@ export class SwarmWebSocketServer {
     cliAccessService?: CliAccessService;
     notificationSettingsService?: NotificationSettingsService;
     remoteBuildSettingsService?: RemoteBuildSettingsService;
+    builderSidebarOrderService?: BuilderSidebarOrderService;
     knowledgeV2SettingsService?: KnowledgeV2SettingsService;
     compactionSettingsService?: CompactionSettingsService;
     observabilityService?: ObservabilityFacade;
@@ -440,6 +444,10 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       cortexEnabled,
     });
+    this.builderSidebarOrderService = isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+      ? options.builderSidebarOrderService ??
+        new BuilderSidebarOrderService({ dataDir: this.swarmManager.getConfig().paths.dataDir })
+      : null;
     this.knowledgeV2SettingsService =
       options.knowledgeV2SettingsService ??
       this.swarmManager.getKnowledgeV2SettingsService?.() ??
@@ -555,6 +563,13 @@ export class SwarmWebSocketServer {
         cliAccessService: this.cliAccessService,
         runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
       }),
+      ...(this.builderSidebarOrderService
+        ? createBuilderSidebarOrderRoutes({
+            service: this.builderSidebarOrderService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+            broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+          })
+        : []),
       ...(this.collaborationSettingsService
         ? createCollaborationRoutes({
             config: this.swarmManager.getConfig(),
@@ -697,6 +712,9 @@ export class SwarmWebSocketServer {
     }
 
     await this.cortexAutoReviewSettingsService.load();
+    if (this.builderSidebarOrderService) {
+      await this.builderSidebarOrderService.load();
+    }
     if (this.knowledgeV2SettingsService) {
       await this.knowledgeV2SettingsService.load();
     }

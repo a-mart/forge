@@ -63,6 +63,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   highlightQuery,
   dragHandleRef,
   dragHandleListeners,
+  dragHandleAttributes,
   onPinSession,
   onPromoteToProjectAgent,
   onOpenProjectAgentSharing,
@@ -144,7 +145,9 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   <button
                     type="button"
                     ref={dragHandleRef}
+                    {...dragHandleAttributes}
                     {...dragHandleListeners}
+                    aria-label={`${dragHandleListeners ? 'Open or drag' : 'Open'} project ${profile.displayName}`}
                     onClick={() => {
                       // Click profile header → select the first session visible in the list.
                       const targetId = firstVisibleSession?.sessionAgent.agentId

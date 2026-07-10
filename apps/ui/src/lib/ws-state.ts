@@ -26,6 +26,8 @@ export type AgentActivityEntry = Extract<
 
 export interface ManagerWsState {
   connected: boolean
+  /** Monotonic transport-open generation; increments even if reconnect state is React-batched. */
+  connectionEpoch: number
   targetAgentId: string | null
   subscribedAgentId: string | null
   messages: ConversationHistoryEntry[]
@@ -46,6 +48,8 @@ export interface ManagerWsState {
   lastSuccess: string | null
   telegramStatus: TelegramStatusEvent | null
   unreadCounts: Record<string, number>
+  /** Latest local-instance order invalidation; the full preference is refetched over HTTP. */
+  builderSidebarOrderRevision: number | null
   /** Wave R presence: connected member identities per session (SPEC §4.7). */
   projectPresence: Record<string, ProjectPresenceViewer[]>
   terminals: TerminalDescriptor[]
@@ -55,6 +59,8 @@ export interface ManagerWsState {
   /** Session whose cached task snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
   taskSnapshotLoadingSessionId: string | null
   hasReceivedAgentsSnapshot: boolean
+  /** True only after the current connection bootstrap has delivered the full profile inventory. */
+  hasReceivedProfilesSnapshot: boolean
   /** Monotonically increasing counter bumped on prompt-related WS events */
   promptChangeKey: number
   /** Monotonically increasing counter bumped on specialist_roster_changed WS events */
@@ -70,6 +76,7 @@ export interface ManagerWsState {
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
   return {
     connected: false,
+    connectionEpoch: 0,
     targetAgentId,
     subscribedAgentId: null,
     messages: [],
@@ -86,6 +93,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     lastSuccess: null,
     telegramStatus: null,
     unreadCounts: {},
+    builderSidebarOrderRevision: null,
     projectPresence: {},
     terminals: [],
     terminalSessionScopeId: null,
@@ -93,6 +101,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     restartRecovery: null,
     taskSnapshotLoadingSessionId: null,
     hasReceivedAgentsSnapshot: false,
+    hasReceivedProfilesSnapshot: false,
     promptChangeKey: 0,
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,

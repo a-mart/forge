@@ -7,7 +7,13 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentSidebar } from './AgentSidebar'
 import { HelpProvider } from '@/components/help/HelpProvider'
-import type { AgentDescriptor, AgentStatus, ManagerProfile } from '@forge/protocol'
+import type {
+  AgentDescriptor,
+  AgentStatus,
+  BuilderSidebarOrderRef,
+  ManagerProfile,
+} from '@forge/protocol'
+import type { RemoteSidebarOrigin } from './agent-sidebar/types'
 
 function manager(
   agentId: string,
@@ -130,6 +136,11 @@ function renderSidebar({
   isSettingsActive = false,
   statuses = {},
   wsUrl,
+  remoteOrigins,
+  builderSidebarOrder,
+  onMoveBuilderProject,
+  activeOriginId,
+  onSelectRemoteAgent,
 }: {
   agents: AgentDescriptor[]
   profiles?: ManagerProfile[]
@@ -144,6 +155,11 @@ function renderSidebar({
   isSettingsActive?: boolean
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
   wsUrl?: string
+  remoteOrigins?: RemoteSidebarOrigin[]
+  builderSidebarOrder?: BuilderSidebarOrderRef[]
+  onMoveBuilderProject?: (active: BuilderSidebarOrderRef, over: BuilderSidebarOrderRef) => void
+  activeOriginId?: string
+  onSelectRemoteAgent?: (originId: string, agentId: string) => void
 }) {
   // Auto-generate profiles from managers if not explicitly provided
   const resolvedProfiles = profiles ?? agents
@@ -174,6 +190,11 @@ function renderSidebar({
           onArchiveSession,
           onArchiveProfile,
           isSettingsActive,
+          remoteOrigins,
+          builderSidebarOrder,
+          onMoveBuilderProject,
+          activeOriginId,
+          onSelectRemoteAgent,
         }),
       ),
     )
@@ -1030,6 +1051,216 @@ describe('AgentSidebar', () => {
 
     // Restore original localStorage for cleanup
     vi.stubGlobal('localStorage', localStorageMock)
+  })
+
+  it('intermixes local and remote projects by composite identity while keeping local Cortex fixed above them', () => {
+    const localSession = {
+      ...sessionManager('shared-session', 'same-profile'),
+      sessionLabel: 'Local Session',
+    }
+    const cortexSession = {
+      ...sessionManager('cortex', 'cortex'),
+      archetypeId: 'cortex',
+      displayName: 'Cortex',
+    }
+    const remoteSession = {
+      ...sessionManager('shared-session', 'same-profile'),
+      displayName: 'Remote Session',
+      sessionLabel: 'Remote Session',
+    }
+    const localProfile: ManagerProfile = {
+      ...profileFor(localSession),
+      profileId: 'same-profile',
+      displayName: 'Local Project',
+      defaultSessionAgentId: localSession.agentId,
+    }
+    const cortexProfile: ManagerProfile = {
+      ...profileFor(cortexSession),
+      profileId: 'cortex',
+      displayName: 'Cortex',
+      defaultSessionAgentId: cortexSession.agentId,
+      profileType: 'system',
+    }
+    const remoteProfile: ManagerProfile = {
+      ...profileFor(remoteSession),
+      profileId: 'same-profile',
+      displayName: 'Remote Project',
+      defaultSessionAgentId: remoteSession.agentId,
+    }
+
+    renderSidebar({
+      agents: [localSession, cortexSession],
+      profiles: [localProfile, cortexProfile],
+      activeOriginId: 'remote-a',
+      selectedAgentId: 'shared-session',
+      onSelectRemoteAgent: vi.fn(),
+      remoteOrigins: [{
+        originId: 'remote-a',
+        connected: true,
+        instanceName: 'Remote A',
+        treeRows: [{
+          profile: remoteProfile,
+          sessions: [{ sessionAgent: remoteSession, workers: [], isDefault: true }],
+        }],
+      }],
+      builderSidebarOrder: [
+        { originId: 'remote-a', profileId: 'same-profile' },
+        { originId: 'local', profileId: 'same-profile' },
+      ],
+      onMoveBuilderProject: vi.fn(),
+    })
+
+    const sidebar = getDesktopSidebar()
+    const unifiedList = sidebar.querySelector('[data-testid="unified-project-list"]')
+    expect(unifiedList).not.toBeNull()
+    const text = unifiedList?.textContent ?? ''
+    expect(text.indexOf('Remote Project')).toBeLessThan(text.indexOf('Local Project'))
+    expect(sidebar.querySelector('[data-testid="remote-profile-row-remote-a::same-profile"]')).not.toBeNull()
+    expect(unifiedList?.textContent).not.toContain('Cortex')
+    expect((sidebar.textContent ?? '').indexOf('Cortex')).toBeLessThan(
+      (sidebar.textContent ?? '').indexOf('Remote Project'),
+    )
+    const localSessionContainer = getByText(sidebar, 'Local Session').closest('div.relative')
+    const remoteSessionButton = getByText(sidebar, 'Remote Session').closest('button')
+    expect(localSessionContainer?.className).not.toContain('ring-1')
+    expect(remoteSessionButton?.className).toContain('ring-1')
+  })
+
+  it('applies plain, s:, and w: search consistently across local and remote rows and hides status cards while searching', async () => {
+    const localSession = {
+      ...sessionManager('local-session', 'local-project'),
+      sessionLabel: 'Needle Local Session',
+    }
+    const remoteSession = {
+      ...sessionManager('remote-session', 'remote-project'),
+      sessionLabel: 'Needle Remote Session',
+    }
+    const remoteWorker = {
+      ...worker('remote-worker', 'remote-session'),
+      displayName: 'Worker Needle Specialist',
+    }
+    const localProfile: ManagerProfile = {
+      ...profileFor(localSession),
+      profileId: 'local-project',
+      displayName: 'Local Project',
+      defaultSessionAgentId: localSession.agentId,
+    }
+    const remoteProfile: ManagerProfile = {
+      ...profileFor(remoteSession),
+      profileId: 'remote-project',
+      displayName: 'Remote Project',
+      defaultSessionAgentId: remoteSession.agentId,
+    }
+
+    renderSidebar({
+      agents: [localSession],
+      profiles: [localProfile],
+      remoteOrigins: [
+        {
+          originId: 'remote-a',
+          connected: true,
+          instanceName: 'Remote A',
+          treeRows: [{
+            profile: remoteProfile,
+            sessions: [{
+              sessionAgent: remoteSession,
+              workers: [remoteWorker],
+              isDefault: true,
+            }],
+          }],
+        },
+        {
+          originId: 'remote-empty',
+          connected: false,
+          instanceName: 'Remote Empty',
+          treeRows: [],
+        },
+      ],
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(sidebar.querySelector('[data-testid="remote-origin-section-remote-empty"]')).not.toBeNull()
+    const searchInput = sidebar.querySelector('input[placeholder^="Search"]') as HTMLInputElement
+
+    fireEvent.change(searchInput, { target: { value: 'Needle' } })
+    await waitFor(() => {
+      expect(sidebar.textContent).toContain('2 matches')
+      expect(queryByText(sidebar, 'Local Project')).toBeTruthy()
+      expect(queryByText(sidebar, 'Remote Project')).toBeTruthy()
+      expect(sidebar.querySelector('[data-testid="remote-origin-sections"]')).toBeNull()
+    })
+
+    fireEvent.change(searchInput, { target: { value: 's:Remote' } })
+    await waitFor(() => {
+      expect(sidebar.textContent).toContain('1 match')
+      expect(queryByText(sidebar, 'Local Project')).toBeNull()
+      expect(queryByText(sidebar, 'Remote Project')).toBeTruthy()
+    })
+
+    fireEvent.change(searchInput, { target: { value: 'w:Worker Needle' } })
+    await waitFor(() => {
+      expect(sidebar.textContent).toContain('1 match')
+      expect(queryByText(sidebar, 'Local Project')).toBeNull()
+      expect(queryByText(sidebar, 'Remote Project')).toBeTruthy()
+      expect(queryByText(sidebar, 'Needle Remote Session')).toBeTruthy()
+    })
+
+    fireEvent.change(searchInput, { target: { value: 'definitely absent' } })
+    await waitFor(() => {
+      expect(sidebar.textContent).toContain('0 matches')
+      expect(queryByText(sidebar, 'No matches found.')).toBeTruthy()
+      expect(queryByText(sidebar, 'Local Project')).toBeNull()
+      expect(queryByText(sidebar, 'Remote Project')).toBeNull()
+      expect(sidebar.querySelector('[data-testid="remote-origin-sections"]')).toBeNull()
+    })
+  })
+
+  it('renders delimiter-adversarial local/remote sortable tuples as distinct accessible rows', () => {
+    const localSession = sessionManager('local-session', 'nested::profile')
+    const remoteSession = sessionManager('remote-session', 'profile')
+    const localProfile: ManagerProfile = {
+      ...profileFor(localSession),
+      profileId: 'nested::profile',
+      displayName: 'Delimiter Local',
+      defaultSessionAgentId: localSession.agentId,
+    }
+    const remoteProfile: ManagerProfile = {
+      ...profileFor(remoteSession),
+      profileId: 'profile',
+      displayName: 'Delimiter Remote',
+      defaultSessionAgentId: remoteSession.agentId,
+    }
+
+    renderSidebar({
+      agents: [localSession],
+      profiles: [localProfile],
+      remoteOrigins: [{
+        originId: 'local::nested',
+        connected: true,
+        instanceName: 'Delimiter Instance',
+        treeRows: [{
+          profile: remoteProfile,
+          sessions: [{ sessionAgent: remoteSession, workers: [], isDefault: true }],
+        }],
+      }],
+      builderSidebarOrder: [
+        { originId: 'local::nested', profileId: 'profile' },
+        { originId: 'local', profileId: 'nested::profile' },
+      ],
+      onMoveBuilderProject: vi.fn(),
+    })
+
+    const sidebar = getDesktopSidebar()
+    const list = sidebar.querySelector('[data-testid="unified-project-list"]')
+    expect(list?.textContent).toContain('Delimiter Local')
+    expect(list?.textContent).toContain('Delimiter Remote')
+    const activators = list?.querySelectorAll('button[aria-roledescription="sortable"]') ?? []
+    expect(activators).toHaveLength(2)
+    expect(Array.from(activators).map((element) => element.getAttribute('aria-label'))).toEqual([
+      'Open or drag remote project Delimiter Remote on Delimiter Instance',
+      'Open or drag project Delimiter Local',
+    ])
+    expect(Array.from(list?.children ?? []).every((element) => !element.hasAttribute('aria-roledescription'))).toBe(true)
   })
 
   it('keeps profiles visible when sidebar search matches inactive repository project agents', async () => {
