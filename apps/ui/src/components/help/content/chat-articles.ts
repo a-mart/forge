@@ -4,6 +4,7 @@ import chatArtifactsContent from './articles/chat/chat-artifacts.md?raw'
 import chatAttachmentsContent from './articles/chat/chat-attachments.md?raw'
 import chatCompactionContent from './articles/chat/chat-compaction.md?raw'
 import chatFeedbackContent from './articles/chat/chat-feedback.md?raw'
+import chatFilesContent from './articles/chat/chat-files.md?raw'
 import chatForkSessionContent from './articles/chat/chat-fork-session.md?raw'
 import chatOverviewContent from './articles/chat/chat-overview.md?raw'
 import chatProfilesContent from './articles/chat/chat-profiles.md?raw'
@@ -43,7 +44,7 @@ export const chatArticles: HelpArticle[] = [
       'quoted preview',
       'reply target',
     ],
-    relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction', 'chat-source-control'],
+    relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction', 'chat-files', 'chat-source-control'],
     contextKeys: ['chat.main'],
   },
   {
@@ -194,6 +195,33 @@ export const chatArticles: HelpArticle[] = [
     contextKeys: ['chat.artifacts'],
   },
   {
+    id: 'chat-files',
+    title: 'Files Workspace',
+    category: 'chat',
+    summary: 'How to use Files tabs, edit and preview content, manage paths, and protect drafts.',
+    content: chatFilesContent,
+    keywords: [
+      'files',
+      'file browser',
+      'tabs',
+      'preview tab',
+      'sticky tab',
+      'CodeMirror',
+      'markdown preview',
+      'source',
+      'create file',
+      'rename',
+      'delete',
+      'draft',
+      'dirty edits',
+      'save conflict',
+      'worktree',
+      'mobile',
+    ],
+    relatedIds: ['chat-overview', 'chat-source-control', 'chat-artifacts'],
+    contextKeys: ['chat.artifacts'],
+  },
+  {
     id: 'chat-source-control',
     title: 'Source Control Workspace',
     category: 'chat',
@@ -215,7 +243,7 @@ export const chatArticles: HelpArticle[] = [
       'dirty edits',
       'file editing',
     ],
-    relatedIds: ['chat-overview', 'chat-artifacts'],
+    relatedIds: ['chat-overview', 'chat-files', 'chat-artifacts'],
     contextKeys: ['chat.artifacts'],
   },
   {
