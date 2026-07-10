@@ -60,7 +60,7 @@ The **Remote projects** switch is a browser-local display/connection preference,
 
 In remote chat, author chips identify messages from other users. The viewer indicator is a snapshot of authenticated people subscribed to that session; it is not typing presence, an edit lock, or proof that someone is actively reading.
 
-If you open Builder directly on a server-hosted Forge origin and its Builder cookie is missing or expired, Forge shows a non-dismissible email/password dialog before opening the Builder connection. Successful sign-in reloads the current URL, preserving the requested route. This is separate from signing in to a remote connection through local **Settings → Collaboration**.
+If you open the UI directly on a collaboration-server origin and its collaboration session cookie is missing or expired, Forge shows a non-dismissible email/password dialog before opening the Builder connection. Successful sign-in reloads the current URL, preserves the requested route, and re-evaluates the account role: admins may continue to Builder, while members are routed to Collaboration. This direct-hosted flow is separate from a configured Remote Projects connection's sign-in and recovery flow under local **Settings → Collaboration**.
 
 See the [Remote Projects guide](collaboration/REMOTE_PROJECTS.md) for server policy, security boundaries, status meanings, and troubleshooting.
 
@@ -68,7 +68,7 @@ See the [Remote Projects guide](collaboration/REMOTE_PROJECTS.md) for server pol
 
 ### First Impressions
 
-Once authenticated, you'll see the main interface: a chat window in the center, a collapsible sidebar on the right, and a session list on the left. It looks like a chat app. Fundamentally, that's what it is. But the chat is with an AI manager that controls a pool of workers.
+Once provider credentials are configured, you'll see the main interface: a chat window in the center, a collapsible sidebar on the right, and a session list on the left. It looks like a chat app. Fundamentally, that's what it is. But the chat is with an AI manager that controls a pool of workers.
 
 ---
 
