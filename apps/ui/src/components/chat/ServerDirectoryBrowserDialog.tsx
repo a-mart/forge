@@ -44,6 +44,10 @@ interface ServerDirectoryBrowserDialogProps {
 
 type BrowserEntry = { name: string; path: string }
 
+function isOutsideAllowedRootsError(message: string): boolean {
+  return message.includes('DIRECTORY_OUTSIDE_ROOT') || /outside the configured workspace roots/i.test(message)
+}
+
 export function ServerDirectoryBrowserDialog({
   open,
   onOpenChange,
@@ -66,31 +70,46 @@ export function ServerDirectoryBrowserDialog({
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [selecting, setSelecting] = useState(false)
 
+  const applyListing = useCallback((listed: DirectoriesListedResult) => {
+    const nextPath = listed.resolvedPath ?? listed.path
+    setCurrentPath(nextPath)
+    setParentPath(listed.parentPath ?? null)
+    setRoots(listed.roots ?? [])
+    const nextEntries =
+      listed.entries && listed.entries.length > 0
+        ? listed.entries
+        : (listed.directories ?? []).map((entryPath) => ({
+            name: entryPath.split(/[/\\]/).filter(Boolean).at(-1) ?? entryPath,
+            path: entryPath,
+          }))
+    setEntries(nextEntries)
+    setPathInput(nextPath)
+  }, [])
+
   const loadPath = useCallback(async (path?: string) => {
     setLoading(true)
     setError(null)
     try {
-      const listed = await client.listDirectories(path)
-      const nextPath = listed.resolvedPath ?? listed.path
-      setCurrentPath(nextPath)
-      setParentPath(listed.parentPath ?? null)
-      setRoots(listed.roots ?? [])
-      const nextEntries =
-        listed.entries && listed.entries.length > 0
-          ? listed.entries
-          : (listed.directories ?? []).map((entryPath) => ({
-              name: entryPath.split(/[/\\]/).filter(Boolean).at(-1) ?? entryPath,
-              path: entryPath,
-            }))
-      setEntries(nextEntries)
-      setPathInput(nextPath)
+      applyListing(await client.listDirectories(path))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to list directories.')
+      // A persisted local CWD (such as /app in a container) may be outside the
+      // collaboration server allowlist. Keep that policy intact, but recover to
+      // the server-provided roots only for that explicit policy rejection.
+      const message = err instanceof Error ? err.message : 'Failed to list directories.'
+      if (path?.trim() && isOutsideAllowedRootsError(message)) {
+        try {
+          applyListing(await client.listDirectories())
+          return
+        } catch {
+          // Preserve the original policy error when the roots cannot be listed.
+        }
+      }
+      setError(message)
       setEntries([])
     } finally {
       setLoading(false)
     }
-  }, [client])
+  }, [applyListing, client])
 
   useEffect(() => {
     if (!open) return
