@@ -203,7 +203,7 @@ beforeEach(() => {
     savePreferences: vi.fn(),
   })
   cortexApiMock.fetchCortexAutoReviewSettings.mockResolvedValue({
-    settings: { enabled: true, intervalMinutes: 120 },
+    settings: { enabled: true, intervalMinutes: 1440 },
     cortexDisabled: false,
   })
   knowledgeV2ApiMock.fetchKnowledgeV2Settings.mockResolvedValue({
@@ -450,34 +450,61 @@ describe('SettingsGeneral', () => {
     })
   })
 
-  /* ---- Cortex auto-review ---- */
+  /* ---- Cortex consolidation (auto-review API) ---- */
 
-  describe('cortex auto-review', () => {
-    it('renders Cortex auto-review toggle', async () => {
+  describe('cortex consolidation', () => {
+    it('renders consolidation toggle with Knowledge v2 language', async () => {
       renderGeneral()
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('Automatic Reviews')
+      expect(container.textContent).toContain('Automatic Consolidation')
+      expect(container.textContent).toContain('merges, archives, and reindexes knowledge entries')
+      expect(container.textContent).not.toContain('Automatic Reviews')
+      expect(container.textContent).not.toContain('reviews active sessions')
+      expect(container.textContent).not.toContain('memory, and reference docs')
     })
 
-    it('renders review interval selector', async () => {
+    it('shows fixed 24-hour cadence without unsupported interval options', async () => {
       renderGeneral()
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('Review Interval')
+      expect(container.textContent).toContain('Consolidation Cadence')
+      expect(container.textContent).toContain('Every 24 hours')
+      expect(container.textContent).not.toContain('Review Interval')
+      expect(container.textContent).not.toContain('Every 15 minutes')
+      expect(container.textContent).not.toContain('Every 30 minutes')
+      expect(container.textContent).not.toContain('Every 2 hours')
+      expect(container.textContent).not.toContain('Every 12 hours')
+      expect(container.querySelector('[data-testid="cortex-consolidation-cadence"]')?.textContent).toBe(
+        'Every 24 hours',
+      )
+      expect(cortexApiMock.updateCortexAutoReviewSettings).not.toHaveBeenCalled()
+    })
+
+    it('does not PUT unsupported intervalMinutes from the Settings UI', async () => {
+      renderGeneral()
+      await flush()
+      await flush()
+
+      const intervalPuts = cortexApiMock.updateCortexAutoReviewSettings.mock.calls.filter(
+        (call: unknown[]) =>
+          Boolean(call[1] && typeof call[1] === 'object' && call[1] !== null && 'intervalMinutes' in call[1]),
+      )
+      expect(intervalPuts).toEqual([])
     })
 
     it('hides Cortex section when cortex is disabled', async () => {
       cortexApiMock.fetchCortexAutoReviewSettings.mockResolvedValue({
-        settings: { enabled: false, intervalMinutes: 120 },
+        settings: { enabled: false, intervalMinutes: 1440 },
         cortexDisabled: true,
       })
       renderGeneral()
       await flush()
       await flush()
 
+      expect(container.textContent).not.toContain('Automatic Consolidation')
       expect(container.textContent).not.toContain('Automatic Reviews')
     })
   })
@@ -790,7 +817,9 @@ describe('SettingsGeneral — collab target', () => {
     await flush()
     await flush()
 
-    expect(container.textContent).toContain('Automatic Reviews')
+    expect(container.textContent).toContain('Automatic Consolidation')
+    expect(container.textContent).toContain('Every 24 hours')
+    expect(container.textContent).not.toContain('Automatic Reviews')
   })
 
   it('passes apiClient to onboarding hook when provided', async () => {
