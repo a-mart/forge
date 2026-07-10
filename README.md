@@ -171,6 +171,8 @@ Agents hang. Models stall. Workers finish their work and forget to report back. 
 
 Worker turn failures are projected into the manager conversation as system messages with preserved error context, and duplicate callback or summary reports for the same turn are suppressed.
 
+Manager turns have a separate liveness watchdog. On an approximately 60-second polling cycle, amber System notices can escalate after roughly 30 seconds, 5 minutes, and 10 minutes without progress; tool execution, compaction, and recovery can affect that clock. The notices do not provide an inline recycle action—if a manager stays stuck, use **Stop All** and send again. After a backend restart Forge does not auto-resume: when recovery data is available, Builder shows a banner with **Resume all** (best effort from the last persisted state) and **Dismiss** (hide the snapshot only). Mid-generation output is not reconstructed, so inspect state before resuming actions that may have side effects.
+
 You can also manually stop any agent from the UI, but you'll rarely need to.
 
 ### Feedback

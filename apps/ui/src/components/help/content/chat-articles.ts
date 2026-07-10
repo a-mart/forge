@@ -9,6 +9,7 @@ import chatForkSessionContent from './articles/chat/chat-fork-session.md?raw'
 import chatOverviewContent from './articles/chat/chat-overview.md?raw'
 import chatProfilesContent from './articles/chat/chat-profiles.md?raw'
 import chatProjectAgentsContent from './articles/chat/chat-project-agents.md?raw'
+import chatRestartRecoveryContent from './articles/chat/chat-restart-recovery.md?raw'
 import chatSendingContent from './articles/chat/chat-sending.md?raw'
 import chatSessionsContent from './articles/chat/chat-sessions.md?raw'
 import chatSidebarContent from './articles/chat/chat-sidebar.md?raw'
@@ -43,8 +44,18 @@ export const chatArticles: HelpArticle[] = [
       'quote',
       'quoted preview',
       'reply target',
+      'stall',
+      'restart recovery',
+      'resume all',
     ],
-    relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction', 'chat-files', 'chat-source-control'],
+    relatedIds: [
+      'chat-sending',
+      'chat-sidebar',
+      'chat-compaction',
+      'chat-files',
+      'chat-source-control',
+      'chat-restart-recovery',
+    ],
     contextKeys: ['chat.main'],
   },
   {
@@ -173,6 +184,26 @@ export const chatArticles: HelpArticle[] = [
     ],
     relatedIds: ['chat-overview', 'chat-sidebar'],
     contextKeys: ['chat.workers'],
+  },
+  {
+    id: 'chat-restart-recovery',
+    title: 'Stalls and restart recovery',
+    category: 'chat',
+    summary: 'What manager stall notices mean and how to recover interrupted work after a backend restart.',
+    content: chatRestartRecoveryContent,
+    keywords: [
+      'stall',
+      'silence',
+      'watchdog',
+      'restart',
+      'recovery',
+      'resume all',
+      'dismiss',
+      'stop all',
+      'interrupted',
+    ],
+    relatedIds: ['chat-overview', 'chat-workers', 'chat-sessions'],
+    contextKeys: ['chat.main'],
   },
   {
     id: 'chat-artifacts',

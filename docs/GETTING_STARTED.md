@@ -491,6 +491,16 @@ Forge's stall detector works in two stages:
 1. **5-minute warning** — If a worker has been streaming without making progress for 5 minutes, the system notifies the manager. The manager can inspect and decide what to do. This is skipped while the worker or parent runtime is recovering.
 2. **10-minute auto-kill** — If the worker is still stuck after another 5 minutes (10 total), the system kills it and notifies the manager, unless runtime recovery is already in progress.
 
+### Manager Stalls and Restart Recovery
+
+Forge also watches active **manager** turns for prolonged silence. A watchdog evaluates about once every 60 seconds and can add amber System notices after roughly 30 seconds, 5 minutes, and 10 minutes without progress, so each notice may arrive up to about one polling interval late. New progress resets the ladder. Manager tool execution, compaction, and runtime recovery can pause or suppress its clock, although a hung tool can still reach the final tier at about 10 minutes.
+
+The notices do not include an inline recycle action. If the manager remains stuck, use **Three-dot menu → Stop All**, then send the request again to begin a fresh turn/runtime. Waiting may also let a pending recycle run once the runtime becomes idle.
+
+A backend restart does not automatically resume interrupted work. When recovery information is available, Builder shows a banner below the chat header with interrupted session and worker counts. **Resume all** makes a best-effort attempt from the last persisted state by prompting interrupted managers/workers and redelivering pending worker-report text where available. **Dismiss** only hides that recovery snapshot. Neither action is persisted as a durable recovery decision, and the banner does not currently provide a per-item error breakdown.
+
+Mid-generation output cannot be reconstructed, and the internal recovery ledger is fail-open and rotating rather than an exact crash-safe record. Before resuming work that may repeat side effects—publishing, deployments, payments, or destructive commands—inspect the current external state and tell the manager what already completed.
+
 ### Manual Stop Controls
 
 In the rare case you need to manually intervene:
