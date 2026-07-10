@@ -1641,7 +1641,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.reloadSkillMetadata();
 
     try {
-      this.config.defaultCwd = await this.resolveAndValidateCwd(this.config.defaultCwd);
+      // Boot only needs existence/is-directory. Collaboration-server allowlist
+      // gates remote selection/create/change — not the image defaultCwd (often /app).
+      this.config.defaultCwd = await this.resolveAndValidateCwd(this.config.defaultCwd, {
+        enforceAllowlist: false,
+      });
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`Invalid default working directory: ${error.message}`);
@@ -4276,6 +4280,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async validateDirectory(path: string): Promise<DirectoryValidationResult> {
     return this.settingsService.validateDirectory(path);
+  }
+
+  async createDirectory(parentPath: string, name: string) {
+    return this.settingsService.createDirectory(parentPath, name);
   }
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
@@ -9876,14 +9884,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.promptService.injectWorkerIdentityContext(descriptor, systemPrompt);
   }
 
-  private async resolveAndValidateCwd(cwd: string): Promise<string> {
-    return validateDirectoryPath(cwd, this.getCwdPolicy());
+  private async resolveAndValidateCwd(
+    cwd: string,
+    options?: { enforceAllowlist?: boolean },
+  ): Promise<string> {
+    return validateDirectoryPath(cwd, this.getCwdPolicy(options));
   }
 
-  private getCwdPolicy(): { rootDir: string; allowlistRoots: string[] } {
+  private getCwdPolicy(options?: { enforceAllowlist?: boolean }): {
+    rootDir: string;
+    allowlistRoots: string[];
+    enforceAllowlist: boolean;
+  } {
+    const collabServer = isCollaborationServerRuntimeTarget(this.config.runtimeTarget);
     return {
       rootDir: this.config.paths.rootDir,
-      allowlistRoots: normalizeAllowlistRoots(this.config.cwdAllowlistRoots)
+      allowlistRoots: normalizeAllowlistRoots(this.config.cwdAllowlistRoots),
+      // Selection surfaces default to allowlist on collab-server; boot/existence
+      // callers pass enforceAllowlist: false explicitly.
+      enforceAllowlist: options?.enforceAllowlist ?? collabServer,
     };
   }
 

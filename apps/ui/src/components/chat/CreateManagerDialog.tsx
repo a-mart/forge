@@ -32,6 +32,10 @@ import {
   groupManagerModelRows,
   type ManagerModelSelectRow,
 } from '@/lib/manager-model-selection'
+import {
+  ServerDirectoryBrowserDialog,
+  type ServerDirectoryBrowserClient,
+} from '@/components/chat/ServerDirectoryBrowserDialog'
 
 const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
   none: 'None',
@@ -64,6 +68,11 @@ interface CreateManagerDialogProps {
   onScaffoldForgeResourcesChange: (checked: boolean) => void
   /** Native directory picker; omit for remote origins (no local dialogs). */
   onBrowseDirectory?: () => void
+  /** Remote server folder browser; omit for local origins. */
+  serverDirectoryBrowser?: {
+    client: ServerDirectoryBrowserClient
+    canCreateDirectory?: boolean
+  }
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }
 
@@ -87,11 +96,13 @@ export function CreateManagerDialog({
   onReasoningLevelChange,
   onScaffoldForgeResourcesChange,
   onBrowseDirectory,
+  serverDirectoryBrowser,
   onSubmit,
 }: CreateManagerDialogProps) {
   const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
   const [availabilityLoading, setAvailabilityLoading] = useState(false)
   const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+  const [serverBrowserOpen, setServerBrowserOpen] = useState(false)
 
   const loadAvailability = useCallback(() => {
     setAvailabilityLoading(true)
@@ -109,6 +120,10 @@ export function CreateManagerDialog({
     if (!open) return
     loadAvailability()
   }, [open, loadAvailability])
+
+  useEffect(() => {
+    if (!open) setServerBrowserOpen(false)
+  }, [open])
 
   const rows = useMemo(() => {
     if (!overridesData) return []
@@ -170,6 +185,7 @@ export function CreateManagerDialog({
   const isModelSelectorDisabled = isCreatingManager || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
@@ -204,7 +220,16 @@ export function CreateManagerDialog({
                 value={newManagerCwd}
                 onChange={(event) => onCwdChange(event.target.value)}
               />
-              {onBrowseDirectory ? (
+              {serverDirectoryBrowser ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setServerBrowserOpen(true)}
+                  disabled={isPickingDirectory || isCreatingManager}
+                >
+                  Browse server…
+                </Button>
+              ) : onBrowseDirectory ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -221,7 +246,9 @@ export function CreateManagerDialog({
             ) : null}
 
             <p className="text-[11px] text-muted-foreground">
-              Use Browse to open the native folder picker, or enter a path manually.
+              {serverDirectoryBrowser
+                ? 'Browse the remote server for an allowed workspace folder, or enter a path manually.'
+                : 'Use Browse to open the native folder picker, or enter a path manually.'}
             </p>
           </div>
 
@@ -331,5 +358,17 @@ export function CreateManagerDialog({
         </form>
       </DialogContent>
     </Dialog>
+
+    {serverDirectoryBrowser ? (
+      <ServerDirectoryBrowserDialog
+        open={serverBrowserOpen}
+        onOpenChange={setServerBrowserOpen}
+        client={serverDirectoryBrowser.client}
+        canCreateDirectory={serverDirectoryBrowser.canCreateDirectory}
+        initialPath={newManagerCwd}
+        onSelect={(path) => onCwdChange(path)}
+      />
+    ) : null}
+    </>
   )
 }

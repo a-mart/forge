@@ -12,6 +12,7 @@ export interface RemoteProfileRowProps {
   dragHandleListeners?: DraggableSyntheticListeners
   dragHandleAttributes?: DraggableAttributes
   onSelectAgent: (originId: OriginId, agentId: string) => void
+  onChangeCwd?: (originId: OriginId, profileId: string, profileLabel: string, currentCwd: string) => void
 }
 
 export function equalRemoteProfileRowProps(
@@ -24,6 +25,7 @@ export function equalRemoteProfileRowProps(
     && previous.isActiveOrigin === next.isActiveOrigin
     && previous.instanceName === next.instanceName
     && previous.onSelectAgent === next.onSelectAgent
+    && previous.onChangeCwd === next.onChangeCwd
     // dnd-kit may regenerate callback objects when its shared context renders.
     // Presence plus semantic ARIA values are what affect this activator; the
     // existing listener/ref closures remain valid for the same keyed sortable.

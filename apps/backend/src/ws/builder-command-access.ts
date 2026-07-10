@@ -85,6 +85,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   // member read surface project-scoped.
   list_directories: "write",
   validate_directory: "write",
+  create_directory: "write",
   // Proxied HTTP surface; members are additionally gated per proxied path
   // (default deny) via evaluateApiProxyMemberAccess.
   api_proxy: "write",

@@ -1221,13 +1221,37 @@ export function BuilderSurface({
           onModelSelectionChange: handleNewManagerModelSelectionChange,
           onReasoningLevelChange: handleNewManagerReasoningLevelChange,
           onScaffoldForgeResourcesChange: handleScaffoldForgeResourcesChange,
-          // Remote origins have no local-machine dialogs: the picker is
-          // hidden and paths are typed + validated over the origin's socket.
+          // Remote origins use the server folder browser over the origin socket.
+          // Local origins keep the native/Electron picker.
           onBrowseDirectory: isRemoteOriginActive
             ? undefined
             : () => {
                 void handleBrowseDirectory()
               },
+          serverDirectoryBrowser: isRemoteOriginActive
+            ? {
+                client: {
+                  listDirectories: (path) => {
+                    const client = clientRef.current
+                    if (!client) return Promise.reject(new Error('Not connected to remote origin.'))
+                    return client.listDirectories(path)
+                  },
+                  validateDirectory: (path) => {
+                    const client = clientRef.current
+                    if (!client) return Promise.reject(new Error('Not connected to remote origin.'))
+                    return client.validateDirectory(path)
+                  },
+                  createDirectory: activeOriginMeta?.capabilities?.createDirectory
+                    ? (parentPath, name) => {
+                        const client = clientRef.current
+                        if (!client) return Promise.reject(new Error('Not connected to remote origin.'))
+                        return client.createDirectory(parentPath, name)
+                      }
+                    : undefined,
+                },
+                canCreateDirectory: activeOriginMeta?.capabilities?.createDirectory === true,
+              }
+            : undefined,
           onSubmit: (event) => {
             void handleCreateManager(event)
           },

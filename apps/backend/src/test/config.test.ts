@@ -364,6 +364,35 @@ describe('createConfig', () => {
     })
   })
 
+  it('parses FORGE_CWD_ALLOWLIST_ROOTS for collaboration-server and fails closed when unset', async () => {
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'collaboration-server',
+        FORGE_CWD_ALLOWLIST_ROOTS: '/workspaces;/data',
+      },
+      () => {
+        const config = createConfig()
+        expect(config.cwdAllowlistRoots).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(/workspaces$/),
+            expect.stringMatching(/data$/),
+          ]),
+        )
+      },
+    )
+
+    await withEnv({ FORGE_RUNTIME_TARGET: 'collaboration-server', FORGE_CWD_ALLOWLIST_ROOTS: '' }, () => {
+      expect(createConfig().cwdAllowlistRoots).toEqual([])
+    })
+  })
+
+  it('keeps builder unrestricted defaults when FORGE_CWD_ALLOWLIST_ROOTS is unset', async () => {
+    await withEnv({ FORGE_RUNTIME_TARGET: 'builder' }, () => {
+      const config = createConfig()
+      expect(config.cwdAllowlistRoots.length).toBeGreaterThan(0)
+    })
+  })
+
   it('parses collaboration auth env values for collaboration-server runtime', async () => {
     await withEnv(
       {

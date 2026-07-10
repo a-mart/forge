@@ -19,7 +19,9 @@ For any internet-facing deployment, put the server behind managed HTTPS and stro
 | Container bind | `FORGE_HOST=0.0.0.0`, `FORGE_PORT=47287` |
 | Host port | `${FORGE_PUBLIC_PORT:-47387}:47287` |
 | Data mount | `./.forge-collaboration-data:/var/lib/forge` |
+| Workspace mount | `${FORGE_WORKSPACES_HOST_PATH:-./.forge-collaboration-workspaces}:/workspaces` |
 | Container data dir | `FORGE_DATA_DIR=/var/lib/forge` |
+| CWD allowlist | `FORGE_CWD_ALLOWLIST_ROOTS=/workspaces` (remote project selection only) |
 | UI | Built UI served from the same origin |
 
 A secondary local-only service, `forge-collaboration-server-secondary`, is behind the `multi-backend-test` compose profile. It publishes `47388` by default and mounts `./.forge-collaboration-data-secondary`. Use it only for multi-backend UI validation.
@@ -44,8 +46,18 @@ Common collaboration variables:
 | `FORGE_COLLABORATION_AUTH_SECRET` | Optional auth secret. If omitted, the server generates and persists one. |
 | `FORGE_COLLABORATION_AUTH_COOKIE_NAME` | Optional cookie name. Defaults to `forge_collab_session`; use a different value for same-host multi-backend testing. |
 | `FORGE_PUBLIC_PORT` | Optional compose host port for the primary server. Defaults to `47387`. |
+| `FORGE_CWD_ALLOWLIST_ROOTS` | Semicolon/newline-separated (also `:` on non-Windows) absolute roots allowed for remote New Project / Change CWD / `create_directory`. Collaboration-server fails closed when unset or empty. Compose defaults to `/workspaces`. Do not treat the image `/app` checkout as a user workspace. |
+| `FORGE_WORKSPACES_HOST_PATH` | Optional host directory bind-mounted to `/workspaces`. Defaults to `./.forge-collaboration-workspaces` so compose does not bind an arbitrary host path by surprise. Create and point this at a real workspace directory before enabling remote projects. |
 
 See [../CONFIGURATION.md](../CONFIGURATION.md) for the broader environment reference.
+
+## Remote project working directories
+
+Remote New Project and Change Working Directory browse only under `FORGE_CWD_ALLOWLIST_ROOTS`. Write-tier members may create one folder level at a time via `create_directory` when remote build is enabled. `pick_directory` remains admin-only (native host picker).
+
+Existing projects whose CWD sits outside the allowlist keep running. Operators cannot select, change to, or create new CWDs outside the configured roots, and roots are not silently expanded or migrated.
+
+When the allowlist is empty or the `/workspaces` mount is missing, the UI tells operators that an admin must mount and configure a workspace root.
 
 ## Data directory and backup inventory
 

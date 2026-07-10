@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { normalizeAllowlistRoots } from "./swarm/cwd-policy.js";
+import { normalizeAllowlistRoots, parseCwdAllowlistRootsEnv } from "./swarm/cwd-policy.js";
 import {
   getAgentsStoreFilePath,
   getCollaborationAuthDbPath,
@@ -70,13 +70,9 @@ export function createConfig(): SwarmConfig {
   const repoMemorySkillFile = resolve(resourcesDir, ".swarm", "skills", "memory", "SKILL.md");
   const defaultCwd = rootDir;
 
-  const cwdAllowlistRoots = normalizeAllowlistRoots([
-    rootDir,
-    resolve(homedir(), "worktrees")
-  ]);
-
   const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
   const runtimeTarget = resolveRuntimeTargetFromEnv();
+  const cwdAllowlistRoots = resolveCwdAllowlistRoots(runtimeTarget, rootDir);
   const adminEmail = parseOptionalStringEnv(
     process.env.FORGE_ADMIN_EMAIL ?? process.env.MIDDLEMAN_ADMIN_EMAIL,
   );
@@ -164,6 +160,36 @@ export function createConfig(): SwarmConfig {
       schedulesFile: undefined
     }
   };
+}
+
+/**
+ * Collaboration-server / remote-build CWD selection uses an explicit allowlist.
+ * Local Builder keeps unrestricted selection and retains the historical default
+ * roots for file-access helpers only.
+ *
+ * `FORGE_CWD_ALLOWLIST_ROOTS` delimiters: `;` and newlines always; `:` also on
+ * non-Windows. Do not assume the image `/app` checkout is a user workspace —
+ * Docker should set this to a mounted path such as `/workspaces`.
+ */
+function resolveCwdAllowlistRoots(
+  runtimeTarget: ReturnType<typeof resolveRuntimeTargetFromEnv>,
+  rootDir: string,
+): string[] {
+  const configuredRoots = parseCwdAllowlistRootsEnv(
+    process.env.FORGE_CWD_ALLOWLIST_ROOTS ?? process.env.MIDDLEMAN_CWD_ALLOWLIST_ROOTS,
+  );
+
+  if (isCollaborationServerRuntimeTarget(runtimeTarget)) {
+    // Fail closed when unset/empty: remote selection/create/change must not
+    // silently fall back to the container image root.
+    return normalizeAllowlistRoots(configuredRoots);
+  }
+
+  if (configuredRoots.length > 0) {
+    return normalizeAllowlistRoots(configuredRoots);
+  }
+
+  return normalizeAllowlistRoots([rootDir, resolve(homedir(), "worktrees")]);
 }
 
 function resolveResourcesDir(rootDir: string): string {

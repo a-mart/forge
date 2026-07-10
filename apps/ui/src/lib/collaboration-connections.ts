@@ -46,6 +46,8 @@ export type CollaborationConnectionKind = 'remote' | 'same-origin'
 export interface CollaborationConnectionCapabilities {
   collab: boolean
   remoteBuild: boolean
+  /** Absent on older servers — UI hides create-folder when false/undefined. */
+  createDirectory?: boolean
   protocolVersion: number
 }
 
@@ -703,6 +705,7 @@ export function cacheCollaborationConnectionCapabilities(
     current &&
     current.collab === capabilities.collab &&
     current.remoteBuild === capabilities.remoteBuild &&
+    current.createDirectory === capabilities.createDirectory &&
     current.protocolVersion === capabilities.protocolVersion
   ) {
     return

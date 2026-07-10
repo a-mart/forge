@@ -125,6 +125,29 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "create_directory") {
+    const parentPath = (maybe as { parentPath?: unknown }).parentPath;
+    const name = (maybe as { name?: unknown }).name;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof parentPath !== "string" || parentPath.trim().length === 0) {
+      return fail("create_directory.parentPath must be a non-empty string");
+    }
+    if (typeof name !== "string" || name.trim().length === 0) {
+      return fail("create_directory.name must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("create_directory.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "create_directory",
+      parentPath: parentPath.trim(),
+      name: name.trim(),
+      requestId
+    });
+  }
+
   if (maybe.type === "pick_directory") {
     const defaultPath = (maybe as { defaultPath?: unknown }).defaultPath;
     const requestId = (maybe as { requestId?: unknown }).requestId;

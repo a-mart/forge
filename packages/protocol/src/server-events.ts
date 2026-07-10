@@ -42,6 +42,7 @@ import type {
 } from './collaboration.js'
 import type {
   DirectoriesListedEvent,
+  DirectoryCreatedEvent,
   DirectoryPickedEvent,
   DirectoryValidatedEvent,
 } from './directory-events.js'
@@ -208,6 +209,7 @@ export type ServerEvent =
   | StopAllAgentsResultEvent
   | DirectoriesListedEvent
   | DirectoryValidatedEvent
+  | DirectoryCreatedEvent
   | DirectoryPickedEvent
   | TelegramStatusEvent
   | PromptChangedEvent

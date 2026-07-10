@@ -115,6 +115,7 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
         requestId: command.requestId,
         requestedPath: listed.requestedPath,
         resolvedPath: listed.resolvedPath,
+        parentPath: listed.parentPath,
         roots: listed.roots,
         entries: listed.directories
       });
@@ -147,6 +148,29 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
       send(socket, {
         type: "error",
         code: "VALIDATE_DIRECTORY_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "create_directory") {
+    try {
+      const created = await swarmManager.createDirectory(command.parentPath, command.name);
+      send(socket, {
+        type: "directory_created",
+        path: created.path,
+        parentPath: created.parentPath,
+        name: created.name,
+        roots: created.roots,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "CREATE_DIRECTORY_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });

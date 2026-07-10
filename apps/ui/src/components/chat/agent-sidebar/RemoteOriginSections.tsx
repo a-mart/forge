@@ -7,7 +7,7 @@
  */
 
 import { memo, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Globe } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, Globe } from 'lucide-react'
 import type { SessionRow } from '@/lib/agent-hierarchy'
 import {
   compositeKey,
@@ -18,6 +18,12 @@ import {
   type OriginMetaState,
 } from '@/lib/origin-store'
 import { cn } from '@/lib/utils'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { SessionStatusDot } from './shared'
 import { WorkerRow } from './WorkerRow'
 import { MAX_VISIBLE_WORKERS } from './constants'
@@ -115,6 +121,7 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
   dragHandleListeners,
   dragHandleAttributes,
   onSelectAgent,
+  onChangeCwd,
 }: RemoteProfileRowProps) {
   const { profile, sessions } = treeRow
   const [collapsed, setCollapsed] = useState(false)
@@ -126,8 +133,12 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
     || session.workers.some((worker) => worker.agentId === selectedAgentId),
   )
 
+  const currentCwd = firstSession?.cwd || sessions[0]?.sessionAgent.cwd || ''
+
   return (
     <div data-testid={`remote-profile-row-${compositeKey(originId, profile.profileId)}`}>
+      <ContextMenu>
+      <ContextMenuTrigger asChild>
       <div
         className={cn(
           'relative flex items-center rounded-lg border bg-blue-500/[0.035] transition-colors',
@@ -178,6 +189,18 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
           </span>
         </button>
       </div>
+      </ContextMenuTrigger>
+      {onChangeCwd ? (
+        <ContextMenuContent>
+          <ContextMenuItem
+            onClick={() => onChangeCwd(originId, profile.profileId, profile.displayName, currentCwd)}
+          >
+            <FolderOpen className="mr-2 size-3.5" />
+            Change Working Directory
+          </ContextMenuItem>
+        </ContextMenuContent>
+      ) : null}
+      </ContextMenu>
 
       {!collapsed && sessions.length > 0 ? (
         <ul className="mt-1 space-y-0.5">

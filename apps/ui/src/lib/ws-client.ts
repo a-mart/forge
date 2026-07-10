@@ -7,6 +7,7 @@ import {
   buildChoiceResponseCommand,
   buildClearAllPinsCommand,
   buildCreateManagerCommand,
+  buildCreateDirectoryCommand,
   buildCreateSessionCommand,
   buildDeleteManagerCommand,
   buildDeleteProjectAgentReferenceCommand,
@@ -81,6 +82,7 @@ import {
 } from './ws-client/snapshot-reducers'
 import type {
   DirectoriesListedResult,
+  DirectoryCreatedResult,
   DirectoryValidationResult,
   Listener,
   ProjectAgentConfigResult,
@@ -134,6 +136,7 @@ import type {
 export type { ManagerWsState } from './ws-state'
 export type {
   DirectoriesListedResult,
+  DirectoryCreatedResult,
   DirectoryValidationResult,
   ProjectAgentConfigResult,
   ProjectAgentReferenceDeletedResult,
@@ -554,6 +557,13 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('validate_directory', (requestId) =>
       buildValidateDirectoryCommand(path, requestId),
+    )
+  }
+
+  async createDirectory(parentPath: string, name: string): Promise<DirectoryCreatedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('create_directory', (requestId) =>
+      buildCreateDirectoryCommand(parentPath, name, requestId),
     )
   }
 

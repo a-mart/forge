@@ -12,7 +12,7 @@ export function createCollaborationStatusRoutes(options: {
     instanceName: string;
     forgeVersion: string;
     protocolVersion: number;
-    capabilities: { collab: boolean; remoteBuild: boolean };
+    capabilities: { collab: boolean; remoteBuild: boolean; createDirectory?: boolean };
   };
 }): HttpRoute[] {
   return [

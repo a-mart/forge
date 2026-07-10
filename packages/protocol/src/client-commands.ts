@@ -164,6 +164,7 @@ export type ClientCommand =
   | { type: 'get_session_workers'; sessionAgentId: string; requestId?: string }
   | { type: 'list_directories'; path?: string; requestId?: string }
   | { type: 'validate_directory'; path: string; requestId?: string }
+  | { type: 'create_directory'; parentPath: string; name: string; requestId?: string }
   | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
   | { type: 'rename_profile'; profileId: string; displayName: string; requestId?: string }
   | { type: 'archive_profile'; profileId: string; requestId?: string }

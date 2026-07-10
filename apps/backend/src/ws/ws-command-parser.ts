@@ -80,6 +80,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "reorder_profiles":
     case "list_directories":
     case "validate_directory":
+    case "create_directory":
     case "pick_directory":
     case "mark_unread":
     case "mark_all_read":

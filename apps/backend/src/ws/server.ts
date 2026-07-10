@@ -584,6 +584,7 @@ export class SwarmWebSocketServer {
               capabilities: {
                 collab: true,
                 remoteBuild: this.remoteBuildSettingsService.isRemoteBuildEnabled(),
+                createDirectory: true,
               },
             }),
           })

@@ -323,6 +323,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       cwdPolicy: {
         rootDir: config.paths.rootDir,
         allowlistRoots: config.cwdAllowlistRoots,
+        enforceAllowlist: false,
       },
     });
     swarmManager.setTerminalArchiveHooks({

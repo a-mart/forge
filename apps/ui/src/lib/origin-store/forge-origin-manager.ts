@@ -232,6 +232,7 @@ export class ForgeOriginManager {
     const capabilities = {
       collab: status.capabilities?.collab ?? status.enabled === true,
       remoteBuild: status.capabilities?.remoteBuild ?? false,
+      createDirectory: status.capabilities?.createDirectory === true,
     }
     store.patchMeta({
       capabilities,
