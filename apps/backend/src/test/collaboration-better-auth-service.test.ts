@@ -69,6 +69,23 @@ describe("collaboration better auth service", () => {
     expect(session?.session.userId).toBe(user.id);
   });
 
+  it("sets the 21-day persistent session cookie for remembered password sign-ins", async () => {
+    const { authService } = await createAuthHarness();
+    const user = await authService.createUser("persistent@example.com", "Persistent User", "persistent-pass-123");
+
+    const signInResult = await (authService as any).auth.api.signInEmail({
+      body: { email: user.email, password: "persistent-pass-123", rememberMe: true },
+      headers: new Headers(),
+      returnHeaders: true,
+    });
+    const sessionCookie = splitSetCookieHeader(signInResult.headers?.get("set-cookie") ?? "")
+      .find((header) => header.startsWith("forge_collab_session="));
+
+    expect(sessionCookie).toContain("Max-Age=1814400");
+    expect(sessionCookie).toContain("HttpOnly");
+    expect(sessionCookie).toContain("SameSite=Lax");
+  });
+
   it("uses a configured collaboration auth cookie name", async () => {
     const { authService } = await createAuthHarness({
       collaborationAuthCookieName: "forge_collab_secondary_session",
