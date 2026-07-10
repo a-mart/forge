@@ -125,6 +125,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onUpdateManagerCwd,
   onBrowseDirectory,
   onValidateDirectory,
+  directServerDirectoryBrowser,
   onRequestSessionWorkers,
   builderSidebarOrder,
   onMoveBuilderProject,
@@ -545,11 +546,15 @@ export const AgentSidebar = React.memo(function AgentSidebar({
 
   const changeCwdServerBrowser = useMemo(() => {
     const originId = changeCwdTarget?.originId
-    if (!originId || originId === LOCAL_ORIGIN_ID) return undefined
+    if (!originId) return undefined
+    const isDirectServer = originId === LOCAL_ORIGIN_ID && Boolean(directServerDirectoryBrowser)
+    if (originId === LOCAL_ORIGIN_ID && !isDirectServer) return undefined
     const store = originRegistry.getOrigin(originId)
     const client = store?.getClient()
     if (!client) return undefined
-    const canCreate = store?.getMetaSnapshot().capabilities?.createDirectory === true
+    const canCreate = isDirectServer
+      ? directServerDirectoryBrowser?.canCreateDirectory === true
+      : store?.getMetaSnapshot().capabilities?.createDirectory === true
     return {
       client: {
         listDirectories: (path?: string) => client.listDirectories(path),
@@ -560,7 +565,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       },
       canCreateDirectory: canCreate,
     }
-  }, [changeCwdTarget?.originId])
+  }, [changeCwdTarget?.originId, directServerDirectoryBrowser])
 
   const handlePromoteToProjectAgent = useCallback((agentId: string) => {
     const agent = agents.find((a) => a.agentId === agentId)
@@ -1125,7 +1130,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           currentCwd={changeCwdTarget.currentCwd}
           onConfirm={handleConfirmChangeCwd}
           onClose={() => setChangeCwdTarget(null)}
-          onBrowseDirectory={changeCwdTarget.originId === LOCAL_ORIGIN_ID ? onBrowseDirectory : undefined}
+          onBrowseDirectory={
+            changeCwdTarget.originId === LOCAL_ORIGIN_ID && !directServerDirectoryBrowser
+              ? onBrowseDirectory
+              : undefined
+          }
           serverDirectoryBrowser={changeCwdServerBrowser}
           onValidateDirectory={changeCwdValidateDirectory}
         />

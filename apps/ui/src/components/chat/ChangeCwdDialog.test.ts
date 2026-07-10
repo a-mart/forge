@@ -40,6 +40,19 @@ describe('ChangeCwdDialog', () => {
     currentCwd?: string
     onConfirm?: (profileId: string, cwd: string) => Promise<void>
     onValidateDirectory?: (path: string) => Promise<DirectoryValidationResult>
+    serverDirectoryBrowser?: {
+      client: {
+        listDirectories: (path?: string) => Promise<{
+          path: string
+          directories: string[]
+          resolvedPath: string
+          roots: string[]
+          entries: Array<{ name: string; path: string }>
+        }>
+        validateDirectory: (path: string) => Promise<DirectoryValidationResult>
+      }
+      canCreateDirectory?: boolean
+    }
   }) {
     const onConfirm = options?.onConfirm ?? vi.fn().mockResolvedValue(undefined)
     const onValidateDirectory =
@@ -60,6 +73,7 @@ describe('ChangeCwdDialog', () => {
           onConfirm,
           onClose: vi.fn(),
           onBrowseDirectory: vi.fn().mockResolvedValue(null),
+          serverDirectoryBrowser: options?.serverDirectoryBrowser,
           onValidateDirectory,
         }),
       )
@@ -67,6 +81,32 @@ describe('ChangeCwdDialog', () => {
 
     return { onConfirm, onValidateDirectory }
   }
+
+  it('uses the server browser rather than the native picker when supplied', async () => {
+    const listDirectories = vi.fn().mockResolvedValue({
+      path: '/workspaces',
+      directories: [],
+      resolvedPath: '/workspaces',
+      roots: ['/workspaces'],
+      entries: [],
+    })
+    renderDialog({
+      currentCwd: '/app',
+      serverDirectoryBrowser: {
+        client: {
+          listDirectories,
+          validateDirectory: vi.fn(),
+        },
+      },
+    })
+
+    const serverBrowse = getByRole(document.body, 'button', { name: /browse server/i })
+    expect(serverBrowse).toBeTruthy()
+    fireEvent.click(serverBrowse)
+
+    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('/app'))
+    expect(document.body.querySelector('button')?.textContent).not.toContain('Browsing...')
+  })
 
   it('disables submit when validation resolves back to the current cwd', async () => {
     const onValidateDirectory = vi.fn().mockResolvedValue({

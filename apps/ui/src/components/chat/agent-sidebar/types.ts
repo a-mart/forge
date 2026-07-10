@@ -80,6 +80,8 @@ export interface AgentSidebarProps {
   onUpdateManagerCwd?: (managerId: string, cwd: string) => Promise<void>
   onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
   onValidateDirectory?: (path: string) => Promise<DirectoryValidationResult>
+  /** Same-origin hosted collaboration Builder uses the server folder browser. */
+  directServerDirectoryBrowser?: { canCreateDirectory: boolean }
   onRequestSessionWorkers?: (sessionId: string) => void
   /** Reconciled local-instance authority, including hidden/offline anchors. */
   builderSidebarOrder?: BuilderSidebarOrderRef[]

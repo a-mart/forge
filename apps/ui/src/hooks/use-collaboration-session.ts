@@ -4,6 +4,8 @@ import { resolveCollaborationApiBaseUrl } from '@/lib/collaboration-endpoints'
 
 export interface CollaborationSession {
   isCollabEnabled: boolean
+  /** Server capabilities from the status handshake, when available. */
+  capabilities?: CollaborationStatus['capabilities']
   isAdmin: boolean
   isMember: boolean
   isLoading: boolean
@@ -42,6 +44,7 @@ export function useCollaborationSession(
   const isTestMode = import.meta.env.MODE === 'test'
   const enabled = options.enabled ?? true
   const [isCollabEnabled, setIsCollabEnabled] = useState(false)
+  const [capabilities, setCapabilities] = useState<CollaborationStatus['capabilities']>()
   const [role, setRole] = useState<'admin' | 'member' | null>(null)
   const [isLoading, setIsLoading] = useState(enabled && !isTestMode)
   const [hasLoaded, setHasLoaded] = useState(isTestMode)
@@ -60,6 +63,7 @@ export function useCollaborationSession(
 
       const enabled = status.enabled === true
       setIsCollabEnabled(enabled)
+      setCapabilities(status.capabilities)
 
       if (!enabled) {
         setRole(null)
@@ -74,6 +78,7 @@ export function useCollaborationSession(
     } catch {
       if (signal.aborted) return
       setIsCollabEnabled(false)
+      setCapabilities(undefined)
       setRole(null)
     } finally {
       if (!signal.aborted) {
@@ -126,6 +131,7 @@ export function useCollaborationSession(
 
   return {
     isCollabEnabled,
+    capabilities,
     isAdmin: role === 'admin',
     isMember: role === 'member',
     isLoading,

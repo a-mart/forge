@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { waitFor } from '@testing-library/dom'
 
 // Radix UI components require ResizeObserver in jsdom
 globalThis.ResizeObserver ??= class ResizeObserver {
@@ -108,6 +109,61 @@ describe('CreateManagerDialog', () => {
       // onModelSelectionChange should never have been called (no auto-select)
       expect(props.onModelSelectionChange).not.toHaveBeenCalled()
     })
+  })
+
+  it('keeps the native picker for a true local Builder', async () => {
+    const nativeBrowse = vi.fn()
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(CreateManagerDialog, defaultProps({ onBrowseDirectory: nativeBrowse })))
+    })
+
+    const browseButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent === 'Browse',
+    )
+    expect(browseButton).toBeTruthy()
+    await act(async () => {
+      browseButton?.click()
+    })
+    expect(nativeBrowse).toHaveBeenCalledOnce()
+  })
+
+  it('uses the server browser instead of the native picker when supplied', async () => {
+    const nativeBrowse = vi.fn()
+    const listDirectories = vi.fn().mockResolvedValue({
+      path: '/workspaces',
+      directories: [],
+      resolvedPath: '/workspaces',
+      roots: ['/workspaces'],
+      entries: [],
+    })
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(CreateManagerDialog, defaultProps({
+        newManagerCwd: '/app',
+        onBrowseDirectory: nativeBrowse,
+        serverDirectoryBrowser: {
+          client: {
+            listDirectories,
+            validateDirectory: vi.fn(),
+          },
+          canCreateDirectory: false,
+        },
+      })))
+    })
+
+    const browseButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Browse server…'),
+    )
+    expect(browseButton).toBeTruthy()
+    await act(async () => {
+      browseButton?.click()
+    })
+
+    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('/app'))
+    expect(nativeBrowse).not.toHaveBeenCalled()
   })
 
   describe('scaffold forge resources checkbox', () => {
