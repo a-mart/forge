@@ -74,6 +74,19 @@ describe('WorkerRow', () => {
     expect(container.textContent).toContain('Codex')
   })
 
+  it('does not create a context-menu trigger for read-only workers', () => {
+    flushSync(() => {
+      root.render(createElement(WorkerRow, {
+        agent: buildWorker(),
+        liveStatus: { status: 'idle', pendingCount: 0 },
+        isSelected: false,
+        onSelect: vi.fn(),
+      }))
+    })
+
+    expect(container.querySelector('[data-worker-row]')?.getAttribute('data-state')).toBeNull()
+  })
+
   it('does not show codex icon for regular forge workers', () => {
     renderWorker(
       buildWorker({

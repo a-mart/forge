@@ -39,6 +39,7 @@ import {
 } from '@/hooks/index-page/use-route-state'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
 import { createLocalBuilderSidebarOrderApi } from '@/lib/builder-sidebar-order-api'
+import { hydrateSessionWorkers } from './worker-hydration'
 import {
   LOCAL_ORIGIN_ID,
   forgeOriginManager,
@@ -428,9 +429,9 @@ export function BuilderSurface({
   )
 
   useEffect(() => {
-    if (!workerFetchManagerId || !clientRef.current) return
-    void clientRef.current.getSessionWorkers(workerFetchManagerId).catch(() => {})
-  }, [workerFetchManagerId, clientRef, activeManagerWorkerCount])
+    if (!workerFetchManagerId) return
+    hydrateSessionWorkers(activeOriginId, workerFetchManagerId)
+  }, [activeOriginId, workerFetchManagerId, activeManagerWorkerCount])
 
   // Resolve parent manager label for the worker back-bar
   const parentManagerLabel = useMemo(() => {

@@ -108,7 +108,7 @@ export interface WorkerRowProps {
   liveStatus: AgentLiveStatus
   isSelected: boolean
   onSelect: () => void
-  onDelete: () => void
+  onDelete?: () => void
   onStop?: () => void
   onResume?: () => void
   highlightQuery?: string
