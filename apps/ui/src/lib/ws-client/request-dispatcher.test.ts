@@ -23,34 +23,19 @@ describe('RequestDispatcher', () => {
   // ---------------------------------------------------------------------------
 
   describe('nextRequestId', () => {
-    it('generates IDs with prefix-timestamp-counter format', () => {
+    it('generates collision-resistant UUID IDs with command prefix', () => {
       const id = dispatcher.nextRequestId('create_manager')
-      expect(id).toMatch(/^create_manager-\d+-\d+$/)
+      expect(id).toMatch(
+        /^create_manager-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      )
     })
 
-    it('embeds a timestamp segment', () => {
-      const before = Date.now()
-      const id = dispatcher.nextRequestId('test')
-      const after = Date.now()
-
-      const timestamp = parseInt(id.split('-')[1], 10)
-      expect(timestamp).toBeGreaterThanOrEqual(before)
-      expect(timestamp).toBeLessThanOrEqual(after)
-    })
-
-    it('increments counter across calls', () => {
+    it('generates distinct IDs across calls', () => {
       const id1 = dispatcher.nextRequestId('a')
       const id2 = dispatcher.nextRequestId('b')
-
-      const counter1 = parseInt(id1.split('-').at(-1)!, 10)
-      const counter2 = parseInt(id2.split('-').at(-1)!, 10)
-      expect(counter2).toBe(counter1 + 1)
-    })
-
-    it('starts counter at 1', () => {
-      const id = dispatcher.nextRequestId('x')
-      const counter = parseInt(id.split('-').at(-1)!, 10)
-      expect(counter).toBe(1)
+      expect(id1).not.toBe(id2)
+      expect(id1).toMatch(/^a-/)
+      expect(id2).toMatch(/^b-/)
     })
   })
 

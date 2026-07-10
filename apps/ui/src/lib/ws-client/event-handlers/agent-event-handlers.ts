@@ -20,6 +20,36 @@ export function handleAgentEvent(event: ServerEvent, context: ManagerWsAgentEven
       context.requestTracker.resolve('create_manager', event.requestId, event.manager)
       return true
 
+    case 'repository_project_creation_progress':
+      context.onRepositoryProjectCreationProgress?.(event)
+      return true
+
+    case 'repository_project_created':
+      context.applyManagerCreated(event.manager)
+      context.requestTracker.resolve('create_repository_project', event.requestId, {
+        manager: event.manager,
+        repositoryPath: event.repositoryPath,
+      })
+      return true
+
+    case 'repository_project_creation_cancelled':
+      if (event.requestId) {
+        context.requestTracker.reject(
+          'create_repository_project',
+          event.requestId,
+          Object.assign(new Error('Clone was cancelled.'), { code: 'clone_cancelled' }),
+        )
+      }
+      return true
+
+    case 'repository_project_creation_cancel_result':
+      context.requestTracker.resolve('cancel_repository_project_creation', event.requestId, {
+        operationRequestId: event.operationRequestId,
+        accepted: event.accepted,
+        tooLate: event.tooLate,
+      })
+      return true
+
     case 'manager_deleted':
       context.applyManagerDeleted(event.managerId)
       context.requestTracker.resolve('delete_manager', event.requestId, {

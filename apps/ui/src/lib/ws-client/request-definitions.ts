@@ -190,6 +190,52 @@ export function buildCreateManagerCommand(
   }
 }
 
+export function buildCreateRepositoryProjectCommand(
+  input: {
+    name: string
+    repositoryUrl: string
+    repositoryBasePath: string
+    repositoryFolder: string
+    modelSelection: ManagerExactModelSelection
+    reasoningLevel?: ManagerReasoningLevel
+  },
+  requestId: string,
+): ClientCommand {
+  const name = requireTrimmedValue(input.name, 'Project name is required.')
+  const repositoryUrl = requireTrimmedValue(input.repositoryUrl, 'Repository URL is required.')
+  const repositoryBasePath = requireTrimmedValue(input.repositoryBasePath, 'Repository base path is required.')
+  const repositoryFolder = requireTrimmedValue(input.repositoryFolder, 'Repository folder is required.')
+
+  if (!input.modelSelection.provider.trim() || !input.modelSelection.modelId.trim()) {
+    throw new Error('Model selection requires both provider and modelId.')
+  }
+  if (input.reasoningLevel && !MANAGER_REASONING_LEVELS.includes(input.reasoningLevel)) {
+    throw new Error('Invalid reasoning level.')
+  }
+
+  return {
+    type: 'create_repository_project',
+    name,
+    repositoryUrl,
+    repositoryBasePath,
+    repositoryFolder,
+    modelSelection: input.modelSelection,
+    reasoningLevel: input.reasoningLevel,
+    requestId,
+  }
+}
+
+export function buildCancelRepositoryProjectCreationCommand(
+  operationRequestId: string,
+  requestId: string,
+): ClientCommand {
+  return {
+    type: 'cancel_repository_project_creation',
+    operationRequestId: requireTrimmedValue(operationRequestId, 'Operation request id is required.'),
+    requestId,
+  }
+}
+
 export function buildDeleteManagerCommand(managerId: string, requestId: string): ClientCommand {
   return {
     type: 'delete_manager',

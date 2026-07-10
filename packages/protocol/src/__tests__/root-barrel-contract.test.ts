@@ -59,6 +59,8 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'kill_agent',
   'stop_all_agents',
   'create_manager',
+  'create_repository_project',
+  'cancel_repository_project_creation',
   'delete_manager',
   'update_profile_default_model',
   'update_manager_model',
@@ -112,6 +114,8 @@ const REQUEST_ID_COMMAND_TYPES = [
   'stop_all_agents',
   'hydrate_archive_last_used',
   'create_manager',
+  'create_repository_project',
+  'cancel_repository_project_creation',
   'delete_manager',
   'update_profile_default_model',
   'update_manager_model',
@@ -400,6 +404,26 @@ const serverEventsByLeafModule = [
   { type: 'profiles_snapshot', profiles: [profile] },
   { type: 'unread_notification', agentId: agent.agentId, reason: 'message', sessionAgentId: agent.agentId },
   { type: 'manager_created', manager: agent, requestId: 'request-1' },
+  {
+    type: 'repository_project_creation_progress',
+    requestId: 'request-repo-1',
+    stage: 'cloning',
+    percent: 40,
+  },
+  {
+    type: 'repository_project_created',
+    manager: agent,
+    repositoryPath: '/tmp/repo',
+    requestId: 'request-repo-1',
+  },
+  { type: 'repository_project_creation_cancelled', requestId: 'request-repo-2' },
+  {
+    type: 'repository_project_creation_cancel_result',
+    requestId: 'request-repo-3',
+    operationRequestId: 'request-repo-2',
+    accepted: true,
+    tooLate: false,
+  },
   { type: 'manager_deleted', managerId: agent.agentId, terminatedWorkerIds: [], requestId: 'request-2' },
   { type: 'session_created', profile, sessionAgent: agent, requestId: 'request-2' },
   { type: 'archive_last_used_hydrated', scannedSessionCount: 1, hydratedSessionCount: 1, requestId: 'request-hydrate-archive-last-used' },
@@ -440,6 +464,20 @@ const requestIdCommands = [
   { type: 'stop_all_agents', managerId: agent.agentId, requestId: 'request-2' },
   { type: 'hydrate_archive_last_used', requestId: 'request-hydrate-archive-last-used' },
   { type: 'create_manager', name: 'Manager', cwd: '/tmp', model: 'pi-5.4', requestId: 'request-3' },
+  {
+    type: 'create_repository_project',
+    name: 'Cloned',
+    repositoryUrl: 'https://github.com/org/repo.git',
+    repositoryBasePath: '/tmp',
+    repositoryFolder: 'repo',
+    modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+    requestId: 'request-3b',
+  },
+  {
+    type: 'cancel_repository_project_creation',
+    operationRequestId: 'request-3b',
+    requestId: 'request-3c',
+  },
   { type: 'delete_manager', managerId: agent.agentId, requestId: 'request-4' },
   { type: 'update_profile_default_model', profileId: profile.profileId, model: 'pi-5.4', requestId: 'request-5' },
   { type: 'update_manager_model', managerId: agent.agentId, model: 'pi-5.4', requestId: 'request-6' },
@@ -523,6 +561,8 @@ describe('protocol root barrel contract', () => {
       'update_manager_cwd',
       'stop_all_agents',
       'create_manager',
+      'create_repository_project',
+      'cancel_repository_project_creation',
       'delete_manager',
       'create_session',
       'stop_session',
@@ -545,7 +585,16 @@ describe('protocol root barrel contract', () => {
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
-    expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.wire === 'optional')).toBe(true)
+    expect(
+      WS_REQUEST_CONTRACTS.every((contract) =>
+        contract.commandType === 'create_repository_project'
+          ? contract.requestId.wire === 'required'
+          : contract.requestId.wire === 'optional',
+      ),
+    ).toBe(true)
+    expect(getWsRequestContract('create_repository_project')).toMatchObject({
+      requestId: { ui: 'required', wire: 'required' },
+    })
     expect(getWsRequestContract('list_directories')).toMatchObject({
       commandType: 'list_directories',
       resultFamily: 'directory_listing',
@@ -783,7 +832,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(57)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(59)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -794,7 +843,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(41)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(43)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)
@@ -815,6 +864,10 @@ describe('protocol root barrel contract', () => {
       'profiles_snapshot',
       'unread_notification',
       'manager_created',
+      'repository_project_creation_progress',
+      'repository_project_created',
+      'repository_project_creation_cancelled',
+      'repository_project_creation_cancel_result',
       'manager_deleted',
       'session_created',
       'archive_last_used_hydrated',

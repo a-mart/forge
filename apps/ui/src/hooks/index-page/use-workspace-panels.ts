@@ -213,7 +213,7 @@ export function useWorkspacePanels({
     fileEditorCoordinator.requestFileEditorTransition({ type: 'select-agent', nextAgentId: agentId }, () => {
       navigateToRoute({ view: 'chat', agentId })
       clientRef.current?.subscribeToAgent(agentId)
-      requestCortexDashboardTab('review')
+      requestCortexDashboardTab('consolidation')
     })
   }, [clientRef, fileEditorCoordinator, navigateToRoute, requestCortexDashboardTab])
 
@@ -480,7 +480,7 @@ export function useWorkspacePanels({
     })
   }, [fileEditorCoordinator, handleOpenArtifactsPanel, handleToggleArtifactsPanel, isInlineDiffViewerOpen, setIsDiffViewerOpen])
 
-  const handleOpenCortexDashboardFromRail = useCallback((tab: 'knowledge' | 'schedules') => {
+  const handleOpenCortexDashboardFromRail = useCallback((tab: 'index' | 'consolidation') => {
     fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'cortex' }, () => {
       if (isInlineDiffViewerOpen) {
         setIsDiffViewerOpen(false)
@@ -570,10 +570,10 @@ export function useWorkspacePanels({
     const artifactsLabel = isCortexSession ? 'Dashboard' : 'Artifacts'
     const workspaceDisabled = !isActivityRailWorkspaceAvailable(activeAgentId, activeManagerAgent)
     const artifactsActive = isCortexSession
-      ? isArtifactsPanelOpen && cortexDashboardTab !== 'schedules'
+      ? isArtifactsPanelOpen && cortexDashboardTab !== 'consolidation'
       : isArtifactsPanelOpen && artifactsPanelTab === 'artifacts'
     const schedulesActive = isCortexSession
-      ? isArtifactsPanelOpen && cortexDashboardTab === 'schedules'
+      ? isArtifactsPanelOpen && cortexDashboardTab === 'consolidation'
       : isArtifactsPanelOpen && artifactsPanelTab === 'schedules'
 
     const chatActive = !isInlineDiffViewerOpen && !isFileBrowserOpen && !isArtifactsPanelOpen
@@ -627,7 +627,7 @@ export function useWorkspacePanels({
         disabled: workspaceDisabled,
         onClick: () => {
           if (isCortexSession) {
-            handleOpenCortexDashboardFromRail('schedules')
+            handleOpenCortexDashboardFromRail('consolidation')
           } else {
             handleOpenArtifactsFromRail('schedules')
           }
@@ -641,7 +641,7 @@ export function useWorkspacePanels({
         disabled: workspaceDisabled,
         onClick: () => {
           if (isCortexSession) {
-            handleOpenCortexDashboardFromRail('knowledge')
+            handleOpenCortexDashboardFromRail('index')
           } else {
             handleOpenArtifactsFromRail('artifacts')
           }

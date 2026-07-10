@@ -8,7 +8,16 @@ import {
   pickPackageEntryFromExports,
   resolveStagedPackageEntryFromManifest,
   validateStagedPiCodingAgentPackageDir,
+  BACKEND_BUNDLE_EXTERNAL_PACKAGES,
 } from '../../apps/electron/scripts/build-all.mjs'
+
+describe('BACKEND_BUNDLE_EXTERNAL_PACKAGES koffi packaging', () => {
+  it('requires koffi in packaged-runtime preflight (not optional)', () => {
+    const koffi = BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === 'koffi')
+    expect(koffi).toBeTruthy()
+    expect(koffi?.optional).toBe(false)
+  })
+})
 
 describe('validateStagedPiCodingAgentPackageDir', () => {
   it('accepts staged pi-coding-agent dirs with compaction measurement assets', async () => {

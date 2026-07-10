@@ -51,6 +51,18 @@ describe('ws command parser session commands', () => {
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       stop_all_agents: { type: 'stop_all_agents', managerId: 'manager-a' },
       create_manager: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4' },
+      create_repository_project: {
+        type: 'create_repository_project',
+        name: 'Cloned',
+        repositoryUrl: 'https://github.com/org/repo.git',
+        repositoryBasePath: '/tmp/project',
+        repositoryFolder: 'repo',
+        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+      },
+      cancel_repository_project_creation: {
+        type: 'cancel_repository_project_creation',
+        operationRequestId: 'create-request-1',
+      },
       delete_manager: { type: 'delete_manager', managerId: 'manager-a' },
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
@@ -78,10 +90,17 @@ describe('ws command parser session commands', () => {
         ok: true,
         command: { ...basePayload, requestId: 'request-1' },
       })
-      expect(parseJsonCommand(basePayload)).toEqual({
-        ok: true,
-        command: { ...basePayload, requestId: undefined },
-      })
+      if (contract.requestId.wire === 'required') {
+        expect(parseJsonCommand(basePayload)).toEqual({
+          ok: false,
+          error: expect.stringMatching(/requestId/),
+        })
+      } else {
+        expect(parseJsonCommand(basePayload)).toEqual({
+          ok: true,
+          command: { ...basePayload, requestId: undefined },
+        })
+      }
     }
   })
 

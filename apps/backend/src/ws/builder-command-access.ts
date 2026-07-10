@@ -51,6 +51,9 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   kill_agent: "write",
   stop_all_agents: "write",
   create_manager: "write",
+  // Local Builder/admin-only: clones write arbitrary content and use host credentials.
+  create_repository_project: "admin",
+  cancel_repository_project_creation: "admin",
   delete_manager: "write",
   update_profile_default_model: "write",
   update_manager_model: "write",

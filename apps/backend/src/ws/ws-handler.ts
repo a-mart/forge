@@ -51,6 +51,7 @@ import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
 import { WsApiProxy } from "./ws-api-proxy.js";
 import { hasRequestId, sendWsEvent, sendWsEventWithBackpressure } from "./ws-send.js";
 import { WsSubscriptions } from "./ws-subscriptions.js";
+import type { RepositoryProjectCreationService } from "../swarm/repository-project-creation-service.js";
 
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
@@ -63,6 +64,7 @@ export class WsHandler {
   private readonly collabSubscriptionManager: CollabSubscriptionManager;
   private readonly collabCommandHandler: CollabCommandHandler;
   private collaborationMessageServicePromise: Promise<CollaborationChannelMessageService> | null = null;
+  private repositoryProjectCreationService: RepositoryProjectCreationService | null = null;
 
   private wss: WebSocketServer | null = null;
 
@@ -124,6 +126,14 @@ export class WsHandler {
       async () => this.getCollaborationMessageService(),
       options.collaborationReadinessService,
     );
+  }
+
+  setRepositoryProjectCreationService(service: RepositoryProjectCreationService | null): void {
+    this.repositoryProjectCreationService = service;
+  }
+
+  sendToSocket(socket: WebSocket, event: ServerEvent | CollaborationServerEvent): void {
+    this.send(socket, event);
   }
 
   attach(server: WebSocketServer): void {
@@ -494,6 +504,7 @@ export class WsHandler {
       broadcastToSubscribed: (event) => this.broadcastToSubscribed(event),
       handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
       unreadTracker: this.unreadTracker ?? undefined,
+      repositoryProjectCreationService: this.repositoryProjectCreationService ?? undefined,
     });
     if (managerHandled) {
       return;

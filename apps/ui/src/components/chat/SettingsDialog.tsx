@@ -45,6 +45,12 @@ interface SettingsPanelProps {
   /** Optional target for target-aware Settings shell. When omitted, Builder target is created from wsUrl. */
   target?: SettingsBackendTarget
   /**
+   * Explicit runtime capability for Clone repository settings.
+   * When omitted, derived after target resolution (builder enables, collab disables).
+   * Explicit false disables even on Builder/direct-server shells.
+   */
+  repositoryCloneAvailable?: boolean
+  /**
    * Optional initial tab to select when the panel mounts.
    * Used for deep-link navigation (e.g. sign-in recovery → Collaboration tab).
    * Must be a valid {@link SettingsTab} string; ignored if not in the target's
@@ -75,6 +81,7 @@ export function SettingsPanel({
   onBack,
   previewSession,
   target: externalTarget,
+  repositoryCloneAvailable,
   initialTab,
   initialCollabApiBaseUrl,
   initialSkillImportUrl,
@@ -94,6 +101,11 @@ export function SettingsPanel({
     () => externalTarget ?? createBuilderSettingsTarget(wsUrl),
     [externalTarget, wsUrl],
   )
+
+  // Derive only after target resolution: collab always disables; explicit false
+  // disables Builder/direct-server; omitted on builder enables.
+  const resolvedRepositoryCloneAvailable =
+    target.kind === 'collab' ? false : repositoryCloneAvailable !== false
 
   // Create API client from resolved target
   const apiClient = useMemo<SettingsApiClient>(
@@ -129,7 +141,14 @@ export function SettingsPanel({
       availableTabs={availableTabs}
       targetLabel={targetLabel}
     >
-      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} />}
+      {activeTab === 'general' && (
+        <SettingsGeneral
+          wsUrl={wsUrl}
+          target={target}
+          apiClient={apiClient}
+          repositoryCloneAvailable={resolvedRepositoryCloneAvailable}
+        />
+      )}
       {activeTab === 'appearance' && <SettingsAppearance />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}

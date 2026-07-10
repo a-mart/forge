@@ -222,6 +222,8 @@ describe('ManagerWsClient', () => {
       'update_manager_cwd',
       'stop_all_agents',
       'create_manager',
+      'create_repository_project',
+      'cancel_repository_project_creation',
       'delete_manager',
       'create_session',
       'stop_session',
@@ -5539,14 +5541,16 @@ describe('ManagerWsClient', () => {
       return { client, socket }
     }
 
-    it('generates request IDs with prefix-timestamp-counter format', async () => {
+    it('generates collision-resistant UUID request IDs with command prefix', async () => {
       const { client, socket } = setupReadyClient()
 
       const promise = client.stopAllAgents('manager')
       const payload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
 
-      // Request ID format: {requestType}-{timestamp}-{counter}
-      expect(payload.requestId).toMatch(/^stop_all_agents-\d+-\d+$/)
+      // Request ID format: {requestType}-{uuid}
+      expect(payload.requestId).toMatch(
+        /^stop_all_agents-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      )
 
       // Resolve to avoid dangling promise
       emitServerEvent(socket, {
@@ -5561,7 +5565,7 @@ describe('ManagerWsClient', () => {
       client.destroy()
     })
 
-    it('increments request counter across multiple requests', async () => {
+    it('generates distinct request IDs across multiple requests', async () => {
       const { client, socket } = setupReadyClient()
 
       const promise1 = client.listDirectories('/tmp')
@@ -5576,11 +5580,6 @@ describe('ManagerWsClient', () => {
 
       // They must be distinct
       expect(payload1.requestId).not.toBe(payload2.requestId)
-
-      // Counter part (last segment) should increment
-      const counter1 = parseInt(payload1.requestId.split('-').at(-1), 10)
-      const counter2 = parseInt(payload2.requestId.split('-').at(-1), 10)
-      expect(counter2).toBe(counter1 + 1)
 
       // Resolve to clean up
       emitServerEvent(socket, {

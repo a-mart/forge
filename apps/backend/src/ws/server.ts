@@ -100,7 +100,10 @@ import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js"
 import { createSpecialistRoutes } from "./http/routes/specialist-routes.js";
 import { createWorkPlansRoutes } from "./http/routes/work-plans-routes.js";
 import { createModelCacheVisualizationRoutes } from "./http/routes/model-cache-visualization-routes.js";
+import { createRepositorySettingsRoutes } from "./http/routes/repository-settings-routes.js";
 import { createStatsRoutes } from "./http/routes/stats-routes.js";
+import { RepositorySettingsService } from "../swarm/repository-settings-service.js";
+import { RepositoryProjectCreationService } from "../swarm/repository-project-creation-service.js";
 import { createStaticUiRoutes } from "./http/routes/static-ui-routes.js";
 import { createTelemetryRoutes } from "./http/routes/telemetry-routes.js";
 import { createTerminalRoutes } from "./http/routes/terminal-routes.js";
@@ -128,6 +131,8 @@ export class SwarmWebSocketServer {
   private readonly builderSidebarOrderService: BuilderSidebarOrderService | null;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService | null;
   private readonly compactionSettingsService: CompactionSettingsService | null;
+  private readonly repositorySettingsService: RepositorySettingsService | null;
+  private readonly repositoryProjectCreationService: RepositoryProjectCreationService | null;
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
   private readonly terminalSettingsService: TerminalSettingsService;
@@ -533,6 +538,19 @@ export class SwarmWebSocketServer {
     this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;
 
+    const isBuilder = isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget);
+    this.repositorySettingsService = isBuilder
+      ? new RepositorySettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir })
+      : null;
+    this.repositoryProjectCreationService = this.repositorySettingsService
+      ? new RepositoryProjectCreationService({
+          swarmManager: this.swarmManager,
+          settingsService: this.repositorySettingsService,
+          sendToSocket: (socket, event) => this.wsHandler.sendToSocket(socket, event),
+        })
+      : null;
+    this.wsHandler.setRepositoryProjectCreationService(this.repositoryProjectCreationService);
+
     this.telemetryService = options.telemetryService ?? null;
     this.collaborationSettingsService = options.collaborationSettingsService ?? null;
     this.collaborationReadinessService = options.collaborationReadinessService ?? null;
@@ -623,6 +641,12 @@ export class SwarmWebSocketServer {
       ...(this.compactionSettingsService
         ? createCompactionSettingsRoutes({
             settingsService: this.compactionSettingsService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
+        : []),
+      ...(this.repositorySettingsService
+        ? createRepositorySettingsRoutes({
+            settingsService: this.repositorySettingsService,
             runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
           })
         : []),
@@ -721,6 +745,9 @@ export class SwarmWebSocketServer {
     }
     if (this.compactionSettingsService) {
       await this.compactionSettingsService.load();
+    }
+    if (this.repositorySettingsService) {
+      await this.repositorySettingsService.load();
     }
     await this.notificationSettingsService.load();
     await this.remoteBuildSettingsService.load();
@@ -857,6 +884,9 @@ export class SwarmWebSocketServer {
     this.cliWss = null;
     this.httpServer = null;
     this.actualPort = null;
+
+    // Abort in-flight clones and await termination/cleanup before tearing down transport.
+    await this.repositoryProjectCreationService?.shutdown()
 
     this.wsHandler.reset();
     this.cliWsHandler.reset();

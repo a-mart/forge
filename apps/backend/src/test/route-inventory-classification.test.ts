@@ -155,6 +155,7 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/settings/knowledge-v2", expect: { GET: "admin", PUT: "admin" }, optional: true },
   { sample: "/api/settings/knowledge-v2/cleanup-legacy", expect: { POST: "admin" }, optional: true },
   { sample: "/api/settings/compaction", expect: { GET: "admin", PUT: "admin" }, optional: true },
+  { sample: "/api/settings/repositories", expect: { GET: "admin", PUT: "admin" }, optional: true },
   { sample: "/api/settings/remote-build", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/env", expect: { GET: "admin", PUT: "admin", DELETE: "admin" } },
   { sample: "/api/settings/auth", expect: { GET: "admin", PUT: "admin", POST: "admin", DELETE: "admin" } },

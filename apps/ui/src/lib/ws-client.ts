@@ -8,6 +8,8 @@ import {
   buildClearAllPinsCommand,
   buildCreateManagerCommand,
   buildCreateDirectoryCommand,
+  buildCreateRepositoryProjectCommand,
+  buildCancelRepositoryProjectCreationCommand,
   buildCreateSessionCommand,
   buildDeleteManagerCommand,
   buildDeleteProjectAgentReferenceCommand,
@@ -53,6 +55,7 @@ import { BootstrapBuffer } from './ws-client/bootstrap-buffer'
 import { SessionWorkerCache } from './ws-client/session-worker-cache'
 import { applyLoadedModelCacheVisualizationSetting as reduceLoadedModelCacheVisualizationSetting } from './ws-client/model-cache-visualization-state'
 import {
+  CREATE_REPOSITORY_PROJECT_TIMEOUT_MS,
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
   SESSION_WORKERS_REQUEST_TIMEOUT_MS,
@@ -165,6 +168,10 @@ export class ManagerWsClient {
   private readonly requestDispatcher: RequestDispatcher
   private readonly bootstrapBuffer: BootstrapBuffer
   private readonly sessionWorkerCache: SessionWorkerCache
+  private readonly repositoryProjectProgressListeners = new Map<
+    string,
+    (event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>) => void
+  >()
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
@@ -500,6 +507,73 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('create_manager', (requestId) =>
       buildCreateManagerCommand(input, requestId),
+    )
+  }
+
+  /**
+   * Clone a repository then create a manager. Returns an operation handle so
+   * callers can cancel and subscribe to progress without touching RequestTracker.
+   */
+  createRepositoryProject(
+    input: {
+      name: string
+      repositoryUrl: string
+      repositoryBasePath: string
+      repositoryFolder: string
+      modelSelection: ManagerExactModelSelection
+      reasoningLevel?: ManagerReasoningLevel
+    },
+    options?: {
+      onProgress?: (
+        event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>,
+      ) => void
+    },
+  ): {
+    requestId: string
+    promise: Promise<{ manager: AgentDescriptor; repositoryPath: string }>
+    cancel: () => Promise<{ accepted: boolean; tooLate: boolean; operationRequestId: string }>
+  } {
+    assertReconnectableSocket(this.socket)
+    const requestId = this.requestDispatcher.nextRequestId('create_repository_project')
+
+    if (options?.onProgress) {
+      this.repositoryProjectProgressListeners.set(requestId, options.onProgress)
+    }
+
+    const promise = new Promise<{ manager: AgentDescriptor; repositoryPath: string }>((resolve, reject) => {
+      this.requestDispatcher.tracker.track(
+        'create_repository_project',
+        requestId,
+        resolve,
+        reject,
+        CREATE_REPOSITORY_PROJECT_TIMEOUT_MS,
+      )
+
+      const sent = this.send(buildCreateRepositoryProjectCommand(input, requestId))
+      if (!sent) {
+        this.requestDispatcher.tracker.reject(
+          'create_repository_project',
+          requestId,
+          new Error(RECONNECTING_SOCKET_ERROR),
+        )
+      }
+    }).finally(() => {
+      this.repositoryProjectProgressListeners.delete(requestId)
+    })
+
+    return {
+      requestId,
+      promise,
+      cancel: () => this.cancelRepositoryProjectCreation(requestId),
+    }
+  }
+
+  async cancelRepositoryProjectCreation(
+    operationRequestId: string,
+  ): Promise<{ accepted: boolean; tooLate: boolean; operationRequestId: string }> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('cancel_repository_project_creation', (requestId) =>
+      buildCancelRepositoryProjectCreationCommand(operationRequestId, requestId),
     )
   }
 
@@ -913,6 +987,9 @@ export class ManagerWsClient {
         applyManagerCreated: (manager) => this.applyManagerCreated(manager),
         applyManagerDeleted: (managerId) => this.applyManagerDeleted(managerId),
         requestTracker: this.requestDispatcher.tracker,
+        onRepositoryProjectCreationProgress: (progressEvent) => {
+          this.repositoryProjectProgressListeners.get(progressEvent.requestId)?.(progressEvent)
+        },
       })
     ) {
       return

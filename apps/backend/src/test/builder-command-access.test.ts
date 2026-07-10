@@ -46,6 +46,8 @@ describe("builder command access policy", () => {
     expect(BUILDER_COMMAND_ACCESS.validate_directory).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.create_directory).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.pick_directory).toBe("admin");
+    expect(BUILDER_COMMAND_ACCESS.create_repository_project).toBe("admin");
+    expect(BUILDER_COMMAND_ACCESS.cancel_repository_project_creation).toBe("admin");
     expect(MEMBER_ALLOWED_TIERS.has(BUILDER_COMMAND_ACCESS.create_directory)).toBe(true);
     expect(
       evaluateBuilderCommandAccess({

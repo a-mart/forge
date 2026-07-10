@@ -49,6 +49,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
   switch (command.type) {
     case "api_proxy":
     case "create_manager":
+    case "create_repository_project":
+    case "cancel_repository_project_creation":
     case "delete_manager":
     case "update_profile_default_model":
     case "update_manager_model":

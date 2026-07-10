@@ -87,6 +87,74 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "create_repository_project") {
+    const name = (maybe as { name?: unknown }).name;
+    const repositoryUrl = (maybe as { repositoryUrl?: unknown }).repositoryUrl;
+    const repositoryBasePath = (maybe as { repositoryBasePath?: unknown }).repositoryBasePath;
+    const repositoryFolder = (maybe as { repositoryFolder?: unknown }).repositoryFolder;
+    const modelSelection = (maybe as { modelSelection?: unknown }).modelSelection;
+    const reasoningLevel = (maybe as { reasoningLevel?: unknown }).reasoningLevel;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof name !== "string" || name.trim().length === 0) {
+      return fail("create_repository_project.name must be a non-empty string");
+    }
+    if (typeof repositoryUrl !== "string" || repositoryUrl.trim().length === 0) {
+      return fail("create_repository_project.repositoryUrl must be a non-empty string");
+    }
+    if (typeof repositoryBasePath !== "string" || repositoryBasePath.trim().length === 0) {
+      return fail("create_repository_project.repositoryBasePath must be a non-empty string");
+    }
+    if (typeof repositoryFolder !== "string" || repositoryFolder.trim().length === 0) {
+      return fail("create_repository_project.repositoryFolder must be a non-empty string");
+    }
+    const parsedModelSelection = parseManagerExactModelSelection(
+      modelSelection,
+      "create_repository_project.modelSelection",
+    );
+    if (typeof parsedModelSelection === "string") {
+      return fail(parsedModelSelection);
+    }
+    if (!parsedModelSelection) {
+      return fail("create_repository_project.modelSelection is required");
+    }
+    if (reasoningLevel !== undefined && !isSwarmReasoningLevel(reasoningLevel)) {
+      return fail(`create_repository_project.reasoningLevel must be one of ${describeSwarmReasoningLevels()}`);
+    }
+    if (typeof requestId !== "string" || requestId.trim().length === 0) {
+      return fail("create_repository_project.requestId must be a non-empty string");
+    }
+
+    return ok({
+      type: "create_repository_project",
+      name: name.trim(),
+      repositoryUrl: repositoryUrl.trim(),
+      repositoryBasePath: repositoryBasePath.trim(),
+      repositoryFolder: repositoryFolder.trim(),
+      modelSelection: parsedModelSelection,
+      reasoningLevel,
+      requestId: requestId.trim(),
+    });
+  }
+
+  if (maybe.type === "cancel_repository_project_creation") {
+    const operationRequestId = (maybe as { operationRequestId?: unknown }).operationRequestId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof operationRequestId !== "string" || operationRequestId.trim().length === 0) {
+      return fail("cancel_repository_project_creation.operationRequestId must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("cancel_repository_project_creation.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "cancel_repository_project_creation",
+      operationRequestId: operationRequestId.trim(),
+      requestId,
+    });
+  }
+
   if (maybe.type === "delete_manager") {
     const managerId = (maybe as { managerId?: unknown }).managerId;
     const requestId = (maybe as { requestId?: unknown }).requestId;

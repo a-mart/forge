@@ -427,6 +427,10 @@ export function getModelCacheVisualizationSettingsPath(dataDir: string): string 
   return join(getSharedConfigDir(dataDir), "model-cache-visualization.json");
 }
 
+export function getRepositorySettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "repository-settings.json");
+}
+
 export function getProjectAgentSharingStorePath(dataDir: string): string {
   return join(getSharedStateDir(dataDir), "project-agent-shares.json");
 }

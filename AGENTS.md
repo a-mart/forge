@@ -171,6 +171,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
+│   │   ├── repository-settings.json       # Builder-only clone base path (configured home + last-used)
 │   │   └── integrations/                  # Telegram integration configs
 │   ├── cache/
 │   │   ├── generated/
