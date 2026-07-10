@@ -46,11 +46,11 @@ In normal Builder chat, hover a visible user or assistant message and click **Re
 
 The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
 
-## Active Work
+## Active Work (currently parked)
 
-For substantial manager-led work, Forge can show an **Active Work** card above the conversation. It is scoped to the current session and shows the manager's plan, item status, and linked worker evidence. Linked worker chips open that worker's transcript when the worker still belongs to the same session. Expandable **Work Plan created** rows in the timeline show the durable `work_plan_created` receipt snapshot, and the card can disclose a bounded list of previous Work Plans when more than one terminal plan is retained.
+Active Work Plans are currently unavailable. Forge does not show the live Active Work card or header control, managers do not receive the `task` tool or Active Work guidance, and task snapshots do not hydrate plan views.
 
-The matching header control opens an anchored Active Work popover with an explicit accessible name. It toggles the card open or closed without scrolling or jumping the transcript. Historical receipt rows hydrate from the latest active or recent task snapshot when available, falling back to the creation snapshot only when needed.
+Older sessions may still show expandable **Work Plan created** rows for persisted `work_plan_created` receipts. These are read-only historical records rendered from their creation snapshots, not editable or resumable live plans.
 
 ## Header controls
 

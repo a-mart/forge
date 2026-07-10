@@ -32,7 +32,7 @@ const conceptsActiveWorkPlans: HelpArticle = {
   id: 'concepts-active-work-plans',
   title: 'Active Work Plans',
   category: 'concepts',
-  summary: 'Durable session-scoped plans for substantial manager-led work.',
+  summary: 'Current parked status and compatibility behavior for historical Work Plan receipts.',
   content: conceptsActiveWorkPlansContent,
   keywords: [
     'active work',
