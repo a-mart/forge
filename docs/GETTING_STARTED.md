@@ -26,7 +26,7 @@ A practical guide to going from first launch to daily use. Covers setup, core co
 
 After cloning the repo and running `pnpm prod:daemon`, open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189).
 
-You'll see a short welcome form from Cortex, Forge's learning system. It asks for your name, technical level, and a few baseline preferences. Forge keeps the structured onboarding state and maintains a managed block in legacy `common.md`. Whether that file enters prompts depends on the Knowledge v2 mode described below. Take 30 seconds and fill it out honestly.
+You'll see a short welcome form from Cortex, Forge's learning system. It asks for your name, technical level, and a few baseline preferences. Forge always stores the structured onboarding state. With Knowledge v2 OFF, Settings renders and updates a managed block in legacy `common.md`; with v2 ON, it upserts global v2 preference entries instead. Take 30 seconds and fill it out honestly.
 
 ### Setting Up Authentication
 
@@ -375,7 +375,7 @@ Prompt sources are explicit:
 - **Knowledge v2 ON:** the generated global `shared/knowledge/INDEX.md`, active-profile `knowledge/INDEX.md`, and current session `memory.md`.
 - **Knowledge v2 OFF:** legacy shared `common.md`, canonical profile `memory.md`, and current session `memory.md`.
 
-Canonical profile memory and legacy common knowledge continue to be maintained with v2 ON, but are not prompt-injected. Normal mode switching preserves both stores. Turning v2 OFF restores the legacy prompt sources only while those originals remain; explicit legacy cleanup archives and removes them. Profile memory and profile-scoped v2 knowledge are different stores.
+Canonical profile memory continues to be maintained with v2 ON. Legacy common knowledge is preserved during normal switching, but neither is prompt-injected in that mode. Normal mode switching preserves both stores. Turning v2 OFF restores the legacy prompt sources only while those originals remain; explicit legacy cleanup archives and removes them. Profile memory and profile-scoped v2 knowledge are different stores.
 
 ### Guarded activation
 

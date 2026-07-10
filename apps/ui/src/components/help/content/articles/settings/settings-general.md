@@ -40,7 +40,7 @@ While Knowledge v2 is ON, the enabled daily Cortex schedule runs the consolidato
 
 ## New Cortex (Knowledge v2)
 
-Knowledge v2 is a default-off preview. When ON, prompts receive compact global and active-profile `INDEX.md` files plus current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` remain maintained but are not prompt-injected. Normal switching preserves both stores; OFF restores legacy context while the originals remain. Explicit confirmed cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
+Knowledge v2 is a default-off preview. When ON, prompts receive compact global and active-profile `INDEX.md` files plus current session `memory.md`. Canonical profile `memory.md` continues to be maintained; legacy shared `common.md` is preserved during normal switching, but neither is prompt-injected. OFF restores legacy context while the originals remain. Explicit confirmed cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
 
 The switch does not migrate data. A successful guarded migration commits a valid manifest and immediately activates v2. If activation persistence fails, the manifest remains an authorized recovery point with v2 OFF; it also permits ordinary re-enable after a later disable. Without a valid manifest, Settings shows migration-required guidance and does not issue an enable request.
 
@@ -48,7 +48,7 @@ This mode switch is different from `FORGE_CORTEX_ENABLED=false`, which disables 
 
 ## Welcome Preferences
 
-Edit the default preferences Forge shares with new manager sessions. These are the onboarding choices you made on first launch (name, technical level, workflow style). Changes here apply to future sessions.
+Edit the default preferences Forge shares with new manager sessions. These are the onboarding choices you made on first launch (name, technical level, workflow style). Forge always updates the structured onboarding state. Changes apply to future manager sessions through the active mode's store: the managed legacy `common.md` block with v2 OFF, or global v2 preference entries with v2 ON.
 
 ## Collaboration
 

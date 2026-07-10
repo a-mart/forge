@@ -10,7 +10,7 @@ When v2 is ON, managers receive the token-capped global `INDEX.md` and can use t
 
 Each profile has its own entry set and generated `INDEX.md` for project-specific conventions, decisions, and gotchas. This is separate from the profile's canonical `memory.md`.
 
-With v2 ON, the prompt sources are the global index, active-profile index, and current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` continue to be maintained, but are not prompt-injected. Normal switching preserves both stores, and v2 OFF restores legacy injection while the originals remain. Explicit confirmed legacy cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
+With v2 ON, the prompt sources are the global index, active-profile index, and current session `memory.md`. Canonical profile `memory.md` continues to be maintained. Legacy shared `common.md` is preserved during normal switching, but neither is prompt-injected. Normal switching preserves both stores, and v2 OFF restores legacy injection while the originals remain. Explicit confirmed legacy cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
 
 ## Viewing knowledge
 

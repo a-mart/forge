@@ -66,7 +66,7 @@ const conceptsMemory: HelpArticle = {
     'cortex',
   ],
   relatedIds: ['concepts-sessions', 'cortex-overview', 'cortex-knowledge'],
-  contextKeys: ['chat.main', 'cortex.knowledge'],
+  contextKeys: ['chat.main'],
 }
 
 const conceptsPromptResolution: HelpArticle = {

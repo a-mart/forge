@@ -20,7 +20,7 @@ Open Cortex from its pinned Builder sidebar entry. The resizable dashboard has f
 
 ## Prompt modes
 
-With Knowledge v2 ON, prompts receive global and active-profile `INDEX.md` files plus current session `memory.md`. Full entries are retrieved on demand. Canonical profile `memory.md` and legacy `shared/knowledge/common.md` stay maintained and preserved but are not prompt-injected.
+With Knowledge v2 ON, prompts receive global and active-profile `INDEX.md` files plus current session `memory.md`. Full entries are retrieved on demand. Canonical profile `memory.md` continues to be maintained. Legacy `shared/knowledge/common.md` is preserved during normal switching, but neither is prompt-injected.
 
 With Knowledge v2 OFF, Forge restores legacy `common.md` + profile `memory.md` + session `memory.md` injection while those legacy originals remain. Normal switching preserves both stores. Explicit confirmed legacy cleanup archives and removes the originals, after which OFF alone cannot restore their prior content.
 

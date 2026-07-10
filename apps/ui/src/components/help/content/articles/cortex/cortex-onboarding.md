@@ -8,16 +8,14 @@ When you launch Forge for the first time, Cortex asks for a few basics before ma
 
 ## Where preferences go
 
-Forge stores the structured onboarding state and maintains a managed preferences block in legacy `shared/knowledge/common.md`. That legacy file remains preserved in both knowledge modes.
+Forge always stores the structured onboarding state. Where it renders those preferences depends on the separate Knowledge v2 switch:
 
-Prompt sourcing depends on the separate Knowledge v2 switch:
-
-- With v2 OFF, `common.md` is part of the legacy common + profile + session prompt context.
-- With v2 ON, prompts use global/profile v2 indexes plus session memory; `common.md` and canonical profile memory remain maintained but are not prompt-injected.
+- With v2 OFF, Forge renders and updates a managed preferences block in legacy `shared/knowledge/common.md`, which is part of the legacy common + profile + session prompt context.
+- With v2 ON, Forge upserts global v2 preference entries instead of updating that legacy block. Prompts use global/profile v2 indexes plus session memory; legacy `common.md` is preserved during normal switching, while canonical profile memory continues to be maintained, but neither is prompt-injected.
 
 ## Updating preferences later
 
-Change onboarding preferences from **Settings > General** under **Welcome preferences**. Forge updates the structured onboarding state and managed legacy common-knowledge block.
+Change onboarding preferences from **Settings > General** under **Welcome preferences**. Forge updates the structured onboarding state, then applies the preferences through the active knowledge mode: the managed legacy block while v2 is OFF, or global v2 preference entries while v2 is ON. The active store supplies those preferences to future manager sessions.
 
 ## Knowledge v2 onboarding
 

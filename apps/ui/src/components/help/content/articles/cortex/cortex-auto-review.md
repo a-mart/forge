@@ -19,7 +19,7 @@ Open Cortex and select **Run** to:
 - see **Last run**, and
 - inspect the **Promotion review queue**.
 
-The **Log** tab shows verified consolidation log activity. The legacy article id `cortex-auto-review` remains only for compatibility.
+The **Log** tab shows verified consolidation log activity.
 
 ## Capture checks
 

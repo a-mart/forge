@@ -14,7 +14,7 @@ This separation keeps a session's exploratory or temporary state from automatica
 
 ## Legacy common knowledge
 
-`shared/knowledge/common.md` stores cross-profile preferences, including the managed onboarding-preferences block. Forge continues maintaining and preserving it in both modes.
+`shared/knowledge/common.md` stores legacy cross-profile preferences, including the managed onboarding-preferences block. With v2 OFF, preference changes render and update that block. With v2 ON, those changes upsert global v2 preference entries instead; the legacy file is preserved during normal switching but is not maintained by those updates.
 
 ## Prompt sources by mode
 
