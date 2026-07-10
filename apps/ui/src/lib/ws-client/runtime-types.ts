@@ -6,6 +6,8 @@ import type { WsRequestErrorHint, WsRequestType } from './types'
 export const INITIAL_CONNECT_DELAY_MS = 50
 export const RECONNECT_MS = 1200
 export const REQUEST_TIMEOUT_MS = 300_000
+/** Clone can take up to 15 minutes server-side; keep the client slightly longer. */
+export const CREATE_REPOSITORY_PROJECT_TIMEOUT_MS = 16 * 60 * 1000
 export const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
 /**
  * get_session_workers is a small, cheap fetch whose pending promise de-duplicates

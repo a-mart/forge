@@ -24,6 +24,7 @@ import {
   MANAGER_REASONING_LEVELS,
   type ManagerExactModelSelection,
   type ManagerReasoningLevel,
+  type RepositoryProjectCreationStage,
 } from '@forge/protocol'
 import {
   buildManagerModelRows,
@@ -36,6 +37,11 @@ import {
   ServerDirectoryBrowserDialog,
   type ServerDirectoryBrowserClient,
 } from '@/components/chat/ServerDirectoryBrowserDialog'
+import {
+  deriveRepositoryFolderFromUrl,
+  formatCloneStageLabel,
+  joinRepositoryDestination,
+} from '@/lib/repository-project-helpers'
 
 const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
   none: 'None',
@@ -46,6 +52,8 @@ const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
   max: 'Max',
   ultra: 'Ultra',
 }
+
+export type CreateProjectSourceMode = 'local_folder' | 'clone_repository'
 
 interface CreateManagerDialogProps {
   open: boolean
@@ -60,6 +68,22 @@ interface CreateManagerDialogProps {
   scaffoldForgeResources: boolean
   createManagerError: string | null
   browseError: string | null
+  /** When false, hide Clone repository (remote / collab surfaces). */
+  cloneRepositoryEnabled?: boolean
+  sourceMode?: CreateProjectSourceMode
+  repositoryUrl?: string
+  repositoryFolder?: string
+  repositoryBasePath?: string
+  cloneStage?: RepositoryProjectCreationStage | null
+  clonePercent?: number | null
+  cloneCancellable?: boolean
+  isCancellingClone?: boolean
+  onSourceModeChange?: (mode: CreateProjectSourceMode) => void
+  onRepositoryUrlChange?: (value: string) => void
+  onRepositoryFolderChange?: (value: string) => void
+  onRepositoryBasePathChange?: (value: string) => void
+  onBrowseRepositoryBasePath?: () => void
+  onCancelClone?: () => void
   onOpenChange: (open: boolean) => void
   onNameChange: (value: string) => void
   onCwdChange: (value: string) => void
@@ -89,6 +113,21 @@ export function CreateManagerDialog({
   scaffoldForgeResources,
   createManagerError,
   browseError,
+  cloneRepositoryEnabled = false,
+  sourceMode = 'local_folder',
+  repositoryUrl = '',
+  repositoryFolder = '',
+  repositoryBasePath = '',
+  cloneStage = null,
+  clonePercent = null,
+  cloneCancellable = false,
+  isCancellingClone = false,
+  onSourceModeChange,
+  onRepositoryUrlChange,
+  onRepositoryFolderChange,
+  onRepositoryBasePathChange,
+  onBrowseRepositoryBasePath,
+  onCancelClone,
   onOpenChange,
   onNameChange,
   onCwdChange,
@@ -103,6 +142,12 @@ export function CreateManagerDialog({
   const [availabilityLoading, setAvailabilityLoading] = useState(false)
   const [availabilityError, setAvailabilityError] = useState<string | null>(null)
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false)
+  const [basePathBrowserOpen, setBasePathBrowserOpen] = useState(false)
+
+  const isCloneMode = cloneRepositoryEnabled && sourceMode === 'clone_repository'
+  const destinationPreview = isCloneMode
+    ? joinRepositoryDestination(repositoryBasePath, repositoryFolder)
+    : ''
 
   const loadAvailability = useCallback(() => {
     setAvailabilityLoading(true)
@@ -122,7 +167,10 @@ export function CreateManagerDialog({
   }, [open, loadAvailability])
 
   useEffect(() => {
-    if (!open) setServerBrowserOpen(false)
+    if (!open) {
+      setServerBrowserOpen(false)
+      setBasePathBrowserOpen(false)
+    }
   }, [open])
 
   const rows = useMemo(() => {
@@ -141,7 +189,6 @@ export function CreateManagerDialog({
     ? encodeManagerModelValue(newManagerModelSelection.provider, newManagerModelSelection.modelId)
     : undefined
 
-  // Auto-select first available row when availability loads (not before)
   useEffect(() => {
     if (!open || availableRows.length === 0 || availabilityLoading) return
 
@@ -156,7 +203,6 @@ export function CreateManagerDialog({
     const decoded = decodeManagerModelValue(value)
     if (decoded) {
       onModelSelectionChange(decoded)
-      // When switching models, set reasoning to the new model's default
       const row = availableRows.find((r) => r.key === value)
       if (row) {
         onReasoningLevelChange(row.defaultReasoningLevel)
@@ -164,7 +210,6 @@ export function CreateManagerDialog({
     }
   }, [availableRows, onModelSelectionChange, onReasoningLevelChange])
 
-  // Get reasoning levels for selected model
   const selectedRow: ManagerModelSelectRow | undefined = selectedValue
     ? availableRows.find((r) => r.key === selectedValue)
     : undefined
@@ -173,7 +218,6 @@ export function CreateManagerDialog({
     [selectedRow?.supportedReasoningLevels],
   )
 
-  // Reset reasoning level if not supported by newly selected model
   useEffect(() => {
     if (newManagerReasoningLevel && !availableReasoningLevels.includes(newManagerReasoningLevel)) {
       onReasoningLevelChange(selectedRow?.defaultReasoningLevel ?? 'high')
@@ -183,19 +227,82 @@ export function CreateManagerDialog({
   const availabilityLoaded = !!overridesData && !availabilityLoading
   const noModelsAvailable = availabilityLoaded && availableRows.length === 0
   const isModelSelectorDisabled = isCreatingManager || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable
+  const dismissBlocked = isCreatingManager || isCancellingClone
+  const showCancelClone = isCloneMode && (isCreatingManager || isCancellingClone) && (cloneCancellable || isCancellingClone)
+
+  const submitLabel = (() => {
+    if (isCancellingClone) {
+      return 'Cancelling…'
+    }
+    if (!isCreatingManager) {
+      return isCloneMode ? 'Clone & create project' : 'Create project'
+    }
+    if (isCloneMode) {
+      return formatCloneStageLabel(cloneStage, clonePercent ?? undefined)
+    }
+    return isValidatingDirectory ? 'Validating...' : 'Creating...'
+  })()
 
   return (
     <>
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && dismissBlocked) return
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-xl"
+        onEscapeKeyDown={(event) => {
+          if (dismissBlocked) event.preventDefault()
+        }}
+        onPointerDownOutside={(event) => {
+          if (dismissBlocked) event.preventDefault()
+        }}
+        onInteractOutside={(event) => {
+          if (dismissBlocked) event.preventDefault()
+        }}
+        aria-describedby={createManagerError ? 'create-manager-error' : undefined}
+      >
         <DialogHeader>
           <DialogTitle>Create project</DialogTitle>
           <DialogDescription>
-            Create a new project with a name and working directory.
+            {isCloneMode
+              ? 'Clone a Git repository, then create a project in the cloned folder.'
+              : 'Create a new project with a name and working directory.'}
           </DialogDescription>
         </DialogHeader>
 
         <form className="space-y-4" onSubmit={onSubmit}>
+          {cloneRepositoryEnabled ? (
+            <div className="space-y-2" aria-label="Project source">
+              <Label className="text-xs font-medium text-muted-foreground">Source</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-pressed={sourceMode === 'local_folder'}
+                  variant={sourceMode === 'local_folder' ? 'default' : 'outline'}
+                  disabled={isCreatingManager || isCancellingClone}
+                  onClick={() => onSourceModeChange?.('local_folder')}
+                >
+                  Use local folder
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-pressed={sourceMode === 'clone_repository'}
+                  variant={sourceMode === 'clone_repository' ? 'default' : 'outline'}
+                  disabled={isCreatingManager || isCancellingClone}
+                  onClick={() => onSourceModeChange?.('clone_repository')}
+                >
+                  Clone repository
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-2">
             <Label htmlFor="manager-name" className="text-xs font-medium text-muted-foreground">
               Name
@@ -206,51 +313,128 @@ export function CreateManagerDialog({
               value={newManagerName}
               onChange={(event) => onNameChange(event.target.value)}
               autoFocus
+              disabled={isCreatingManager}
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="manager-cwd" className="text-xs font-medium text-muted-foreground">
-              Working directory
-            </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="manager-cwd"
-                placeholder="/path/to/project"
-                value={newManagerCwd}
-                onChange={(event) => onCwdChange(event.target.value)}
-              />
-              {serverDirectoryBrowser ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setServerBrowserOpen(true)}
-                  disabled={isPickingDirectory || isCreatingManager}
-                >
-                  Browse server…
-                </Button>
-              ) : onBrowseDirectory ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={onBrowseDirectory}
-                  disabled={isPickingDirectory || isCreatingManager}
-                >
-                  {isPickingDirectory ? 'Browsing...' : 'Browse'}
-                </Button>
-              ) : null}
+          {isCloneMode ? (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="repository-url" className="text-xs font-medium text-muted-foreground">
+                  Repository URL
+                </Label>
+                <Input
+                  id="repository-url"
+                  placeholder="https://github.com/org/repo.git"
+                  value={repositoryUrl}
+                  onChange={(event) => onRepositoryUrlChange?.(event.target.value)}
+                  disabled={isCreatingManager}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  HTTPS or SSH URLs. Private repos use your system Git/SSH credentials — not Forge model auth.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="repository-folder" className="text-xs font-medium text-muted-foreground">
+                  Repository folder
+                </Label>
+                <Input
+                  id="repository-folder"
+                  placeholder={deriveRepositoryFolderFromUrl(repositoryUrl) ?? 'repo'}
+                  value={repositoryFolder}
+                  onChange={(event) => onRepositoryFolderChange?.(event.target.value)}
+                  disabled={isCreatingManager}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="repository-base" className="text-xs font-medium text-muted-foreground">
+                  Destination base path
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="repository-base"
+                    placeholder="/Users/you/repos"
+                    value={repositoryBasePath}
+                    onChange={(event) => onRepositoryBasePathChange?.(event.target.value)}
+                    disabled={isCreatingManager}
+                  />
+                  {onBrowseRepositoryBasePath ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={onBrowseRepositoryBasePath}
+                      disabled={isPickingDirectory || isCreatingManager}
+                    >
+                      {isPickingDirectory ? 'Browsing...' : 'Choose'}
+                    </Button>
+                  ) : serverDirectoryBrowser ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setBasePathBrowserOpen(true)}
+                      disabled={isPickingDirectory || isCreatingManager}
+                    >
+                      Browse server…
+                    </Button>
+                  ) : null}
+                </div>
+                {destinationPreview ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Will clone to <span className="font-mono text-foreground">{destinationPreview}</span>
+                  </p>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground">
+                  Defaults follow Settings → General → Repositories: configured home, otherwise last-used base, otherwise your home directory.
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="manager-cwd" className="text-xs font-medium text-muted-foreground">
+                Working directory
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="manager-cwd"
+                  placeholder="/path/to/project"
+                  value={newManagerCwd}
+                  onChange={(event) => onCwdChange(event.target.value)}
+                  disabled={isCreatingManager}
+                />
+                {serverDirectoryBrowser ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setServerBrowserOpen(true)}
+                    disabled={isPickingDirectory || isCreatingManager}
+                  >
+                    Browse server…
+                  </Button>
+                ) : onBrowseDirectory ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={onBrowseDirectory}
+                    disabled={isPickingDirectory || isCreatingManager}
+                  >
+                    {isPickingDirectory ? 'Browsing...' : 'Browse'}
+                  </Button>
+                ) : null}
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                {serverDirectoryBrowser
+                  ? 'Browse the remote server for an allowed workspace folder, or enter a path manually.'
+                  : 'Use Browse to open the native folder picker, or enter a path manually.'}
+              </p>
             </div>
+          )}
 
-            {browseError ? (
-              <p className="text-xs text-destructive">{browseError}</p>
-            ) : null}
-
-            <p className="text-[11px] text-muted-foreground">
-              {serverDirectoryBrowser
-                ? 'Browse the remote server for an allowed workspace folder, or enter a path manually.'
-                : 'Use Browse to open the native folder picker, or enter a path manually.'}
-            </p>
-          </div>
+          {browseError ? (
+            <p className="text-xs text-destructive">{browseError}</p>
+          ) : null}
 
           <div className="space-y-2">
             <Label htmlFor="manager-model" className="text-xs font-medium text-muted-foreground">
@@ -335,24 +519,38 @@ export function CreateManagerDialog({
           </div>
 
           {createManagerError ? (
-            <p className="text-xs text-destructive">{createManagerError}</p>
+            <p id="create-manager-error" role="alert" className="text-xs text-destructive">
+              {createManagerError}
+            </p>
+          ) : null}
+
+          {isCloneMode && (isCreatingManager || isCancellingClone) ? (
+            <p className="text-[11px] text-muted-foreground" role="status" aria-live="polite">
+              {isCancellingClone
+                ? 'Cancelling clone…'
+                : cloneStage === 'publishing' || cloneStage === 'creating_manager'
+                  ? 'The repository is published. This dialog stays open while Forge finishes creating the project.'
+                  : formatCloneStageLabel(cloneStage, clonePercent ?? undefined)}
+            </p>
           ) : null}
 
           <div className="flex items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={isCreatingManager}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isCreatingManager || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable}>
-              {isCreatingManager
-                ? isValidatingDirectory
-                  ? 'Validating...'
-                  : 'Creating...'
-                : 'Create project'}
+            {showCancelClone && onCancelClone ? (
+              <Button type="button" variant="outline" onClick={onCancelClone} disabled={isCancellingClone}>
+                {isCancellingClone ? 'Cancelling…' : 'Cancel clone'}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={dismissBlocked}
+              >
+                Cancel
+              </Button>
+            )}
+            <Button type="submit" disabled={isCreatingManager || isCancellingClone || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable}>
+              {submitLabel}
             </Button>
           </div>
         </form>
@@ -367,6 +565,17 @@ export function CreateManagerDialog({
         canCreateDirectory={serverDirectoryBrowser.canCreateDirectory}
         initialPath={newManagerCwd}
         onSelect={(path) => onCwdChange(path)}
+      />
+    ) : null}
+
+    {serverDirectoryBrowser && isCloneMode ? (
+      <ServerDirectoryBrowserDialog
+        open={basePathBrowserOpen}
+        onOpenChange={setBasePathBrowserOpen}
+        client={serverDirectoryBrowser.client}
+        canCreateDirectory={false}
+        initialPath={repositoryBasePath}
+        onSelect={(path) => onRepositoryBasePathChange?.(path)}
       />
     ) : null}
     </>

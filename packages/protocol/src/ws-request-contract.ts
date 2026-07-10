@@ -3,7 +3,7 @@ import type { ServerEvent } from './server-events.js'
 
 export type WsRequestIdPolicy = {
   ui: 'required'
-  wire: 'optional'
+  wire: 'optional' | 'required'
 }
 
 export type WsRequestContract<
@@ -37,6 +37,8 @@ type ContractCommandType = Extract<
   | 'update_manager_cwd'
   | 'stop_all_agents'
   | 'create_manager'
+  | 'create_repository_project'
+  | 'cancel_repository_project_creation'
   | 'delete_manager'
   | 'create_session'
   | 'stop_session'
@@ -77,6 +79,8 @@ type ContractSuccessEventType = Extract<
   | 'manager_cwd_updated'
   | 'stop_all_agents_result'
   | 'manager_created'
+  | 'repository_project_created'
+  | 'repository_project_creation_cancel_result'
   | 'manager_deleted'
   | 'session_created'
   | 'session_stopped'
@@ -224,6 +228,37 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['manager_created'],
     errorCodeFragments: ['create_manager'],
+  },
+  {
+    commandType: 'create_repository_project',
+    resultFamily: 'repository_project_create',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['repository_project_created'],
+    errorCodeFragments: [
+      'create_repository_project',
+      'invalid_repository_url',
+      'invalid_repository_folder',
+      'invalid_repository_base_path',
+      'destination_exists',
+      'git_unavailable',
+      'repository_not_found',
+      'repository_auth_failed',
+      'repository_network_failed',
+      'clone_timed_out',
+      'clone_cancelled',
+      'destination_permission_denied',
+      'disk_full',
+      'manager_creation_failed_after_clone',
+      'clone_failed',
+      'duplicate_operation',
+    ],
+  },
+  {
+    commandType: 'cancel_repository_project_creation',
+    resultFamily: 'repository_project_cancel',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['repository_project_creation_cancel_result'],
+    errorCodeFragments: ['cancel_repository_project_creation'],
   },
   {
     commandType: 'delete_manager',

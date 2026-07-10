@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { createElement, useEffect, useState } from 'react'
+import { createElement, createRef, forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -32,13 +32,11 @@ type HarnessState = {
   setMessageSourceView: (view: MessageSourceView) => void
 }
 
-const capturedRef: { current: HarnessState | null } = { current: null }
-
 /**
  * Mirrors BuilderSurface's agent-switch chrome reset for messageSourceView:
  * when the active agent changes, re-apply the role-based default.
  */
-function MessageSourceViewHarness() {
+const MessageSourceViewHarness = forwardRef<HarnessState>(function MessageSourceViewHarness(_props, ref) {
   const [activeAgent, setActiveAgent] = useState<HarnessAgent | null>(null)
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
 
@@ -46,25 +44,27 @@ function MessageSourceViewHarness() {
     setMessageSourceView(defaultMessageSourceViewForAgentRole(activeAgent?.role))
   }, [activeAgent?.agentId, activeAgent?.role])
 
-  capturedRef.current = {
+  useImperativeHandle(ref, () => ({
     messageSourceView,
     setActiveAgent,
     setMessageSourceView,
-  }
+  }), [messageSourceView])
 
   return null
-}
+})
 
 describe('messageSourceView agent transitions', () => {
   let container: HTMLDivElement
   let root: Root
+  let harnessRef: ReturnType<typeof createRef<HarnessState>>
 
   beforeEach(() => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
+    harnessRef = createRef<HarnessState>()
     act(() => {
-      root.render(createElement(MessageSourceViewHarness))
+      root.render(createElement(MessageSourceViewHarness, { ref: harnessRef }))
     })
   })
 
@@ -73,62 +73,61 @@ describe('messageSourceView agent transitions', () => {
       root.unmount()
     })
     container.remove()
-    capturedRef.current = null
   })
 
   it('switches to All when selecting a worker, then back to Web for a manager', () => {
-    const harness = capturedRef.current
+    const harness = harnessRef.current
     expect(harness).not.toBeNull()
     expect(harness!.messageSourceView).toBe('web')
 
     act(() => {
       harness!.setActiveAgent({ agentId: 'worker-1', role: 'worker' })
     })
-    expect(capturedRef.current!.messageSourceView).toBe('all')
+    expect(harnessRef.current!.messageSourceView).toBe('all')
 
     act(() => {
       harness!.setActiveAgent({ agentId: 'manager-1', role: 'manager' })
     })
-    expect(capturedRef.current!.messageSourceView).toBe('web')
+    expect(harnessRef.current!.messageSourceView).toBe('web')
   })
 
   it('re-applies All when moving between workers even after a manual Web override', () => {
-    const harness = capturedRef.current
+    const harness = harnessRef.current
     expect(harness).not.toBeNull()
 
     act(() => {
       harness!.setActiveAgent({ agentId: 'worker-1', role: 'worker' })
     })
-    expect(capturedRef.current!.messageSourceView).toBe('all')
+    expect(harnessRef.current!.messageSourceView).toBe('all')
 
     act(() => {
-      capturedRef.current!.setMessageSourceView('web')
+      harnessRef.current!.setMessageSourceView('web')
     })
-    expect(capturedRef.current!.messageSourceView).toBe('web')
+    expect(harnessRef.current!.messageSourceView).toBe('web')
 
     act(() => {
-      capturedRef.current!.setActiveAgent({ agentId: 'worker-2', role: 'worker' })
+      harnessRef.current!.setActiveAgent({ agentId: 'worker-2', role: 'worker' })
     })
-    expect(capturedRef.current!.messageSourceView).toBe('all')
+    expect(harnessRef.current!.messageSourceView).toBe('all')
   })
 
   it('keeps Web when switching between managers after a manual All override', () => {
-    const harness = capturedRef.current
+    const harness = harnessRef.current
     expect(harness).not.toBeNull()
 
     act(() => {
       harness!.setActiveAgent({ agentId: 'manager-1', role: 'manager' })
     })
-    expect(capturedRef.current!.messageSourceView).toBe('web')
+    expect(harnessRef.current!.messageSourceView).toBe('web')
 
     act(() => {
-      capturedRef.current!.setMessageSourceView('all')
+      harnessRef.current!.setMessageSourceView('all')
     })
-    expect(capturedRef.current!.messageSourceView).toBe('all')
+    expect(harnessRef.current!.messageSourceView).toBe('all')
 
     act(() => {
-      capturedRef.current!.setActiveAgent({ agentId: 'manager-2', role: 'manager' })
+      harnessRef.current!.setActiveAgent({ agentId: 'manager-2', role: 'manager' })
     })
-    expect(capturedRef.current!.messageSourceView).toBe('web')
+    expect(harnessRef.current!.messageSourceView).toBe('web')
   })
 })

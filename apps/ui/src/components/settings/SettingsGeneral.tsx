@@ -54,6 +54,11 @@ import {
   setModelCacheVisualizationEnabledApi,
 } from '@/components/settings/model-cache-visualization-api'
 import {
+  fetchRepositorySettings,
+  updateRepositorySettings,
+} from '@/components/settings/repository-settings-api'
+import { Input } from '@/components/ui/input'
+import {
   fetchAvailableShells,
   updateTerminalShellSettings,
   type AvailableShellsResponse,
@@ -83,6 +88,11 @@ interface SettingsGeneralProps {
   target?: SettingsBackendTarget
   /** When provided, used for all backend requests instead of raw wsUrl. */
   apiClient?: SettingsApiClient
+  /**
+   * Explicit runtime capability for Clone repository settings.
+   * Direct collaboration-server Builder must pass false even when target.kind is builder.
+   */
+  repositoryCloneAvailable?: boolean
 }
 
 interface CompactionModelOption {
@@ -182,11 +192,22 @@ function buildCompactionAvailabilityWarning(view: GetCompactionSettingsResponse 
   return null
 }
 
-export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralProps) {
+export function SettingsGeneral({
+  wsUrl,
+  target,
+  apiClient,
+  repositoryCloneAvailable,
+}: SettingsGeneralProps) {
   useHelpContext('settings.general')
 
   const isCollab = target?.kind === 'collab'
   const isBuilder = !isCollab
+  /**
+   * Prefer the explicit runtime capability. Fall back to builder target only when
+   * the caller omitted the prop (legacy tests); never enable for collab targets.
+   */
+  const repositoriesSettingsEnabled =
+    repositoryCloneAvailable ?? (target?.kind === 'builder')
 
   // Use apiClient for onboarding when available, fall back to wsUrl
   const onboardingSource = apiClient ?? wsUrl
@@ -218,6 +239,14 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [modelCacheVisualizationLoading, setModelCacheVisualizationLoading] = useState(true)
   const [modelCacheVisualizationUpdating, setModelCacheVisualizationUpdating] = useState(false)
   const [modelCacheVisualizationError, setModelCacheVisualizationError] = useState<string | null>(null)
+
+  const [repositoryConfiguredHome, setRepositoryConfiguredHome] = useState('')
+  const [repositoryEffectiveBasePath, setRepositoryEffectiveBasePath] = useState('')
+  const [repositorySource, setRepositorySource] = useState<'configured' | 'last_used' | 'default' | null>(null)
+  const [repositoryLoading, setRepositoryLoading] = useState(true)
+  const [repositoryUpdating, setRepositoryUpdating] = useState(false)
+  const [repositoryError, setRepositoryError] = useState<string | null>(null)
+  const [repositorySuccess, setRepositorySuccess] = useState(false)
 
   // Terminal shell settings — Builder-only
   const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
@@ -567,6 +596,74 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
     }
   }, [isBuilder, modelCacheVisualizationSource])
 
+  const repositorySettingsSource = apiClient ?? wsUrl
+
+  useEffect(() => {
+    if (!repositoriesSettingsEnabled) return
+    let cancelled = false
+    setRepositoryLoading(true)
+    setRepositoryError(null)
+    void fetchRepositorySettings(repositorySettingsSource)
+      .then((settings) => {
+        if (cancelled) return
+        setRepositoryConfiguredHome(settings.configuredHome ?? '')
+        setRepositoryEffectiveBasePath(settings.effectiveBasePath)
+        setRepositorySource(settings.source)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setRepositoryError(err instanceof Error ? err.message : 'Could not load repository settings')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRepositoryLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [repositoriesSettingsEnabled, repositorySettingsSource])
+
+  const handleSaveRepositoryHome = useCallback(() => {
+    if (repositoryUpdating) return
+    setRepositoryUpdating(true)
+    setRepositoryError(null)
+    setRepositorySuccess(false)
+    const next = repositoryConfiguredHome.trim() || null
+    void updateRepositorySettings(repositorySettingsSource, next)
+      .then((settings) => {
+        setRepositoryConfiguredHome(settings.configuredHome ?? '')
+        setRepositoryEffectiveBasePath(settings.effectiveBasePath)
+        setRepositorySource(settings.source)
+        setRepositorySuccess(true)
+      })
+      .catch((err) => {
+        setRepositoryError(err instanceof Error ? err.message : 'Could not save repository home')
+      })
+      .finally(() => {
+        setRepositoryUpdating(false)
+      })
+  }, [repositoryConfiguredHome, repositorySettingsSource, repositoryUpdating])
+
+  const handleResetRepositoryHome = useCallback(() => {
+    if (repositoryUpdating) return
+    setRepositoryUpdating(true)
+    setRepositoryError(null)
+    setRepositorySuccess(false)
+    void updateRepositorySettings(repositorySettingsSource, null)
+      .then((settings) => {
+        setRepositoryConfiguredHome(settings.configuredHome ?? '')
+        setRepositoryEffectiveBasePath(settings.effectiveBasePath)
+        setRepositorySource(settings.source)
+        setRepositorySuccess(true)
+      })
+      .catch((err) => {
+        setRepositoryError(err instanceof Error ? err.message : 'Could not reset repository home')
+      })
+      .finally(() => {
+        setRepositoryUpdating(false)
+      })
+  }, [repositorySettingsSource, repositoryUpdating])
+
   const handleModelCacheVisualizationToggle = useCallback(
     (checked: boolean) => {
       if (modelCacheVisualizationUpdating) return
@@ -716,6 +813,64 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
               </SelectContent>
             </Select>
           </SettingsWithCTA>
+        </SettingsSection>
+      )}
+
+      {repositoriesSettingsEnabled && (
+        <SettingsSection
+          label="Repositories"
+          description="Default base path for Clone repository when creating a project. Configured home wins over last-used clone base; otherwise Forge uses your home directory."
+        >
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="repository-configured-home" className="text-sm font-medium">
+                Configured repository home
+              </Label>
+              <Input
+                id="repository-configured-home"
+                value={repositoryConfiguredHome}
+                onChange={(event) => {
+                  setRepositoryConfiguredHome(event.target.value)
+                  setRepositorySuccess(false)
+                }}
+                placeholder={repositoryEffectiveBasePath || 'Absolute directory path'}
+                disabled={repositoryLoading || repositoryUpdating}
+              />
+              <p className="text-xs text-muted-foreground">
+                Effective default: <span className="font-mono text-foreground">{repositoryEffectiveBasePath || '…'}</span>
+                {repositorySource ? ` (${repositorySource.replace('_', ' ')})` : null}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSaveRepositoryHome}
+                disabled={repositoryLoading || repositoryUpdating}
+              >
+                {repositoryUpdating ? 'Saving…' : 'Save'}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleResetRepositoryHome}
+                disabled={repositoryLoading || repositoryUpdating || !repositoryConfiguredHome}
+              >
+                <RotateCcw className="mr-1.5 size-3.5" />
+                Clear configured home
+              </Button>
+              {repositorySuccess ? (
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <Check className="size-3.5" />
+                  Saved
+                </span>
+              ) : null}
+            </div>
+            {repositoryError ? (
+              <p className="text-xs text-destructive">{repositoryError}</p>
+            ) : null}
+          </div>
         </SettingsSection>
       )}
 

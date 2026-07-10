@@ -56,6 +56,12 @@ import type {
   StopAllAgentsResultEvent,
 } from './manager-events.js'
 import type {
+  RepositoryProjectCreatedEvent,
+  RepositoryProjectCreationCancelResultEvent,
+  RepositoryProjectCreationCancelledEvent,
+  RepositoryProjectCreationProgressEvent,
+} from './repository-project.js'
+import type {
   UnreadCountUpdateEvent,
   UnreadCountsSnapshotEvent,
   UnreadNotificationEvent,
@@ -122,6 +128,7 @@ export * from './conversation-events.js'
 export * from './agent-events.js'
 export * from './cli.js'
 export * from './manager-events.js'
+export * from './repository-project.js'
 export * from './session-events.js'
 export * from './project-agent-events.js'
 export * from './profile-events.js'
@@ -177,6 +184,10 @@ export type ServerEvent =
   | ProfileDefaultModelUpdatedEvent
   | ManagerModelUpdatedEvent
   | ManagerCwdUpdatedEvent
+  | RepositoryProjectCreationProgressEvent
+  | RepositoryProjectCreatedEvent
+  | RepositoryProjectCreationCancelledEvent
+  | RepositoryProjectCreationCancelResultEvent
   | SessionCreatedEvent
   | ArchiveLastUsedHydratedEvent
   | SessionStoppedEvent

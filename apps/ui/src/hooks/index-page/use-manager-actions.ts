@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useRef,
   useState,
   type Dispatch,
   type FormEvent,
@@ -9,12 +10,16 @@ import {
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { seedProjectResources } from '@/components/file-browser/use-file-browser-queries'
+import { fetchRepositorySettings } from '@/components/settings/repository-settings-api'
+import type { CreateProjectSourceMode } from '@/components/chat/CreateManagerDialog'
+import { deriveRepositoryFolderFromUrl } from '@/lib/repository-project-helpers'
 import { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type {
   AgentDescriptor,
   ManagerExactModelSelection,
   ManagerReasoningLevel,
+  RepositoryProjectCreationStage,
 } from '@forge/protocol'
 import type { AppRouteState } from './use-route-state'
 
@@ -61,6 +66,20 @@ export function useManagerActions({
   handleCreateManagerDialogOpenChange: (open: boolean) => void
   handleBrowseDirectory: () => Promise<void>
   handleCreateManager: (event: FormEvent<HTMLFormElement>) => Promise<void>
+  createProjectSourceMode: CreateProjectSourceMode
+  repositoryUrl: string
+  repositoryFolder: string
+  repositoryBasePath: string
+  cloneStage: RepositoryProjectCreationStage | null
+  clonePercent: number | null
+  cloneCancellable: boolean
+  isCancellingClone: boolean
+  handleCreateProjectSourceModeChange: (mode: CreateProjectSourceMode) => void
+  handleRepositoryUrlChange: (value: string) => void
+  handleRepositoryFolderChange: (value: string) => void
+  handleRepositoryBasePathChange: (value: string) => void
+  handleBrowseRepositoryBasePath: () => Promise<void>
+  handleCancelClone: () => Promise<void>
   managerToDelete: AgentDescriptor | null
   deleteManagerError: string | null
   isDeletingManager: boolean
@@ -87,6 +106,21 @@ export function useManagerActions({
   const [browseError, setBrowseError] = useState<string | null>(null)
   const [isPickingDirectory, setIsPickingDirectory] = useState(false)
 
+  const [createProjectSourceMode, setCreateProjectSourceMode] = useState<CreateProjectSourceMode>('local_folder')
+  const [repositoryUrl, setRepositoryUrl] = useState('')
+  const [repositoryFolder, setRepositoryFolder] = useState('')
+  const [repositoryBasePath, setRepositoryBasePath] = useState('')
+  const [folderTouched, setFolderTouched] = useState(false)
+  const [nameTouched, setNameTouched] = useState(false)
+  const [cloneStage, setCloneStage] = useState<RepositoryProjectCreationStage | null>(null)
+  const [clonePercent, setClonePercent] = useState<number | null>(null)
+  const [cloneCancellable, setCloneCancellable] = useState(false)
+  const [isCancellingClone, setIsCancellingClone] = useState(false)
+  const basePathTouchedRef = useRef(false)
+  const settingsLoadGenerationRef = useRef(0)
+  const activeCloneRequestIdRef = useRef<string | null>(null)
+  const activeCloneCancelRef = useRef<(() => Promise<{ accepted: boolean; tooLate: boolean }>) | null>(null)
+
   const [managerToDelete, setManagerToDelete] = useState<AgentDescriptor | null>(null)
   const [deleteManagerError, setDeleteManagerError] = useState<string | null>(null)
   const [isDeletingManager, setIsDeletingManager] = useState(false)
@@ -100,12 +134,60 @@ export function useManagerActions({
   const isSmartCompactingManager = smartCompactingAgentId !== null && smartCompactingAgentId === activeAgentId
 
   const handleNewManagerNameChange = useCallback((value: string) => {
+    setNameTouched(true)
     setNewManagerName(value)
   }, [])
 
   const handleNewManagerCwdChange = useCallback((value: string) => {
     setNewManagerCwd(value)
     setCreateManagerError(null)
+  }, [])
+
+  const handleCreateProjectSourceModeChange = useCallback((mode: CreateProjectSourceMode) => {
+    setCreateProjectSourceMode(mode)
+    setCreateManagerError(null)
+    setBrowseError(null)
+  }, [])
+
+  const handleRepositoryUrlChange = useCallback((value: string) => {
+    setRepositoryUrl(value)
+    setCreateManagerError(null)
+    const derived = deriveRepositoryFolderFromUrl(value)
+    if (derived && !folderTouched) {
+      setRepositoryFolder(derived)
+    }
+    if (derived && !nameTouched) {
+      setNewManagerName(derived)
+    }
+  }, [folderTouched, nameTouched])
+
+  const handleRepositoryFolderChange = useCallback((value: string) => {
+    setFolderTouched(true)
+    setRepositoryFolder(value)
+    setCreateManagerError(null)
+  }, [])
+
+  const handleRepositoryBasePathChange = useCallback((value: string) => {
+    basePathTouchedRef.current = true
+    setRepositoryBasePath(value)
+    setCreateManagerError(null)
+  }, [])
+
+  const resetCloneFields = useCallback(() => {
+    setCreateProjectSourceMode('local_folder')
+    setRepositoryUrl('')
+    setRepositoryFolder('')
+    setRepositoryBasePath('')
+    setFolderTouched(false)
+    setNameTouched(false)
+    basePathTouchedRef.current = false
+    setCloneStage(null)
+    setClonePercent(null)
+    setCloneCancellable(false)
+    setIsCancellingClone(false)
+    activeCloneRequestIdRef.current = null
+    activeCloneCancelRef.current = null
+    settingsLoadGenerationRef.current += 1
   }, [])
 
   const handleNewManagerModelSelectionChange = useCallback((value: ManagerExactModelSelection) => {
@@ -206,16 +288,31 @@ export function useManagerActions({
     setScaffoldForgeResources(true)
     setBrowseError(null)
     setCreateManagerError(null)
+    resetCloneFields()
     setIsCreateManagerDialogOpen(true)
-  }, [activeAgent, agents])
+
+    const generation = ++settingsLoadGenerationRef.current
+    void fetchRepositorySettings(wsUrl)
+      .then((settings) => {
+        if (settingsLoadGenerationRef.current !== generation) return
+        if (basePathTouchedRef.current) return
+        setRepositoryBasePath(settings.effectiveBasePath)
+      })
+      .catch(() => {
+        // Non-blocking: user can still type a base path.
+      })
+  }, [activeAgent, agents, resetCloneFields, wsUrl])
 
   const handleCreateManagerDialogOpenChange = useCallback((open: boolean) => {
-    if (!open && isCreatingManager) {
-      return
+    if (!open) {
+      // Never silently background an active clone / cancel / local create.
+      if (isCreatingManager || isCancellingClone) {
+        return
+      }
     }
 
     setIsCreateManagerDialogOpen(open)
-  }, [isCreatingManager])
+  }, [isCancellingClone, isCreatingManager])
 
   const handleBrowseDirectory = useCallback(async () => {
     const client = clientRef.current
@@ -241,6 +338,57 @@ export function useManagerActions({
     }
   }, [clientRef, newManagerCwd])
 
+  const handleBrowseRepositoryBasePath = useCallback(async () => {
+    const client = clientRef.current
+    if (!client) {
+      return
+    }
+
+    setBrowseError(null)
+    setIsPickingDirectory(true)
+
+    try {
+      const pickedPath = await client.pickDirectory(repositoryBasePath)
+      if (!pickedPath) {
+        return
+      }
+
+      basePathTouchedRef.current = true
+      setRepositoryBasePath(pickedPath)
+      setCreateManagerError(null)
+    } catch (error) {
+      setBrowseError(toErrorMessage(error))
+    } finally {
+      setIsPickingDirectory(false)
+    }
+  }, [clientRef, repositoryBasePath])
+
+  const handleCancelClone = useCallback(async () => {
+    const cancel = activeCloneCancelRef.current
+    if (!cancel || isCancellingClone) {
+      return
+    }
+    setIsCancellingClone(true)
+    setCloneCancellable(false)
+    setCreateManagerError(null)
+    try {
+      const result = await cancel()
+      if (!result.accepted) {
+        // Clear cancelling immediately on ack error / accepted:false / tooLate.
+        setIsCancellingClone(false)
+        if (result.tooLate) {
+          setCreateManagerError(
+            'Cancellation was too late — the repository was already published. This dialog stays open while Forge finishes creating the project.',
+          )
+        }
+      }
+      // accepted:true — keep Cancelling until the create operation settles.
+    } catch (error) {
+      setIsCancellingClone(false)
+      setCreateManagerError(toErrorMessage(error))
+    }
+  }, [isCancellingClone])
+
   const handleCreateManager = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
@@ -250,20 +398,108 @@ export function useManagerActions({
     }
 
     const name = newManagerName.trim()
-    const cwd = newManagerCwd.trim()
 
     if (!name) {
       setCreateManagerError('Manager name is required.')
       return
     }
 
-    if (!cwd) {
-      setCreateManagerError('Manager working directory is required.')
+    if (!newManagerModelSelection) {
+      setCreateManagerError('A model must be selected.')
       return
     }
 
-    if (!newManagerModelSelection) {
-      setCreateManagerError('A model must be selected.')
+    if (createProjectSourceMode === 'clone_repository') {
+      const url = repositoryUrl.trim()
+      const folder = repositoryFolder.trim()
+      const basePath = repositoryBasePath.trim()
+
+      if (!url) {
+        setCreateManagerError('Repository URL is required.')
+        return
+      }
+      if (!folder) {
+        setCreateManagerError('Repository folder is required.')
+        return
+      }
+      if (!basePath) {
+        setCreateManagerError('Destination base path is required.')
+        return
+      }
+
+      setCreateManagerError(null)
+      setIsCreatingManager(true)
+      setCloneStage('validating')
+      setClonePercent(null)
+      setCloneCancellable(true)
+
+      try {
+        const operation = client.createRepositoryProject(
+          {
+            name,
+            repositoryUrl: url,
+            repositoryBasePath: basePath,
+            repositoryFolder: folder,
+            modelSelection: newManagerModelSelection,
+            reasoningLevel: newManagerReasoningLevel,
+          },
+          {
+            onProgress: (progress) => {
+              setCloneStage(progress.stage)
+              setClonePercent(progress.percent ?? null)
+              setCloneCancellable(progress.stage === 'validating' || progress.stage === 'cloning')
+            },
+          },
+        )
+
+        activeCloneRequestIdRef.current = operation.requestId
+        activeCloneCancelRef.current = operation.cancel
+
+        const result = await operation.promise
+        const manager = result.manager
+
+        navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
+        client.subscribeToAgent(manager.agentId)
+
+        if (scaffoldForgeResources) {
+          const profileId = manager.profileId ?? manager.agentId
+          seedProjectResources(wsUrl, { profileId, sessionAgentId: manager.agentId }).catch((err) => {
+            console.warn('Failed to seed .forge project resources:', err)
+          })
+        }
+
+        setIsCreateManagerDialogOpen(false)
+        setNewManagerName('')
+        setNewManagerCwd('')
+        setNewManagerModelSelection(undefined)
+        setNewManagerReasoningLevel(undefined)
+        setScaffoldForgeResources(true)
+        setBrowseError(null)
+        setCreateManagerError(null)
+        resetCloneFields()
+      } catch (error) {
+        const message = toErrorMessage(error)
+        if (/clone_cancelled/i.test(message) || /cancelled/i.test(message)) {
+          setCreateManagerError(null)
+        } else {
+          setCreateManagerError(message.replace(/^[A-Z0-9_]+:\s*/i, ''))
+        }
+      } finally {
+        setIsCreatingManager(false)
+        setIsCancellingClone(false)
+        setCloneStage(null)
+        setClonePercent(null)
+        setCloneCancellable(false)
+        activeCloneRequestIdRef.current = null
+        activeCloneCancelRef.current = null
+      }
+      return
+    }
+
+    const cwd = newManagerCwd.trim()
+
+    if (!cwd) {
+      setCreateManagerError('Manager working directory is required.')
       return
     }
 
@@ -306,6 +542,7 @@ export function useManagerActions({
       setScaffoldForgeResources(true)
       setBrowseError(null)
       setCreateManagerError(null)
+      resetCloneFields()
     } catch (error) {
       setCreateManagerError(toErrorMessage(error))
     } finally {
@@ -314,11 +551,16 @@ export function useManagerActions({
     }
   }, [
     clientRef,
+    createProjectSourceMode,
     navigateToRoute,
     newManagerCwd,
     newManagerModelSelection,
     newManagerReasoningLevel,
     newManagerName,
+    repositoryBasePath,
+    repositoryFolder,
+    repositoryUrl,
+    resetCloneFields,
     scaffoldForgeResources,
     wsUrl,
   ])
@@ -400,6 +642,20 @@ export function useManagerActions({
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,
     handleCreateManager,
+    createProjectSourceMode,
+    repositoryUrl,
+    repositoryFolder,
+    repositoryBasePath,
+    cloneStage,
+    clonePercent,
+    cloneCancellable,
+    isCancellingClone,
+    handleCreateProjectSourceModeChange,
+    handleRepositoryUrlChange,
+    handleRepositoryFolderChange,
+    handleRepositoryBasePathChange,
+    handleBrowseRepositoryBasePath,
+    handleCancelClone,
     managerToDelete,
     deleteManagerError,
     isDeletingManager,

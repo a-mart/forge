@@ -10,6 +10,10 @@ import {
 import type { UnreadTracker } from "../../swarm/unread-tracker.js";
 import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/model-presets.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
+import {
+  RepositoryProjectCreationError,
+  type RepositoryProjectCreationService,
+} from "../../swarm/repository-project-creation-service.js";
 
 export interface ManagerCommandRouteContext {
   command: ClientCommand;
@@ -21,6 +25,7 @@ export interface ManagerCommandRouteContext {
   broadcastToSubscribed: (event: ServerEvent) => void;
   handleDeletedAgentSubscriptions: (deletedAgentIds: Set<string>) => void;
   unreadTracker?: UnreadTracker;
+  repositoryProjectCreationService?: RepositoryProjectCreationService;
 }
 
 export async function handleManagerCommand(context: ManagerCommandRouteContext): Promise<boolean> {
@@ -33,7 +38,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     send,
     broadcastToSubscribed,
     handleDeletedAgentSubscriptions,
-    unreadTracker
+    unreadTracker,
+    repositoryProjectCreationService,
   } = context;
 
   if (command.type === "create_manager") {
@@ -71,6 +77,107 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
       });
     }
 
+    return true;
+  }
+
+  if (command.type === "create_repository_project") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId,
+      });
+      return true;
+    }
+
+    if (!repositoryProjectCreationService) {
+      send(socket, {
+        type: "error",
+        code: "CREATE_REPOSITORY_PROJECT_FAILED",
+        message: "Repository project creation is unavailable.",
+        requestId: command.requestId,
+      });
+      return true;
+    }
+
+    if (!command.requestId) {
+      send(socket, {
+        type: "error",
+        code: "CREATE_REPOSITORY_PROJECT_FAILED",
+        message: "create_repository_project.requestId is required.",
+      });
+      return true;
+    }
+
+    try {
+      const result = await repositoryProjectCreationService.create({
+        requestId: command.requestId,
+        name: command.name,
+        repositoryUrl: command.repositoryUrl,
+        repositoryBasePath: command.repositoryBasePath,
+        repositoryFolder: command.repositoryFolder,
+        modelSelection: command.modelSelection,
+        ...(command.reasoningLevel !== undefined ? { reasoningLevel: command.reasoningLevel } : {}),
+        managerContextId,
+        socket,
+      });
+
+      broadcastToSubscribed({
+        type: "repository_project_created",
+        manager: result.manager,
+        repositoryPath: result.repositoryPath,
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      if (
+        error instanceof RepositoryProjectCreationError &&
+        error.code === "clone_cancelled"
+      ) {
+        send(socket, {
+          type: "repository_project_creation_cancelled",
+          requestId: command.requestId,
+        });
+        return true;
+      }
+
+      const code =
+        error instanceof RepositoryProjectCreationError
+          ? error.code.toUpperCase()
+          : "CREATE_REPOSITORY_PROJECT_FAILED";
+      const message =
+        error instanceof Error ? error.message : String(error);
+      send(socket, {
+        type: "error",
+        code,
+        message,
+        requestId: command.requestId,
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "cancel_repository_project_creation") {
+    if (!repositoryProjectCreationService) {
+      send(socket, {
+        type: "error",
+        code: "CANCEL_REPOSITORY_PROJECT_CREATION_FAILED",
+        message: "Repository project creation is unavailable.",
+        requestId: command.requestId,
+      });
+      return true;
+    }
+
+    const result = repositoryProjectCreationService.cancel(command.operationRequestId, socket);
+    send(socket, {
+      type: "repository_project_creation_cancel_result",
+      requestId: command.requestId,
+      operationRequestId: command.operationRequestId,
+      accepted: result.accepted,
+      tooLate: result.tooLate,
+    });
     return true;
   }
 

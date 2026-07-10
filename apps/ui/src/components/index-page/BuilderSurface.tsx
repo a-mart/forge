@@ -105,6 +105,11 @@ interface BuilderSurfaceProps {
   navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void
   /** Same-origin hosted collaboration Builder still browses server directories. */
   directServerDirectoryBrowser?: { canCreateDirectory: boolean }
+  /**
+   * Explicit capability for Clone repository / Repositories settings.
+   * False on direct collaboration-server Builder shells.
+   */
+  repositoryCloneAvailable?: boolean
   collaborationModeSwitch?: {
     activeSurface: ActiveSurface
     onSelectSurface: (surface: ActiveSurface) => void
@@ -117,6 +122,7 @@ export function BuilderSurface({
   activeView,
   navigateToRoute: navigateToOuterRoute,
   directServerDirectoryBrowser,
+  repositoryCloneAvailable,
   collaborationModeSwitch,
 }: BuilderSurfaceProps) {
   // This API is intentionally pinned to the local Builder URL. It must never
@@ -136,6 +142,8 @@ export function BuilderSurface({
   // chips render only for authors other than this user (SPEC §5.5).
   const activeOriginMeta = useOriginMeta(activeOriginId)
   const usesServerDirectoryBrowser = isRemoteOriginActive || Boolean(directServerDirectoryBrowser)
+  const cloneRepositoryEnabled =
+    repositoryCloneAvailable !== false && !isRemoteOriginActive && !usesServerDirectoryBrowser
   const activeOriginCurrentUserId = isRemoteOriginActive
     ? activeOriginMeta?.currentUser?.userId ?? null
     : null
@@ -540,6 +548,20 @@ export function BuilderSurface({
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,
     handleCreateManager,
+    createProjectSourceMode,
+    repositoryUrl,
+    repositoryFolder,
+    repositoryBasePath,
+    cloneStage,
+    clonePercent,
+    cloneCancellable,
+    handleCreateProjectSourceModeChange,
+    handleRepositoryUrlChange,
+    handleRepositoryFolderChange,
+    handleRepositoryBasePathChange,
+    handleBrowseRepositoryBasePath,
+    handleCancelClone,
+    isCancellingClone,
     isCompactingManager,
     handleCompactManager,
     isSmartCompactingManager,
@@ -883,6 +905,7 @@ export function BuilderSurface({
                 promptChangeKey={state.promptChangeKey}
                 specialistChangeKey={state.specialistChangeKey}
                 modelConfigChangeKey={state.modelConfigChangeKey}
+                repositoryCloneAvailable={cloneRepositoryEnabled}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',
@@ -1220,6 +1243,27 @@ export function BuilderSurface({
           scaffoldForgeResources,
           createManagerError,
           browseError,
+          cloneRepositoryEnabled,
+          sourceMode: createProjectSourceMode,
+          repositoryUrl,
+          repositoryFolder,
+          repositoryBasePath,
+          cloneStage,
+          clonePercent,
+          cloneCancellable,
+          isCancellingClone,
+          onSourceModeChange: handleCreateProjectSourceModeChange,
+          onRepositoryUrlChange: handleRepositoryUrlChange,
+          onRepositoryFolderChange: handleRepositoryFolderChange,
+          onRepositoryBasePathChange: handleRepositoryBasePathChange,
+          onBrowseRepositoryBasePath: !usesServerDirectoryBrowser
+            ? () => {
+                void handleBrowseRepositoryBasePath()
+              }
+            : undefined,
+          onCancelClone: () => {
+            void handleCancelClone()
+          },
           onOpenChange: handleCreateManagerDialogOpenChange,
           onNameChange: handleNewManagerNameChange,
           onCwdChange: handleNewManagerCwdChange,

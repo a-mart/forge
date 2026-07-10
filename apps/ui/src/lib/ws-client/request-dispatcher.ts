@@ -37,7 +37,14 @@ export class RequestDispatcher {
 
   nextRequestId(prefix: string): string {
     this.requestCounter += 1
-    return `${prefix}-${Date.now()}-${this.requestCounter}`
+    try {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return `${prefix}-${crypto.randomUUID()}`
+      }
+    } catch {
+      // fall through
+    }
+    return `${prefix}-${Date.now()}-${this.requestCounter}-${Math.random().toString(36).slice(2, 10)}`
   }
 
   // ---------------------------------------------------------------------------

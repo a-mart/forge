@@ -35,7 +35,7 @@ const stagedBuiltinSpecialistsDir = path.join(forgeResourcesDir, 'apps', 'backen
 const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
-const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
+export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
   {
     name: 'sharp',
     optional: false,
@@ -66,7 +66,7 @@ const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
   },
   {
     name: 'koffi',
-    optional: true,
+    optional: false,
     validateLoadedModule: (loadedModule) =>
       typeof loadedModule?.struct === 'function' ? null : 'expected a struct() export',
   },

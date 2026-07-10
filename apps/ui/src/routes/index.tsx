@@ -322,6 +322,7 @@ export function IndexPage() {
             directServerDirectoryBrowser={isDirectCollaborationServerBuilder
               ? { canCreateDirectory: collabSession.capabilities?.createDirectory === true }
               : undefined}
+            repositoryCloneAvailable={!isDirectCollaborationServerBuilder}
             collaborationModeSwitch={
               activeView === 'chat' && ((collabSession.isCollabEnabled && collabSession.isAdmin) || hasRemoteCollabServer)
                 ? {

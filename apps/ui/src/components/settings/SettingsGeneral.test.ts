@@ -138,6 +138,16 @@ vi.mock('@/components/settings/compaction-settings-api', () => ({
   updateCompactionSettings: (...args: unknown[]) => compactionApiMock.updateCompactionSettings(...args),
 }))
 
+const repositoryApiMock = vi.hoisted(() => ({
+  fetchRepositorySettings: vi.fn(),
+  updateRepositorySettings: vi.fn(),
+}))
+
+vi.mock('@/components/settings/repository-settings-api', () => ({
+  fetchRepositorySettings: (...args: unknown[]) => repositoryApiMock.fetchRepositorySettings(...args),
+  updateRepositorySettings: (...args: unknown[]) => repositoryApiMock.updateRepositorySettings(...args),
+}))
+
 const modelPresetMock = vi.hoisted(() => ({
   fetchModelPresets: vi.fn(),
 }))
@@ -278,6 +288,18 @@ beforeEach(() => {
       supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
     },
   ])
+  repositoryApiMock.fetchRepositorySettings.mockResolvedValue({
+    configuredHome: null,
+    lastUsedBasePath: null,
+    effectiveBasePath: '/tmp/home',
+    source: 'default',
+  })
+  repositoryApiMock.updateRepositorySettings.mockResolvedValue({
+    configuredHome: '/tmp/repos',
+    lastUsedBasePath: null,
+    effectiveBasePath: '/tmp/repos',
+    source: 'configured',
+  })
 })
 
 afterEach(() => {
@@ -684,6 +706,16 @@ describe('SettingsGeneral — collab target', () => {
     expect(modelPresetMock.fetchModelPresets).not.toHaveBeenCalled()
   })
 
+  it('hides Repositories and does not hit repository settings routes in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(container.textContent).not.toContain('Repositories')
+    expect(container.textContent).not.toContain('Configured repository home')
+    expect(repositoryApiMock.fetchRepositorySettings).not.toHaveBeenCalled()
+  })
+
   it('still renders Cortex settings in collab mode', async () => {
     renderCollab()
     await flush()
@@ -900,5 +932,66 @@ describe('SettingsGeneral — collab target', () => {
       expect.any(String),
       true,
     )
+  })
+})
+
+describe('SettingsGeneral — builder target repositories', () => {
+  function renderBuilder(): void {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsGeneral, {
+          wsUrl: 'ws://127.0.0.1:47187',
+          target: {
+            kind: 'builder',
+            label: 'Local Builder',
+            description: 'Local backend.',
+            wsUrl: 'ws://127.0.0.1:47187',
+            apiBaseUrl: 'http://127.0.0.1:47187/',
+            fetchCredentials: 'same-origin',
+            requiresAdmin: false,
+            availableTabs: ['general', 'auth', 'models', 'about'],
+          },
+        }),
+      )
+    })
+  }
+
+  it('loads and renders Repositories for an explicit builder target', async () => {
+    renderBuilder()
+    await flush()
+    await flush()
+
+    expect(container.textContent).toContain('Repositories')
+    expect(container.textContent).toContain('Configured repository home')
+    expect(repositoryApiMock.fetchRepositorySettings).toHaveBeenCalled()
+  })
+
+  it('hides Repositories when repositoryCloneAvailable is false on a builder target (direct collab)', async () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsGeneral, {
+          wsUrl: 'ws://127.0.0.1:47187',
+          repositoryCloneAvailable: false,
+          target: {
+            kind: 'builder',
+            label: 'Hosted collab builder',
+            description: 'Direct collaboration server builder shell.',
+            wsUrl: 'ws://127.0.0.1:47187',
+            apiBaseUrl: 'http://127.0.0.1:47187/',
+            fetchCredentials: 'same-origin',
+            requiresAdmin: false,
+            availableTabs: ['general', 'auth', 'models', 'about'],
+          },
+        }),
+      )
+    })
+    await flush()
+    await flush()
+
+    expect(container.textContent).not.toContain('Repositories')
+    expect(container.textContent).not.toContain('Configured repository home')
+    expect(repositoryApiMock.fetchRepositorySettings).not.toHaveBeenCalled()
   })
 })

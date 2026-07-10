@@ -12,6 +12,10 @@ import type {
   CollaborationUserMessageCommand,
 } from './collaboration.js'
 import type {
+  CancelRepositoryProjectCreationCommandFields,
+  CreateRepositoryProjectCommandFields,
+} from './repository-project.js'
+import type {
   AgentSessionPurpose,
   ChoiceAnswer,
   DeliveryMode,
@@ -63,6 +67,8 @@ export type ClientCommand =
   | { type: 'kill_agent'; agentId: string }
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }
   | ({ type: 'create_manager'; name: string; cwd: string; reasoningLevel?: ManagerReasoningLevel; requestId?: string } & ManagerModelSelectionInput)
+  | ({ type: 'create_repository_project' } & CreateRepositoryProjectCommandFields)
+  | ({ type: 'cancel_repository_project_creation' } & CancelRepositoryProjectCreationCommandFields)
   | { type: 'delete_manager'; managerId: string; requestId?: string }
   | ({
       type: 'update_profile_default_model'

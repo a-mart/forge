@@ -63,6 +63,10 @@ The OpenAI Codex Responses transport settings above apply to normal Codex model 
 
 Active Work Plans are currently unavailable. Settings → General has no Active Work Plans toggle, managers do not receive the `task` tool or Active Work guidance, and the live Active Work card/header and task-snapshot hydration are unavailable. Existing `shared/config/work-plans.json` files are preserved as compatibility data, but runtime reads stay disabled and setting writes are ignored. Older `work_plan_created` receipts may still render in chat as read-only records from their creation snapshots.
 
+### Repositories
+
+Settings → General → **Repositories** (Builder/local only) stores clone defaults in `shared/config/repository-settings.json`. Precedence for Clone repository is configured home → last successfully used clone base → user home. Collaboration admin surfaces do not load this route.
+
 ### Compaction
 
 Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. SDK/native runtimes, including Claude SDK, and xAI/Grok are not controlled by these settings.
@@ -166,6 +170,7 @@ All persistent state lives in a single data directory:
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   ├── work-plans.json                # Preserved parked Active Work Plans compatibility data
 │   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
+│   │   ├── repository-settings.json       # Builder-only clone repository base path defaults
 │   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
 │   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
 │   │   ├── collaboration/

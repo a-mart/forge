@@ -1,8 +1,12 @@
-General Settings covers editor integration, sidebar preferences, compaction, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
+General Settings covers editor integration, sidebar preferences, repository clone defaults, compaction, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
 
 ## Appearance
 
 Open **Settings > Appearance** to choose Light, Dark, System, or a custom local appearance. Choose which code editor opens artifact file links from General. Supported editors are VS Code Insiders, VS Code, and Cursor.
+
+## Repositories
+
+Use **Settings > General > Repositories** to set a configured repository home for **Clone repository** during project creation. Precedence is: configured home → last successfully used clone base → your home directory. Clearing the configured home falls back to last-used or home. This section is local Builder only; collaboration-server Builder shells hide it and do not call the repositories settings API. Private clones require ambient noninteractive Git/SSH credentials on the Builder host.
 
 ## Sidebar
 

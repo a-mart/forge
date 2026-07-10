@@ -230,4 +230,112 @@ describe('CreateManagerDialog', () => {
       expect(checkbox!.disabled).toBe(true)
     })
   })
+
+  describe('clone repository source mode', () => {
+    function cloneProps(overrides: Record<string, unknown> = {}) {
+      return defaultProps({
+        cloneRepositoryEnabled: true,
+        sourceMode: 'clone_repository',
+        repositoryUrl: 'https://github.com/org/repo.git',
+        repositoryFolder: 'repo',
+        repositoryBasePath: '/tmp/repos',
+        onSourceModeChange: vi.fn(),
+        onRepositoryUrlChange: vi.fn(),
+        onRepositoryFolderChange: vi.fn(),
+        onRepositoryBasePathChange: vi.fn(),
+        onCancelClone: vi.fn(),
+        ...overrides,
+      })
+    }
+
+    it('exposes toggle source selector semantics with aria-pressed', async () => {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(createElement(CreateManagerDialog, cloneProps({ sourceMode: 'local_folder' })))
+      })
+
+      const group = document.body.querySelector('[aria-label="Project source"]')
+      expect(group).toBeTruthy()
+      expect(group?.getAttribute('role')).not.toBe('radiogroup')
+      const toggles = group!.querySelectorAll('button[aria-pressed]')
+      expect(toggles.length).toBe(2)
+      expect(toggles[0]?.getAttribute('aria-pressed')).toBe('true')
+      expect(toggles[1]?.getAttribute('aria-pressed')).toBe('false')
+      expect(toggles[0]?.getAttribute('role')).not.toBe('radio')
+    })
+
+    it('blocks generic dismiss while cloning and keeps Cancel clone through ack', async () => {
+      const onOpenChange = vi.fn()
+      const onCancelClone = vi.fn()
+
+      await act(async () => {
+        root = createRoot(container)
+        root.render(
+          createElement(
+            CreateManagerDialog,
+            cloneProps({
+              isCreatingManager: true,
+              cloneCancellable: true,
+              cloneStage: 'cloning',
+              clonePercent: 40,
+              onOpenChange,
+              onCancelClone,
+            }),
+          ),
+        )
+      })
+
+      const status = document.body.querySelector('[role="status"][aria-live="polite"]')
+      expect(status?.textContent).toMatch(/Cloning|40/)
+
+      const cancelClone = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Cancel clone',
+      )
+      expect(cancelClone).toBeTruthy()
+      expect(cancelClone!.disabled).toBe(false)
+
+      const genericCancel = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Cancel',
+      )
+      expect(genericCancel).toBeUndefined()
+
+      await act(async () => {
+        cancelClone?.click()
+      })
+      expect(onCancelClone).toHaveBeenCalledOnce()
+      expect(onOpenChange).not.toHaveBeenCalled()
+    })
+
+    it('keeps dialog open while cancelling and associates errors with alert', async () => {
+      const onOpenChange = vi.fn()
+
+      await act(async () => {
+        root = createRoot(container)
+        root.render(
+          createElement(
+            CreateManagerDialog,
+            cloneProps({
+              isCancellingClone: true,
+              cloneCancellable: true,
+              createManagerError: 'Clone was cancelled too late.',
+              onOpenChange,
+            }),
+          ),
+        )
+      })
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.getAttribute('aria-describedby')).toBe('create-manager-error')
+      const alert = document.body.querySelector('#create-manager-error[role="alert"]')
+      expect(alert?.textContent).toContain('too late')
+
+      const status = document.body.querySelector('[role="status"]')
+      expect(status?.textContent).toMatch(/Cancelling/)
+
+      const cancellingButton = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Cancelling…',
+      )
+      expect(cancellingButton?.disabled).toBe(true)
+    })
+  })
 })

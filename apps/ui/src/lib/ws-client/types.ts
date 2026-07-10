@@ -91,6 +91,12 @@ export type ProjectAgentExternalDirectoryResult = {
 
 export type WsRequestResultMap = {
   create_manager: AgentDescriptor
+  create_repository_project: { manager: AgentDescriptor; repositoryPath: string }
+  cancel_repository_project_creation: {
+    operationRequestId: string
+    accepted: boolean
+    tooLate: boolean
+  }
   delete_manager: { managerId: string }
   update_profile_default_model: { profileId: string }
   update_manager_model: { managerId: string }
@@ -162,6 +168,9 @@ export interface ManagerWsAgentEventContext {
   applyManagerCreated: (manager: AgentDescriptor) => void
   applyManagerDeleted: (managerId: string) => void
   requestTracker: RequestTrackerAdapter
+  onRepositoryProjectCreationProgress?: (
+    event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>,
+  ) => void
 }
 
 export interface ManagerWsSessionEventContext {

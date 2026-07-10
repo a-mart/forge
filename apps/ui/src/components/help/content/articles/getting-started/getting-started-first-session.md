@@ -2,15 +2,25 @@ Everything in Forge starts with a manager session. Here's how to get one running
 
 ## Create a manager
 
-Click the **+** button at the top of the sidebar to create a new project. You'll need three things:
+Click the **+** button at the top of the sidebar to create a new project. You can either use an existing local folder or clone a repository first.
+
+### Use local folder
+
+You'll need three things:
 
 - **Name** — something that identifies the project or workstream. You can rename it later.
 - **Working directory** — the project folder where workers will operate. Each worker gets its own worktree branched from this directory.
 - **Model** — which LLM powers the manager. Claude Sonnet and GPT models both work well. You can change this later in Settings, and supported models also let you choose a reasoning level.
 
+### Clone repository
+
+Choose **Clone repository** to clone over HTTPS or SSH into a destination base path, then create the project in the cloned folder. Forge derives an editable folder name from the URL and shows the final path before cloning.
+
+Private repositories need ambient system Git or SSH credentials already available noninteractively (Forge does not prompt for passwords or tokens during clone). You can cancel only before the repository is published; after publication this dialog stays open while Forge finishes creating the project. Destination collisions are refused (no overwrite). Configure the default base path under **Settings → General → Repositories** (configured home, then last-used base, otherwise your home directory). Clone repository is available on local Builder only — not on collaboration-server Builder shells.
+
 By default, the Create Project dialog also seeds repo-root `.forge` project resources. Leave that checked if you want the starter `.forge/` tree; turn it off to skip the scaffold.
 
-Click **Create** and the manager appears in the sidebar.
+Click **Create** (or **Clone & create project**) and the manager appears in the sidebar.
 
 ## Send your first message
 

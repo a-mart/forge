@@ -174,6 +174,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   ├── work-plans.json                # Preserved parked Active Work Plans compatibility data; runtime ignores writes
 │   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
+│   │   ├── repository-settings.json       # Builder-only clone base path (configured home + last-used)
 │   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
 │   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
 │   │   ├── collaboration/
