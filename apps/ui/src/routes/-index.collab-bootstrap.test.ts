@@ -43,6 +43,10 @@ vi.mock('@/components/index-page/CollabSurface', () => ({
   CollabSurface: () => createElement('div', { 'data-testid': 'collab-surface' }, 'Collab surface'),
 }))
 
+vi.mock('@/components/index-page/CollaborationInlineLoginDialog', () => ({
+  CollaborationInlineLoginDialog: () => createElement('div', { 'data-testid': 'collaboration-inline-login' }, 'Inline sign in'),
+}))
+
 vi.mock('@/hooks/index-page/use-route-state', () => ({
   DEFAULT_MANAGER_AGENT_ID: '__default__',
   useRouteState: () => routeStateMock.value,
@@ -247,7 +251,7 @@ describe('IndexPage collab bootstrap gating', () => {
     }, true)
   })
 
-  it('keeps Builder accessible when collab is enabled but user is not authenticated', () => {
+  it('shows inline sign-in instead of opening Builder WebSocket or redirecting to Settings when direct collab Builder is unauthenticated', () => {
     const navigateToRoute = vi.fn()
     routeStateMock.value = {
       routeState: {
@@ -270,13 +274,13 @@ describe('IndexPage collab bootstrap gating', () => {
 
     renderPage()
 
-    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(container.querySelector('[data-testid="collaboration-inline-login"]')?.textContent).toContain('Inline sign in')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
     expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
-    expect(navigateToRoute).toHaveBeenCalledWith({
-      view: 'chat',
-      agentId: '__default__',
-      surface: 'builder',
-    }, true)
+    expect(navigateToRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'builder' }),
+      true,
+    )
   })
 
   it('does not redirect a member away from forced collab settings route', () => {
@@ -475,7 +479,7 @@ describe('IndexPage collab bootstrap gating', () => {
     expect(navigateToRoute).not.toHaveBeenCalled()
   })
 
-  it('still bounces unauthenticated same-origin collab users to builder', () => {
+  it('shows inline sign-in after bouncing an unauthenticated same-origin collab route to Builder', () => {
     // When no remote server is configured (same-origin collab), unauthenticated
     // users should still be bounced to builder.
     collabServerUrlMock.value = null
@@ -501,8 +505,9 @@ describe('IndexPage collab bootstrap gating', () => {
 
     renderPage()
 
-    // Same-origin unauthenticated: should render builder, not collab
-    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    // Same-origin unauthenticated: pause Builder transport behind sign-in.
+    expect(container.querySelector('[data-testid="collaboration-inline-login"]')?.textContent).toContain('Inline sign in')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
     expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
     // Should navigate back to builder surface
     expect(navigateToRoute).toHaveBeenCalledWith(
@@ -511,7 +516,7 @@ describe('IndexPage collab bootstrap gating', () => {
     )
   })
 
-  it('bounces unauthenticated users to builder when configured collab URL is same-origin as backend', () => {
+  it('shows inline sign-in when configured collab URL is same-origin as backend', () => {
     // Regression: an explicitly configured URL that resolves to the same origin
     // as the Forge backend should behave identically to "no configured URL" for
     // the unauthenticated bounce — only truly remote origins bypass the bounce.
@@ -538,8 +543,9 @@ describe('IndexPage collab bootstrap gating', () => {
 
     renderPage()
 
-    // Same-origin configured URL: unauthenticated users must bounce to builder
-    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    // Same-origin configured URL: pause Builder transport behind sign-in.
+    expect(container.querySelector('[data-testid="collaboration-inline-login"]')?.textContent).toContain('Inline sign in')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
     expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
     expect(navigateToRoute).toHaveBeenCalledWith(
       expect.objectContaining({ surface: 'builder' }),

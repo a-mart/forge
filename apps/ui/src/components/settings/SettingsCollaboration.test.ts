@@ -803,7 +803,7 @@ describe('SettingsCollaboration', () => {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'user@test.com', password: 'secret123' }),
+          body: JSON.stringify({ email: 'user@test.com', password: 'secret123', rememberMe: true }),
         })
       })
     })

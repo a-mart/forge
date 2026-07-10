@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import { BuilderSurface } from '@/components/index-page/BuilderSurface'
 import { CollabSurface } from '@/components/index-page/CollabSurface'
+import { CollaborationInlineLoginDialog } from '@/components/index-page/CollaborationInlineLoginDialog'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   useRouteState,
@@ -125,6 +126,10 @@ export function IndexPage() {
     apiBaseUrl: resolvedCollabTarget?.apiBaseUrl,
   })
   const isCollabUnauthenticated = shouldLoadCollabSession && collabSession.hasLoaded && collabSession.isCollabEnabled && !collabSession.isAdmin && !collabSession.isMember
+  // A collaboration server serves Builder directly at its own origin. Gate
+  // that local Builder transport on the explicit `/me` probe so an expired or
+  // missing session does not turn into an unactionable WebSocket retry loop.
+  const requiresInlineBuilderSignIn = isCollabUnauthenticated && !resolvedCollabTarget?.isRemote
   const shouldBlockOnCollabBootstrap = shouldLoadCollabSession && !collabSession.hasLoaded
 
   // Detect forced collab settings route — do not fall back to builder for these
@@ -291,6 +296,15 @@ export function IndexPage() {
             }}
             onSignIn={(apiBaseUrl) => {
               navigateToRoute({ view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: apiBaseUrl })
+            }}
+          />
+        ) : requiresInlineBuilderSignIn ? (
+          <CollaborationInlineLoginDialog
+            apiBaseUrl={resolvedCollabTarget?.apiBaseUrl ?? window.location.origin}
+            onAuthenticated={() => {
+              // Reloading recreates the local Builder WebSocket with the new
+              // HttpOnly cookie while retaining the requested URL/route.
+              window.location.reload()
             }}
           />
         ) : (

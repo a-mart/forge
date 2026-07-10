@@ -399,7 +399,9 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: signInEmail.trim(), password: signInPassword }),
+          // Keep the Better Auth session persistent across browser restarts.
+          // This is its default, but explicit is safer for every client flow.
+          body: JSON.stringify({ email: signInEmail.trim(), password: signInPassword, rememberMe: true }),
         })
 
         if (!response.ok) {
