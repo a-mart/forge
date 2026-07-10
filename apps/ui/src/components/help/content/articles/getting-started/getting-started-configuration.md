@@ -2,13 +2,13 @@ Forge needs an LLM provider to run agents. Everything else is optional but worth
 
 ## Connect a provider
 
-Open **Settings** (gear icon in the sidebar) and go to the **Auth** tab. You can sign in with OAuth or paste an API key for:
+Open **Settings** (gear icon in the sidebar) and go to **Authentication**. Configure at least one provider that supports the agents and models you want:
 
-- **Anthropic** — Claude models (Sonnet, Opus, Haiku)
-- **Claude SDK** — native Claude Code CLI OAuth; run `claude login` first
-- **OpenAI** — GPT models and Codex
+- **Anthropic** and **OpenAI** use the current OAuth account-pool cards.
+- **xAI**, **OpenRouter**, and **Cursor SDK** use masked key/token rows.
+- **Claude SDK** uses external Claude Code CLI OAuth; run `claude login` first.
 
-You need at least one provider connected. Both can be active at the same time — different managers or specialists can use different providers.
+Status and auth-type badges appear only on applicable cards. You only need one compatible provider to run agents, while multiple configured providers let different managers or specialists use different models.
 
 ## Choose your model
 

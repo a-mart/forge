@@ -1,21 +1,21 @@
-The Authentication pane lists each provider on its own row. Every row shows the provider label and an auth-mode badge so you can see at a glance whether Forge is using OAuth or an API key.
+The Authentication pane manages model-provider credentials for the selected Builder or Collaboration backend. Its controls differ by provider: status and auth-type badges appear only on applicable cards.
 
 ## Supported providers
 
-- **Anthropic** — Claude-based workers and managers. Supports either OAuth or API key auth.
-- **OpenAI** — Codex runtime sessions and voice transcription. Supports OAuth, API key auth, or Forge Auth broker mode for OpenAI/Codex in v1.
-- **Claude SDK** — Native Claude Code CLI OAuth path for Claude models. OAuth only.
-- **Cursor SDK** — Native Cursor SDK runtime for Composer 2.5 and Cursor Grok 4.5 manager/worker sessions when those catalog models are visible. Configure it through the Cursor SDK auth row in Settings, shared secrets, or the environment. Background auth/transport failures stay inside the worker runtime and surface as worker failures, not app crashes.
-- **xAI** — Grok-based workers.
+- **Anthropic** — Claude-based workers and managers. The current card manages an OAuth account pool.
+- **OpenAI** — GPT and Codex runtime sessions. The current card manages an OAuth account pool and the OpenAI/Codex-only Forge Auth broker mode.
+- **xAI** — A masked API-key row for native Grok models.
+- **OpenRouter** — A masked API-key row for user-added OpenRouter models.
+- **Cursor SDK** — A masked key/token row for Composer 2.5 and Cursor Grok 4.5 sessions when those catalog models are visible. Shared secrets and environment configuration are also supported. Background auth/transport failures stay inside the worker runtime and surface as worker failures, not app crashes.
+- **Claude SDK** — Not a Settings credential row. Run `claude login` to provide the external Claude Code CLI OAuth credentials used by this runtime.
 
 ## Configuring a provider
 
 1. Open **Settings > Authentication**.
-2. Find the provider row you want.
-3. Use the auth control shown on that row to connect with OAuth or enter an API key, depending on the provider and your setup.
-4. Click **Save** if prompted.
+2. For OpenAI or Anthropic, use **Add Account** and complete the OAuth flow.
+3. For xAI, OpenRouter, or Cursor SDK, enter the requested key/token and select **Save**. These key rows include provider links where available.
 
-Each row also shows whether that provider is configured. Saved credentials are masked and stored on disk at `~/.forge/shared/config/auth/auth.json`. Pooled OAuth credentials refresh through the shared auth path before runtime selection and save refreshed tokens back under the pooled key; missing or clearly expired pooled creds surface as `auth_error`. Use the eye icon to toggle visibility of any entered secret. Click **Remove** to delete saved credentials.
+Provider cards show configuration state. Generic key-row secrets are masked; use the eye control to reveal the draft value and **Remove** to delete a saved credential. OAuth pool accounts can be renamed, selected as primary, or removed from their card. Credentials are stored on the targeted backend under `~/.forge/shared/config/auth/auth.json`. Pooled OAuth credentials refresh through the shared auth path before runtime selection and save refreshed tokens back under the pooled key; missing or clearly expired pooled creds surface as `auth_error`.
 
 OpenAI also has a Forge Auth broker mode. It is v1-scoped to OpenAI/Codex and uses a separate broker to issue short-lived leases. In v1, the normal setup path is a one-time setup link created by the broker admin UI for your name/email. Paste that link into the Forge Auth broker panel and click **Redeem invite**. The link contains only an invite id and secret, not an OpenAI token, runtime token, admin token, or provisioning token. Forge redeems it server-to-server, stores the broker runtime token only in Forge secrets, and shows status with masked values. Reusing the same setup link fails after redemption.
 
@@ -25,18 +25,14 @@ While broker mode is active, local OpenAI OAuth/API-key and pool credentials bel
 
 If `FORGE_OPENAI_CODEX_AUTH_MODE` is set in the environment, it overrides the Settings value and disables invite paste and manual broker edits in the UI. In `central_broker` mode, saved broker URL/token values are ignored and Forge uses `FORGE_OPENAI_AUTH_BROKER_URL`, `FORGE_OPENAI_AUTH_BROKER_TOKEN`, `FORGE_OPENAI_AUTH_BROKER_INSTANCE_ID`, and `FORGE_OPENAI_AUTH_BROKER_INSTANCE_LABEL` from the environment instead.
 
-Each provider row includes a **Get key** link when API key auth is supported, which opens the provider's key management page in your browser.
-
 Provider auth changes propagate by recycling matching idle manager runtimes or deferring the recycle until busy runtimes are idle. This includes collaboration channel sessions, direct OAuth login changes, and credential pool strategy changes, so the common case does not require recreating sessions or restarting the backend.
 
 ## OAuth login
 
-Anthropic and OpenAI support OAuth as an alternative to API keys. Click **Login with OAuth**, follow the browser authorization flow, then paste the authorization code back into Forge. OAuth tokens are stored and refreshed automatically. OpenAI OAuth is unavailable for edits while Forge Auth broker mode is active.
+The current Anthropic and OpenAI pool cards add accounts through OAuth. Select **Add Account**, follow the browser authorization flow, then paste an authorization code or callback URL if prompted. OAuth tokens are stored and refreshed automatically. OpenAI's local credential card is read-only while Forge Auth broker mode is active.
 
-Claude SDK uses Claude Code CLI OAuth instead of an API key. Run `claude login` first so Forge can read the local Claude credentials. If the SDK is unavailable, Forge falls back to the Pi-proxied Anthropic path automatically.
-
-If the OAuth flow gets stuck, click **Clear** to reset it and try again.
+Claude SDK uses the external Claude Code CLI login instead: run `claude login` before selecting a Claude SDK model. If an in-app OAuth flow gets stuck, select **Clear** to reset it and try again.
 
 ## Which credential do I need?
 
-You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI or enable Forge Auth broker mode if you want Codex runtime sessions; local OpenAI credentials are still the path for voice transcription. Add xAI if you want to use Grok models through xAI. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key. Use Cursor SDK auth if you want Composer 2.5 or Cursor Grok 4.5 access in Cursor SDK selectors.
+You need at least one compatible provider credential to run agents. Choose Anthropic for its Claude models; OpenAI or Forge Auth broker mode for GPT/Codex; xAI for native Grok; OpenRouter for user-added OpenRouter models; or Cursor SDK for its visible catalog models. Use `claude login` when you want the native Claude SDK runtime. Availability still depends on model-catalog visibility and the selected manager or specialist surface.
