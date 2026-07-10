@@ -17,6 +17,35 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 200): Promise<void> {
+  const startedAt = Date.now()
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error('Timed out waiting for test condition.')
+    }
+    await delay(1)
+  }
+}
+
+function createConversationHistory(agentId: string, count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    type: 'conversation_message' as const,
+    agentId,
+    role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+    text: `message-${index + 1}`,
+    timestamp: `2026-01-01T00:00:${String(index).padStart(2, '0')}.000Z`,
+    source: index % 2 === 0 ? 'user_input' as const : 'system' as const,
+  }))
+}
+
 function createPerfStub(): SidebarPerfRecorder {
   return {
     recordDuration: vi.fn(),
@@ -310,15 +339,125 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     expect(getEventTypes(sentEvents)).toContain('profiles_snapshot')
   })
 
-  it('coalesces deletion rehome, same-target subscribe, and stale deleted-target subscribe into one bootstrap sequence', async () => {
+  it('treats A→B→A as a new latest generation instead of joining the stale A bootstrap', async () => {
+    const manager = createManagerStub()
+    const socket = createSocket()
+    let currentBootstrapTarget: string | null = null
+    const pauseAfterInitialProfilesSnapshot = createDeferred<void>()
+    let initialProfilesSnapshotPaused = false
+    const recordedBootstrapEvents: Array<{ type: string; targetAgentId: string }> = []
+
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => Buffer.byteLength(JSON.stringify(event), 'utf8'),
+      sendBootstrapCritical: async (_socket, event) => {
+        if (event.type === 'ready') {
+          currentBootstrapTarget = event.subscribedAgentId
+        }
+
+        recordedBootstrapEvents.push({
+          type: event.type,
+          targetAgentId: event.type === 'ready' ? event.subscribedAgentId : currentBootstrapTarget ?? 'unknown',
+        })
+
+        if (!initialProfilesSnapshotPaused && currentBootstrapTarget === 'manager' && event.type === 'profiles_snapshot') {
+          initialProfilesSnapshotPaused = true
+          await pauseAfterInitialProfilesSnapshot.promise
+        }
+
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    const firstSubscribe = subscriptions.handleSubscribe(socket, 'manager')
+    await waitFor(() => initialProfilesSnapshotPaused)
+    const secondSubscribe = subscriptions.handleSubscribe(socket, 'session-1')
+    const thirdSubscribe = subscriptions.handleSubscribe(socket, 'manager')
+    pauseAfterInitialProfilesSnapshot.resolve()
+
+    await Promise.all([firstSubscribe, secondSubscribe, thirdSubscribe])
+
+    expect(subscriptions.getSubscribedAgentId(socket)).toBe('manager')
+    expect(
+      recordedBootstrapEvents
+        .filter((event) => event.type === 'ready')
+        .map((event) => event.targetAgentId),
+    ).toEqual(['manager', 'manager'])
+    expect(
+      recordedBootstrapEvents
+        .filter((event) => event.type === 'conversation_history')
+        .map((event) => event.targetAgentId),
+    ).toEqual(['manager'])
+    expect(recordedBootstrapEvents.some((event) => event.targetAgentId === 'session-1')).toBe(false)
+  })
+
+  it('starts a new bootstrap when the same target subscribe changes messageCount', async () => {
+    const manager = createManagerStub()
+    const baseHistoryResult = manager.getConversationHistoryWithDiagnostics('manager')
+    manager.getConversationHistoryWithDiagnostics = vi.fn((agentId: string) => ({
+      ...baseHistoryResult,
+      history: createConversationHistory(agentId, 120),
+    }))
+
+    const socket = createSocket()
+    let currentBootstrapTarget: string | null = null
+    const pauseAfterInitialProfilesSnapshot = createDeferred<void>()
+    let initialProfilesSnapshotPaused = false
+    const historyMessageCounts: number[] = []
+    const readyTargets: string[] = []
+
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => Buffer.byteLength(JSON.stringify(event), 'utf8'),
+      sendBootstrapCritical: async (_socket, event) => {
+        if (event.type === 'ready') {
+          currentBootstrapTarget = event.subscribedAgentId
+          readyTargets.push(event.subscribedAgentId)
+        }
+
+        if (event.type === 'conversation_history') {
+          historyMessageCounts.push(event.messages.length)
+        }
+
+        if (!initialProfilesSnapshotPaused && currentBootstrapTarget === 'manager' && event.type === 'profiles_snapshot') {
+          initialProfilesSnapshotPaused = true
+          await pauseAfterInitialProfilesSnapshot.promise
+        }
+
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    const firstSubscribe = subscriptions.handleSubscribe(socket, 'manager', 7)
+    await waitFor(() => initialProfilesSnapshotPaused)
+    const secondSubscribe = subscriptions.handleSubscribe(socket, 'manager', 25)
+    pauseAfterInitialProfilesSnapshot.resolve()
+
+    await Promise.all([firstSubscribe, secondSubscribe])
+
+    expect(readyTargets).toEqual(['manager', 'manager'])
+    expect(historyMessageCounts).toEqual([25])
+  })
+
+  it('cancels a delayed bootstrap when the socket is removed', async () => {
     const manager = createManagerStub()
     const socket = createSocket()
     const sentEvents: ServerEvent[] = []
-    let concurrentBootstraps = 0
-    let maxConcurrentBootstraps = 0
-    let bootstrapSequenceCount = 0
-    let currentBootstrapSequenceId = 0
-    const eventSequenceIds: number[] = []
+    let currentBootstrapTarget: string | null = null
+    const pauseAfterProfilesSnapshot = createDeferred<void>()
+    let profilesSnapshotPaused = false
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
@@ -329,20 +468,228 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       perf: createPerfStub(),
       send: (_socket, event) => {
         sentEvents.push(event)
-        eventSequenceIds.push(currentBootstrapSequenceId)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      sendBootstrapCritical: async (_socket, event) => {
+        if (event.type === 'ready') {
+          currentBootstrapTarget = event.subscribedAgentId
+        }
+
+        sentEvents.push(event)
+        if (!profilesSnapshotPaused && currentBootstrapTarget === 'manager' && event.type === 'profiles_snapshot') {
+          profilesSnapshotPaused = true
+          await pauseAfterProfilesSnapshot.promise
+        }
+
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    const subscribePromise = subscriptions.handleSubscribe(socket, 'manager')
+    await waitFor(() => profilesSnapshotPaused)
+    subscriptions.remove(socket)
+    pauseAfterProfilesSnapshot.resolve()
+    await subscribePromise
+    await flushMicrotasks(20)
+
+    expect(subscriptions.getSubscribedAgentId(socket)).toBeUndefined()
+    expect(getEventTypes(sentEvents)).toEqual(['ready', 'agents_snapshot', 'profiles_snapshot'])
+    expect((subscriptions as any).bootstrapControllers.size).toBe(0)
+  })
+
+  it('cancels delayed bootstraps on clear without detached follow-up drains', async () => {
+    const manager = createManagerStub()
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    let currentBootstrapTarget: string | null = null
+    const pauseAfterProfilesSnapshot = createDeferred<void>()
+    let profilesSnapshotPaused = false
+
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      sendBootstrapCritical: async (_socket, event) => {
+        if (event.type === 'ready') {
+          currentBootstrapTarget = event.subscribedAgentId
+        }
+
+        sentEvents.push(event)
+        if (!profilesSnapshotPaused && currentBootstrapTarget === 'manager' && event.type === 'profiles_snapshot') {
+          profilesSnapshotPaused = true
+          await pauseAfterProfilesSnapshot.promise
+        }
+
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    const subscribePromise = subscriptions.handleSubscribe(socket, 'manager')
+    await waitFor(() => profilesSnapshotPaused)
+    subscriptions.clear()
+    pauseAfterProfilesSnapshot.resolve()
+    await subscribePromise
+    await flushMicrotasks(20)
+
+    expect(subscriptions.getSubscribedAgentId(socket)).toBeUndefined()
+    expect(getEventTypes(sentEvents)).toEqual(['ready', 'agents_snapshot', 'profiles_snapshot'])
+    expect((subscriptions as any).bootstrapControllers.size).toBe(0)
+  })
+
+  it('does not retry a failed generation until a later subscribe explicitly retries it', async () => {
+    const manager = createManagerStub()
+    const sentEvents: ServerEvent[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const socket = createSocket()
+    const unhandledRejections: unknown[] = []
+    const handleUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason)
+    }
+    process.on('unhandledRejection', handleUnhandledRejection)
+
+    try {
+      manager.getSessionTaskStateSnapshot = vi.fn(async () => {
+        throw new Error('persistent task snapshot failure')
+      })
+
+      const subscriptions = new WsSubscriptions({
+        swarmManager: manager as any,
+        integrationRegistry: null,
+        allowNonManagerSubscriptions: true,
+        terminalService: null,
+        unreadTracker: null,
+        perf: createPerfStub(),
+        send: (_socket, event) => {
+          sentEvents.push(event)
+          return Buffer.byteLength(JSON.stringify(event), 'utf8')
+        },
+        getServer: () => ({ clients: new Set([socket]) }) as any,
+      })
+
+      await subscriptions.handleSubscribe(socket, 'manager')
+      await flushMicrotasks(20)
+      await delay(20)
+
+      expect(manager.getSessionTaskStateSnapshot).toHaveBeenCalledTimes(1)
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(unhandledRejections).toEqual([])
+      expect(getEventTypes(sentEvents)).not.toContain('session_task_state_snapshot')
+      expect(getEventTypes(sentEvents)).not.toContain('terminals_snapshot')
+      expect((subscriptions as any).bootstrapControllers.size).toBe(0)
+
+      sentEvents.length = 0
+      manager.getSessionTaskStateSnapshot = vi.fn(async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId))
+
+      await subscriptions.handleSubscribe(socket, 'manager')
+
+      expect(getEventTypes(sentEvents)).toContain('session_task_state_snapshot')
+      expect(getEventTypes(sentEvents)).toContain('terminals_snapshot')
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      process.off('unhandledRejection', handleUnhandledRejection)
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('cancels the last deleted manager bootstrap instead of finishing stale history', async () => {
+    const manager = createManagerStub()
+    manager.deleteAgent('session-1')
+
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    let currentBootstrapTarget: string | null = null
+    const pauseAfterProfilesSnapshot = createDeferred<void>()
+    let profilesSnapshotPaused = false
+
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      sendBootstrapCritical: async (_socket, event) => {
+        if (event.type === 'ready') {
+          currentBootstrapTarget = event.subscribedAgentId
+        }
+
+        sentEvents.push(event)
+        if (!profilesSnapshotPaused && currentBootstrapTarget === 'manager' && event.type === 'profiles_snapshot') {
+          profilesSnapshotPaused = true
+          await pauseAfterProfilesSnapshot.promise
+        }
+
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    const subscribePromise = subscriptions.handleSubscribe(socket, 'manager')
+    await waitFor(() => profilesSnapshotPaused)
+    manager.deleteAgent('manager')
+    subscriptions.handleDeletedAgentSubscriptions(new Set(['manager']))
+    pauseAfterProfilesSnapshot.resolve()
+    await subscribePromise
+    await flushMicrotasks(20)
+
+    expect(subscriptions.getSubscribedAgentId(socket)).toBe('__bootstrap_manager__')
+    expect(getEventTypes(sentEvents)).toEqual(['ready', 'agents_snapshot', 'profiles_snapshot'])
+    expect((subscriptions as any).bootstrapControllers.size).toBe(0)
+  })
+
+  it('serializes deletion rehome, same-target subscribe, and stale deleted-target subscribe without interleaving bootstraps', async () => {
+    const manager = createManagerStub()
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    let bootstrapSequenceCount = 0
+    let currentBootstrapSequenceId = 0
+    let currentBootstrapTarget: string | null = null
+    let pauseAfterProfilesSnapshot = createDeferred<void>()
+    let profilesSnapshotPaused = false
+    const recordedBootstrapEvents: Array<{ type: string; targetAgentId: string; sequenceId: number }> = []
+
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
         return Buffer.byteLength(JSON.stringify(event), 'utf8')
       },
       sendBootstrapCritical: async (_socket, event) => {
         sentEvents.push(event)
-        eventSequenceIds.push(currentBootstrapSequenceId)
 
         if (event.type === 'ready') {
           bootstrapSequenceCount += 1
           currentBootstrapSequenceId = bootstrapSequenceCount
-          concurrentBootstraps += 1
-          maxConcurrentBootstraps = Math.max(maxConcurrentBootstraps, concurrentBootstraps)
-          await delay(5)
-          concurrentBootstraps -= 1
+          currentBootstrapTarget = event.subscribedAgentId
+        }
+
+        recordedBootstrapEvents.push({
+          type: event.type,
+          targetAgentId: event.type === 'ready' ? event.subscribedAgentId : currentBootstrapTarget ?? 'unknown',
+          sequenceId: currentBootstrapSequenceId,
+        })
+
+        if (!profilesSnapshotPaused && currentBootstrapTarget === 'manager' && event.type === 'profiles_snapshot') {
+          profilesSnapshotPaused = true
+          await pauseAfterProfilesSnapshot.promise
         }
 
         return Buffer.byteLength(JSON.stringify(event), 'utf8')
@@ -352,30 +699,32 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     await subscriptions.handleSubscribe(socket, 'session-1')
     sentEvents.length = 0
-    eventSequenceIds.length = 0
     bootstrapSequenceCount = 0
     currentBootstrapSequenceId = 0
-    maxConcurrentBootstraps = 0
+    currentBootstrapTarget = null
+    recordedBootstrapEvents.length = 0
+    pauseAfterProfilesSnapshot = createDeferred<void>()
+    profilesSnapshotPaused = false
 
     manager.deleteAgent('session-1')
 
     subscriptions.handleDeletedAgentSubscriptions(new Set(['session-1']))
-    void subscriptions.handleSubscribe(socket, 'manager')
-    void subscriptions.handleSubscribe(socket, 'session-1')
+    await waitFor(() => profilesSnapshotPaused)
+    const sameTargetSubscribe = subscriptions.handleSubscribe(socket, 'manager')
+    const staleDeletedTargetSubscribe = subscriptions.handleSubscribe(socket, 'session-1')
+    pauseAfterProfilesSnapshot.resolve()
 
-    await flushMicrotasks(50)
-    await new Promise((resolve) => setTimeout(resolve, 100))
-
-    expect(maxConcurrentBootstraps).toBeLessThanOrEqual(1)
+    await Promise.all([sameTargetSubscribe, staleDeletedTargetSubscribe])
+    await flushMicrotasks(20)
 
     const readyEvents = sentEvents.filter(
       (event): event is Extract<ServerEvent, { type: 'ready' }> => event.type === 'ready',
     )
-    expect(readyEvents).toHaveLength(1)
-    expect(readyEvents[0]?.subscribedAgentId).toBe('manager')
+    expect(readyEvents.map((event) => event.subscribedAgentId)).toEqual(['manager', 'manager'])
 
     const historyEvents = sentEvents.filter((event) => event.type === 'conversation_history')
     expect(historyEvents).toHaveLength(1)
+    expect(historyEvents[0]).toMatchObject({ agentId: 'manager' })
 
     const errorEvents = sentEvents.filter((event) => event.type === 'error')
     expect(errorEvents).toHaveLength(1)
@@ -383,12 +732,16 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       code: 'UNKNOWN_AGENT',
     })
 
-    const bootstrapEventSequenceIds = new Set(
-      sentEvents
-        .map((_event, index) => eventSequenceIds[index])
-        .filter((sequenceId) => sequenceId > 0),
-    )
-    expect(bootstrapEventSequenceIds.size).toBeLessThanOrEqual(1)
+    expect(new Set(recordedBootstrapEvents.map((event) => event.sequenceId))).toEqual(new Set([1, 2]))
+    const firstSecondSequenceIndex = recordedBootstrapEvents.findIndex((event) => event.sequenceId === 2)
+    expect(firstSecondSequenceIndex).toBeGreaterThan(0)
+    expect(recordedBootstrapEvents.slice(firstSecondSequenceIndex).every((event) => event.sequenceId === 2)).toBe(true)
+    expect(recordedBootstrapEvents.some((event) => event.targetAgentId === 'session-1')).toBe(false)
+    expect(
+      recordedBootstrapEvents.some(
+        (event) => event.targetAgentId === 'manager' && event.type === 'conversation_history',
+      ),
+    ).toBe(true)
   })
 
   it('resends snapshots when resolveSubscribedAgentId falls back after the subscribed agent disappears', async () => {

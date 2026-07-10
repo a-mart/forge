@@ -22,15 +22,18 @@ interface DeliveredSnapshotVersions {
   profilesSnapshotVersion?: number;
 }
 
-interface SocketBootstrapControllerState {
+interface SocketBootstrapRequest {
   generation: number;
-  latestTargetAgentId: string;
-  latestMessageCount?: number;
+  targetAgentId: string;
+  messageCount?: number;
+}
+
+interface SocketBootstrapControllerState {
+  nextGeneration: number;
+  latestRequest: SocketBootstrapRequest | null;
+  activeRequest: SocketBootstrapRequest | null;
   activePromise: Promise<void> | null;
-  activeTargetAgentId: string | null;
-  activeGeneration: number;
-  lastCompletedGeneration: number;
-  lastCompletedTargetAgentId: string | null;
+  cancelled: boolean;
 }
 
 export class WsSubscriptions {
@@ -81,7 +84,9 @@ export class WsSubscriptions {
   clear(): void {
     this.subscriptions.clear();
     this.deliveredSnapshotVersions.clear();
-    this.bootstrapControllers.clear();
+    for (const socket of this.bootstrapControllers.keys()) {
+      this.cancelBootstrapController(socket);
+    }
   }
 
   /**
@@ -138,7 +143,7 @@ export class WsSubscriptions {
   private removeInternal(socket: WebSocket): void {
     this.subscriptions.delete(socket);
     this.deliveredSnapshotVersions.delete(socket);
-    this.bootstrapControllers.delete(socket);
+    this.cancelBootstrapController(socket);
   }
 
   getSubscribedAgentId(socket: WebSocket): string | undefined {
@@ -439,12 +444,13 @@ export class WsSubscriptions {
       const fallbackAgentId = this.resolvePreferredManagerSubscriptionId();
       this.resetDeliveredSnapshotVersions(socket);
       if (!fallbackAgentId) {
-        this.subscriptions.set(socket, this.resolveDefaultSubscriptionAgentId());
+        this.cancelBootstrapController(socket);
+        this.subscriptions.set(socket, BOOTSTRAP_SUBSCRIPTION_AGENT_ID);
         continue;
       }
 
       this.subscriptions.set(socket, fallbackAgentId);
-      this.requestSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+      void this.requestSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
     }
   }
 
@@ -453,104 +459,98 @@ export class WsSubscriptions {
     targetAgentId: string,
     requestedMessageCount?: number,
   ): Promise<void> {
+    const messageCount = normalizeSubscribeMessageCount(requestedMessageCount);
     let state = this.bootstrapControllers.get(socket);
-    if (!state) {
+    if (!state || (state.cancelled && !state.activePromise)) {
       state = {
-        generation: 0,
-        latestTargetAgentId: targetAgentId,
-        latestMessageCount: requestedMessageCount,
+        nextGeneration: 0,
+        latestRequest: null,
+        activeRequest: null,
         activePromise: null,
-        activeTargetAgentId: null,
-        activeGeneration: 0,
-        lastCompletedGeneration: 0,
-        lastCompletedTargetAgentId: null,
+        cancelled: false,
       };
       this.bootstrapControllers.set(socket, state);
     }
 
-    if (state.activePromise && state.activeTargetAgentId === targetAgentId) {
-      if (requestedMessageCount !== undefined) {
-        state.latestMessageCount = requestedMessageCount;
-      }
-      return state.activePromise;
+    if (this.canJoinActiveBootstrap(state, targetAgentId, messageCount)) {
+      return state.activePromise ?? Promise.resolve();
     }
 
-    state.generation += 1;
-    state.latestTargetAgentId = targetAgentId;
-    state.latestMessageCount = requestedMessageCount;
+    state.cancelled = false;
+    state.nextGeneration += 1;
+    state.latestRequest = {
+      generation: state.nextGeneration,
+      targetAgentId,
+      messageCount,
+    };
 
-    if (!state.activePromise) {
-      state.activePromise = this.runBootstrapControllerDrain(socket).catch((error) => {
-        console.warn("[swarm] ws:subscription_bootstrap_failed", {
-          targetAgentId: state.latestTargetAgentId,
-          requestedMessageCount: state.latestMessageCount ?? null,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }
-
-    return state.activePromise;
+    this.ensureBootstrapControllerDrain(socket, state);
+    return state.activePromise ?? Promise.resolve();
   }
 
-  private async runBootstrapControllerDrain(socket: WebSocket): Promise<void> {
-    const state = this.bootstrapControllers.get(socket);
-    if (!state) {
+  private ensureBootstrapControllerDrain(socket: WebSocket, state: SocketBootstrapControllerState): void {
+    if (state.activePromise || state.cancelled || !state.latestRequest) {
       return;
     }
 
-    try {
-      while (true) {
-        const generation = state.generation;
-        const targetAgentId = state.latestTargetAgentId;
-        const requestedMessageCount = state.latestMessageCount;
-        state.activeTargetAgentId = targetAgentId;
-        state.activeGeneration = generation;
-
-        const shouldContinue = (): boolean => {
-          const current = this.bootstrapControllers.get(socket);
-          return (
-            current !== undefined &&
-            current.generation === generation &&
-            current.latestTargetAgentId === targetAgentId
-          );
-        };
-
-        try {
-          await this.sendSubscriptionBootstrap(socket, targetAgentId, requestedMessageCount, shouldContinue);
-        } catch (error) {
-          if (shouldContinue()) {
-            throw error;
-          }
+    const activePromise = this.runBootstrapControllerDrain(socket, state)
+      .catch((error) => {
+        const failedRequest = state.activeRequest ?? state.latestRequest;
+        console.warn("[swarm] ws:subscription_bootstrap_failed", {
+          targetAgentId: failedRequest?.targetAgentId ?? null,
+          requestedMessageCount: failedRequest?.messageCount ?? null,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        if (state.activePromise !== activePromise) {
+          return;
         }
 
-        if (shouldContinue()) {
-          state.lastCompletedGeneration = generation;
-          state.lastCompletedTargetAgentId = targetAgentId;
+        const lastAttemptedGeneration = state.activeRequest?.generation ?? 0;
+        state.activePromise = null;
+        state.activeRequest = null;
+
+        if (state.cancelled || !state.latestRequest) {
+          this.bootstrapControllers.delete(socket);
+          return;
         }
 
-        if (!shouldContinue()) {
-          continue;
+        if (state.latestRequest.generation > lastAttemptedGeneration) {
+          this.ensureBootstrapControllerDrain(socket, state);
+          return;
         }
 
-        if (state.generation === generation) {
-          break;
-        }
+        this.bootstrapControllers.delete(socket);
+      });
 
-        if (state.latestTargetAgentId === targetAgentId) {
-          break;
+    state.activePromise = activePromise;
+  }
+
+  private async runBootstrapControllerDrain(
+    socket: WebSocket,
+    state: SocketBootstrapControllerState,
+  ): Promise<void> {
+    while (!state.cancelled) {
+      const request = state.latestRequest;
+      if (!request) {
+        return;
+      }
+
+      state.activeRequest = request;
+      const shouldContinue = (): boolean => this.getBootstrapRequestDisposition(state, request) === "current";
+
+      try {
+        await this.sendSubscriptionBootstrap(socket, request.targetAgentId, request.messageCount, shouldContinue);
+      } catch (error) {
+        if (this.getBootstrapRequestDisposition(state, request) === "current") {
+          throw error;
         }
       }
-    } finally {
-      state.activePromise = null;
-      state.activeTargetAgentId = null;
-      state.activeGeneration = 0;
 
-      const needsFollowUp =
-        state.generation > state.lastCompletedGeneration &&
-        state.latestTargetAgentId !== state.lastCompletedTargetAgentId;
-
-      if (needsFollowUp) {
-        state.activePromise = this.runBootstrapControllerDrain(socket);
+      const disposition = this.getBootstrapRequestDisposition(state, request);
+      if (disposition !== "superseded") {
+        return;
       }
     }
   }
@@ -595,6 +595,48 @@ export class WsSubscriptions {
     if (result.profilesSnapshotSent) {
       this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", currentProfilesSnapshotVersion);
     }
+  }
+
+  private cancelBootstrapController(socket: WebSocket): void {
+    const state = this.bootstrapControllers.get(socket);
+    if (!state) {
+      return;
+    }
+
+    state.cancelled = true;
+    state.latestRequest = null;
+    if (!state.activePromise) {
+      this.bootstrapControllers.delete(socket);
+    }
+  }
+
+  private canJoinActiveBootstrap(
+    state: SocketBootstrapControllerState,
+    targetAgentId: string,
+    messageCount?: number,
+  ): boolean {
+    const activeRequest = state.activeRequest;
+    const latestRequest = state.latestRequest;
+    if (!state.activePromise || !activeRequest || !latestRequest) {
+      return false;
+    }
+
+    return (
+      activeRequest.generation === latestRequest.generation &&
+      activeRequest.targetAgentId === targetAgentId &&
+      activeRequest.messageCount === messageCount
+    );
+  }
+
+  private getBootstrapRequestDisposition(
+    state: SocketBootstrapControllerState,
+    request: SocketBootstrapRequest,
+  ): "current" | "superseded" | "cancelled" {
+    if (state.cancelled || !state.latestRequest) {
+      return "cancelled";
+    }
+
+    return state.latestRequest.generation === request.generation ? "current" : "superseded";
   }
 
   private resetDeliveredSnapshotVersions(socket: WebSocket): void {

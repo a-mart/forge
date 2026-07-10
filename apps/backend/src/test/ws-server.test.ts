@@ -4960,12 +4960,12 @@ describe('SwarmWebSocketServer', () => {
 
     const pingStartIndex = events.length
     client.send(JSON.stringify({ type: 'ping' }))
-    const staleSubscriptionReadyEvent = await waitForEventAfter(
+    const placeholderReadyEvent = await waitForEventAfter(
       events,
       pingStartIndex,
-      (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId,
+      (event) => event.type === 'ready' && event.subscribedAgentId === '__bootstrap_manager__',
     )
-    expect(staleSubscriptionReadyEvent.type).toBe('ready')
+    expect(placeholderReadyEvent.type).toBe('ready')
 
     client.send(
       JSON.stringify({
