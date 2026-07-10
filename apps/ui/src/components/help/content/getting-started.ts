@@ -71,8 +71,12 @@ export const gettingStartedArticles: HelpArticle[] = [
       'profile',
       'settings',
       'specialists',
+      'remote projects',
+      'collaboration connection',
+      'remote server',
     ],
     relatedIds: [
+      'settings-collaboration',
       'getting-started',
       'getting-started-first-session',
       'settings-auth',

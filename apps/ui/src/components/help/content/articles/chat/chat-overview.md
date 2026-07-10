@@ -8,6 +8,14 @@ The main view has three parts:
 - **Message area** (center) showing the conversation transcript.
 - **Desktop workspace rail** (left edge of the workspace) for Chat, Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Chat returns to the current manager/session conversation, including from a selected worker route back to its parent manager thread. Files opens a resizable tree and tabbed file surface: single-click uses one replaceable preview tab, while double-click, first edit, and create make tabs sticky. Markdown defaults to rendered Preview with a Preview/Source toggle, and Files supports empty-file creation plus file/directory rename and delete. Opening another file, hiding Files, or entering Source Control preserves drafts without prompting; destructive path actions and matching Source Control write mutations guard affected dirty tabs. Source Control opens inline with Changes, History, Worktrees, and Pull Requests tabs, and may quietly refresh stale origin data when opened. Selecting a worktree scopes Source Control and Files without changing the chat session's working directory. Files, Source Control, Artifacts/Dashboard, and Schedules switch mutually exclusively, while Terminal stays independent and persistent. Mobile keeps the header/drawer workspace behavior and file content remains read-only.
 
+## Local and remote origins
+
+Selecting a blue, globe-marked Remote Project row changes the active origin for supported project surfaces. Chat and agent execution, Files, Source Control, attachments, Session Audit, model availability, and terminals when permitted target that remote server. Remote paths and workspace operations therefore act on server storage and processes, not a local clone. Selecting a local row switches those surfaces back.
+
+Non-chat Settings, Stats, Archive, onboarding, Cortex, provider usage, and sidebar ordering remain local even while a remote project is selected.
+
+Remote chat can show author chips on messages from other signed-in users. The viewer indicator shows authenticated people currently subscribed to that session. It is not typing presence, an edit lock, an exclusive lease, or proof that someone is actively reading.
+
 ## Streaming and status
 
 While a manager is responding, you'll see a green status dot in the header and the text "Streaming." The message appears incrementally as it's generated.

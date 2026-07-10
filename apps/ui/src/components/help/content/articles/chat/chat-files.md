@@ -1,5 +1,7 @@
 Use **Files** from the desktop workspace rail to browse the current session's repository or the worktree selected in Source Control.
 
+When a Remote Project is selected, Files reads and mutates paths on that Forge server's repository/workspace. Opens, saves, creates, renames, deletes, version checks, and previews use remote server storage; Forge does not create or synchronize a local checkout. Confirm the blue, globe-marked project you selected before making destructive changes.
+
 ## Open files and tabs
 
 - **Single-click** a file to open or activate the italic preview tab. There is one preview tab, so another single-click replaces it when it is clean.

@@ -92,6 +92,32 @@ Collaboration runtime is unsupported in V1. It uses the no-op/fail-closed observ
 
 Collaboration keeps structured state in SQLite and user-authored specialist bodies on disk. Workspace, category, and channel metadata, membership, read state, category default selected specialist handles, channel selected specialist handles, and collaboration skill-selection state belong in the collaboration database. Specialist markdown files, prompt bodies, reference docs, and skill definitions remain file-backed. `NULL` or all-includes means every optional global skill is included; custom arrays filter both the prompt roster and runtime-loaded skills. `memory` is always-on/core. No channel-local skill authoring exists in V1. Global specialists live in `${FORGE_DATA_DIR}/shared/specialists/`; collaboration channel-local specialists live in `${FORGE_DATA_DIR}/profiles/_collaboration/sessions/<sessionId>/specialists/`. Specialist `TargetSpace` frontmatter controls whether a shared specialist appears in Builder, Collaboration, or both. Collaboration servers seed the union of Builder and `collab-` prefixed Collaboration built-ins, then UI/runtime rosters filter by `TargetSpace`. See [Collaboration development](collaboration/DEVELOPMENT.md#sqlite-migration-policy) for the migration policy and [Collaboration operations](collaboration/OPERATIONS.md) for deployment guidance.
 
+### Remote Projects
+
+Remote Projects exposes an allowlisted subset of normal Builder projects from a collaboration server. Some internal API and persistence names retain `remote-build` for compatibility, but the user-facing feature name is Remote Projects.
+
+The server policy is stored at `${FORGE_DATA_DIR}/shared/config/remote-build-settings.json` with these defaults:
+
+```json
+{
+  "enabled": false,
+  "terminalsEnabled": true,
+  "instanceName": null
+}
+```
+
+Only collaboration admins can read or partially update the policy through `GET /api/settings/remote-build` and `PUT /api/settings/remote-build`. There is no server admin UI and no environment variable for this policy. `instanceName: null` falls back to the host name. Operators should set terminal policy deliberately before enabling Remote Projects: `terminalsEnabled: false` denies subsequent member terminal lifecycle mutations and ticket issuance, but it is not a sandbox and does not close an already attached terminal WebSocket.
+
+Each configured remote connection separately stores `remoteProjectsEnabled` in that browser's collaboration registry (`forge:collab:connections:v1`). It is a presentation/connection preference, not authorization. A newly added connection is opted in automatically only after a successful **Test** advertises Remote Projects capability; adding an untested/unsupported connection or re-adding an existing connection does not silently enable it. The server's `enabled` policy remains authoritative. The unified local/remote project order is a local Builder backend preference at `${LOCAL_FORGE_DATA_DIR}/shared/config/builder-sidebar-order.json`; it is not sent to the remote server and does not grant access.
+
+The public `/api/collaboration/status` response advertises `instanceName`, Forge version, Builder protocol version, and capabilities such as `remoteBuild`. Treat the configured instance name and host-name fallback as public metadata. Clients refuse to attach when the server's protocol is newer than they support. Remote profiles and descriptors remain in the server's `${FORGE_DATA_DIR}/swarm/agents.json`; session history/state remains under `${FORGE_DATA_DIR}/profiles/<profileId>/sessions/<sessionId>/`; repositories and paths remain on its workspace mounts. No client-side clone or sync is created.
+
+Remote Projects uses the collaboration Better Auth session: a 21-day sliding lifetime with `updateAge` of one day. Cookies are scoped by host/domain and path, not port, so same-host multi-backend deployments must configure distinct `FORGE_COLLABORATION_AUTH_COOKIE_NAME` values (including the derived auxiliary-cookie namespaces). Browser-local connection preferences do not isolate cookies.
+
+Members are trusted instance operators with broad allowlisted Builder read/write access when the server policy is enabled; there is no per-project ACL. Unclassified member routes and commands default to admin-only. Setting `enabled: false` blocks subsequent member Builder HTTP requests and commands but does not disconnect existing WebSockets or remove subscriptions. Ordinary sign-out or session expiry can likewise leave an already authenticated WebSocket active until it disconnects. Account disable/delete, role change, and password reset use explicit tracked-socket closure; urgent containment may also require network or server action.
+
+See the [Remote Projects guide](collaboration/REMOTE_PROJECTS.md) for the complete setup, topology, supported surfaces, and security model.
+
 For compatibility, startup also accepts legacy `MIDDLEMAN_*` environment variables (for example, `MIDDLEMAN_HOST`, `MIDDLEMAN_PORT`, `MIDDLEMAN_DATA_DIR`, `MIDDLEMAN_DEBUG`, `VITE_MIDDLEMAN_WS_URL`, `MIDDLEMAN_RUNTIME_TARGET`). When `FORGE_RUNTIME_TARGET` is unset, legacy `FORGE_COLLABORATION_ENABLED=true` or `MIDDLEMAN_COLLABORATION_ENABLED=true` maps to the `collaboration-server` runtime target.
 
 ## `.env` File
@@ -140,6 +166,11 @@ All persistent state lives in a single data directory:
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   ├── work-plans.json                # Builder-only default-on Active Work Plans toggle
 │   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
+│   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
+│   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
+│   │   ├── collaboration/
+│   │   │   ├── auth.db                    # Collaboration users, sessions, channels, and structured state
+│   │   │   └── auth-secret.key            # Generated collaboration auth secret when env secret is unset
 │   │   └── integrations/      # Shared integration configs
 │   ├── cache/                 # Regenerable/ephemeral
 │   │   ├── generated/

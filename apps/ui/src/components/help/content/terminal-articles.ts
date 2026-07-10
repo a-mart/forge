@@ -20,8 +20,12 @@ export const terminalArticles: HelpArticle[] = [
       'persist',
       'scrollback',
       'profile',
+      'remote projects',
+      'remote terminal',
+      'server host',
+      'terminal policy',
     ],
-    relatedIds: ['terminal-shortcuts', 'terminal-management'],
+    relatedIds: ['settings-collaboration', 'terminal-shortcuts', 'terminal-management'],
     contextKeys: ['terminal.panel'],
   },
   {

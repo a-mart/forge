@@ -11,6 +11,8 @@ Open **Source Control** from the desktop workspace rail. The workspace includes 
 
 Selecting a worktree changes the Source Control and Files context only. You can browse and, on desktop, create, edit, rename, or delete paths from that worktree in Files without changing the chat session's working directory or where the manager sends workers. Successful create, rename, save, and delete operations refresh Source Control so Changes stays current.
 
+When a Remote Project is selected, the repository and worktrees are on that Forge server. Status, history, diffs, branch operations, fetch/pull, and GitHub CLI (`gh`) requests execute on the remote server against its repository, credentials, and network—not on your local machine or a synchronized clone.
+
 ## Branch and remote actions
 
 Source Control can fetch from origin, switch branches, create branches, and pull from upstream. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background. Manual **Fetch** remains explicit and reports errors if it cannot complete. Opening Source Control preserves Files drafts without prompting. Branch switch/create and fast-forward-only pull guard dirty tabs in the matching worktree with **Save**, **Discard**, or **Cancel**, then use a confirmation flow with an expected-head/status preflight before Forge sends the git command. Read-only Source Control navigation does not trigger the dirty guard.

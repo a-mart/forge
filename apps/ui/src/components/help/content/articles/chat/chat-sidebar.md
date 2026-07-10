@@ -4,6 +4,10 @@ The sidebar on the left is your main navigation for everything in Forge. It show
 
 Each **profile** is a collapsible group. Inside each profile are its **sessions**. Inside each session, you can expand to see active **workers**. Click any item to switch to it.
 
+Enabled Remote Projects appear in Builder as blue, globe-marked project and session rows mixed with local projects. Remote rows are select-only: they do not expose the local profile/session rename, archive, delete, fork, or model/CWD management menus. Selecting one makes its server the active origin for supported chat and workspace surfaces; selecting a local row switches those surfaces back.
+
+A connection without a selectable project can show **Connecting**, **Sign in required**, **Unreachable**, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. These states describe connectivity, authentication, policy, and protocol compatibility; they do not create a local copy of the remote project.
+
 Project agents appear pinned at the top of each profile section with a badge, above regular sessions. Session pinning in the sidebar is separate from message pinning inside a conversation.
 
 ## Search
@@ -17,7 +21,7 @@ The search bar at the top filters local and connected remote sessions and worker
 
 Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Default Model, Change Working Directory, Mark All as Read, Mute/Unmute All Sessions, Archive Project, or Delete Manager. Changing the default model updates only sessions that still inherit the project default; sessions with an explicit session override are not affected. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path. Archiving a project marks only the profile as archived, not each session individually, but the whole project becomes read-only and unusable until restored.
 
-You can drag local and connected remote project headers into one shared order. Forge saves that unified order on the local Builder instance, so browsers and the desktop app connected to the same local Forge use the same layout. The preference is never written to a remote collaboration server. Offline, disabled, archived, and client-unseen projects keep their positions: one client's connection registry or project snapshot cannot delete positions another client still needs. Deleted projects and removed connections can therefore remain as harmless hidden anchors until Forge has explicit local-instance cleanup authority. Local Cortex stays pinned above the mixed project list. The **+** button on a local profile header creates a new session.
+You can drag local and connected remote project headers into one shared order. Forge saves that unified order on the local Builder instance, so browsers and the desktop app connected to the same local Forge use the same layout. Ordering is only presentation state: it is never written to a remote collaboration server and does not grant access, change membership, or enable Remote Projects. Offline, disabled, archived, and client-unseen projects keep their positions: one client's connection registry or project snapshot cannot delete positions another client still needs. Deleted projects and removed connections can therefore remain as harmless hidden anchors until Forge has explicit local-instance cleanup authority. Local Cortex stays pinned above the mixed project list. The **+** button on a local profile header creates a new session.
 
 ## Session actions
 

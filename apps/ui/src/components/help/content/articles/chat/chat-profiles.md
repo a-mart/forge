@@ -16,6 +16,8 @@ Each profile can have multiple sessions. Sessions inherit all config from the pr
 
 By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Sessions that still inherit the profile default pick up future default changes automatically. Use "Use Project Default" on a session to revert it to inherited state, and the override action is available from the session context menu alongside the other session-management actions.
 
+Remote profiles remain authoritative on their Forge server and appear as blue, globe-marked rows when that connection's Remote Projects preference and server policy are enabled. These rows are select-only; profile and session management remains on the remote instance rather than using local context menus. A remote connection may instead show connecting, sign-in-required, unreachable, server-disabled, update-required, or empty status until its projects can be selected.
+
 ## Rename a profile
 
 Right-click the profile header in the sidebar and choose **Rename**. This only changes the display name. The profile ID and data directory stay the same.
@@ -26,7 +28,7 @@ Right-click the profile and choose **Change Default Model** to update the defaul
 
 ## Reorder profiles
 
-Drag local and connected remote project headers in the sidebar to intermix them. The order is saved automatically by your local Builder instance and shared by browsers or the desktop app connected to that instance. Forge does not write this personal layout preference to remote collaboration servers. Projects that are offline, disabled, archived, or simply unseen by one client retain their positions. Forge never treats one browser's connection list or project snapshot as permission to remove another client's saved positions, so deleted projects or removed connections can remain as harmless hidden anchors until explicit local-instance cleanup is available. Local Cortex remains pinned above the reordered projects.
+Drag local and connected remote project headers in the sidebar to intermix them. The order is saved automatically by your local Builder instance and shared by browsers or the desktop app connected to that instance. It is a display preference, not an access list: Forge does not write it to remote collaboration servers, and reordering a remote profile does not grant access or alter server policy. Projects that are offline, disabled, archived, or simply unseen by one client retain their positions. Forge never treats one browser's connection list or project snapshot as permission to remove another client's saved positions, so deleted projects or removed connections can remain as harmless hidden anchors until explicit local-instance cleanup is available. Local Cortex remains pinned above the reordered projects.
 
 ## Deleting a profile
 
