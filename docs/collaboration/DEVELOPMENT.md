@@ -4,7 +4,7 @@
 
 Collaboration work happens in this repo. Start with the current code, protocol, and docs here. Keep documentation focused on the current collaboration mode.
 
-Keep collaboration changes isolated from Builder behavior unless the task explicitly requires a shared change. When a change touches shared infrastructure, verify both Builder and Collaboration contracts.
+Keep Collaboration-channel changes isolated from Builder behavior unless the task explicitly requires a shared change. Remote Projects intentionally crosses that boundary through reviewed origin-aware Builder seams; verify local Builder, remote origin, and Collaboration channel contracts separately. Read [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md) before changing those seams.
 
 ## Source map for coding agents
 
@@ -13,49 +13,72 @@ Keep collaboration changes isolated from Builder behavior unless the task explic
 | Runtime target/config | `apps/backend/src/runtime-target.ts`, `apps/backend/src/config.ts` |
 | Runtime/profile utilities | `apps/backend/src/swarm/swarm-manager-utils.ts` |
 | Collaboration services | `apps/backend/src/collaboration/*` |
-| Auth middleware | `apps/backend/src/collaboration/auth/collaboration-auth-middleware.ts` |
+| Remote Projects policy | `apps/backend/src/collaboration/remote-build-settings-service.ts`, `apps/backend/src/ws/http/routes/remote-build-settings-routes.ts` |
+| Auth middleware / remote HTTP allowlist | `apps/backend/src/collaboration/auth/collaboration-auth-middleware.ts` |
+| Remote Builder WS allowlist | `apps/backend/src/ws/builder-command-access.ts` |
 | HTTP routes | `apps/backend/src/ws/http/routes/collaboration-routes.ts`, `apps/backend/src/ws/http/routes/collaboration/*` |
 | WS handler/commands | `apps/backend/src/ws/ws-handler.ts`, `apps/backend/src/ws/commands/parse-collab-command.ts`, `collab-command-handler.ts` |
 | WS fanout | `apps/backend/src/ws/collab-subscription-manager.ts` |
-| Protocol | `packages/protocol/src/collaboration.ts` |
+| Protocol | `packages/protocol/src/collaboration.ts`, `builder-protocol.ts`, `presence.ts`, `builder-sidebar-order.ts` |
 | UI surface | `apps/ui/src/components/index-page/CollabSurface.tsx`, `CollabWorkspace.tsx` |
-| UI connection manager | `apps/ui/src/lib/collaboration/connection-manager.ts` |
-| UI endpoint targeting | `apps/ui/src/lib/collaboration-endpoints.ts`, `collaboration-connections.ts` |
+| UI Collaboration connection manager | `apps/ui/src/lib/collaboration/connection-manager.ts` |
+| UI endpoint targeting / browser registry | `apps/ui/src/lib/collaboration-endpoints.ts`, `collaboration-connections.ts` |
+| Remote origin lifecycle/state | `apps/ui/src/lib/origin-store/forge-origin-manager.ts`, `apps/ui/src/lib/origin-store/*` |
+| Active-origin Builder shell | `apps/ui/src/components/index-page/BuilderSurface.tsx`, `apps/ui/src/hooks/index-page/use-origin-connection.ts` |
+| Remote/sidebar order UI | `apps/ui/src/components/chat/agent-sidebar/RemoteOriginSections.tsx`, `AgentSidebarConnected.tsx`, `apps/ui/src/lib/builder-sidebar-order-*` |
+| Sidebar-order backend | `apps/backend/src/swarm/builder-sidebar-order-service.ts`, `apps/backend/src/ws/http/routes/builder-sidebar-order-routes.ts` |
 | Settings target | `apps/ui/src/components/settings/settings-target.ts`, `settings-api-client.ts` |
 | Specialists | `apps/backend/src/collaboration/specialist-selection.ts`, settings specialist UI/tests |
 | Skills | `apps/backend/src/collaboration/skill-selection.ts`, `skill-handle-provider.ts`, settings skills UI/tests |
-| Terminal caveat | `apps/backend/src/ws/server.ts`, `apps/backend/src/ws/http/routes/terminal-routes.ts` |
+| Remote terminal policy/caveat | `apps/backend/src/ws/server.ts`, `apps/backend/src/ws/http/routes/terminal-routes.ts`, `apps/backend/src/ws/builder-command-access.ts` |
 | Remote project CWD browser | `apps/backend/src/swarm/cwd-policy.ts`, `FORGE_CWD_ALLOWLIST_ROOTS`, UI `ServerDirectoryBrowserDialog` |
 
-## Builder vs Collaboration invariants
+## Local Builder, Remote Projects, and Collaboration invariants
 
-| Concern | Builder | Collaboration |
-|---------|---------|---------------|
-| Runtime branch | Default local target | `collaboration-server` target from `runtime-target.ts`/`config.ts` |
-| Profile/session | User-visible managers | System-only `_collaboration` profile |
-| Session metadata | Normal Builder sessions | `sessionSurface: "collab"` plus workspace/channel metadata |
-| HTTP authorization | Route-specific Builder policy | Fail-closed/admin-by-default in collab runtime unless classified otherwise |
-| WS authorization | Normal app commands | Members use only `collab_*` commands |
-| Settings | Mutates local Builder backend | Mutates selected remote/backend connection |
-| Storage | Local Builder data | Dedicated collaboration data boundary |
-| Project CWD selection | Unrestricted local paths / native picker | Allowlisted roots via `FORGE_CWD_ALLOWLIST_ROOTS` (fail closed when unset); server folder browser + single-level `create_directory` |
-| Specialists | Builder target-space filtered | Collaboration target-space filtered |
-| Skills | Normal skill loading | Selected global handles plus always-on `memory`; no channel-local skill authoring v1 |
-| Builder-only surfaces | Project Agents, project resources, Codex, Phoenix, CLI, terminal UI | Excluded unless explicitly designed |
-| Multi-backend | Not applicable | Metadata-first; exactly one active detail subscription |
+| Concern | Local Builder | Remote Projects | Collaboration channels |
+|---------|---------------|-----------------|------------------------|
+| Runtime/data | Local default target/data | `collaboration-server` normal profiles/sessions | Same server, hidden `_collaboration` profile |
+| Navigation | Unified Builder sidebar | Same sidebar; blue/globe rows keyed by origin | Collaboration surface/channel sidebar |
+| HTTP authorization | Normal Builder policy | Member allowlist behind `enabled`; unclassified is admin-only | Collaboration route classification |
+| WS authorization | Normal commands | Builder command tier allowlist; admins pass policy | Authenticated `collab_*` commands |
+| State | Local origin store | Per-connection origin store | Collaboration connection/session state |
+| Project CWD selection | Local/native picker | Allowlisted server roots and server browser | Channel-configured CWD |
+| Project surfaces | Local | Active-origin chat, Files, Git, terminals, attachments, audit/model availability | Only explicitly designed channel surfaces |
+| Local-only surfaces | N/A | Non-chat Settings, Stats, Archive, onboarding, Cortex, usage/order API | Not projected into channels |
+| Persistence | Local data dir | Server data/workspaces; no clone/sync | Server SQLite plus `_collaboration` files |
+| Subscription model | Selected local session | Enabled origins may connect; one route-selected active origin | Metadata-first; one active channel detail subscription |
 
-Do not treat mounted backend routes as product support. For example, terminal routes may still be mounted by shared server setup, but the collaboration UX hides terminal UI/settings. Document and test this as a UX boundary, not as a security-disabled backend feature.
+Keep the two Remote Projects controls independent: server `enabled` is authorization policy, while browser `remoteProjectsEnabled` only decides whether that connection is managed/rendered. Never treat the client preference as security.
+
+Do not treat mounted backend routes as product support. Collaboration channels and Remote Projects have separate allowlists. A route hidden from channel UX may be deliberately supported for a remote active origin, while an unclassified member route must remain admin-only.
 
 ## Protocol and API change workflow
 
-1. Update `packages/protocol/src/collaboration.ts` first.
+1. Update the owning protocol module first: `collaboration.ts` for channels, or `builder-protocol.ts`/`presence.ts`/`builder-sidebar-order.ts` for Remote Projects.
 2. Update backend HTTP route DTOs and WebSocket command/event handling.
-3. Update UI API clients, connection manager state, and components.
+3. Update UI API clients, connection/origin state, and components.
 4. Add or update tests on both sides of the boundary.
-5. Check replay/bootstrap behavior, not just live events.
-6. Update docs when behavior, fields, defaults, or operational contracts change.
+5. Check replay/bootstrap and reconnect behavior, not just live events.
+6. Update docs when behavior, fields, defaults, access classes, or operational contracts change.
 
-Never duplicate collaboration DTOs in app-local files when they belong in protocol.
+Builder remote wire changes are additive within `BUILDER_PROTOCOL_VERSION`. Removing or repurposing an existing field/command/event requires a protocol bump. A client must continue blocking attachment when the server protocol is newer than its supported ceiling.
+
+Never duplicate shared DTOs in app-local files when they belong in protocol.
+
+## Remote Projects access and state invariants
+
+- The user-facing name is Remote Projects even though compatibility identifiers use `remote-build`/`remoteBuild`.
+- The server policy defaults to off and is admin-only at `/api/settings/remote-build`; do not add an undocumented UI or environment override.
+- Member HTTP and WS access remains allowlist-only. New commands/routes must be deliberately classified and tested with policy on and off; default is admin-only.
+- Admins pass the member policy gate. Active members receive both read and write tiers only while `enabled` is on.
+- `terminalsEnabled` gates member terminal lifecycle mutations/tickets. It must not be described as killing already attached terminal sockets.
+- Disabling policy does not disconnect sockets/subscriptions. Ordinary sign-out/expiry does not continuously revalidate a connected WS. Do not “fix” documentation by promising stronger revocation than the code provides.
+- Admin disable/delete, role change, and password reset must retain the `4001` socket invalidation path.
+- The public status handshake exposes instance name/version/protocol/capabilities; never put sensitive server metadata in an example `instanceName`.
+- `clientRequestId` correlates optimistic sends with echoed persisted events; it is not an exactly-once or idempotency contract.
+- Project presence means subscribed viewer identities only—never typing, editing, cursors, or locks.
+- Origin-scoped events must mutate only their `(originId, id)` store. Non-chat local-only surfaces must not silently derive endpoints from the active remote origin.
+- Unified order is local-instance-owned and retains offline/hidden remote anchors.
 
 ## SQLite migration policy
 
@@ -116,20 +139,25 @@ Do not run service restarts, Docker commands, builds, or production-data mutatio
 
 - Keep collaboration domain logic in `apps/backend/src/collaboration/*`.
 - Keep HTTP route handlers thin and delegate to services.
-- Classify collaboration HTTP routes deliberately. In the collaboration runtime, admin access is the default unless a route is intentionally member/public.
-- Keep WebSocket command parsing strict. Unknown or non-collaboration commands must not become collaboration actions.
+- Classify collaboration HTTP routes deliberately. In the collaboration runtime, admin access is the default unless a route is intentionally public, channel-member, or Remote-Projects-member.
+- Keep the Remote Projects member HTTP allowlist and Builder WS tier map explicit and total. Test policy-disabled behavior separately from admin behavior.
+- Keep WebSocket command parsing strict. `collab_*` channel commands and allowlisted remote Builder commands follow separate authorization paths.
 - Route channel sends through `collab_user_message` and channel services so author/read-state metadata stays consistent.
 - Keep `_collaboration` system profile hidden from normal Builder lists and snapshots.
 - Preserve session-backed channel behavior so history/replay and existing manager runtime infrastructure continue to work.
 
 ## UI implementation patterns
 
-- Use `CollabSurface.tsx` and `CollabWorkspace.tsx` as the top-level collaboration shell.
+- Use `CollabSurface.tsx` and `CollabWorkspace.tsx` as the top-level Collaboration-channel shell.
 - Keep endpoint choice centralized in `collaboration-endpoints.ts` and connection metadata in `collaboration-connections.ts` / `collaboration/connection-manager.ts`.
-- Maintain the metadata-first multi-backend model. Subscribe to detail for only the selected backend/channel.
+- Maintain the channel metadata-first multi-backend model. Subscribe to detail for only the selected backend/channel.
+- Manage Remote Projects through `forge-origin-manager.ts`: status/version/auth probe before transport, one origin store per opted-in remote connection, and a permanent sign-in-required state after `4001` until re-authentication.
+- Route active-origin project surfaces from `BuilderSurface.tsx` through the selected origin. Explicitly keep non-chat Settings, Stats, Archive, onboarding, Cortex, sidebar usage, and order API on local endpoints.
+- Preserve blue/globe remote rows and connecting/sign-in/unreachable/version-blocked/disabled/no-project states.
+- Keep browser `remoteProjectsEnabled` separate from the server capability/policy. Registry removal/opt-out destroys only the client origin.
 - Route settings calls through `settings-target.ts` and `settings-api-client.ts` so Collaboration settings mutate the selected backend, not the local Builder backend.
-- Reuse shared chat components only through the collaboration adapter layer when metadata, authorship, or replay semantics differ.
-- Preserve sign-in recovery behavior for invalidated remote sessions rather than retrying forever.
+- Reuse shared chat components only through the relevant adapter/origin layer when metadata, authorship, or replay semantics differ.
+- Preserve author attribution and `clientRequestId` echo reconciliation without claiming exactly-once delivery.
 
 ## Specialists and skills development notes
 
@@ -137,7 +165,7 @@ Specialists:
 
 - Use `TargetSpace` frontmatter for new specialist files.
 - Missing target space is Builder-only compatibility.
-- Collaboration built-ins use `collab-` handles.
+- Collaboration uses TargetSpace-filtered global tiers/lenses; legacy `collab-*` handles are compatibility rewrites, not the preferred source files for new built-ins.
 - UI and runtime rosters must filter by target space.
 - Selected global handles are SQLite state; definitions stay markdown files.
 - Channel-local specialist markdown is collaboration-scoped by location.
@@ -152,13 +180,25 @@ Skills:
 
 ## Validation checklist
 
-For docs-only changes:
+For canonical collaboration Markdown-only changes that do not touch in-app help:
 
 ```bash
 git diff --check
-pnpm help:validate
-pnpm quality:changed -- --base origin/main
+rg -n 'REMOTE_PROJECTS|remote-build-settings|remoteProjectsEnabled' docs/collaboration
 ```
+
+Read the changed link targets and verify relative paths. `pnpm help:validate` and app typechecks are not required when help/code is untouched.
+
+For Remote Projects protocol/access/origin changes, include the relevant targeted suites:
+
+- `apps/backend/src/test/remote-build-ws-access.test.ts`
+- `apps/backend/src/test/builder-command-access.test.ts`
+- `apps/backend/src/test/collaboration-http-auth.test.ts`
+- `apps/backend/src/test/route-inventory-classification.test.ts`
+- `packages/protocol/src/__tests__/builder-protocol-contract.test.ts`
+- `apps/ui/src/lib/origin-store/*test.ts`
+- `apps/ui/src/lib/ws-client/event-handlers/conversation-dedup.test.ts`
+- remote sidebar and builder-sidebar-order tests
 
 For protocol/API changes, add targeted backend and UI tests around changed DTOs and route/client behavior. For storage changes, add migration tests and rerun relevant collaboration service tests. For UI behavior, add component/hook tests for backend targeting, connection state, and replay/bootstrap behavior.
 
@@ -171,6 +211,10 @@ Do not run full builds, Docker validation, service restarts, or live backend che
 - Treating provider auth as shared between Builder and Collaboration.
 - Moving prompts, reference docs, specialist markdown, or skill definitions into SQLite.
 - Silently dropping unresolved specialist/skill handles.
-- Loading Builder-only surfaces into collaboration because a shared backend route exists.
-- Opening detail subscriptions to every configured backend.
-- Forgetting `localhost` versus `127.0.0.1` cookie/origin behavior in local split deployments.
+- Loading Builder-only surfaces into Collaboration channels because a shared backend route exists.
+- Hiding a supported Remote Projects surface merely because it is excluded from channels, or routing a local-only surface to the active remote origin.
+- Treating browser `remoteProjectsEnabled` as authorization or assuming server disablement closes existing sockets.
+- Describing `clientRequestId` as exactly-once delivery or project presence as typing/edit locking.
+- Opening channel detail subscriptions to every configured backend.
+- Dropping offline/hidden remote anchors from the local unified sidebar order.
+- Forgetting that cookies are not port-scoped or mixing `localhost` and `127.0.0.1` in local split deployments.

@@ -6,14 +6,20 @@ Collaboration mode is implemented in this Forge repo. This directory is the star
 
 | Task | Read |
 |------|------|
+| Configure, use, secure, or troubleshoot Remote Projects | [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md) |
 | Understand the system design or find code paths | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Deploy, upgrade, back up, or troubleshoot a collaboration server | [OPERATIONS.md](OPERATIONS.md) |
-| Change collaboration code, protocol, data model, specialists, or skills | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| Change collaboration code, protocol, data model, specialists, skills, or remote origins | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Check current work tracking, decisions, risks, and backlog | [project/README.md](project/README.md) |
 
 ## Current shape
 
-Collaboration mode reuses Forge's session/runtime infrastructure but runs under the `collaboration-server` runtime target. Channels are backed by manager sessions under the hidden `_collaboration` system profile, and the collaboration UI connects to one or more collaboration backends from the Builder app.
+The `collaboration-server` runtime hosts two distinct product surfaces:
+
+- **Collaboration channels** are backed by manager sessions under the hidden `_collaboration` system profile and open in the Collaboration surface.
+- **Remote Projects** are normal Builder profiles and sessions stored and executed on that server. When both server policy and a browser connection preference are enabled, they appear beside local projects in the unified Builder sidebar. They are not channels or a third mode, and Forge does not clone or synchronize them locally.
+
+See [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md) for the two controls, operator API setup, supported surfaces, trusted-operator access model, session/cookie behavior, persistence, and current live-revocation limitations.
 
 The deployable server is built from this repo with `Dockerfile` and `docker-compose.yml`. The compose service is `forge-collaboration-server`, listens inside the container on `47287`, and is published on host port `47387` by default. The container sets `FORGE_RUNTIME_TARGET=collaboration-server` and stores data under `/var/lib/forge`.
 
@@ -27,7 +33,15 @@ Structured collaboration state lives in SQLite at:
 ${FORGE_DATA_DIR}/shared/config/collaboration/auth.db
 ```
 
-User-authored content stays file-backed in the normal Forge data tree, mainly under:
+Remote Projects policy and normal remote Builder profiles/sessions also stay on the server:
+
+```text
+${FORGE_DATA_DIR}/shared/config/remote-build-settings.json
+${FORGE_DATA_DIR}/profiles/<profileId>/sessions/
+${FORGE_DATA_DIR}/swarm/agents.json
+```
+
+User-authored Collaboration content stays file-backed in the normal Forge data tree, mainly under:
 
 ```text
 ${FORGE_DATA_DIR}/profiles/_collaboration/
@@ -51,4 +65,4 @@ Collaboration SQLite migrations run at startup. They must be additive when possi
 
 - [Configuration reference](../CONFIGURATION.md) for the broader environment variable list.
 - [Project tracker](project/README.md) for current collaboration work state.
-- [Architecture](ARCHITECTURE.md), [Operations](OPERATIONS.md), and [Development](DEVELOPMENT.md) are the canonical current-facing collaboration docs.
+- [Remote Projects](REMOTE_PROJECTS.md), [Architecture](ARCHITECTURE.md), [Operations](OPERATIONS.md), and [Development](DEVELOPMENT.md) are the canonical current-facing collaboration docs.

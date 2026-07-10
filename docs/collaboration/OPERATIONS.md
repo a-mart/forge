@@ -1,12 +1,14 @@
 # Collaboration Operations
 
-This is the canonical operator runbook for the current Forge collaboration server.
+This is the canonical operator runbook for the current Forge collaboration server. For Remote Projects terminology, the two-control activation model, exact API setup, supported surfaces, and limitations, read [REMOTE_PROJECTS.md](REMOTE_PROJECTS.md).
 
 ## Supported topology and security posture
 
 The supported deployment is a dedicated collaboration server built from this repo and run with `FORGE_RUNTIME_TARGET=collaboration-server`. Use a dedicated data directory or volume. Do not point a collaboration server at a normal Builder `~/.forge` directory.
 
 For any internet-facing deployment, put the server behind managed HTTPS and strong network controls. A raw public container port is not the intended security boundary. Trusted pilot deployments should use HTTPS plus access controls, or a trusted VPN/Tailscale boundary.
+
+Remote Projects is a trusted-operator feature. Enabled members receive broad Builder read/write allowlists across the server's normal projects, with no per-project ACL; files, Git, agents, project resources, and terminals can become shell-equivalent powers. Use separate server/OS boundaries for mutually untrusted users.
 
 ## Docker/Compose contract
 
@@ -51,9 +53,20 @@ Common collaboration variables:
 
 See [../CONFIGURATION.md](../CONFIGURATION.md) for the broader environment reference.
 
+## Remote Projects activation
+
+Remote Projects is disabled by default and requires two independent controls:
+
+1. An admin enables server policy through authenticated `GET`/partial `PUT /api/settings/remote-build`.
+2. Each browser enables the per-connection **Remote projects** preference.
+
+The server policy persists at `${FORGE_DATA_DIR}/shared/config/remote-build-settings.json` and defaults to `enabled: false`, `terminalsEnabled: true`, and `instanceName: null`. There is currently no server admin UI or environment variable for it. Explicitly decide `terminalsEnabled`—prefer `false` initially—before or when setting `enabled: true`. See [Operator enablement](REMOTE_PROJECTS.md#3-operator-enablement-with-the-admin-api) for an authenticated example.
+
+The public `/api/collaboration/status` handshake advertises instance name, Forge version, Builder protocol version, and capabilities to every reachable client. Use a non-sensitive `instanceName`; `null` falls back to a host name that may itself reveal operational metadata.
+
 ## Remote project working directories
 
-Remote New Project and Change Working Directory browse only under `FORGE_CWD_ALLOWLIST_ROOTS`. Write-tier members may create one folder level at a time via `create_directory` when remote build is enabled. `pick_directory` remains admin-only (native host picker).
+Remote New Project and Change Working Directory browse only under `FORGE_CWD_ALLOWLIST_ROOTS`. Write-tier members may create one folder level at a time via `create_directory` when Remote Projects is enabled. `pick_directory` remains admin-only (native host picker).
 
 Existing projects whose CWD sits outside the allowlist keep running. Operators cannot select, change to, or create new CWDs outside the configured roots, and roots are not silently expanded or migrated.
 
@@ -68,11 +81,13 @@ High-value paths to verify in the backup include:
 ```text
 ${FORGE_DATA_DIR}/shared/config/collaboration/auth.db
 ${FORGE_DATA_DIR}/shared/config/collaboration/auth-secret.key
+${FORGE_DATA_DIR}/shared/config/remote-build-settings.json
 ${FORGE_DATA_DIR}/shared/config/auth/
 ${FORGE_DATA_DIR}/shared/config/secrets.json
 ${FORGE_DATA_DIR}/swarm/agents.json
 ${FORGE_DATA_DIR}/shared/specialists/
 ${FORGE_DATA_DIR}/profiles/_collaboration/
+${FORGE_DATA_DIR}/profiles/<remoteProfileId>/sessions/
 ${FORGE_DATA_DIR}/skills/
 ${FORGE_DATA_DIR}/profiles/*/pi/skills/
 ${FORGE_DATA_DIR}/agent/skills/
@@ -82,6 +97,8 @@ ${FORGE_DATA_DIR}/agent/manager/skills/
 `${FORGE_DATA_DIR}/swarm/agents.json` stores Forge profile/session descriptors, including the `_collaboration` profile/root descriptors and channel backing manager descriptors. Losing it can orphan SQLite channel rows because `backingSessionAgentId` must resolve to a valid collaboration manager descriptor.
 
 `${FORGE_DATA_DIR}/skills/` stores user-created global Forge skills. `${FORGE_DATA_DIR}/profiles/*/pi/skills/` stores profile/project-scoped Pi skills. `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/` store Pi-discovered global worker/manager skills. Collaboration v1 selected-skill state stores global handles plus always-on `memory`; these paths are backup inventory for file-backed definitions, not evidence of channel-local skill authoring.
+
+Also back up the host workspace mounts that contain remote project repositories. Remote project profiles, sessions, attachments, and execution state remain on this server; no Builder client clone or browser connection registry is a backup.
 
 If `FORGE_COLLABORATION_AUTH_SECRET` is supplied outside the data directory, back up the external secret source too.
 
@@ -113,7 +130,8 @@ If `FORGE_COLLABORATION_AUTH_SECRET` is supplied outside the data directory, bac
 7. Sign in with the bootstrapped admin account.
 8. Configure provider auth in Collaboration settings on that backend.
 9. Create a test category/channel and send a message.
-10. Take an initial backup of the data directory.
+10. If this instance will serve Remote Projects, mount/allowlist workspaces, review the trusted-operator model, and use the authenticated admin API to enable policy with an explicit `terminalsEnabled` choice.
+11. Take an initial backup of the data directory and workspace mounts.
 
 ## Upgrade and rollback
 
@@ -151,6 +169,7 @@ Validation after deploy:
 - Create or open a channel.
 - Send a message and watch transcript/status updates.
 - Leave the channel open long enough to confirm the WebSocket stays connected through the proxy.
+- If Remote Projects is enabled, confirm the public status capability, client sign-in, blue/globe remote rows, and active-origin Files/Git behavior with a non-production test project.
 
 ## Reverse proxy guidance
 
@@ -201,10 +220,26 @@ proxy_send_timeout 1h;
 
 ### Auth, cookies, and origin errors
 
+- Collaboration sessions have a 21-day sliding lifetime with a one-day `updateAge`; the Forge client signs in with `rememberMe: true`.
 - Keep `FORGE_COLLABORATION_BASE_URL` aligned with the browser URL users actually open.
-- In split deployments, include Builder/UI origins in `FORGE_COLLABORATION_TRUSTED_ORIGINS`.
+- In split deployments, include Builder/UI origins in `FORGE_COLLABORATION_TRUSTED_ORIGINS`; browser CORS and Better Auth trusted-origin checks both apply.
+- Same-site cookies use `SameSite=Lax`. Cross-site browser auth requires HTTPS and uses `SameSite=None; Secure`.
 - For local HTTP testing, use `127.0.0.1` consistently. Mixing `localhost` and `127.0.0.1` makes cookies cross-site and can require HTTPS cookie semantics.
-- Use a distinct `FORGE_COLLABORATION_AUTH_COOKIE_NAME` only when multiple same-host collaboration servers need independent sessions.
+- Cookies are not port-scoped. Multiple collaboration servers on the same hostname, even on different ports, must use distinct `FORGE_COLLABORATION_AUTH_COOKIE_NAME` values.
+
+### Remote Projects policy or row state
+
+- **Disabled:** verify authenticated admin `GET /api/settings/remote-build`, then enable policy through its partial `PUT`; a browser preference cannot override it.
+- **Sign-in required:** sign in to that specific connection. A `4001` close means an admin invalidated the tracked session/socket.
+- **Update Forge to connect:** update the client; it blocks servers with a newer unsupported Builder protocol.
+- **Unreachable:** check `/api/health`, public `/api/collaboration/status`, TLS/DNS/proxy configuration, and trusted origins.
+- **No remote projects yet:** the origin is connected but the server has no renderable normal Builder project.
+
+### Live revocation caveats
+
+Setting Remote Projects `enabled: false` denies subsequent member commands and HTTP requests but does not disconnect existing WebSockets/subscriptions. Ordinary sign-out or natural session expiry also does not continuously revalidate an existing authenticated WebSocket. Admin disable/delete, role change, and password reset explicitly close tracked user sockets with code `4001`.
+
+`terminalsEnabled: false` denies subsequent member terminal lifecycle/ticket operations but does not terminate a terminal socket that is already attached. For urgent containment, combine policy changes with account invalidation and network/socket shutdown as appropriate. Treat these as current limitations, not guarantees.
 
 ### Missing provider auth
 
