@@ -101,10 +101,14 @@ The main panel is a chat window. You type messages to your manager, it responds.
 
 Two view modes, toggled at the top:
 
-- **Web** (default) — Prioritizes the visible conversation transcript and pending choices you can answer. Clean, focused.
-- **All** — Stays manager-focused and adds manager-session activity and tool rows. Worker/internal JSONL and tool rows live in Session Audit Log; **Detailed** can show owned direct-worker activity, but it still does not surface every worker internal inline.
+- **Web** (default for managers) — Prioritizes the focused conversation transcript and pending choices you can answer.
+- **All** — Adds manager-session activity, manager tool rows, and terminal reports returned by workers. It does not inline the workers' internal tool history.
 
-Use **Session Audit Log** from the chat header menu when you need the canonical persisted rows. It opens a list/detail inspector: the row list stays compact and paginated, and selecting a row loads the full JSON detail for inspection and copy. On desktop, the list and detail panes are separated by a draggable, keyboard-accessible divider that remembers its width locally. Supported native provider rows, including provider text, tool calls/results, system rows, and hidden thinking blocks, are classified as hidden runtime rows instead of appearing as `Unknown row: message`. Provider internals such as thinking, tool arguments/results, and system content stay out of normal Web/All/Detailed summaries and list previews; inspect the JSON detail view when you need the underlying row and have access to it.
+Selecting a worker pill or worker row opens that worker's own transcript, which defaults to **All**. Return to the manager and switch to All manually when you want to inspect terminal worker reports that are hidden from the manager's Web view.
+
+If a worker finishes but the manager does not summarize the result, Forge may show either a system notice directing you to All or a calm **Worker outcome · auto-surfaced** card with a bounded outcome summary. The card is informational rather than a manager-authored reply; use All for the full terminal report.
+
+Use **Session Audit Log** from the chat header menu when you need the canonical persisted rows and runtime internals. It opens a list/detail inspector: the row list stays compact and paginated, and selecting a row loads the full JSON detail for inspection and copy. On desktop, the list and detail panes are separated by a draggable, keyboard-accessible divider that remembers its width locally. Supported native provider rows, including provider text, tool calls/results, system rows, and hidden thinking blocks, are classified as hidden runtime rows instead of appearing as `Unknown row: message`. Provider internals such as thinking, tool arguments/results, and system content stay out of normal Web/All summaries and list previews; inspect the JSON detail view when you need the underlying row and have access to it.
 
 Agents can include Mermaid diagrams in their responses using standard markdown code fences (` ```mermaid ... ``` `). These render inline with an interactive toolbar for toggling between diagram and source, copying code, exporting as SVG or PNG, and viewing fullscreen.
 
@@ -146,7 +150,7 @@ The left sidebar shows all your sessions across all managers. You can switch ses
 
 ### Worker Pills
 
-When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker and shows an elapsed timer. Click a pill to see what that worker is doing: commands it's running, files it's editing, with elapsed time on each tool call.
+When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker and shows an elapsed timer. Click a pill to open that worker's transcript; worker transcripts default to the **All** view so their activity is visible.
 
 Quick at-a-glance view of parallel work in progress. Codex app-server sidecars appear as worker-like external-thread cards. They persist by default, can be stopped through the same session stop path, and can be reused after stop. Plain `@Codex` / `[@Codex]` text follow-ups continue the direct sidecar thread; plugin selector mentions open the plugin-scoped path, which reaches the manager and is delegated to the visible `Codex Plugin` specialist worker with read-only scoped tools, bounded redacted results, artifact-backed full exports when needed, and normal manager follow-up while scope remains active. If a scoped Codex Plugin worker is stopped or fails, clear continuation or retry turns can reuse the server-stored scope without re-tagging; unrelated turns clear that retry context. The sidecar path is Builder web only, text-only, excludes Collaboration, and allows only one active direct Codex turn globally.
 

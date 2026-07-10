@@ -4,6 +4,12 @@
 **Status:** Root cause identified; recommendations pending decision
 **Primary evidence:** `~/.forge/profiles/rapa-teams-gateway/sessions/mammo-sch` (gpt-5.5 manager), cross-session scan of all profiles, git history
 
+> **Current status (2026-07):** This document preserves the original investigation and its staged
+> resample-only account. That account is now superseded by the shipped runtime-agnostic silent-manager
+> system notice and the separate Pi terminal-report outcome backstop described in
+> [Manager Empty-Turn Fix](MANAGER_EMPTY_TURN_FIX.md). Raw terminal worker reports remain available in the
+> manager's All view; the backstop surfaces only a bounded informational outcome when eligible.
+
 ---
 
 ## 1. Summary

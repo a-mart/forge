@@ -4,7 +4,7 @@ When you send a message, the manager reads it, decides what needs to happen, and
 
 ## What you see
 
-Workers appear as pills below the chat header while they are active. Click a pill to see what that worker is doing. When a worker finishes, it reports back to the manager and disappears. Agents can also produce Mermaid diagrams that render inline in chat instead of staying as raw code fences.
+Workers appear as pills below the chat header while they are active. Click a pill to open that worker's transcript, which defaults to **All**. When a worker finishes, its terminal report is returned to the manager; in the manager thread, that raw report stays out of the focused Web view and is available in **All**. Agents can also produce Mermaid diagrams that render inline in chat instead of staying as raw code fences.
 
 ## Why this matters
 
@@ -16,7 +16,9 @@ The manager controls the flow. It decides which model each worker uses, what ins
 
 The manager picks a model for each worker based on the task. Quick jobs like file reads get a cheaper, faster model. Complex work like architecture review gets a more capable one. If you have specialists configured, the manager routes work to the right specialist automatically based on what the task needs.
 
-Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion. The normal chat transcript stays manager-session focused: Web prioritizes the visible conversation transcript and pending choices you can answer, while All adds manager-owned activity without expanding into worker-internal tool history.
+Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion. The normal chat transcript stays manager-session focused: Web prioritizes the visible conversation transcript and pending choices you can answer, while All adds manager-owned activity and terminal worker reports without expanding into worker-internal tool history.
+
+If the manager does not summarize a completed worker result, Forge can show a system fallback that points you to **All**, or an informational **Worker outcome · auto-surfaced** card with a bounded summary. Switch to All to read the full terminal report.
 
 Use **Session Audit Log** when you need the full persisted diagnostic view. It reads canonical manager and worker JSONL sources, lets you switch from the manager session log to a worker transcript, and keeps the list paginated with compact clickable summaries. On desktop, the audit inspector uses a split list/detail layout with a draggable, resizable divider. Select any row to automatically fetch the full canonical JSONL row (up to an 8 MB detail cap) into a detail pane with formatted/raw toggles, wrapping, and copy. Small rows use syntax highlighting; very large JSON uses a plain scrollable viewer so the UI stays responsive. Worker internals are visible only after explicitly selecting a worker source in that audit view, and audit rows are not added to normal chat or model context.
 
