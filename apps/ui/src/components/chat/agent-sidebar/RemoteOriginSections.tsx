@@ -11,6 +11,7 @@ import { ChevronDown, ChevronRight, Globe } from 'lucide-react'
 import type { SessionRow } from '@/lib/agent-hierarchy'
 import {
   compositeKey,
+  originRegistry,
   useOriginMeta,
   useOriginSlice,
   type OriginId,
@@ -18,6 +19,8 @@ import {
 } from '@/lib/origin-store'
 import { cn } from '@/lib/utils'
 import { SessionStatusDot } from './shared'
+import { WorkerRow } from './WorkerRow'
+import { MAX_VISIBLE_WORKERS } from './constants'
 import type { ManagerWsState } from '@/lib/ws-state'
 import {
   equalRemoteProfileRowProps,
@@ -118,7 +121,10 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
   const meta = useOriginMeta(originId)
   const instanceName = meta?.instanceName?.trim() || fallbackInstanceName?.trim() || 'Remote Forge'
   const firstSession = sessions[0]?.sessionAgent
-  const isHeaderSelected = isActiveOrigin && sessions.some((session) => session.sessionAgent.agentId === selectedAgentId)
+  const isHeaderSelected = isActiveOrigin && sessions.some((session) =>
+    session.sessionAgent.agentId === selectedAgentId
+    || session.workers.some((worker) => worker.agentId === selectedAgentId),
+  )
 
   return (
     <div data-testid={`remote-profile-row-${compositeKey(originId, profile.profileId)}`}>
@@ -180,8 +186,8 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
               key={compositeKey(originId, session.sessionAgent.agentId)}
               originId={originId}
               session={session}
-              isSelected={isActiveOrigin && selectedAgentId === session.sessionAgent.agentId}
-              onSelect={() => onSelectAgent(originId, session.sessionAgent.agentId)}
+              selectedAgentId={isActiveOrigin ? selectedAgentId : null}
+              onSelectAgent={onSelectAgent}
             />
           ))}
         </ul>
@@ -193,16 +199,22 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
 const RemoteSessionRow = memo(function RemoteSessionRow({
   originId,
   session,
-  isSelected,
-  onSelect,
+  selectedAgentId,
+  onSelectAgent,
 }: {
   originId: OriginId
   session: SessionRow
-  isSelected: boolean
-  onSelect: () => void
+  selectedAgentId: string | null
+  onSelectAgent: (originId: OriginId, agentId: string) => void
 }) {
-  const { sessionAgent, isDefault } = session
+  const { sessionAgent, workers, isDefault } = session
+  const [collapsed, setCollapsed] = useState(true)
+  const [isWorkerListExpanded, setWorkerListExpanded] = useState(false)
   const label = sessionAgent.sessionLabel || (isDefault ? 'Main' : sessionAgent.displayName || sessionAgent.agentId)
+  const workerCount = sessionAgent.workerCount ?? workers.length
+  const hasWorkers = workerCount > 0
+  const isSelected = selectedAgentId === sessionAgent.agentId
+  const hasSelectedWorker = workers.some((worker) => worker.agentId === selectedAgentId)
   const selectLiveStatus = useMemo(
     () => (state: ManagerWsState) => state.statuses[sessionAgent.agentId]?.status,
     [sessionAgent.agentId],
@@ -219,40 +231,93 @@ const RemoteSessionRow = memo(function RemoteSessionRow({
     selectorKey: `sidebar.remote-session-unread.${sessionAgent.agentId}`,
   })
   const running = liveStatus === 'idle' || liveStatus === 'streaming'
+  const toggleWorkers = () => {
+    setCollapsed((wasCollapsed) => {
+      if (wasCollapsed) void originRegistry.getOrigin(originId)?.getClient().getSessionWorkers(sessionAgent.agentId).catch(() => {})
+      return !wasCollapsed
+    })
+  }
+  const needsWorkerTruncation = workers.length > MAX_VISIBLE_WORKERS
+  let visibleWorkers = workers
+  let hiddenWorkerCount = 0
+  if (needsWorkerTruncation && !isWorkerListExpanded) {
+    const topWorkers = workers.slice(0, MAX_VISIBLE_WORKERS)
+    const selectedWorkerInTop = !selectedAgentId || topWorkers.some((worker) => worker.agentId === selectedAgentId)
+    const selectedWorker = workers.find((worker) => worker.agentId === selectedAgentId)
+    visibleWorkers = selectedWorkerInTop || !selectedWorker
+      ? topWorkers
+      : [...topWorkers.slice(0, MAX_VISIBLE_WORKERS - 1), selectedWorker]
+    hiddenWorkerCount = workers.length - visibleWorkers.length
+  }
 
   return (
     <li>
-      <button
-        type="button"
-        onClick={onSelect}
-        className={cn(
-          'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1.5 pl-5 pr-1.5 text-left transition-colors',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-          isSelected
-            ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
-            : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
-        )}
-      >
-        {liveStatus === 'streaming' ? (
-          <span
-            className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent"
-            style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
-            aria-label="Manager streaming"
-          />
-        ) : liveStatus === 'error' ? (
-          <span className="size-2 shrink-0 rounded-full bg-red-500" aria-label="Session error" />
-        ) : (
-          <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} />
-        )}
-        <span className="min-w-0 flex-1 truncate text-sm leading-5">{label}</span>
-        {unreadCount > 0 ? (
-          <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
-            {unreadCount > 99 ? '99+' : unreadCount}
-          </span>
+      <div className={cn('relative', (isSelected || hasSelectedWorker) && 'text-sidebar-foreground')}>
+        {hasWorkers ? (
+          <button
+            type="button"
+            onClick={toggleWorkers}
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} session workers`}
+            aria-expanded={!collapsed}
+            className="absolute left-2 top-1/2 z-10 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+          >
+            {collapsed ? <ChevronRight className="size-3" aria-hidden="true" /> : <ChevronDown className="size-3" aria-hidden="true" />}
+          </button>
         ) : null}
-      </button>
+        <button
+          type="button"
+          onClick={() => onSelectAgent(originId, sessionAgent.agentId)}
+          className={cn(
+            'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1.5 pr-1.5 text-left transition-colors',
+            hasWorkers ? 'pl-7' : 'pl-5',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+            isSelected || hasSelectedWorker
+              ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
+              : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
+          )}
+        >
+          {liveStatus === 'streaming' ? (
+            <span className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent" style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }} aria-label="Manager streaming" />
+          ) : liveStatus === 'error' ? (
+            <span className="size-2 shrink-0 rounded-full bg-red-500" aria-label="Session error" />
+          ) : (
+            <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} />
+          )}
+          <span className="min-w-0 flex-1 truncate text-sm leading-5">{label}</span>
+          {unreadCount > 0 ? <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">{unreadCount > 99 ? '99+' : unreadCount}</span> : null}
+        </button>
+      </div>
+      {hasWorkers && !collapsed ? (
+        <div className="relative mt-0.5">
+          <ul className="space-y-0.5">
+            {visibleWorkers.map((worker) => (
+              <li key={worker.agentId}>
+                <RemoteWorkerRow originId={originId} worker={worker} isSelected={selectedAgentId === worker.agentId} onSelect={() => onSelectAgent(originId, worker.agentId)} />
+              </li>
+            ))}
+          </ul>
+          {needsWorkerTruncation ? (
+            <button type="button" onClick={() => setWorkerListExpanded((expanded) => !expanded)} className="relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors hover:bg-sidebar-accent/30 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60">
+              {isWorkerListExpanded ? <><ChevronDown className="size-3 shrink-0" aria-hidden="true" /><span>Show less</span></> : <><ChevronDown className="size-3 shrink-0" aria-hidden="true" /><span>Show {hiddenWorkerCount} more</span></>}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </li>
   )
+})
+
+const RemoteWorkerRow = memo(function RemoteWorkerRow({ originId, worker, isSelected, onSelect }: {
+  originId: OriginId
+  worker: SessionRow['workers'][number]
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  const selectLiveStatus = useMemo(() => (state: ManagerWsState) => state.statuses[worker.agentId], [worker.agentId])
+  const liveStatus = useOriginSlice(originId, selectLiveStatus, {
+    selectorKey: `sidebar.remote-worker-status.${worker.agentId}`,
+  })
+  return <WorkerRow agent={worker} liveStatus={{ status: liveStatus?.status ?? worker.status, pendingCount: liveStatus?.pendingCount ?? 0 }} isSelected={isSelected} onSelect={onSelect} />
 })
 
 function RemoteOriginStatusCard({

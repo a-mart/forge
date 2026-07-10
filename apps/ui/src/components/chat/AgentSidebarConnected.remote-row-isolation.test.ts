@@ -81,7 +81,7 @@ afterEach(() => {
 })
 
 describe('AgentSidebarConnected remote row isolation', () => {
-  it('does not rerender remote B rows for a production-shaped local A worker status event', async () => {
+  it('does not rerender an unrelated remote row for a production-shaped remote worker status event', async () => {
     const local = originRegistry.createOrigin({
       originId: LOCAL_ORIGIN_ID,
       wsUrl: 'ws://local.test',
@@ -98,12 +98,25 @@ describe('AgentSidebarConnected remote row isolation', () => {
         profiles: [profile('local-project', 'local-session')],
       },
     })
-    const remote = originRegistry.createOrigin({
-      originId: 'remote-b',
-      wsUrl: 'ws://remote.test',
+    const remoteA = originRegistry.createOrigin({
+      originId: 'remote-a',
+      wsUrl: 'ws://remote-a.test',
       offline: true,
     })
-    remote.ingest({
+    remoteA.ingest({
+      type: 'snapshot',
+      state: {
+        connected: true,
+        agents: [manager('remote-a-session', 'remote-a-project'), worker('remote-a-worker', 'remote-a-session', 'remote-a-project')],
+        profiles: [profile('remote-a-project', 'remote-a-session')],
+      },
+    })
+    const remoteB = originRegistry.createOrigin({
+      originId: 'remote-b',
+      wsUrl: 'ws://remote-b.test',
+      offline: true,
+    })
+    remoteB.ingest({
       type: 'snapshot',
       state: {
         connected: true,
@@ -118,6 +131,7 @@ describe('AgentSidebarConnected remote row isolation', () => {
         revision: 1,
         order: [
           { originId: 'local', profileId: 'local-project' },
+          { originId: 'remote-a', profileId: 'remote-a-project' },
           { originId: 'remote-b', profileId: 'remote-project' },
         ],
         updatedAt: '2026-07-09T12:00:00.000Z',
@@ -145,12 +159,12 @@ describe('AgentSidebarConnected remote row isolation', () => {
     remoteRowRenderSpy.mockClear()
 
     flushSync(() => {
-      local.ingest({
+      remoteA.ingest({
         type: 'event',
         event: {
           type: 'agent_status',
-          agentId: 'local-worker',
-          managerId: 'local-session',
+          agentId: 'remote-a-worker',
+          managerId: 'remote-a-session',
           status: 'streaming',
           pendingCount: 1,
         },
@@ -158,7 +172,7 @@ describe('AgentSidebarConnected remote row isolation', () => {
     })
     await Promise.resolve()
 
-    expect(remoteRowRenderSpy).not.toHaveBeenCalled()
+    expect(remoteRowRenderSpy.mock.calls.filter(([props]) => props.originId === 'remote-b')).toHaveLength(0)
     expect(api.put).not.toHaveBeenCalled()
   })
 })

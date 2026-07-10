@@ -30,10 +30,9 @@ export const WorkerRow = React.memo(function WorkerRow({
   const isStopped = statusValue === 'terminated' || statusValue === 'stopped'
   const isCodexWorker = isCodexExternalThread(agent)
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
+  const row = (
         <div
+          data-worker-row
           className={cn(
             'flex w-full items-center gap-1 rounded-md py-1.5 pl-12 pr-1.5 transition-colors',
             isSelected
@@ -77,7 +76,13 @@ export const WorkerRow = React.memo(function WorkerRow({
             </Tooltip>
           </TooltipProvider>
         </div>
-      </ContextMenuTrigger>
+  )
+
+  if (!onDelete && !onStop && !onResume) return row
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
       <ContextMenuContent>
         {isRunning && onStop ? (
           <ContextMenuItem onClick={() => onStop()}>
@@ -91,11 +96,13 @@ export const WorkerRow = React.memo(function WorkerRow({
             Resume
           </ContextMenuItem>
         ) : null}
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={() => onDelete()}>
-          <Trash2 className="mr-2 size-3.5" />
-          Delete
-        </ContextMenuItem>
+        {onDelete && ((isRunning && onStop) || (isStopped && onResume)) ? <ContextMenuSeparator /> : null}
+        {onDelete ? (
+          <ContextMenuItem variant="destructive" onClick={() => onDelete()}>
+            <Trash2 className="mr-2 size-3.5" />
+            Delete
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   )

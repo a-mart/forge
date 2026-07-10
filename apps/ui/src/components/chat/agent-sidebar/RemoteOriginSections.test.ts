@@ -54,8 +54,18 @@ function makeProfile(overrides: Partial<ManagerProfile> = {}): ManagerProfile {
   }
 }
 
-function makeSession(agent: AgentDescriptor, isDefault = true): SessionRow {
-  return { sessionAgent: agent, workers: [], isDefault }
+function makeSession(agent: AgentDescriptor, isDefault = true, workers: AgentDescriptor[] = []): SessionRow {
+  return { sessionAgent: agent, workers, isDefault }
+}
+
+function makeWorker(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
+  return makeAgent({
+    agentId: 'worker-1',
+    managerId: 'session-1',
+    displayName: 'Worker 1',
+    role: 'worker',
+    ...overrides,
+  })
 }
 
 function makeRow(profile: ManagerProfile, sessions: SessionRow[]): ProfileTreeRow {
@@ -168,6 +178,58 @@ describe('remote row/status rendering without nested DnD', () => {
     )
     projectButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     expect(keyDown).toHaveBeenCalledOnce()
+  })
+
+  it('expands remote workers, fetches from the row origin, and routes worker selection to it', () => {
+    const originId = 'remote:workers' as OriginId
+    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://workers.test', offline: true })
+    const activeStore = originRegistry.createOrigin({ originId: 'remote:active', wsUrl: 'ws://active.test', offline: true })
+    const fetchWorkers = vi.spyOn(store.getClient(), 'getSessionWorkers').mockResolvedValue({ sessionAgentId: 'session-workers', workers: [] })
+    const activeFetchWorkers = vi.spyOn(activeStore.getClient(), 'getSessionWorkers').mockResolvedValue({ sessionAgentId: 'session-workers', workers: [] })
+    const onSelectAgent = vi.fn()
+    const session = makeAgent({ agentId: 'session-workers', workerCount: 1 })
+    const worker = makeWorker({ agentId: 'worker-remote', managerId: 'session-workers', status: 'streaming' })
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(RemoteProfileRow, {
+        originId,
+        treeRow: makeRow(makeProfile(), [makeSession(session, true, [worker])]),
+        selectedAgentId: null,
+        isActiveOrigin: true,
+        onSelectAgent,
+      }))
+    })
+
+    expect(container.textContent).not.toContain('Worker 1')
+    const expand = container.querySelector('[aria-label="Expand session workers"]') as HTMLButtonElement
+    flushSync(() => expand.click())
+    expect(fetchWorkers).toHaveBeenCalledWith('session-workers')
+    expect(activeFetchWorkers).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Worker 1')
+    const workerButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Worker 1'))
+    workerButton?.click()
+    expect(onSelectAgent).toHaveBeenCalledWith(originId, 'worker-remote')
+  })
+
+  it('keeps worker expansion independent for colliding session IDs across origins', () => {
+    const onSelectAgent = vi.fn()
+    const session = makeAgent({ agentId: 'same-session', workerCount: 1 })
+    const worker = makeWorker({ agentId: 'same-worker', managerId: 'same-session' })
+    for (const originId of ['remote:east', 'remote:west'] as const) {
+      originRegistry.createOrigin({ originId, wsUrl: `ws://${originId}.test`, offline: true })
+    }
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement('div', null,
+        createElement(RemoteProfileRow, { originId: 'remote:east', treeRow: makeRow(makeProfile(), [makeSession(session, true, [worker])]), selectedAgentId: null, isActiveOrigin: true, onSelectAgent }),
+        createElement(RemoteProfileRow, { originId: 'remote:west', treeRow: makeRow(makeProfile(), [makeSession(session, true, [worker])]), selectedAgentId: null, isActiveOrigin: true, onSelectAgent }),
+      ))
+    })
+    const expandButtons = Array.from(container.querySelectorAll('[aria-label="Expand session workers"]')) as HTMLButtonElement[]
+    flushSync(() => expandButtons[0]?.click())
+    expect(container.querySelectorAll('[aria-label="Collapse session workers"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Worker 1')
   })
 
   it('updates status and unread from the owning origin row subscription', () => {
