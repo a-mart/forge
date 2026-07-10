@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useLatestRef } from '@/hooks/useLatestRef'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -69,6 +70,13 @@ export function ServerDirectoryBrowserDialog({
   const [newFolderName, setNewFolderName] = useState('')
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [selecting, setSelecting] = useState(false)
+  // Parent origin/status updates can replace the client object while this dialog
+  // is open. Keep requests on the latest client without making the open effect
+  // depend on its identity.
+  const clientRef = useLatestRef(client)
+  const initialPathRef = useLatestRef(initialPath)
+  const onOpenChangeRef = useLatestRef(onOpenChange)
+  const onSelectRef = useLatestRef(onSelect)
 
   const applyListing = useCallback((listed: DirectoriesListedResult) => {
     const nextPath = listed.resolvedPath ?? listed.path
@@ -90,7 +98,7 @@ export function ServerDirectoryBrowserDialog({
     setLoading(true)
     setError(null)
     try {
-      applyListing(await client.listDirectories(path))
+      applyListing(await clientRef.current.listDirectories(path))
     } catch (err) {
       // A persisted local CWD (such as /app in a container) may be outside the
       // collaboration server allowlist. Keep that policy intact, but recover to
@@ -98,7 +106,7 @@ export function ServerDirectoryBrowserDialog({
       const message = err instanceof Error ? err.message : 'Failed to list directories.'
       if (path?.trim() && isOutsideAllowedRootsError(message)) {
         try {
-          applyListing(await client.listDirectories())
+          applyListing(await clientRef.current.listDirectories())
           return
         } catch {
           // Preserve the original policy error when the roots cannot be listed.
@@ -109,15 +117,15 @@ export function ServerDirectoryBrowserDialog({
     } finally {
       setLoading(false)
     }
-  }, [applyListing, client])
+  }, [applyListing, clientRef])
 
   useEffect(() => {
     if (!open) return
     setShowNewFolder(false)
     setNewFolderName('')
     setError(null)
-    void loadPath(initialPath?.trim() || undefined)
-  }, [open, initialPath, loadPath])
+    void loadPath(initialPathRef.current?.trim() || undefined)
+  }, [open, initialPathRef, loadPath])
 
   const breadcrumbs = useMemo(() => buildBreadcrumbs(currentPath, roots), [currentPath, roots])
   const noRootsConfigured = Boolean(
@@ -132,7 +140,7 @@ export function ServerDirectoryBrowserDialog({
     setLoading(true)
     setError(null)
     try {
-      const validation = await client.validateDirectory(trimmed)
+      const validation = await clientRef.current.validateDirectory(trimmed)
       if (!validation.valid) {
         setError(validation.message ?? 'Directory is not valid.')
         return
@@ -143,14 +151,14 @@ export function ServerDirectoryBrowserDialog({
     } finally {
       setLoading(false)
     }
-  }, [client, loadPath, pathInput])
+  }, [clientRef, loadPath, pathInput])
 
   const handleCreateFolder = useCallback(async () => {
-    if (!client.createDirectory || !currentPath || !newFolderName.trim()) return
+    if (!clientRef.current.createDirectory || !currentPath || !newFolderName.trim()) return
     setCreating(true)
     setError(null)
     try {
-      const created = await client.createDirectory(currentPath, newFolderName.trim())
+      const created = await clientRef.current.createDirectory(currentPath, newFolderName.trim())
       setShowNewFolder(false)
       setNewFolderName('')
       await loadPath(created.parentPath)
@@ -159,7 +167,7 @@ export function ServerDirectoryBrowserDialog({
     } finally {
       setCreating(false)
     }
-  }, [client, currentPath, loadPath, newFolderName])
+  }, [clientRef, currentPath, loadPath, newFolderName])
 
   const handleUseFolder = useCallback(async () => {
     const candidate = pathInput.trim() || currentPath
@@ -167,23 +175,23 @@ export function ServerDirectoryBrowserDialog({
     setSelecting(true)
     setError(null)
     try {
-      const validation = await client.validateDirectory(candidate)
+      const validation = await clientRef.current.validateDirectory(candidate)
       if (!validation.valid) {
         setError(validation.message ?? 'Directory is not valid.')
         return
       }
       const resolved = validation.resolvedPath ?? validation.path ?? candidate
-      onSelect(resolved)
-      onOpenChange(false)
+      onSelectRef.current(resolved)
+      onOpenChangeRef.current(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to validate directory.')
     } finally {
       setSelecting(false)
     }
-  }, [client, currentPath, onOpenChange, onSelect, pathInput])
+  }, [clientRef, currentPath, onOpenChangeRef, onSelectRef, pathInput])
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!selecting && !creating) onOpenChange(next) }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!selecting && !creating) onOpenChangeRef.current(next) }}>
       <DialogContent className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-xl">
         <DialogHeader className="space-y-1 border-b px-4 py-3">
           <DialogTitle>{title}</DialogTitle>
@@ -367,7 +375,7 @@ export function ServerDirectoryBrowserDialog({
         </div>
 
         <DialogFooter className="border-t px-4 py-3">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={selecting}>
+          <Button type="button" variant="outline" onClick={() => onOpenChangeRef.current(false)} disabled={selecting}>
             Cancel
           </Button>
           <Button

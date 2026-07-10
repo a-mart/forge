@@ -4040,6 +4040,43 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('keeps request-scoped directory errors out of conversation messages while rejecting each caller', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+    const messageCount = client.getState().messages.length
+
+    const cases = [
+      ['LIST_DIRECTORIES_FAILED', () => client.listDirectories('/app')],
+      ['VALIDATE_DIRECTORY_FAILED', () => client.validateDirectory('/app')],
+      ['CREATE_DIRECTORY_FAILED', () => client.createDirectory('/workspaces', 'demo')],
+    ] as const
+
+    for (const [code, request] of cases) {
+      const promise = request()
+      const payload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      emitServerEvent(socket, {
+        type: 'error',
+        code,
+        message: 'Directory is outside the configured workspace roots.',
+        requestId: payload.requestId,
+      })
+      await expect(promise).rejects.toThrow(`${code}: Directory is outside the configured workspace roots.`)
+      expect(client.getState().messages).toHaveLength(messageCount)
+      expect(client.getState().lastError).toBeNull()
+    }
+
+    client.destroy()
+  })
+
   it('rejects delete_manager when backend returns an error', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
@@ -4055,6 +4092,7 @@ describe('ManagerWsClient', () => {
       subscribedAgentId: 'manager',
     })
 
+    const messageCount = client.getState().messages.length
     const deletePromise = client.deleteManager('manager')
     const deletePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
 
@@ -4067,6 +4105,7 @@ describe('ManagerWsClient', () => {
 
     await expect(deletePromise).rejects.toThrow('DELETE_MANAGER_FAILED: Delete failed for testing.')
     expect(client.getState().lastError).toBe('Delete failed for testing.')
+    expect(client.getState().messages).toHaveLength(messageCount + 1)
 
     client.destroy()
   })

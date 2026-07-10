@@ -962,6 +962,8 @@ export class ManagerWsClient {
     handleSystemEvent(event, {
       updateState: (patch) => this.updateState(patch),
       pushSystemMessage: (text) => this.pushSystemMessage(text),
+      isPendingDirectoryRequest: (requestId) =>
+        this.requestDispatcher.isPendingDirectoryRequest(requestId),
       rejectPendingFromError: (code, message, requestId) =>
         this.requestDispatcher.rejectPendingFromError(code, message, requestId),
     })

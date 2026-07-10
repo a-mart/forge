@@ -73,6 +73,16 @@ export class WsRequestTracker<RequestMap extends Record<string, unknown>> {
     return true
   }
 
+  getPendingRequestType(requestId: string | undefined): RequestKey<RequestMap> | null {
+    if (!requestId) return null
+    for (const requestType of this.requestTypes) {
+      if (this.pendingMapFor(requestType).has(requestId)) {
+        return requestType
+      }
+    }
+    return null
+  }
+
   rejectByRequestId(requestId: string, error: Error): boolean {
     for (const requestType of this.requestTypes) {
       if (this.reject(requestType, requestId, error)) {

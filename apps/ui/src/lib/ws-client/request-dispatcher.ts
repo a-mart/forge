@@ -69,6 +69,13 @@ export class RequestDispatcher {
   // Error attribution / rejection
   // ---------------------------------------------------------------------------
 
+  isPendingDirectoryRequest(requestId?: string): boolean {
+    const requestType = this.tracker.getPendingRequestType(requestId)
+    return requestType === 'list_directories'
+      || requestType === 'validate_directory'
+      || requestType === 'create_directory'
+  }
+
   rejectPendingFromError(code: string, message: string, requestId?: string): void {
     const fullError = new Error(`${code}: ${message}`)
 

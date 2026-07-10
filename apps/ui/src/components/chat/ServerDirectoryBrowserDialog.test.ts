@@ -179,6 +179,84 @@ describe('ServerDirectoryBrowserDialog', () => {
     })
   })
 
+  it('does not restart the initial listing when parents replace callback identities, and uses the latest client for refresh', async () => {
+    const listing = (path?: string) => ({
+      path: path ?? '/workspaces',
+      directories: [],
+      resolvedPath: path ?? '/workspaces',
+      roots: ['/workspaces'],
+      entries: [],
+    })
+    const firstListDirectories = vi.fn(async (path?: string) => listing(path))
+    const secondListDirectories = vi.fn(async (path?: string) => listing(path))
+    const renderDialog = (listDirectories: typeof firstListDirectories) =>
+      createElement(ServerDirectoryBrowserDialog, {
+        open: true,
+        initialPath: '/workspaces',
+        onOpenChange: () => {},
+        // Deliberately create new callbacks as BuilderSurface does on rerender.
+        client: {
+          listDirectories: (path) => listDirectories(path),
+          validateDirectory: async (path) => ({ path, valid: true, message: null, resolvedPath: path }),
+        },
+        onSelect: () => {},
+      })
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(renderDialog(firstListDirectories))
+    })
+    await waitFor(() => expect(firstListDirectories).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      root!.render(renderDialog(secondListDirectories))
+    })
+    expect(firstListDirectories).toHaveBeenCalledTimes(1)
+    expect(secondListDirectories).not.toHaveBeenCalled()
+
+    const refreshButton = document.body.querySelector('button[aria-label="Refresh"]')
+    expect(refreshButton).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(refreshButton!)
+    })
+    await waitFor(() => expect(secondListDirectories).toHaveBeenCalledWith('/workspaces'))
+  })
+
+  it('lists once each time the browser opens', async () => {
+    const listDirectories = vi.fn(async (path?: string) => ({
+      path: path ?? '/workspaces',
+      directories: [],
+      resolvedPath: path ?? '/workspaces',
+      roots: ['/workspaces'],
+      entries: [],
+    }))
+    const renderDialog = (open: boolean) =>
+      createElement(ServerDirectoryBrowserDialog, {
+        open,
+        initialPath: '/workspaces',
+        onOpenChange: () => {},
+        client: {
+          listDirectories,
+          validateDirectory: async (path) => ({ path, valid: true, message: null, resolvedPath: path }),
+        },
+        onSelect: () => {},
+      })
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(renderDialog(true))
+    })
+    await waitFor(() => expect(listDirectories).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      root!.render(renderDialog(false))
+    })
+    await act(async () => {
+      root!.render(renderDialog(true))
+    })
+    await waitFor(() => expect(listDirectories).toHaveBeenCalledTimes(2))
+  })
+
   it('keeps non-policy initial-path errors visible instead of falling back to roots', async () => {
     const listDirectories = vi.fn(async () => {
       throw new Error('DIRECTORY_LIST_FAILED: permission denied')
