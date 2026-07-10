@@ -85,9 +85,9 @@ Knowledge v2 is a default-off Builder preview controlled from **Settings → Gen
 | Knowledge v2 ON | Global `shared/knowledge/INDEX.md`, the active profile's `knowledge/INDEX.md`, and the current session's `memory.md` |
 | Knowledge v2 OFF | Legacy `shared/knowledge/common.md`, canonical profile `memory.md`, and current session `memory.md` |
 
-Profile `memory.md` and legacy `common.md` continue to be maintained and preserved while v2 is ON, but they are not prompt-injected in that mode. Turning v2 OFF restores the legacy prompt sources without deleting v2 entries or indexes.
+Profile `memory.md` and legacy `common.md` continue to be maintained while v2 is ON, but they are not prompt-injected in that mode. Normal mode switching preserves the underlying legacy and v2 files. Turning v2 OFF restores the legacy prompt sources only while the legacy originals remain.
 
-A normal false→true activation requires a strictly valid completed migration manifest and no active migration lock. Settings and first-launch v2 onboarding use the backend's fail-closed capability result: before migration, Settings shows migration-required guidance and onboarding withholds the activation offer, so neither sends an enable request. A direct unsafe `PUT /api/settings/knowledge-v2` is rejected with HTTP 409 and `KNOWLEDGE_V2_MIGRATION_REQUIRED`. The toggle does not migrate data.
+A normal false→true activation requires a strictly valid completed migration manifest and no active migration lock. Before migration, Settings shows migration-required guidance and first-launch v2 onboarding withholds the activation offer, so neither sends an enable request. A direct unsafe `PUT /api/settings/knowledge-v2` is rejected with HTTP 409 and `KNOWLEDGE_V2_MIGRATION_REQUIRED`. The toggle does not migrate data.
 
 Run the guarded migration explicitly from the repository root with a deliberate data directory:
 
@@ -95,7 +95,22 @@ Run the guarded migration explicitly from the repository root with a deliberate 
 node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data
 ```
 
-Migration and activation share the ownership-safe cross-process lock. New migrations atomically write a completed v2 manifest with `authorized_pending` activation semantics before guarded activation; any failure leaves Knowledge v2 OFF. Strictly valid manifests from the earlier v1 writer remain accepted. After migration, users can enable v2; enabled users can disable it.
+Migration and activation share the ownership-safe cross-process lock. A successful new migration atomically writes a completed v2 manifest with truthful `authorized_pending` authorization, releases the lock, and immediately persists v2 activation. Strictly valid manifests from the earlier v1 writer remain accepted. If activation persistence fails after the manifest commit, the valid manifest remains an authorized recovery point and v2 stays OFF; an ordinary enable attempt can then recover. After a later user disable, the same valid manifest permits ordinary re-enable.
+
+Legacy cleanup is a separate, explicit operation:
+
+```bash
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data --cleanup-legacy --confirm
+```
+
+It archives legacy knowledge files and retired Cortex artifacts under `shared/knowledge/.archive/legacy-cleanup/<timestamp>/`, then removes the originals. After cleanup, switching v2 OFF cannot restore the prior legacy content by itself.
+
+Rollback uses the migration manifest's listed backups, disables v2, and reports that a restart is required:
+
+```bash
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data --rollback
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data --rollback --manifest /path/to/manifest.json
+```
 
 ### Phoenix Observability
 

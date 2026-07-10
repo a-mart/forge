@@ -375,13 +375,13 @@ Prompt sources are explicit:
 - **Knowledge v2 ON:** the generated global `shared/knowledge/INDEX.md`, active-profile `knowledge/INDEX.md`, and current session `memory.md`.
 - **Knowledge v2 OFF:** legacy shared `common.md`, canonical profile `memory.md`, and current session `memory.md`.
 
-Canonical profile memory and legacy common knowledge continue to be maintained and preserved with v2 ON, but are not prompt-injected. Turning v2 OFF restores the legacy prompt sources without deleting v2 entries or indexes. Profile memory and profile-scoped v2 knowledge are different stores.
+Canonical profile memory and legacy common knowledge continue to be maintained with v2 ON, but are not prompt-injected. Normal mode switching preserves both stores. Turning v2 OFF restores the legacy prompt sources only while those originals remain; explicit legacy cleanup archives and removes them. Profile memory and profile-scoped v2 knowledge are different stores.
 
 ### Guarded activation
 
-A normal false→true activation is allowed only after a guarded migration has produced a strictly valid completed manifest and released its ownership-safe cross-process lock. The migration writes its completed manifest before guarded activation; migration or activation failure leaves the switch OFF. Earlier valid v1 manifests remain accepted, while new migrations write the v2 manifest with truthful `authorized_pending` activation semantics.
+A normal false→true activation is allowed only after a guarded migration has produced a strictly valid completed manifest and released its ownership-safe cross-process lock. A successful migration commits that manifest, releases the lock, and immediately persists v2 activation. Earlier valid v1 manifests remain accepted; new migrations write a truthful v2 `authorized_pending` authorization. If activation persistence fails after the manifest commit, the manifest remains an authorized recovery point and v2 stays OFF. It permits an ordinary recovery enable, as well as ordinary re-enable after a later user disable.
 
-**Settings → General** and the first-launch v2 offer use the backend's fail-closed capability result. Before migration, Settings shows migration-required guidance and onboarding does not offer or request activation. The ordinary toggle never migrates data. Direct unsafe activation is rejected with HTTP 409 and `KNOWLEDGE_V2_MIGRATION_REQUIRED`. After migration, users can enable v2; enabled users can disable it.
+**Settings → General** and first-launch v2 onboarding use the backend's fail-closed capability result. Before migration, Settings shows migration-required guidance and onboarding does not offer or request activation. The ordinary toggle never migrates data. Direct unsafe activation is rejected with HTTP 409 and `KNOWLEDGE_V2_MIGRATION_REQUIRED`.
 
 Operators run migration explicitly from the repository root with a deliberate data directory:
 
@@ -389,22 +389,32 @@ Operators run migration explicitly from the repository root with a deliberate da
 node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data
 ```
 
+Cleanup and rollback are separate explicit operations:
+
+```bash
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data --cleanup-legacy --confirm
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data --rollback
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data --rollback --manifest /path/to/manifest.json
+```
+
+Cleanup archives legacy files and retired Cortex artifacts under `shared/knowledge/.archive/legacy-cleanup/<timestamp>/` and removes the originals, so OFF alone can no longer restore their prior content. Rollback restores manifest-listed legacy backups, disables v2, and reports that a restart is required.
+
 ### How learning works
 
-Managers can save durable facts directly with `save_learning`. At bounded compaction, idle, and close checkpoints, a deterministic cadence check and small judge can launch a restricted capture-check fork for facts that may have been missed; feedback signals bypass the judge and trigger that check directly. Managers use the `knowledge` tool to search and read full entries behind the compact indexes.
+Managers can save durable facts directly with `save_learning`. At bounded compaction, idle, and session-archive checkpoints, a deterministic cadence check and small judge can launch a restricted capture-check fork for facts that may have been missed; feedback signals bypass the judge and trigger that check directly. Managers use the `knowledge` tool to search and read full entries behind the compact indexes.
 
-Cortex's consolidator reads entries only. It merges duplicates, supersedes conflicts, archives stale entries, and regenerates token-capped indexes. It does **not** mine transcripts or create new entries.
+While Knowledge v2 is ON, Cortex's consolidator reads entries only. It merges duplicates, supersedes conflicts, archives stale entries, and regenerates token-capped indexes. It does **not** mine transcripts or create new entries.
 
 ### Cortex dashboard
 
 Open Cortex from its pinned Builder sidebar entry. The resizable dashboard has four tabs:
 
 - **Index** — View generated global/profile indexes and token-cost meters.
-- **Entries** — Browse and edit structured entries and their provenance.
-- **Changelog** — Inspect added, merged, archived, superseded, and reindexed actions.
-- **Consolidation** — See the latest run and next trigger, or run consolidation manually.
+- **Entries** — Read entry bodies and provenance details; the current dashboard is read-only.
+- **Log** — Inspect verified consolidation log activity.
+- **Run** — Use **Consolidate now**, see **Last run**, and inspect the **Promotion review queue**.
 
-The daily consolidation schedule can be enabled or disabled under **Settings → General**. Entry bodies remain directly editable from **Entries**.
+While Knowledge v2 is ON, the daily consolidation schedule can be enabled or disabled under **Settings → General**, and manual consolidation is available from **Run**.
 
 ---
 
@@ -741,10 +751,10 @@ If you can describe the task to a capable colleague, you can describe it to your
 Once you're comfortable with the basics:
 
 1. **Build your workflow preferences** — Have conversations with your manager about how you like to work and save the durable parts as knowledge.
-2. **Explore Cortex** — If an operator has completed the guarded migration, opt into Knowledge v2 and inspect **Index**, **Entries**, **Changelog**, and **Consolidation**.
+2. **Explore Cortex** — When Knowledge v2 is active, inspect **Index**, read-only **Entries**, **Log**, and **Run**.
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
-5. **Review consolidation settings** — Use **Settings → General** to enable or disable the daily entry consolidation schedule; manual consolidation is available in Cortex.
+5. **Review consolidation settings** — While Knowledge v2 is ON, use **Settings → General** for the daily entry consolidation schedule; manual consolidation is available under Cortex **Run**.
 6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
 7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 

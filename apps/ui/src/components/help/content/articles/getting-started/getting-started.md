@@ -16,4 +16,4 @@ One conversation can have dozens of workers running at once. You don't manage th
 
 Spend your first few minutes telling the manager how you like to work. Your review process, your branching strategy, how you think about testing. This is not small talk. It's calibration. The better the manager understands your style, the better it orchestrates on your behalf.
 
-After that, rate messages as you go. Thumbs up when the manager nails it, thumbs down when it misses. This feedback feeds into Cortex, which learns your preferences over time and improves future sessions.
+After that, rate messages as you go. Thumbs up when the manager nails it, thumbs down when it misses. While Knowledge v2 is on, feedback can directly trigger a bounded capture check so durable preferences are not missed.

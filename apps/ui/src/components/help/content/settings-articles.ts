@@ -52,7 +52,7 @@ export const settingsArticles: HelpArticle[] = [
       'phoenix',
       'diagnostics',
     ],
-    relatedIds: ['settings-theme', 'settings-editor', 'settings-collaboration', 'settings-observability', 'settings-about', 'chat-compaction', 'models-providers'],
+    relatedIds: ['settings-theme', 'settings-editor', 'settings-collaboration', 'settings-observability', 'settings-about', 'chat-compaction', 'models-providers', 'cortex-overview', 'cortex-knowledge', 'cortex-onboarding'],
     contextKeys: ['settings.general'],
   },
   {

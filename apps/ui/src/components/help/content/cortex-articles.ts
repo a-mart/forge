@@ -22,7 +22,7 @@ export const cortexArticles: HelpArticle[] = [
       'learning',
       'index',
     ],
-    relatedIds: ['cortex-knowledge', 'cortex-auto-review', 'cortex-onboarding'],
+    relatedIds: ['cortex-knowledge', 'cortex-auto-review', 'cortex-onboarding', 'settings-general'],
     contextKeys: ['cortex.dashboard'],
   },
   {
@@ -41,8 +41,8 @@ export const cortexArticles: HelpArticle[] = [
       'index',
       'cortex',
     ],
-    relatedIds: ['cortex-overview', 'cortex-auto-review'],
-    contextKeys: ['cortex.dashboard', 'cortex.knowledge'],
+    relatedIds: ['cortex-overview', 'cortex-auto-review', 'settings-general'],
+    contextKeys: ['cortex.dashboard'],
   },
   {
     id: 'cortex-auto-review',
@@ -60,8 +60,8 @@ export const cortexArticles: HelpArticle[] = [
       'capture check',
       'cortex',
     ],
-    relatedIds: ['cortex-overview', 'cortex-knowledge'],
-    contextKeys: ['cortex.review'],
+    relatedIds: ['cortex-overview', 'cortex-knowledge', 'settings-general'],
+    contextKeys: ['cortex.dashboard'],
   },
   {
     id: 'cortex-onboarding',
@@ -79,7 +79,7 @@ export const cortexArticles: HelpArticle[] = [
       'setup',
       'cortex',
     ],
-    relatedIds: ['cortex-overview', 'cortex-knowledge'],
+    relatedIds: ['cortex-overview', 'cortex-knowledge', 'settings-general'],
     contextKeys: ['cortex.dashboard'],
   },
 ]

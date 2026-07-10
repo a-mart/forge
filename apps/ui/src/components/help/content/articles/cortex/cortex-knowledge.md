@@ -10,25 +10,18 @@ When v2 is ON, managers receive the token-capped global `INDEX.md` and can use t
 
 Each profile has its own entry set and generated `INDEX.md` for project-specific conventions, decisions, and gotchas. This is separate from the profile's canonical `memory.md`.
 
-With v2 ON, the prompt sources are the global index, active-profile index, and current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` continue to be maintained and preserved, but are not prompt-injected. Turning v2 OFF restores legacy common + profile + session injection without deleting v2 files.
+With v2 ON, the prompt sources are the global index, active-profile index, and current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` continue to be maintained, but are not prompt-injected. Normal switching preserves both stores, and v2 OFF restores legacy injection while the originals remain. Explicit confirmed legacy cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
 
-## Viewing and editing
+## Viewing knowledge
 
-Open the Cortex dashboard and use **Index**, **Entries**, **Changelog**, and **Consolidation** to inspect generated indexes, edit entries, review changes, and run consolidation.
+Open the Cortex dashboard and use **Index**, **Entries**, **Log**, and **Run**. **Entries** shows entry bodies and provenance details, but the current dashboard is read-only. **Log** shows verified consolidation activity. **Run** provides **Consolidate now**, **Last run**, and the **Promotion review queue**.
 
-To edit an entry:
-
-1. Open **Entries**.
-2. Select an entry.
-3. Make your changes.
-4. Save, or cancel to discard.
-
-Entry bodies are Markdown. Cortex keeps provenance, support count, evidence tier, supersession history, and token estimates with each entry.
+Entry bodies are Markdown on disk. Cortex records provenance, support count, evidence tier, supersession history, and token estimates with each entry.
 
 ## When knowledge updates
 
-Knowledge changes when managers call `save_learning`, capture-check forks verify missed durable facts, or you edit entries manually. Consolidation reads entries only; it does not mine transcripts or create new entries. It merges duplicates, supersedes conflicts, archives stale entries, and regenerates indexes.
+Knowledge changes when managers call `save_learning` or capture-check forks verify missed durable facts. While Knowledge v2 is ON, consolidation reads entries only; it does not mine transcripts or create new entries. It merges duplicates, supersedes conflicts, archives stale entries, and regenerates indexes.
 
 ## Guarded activation
 
-The normal toggle is available only after Forge verifies a strictly valid completed migration manifest and no active migration lock. Before that, Settings shows migration-required guidance and onboarding does not issue an activation request. The UI does not run migration. Migrated users can enable v2, and enabled users can disable it.
+The UI does not run migration. A successful guarded migration commits a valid manifest and immediately activates v2. If activation persistence fails, the manifest remains an authorized recovery point with v2 OFF; it also permits ordinary re-enable after a later disable. Without a valid manifest, Settings shows migration-required guidance and onboarding does not issue activation.

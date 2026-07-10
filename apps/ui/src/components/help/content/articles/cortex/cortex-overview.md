@@ -14,21 +14,21 @@ Knowledge v2 is an opt-in, default-off preview. It is separate from the whole-su
 Open Cortex from its pinned Builder sidebar entry. The resizable dashboard has four tabs:
 
 - **Index** — View generated global/profile indexes and token-cost meters.
-- **Entries** — Browse and edit structured entries with provenance.
-- **Changelog** — Review added, merged, archived, superseded, and reindexed actions.
-- **Consolidation** — See the latest run, next trigger, and manual consolidation action.
+- **Entries** — Read entry bodies and provenance details; the dashboard is read-only.
+- **Log** — Inspect verified consolidation log activity.
+- **Run** — Use **Consolidate now**, see **Last run**, and inspect the **Promotion review queue**.
 
 ## Prompt modes
 
 With Knowledge v2 ON, prompts receive global and active-profile `INDEX.md` files plus current session `memory.md`. Full entries are retrieved on demand. Canonical profile `memory.md` and legacy `shared/knowledge/common.md` stay maintained and preserved but are not prompt-injected.
 
-With Knowledge v2 OFF, Forge restores legacy `common.md` + profile `memory.md` + session `memory.md` injection. Switching OFF does not delete v2 entries or indexes.
+With Knowledge v2 OFF, Forge restores legacy `common.md` + profile `memory.md` + session `memory.md` injection while those legacy originals remain. Normal switching preserves both stores. Explicit confirmed legacy cleanup archives and removes the originals, after which OFF alone cannot restore their prior content.
 
-Settings and first-launch v2 onboarding do not migrate data. They offer activation only after the backend verifies a completed guarded migration; otherwise Settings shows migration-required guidance and onboarding does not send an unsafe enable request.
+Settings and first-launch v2 onboarding do not migrate data. A successful guarded migration commits a valid manifest and immediately activates v2. If activation persistence fails, that manifest remains an authorized recovery point with v2 OFF; it also permits re-enable after a later disable. Without a valid manifest, Settings shows migration-required guidance and onboarding sends no activation.
 
 ## Consolidation schedule
 
-When Cortex consolidation is enabled in **Settings > General**, Forge runs the entry-only consolidator on its configured cadence. You can also trigger consolidation manually from the **Consolidation** tab.
+While Knowledge v2 is ON, the enabled Cortex schedule runs the entry-only consolidator on its configured cadence. You can also trigger consolidation manually from **Run**.
 
 ## Disabling Cortex
 

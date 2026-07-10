@@ -23,6 +23,6 @@ Knowledge v2 is an opt-in, default-off preview:
 - **Knowledge v2 ON:** prompts receive the generated global and active-profile `INDEX.md` files plus session `memory.md`. Canonical profile `memory.md` and legacy `common.md` are not prompt-injected.
 - **Knowledge v2 OFF:** prompts receive legacy `common.md`, canonical profile `memory.md`, and session `memory.md`.
 
-Turning v2 off restores the legacy sources without deleting v2 entries or indexes. The ordinary Settings toggle does not migrate data; Forge only offers activation after the backend verifies a completed guarded migration.
+Normal switching preserves both stores. Turning v2 off restores the legacy sources while their original files remain; explicit confirmed legacy cleanup archives and removes those originals, so OFF alone cannot restore their prior content. The ordinary Settings toggle does not migrate data.
 
 These files are plain Markdown on disk and remain available for inspection. Managers can use the `knowledge` tool to search and read full v2 entries behind the compact indexes.

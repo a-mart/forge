@@ -9,8 +9,8 @@ export const helpTooltips: HelpTooltipContent[] = [
   },
   {
     id: 'settings.cortex-auto-review',
-    text: 'Cortex periodically reviews sessions and updates knowledge. Only sessions with new activity are checked.',
-    articleId: 'cortex-overview',
+    text: 'While Knowledge v2 is on, Cortex can consolidate existing entries on a daily schedule. It does not review transcripts or create entries.',
+    articleId: 'cortex-auto-review',
     contextKey: 'settings.general',
   },
 ]

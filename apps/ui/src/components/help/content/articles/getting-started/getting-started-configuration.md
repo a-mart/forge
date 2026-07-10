@@ -29,7 +29,7 @@ Profile settings include:
 - **System prompt** — base instructions for the manager. You can customize this or use the default.
 - **Skills** — toggle built-in capabilities like web search, image generation, and browser automation.
 - **Specialists** — named worker templates with their own model and prompt configuration.
-- **Memory** — persistent knowledge the manager accumulates over time, managed by Cortex.
+- **Memory** — canonical profile and session memory. This is distinct from profile-scoped Knowledge v2 entries.
 
 Most of these work well with defaults. Adjust them as you learn what your workflow needs.
 
@@ -41,4 +41,4 @@ Return to Builder and select a blue, globe-marked remote project header or a nes
 
 ## What's next
 
-Start a conversation. The best way to configure Forge is to use it — the manager will ask for clarification when it needs it, and Cortex learns your preferences from how you work.
+Start a conversation. The best way to configure Forge is to use it—the manager will ask for clarification when needed. While Knowledge v2 is on, managers and bounded capture checks can save durable preferences as entries.

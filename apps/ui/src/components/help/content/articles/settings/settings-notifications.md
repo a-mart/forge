@@ -24,7 +24,7 @@ Each manager has three sound triggers:
 
 ## Cortex
 
-Cortex always has its own standalone settings and never inherits from the defaults. This prevents automated review sessions from triggering sounds meant for interactive managers.
+Cortex always has its own standalone settings and never inherits from the defaults. This keeps scheduled consolidation and other Cortex activity from inheriting sounds meant for interactive managers.
 
 ## Custom sounds
 
@@ -43,6 +43,6 @@ This is useful when you have automated CLI workflows (scripts, CI pipelines, sch
 - The question sound is enabled by default and uses a dedicated audio file. It helps you notice when agents need your input for a decision.
 - Set a distinct "all done" sound in the defaults so you hear when any long task finishes.
 - Use per-manager overrides only when you need to tell managers apart by ear.
-- Cortex settings are separate — configure them if you want sounds for automated reviews.
+- Cortex settings are separate — configure them if you want sounds for scheduled consolidation or direct Cortex activity.
 - If you prefer not to hear question alerts, disable the question sound in defaults — choice requests will fall back to the regular unread sound instead.
 - Enable "Mute CLI-originated notifications" if you use the Forge CLI for background automation and don't want sound alerts for that activity.

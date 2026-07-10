@@ -21,7 +21,9 @@ Change onboarding preferences from **Settings > General** under **Welcome prefer
 
 ## Knowledge v2 onboarding
 
-The separate **Try the new Cortex** prompt is only an opt-in offer for Knowledge v2. It does not perform migration. Forge shows an enable action only after the backend verifies a completed guarded migration; otherwise onboarding sends no unsafe activation request. You can later disable v2 in Settings to restore legacy prompt sources without deleting v2 entries or indexes.
+The separate **Try the new Cortex** prompt does not perform migration. A successful guarded migration commits a valid manifest and immediately activates v2. If activation persistence fails, or if you later disable v2, that manifest authorizes an ordinary enable action; without it, onboarding sends no activation request.
+
+Normal switching preserves both stores. Disabling v2 restores legacy prompt sources while the original legacy files remain. Explicit confirmed cleanup archives and removes those originals, after which OFF alone cannot restore their prior content.
 
 ## Skipping onboarding
 

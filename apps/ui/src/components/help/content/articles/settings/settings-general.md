@@ -36,13 +36,13 @@ To opt out, set `FORGE_TELEMETRY=false` in your environment. There is no telemet
 
 ## Cortex consolidation
 
-When enabled, the daily Cortex schedule runs the consolidator over existing Knowledge v2 entries. It reads entries only: it can merge duplicates, supersede conflicts, archive stale entries, and regenerate indexes, but it does not mine transcripts or create entries. Disable the schedule if you want to trigger consolidation manually from the Cortex **Consolidation** tab.
+While Knowledge v2 is ON, the enabled daily Cortex schedule runs the consolidator over existing entries. It can merge duplicates, supersede conflicts, archive stale entries, and regenerate indexes, but it does not mine transcripts or create entries. Disable the schedule if you want to trigger consolidation manually from Cortex **Run**.
 
 ## New Cortex (Knowledge v2)
 
-Knowledge v2 is a default-off preview. When ON, prompts receive compact global and active-profile `INDEX.md` files plus current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` remain maintained and preserved, but are not prompt-injected. Turning the switch OFF restores legacy common + profile + session prompt context without deleting v2 entries or indexes.
+Knowledge v2 is a default-off preview. When ON, prompts receive compact global and active-profile `INDEX.md` files plus current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` remain maintained but are not prompt-injected. Normal switching preserves both stores; OFF restores legacy context while the originals remain. Explicit confirmed cleanup archives and removes those originals, so OFF alone cannot restore their prior content.
 
-The switch does not migrate data. Forge enables it only after the backend verifies a strictly valid completed migration under the guarded migration lock. Before that, Settings shows migration-required guidance and does not issue an unsafe enable request. Migrated users can enable v2; enabled users can disable it.
+The switch does not migrate data. A successful guarded migration commits a valid manifest and immediately activates v2. If activation persistence fails, the manifest remains an authorized recovery point with v2 OFF; it also permits ordinary re-enable after a later disable. Without a valid manifest, Settings shows migration-required guidance and does not issue an enable request.
 
 This mode switch is different from `FORGE_CORTEX_ENABLED=false`, which disables the entire Cortex subsystem.
 

@@ -17,8 +17,8 @@ export const CORTEX_V2_COPY = {
   settings: {
     label: 'New Cortex (Knowledge v2)',
     description:
-      'Use compact global and profile knowledge indexes in prompts while keeping this session’s working memory. Legacy common and profile memory stay preserved but are not injected in this mode.',
-    revertNote: 'Turning this off restores legacy common, profile, and session prompt context without deleting Knowledge v2 data.',
+      'Use compact global and profile knowledge indexes in prompts while keeping each manager session’s working memory. Legacy common and profile memory stay preserved but are not injected in this mode.',
+    revertNote: 'Turning this off restores legacy context while its original files remain. Confirmed legacy cleanup removes those originals.',
     unavailableNote: 'New Cortex settings are only available on the local Builder backend.',
     loadError: 'Could not load New Cortex settings',
     updateError: 'Failed to update New Cortex setting',
@@ -29,8 +29,8 @@ export const CORTEX_V2_COPY = {
   onboarding: {
     title: 'Try the new Cortex',
     description:
-      "Knowledge v2 keeps durable learning as individual global or profile entries. Prompts receive compact indexes plus this session’s working memory, and managers pull entry details on demand with the knowledge tool.",
-    revertNote: "It's an opt-in preview. You can switch back to legacy common, profile, and session prompt context without deleting Knowledge v2 data.",
+      "Knowledge v2 keeps durable learning as individual global or profile entries. Prompts receive compact indexes plus the current manager session’s working memory, and managers pull entry details on demand with the knowledge tool.",
+    revertNote: "You can switch back to legacy context while its original files remain. Confirmed legacy cleanup removes those originals.",
     enable: 'Enable new Cortex',
     dismiss: 'Not now',
     migrationRequired: 'Migration required. Ask the Forge operator to complete the guarded migration; onboarding cannot migrate or enable it yet.',
