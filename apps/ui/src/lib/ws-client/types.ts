@@ -188,5 +188,7 @@ export interface ManagerWsDirectoryEventContext {
 export interface ManagerWsSystemEventContext {
   updateState: (patch: Partial<ManagerWsState>) => void
   pushSystemMessage: (text: string) => void
+  /** Utility browser command errors reject their caller but are not chat events. */
+  isPendingDirectoryRequest: (requestId?: string) => boolean
   rejectPendingFromError: (code: string, message: string, requestId?: string) => void
 }
