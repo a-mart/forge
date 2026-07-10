@@ -27,6 +27,7 @@ import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { CortexV2OnboardingModal } from '@/components/settings/CortexV2OnboardingModal'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
+import { defaultMessageSourceViewForAgentRole } from '@/components/index-page/message-source-view'
 import { resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { hasProjectManagers } from '@/lib/onboarding-ui'
 import {
@@ -285,7 +286,8 @@ export function BuilderSurface({
   useEffect(() => {
     setDetailedAllView(false)
     setActiveWorkExpanded(false)
-  }, [activeAgentId])
+    setMessageSourceView(defaultMessageSourceViewForAgentRole(activeAgent?.role))
+  }, [activeAgentId, activeAgent?.role])
 
   // Derive effective detailed state for hook consumption
   const effectiveDetailedAllView = isActiveManager && messageSourceView === 'all' && detailedAllView
