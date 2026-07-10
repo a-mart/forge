@@ -26,7 +26,7 @@ A practical guide to going from first launch to daily use. Covers setup, core co
 
 After cloning the repo and running `pnpm prod:daemon`, open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189).
 
-You'll see a short welcome form from Cortex, Forge's learning system. It asks for your name, technical level, and a few baseline preferences. This isn't decorative. Your answers get written into a Common Knowledge file that's injected into the system prompt for every session you create. Take 30 seconds and fill it out honestly.
+You'll see a short welcome form from Cortex, Forge's learning system. It asks for your name, technical level, and a few baseline preferences. Forge keeps the structured onboarding state and maintains a managed block in legacy `common.md`. Whether that file enters prompts depends on the Knowledge v2 mode described below. Take 30 seconds and fill it out honestly.
 
 ### Setting Up Authentication
 
@@ -173,7 +173,7 @@ When agents create plans, design documents, or other working files that aren't p
 
 ### Schedules
 
-If you've set up scheduled tasks (like automated Cortex reviews on a cron schedule), they appear in the sidebar's Schedules pane.
+If you've set up scheduled tasks (including the managed daily Cortex consolidation schedule), they appear in the sidebar's Schedules pane.
 
 ### Provider Usage
 
@@ -327,7 +327,7 @@ Before diving into implementation, have some conceptual conversations with your 
 - What's your testing philosophy?
 - Do you prefer small incremental changes or big-bang implementations?
 
-These conversations become part of your manager's context and Cortex's learning material. Over time, Forge internalizes your preferences and applies them automatically.
+These conversations give your manager useful context. When a durable preference is saved as knowledge, future managers can find and apply it.
 
 > "Don't just use it as 'I'm using what I have and that's what I get.' Use it as somebody you're almost trying to mentor and teach how you like to work."
 
@@ -358,92 +358,53 @@ You don't need to rate every message. Focus on the meaningful ones: the spectacu
 
 ### How Feedback Becomes Learning
 
-Your ratings and comments get picked up by Cortex during its review cycles. It analyzes patterns across your feedback and distills those into knowledge that improves future sessions. More on this in the Cortex section.
+Feedback signals can trigger a bounded Cortex capture check, which verifies whether a durable fact should be saved. Cortex does not run the former transcript-review pipeline. More on the current architecture in the Cortex section.
 
 ---
 
 ## 7. Cortex — The Brain
 
-Cortex is what makes Forge a self-improving system rather than just an agent orchestrator. It learns from your usage and makes the whole system better over time.
+Cortex is Forge's durable learning system. It appears as a pinned Builder sidebar entry and, in Knowledge v2 mode, maintains provenance-bearing entries that managers can search and read on demand.
 
-### What Cortex Is
+### Knowledge v2 is an opt-in preview
 
-Cortex is architecturally just another manager agent. There's no special technical machinery. But its job is unique: it reviews your sessions, analyzes your feedback, identifies patterns, and updates knowledge files that get injected into every session's system prompt. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions stay hidden from Builder lists.
+Knowledge v2 is **off by default**. It is separate from `FORGE_CORTEX_ENABLED`: the mode switch chooses v2 or legacy prompt sourcing, while `FORGE_CORTEX_ENABLED=false` disables the entire Cortex subsystem.
 
-It's the institutional memory of your Forge instance.
+Prompt sources are explicit:
 
-### Opening Cortex
+- **Knowledge v2 ON:** the generated global `shared/knowledge/INDEX.md`, active-profile `knowledge/INDEX.md`, and current session `memory.md`.
+- **Knowledge v2 OFF:** legacy shared `common.md`, canonical profile `memory.md`, and current session `memory.md`.
 
-Click the brain icon (🧠) in the sidebar to open Cortex from its pinned Builder sidebar entry. That opens the Cortex dashboard/interface, with several tabs in the special sidebar.
+Canonical profile memory and legacy common knowledge continue to be maintained and preserved with v2 ON, but are not prompt-injected. Turning v2 OFF restores the legacy prompt sources without deleting v2 entries or indexes. Profile memory and profile-scoped v2 knowledge are different stores.
 
-### Common Knowledge
+### Guarded activation
 
-Knowledge that applies across all your projects and sessions. Cortex puts things here that are about how you work as a person, not about any specific project:
+A normal false→true activation is allowed only after a guarded migration has produced a strictly valid completed manifest and released its ownership-safe cross-process lock. The migration writes its completed manifest before guarded activation; migration or activation failure leaves the switch OFF. Earlier valid v1 manifests remain accepted, while new migrations write the v2 manifest with truthful `authorized_pending` activation semantics.
 
-- Your prompting habits (including errors your voice dictation consistently makes)
-- Your git workflow preferences
-- Documentation standards
-- General coding style preferences
+**Settings → General** and the first-launch v2 offer use the backend's fail-closed capability result. Before migration, Settings shows migration-required guidance and onboarding does not offer or request activation. The ordinary toggle never migrates data. Direct unsafe activation is rejected with HTTP 409 and `KNOWLEDGE_V2_MIGRATION_REQUIRED`. After migration, users can enable v2; enabled users can disable it.
 
-Common Knowledge gets added to the system prompt for every session in every project. Cortex is conservative about what goes here. It should stay small and high-signal. You'll see this updated the least.
+Operators run migration explicitly from the repository root with a deliberate data directory:
 
-### Project Knowledge
+```bash
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data
+```
 
-In the Knowledge dropdown, you'll see a file for every project you have a manager for. Project-specific learning goes here:
+### How learning works
 
-- Architecture patterns specific to this codebase
-- Common pitfalls and gotchas
-- Testing approaches that work for this project
-- Dependencies and integration notes
+Managers can save durable facts directly with `save_learning`. At bounded compaction, idle, and close checkpoints, a deterministic cadence check and small judge can launch a restricted capture-check fork for facts that may have been missed; feedback signals bypass the judge and trigger that check directly. Managers use the `knowledge` tool to search and read full entries behind the compact indexes.
 
-Project Knowledge files get updated more frequently than Common Knowledge as Cortex processes your sessions.
+Cortex's consolidator reads entries only. It merges duplicates, supersedes conflicts, archives stale entries, and regenerates token-capped indexes. It does **not** mine transcripts or create new entries.
 
-### Editing Knowledge
+### Cortex dashboard
 
-Both Common Knowledge and Project Knowledge are editable. If you see something wrong:
+Open Cortex from its pinned Builder sidebar entry. The resizable dashboard has four tabs:
 
-- Edit it directly in the UI
-- Tell Cortex to update it (in the main Cortex session): "Hey, that note about preferring Jest is wrong, we switched to Vitest"
+- **Index** — View generated global/profile indexes and token-cost meters.
+- **Entries** — Browse and edit structured entries and their provenance.
+- **Changelog** — Inspect added, merged, archived, superseded, and reindexed actions.
+- **Consolidation** — See the latest run and next trigger, or run consolidation manually.
 
-### Cortex's Own Notes
-
-The **Notes** tab is Cortex's private scratchpad. It keeps observations and self-improvement notes here. It's not just learning about you. It's learning about how to learn about you. It reviews its own notes to improve its review process.
-
-This meta-learning loop is subtle but effective. After a few weeks of usage, you'll see Cortex making increasingly sophisticated observations about patterns in your work.
-
-### The Review System
-
-The **Review** tab is where Cortex processes your sessions. Every session you work in appears here as a reviewable item. Cortex can analyze the conversation, your feedback, and the outcomes to extract learning.
-
-**Automatic reviews:** By default, Forge runs automatic Cortex reviews every 2 hours. Raw session JSONL growth is only a pre-scan signal: Cortex uses it to decide which sessions to inspect, then only runs reviews when reviewable transcript drift, memory, or feedback has actually changed. Internal, custom, and other allowlisted system entries are filtered out of reviewable transcript drift, while unknown or malformed drift is surfaced. If nothing changed, no tokens are spent. You can adjust the interval or turn this off in **Settings → General**.
-
-**Running reviews manually:**
-- **Review All** — Queues all pending sessions for review. They execute one at a time (single concurrency) so they don't overwhelm your system.
-- **Per-session review** — Hover over any row and click the send button to queue just that session.
-- **Exclude sessions** — Mark sessions you don't want reviewed (like test sessions) so Cortex skips them.
-
-**Drift detection:** If you keep working in a session after it's been reviewed, Cortex detects "transcript drift" and flags it for re-review. Same with "feedback drift" if you add ratings to messages in an already-reviewed session.
-
-> Toggle the "All" view in the Cortex chat to see the full tool call activity behind the scenes. The "Web" view shows just the summary messages.
-
-### Talking to Cortex Directly
-
-The main Cortex session is for direct conversations with Cortex about your workflow, preferences, and knowledge management:
-
-- Discuss your working style and preferences
-- Ask Cortex to update or correct knowledge entries
-- Talk about patterns you're noticing across projects
-- Request changes to how Cortex reviews or learns
-
-**Don't do project work in the Cortex session.** It's for meta-level conversations about how you work, not for actual coding tasks. Do your project work in your project manager sessions.
-
-### Cortex Without the Meta Stuff
-
-Even without diving into Cortex's review system, Forge is useful on its own. Cortex just makes it improve over time. If you're not ready for the meta-learning aspects, just use the basic feedback buttons (thumbs up/down) as you work and let Cortex run reviews periodically. The system improves in the background.
-
-### Versioning and Rollback
-
-All of Cortex's changes to knowledge files are versioned in git. If Cortex makes a bad update (learns something incorrect or overfits to a temporary pattern), you can roll back to any previous version. Safety net for the self-improvement loop.
+The daily consolidation schedule can be enabled or disabled under **Settings → General**. Entry bodies remain directly editable from **Entries**.
 
 ---
 
@@ -532,7 +493,7 @@ You'll rarely need these. The automated safeguards handle most failure cases.
 Go to **Settings → Notifications** for per-session notification controls. Recommended setup:
 
 - **Project sessions:** Turn on "All Done" notifications. This fires when your session agent completes and all workers are finished. Clean "your work is ready" signal.
-- **Cortex:** Turn notifications off. During review cycles, Cortex gets chatty and you'll be bombarded with alerts.
+- **Cortex:** Keep notifications off if you do not want messages from scheduled consolidation or direct Cortex activity.
 
 The "Unread" notification fires whenever the session agent sends you a message. Can be useful but gets noisy if your manager is running many workers (each worker completion triggers a message).
 
@@ -684,10 +645,22 @@ No database. Everything is files (JSON, JSONL, and Markdown):
 ├── swarm/agents.json              # Global agent registry
 ├── shared/
 │   ├── config/
-│   │   └── auth/                  # Your authentication credentials
-│   └── knowledge/                 # Cortex knowledge files (common + per-project)
+│   │   ├── auth/                  # Your authentication credentials
+│   │   └── knowledge-v2.json      # Default-off Knowledge v2 mode settings
+│   └── knowledge/
+│       ├── common.md              # Legacy common knowledge (prompt source only with v2 OFF)
+│       ├── entries/               # Global Knowledge v2 entries
+│       ├── archive/               # Archived global Knowledge v2 entries
+│       ├── .archive/              # Migration backups and explicit legacy-cleanup archives
+│       ├── INDEX.md               # Generated global Knowledge v2 index
+│       ├── .knowledge-v2-migration-manifest.json
+│       └── .knowledge-v2-migration.lock.json/ # Cross-process lock while busy
 └── profiles/<profileId>/
-    ├── memory.md                  # Profile-level memory
+    ├── memory.md                  # Canonical profile memory (prompt source only with v2 OFF)
+    ├── knowledge/
+    │   ├── entries/               # Profile-scoped Knowledge v2 entries
+    │   ├── archive/               # Archived profile-scoped entries
+    │   └── INDEX.md               # Generated profile Knowledge v2 index
     ├── project-agents/<handle>/
     │   ├── config.json            # Agent config (handle, whenToUse, agentId, timestamps)
     │   ├── prompt.md              # Project Agent role instructions (editable, layered with Forge's base prompt)
@@ -767,11 +740,11 @@ If you can describe the task to a capable colleague, you can describe it to your
 
 Once you're comfortable with the basics:
 
-1. **Build your workflow preferences** — Have conversations with your manager about how you like to work. Let Cortex learn from them.
-2. **Run your first Cortex review** — Go to Cortex's review tab and queue up a session for analysis. See what it learns. (Automatic reviews run by default every 2 hours, but manually triggering one helps you understand the process.)
+1. **Build your workflow preferences** — Have conversations with your manager about how you like to work and save the durable parts as knowledge.
+2. **Explore Cortex** — If an operator has completed the guarded migration, opt into Knowledge v2 and inspect **Index**, **Entries**, **Changelog**, and **Consolidation**.
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
-5. **Adjust review frequency** — Check **Settings → General** to configure how often automatic Cortex reviews run or turn them off if you prefer manual control.
+5. **Review consolidation settings** — Use **Settings → General** to enable or disable the daily entry consolidation schedule; manual consolidation is available in Cortex.
 6. **Explore multi-model routing** — If you have multiple providers configured, teach your manager which providers and models to use for different kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
 7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 

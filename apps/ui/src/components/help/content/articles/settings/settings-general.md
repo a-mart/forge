@@ -1,4 +1,4 @@
-General Settings covers editor integration, sidebar preferences, repository clone defaults, compaction, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
+General Settings covers editor integration, sidebar preferences, repository clone defaults, compaction, telemetry, the Cortex consolidation schedule, and the Knowledge v2 preview. Appearance has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
 
 ## Appearance
 
@@ -34,11 +34,17 @@ Anonymous telemetry is enabled by default and sends only aggregate counts such a
 
 To opt out, set `FORGE_TELEMETRY=false` in your environment. There is no telemetry setting in the UI.
 
-## Cortex Auto-Review
+## Cortex consolidation
 
-Cortex is Forge's self-improvement system. When automatic reviews are enabled, Cortex periodically checks your sessions and updates knowledge, memory, and reference docs. You can set the review interval from every 15 minutes up to every 24 hours. Disable it entirely if you want to run reviews manually.
+When enabled, the daily Cortex schedule runs the consolidator over existing Knowledge v2 entries. It reads entries only: it can merge duplicates, supersede conflicts, archive stale entries, and regenerate indexes, but it does not mine transcripts or create entries. Disable the schedule if you want to trigger consolidation manually from the Cortex **Consolidation** tab.
 
-Only reviewable transcript drift drives reviews; raw JSONL growth alone and internal/system entries do not.
+## New Cortex (Knowledge v2)
+
+Knowledge v2 is a default-off preview. When ON, prompts receive compact global and active-profile `INDEX.md` files plus current session `memory.md`. Canonical profile `memory.md` and legacy shared `common.md` remain maintained and preserved, but are not prompt-injected. Turning the switch OFF restores legacy common + profile + session prompt context without deleting v2 entries or indexes.
+
+The switch does not migrate data. Forge enables it only after the backend verifies a strictly valid completed migration under the guarded migration lock. Before that, Settings shows migration-required guidance and does not issue an unsafe enable request. Migrated users can enable v2; enabled users can disable it.
+
+This mode switch is different from `FORGE_CORTEX_ENABLED=false`, which disables the entire Cortex subsystem.
 
 ## Welcome Preferences
 

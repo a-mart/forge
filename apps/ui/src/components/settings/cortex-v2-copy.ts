@@ -17,23 +17,23 @@ export const CORTEX_V2_COPY = {
   settings: {
     label: 'New Cortex (Knowledge v2)',
     description:
-      'Store what Forge learns as individual knowledge entries and inject only a compact index into prompts, instead of the full memory files.',
-    revertNote: 'Turning this off reverts to the previous memory behavior.',
+      'Use compact global and profile knowledge indexes in prompts while keeping this session’s working memory. Legacy common and profile memory stay preserved but are not injected in this mode.',
+    revertNote: 'Turning this off restores legacy common, profile, and session prompt context without deleting Knowledge v2 data.',
     unavailableNote: 'New Cortex settings are only available on the local Builder backend.',
     loadError: 'Could not load New Cortex settings',
     updateError: 'Failed to update New Cortex setting',
-    migrationRequired: 'Migration required before New Cortex can be enabled. Activation is unavailable in the UI until the guarded migration has completed.',
+    migrationRequired: 'Migration required before New Cortex can be enabled. Ask the Forge operator to complete the guarded migration; this toggle does not migrate data.',
     retry: 'Retry',
   },
   /** First-launch onboarding modal. */
   onboarding: {
     title: 'Try the new Cortex',
     description:
-      "Forge has a new way to remember what it learns. Instead of loading full memory files into every prompt, the new Cortex keeps each learning as its own entry and injects only a compact index — using far less context. Managers pull details on demand with the knowledge and save_learning tools.",
-    revertNote: "It's opt-in, and you can switch back to the previous memory behavior anytime in Settings.",
+      "Knowledge v2 keeps durable learning as individual global or profile entries. Prompts receive compact indexes plus this session’s working memory, and managers pull entry details on demand with the knowledge tool.",
+    revertNote: "It's an opt-in preview. You can switch back to legacy common, profile, and session prompt context without deleting Knowledge v2 data.",
     enable: 'Enable new Cortex',
     dismiss: 'Not now',
-    migrationRequired: 'Migration required. Forge cannot safely enable the new Cortex until the guarded migration has completed.',
+    migrationRequired: 'Migration required. Ask the Forge operator to complete the guarded migration; onboarding cannot migrate or enable it yet.',
     enableError: 'Could not enable New Cortex. You can try again from Settings.',
   },
 } as const

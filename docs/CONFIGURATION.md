@@ -13,6 +13,7 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 | `FORGE_DATA_DIR` | `~/.forge` (macOS/Linux) or `%LOCALAPPDATA%\forge` (Windows) | Data directory for all persistent state. |
 | `FORGE_DEBUG` | `false` | Enable debug logging. Also enables extension tool-call logging, which surfaces tool invocations from Pi extensions in the backend logs. |
 | `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. Only aggregate counts are sent. |
+| `FORGE_CORTEX_ENABLED` | `true` | Enable or disable the entire Cortex subsystem. This is separate from the default-off Knowledge v2 mode switch. |
 | `FORGE_RUNTIME_TARGET` | `builder` | Runtime surface to boot. Supported values: `builder` and `collaboration-server`. `builder` starts the local Builder backend; `collaboration-server` starts the deployable collaboration runtime used by the public Docker/self-host path. |
 
 > **Security:** The normal local Builder runtime does not require a browser account or app session. Keep it bound to loopback or a trusted network. Before exposing it more broadly, put an authentication-enforcing proxy in front of it or use the account-gated collaboration-server topology. A network bind or reverse proxy alone does not add authentication.
@@ -72,6 +73,29 @@ Settings → General → **Repositories** (Builder/local only) stores clone defa
 ### Compaction
 
 Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. SDK/native runtimes, including Claude SDK, and xAI/Grok are not controlled by these settings.
+
+### Cortex and Knowledge v2
+
+`FORGE_CORTEX_ENABLED=false` disables the entire Cortex subsystem. It is not the Knowledge v2 mode switch.
+
+Knowledge v2 is a default-off Builder preview controlled from **Settings → General** after migration. Its prompt sources differ deliberately:
+
+| Mode | Prompt-injected knowledge and memory |
+|------|--------------------------------------|
+| Knowledge v2 ON | Global `shared/knowledge/INDEX.md`, the active profile's `knowledge/INDEX.md`, and the current session's `memory.md` |
+| Knowledge v2 OFF | Legacy `shared/knowledge/common.md`, canonical profile `memory.md`, and current session `memory.md` |
+
+Profile `memory.md` and legacy `common.md` continue to be maintained and preserved while v2 is ON, but they are not prompt-injected in that mode. Turning v2 OFF restores the legacy prompt sources without deleting v2 entries or indexes.
+
+A normal false→true activation requires a strictly valid completed migration manifest and no active migration lock. Settings and first-launch v2 onboarding use the backend's fail-closed capability result: before migration, Settings shows migration-required guidance and onboarding withholds the activation offer, so neither sends an enable request. A direct unsafe `PUT /api/settings/knowledge-v2` is rejected with HTTP 409 and `KNOWLEDGE_V2_MIGRATION_REQUIRED`. The toggle does not migrate data.
+
+Run the guarded migration explicitly from the repository root with a deliberate data directory:
+
+```bash
+node scripts/knowledge-v2-migrate.mjs --data-dir /path/to/forge-data
+```
+
+Migration and activation share the ownership-safe cross-process lock. New migrations atomically write a completed v2 manifest with `authorized_pending` activation semantics before guarded activation; any failure leaves Knowledge v2 OFF. Strictly valid manifests from the earlier v1 writer remain accepted. After migration, users can enable v2; enabled users can disable it.
 
 ### Phoenix Observability
 
@@ -166,7 +190,8 @@ All persistent state lives in a single data directory:
 │   │   │   └── auth.json      # API keys and auth tokens
 │   │   ├── secrets.json       # Additional secrets
 │   │   ├── model-overrides.json   # User model visibility/context caps (Settings → Models)
-│   │   ├── cortex-auto-review.json        # Cortex auto-review schedule settings
+│   │   ├── cortex-auto-review.json        # Cortex consolidation cadence settings
+│   │   ├── knowledge-v2.json              # Default-off Knowledge v2 mode and index-cap settings
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
@@ -191,13 +216,23 @@ All persistent state lives in a single data directory:
 │   │   ├── .compaction-count-reconcile-v3-done  # Monotonic compaction-count reconciliation sentinel
 │   │   ├── .shared-config-migration-done  # Shared-config layout migration sentinel
 │   │   └── .shared-config-cleanup-done    # Shared-config old-path cleanup sentinel
-│   ├── knowledge/             # Knowledge base
-│   │   ├── common.md          # Common knowledge (cross-profile)
+│   ├── knowledge/             # Legacy knowledge plus global Knowledge v2 storage
+│   │   ├── common.md          # Legacy common knowledge; injected only with v2 OFF
 │   │   ├── onboarding-state.json  # First-launch user preferences
-│   │   └── profiles/<profileId>.md  # Per-profile knowledge
+│   │   ├── profiles/<profileId>.md  # Preserved legacy per-profile knowledge
+│   │   ├── entries/*.md       # Knowledge v2 global entries
+│   │   ├── archive/           # Archived Knowledge v2 global entries
+│   │   ├── .archive/          # Migration backups and explicit legacy-cleanup archives
+│   │   ├── INDEX.md           # Generated global Knowledge v2 index
+│   │   ├── .knowledge-v2-migration-manifest.json # Completed migration record/activation authorization
+│   │   └── .knowledge-v2-migration.lock.json/    # Cross-process ownership lock while migration/activation is busy
 │   └── specialists/           # Global specialist definitions (.md files)
 ├── profiles/<profileId>/      # Per-manager-profile data
-│   ├── memory.md              # Profile-level memory
+│   ├── memory.md              # Canonical profile memory; injected only with v2 OFF
+│   ├── knowledge/
+│   │   ├── entries/*.md       # Profile-scoped Knowledge v2 entries
+│   │   ├── archive/           # Archived profile-scoped Knowledge v2 entries
+│   │   └── INDEX.md           # Generated profile Knowledge v2 index
 │   ├── project-agents/<handle>/  # Per-project-agent data
 │   │   ├── config.json        # Agent config
 │   │   ├── prompt.md          # Editable Project Agent role instructions

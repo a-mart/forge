@@ -151,12 +151,14 @@ Remote Projects is not replication: remote profiles, sessions, files, repositori
 
 ### Cortex
 
-Cortex is Forge's persistent knowledge system. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. Knowledge is stored as small per-entry files, each carrying provenance — where it came from, when it was first seen, how many times it's been confirmed — across two scopes:
+Cortex is Forge's persistent knowledge system. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. The Knowledge v2 preview stores small provenance-bearing entries in two scopes:
 
-- **Common knowledge** — cross-project preferences and habits that apply everywhere. How you like code reviewed, your naming conventions, your communication style.
-- **Project knowledge** — per-project learned guidance. Architecture patterns, testing conventions, deployment quirks specific to each codebase.
+- **Global knowledge** — cross-project preferences and habits that apply everywhere, such as review, naming, and communication conventions.
+- **Profile-scoped knowledge** — learned guidance for one profile, such as architecture patterns, testing conventions, and deployment gotchas.
 
-Only a small, token-capped index of entry titles is injected into prompts; the agent pulls full entries on demand with a knowledge tool, so context stays lean no matter how much you've taught it. Knowledge is captured inline — when you correct the manager or state a durable preference, it's saved in the moment — and a background consolidator periodically merges duplicates, resolves contradictions, and retires stale entries. Every change is versioned in git with an entry-level changelog, so you can see exactly what changed, when, and why, and roll back anything. Cortex ships behind a switch (off by default) with a one-command migration from any earlier knowledge files.
+Knowledge v2 is **off by default**. When enabled, managers receive token-capped global and profile `INDEX.md` files plus the current session's `memory.md`; they pull full entries on demand with the `knowledge` tool. The canonical profile `memory.md` and legacy shared `common.md` remain maintained, but are not prompt-injected in v2 mode. Turning v2 off restores legacy common + profile + session prompt injection without deleting the entry or index files.
+
+Before a normal false→true activation, an operator must complete the guarded migration. Settings reports when migration is required, while first-launch v2 onboarding withholds the activation offer; neither surface runs migration or issues an unsafe activation request. The backend fails closed if migration capability cannot be proven and rejects unsafe activation with HTTP 409 / `KNOWLEDGE_V2_MIGRATION_REQUIRED`. Migrated users can enable the preview, and enabled users can disable it. A background consolidator later merges duplicates, resolves contradictions, archives stale entries, and regenerates indexes; it reads entries rather than transcripts. Every entry change is versioned in git and visible in the changelog.
 
 ### Smart Compaction
 
@@ -185,7 +187,7 @@ You can also manually stop any agent from the UI, but you'll rarely need to.
 
 ### Feedback
 
-Message feedback is collected through a single feedback trigger and popover with **Good response**, **Needs work**, and **Add/update comment** actions. These aren't decorative. Your ratings feed into Cortex's review cycle to identify what's working and what isn't.
+Message feedback is collected through a single feedback trigger and popover with **Good response**, **Needs work**, and **Add/update comment** actions. These aren't decorative: feedback can trigger a bounded Cortex capture check so durable learning is not missed.
 
 You don't need to rate every message. Focus on the meaningful moments: when the manager does something clever, when a worker produces garbage, when you notice a recurring pattern. Sessions can also be rated holistically.
 
