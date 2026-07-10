@@ -37,6 +37,7 @@ import {
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
+import { createLocalBuilderSidebarOrderApi } from '@/lib/builder-sidebar-order-api'
 import {
   LOCAL_ORIGIN_ID,
   forgeOriginManager,
@@ -113,6 +114,13 @@ export function BuilderSurface({
   navigateToRoute: navigateToOuterRoute,
   collaborationModeSwitch,
 }: BuilderSurfaceProps) {
+  // This API is intentionally pinned to the local Builder URL. It must never
+  // derive from the active (possibly remote) origin.
+  const builderSidebarOrderApi = useMemo(
+    () => createLocalBuilderSidebarOrderApi(localWsUrl),
+    [localWsUrl],
+  )
+
   // Wave R: the route's `origin` selects which origin's state/client feed the
   // chat surface. Absent = the local origin. Non-chat views always render
   // against local.
@@ -689,10 +697,6 @@ export function BuilderSurface({
     })
   }, [navigateToOuterRoute])
 
-  const handleReorderRemoteProfiles = useCallback((originId: string, profileIds: string[]) => {
-    originRegistry.getOrigin(originId)?.getClient().reorderProfiles(profileIds)
-  }, [])
-
   const handleRemoteOriginRetry = useCallback((originId: string) => {
     forgeOriginManager.retryOrigin(originId)
   }, [])
@@ -705,11 +709,11 @@ export function BuilderSurface({
 
       <AgentSidebarConnected
         wsUrl={localWsUrl}
+        builderSidebarOrderApi={builderSidebarOrderApi}
         collaborationModeSwitch={collaborationModeSwitch}
         selectedAgentId={activeAgentId}
         activeOriginId={activeOriginId}
         onSelectRemoteAgent={handleSelectRemoteAgent}
-        onReorderRemoteProfiles={handleReorderRemoteProfiles}
         onRemoteOriginSignIn={handleRemoteOriginSignIn}
         onRemoteOriginRetry={handleRemoteOriginRetry}
         isSettingsActive={activeView === 'settings'}
@@ -748,7 +752,6 @@ export function BuilderSurface({
         onBrowseDirectory={localSidebarSession.handleBrowseDirectoryForCwd}
         onValidateDirectory={localSidebarSession.handleValidateDirectoryForCwd}
         onRequestSessionWorkers={localSidebarSession.handleRequestSessionWorkers}
-        onReorderProfiles={localSidebarSession.handleReorderProfiles}
         onSetSessionProjectAgent={localSidebarSession.handleSetSessionProjectAgent}
         onGetProjectAgentConfig={localSidebarSession.handleGetProjectAgentConfig}
         onGetProjectAgentSharing={localSidebarSession.handleGetProjectAgentSharing}

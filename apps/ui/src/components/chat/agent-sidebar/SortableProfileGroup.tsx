@@ -1,15 +1,28 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
-import type React from 'react'
+import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
+import { memo, type CSSProperties, type ReactNode } from 'react'
 
-export function SortableProfileGroup({
-  treeRow,
+interface SortableProfileGroupProps {
+  /** Explicit composite `(originId, profileId)` identity. */
+  sortableId: string
+  /**
+   * Optional semantic dependencies used to isolate a remote sortable row from
+   * unrelated local sidebar renders. Omit for local rows, whose rich callbacks
+   * and status props must always be refreshed from their render closure.
+   */
+  memoDependencies?: readonly unknown[]
+  children: (
+    dragHandleRef: (element: HTMLElement | null) => void,
+    dragHandleListeners: DraggableSyntheticListeners,
+    dragHandleAttributes: DraggableAttributes,
+  ) => ReactNode
+}
+
+export const SortableProfileGroup = memo(function SortableProfileGroup({
+  sortableId,
   children,
-}: {
-  treeRow: ProfileTreeRow
-  children: (dragHandleRef: (element: HTMLElement | null) => void, dragHandleListeners: Record<string, unknown> | undefined) => React.ReactNode
-}) {
+}: SortableProfileGroupProps) {
   const {
     attributes,
     listeners,
@@ -18,17 +31,24 @@ export function SortableProfileGroup({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: treeRow.profile.profileId })
+  } = useSortable({ id: sortableId })
 
-  const style: React.CSSProperties = {
+  const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : undefined,
   }
 
   return (
-    <li ref={setNodeRef} style={style} {...attributes}>
-      {children(setActivatorNodeRef, listeners)}
+    <li ref={setNodeRef} style={style}>
+      {children(setActivatorNodeRef, listeners, attributes)}
     </li>
   )
-}
+}, (previous, next) => {
+  const previousDependencies = previous.memoDependencies
+  const nextDependencies = next.memoDependencies
+  if (!previousDependencies || !nextDependencies) return false
+  return previous.sortableId === next.sortableId
+    && previousDependencies.length === nextDependencies.length
+    && previousDependencies.every((value, index) => Object.is(value, nextDependencies[index]))
+})

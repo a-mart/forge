@@ -22,7 +22,7 @@ import type { ManagerWsState } from '@/lib/ws-state'
 import { originRegistry } from './origin-registry'
 import type { OriginSelector } from './origin-store'
 import type { OriginMetaState } from './origin-meta'
-import { LOCAL_ORIGIN_ID, compositeKey, type OriginId } from './origin-key'
+import { compositeKey, type OriginId } from './origin-key'
 
 type Unsubscribe = () => void
 
@@ -176,31 +176,6 @@ export function useOriginMeta(originId: OriginId): OriginMetaState | null {
     (): OriginMetaState | null => originRegistry.getOrigin(originId)?.getMetaSnapshot() ?? null,
     [originId],
   )
-
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-}
-
-/**
- * Live NON-local origin ids from the registry (Wave R sidebar sections).
- * Stable array identity while the set is unchanged.
- */
-export function useRemoteOriginIds(): OriginId[] {
-  const cacheRef = useRef<OriginId[]>([])
-
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => originRegistry.subscribeRegistry(onStoreChange),
-    [],
-  )
-
-  const getSnapshot = useCallback((): OriginId[] => {
-    const next = originRegistry.getOriginIds().filter((id) => id !== LOCAL_ORIGIN_ID)
-    const prev = cacheRef.current
-    if (prev.length === next.length && next.every((id, index) => prev[index] === id)) {
-      return prev
-    }
-    cacheRef.current = next
-    return next
-  }, [])
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

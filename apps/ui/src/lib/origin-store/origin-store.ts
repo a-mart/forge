@@ -29,6 +29,7 @@ import type { ServerEvent } from '@forge/protocol'
 import { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { handleConversationEvent } from '@/lib/ws-client/event-handlers/conversation-event-handlers'
+import { reduceAgentStatus } from '@/lib/ws-client/snapshot-reducers'
 import { createBuilderSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
 import {
   createSettingsApiClient,
@@ -226,8 +227,8 @@ export class OriginStore {
   /**
    * Hydrate the store from a `snapshot` or a single domain `event` with no
    * socket.  Used by tests and by non-WebSocket transports (Wave R).  This
-   * routes conversation-family events through the SAME pure reducer the live
-   * client uses (`handleConversationEvent`), so id-keyed bootstrap-merge
+   * routes conversation and agent-status events through the SAME pure reducers
+   * the live client uses, so id-keyed bootstrap-merge
    * behavior stays in one place (see Coordination-with-WP-P1 in the store dir
    * README).  There is no `window` access and no reload side effect here.
    */
@@ -237,9 +238,14 @@ export class OriginStore {
       return
     }
 
+    if (input.event.type === 'agent_status') {
+      this.applyState(reduceAgentStatus({ state: this.state, event: input.event }).nextState)
+      return
+    }
+
     // Route the event through the shared conversation reducer with an
-    // origin-scoped context.  Non-conversation events are ignored by the
-    // reducer (returns false) — the live path handles those via the client.
+    // origin-scoped context. Other event families are handled by the live
+    // client and remain outside transport-agnostic ingestion for now.
     handleConversationEvent(input.event, {
       state: this.state,
       updateState: (patch) => this.applyState({ ...this.state, ...patch }),

@@ -815,7 +815,13 @@ export class ManagerWsClient {
     // fresh snapshot invalidates and refetches per session.
     this.updateState({
       connected: true,
+      connectionEpoch: this.state.connectionEpoch + 1,
+      // Invalidation revisions are scoped to one backend connection epoch. A
+      // restarted backend may legitimately reload local preference authority
+      // at R0, so an old R5 watermark must not suppress its new R1..R5 events.
+      builderSidebarOrderRevision: null,
       hasReceivedAgentsSnapshot: false,
+      hasReceivedProfilesSnapshot: false,
       lastError: null,
     })
 
@@ -836,6 +842,7 @@ export class ManagerWsClient {
     this.updateState({
       connected: false,
       hasReceivedAgentsSnapshot: false,
+      hasReceivedProfilesSnapshot: false,
       subscribedAgentId: null,
     })
 
@@ -915,6 +922,16 @@ export class ManagerWsClient {
       updateState: (patch) => this.updateState(patch),
       requestTracker: this.requestDispatcher.tracker,
     })) {
+      return
+    }
+
+    if (event.type === 'builder_sidebar_order_updated') {
+      if (
+        this.state.builderSidebarOrderRevision === null
+        || event.revision > this.state.builderSidebarOrderRevision
+      ) {
+        this.updateState({ builderSidebarOrderRevision: event.revision })
+      }
       return
     }
 

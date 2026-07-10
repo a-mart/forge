@@ -3,6 +3,7 @@ import type {
   AgentsSnapshotEvent,
   SessionWorkersSnapshotEvent,
 } from './agent-events.js'
+import type { BuilderSidebarOrderUpdatedEvent } from './builder-sidebar-order.js'
 import type { CliServerEvent } from './cli.js'
 import type {
   ConversationEntry,
@@ -115,6 +116,7 @@ import type { ProjectPresenceEvent } from './presence.js'
 import type { RestartRecoverySnapshotEvent } from './restart-recovery.js'
 
 // Compatibility re-exports from leaf modules
+export * from './builder-sidebar-order.js'
 export * from './conversation-events.js'
 export * from './agent-events.js'
 export * from './cli.js'
@@ -131,6 +133,7 @@ export * from './transport-events.js'
 export * from './restart-recovery.js'
 
 export type ServerEvent =
+  | BuilderSidebarOrderUpdatedEvent
   | CliServerEvent
   | ReadyEvent
   | CollaborationBootstrapEvent

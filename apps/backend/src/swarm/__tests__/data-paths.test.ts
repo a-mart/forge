@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   getAgentsStoreFilePath,
+  getBuilderSidebarOrderPath,
   getGlobalForgeExtensionsDir,
   getLegacyAgentMemoryPath,
   getLegacyAuthDirPath,
@@ -171,6 +172,7 @@ describe("data-paths", () => {
     );
 
     expect(getProjectResourceSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "project-resources.json"));
+    expect(getBuilderSidebarOrderPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "builder-sidebar-order.json"));
     expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "integrations"));
     expect(getSharedKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge"));
     expect(getProfileKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "profiles"));

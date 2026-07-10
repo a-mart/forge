@@ -8,7 +8,7 @@ Project agents appear pinned at the top of each profile section with a badge, ab
 
 ## Search
 
-The search bar at the top filters sessions and workers by name. Prefix shortcuts:
+The search bar at the top filters local and connected remote sessions and workers by name in one result set. Remote connection status cards are hidden while a search is active so they are not counted as matches. Prefix shortcuts:
 
 - `s:` searches only session names.
 - `w:` searches only worker names.
@@ -17,7 +17,7 @@ The search bar at the top filters sessions and workers by name. Prefix shortcuts
 
 Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Default Model, Change Working Directory, Mark All as Read, Mute/Unmute All Sessions, Archive Project, or Delete Manager. Changing the default model updates only sessions that still inherit the project default; sessions with an explicit session override are not affected. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path. Archiving a project marks only the profile as archived, not each session individually, but the whole project becomes read-only and unusable until restored.
 
-You can also drag profiles to reorder them. The **+** button on a profile header creates a new session.
+You can drag local and connected remote project headers into one shared order. Forge saves that unified order on the local Builder instance, so browsers and the desktop app connected to the same local Forge use the same layout. The preference is never written to a remote collaboration server. Offline, disabled, archived, and client-unseen projects keep their positions: one client's connection registry or project snapshot cannot delete positions another client still needs. Deleted projects and removed connections can therefore remain as harmless hidden anchors until Forge has explicit local-instance cleanup authority. Local Cortex stays pinned above the mixed project list. The **+** button on a local profile header creates a new session.
 
 ## Session actions
 

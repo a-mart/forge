@@ -66,6 +66,15 @@ describe('builder runtime target seam', () => {
 
     const builderSettingsResponse = await fetch(`${baseUrl}/api/settings/auth`)
     expect(builderSettingsResponse.status).toBe(200)
+
+    const sidebarOrderResponse = await fetch(`${baseUrl}/api/settings/builder-sidebar-order`)
+    expect(sidebarOrderResponse.status).toBe(200)
+    await expect(sidebarOrderResponse.json()).resolves.toEqual({
+      version: 1,
+      revision: 0,
+      order: [],
+      updatedAt: null,
+    })
   })
 
   it('does not set up documented collaboration auth artifacts in builder mode', async () => {

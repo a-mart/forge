@@ -259,6 +259,20 @@ describe('ManagerWsClient', () => {
     ).toBe(true)
   })
 
+  it('projects bounded Builder order invalidations and ignores stale revisions', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', null)
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances[0]!
+    socket.emit('open')
+
+    emitServerEvent(socket, { type: 'builder_sidebar_order_updated', revision: 3 })
+    emitServerEvent(socket, { type: 'builder_sidebar_order_updated', revision: 2 })
+
+    expect(client.getState().builderSidebarOrderRevision).toBe(3)
+    client.destroy()
+  })
+
   it('subscribes on connect and sends user_message commands to the active agent', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
@@ -745,10 +759,16 @@ describe('ManagerWsClient', () => {
 
     socket.emit('open')
     expect(JSON.parse(socket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
+    expect(client.getState().connectionEpoch).toBe(1)
+    emitServerEvent(socket, { type: 'profiles_snapshot', profiles: [] })
+    expect(client.getState().hasReceivedProfilesSnapshot).toBe(true)
+    emitServerEvent(socket, { type: 'builder_sidebar_order_updated', revision: 5 })
+    expect(client.getState().builderSidebarOrderRevision).toBe(5)
 
     // Backend restart drops the socket; the client schedules a reconnect.
     socket.close()
     expect(client.getState().connected).toBe(false)
+    expect(client.getState().hasReceivedProfilesSnapshot).toBe(false)
     vi.advanceTimersByTime(1200)
 
     const reconnectedSocket = FakeWebSocket.instances[1]
@@ -761,7 +781,15 @@ describe('ManagerWsClient', () => {
     expect(reload).not.toHaveBeenCalled()
     expect(JSON.parse(reconnectedSocket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
     expect(client.getState().connected).toBe(true)
+    expect(client.getState().connectionEpoch).toBe(2)
+    expect(client.getState().builderSidebarOrderRevision).toBeNull()
     expect(client.getState().hasReceivedAgentsSnapshot).toBe(false)
+    expect(client.getState().hasReceivedProfilesSnapshot).toBe(false)
+
+    // The restarted backend begins a new revision generation. Its R1 event is
+    // accepted rather than being suppressed by the old connection's R5.
+    emitServerEvent(reconnectedSocket, { type: 'builder_sidebar_order_updated', revision: 1 })
+    expect(client.getState().builderSidebarOrderRevision).toBe(1)
 
     // The re-subscribe lands: the backend's fresh `ready` re-hydrates the target.
     emitServerEvent(reconnectedSocket, {
