@@ -22,7 +22,7 @@ Remote Projects also requires the server operator to enable the feature. The bro
 
 ## Sidebar and connection states
 
-Enabled remote projects appear as blue, globe-marked project and session rows in the unified Builder sidebar. They are select-only rather than offering local rename, archive, delete, or other management menus. A remote connection can show:
+Enabled remote project headers appear with blue styling and a globe marker in the unified Builder sidebar. Nested session rows sit beneath them and use status dots. Remote actions are limited: **Change Working Directory** is available from a project header and opens the server directory browser. Local rename, archive, delete, fork, and model actions remain absent. A remote connection can show:
 
 - connecting;
 - sign-in required;

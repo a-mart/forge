@@ -16,7 +16,7 @@ Each profile can have multiple sessions. Sessions inherit all config from the pr
 
 By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Sessions that still inherit the profile default pick up future default changes automatically. Use "Use Project Default" on a session to revert it to inherited state, and the override action is available from the session context menu alongside the other session-management actions.
 
-Remote profiles remain authoritative on their Forge server and appear as blue, globe-marked rows when that connection's Remote Projects preference and server policy are enabled. These rows are select-only; profile and session management remains on the remote instance rather than using local context menus. A remote connection may instead show connecting, sign-in-required, unreachable, server-disabled, update-required, or empty status until its projects can be selected.
+Remote profiles remain authoritative on their Forge server. Their project headers appear with blue styling and a globe marker when the connection's Remote Projects preference and server policy are enabled; nested session rows use status dots. Header actions are limited to **Change Working Directory**, which opens the server directory browser. Local rename, archive, delete, fork, and model actions remain absent. A remote connection may instead show connecting, sign-in-required, unreachable, server-disabled, update-required, or empty status until its projects can be selected.
 
 ## Rename a profile
 

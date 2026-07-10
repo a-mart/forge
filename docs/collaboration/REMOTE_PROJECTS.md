@@ -116,9 +116,9 @@ On each Builder client:
 2. Enter the remote server URL, select **Test**, and then select **Add**.
 3. Sign in to that connection with a collaboration account.
 4. When the server advertises Remote Projects support, confirm **Remote projects** is on for that connection. A new successfully tested connection may already be opted in automatically.
-5. Return to Builder and select a blue, globe-marked remote project or session row.
+5. Return to Builder and select a blue, globe-marked remote project header or a nested session row beneath it. Nested session rows use status dots rather than the globe marker.
 
-Remote Projects remain in the unified Builder sidebar; the Builder/Collaboration switch still means Builder projects versus Collaboration channels. Remote project rows do not create another mode. Their visible project/session row actions are select-only rather than exposing the full set of local destructive/archive controls.
+Remote Projects remain in the unified Builder sidebar; the Builder/Collaboration switch still means Builder projects versus Collaboration channels. Remote project rows do not create another mode. Header actions are limited: **Change Working Directory** opens the server directory browser, while local rename, archive, delete, fork, and model actions remain absent.
 
 An enabled connection can render these origin states even when it has no project row:
 

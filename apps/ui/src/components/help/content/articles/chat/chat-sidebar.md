@@ -4,7 +4,7 @@ The sidebar on the left is your main navigation for everything in Forge. It show
 
 Each **profile** is a collapsible group. Inside each profile are its **sessions**. Inside each session, you can expand to see active **workers**. Click any item to switch to it.
 
-Enabled Remote Projects appear in Builder as blue, globe-marked project and session rows mixed with local projects. Remote rows are select-only: they do not expose the local profile/session rename, archive, delete, fork, or model/CWD management menus. Selecting one makes its server the active origin for supported chat and workspace surfaces; selecting a local row switches those surfaces back.
+Enabled remote project headers appear in Builder with blue styling and a globe marker, mixed with local projects. Nested session rows sit beneath each header and use status dots rather than the globe marker. Remote actions are limited: right-click a remote project header to use **Change Working Directory** through the server directory browser. Local rename, archive, delete, fork, and model actions remain absent. Selecting a remote project or session makes its server the active origin for supported chat and workspace surfaces; selecting a local row switches those surfaces back.
 
 A connection without a selectable project can show **Connecting**, **Sign in required**, **Unreachable**, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. These states describe connectivity, authentication, policy, and protocol compatibility; they do not create a local copy of the remote project.
 
