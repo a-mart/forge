@@ -4797,6 +4797,122 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('keeps the socket healthy when deleting the selected manager with runtime terminate and large fallback history', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    const defaultManager = await bootWithDefaultManager(manager, config)
+    const secondary = await manager.createManager(defaultManager.agentId, {
+      name: 'Selected Manager',
+      cwd: config.defaultCwd,
+    })
+    const ownedWorker = await manager.spawnAgent(secondary.agentId, { agentId: 'Delete Me Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: defaultManager.agentId }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId)
+
+    for (let index = 0; index < 40; index += 1) {
+      client.send(JSON.stringify({ type: 'user_message', text: `Fallback history message ${index}` }))
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === 'conversation_message' &&
+          event.source === 'user_input' &&
+          event.text === `Fallback history message ${index}`,
+      )
+    }
+
+    client.send(JSON.stringify({ type: 'subscribe', agentId: secondary.agentId }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === secondary.agentId)
+
+    const deleteStartIndex = events.length
+    client.send(JSON.stringify({ type: 'delete_manager', managerId: secondary.agentId, requestId: 'delete-selected-manager' }))
+
+    const deletedEvent = await waitForEventAfter(
+      events,
+      deleteStartIndex,
+      (event) => event.type === 'manager_deleted' && event.managerId === secondary.agentId,
+    )
+    expect(deletedEvent.type).toBe('manager_deleted')
+    if (deletedEvent.type === 'manager_deleted') {
+      expect(deletedEvent.terminatedWorkerIds).toContain(ownedWorker.agentId)
+    }
+
+    client.send(JSON.stringify({ type: 'subscribe', agentId: defaultManager.agentId }))
+    client.send(JSON.stringify({ type: 'subscribe', agentId: secondary.agentId }))
+
+    const fallbackReadyEvent = await waitForEventAfter(
+      events,
+      deleteStartIndex,
+      (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId,
+    )
+    expect(fallbackReadyEvent.type).toBe('ready')
+
+    const fallbackHistoryEvent = await waitForEventAfter(
+      events,
+      deleteStartIndex,
+      (event) =>
+        event.type === 'conversation_history' && event.agentId === defaultManager.agentId,
+    )
+    expect(fallbackHistoryEvent.type).toBe('conversation_history')
+    if (fallbackHistoryEvent.type === 'conversation_history') {
+      expect(fallbackHistoryEvent.messages.length).toBeGreaterThan(0)
+    }
+
+    const postDeleteEvents = events.slice(deleteStartIndex)
+    const fallbackReadyEvents = postDeleteEvents.filter(
+      (event): event is Extract<ServerEvent, { type: 'ready' }> =>
+        event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId,
+    )
+    expect(fallbackReadyEvents).toHaveLength(1)
+
+    const fallbackHistoryEvents = postDeleteEvents.filter(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> =>
+        event.type === 'conversation_history' && event.agentId === defaultManager.agentId,
+    )
+    expect(fallbackHistoryEvents).toHaveLength(1)
+
+    const staleSubscribeErrors = postDeleteEvents.filter(
+      (event): event is Extract<ServerEvent, { type: 'error' }> =>
+        event.type === 'error' && event.code === 'UNKNOWN_AGENT',
+    )
+    expect(staleSubscribeErrors.length).toBeLessThanOrEqual(1)
+
+    expect(manager.listAgents().some((agent) => agent.agentId === secondary.agentId)).toBe(false)
+    expect(manager.listAgents().some((agent) => agent.agentId === defaultManager.agentId)).toBe(true)
+
+    const pingStartIndex = events.length
+    client.send(JSON.stringify({ type: 'ping' }))
+    const pingReadyEvent = await waitForEventAfter(
+      events,
+      pingStartIndex,
+      (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId,
+    )
+    expect(pingReadyEvent.type).toBe('ready')
+    expect(client.readyState).toBe(WebSocket.OPEN)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('allows the same socket to create a replacement after deleting the last manager', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

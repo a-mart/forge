@@ -7,7 +7,6 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react'
-import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { seedProjectResources } from '@/components/file-browser/use-file-browser-queries'
 import { fetchRepositorySettings } from '@/components/settings/repository-settings-api'
@@ -22,6 +21,7 @@ import type {
   RepositoryProjectCreationStage,
 } from '@forge/protocol'
 import type { AppRouteState } from './use-route-state'
+import { DEFAULT_MANAGER_AGENT_ID } from './use-route-state'
 
 interface UseManagerActionsOptions {
   wsUrl: string
@@ -591,15 +591,19 @@ export function useManagerActions({
       await client.deleteManager(manager.agentId)
 
       if (activeAgentId === manager.agentId) {
-        const remainingAgents = agents.filter(
-          (agent) =>
-            agent.agentId !== manager.agentId &&
-            agent.managerId !== manager.agentId,
-        )
-        const fallbackAgentId = chooseFallbackAgentId(remainingAgents)
-        if (fallbackAgentId) {
-          navigateToRoute({ view: 'chat', agentId: fallbackAgentId, surface: 'builder' })
-          client.subscribeToAgent(fallbackAgentId)
+        const nextTargetAgentId = client.getState().targetAgentId
+        if (nextTargetAgentId) {
+          navigateToRoute({
+            view: 'chat',
+            agentId: nextTargetAgentId,
+            surface: 'builder',
+          })
+        } else {
+          navigateToRoute({
+            view: 'chat',
+            agentId: DEFAULT_MANAGER_AGENT_ID,
+            surface: 'builder',
+          })
         }
       }
 
@@ -610,7 +614,7 @@ export function useManagerActions({
     } finally {
       setIsDeletingManager(false)
     }
-  }, [activeAgentId, agents, clientRef, managerToDelete, navigateToRoute])
+  }, [activeAgentId, clientRef, managerToDelete, navigateToRoute])
 
   const handleCloseDeleteManagerDialog = useCallback(() => {
     if (isDeletingManager) {

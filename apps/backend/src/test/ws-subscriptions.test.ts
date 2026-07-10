@@ -5,12 +5,16 @@ import { WsSubscriptions } from '../ws/ws-subscriptions.js'
 import { WebSocket } from 'ws'
 
 // The bootstrap send sequence is async and flow-controls bootstrap-critical events (awaits socket
-// drain between sends). Fire-and-forget bootstrap paths (queueSubscriptionBootstrap) therefore settle
-// across microtask boundaries, so flush the microtask queue before asserting on delivered events.
+// drain between sends). Fire-and-forget bootstrap paths therefore settle across microtask
+// boundaries, so flush the microtask queue before asserting on delivered events.
 async function flushMicrotasks(ticks = 20): Promise<void> {
   for (let i = 0; i < ticks; i += 1) {
     await Promise.resolve()
   }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function createPerfStub(): SidebarPerfRecorder {
@@ -304,6 +308,87 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     expect(getEventTypes(sentEvents)).toContain('ready')
     expect(getEventTypes(sentEvents)).toContain('agents_snapshot')
     expect(getEventTypes(sentEvents)).toContain('profiles_snapshot')
+  })
+
+  it('coalesces deletion rehome, same-target subscribe, and stale deleted-target subscribe into one bootstrap sequence', async () => {
+    const manager = createManagerStub()
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    let concurrentBootstraps = 0
+    let maxConcurrentBootstraps = 0
+    let bootstrapSequenceCount = 0
+    let currentBootstrapSequenceId = 0
+    const eventSequenceIds: number[] = []
+
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        eventSequenceIds.push(currentBootstrapSequenceId)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      sendBootstrapCritical: async (_socket, event) => {
+        sentEvents.push(event)
+        eventSequenceIds.push(currentBootstrapSequenceId)
+
+        if (event.type === 'ready') {
+          bootstrapSequenceCount += 1
+          currentBootstrapSequenceId = bootstrapSequenceCount
+          concurrentBootstraps += 1
+          maxConcurrentBootstraps = Math.max(maxConcurrentBootstraps, concurrentBootstraps)
+          await delay(5)
+          concurrentBootstraps -= 1
+        }
+
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(socket, 'session-1')
+    sentEvents.length = 0
+    eventSequenceIds.length = 0
+    bootstrapSequenceCount = 0
+    currentBootstrapSequenceId = 0
+    maxConcurrentBootstraps = 0
+
+    manager.deleteAgent('session-1')
+
+    subscriptions.handleDeletedAgentSubscriptions(new Set(['session-1']))
+    void subscriptions.handleSubscribe(socket, 'manager')
+    void subscriptions.handleSubscribe(socket, 'session-1')
+
+    await flushMicrotasks(50)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    expect(maxConcurrentBootstraps).toBeLessThanOrEqual(1)
+
+    const readyEvents = sentEvents.filter(
+      (event): event is Extract<ServerEvent, { type: 'ready' }> => event.type === 'ready',
+    )
+    expect(readyEvents).toHaveLength(1)
+    expect(readyEvents[0]?.subscribedAgentId).toBe('manager')
+
+    const historyEvents = sentEvents.filter((event) => event.type === 'conversation_history')
+    expect(historyEvents).toHaveLength(1)
+
+    const errorEvents = sentEvents.filter((event) => event.type === 'error')
+    expect(errorEvents).toHaveLength(1)
+    expect(errorEvents[0]).toMatchObject({
+      code: 'UNKNOWN_AGENT',
+    })
+
+    const bootstrapEventSequenceIds = new Set(
+      sentEvents
+        .map((_event, index) => eventSequenceIds[index])
+        .filter((sequenceId) => sequenceId > 0),
+    )
+    expect(bootstrapEventSequenceIds.size).toBeLessThanOrEqual(1)
   })
 
   it('resends snapshots when resolveSubscribedAgentId falls back after the subscribed agent disappears', async () => {

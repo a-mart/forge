@@ -65,6 +65,7 @@ export async function sendSubscriptionBootstrap(options: {
   resolveTaskSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
+  shouldContinue?: () => boolean;
 }): Promise<SubscriptionBootstrapSendResult> {
   const {
     socket,
@@ -82,7 +83,10 @@ export async function sendSubscriptionBootstrap(options: {
     resolveTaskSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
+    shouldContinue,
   } = options;
+
+  const canContinue = (): boolean => shouldContinue?.() !== false;
 
   const buildMode = resolveBackendSidebarPerfBuildMode();
   const startedAtMs = performance.now();
@@ -100,6 +104,10 @@ export async function sendSubscriptionBootstrap(options: {
   // sending. Sending sequentially with `await` lets the socket buffer drain between events so the
   // whole bootstrap completes without overflowing the 1 MB buffer and dropping later events.
   const sendMeasured = async (fieldPrefix: string, event: ServerEvent): Promise<number | null> => {
+    if (!canContinue()) {
+      return null;
+    }
+
     const sendStartedAtMs = performance.now();
     const payloadBytes = await send(socket, event);
     metricFields[`${fieldPrefix}SendMs`] = performance.now() - sendStartedAtMs;
@@ -115,6 +123,13 @@ export async function sendSubscriptionBootstrap(options: {
     serverTime: new Date().toISOString(),
     subscribedAgentId: targetAgentId
   });
+
+  if (!canContinue()) {
+    return {
+      agentsSnapshotSent: false,
+      profilesSnapshotSent: false,
+    };
+  }
 
   metricFields.snapshotSkipped = !includeAgentsSnapshot;
 
@@ -297,6 +312,13 @@ export async function sendSubscriptionBootstrap(options: {
     },
     fields: metricFields
   });
+
+  if (!canContinue()) {
+    return {
+      agentsSnapshotSent: false,
+      profilesSnapshotSent: false,
+    };
+  }
 
   return {
     agentsSnapshotSent,
