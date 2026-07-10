@@ -22,6 +22,7 @@ export const CORTEX_V2_COPY = {
     unavailableNote: 'New Cortex settings are only available on the local Builder backend.',
     loadError: 'Could not load New Cortex settings',
     updateError: 'Failed to update New Cortex setting',
+    migrationRequired: 'Migration required before New Cortex can be enabled. Activation is unavailable in the UI until the guarded migration has completed.',
     retry: 'Retry',
   },
   /** First-launch onboarding modal. */
@@ -32,6 +33,7 @@ export const CORTEX_V2_COPY = {
     revertNote: "It's opt-in, and you can switch back to the previous memory behavior anytime in Settings.",
     enable: 'Enable new Cortex',
     dismiss: 'Not now',
+    migrationRequired: 'Migration required. Forge cannot safely enable the new Cortex until the guarded migration has completed.',
     enableError: 'Could not enable New Cortex. You can try again from Settings.',
   },
 } as const

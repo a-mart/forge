@@ -38,7 +38,7 @@ export async function fetchKnowledgeV2Settings(
   if (!payload?.settings) {
     throw new Error('Invalid knowledge-v2 settings response from backend.')
   }
-  return { available: true, response: payload as GetKnowledgeV2SettingsResponse }
+  return { available: true, response: normalizeActivation(payload as GetKnowledgeV2SettingsResponse) }
 }
 
 export async function updateKnowledgeV2Settings(
@@ -56,5 +56,16 @@ export async function updateKnowledgeV2Settings(
   if (!payload?.settings) {
     throw new Error('Invalid knowledge-v2 settings update response from backend.')
   }
-  return payload as UpdateKnowledgeV2SettingsResponse
+  return normalizeActivation(payload as UpdateKnowledgeV2SettingsResponse)
+}
+
+function normalizeActivation<T extends GetKnowledgeV2SettingsResponse>(payload: T): T {
+  const activation = payload.activation
+  const canEnable = activation?.canEnable === true && activation.reason === null
+  return {
+    ...payload,
+    activation: canEnable
+      ? { canEnable: true, reason: null }
+      : { canEnable: false, reason: 'migration_required' },
+  }
 }

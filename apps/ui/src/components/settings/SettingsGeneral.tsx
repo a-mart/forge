@@ -232,6 +232,7 @@ export function SettingsGeneral({
   // Knowledge v2 ("New Cortex") — Builder-only; hidden when the endpoint 404s.
   const [knowledgeV2Settings, setKnowledgeV2Settings] = useState<KnowledgeV2Settings | null>(null)
   const [knowledgeV2Available, setKnowledgeV2Available] = useState(false)
+  const [knowledgeV2CanEnable, setKnowledgeV2CanEnable] = useState(false)
   const [knowledgeV2Error, setKnowledgeV2Error] = useState<string | null>(null)
   const [knowledgeV2Updating, setKnowledgeV2Updating] = useState(false)
 
@@ -548,6 +549,9 @@ export function SettingsGeneral({
   // Fetch Knowledge v2 ("New Cortex") settings on mount. Reuses cortexSource.
   useEffect(() => {
     let cancelled = false
+    setKnowledgeV2Available(false)
+    setKnowledgeV2Settings(null)
+    setKnowledgeV2CanEnable(false)
     setKnowledgeV2Error(null)
     void fetchKnowledgeV2Settings(cortexSource)
       .then((result) => {
@@ -559,10 +563,15 @@ export function SettingsGeneral({
         }
         setKnowledgeV2Available(true)
         setKnowledgeV2Settings(result.response.settings)
+        setKnowledgeV2CanEnable(result.response.activation.canEnable)
       })
       .catch((err) => {
         if (cancelled) return
+        // Endpoint failures remain visible as a disabled/error row; only a
+        // confirmed 404 hides this Builder-only setting.
         setKnowledgeV2Available(true)
+        setKnowledgeV2Settings(null)
+        setKnowledgeV2CanEnable(false)
         setKnowledgeV2Error(err instanceof Error ? err.message : CORTEX_V2_COPY.settings.loadError)
       })
     return () => {
@@ -727,13 +736,14 @@ export function SettingsGeneral({
 
   const handleKnowledgeV2Toggle = useCallback(
     (enabled: boolean) => {
-      if (knowledgeV2Updating) return
+      if (knowledgeV2Updating || (enabled && !knowledgeV2CanEnable)) return
       setKnowledgeV2Updating(true)
       setKnowledgeV2Error(null)
 
       void updateKnowledgeV2Settings(cortexSource, { enabled })
         .then((response) => {
           setKnowledgeV2Settings(response.settings)
+          setKnowledgeV2CanEnable(response.activation.canEnable)
         })
         .catch((err) => {
           setKnowledgeV2Error(err instanceof Error ? err.message : CORTEX_V2_COPY.settings.updateError)
@@ -742,7 +752,7 @@ export function SettingsGeneral({
           setKnowledgeV2Updating(false)
         })
     },
-    [cortexSource, knowledgeV2Updating],
+    [cortexSource, knowledgeV2CanEnable, knowledgeV2Updating],
   )
 
   const handleEditorPreferenceChange = useCallback((nextPreference: EditorPreference) => {
@@ -1203,8 +1213,17 @@ export function SettingsGeneral({
                   id="knowledge-v2-enabled-toggle"
                   checked={knowledgeV2Settings?.enabled ?? false}
                   onCheckedChange={handleKnowledgeV2Toggle}
-                  disabled={!knowledgeV2Settings || knowledgeV2Updating}
+                  disabled={
+                    !knowledgeV2Settings
+                    || knowledgeV2Updating
+                    || (!knowledgeV2Settings.enabled && !knowledgeV2CanEnable)
+                  }
                 />
+                {knowledgeV2Settings && !knowledgeV2Settings.enabled && !knowledgeV2CanEnable ? (
+                  <span className="max-w-72 text-right text-[10px] text-amber-700 dark:text-amber-300">
+                    {CORTEX_V2_COPY.settings.migrationRequired}
+                  </span>
+                ) : null}
                 {knowledgeV2Error ? (
                   <span className="text-[10px] text-destructive">{knowledgeV2Error}</span>
                 ) : null}

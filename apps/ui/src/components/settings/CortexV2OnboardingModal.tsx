@@ -23,8 +23,8 @@ import { CORTEX_V2_COPY, CORTEX_V2_ONBOARDING_SEEN_KEY } from './cortex-v2-copy'
  * - Otherwise it loads `GET /api/settings/knowledge-v2`.  It does NOT show and
  *   marks the user as decided when the feature is already enabled or when the
  *   endpoint is unavailable (404 → non-Builder runtime) or errors.
- * - Choosing "Enable new Cortex" issues `PUT { enabled: true }`; "Not now"
- *   simply closes.  Either action sets the seen marker.
+ * - Activation is offered only when the backend reports a completed migration.
+ *   Otherwise the modal explains that migration is required and never issues a PUT.
  */
 
 // eslint-disable-next-line react-refresh/only-export-components -- tiny seen-marker helpers colocated with the modal they gate
@@ -53,6 +53,7 @@ interface CortexV2OnboardingModalProps {
 
 export function CortexV2OnboardingModal({ source }: CortexV2OnboardingModalProps) {
   const [open, setOpen] = useState(false)
+  const [canEnable, setCanEnable] = useState(false)
   const [enabling, setEnabling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Guard against double-decide across the async gate + StrictMode double-mount.
@@ -75,6 +76,11 @@ export function CortexV2OnboardingModal({ source }: CortexV2OnboardingModalProps
           decide()
           return
         }
+        // Do not show a dead-end activation prompt before an administrator has
+        // completed the guarded migration. Leave the marker unset so a later
+        // launch can offer onboarding once activation becomes available.
+        if (!result.response.activation.canEnable) return
+        setCanEnable(true)
         setOpen(true)
       })
       .catch(() => {
@@ -97,7 +103,7 @@ export function CortexV2OnboardingModal({ source }: CortexV2OnboardingModalProps
   )
 
   const handleEnable = useCallback(() => {
-    if (enabling) return
+    if (!canEnable || enabling) return
     setEnabling(true)
     setError(null)
     void updateKnowledgeV2Settings(source, { enabled: true })
@@ -108,10 +114,8 @@ export function CortexV2OnboardingModal({ source }: CortexV2OnboardingModalProps
       .catch((err) => {
         setError(err instanceof Error ? err.message : CORTEX_V2_COPY.onboarding.enableError)
       })
-      .finally(() => {
-        setEnabling(false)
-      })
-  }, [enabling, source, decide])
+      .finally(() => setEnabling(false))
+  }, [canEnable, decide, enabling, source])
 
   const handleDismiss = useCallback(() => {
     decide()
@@ -131,9 +135,9 @@ export function CortexV2OnboardingModal({ source }: CortexV2OnboardingModalProps
           <Button variant="ghost" onClick={handleDismiss} disabled={enabling}>
             {CORTEX_V2_COPY.onboarding.dismiss}
           </Button>
-          <Button onClick={handleEnable} disabled={enabling}>
-            {CORTEX_V2_COPY.onboarding.enable}
-          </Button>
+          {canEnable ? (
+            <Button onClick={handleEnable} disabled={enabling}>{CORTEX_V2_COPY.onboarding.enable}</Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
