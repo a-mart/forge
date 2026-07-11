@@ -59,6 +59,8 @@ All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/ex
 
 Project-local executable Pi resources under `.forge/pi/` are loaded only after the repository `.forge` directory is trusted. Forge injects a project-scope disable-all extension baseline before trusted repo settings so legacy `<cwd>/.pi/extensions` is not auto-loaded unless an explicitly trusted repo setting adds executable paths. For deterministic smoke tests and custom tools, list repo Pi extensions explicitly in `.forge/pi/settings.json`. See [Project Resources](PROJECT_RESOURCES.md) for the repo-root layout, trust prompt, block/manage-later behavior, and override rule.
 
+WP-9 packaged-runtime acceptance must repeat the denied/trusted project-resource matrix against staged Electron backend assets (not repo fallbacks): denied `.forge/pi` and legacy `.pi` direct/settings/package/symlink/junction/case variants must produce no top-level or factory side effects before or after `createAgentSession()`/`bindExtensions()`, while a trusted control loads exactly once and then stays blocked after trust revocation and runtime recreation.
+
 ### Profile Overlay Directories
 
 Each Forge profile can have its own Pi resource directories under `~/.forge/profiles/<profileId>/pi/`. These are **additive** — they add to the global and project-local directories, they do not replace them.
