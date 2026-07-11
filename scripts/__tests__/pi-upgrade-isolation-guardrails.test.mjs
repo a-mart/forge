@@ -3,6 +3,7 @@
  * Unit tests for isolation guardrails (no secrets, no network).
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +12,8 @@ import {
   assertIsolatedUiPort,
   assertViteWsUrlMatchesBackend,
 } from "../pi-upgrade/assert-isolation.mjs";
+
+const repoRoot = join(import.meta.dirname, "..", "..");
 
 describe("pi-upgrade isolation guardrails", () => {
   it("refuses production ~/.forge data dir", () => {
@@ -46,5 +49,22 @@ describe("pi-upgrade isolation guardrails", () => {
     expect(assertViteWsUrlMatchesBackend("ws://127.0.0.1:47687", 47687)).toBe(
       "ws://127.0.0.1:47687",
     );
+  });
+
+  it("launcher requires vacant ports and binds health to recorded child identity", () => {
+    const script = readFileSync(join(repoRoot, "scripts/pi-upgrade/start-isolated-instance.sh"), "utf8");
+    expect(script).toContain("refusing to adopt an existing listener");
+    expect(script).toContain("FORGE_PI_UPGRADE_INSTANCE_NONCE");
+    expect(script).toContain("backend health did not match recorded child/data/nonce identity");
+    expect(script).toContain("isolated identity is empty");
+  });
+
+  it("stop script kills only recorded nonce-verified owned PIDs, never arbitrary listeners", () => {
+    const script = readFileSync(join(repoRoot, "scripts/pi-upgrade/stop-isolated-instance.sh"), "utf8");
+    expect(script).toContain("stop_recorded_pid");
+    expect(script).toContain("refusing to stop");
+    expect(script).toContain("nonce mismatch");
+    expect(script).toContain("refusing arbitrary kill");
+    expect(script).not.toMatch(/kill \$pids/);
   });
 });

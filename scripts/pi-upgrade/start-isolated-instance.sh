@@ -25,6 +25,11 @@ set +a
 BACKEND_PORT="${FORGE_PORT:?FORGE_PORT required}"
 UI_PORT="${FORGE_UI_PORT:-$((BACKEND_PORT + 1))}"
 export FORGE_UI_PORT="$UI_PORT"
+INSTANCE_NONCE="$(node -e 'console.log(require("crypto").randomUUID())')"
+if [[ -z "${FORGE_DATA_DIR:-}" || -z "$INSTANCE_NONCE" ]]; then
+  echo "ERROR: isolated identity is empty (FORGE_DATA_DIR and nonce are required)." >&2
+  exit 1
+fi
 
 PNPM_BIN="$(command -v pnpm || true)"
 if [[ -z "$PNPM_BIN" || "$PNPM_BIN" != /* ]]; then
@@ -37,6 +42,13 @@ if [[ -z "$PNPM_BIN" || "$PNPM_BIN" != /* ]]; then
 fi
 
 node "$ROOT/scripts/pi-upgrade/assert-isolation.mjs"
+
+for port in "$BACKEND_PORT" "$UI_PORT"; do
+  if lsof -i ":$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+    echo "ERROR: port $port is already in use; refusing to adopt an existing listener." >&2
+    exit 1
+  fi
+done
 
 # Copied data roots inherit production runtime.lock; remove only from isolated trees.
 if [[ -f "${FORGE_DATA_DIR}/runtime.lock" ]]; then
@@ -51,25 +63,30 @@ UI_LOG="$LOG_DIR/ui-${UI_PORT}.log"
 
 echo "Starting isolated backend on 127.0.0.1:${BACKEND_PORT} (data=${FORGE_DATA_DIR})"
 # Prefer non-watch tsx for stable E2E (avoids protocol rebuild lock races).
-nohup env FORGE_HOST=127.0.0.1 FORGE_PORT="$BACKEND_PORT" FORGE_DATA_DIR="$FORGE_DATA_DIR" \
+nohup env FORGE_HOST=127.0.0.1 FORGE_PORT="$BACKEND_PORT" FORGE_DATA_DIR="$FORGE_DATA_DIR" FORGE_PI_UPGRADE_INSTANCE_NONCE="$INSTANCE_NONCE" \
   "$PNPM_BIN" --filter @forge/backend exec tsx src/index.ts \
   >"$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 echo "$BACKEND_PID" >"$LOG_DIR/backend-${BACKEND_PORT}.pid"
+echo "$INSTANCE_NONCE" >"$LOG_DIR/backend-${BACKEND_PORT}.nonce"
 
 echo "Waiting for backend health..."
 for i in $(seq 1 90); do
   if curl --noproxy '*' -sf "http://127.0.0.1:${BACKEND_PORT}/api/health" >/dev/null 2>&1; then
-    echo "Backend ready (pid=$BACKEND_PID)"
-    break
+    LIVE_ENV="$(ps eww -p "$BACKEND_PID" 2>/dev/null || true)"
+    if [[ "$LIVE_ENV" == *"FORGE_DATA_DIR=${FORGE_DATA_DIR}"* && "$LIVE_ENV" == *"FORGE_PI_UPGRADE_INSTANCE_NONCE=${INSTANCE_NONCE}"* ]]; then
+      echo "Backend ready (pid=$BACKEND_PID)"
+      break
+    fi
+    echo "ERROR: backend health did not match recorded child/data/nonce identity." >&2
+    tail -40 "$BACKEND_LOG" >&2 || true
+    kill "$BACKEND_PID" 2>/dev/null || true
+    exit 1
   fi
   if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
-    sleep 2
-    if ! kill -0 "$BACKEND_PID" 2>/dev/null && ! lsof -i ":${BACKEND_PORT}" -sTCP:LISTEN &>/dev/null; then
-      echo "ERROR: backend exited early. Tail of log:" >&2
-      tail -40 "$BACKEND_LOG" >&2 || true
-      exit 1
-    fi
+    echo "ERROR: backend exited early. Tail of log:" >&2
+    tail -40 "$BACKEND_LOG" >&2 || true
+    exit 1
   fi
   if [[ "$i" -eq 90 ]]; then
     echo "ERROR: backend did not become healthy. Tail of log:" >&2
@@ -80,24 +97,33 @@ for i in $(seq 1 90); do
 done
 
 LIVE_DATA="$(ps eww -p "$BACKEND_PID" 2>/dev/null | tr ' ' '\n' | awk -F= '/^FORGE_DATA_DIR=/{print $2; exit}' || true)"
-if [[ -n "$LIVE_DATA" && "$LIVE_DATA" != "$FORGE_DATA_DIR" ]]; then
-  echo "ERROR: live backend FORGE_DATA_DIR mismatch (expected isolated copy)." >&2
+LIVE_NONCE="$(ps eww -p "$BACKEND_PID" 2>/dev/null | tr ' ' '\n' | awk -F= '/^FORGE_PI_UPGRADE_INSTANCE_NONCE=/{print $2; exit}' || true)"
+if [[ -z "$LIVE_DATA" || "$LIVE_DATA" != "$FORGE_DATA_DIR" || -z "$LIVE_NONCE" || "$LIVE_NONCE" != "$INSTANCE_NONCE" ]]; then
+  echo "ERROR: live backend identity mismatch (expected isolated data and nonce)." >&2
   kill "$BACKEND_PID" 2>/dev/null || true
   exit 1
 fi
 
 echo "Starting isolated UI on 127.0.0.1:${UI_PORT} (vite dev only; VITE_FORGE_WS_URL=${VITE_FORGE_WS_URL})"
-nohup env VITE_FORGE_WS_URL="$VITE_FORGE_WS_URL" \
+nohup env VITE_FORGE_WS_URL="$VITE_FORGE_WS_URL" FORGE_PI_UPGRADE_INSTANCE_NONCE="$INSTANCE_NONCE" \
   "$PNPM_BIN" --filter @forge/ui exec vite dev --port "$UI_PORT" --strictPort \
   >"$UI_LOG" 2>&1 &
 UI_PID=$!
 echo "$UI_PID" >"$LOG_DIR/ui-${UI_PORT}.pid"
+echo "$INSTANCE_NONCE" >"$LOG_DIR/ui-${UI_PORT}.nonce"
 
 echo "Waiting for UI..."
 for i in $(seq 1 45); do
   if curl --noproxy '*' -sf "http://127.0.0.1:${UI_PORT}" >/dev/null 2>&1; then
-    echo "UI ready (pid=$UI_PID)"
-    break
+    LIVE_UI_NONCE="$(ps eww -p "$UI_PID" 2>/dev/null | tr ' ' '\n' | awk -F= '/^FORGE_PI_UPGRADE_INSTANCE_NONCE=/{print $2; exit}' || true)"
+    if [[ "$LIVE_UI_NONCE" == "$INSTANCE_NONCE" ]]; then
+      echo "UI ready (pid=$UI_PID)"
+      break
+    fi
+    echo "ERROR: UI health did not match recorded child/nonce identity." >&2
+    tail -40 "$UI_LOG" >&2 || true
+    kill "$BACKEND_PID" "$UI_PID" 2>/dev/null || true
+    exit 1
   fi
   if ! kill -0 "$UI_PID" 2>/dev/null; then
     echo "ERROR: UI exited early. Tail of log:" >&2
