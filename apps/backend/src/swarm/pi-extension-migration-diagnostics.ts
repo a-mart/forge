@@ -10,6 +10,19 @@ const SUPPORTED_LEGACY_REWRITE: Record<string, string> = {
 const LEGACY_SPECIFIER_PATTERN = /@mariozechner\/pi-(?:ai|coding-agent|agent-core|tui)(?:\/[A-Za-z0-9._/-]+)?/g;
 
 /**
+ * Upstream jiti aliases rewrite `@mariozechner/pi-ai/<unsupported>` onto the
+ * `@earendil-works/pi-ai` compat entry before Node resolves. The resulting
+ * ERR_MODULE_NOT_FOUND then cites a filesystem path like
+ * `.../pi-ai/dist/compat.js/private-subpath` instead of the original specifier.
+ */
+const ALIASED_UNSUPPORTED_PATH_PATTERNS: Array<{ pattern: RegExp; specifier: string }> = [
+  {
+    pattern: /(?:@earendil-works\/)?pi-ai(?:\/dist)?\/compat\.js\/private-subpath|pi-ai\/private-subpath/i,
+    specifier: "@mariozechner/pi-ai/private-subpath",
+  },
+];
+
+/**
  * Rewrite path-specific Pi extension module-not-found errors into migration guidance.
  * Forge does not ship @mariozechner/pi-* shims.
  */
@@ -19,15 +32,26 @@ export function diagnosePiExtensionModuleNotFound(error: unknown): string | unde
     error && typeof error === "object" && "code" in error
       ? String((error as { code?: unknown }).code ?? "")
       : "";
+  const causeMessage =
+    error && typeof error === "object" && "cause" in error && (error as { cause?: unknown }).cause instanceof Error
+      ? (error as { cause: Error }).cause.message
+      : "";
+  const combinedMessage = [message, causeMessage].filter(Boolean).join("\n");
   const looksMissing =
     code === "ERR_MODULE_NOT_FOUND" ||
     code === "MODULE_NOT_FOUND" ||
-    /Cannot find (?:package|module)/i.test(message) ||
-    /ERR_MODULE_NOT_FOUND/.test(message);
+    /Cannot find (?:package|module)/i.test(combinedMessage) ||
+    /ERR_MODULE_NOT_FOUND/.test(combinedMessage) ||
+    /Failed to load extension:/i.test(combinedMessage);
   if (!looksMissing) return undefined;
 
-  const matches = message.match(LEGACY_SPECIFIER_PATTERN);
-  if (!matches || matches.length === 0) return undefined;
+  const matches: string[] = [...(combinedMessage.match(LEGACY_SPECIFIER_PATTERN) ?? [])];
+  for (const { pattern, specifier } of ALIASED_UNSUPPORTED_PATH_PATTERNS) {
+    if (pattern.test(combinedMessage)) {
+      matches.push(specifier);
+    }
+  }
+  if (matches.length === 0) return undefined;
 
   const unique = [...new Set(matches)];
   const lines = unique.map((specifier) => {

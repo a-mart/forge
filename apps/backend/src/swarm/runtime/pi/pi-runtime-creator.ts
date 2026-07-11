@@ -687,10 +687,19 @@ function buildRuntimeExtensionSnapshot(options: BuildRuntimeExtensionSnapshotOpt
 
   const loadErrors = options.extensionsResult.errors
     .filter((entry) => !isInternalInlineExtensionPath(entry.path))
-    .map((entry) => ({
-      path: entry.path,
-      error: entry.error
-    }))
+    .map((entry) => {
+      const rawError: unknown = entry.error;
+      const rawMessage =
+        typeof rawError === "string"
+          ? rawError
+          : rawError instanceof Error
+            ? rawError.message
+            : String(rawError ?? "");
+      return {
+        path: entry.path,
+        error: formatPiExtensionLoadError(rawError, rawMessage || "Extension failed to load"),
+      };
+    })
     .sort((left, right) => left.path.localeCompare(right.path));
 
   return {

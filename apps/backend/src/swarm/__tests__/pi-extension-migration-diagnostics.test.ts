@@ -24,6 +24,17 @@ describe("pi-extension-migration-diagnostics", () => {
     expect(diagnostic).not.toContain("must be rewritten to");
   });
 
+  it("recognizes upstream-aliased filesystem private-subpath failures", () => {
+    const error = Object.assign(
+      new Error(
+        "Failed to load extension: Cannot find module '/tmp/node_modules/@earendil-works/pi-ai/dist/compat.js/private-subpath'",
+      ),
+      { code: "MODULE_NOT_FOUND" },
+    );
+    const diagnostic = diagnosePiExtensionModuleNotFound(error);
+    expect(diagnostic).toContain("Unsupported legacy Pi extension import @mariozechner/pi-ai/private-subpath");
+  });
+
   it("rewrites legacy oauth imports to the public earendil oauth export", () => {
     const error = Object.assign(
       new Error("Cannot find package '@mariozechner/pi-ai/oauth' imported from /tmp/ext.ts"),

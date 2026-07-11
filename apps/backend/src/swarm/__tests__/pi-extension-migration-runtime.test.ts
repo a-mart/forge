@@ -65,6 +65,8 @@ async function writeExtensionFromFixture(targetPath: string, fixtureName: string
 
 async function loadProjectExtension(root: string, relativeExtension: string): Promise<{
   errors: string[];
+  rawErrors: unknown[];
+  diagnosed: string[];
   marker: string;
   loadedPaths: string[];
 }> {
@@ -120,13 +122,20 @@ async function loadProjectExtension(root: string, relativeExtension: string): Pr
   await new Promise((resolve) => setImmediate(resolve));
   session.dispose();
 
-  const loaderErrors = loader.getExtensions().errors.map((entry) => String(entry.error ?? ""));
-  const createErrors = (extensionsResult?.errors ?? []).map((entry) => String(entry.error ?? ""));
-  const diagnosed = [...loaderErrors, ...createErrors].map(
-    (message) => formatPiExtensionLoadError(Object.assign(new Error(message), { code: "ERR_MODULE_NOT_FOUND" }), message),
-  );
+  const loaderErrorEntries = loader.getExtensions().errors.map((entry) => entry.error);
+  const createErrorEntries = (extensionsResult?.errors ?? []).map((entry) => entry.error);
+  const rawErrors = [...loaderErrorEntries, ...createErrorEntries];
+  const diagnosed = rawErrors.map((error) => {
+    const rawMessage = error instanceof Error ? error.message : String(error ?? "");
+    return formatPiExtensionLoadError(error, rawMessage);
+  });
   return {
-    errors: [...loaderErrors, ...createErrors, ...diagnosed],
+    errors: [
+      ...rawErrors.map((error) => (error instanceof Error ? error.message : String(error ?? ""))),
+      ...diagnosed,
+    ],
+    rawErrors,
+    diagnosed,
     marker,
     loadedPaths: loader.getExtensions().extensions.map((extension) => extension.path),
   };
@@ -170,16 +179,18 @@ describe("pi extension migration through real DefaultResourceLoader + createAgen
     );
 
     const result = await loadProjectExtension(root, "legacy-unsupported.js");
-    const combined = result.errors.join("\n");
-    expect(combined).toMatch(/private-subpath|Cannot find|ERR_MODULE_NOT_FOUND|Unsupported legacy/i);
+    expect(
+      result.rawErrors.length,
+      `expected real loader/createAgentSession errors for unsupported subpath; got ${JSON.stringify(result.errors)}`,
+    ).toBeGreaterThan(0);
 
-    const diagnosed = diagnosePiExtensionModuleNotFound(
-      Object.assign(new Error("Cannot find package '@mariozechner/pi-ai/private-subpath' imported from extension"), {
-        code: "ERR_MODULE_NOT_FOUND",
-      }),
-    );
-    expect(diagnosed).toContain("Unsupported legacy Pi extension import @mariozechner/pi-ai/private-subpath");
-    expect(diagnosed).not.toContain("must be rewritten to");
+    expect(
+      result.diagnosed.some((message) =>
+        message.includes("Unsupported legacy Pi extension import @mariozechner/pi-ai/private-subpath"),
+      ),
+      `expected Forge migration guidance from real resourceLoader/extensionsResult errors; diagnosed=${JSON.stringify(result.diagnosed)} raw=${JSON.stringify(result.errors)}`,
+    ).toBe(true);
+    expect(result.diagnosed.join("\n")).not.toContain("must be rewritten to");
   });
 
   it("keeps committed scanner fixtures aligned with runtime cases", async () => {
