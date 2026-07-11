@@ -647,10 +647,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private async disposeSessionResources(shutdown: PiSessionShutdownMetadata): Promise<void> {
     await this.drainSessionEventQueue("dispose_drain_session_events");
 
+    const failures: Array<{ stage: string; error: unknown }> = [];
+
     try {
       // NOTE: Uses the public AgentSession.extensionRunner API
-      // (verified against @earendil-works/pi-coding-agent@0.71.1).
-      // The try/catch ensures this remains safe against Pi version changes.
+      // (verified against @earendil-works/pi-coding-agent@0.80.6).
       const runner = this.session.extensionRunner;
       if (runner?.hasHandlers("session_shutdown")) {
         await runner.emit({
@@ -663,27 +664,74 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.logRuntimeError("interrupt", error, {
         stage: "dispose_session_shutdown_emit_failed"
       });
-      throw error;
+      failures.push({ stage: "dispose_session_shutdown_emit_failed", error });
     }
 
-    clearForgePiCompactionFailure(this.compactionFailureScopeKey);
-    this.closeStaleOpenAICodexWebSocketSession("dispose_session_resources");
-    await this.openAIAuthBrokerController?.release(shutdown.reason);
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
-    this.session.dispose();
-    this.pendingDeliveries = [];
-    this.recoveryBufferedMessages.length = 0;
-    this.promptDispatchPending = false;
-    this.currentTurnReplayMessages = [];
-    this.preparedSpecialistFallbackSessionMessages = undefined;
-    this.ignoreNextAgentStart = false;
-    this.latestAutoCompactionReason = undefined;
-    this.autoCompactionRecoveryInProgress = false;
-    this.clearAutoCompactionTimeout();
-    this.suppressSessionEventsUntilIdle = null;
-    this.awaitingAgentSettlement = false;
-    this.inFlightPrompts.clear();
+    try {
+      clearForgePiCompactionFailure(this.compactionFailureScopeKey);
+      this.closeStaleOpenAICodexWebSocketSession("dispose_session_resources");
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, {
+        stage: "dispose_pre_broker_cleanup_failed"
+      });
+      failures.push({ stage: "dispose_pre_broker_cleanup_failed", error });
+    }
+
+    try {
+      await this.openAIAuthBrokerController?.release(shutdown.reason);
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, {
+        stage: "dispose_broker_release_failed"
+      });
+      failures.push({ stage: "dispose_broker_release_failed", error });
+    }
+
+    // Mandatory ownership cleanup always runs so a throwing extension or broker
+    // release cannot skip unsubscribe/dispose/state clearing. The cached
+    // shutdown promise represents completed mandatory cleanup (then aggregated error).
+    try {
+      this.unsubscribe?.();
+      this.unsubscribe = undefined;
+      this.session.dispose();
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, {
+        stage: "dispose_session_dispose_failed"
+      });
+      failures.push({ stage: "dispose_session_dispose_failed", error });
+    } finally {
+      this.pendingDeliveries = [];
+      this.recoveryBufferedMessages.length = 0;
+      this.promptDispatchPending = false;
+      this.currentTurnReplayMessages = [];
+      this.preparedSpecialistFallbackSessionMessages = undefined;
+      this.ignoreNextAgentStart = false;
+      this.latestAutoCompactionReason = undefined;
+      this.autoCompactionRecoveryInProgress = false;
+      this.clearAutoCompactionTimeout();
+      this.suppressSessionEventsUntilIdle = null;
+      this.awaitingAgentSettlement = false;
+      this.inFlightPrompts.clear();
+    }
+
+    if (failures.length === 1) {
+      throw failures[0]!.error instanceof Error
+        ? failures[0]!.error
+        : new Error(String(failures[0]!.error));
+    }
+    if (failures.length > 1) {
+      const summary = failures
+        .map((failure) => {
+          const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+          return `${failure.stage}: ${message}`;
+        })
+        .join("; ");
+      throw new AggregateError(
+        failures.map((failure) =>
+          failure.error instanceof Error ? failure.error : new Error(String(failure.error)),
+        ),
+        `Pi session shutdown completed mandatory cleanup with ${failures.length} failures: ${summary}`,
+      );
+    }
   }
 
   async smartCompact(customInstructions?: string, options?: SmartCompactOptions): Promise<SmartCompactResult> {

@@ -347,4 +347,32 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
     expect(release).toHaveBeenCalledTimes(1);
     expect(session.disposeCalls).toBe(1);
   });
+
+  it("still unsubscribes, disposes, clears state, and releases broker when session_shutdown throws", async () => {
+    const { runtime, session, release } = makeRuntime();
+    session.extensionRunner.hasHandlers.mockReturnValue(true);
+    session.extensionRunner.emit.mockRejectedValue(new Error("extension shutdown boom"));
+
+    await expect(runtime.terminate({ abort: false })).rejects.toThrow("extension shutdown boom");
+
+    expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(session.disposeCalls).toBe(1);
+    expect((runtime as any).unsubscribe).toBeUndefined();
+    expect((runtime as any).pendingDeliveries).toEqual([]);
+    expect((runtime as any).inFlightPrompts.size).toBe(0);
+  });
+
+  it("completes mandatory cleanup and aggregates when shutdown and broker release both throw", async () => {
+    const { runtime, session, release } = makeRuntime();
+    session.extensionRunner.hasHandlers.mockReturnValue(true);
+    session.extensionRunner.emit.mockRejectedValue(new Error("extension shutdown boom"));
+    release.mockRejectedValue(new Error("broker release boom"));
+
+    await expect(runtime.terminate({ abort: false })).rejects.toThrow(/mandatory cleanup|extension shutdown boom|broker release boom/);
+
+    expect(session.disposeCalls).toBe(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect((runtime as any).pendingDeliveries).toEqual([]);
+  });
 });
