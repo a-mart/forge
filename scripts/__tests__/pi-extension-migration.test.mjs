@@ -42,4 +42,31 @@ describe('Pi extension migration scanner/codemod', () => {
     })
     expect(payload.findings[0].diagnostic).toContain('Unsupported legacy Pi extension import')
   })
+
+  it('scans committed source fixtures for supported and unsupported legacy imports', () => {
+    const fixtures = join(repoRoot, 'scripts/__tests__/fixtures/pi-extension-migration')
+    const supported = spawnSync(
+      'node',
+      ['scripts/pi-extension-migration.mjs', join(fixtures, 'legacy-supported.ts')],
+      { cwd: repoRoot, encoding: 'utf8' },
+    )
+    expect(supported.status).toBe(0)
+    const supportedPayload = JSON.parse(supported.stdout)
+    expect(supportedPayload.findings.map((finding) => finding.specifier)).toEqual(
+      expect.arrayContaining([
+        '@mariozechner/pi-ai',
+        '@mariozechner/pi-coding-agent',
+        '@mariozechner/pi-ai/oauth',
+      ]),
+    )
+
+    const unsupported = spawnSync(
+      'node',
+      ['scripts/pi-extension-migration.mjs', join(fixtures, 'legacy-unsupported.ts')],
+      { cwd: repoRoot, encoding: 'utf8' },
+    )
+    expect(unsupported.status).toBe(1)
+    const unsupportedPayload = JSON.parse(unsupported.stdout)
+    expect(unsupportedPayload.findings[0].specifier).toBe('@mariozechner/pi-ai/private-subpath')
+  })
 })

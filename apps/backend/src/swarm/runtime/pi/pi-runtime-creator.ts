@@ -25,6 +25,7 @@ import type {
 } from "../../openai-auth/openai-auth-broker-runtime-service.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
 import { createPiModelRegistry } from "../../pi-model-registry.js";
+import { formatPiExtensionLoadError } from "../../pi-extension-migration-diagnostics.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -328,7 +329,8 @@ export class PiRuntimeCreator {
             stack: error.stack
           });
 
-          const message = error.error.trim().length > 0 ? error.error.trim() : "Extension handler failed";
+          const rawMessage = error.error.trim().length > 0 ? error.error.trim() : "Extension handler failed";
+          const message = formatPiExtensionLoadError(error.error, rawMessage);
           void this.deps.callbacks
             .onRuntimeError(runtimeToken, descriptor.agentId, {
               phase: "extension",
@@ -350,9 +352,11 @@ export class PiRuntimeCreator {
         }
       });
     } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const message = formatPiExtensionLoadError(error, rawMessage);
       this.deps.logDebug("extension:bind_error", {
         agentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
+        message
       });
     }
 

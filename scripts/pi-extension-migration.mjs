@@ -5,6 +5,7 @@ import path from 'node:path'
 const SUPPORTED_REWRITES = new Map([
   ['@mariozechner/pi-ai', '@earendil-works/pi-ai/compat'],
   ['@mariozechner/pi-ai/compat', '@earendil-works/pi-ai/compat'],
+  ['@mariozechner/pi-ai/oauth', '@earendil-works/pi-ai/oauth'],
   ['@mariozechner/pi-coding-agent', '@earendil-works/pi-coding-agent'],
   ['@mariozechner/pi-agent-core', '@earendil-works/pi-agent-core'],
   ['@mariozechner/pi-tui', '@earendil-works/pi-tui'],

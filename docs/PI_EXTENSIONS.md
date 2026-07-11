@@ -59,7 +59,7 @@ All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/ex
 
 Project-local executable Pi resources under `.forge/pi/` are loaded only after the repository `.forge` directory is trusted. Forge injects a project-scope disable-all extension baseline before trusted repo settings so legacy `<cwd>/.pi/extensions` is not auto-loaded unless an explicitly trusted repo setting adds executable paths. For deterministic smoke tests and custom tools, list repo Pi extensions explicitly in `.forge/pi/settings.json`. See [Project Resources](PROJECT_RESOURCES.md) for the repo-root layout, trust prompt, block/manage-later behavior, and override rule.
 
-Packaged-runtime acceptance repeats the denied/trusted project-resource matrix against staged Electron backend assets (not repo fallbacks): denied `.forge/pi` and legacy `.pi` direct/settings/package/symlink/junction/case variants must produce no top-level or factory side effects before or after `createAgentSession()`/`bindExtensions()`, while a trusted control loads exactly once and then stays blocked after trust revocation and runtime recreation.
+Packaged Electron acceptance also re-checks denied/trusted project-resource behavior against staged backend assets (not repo fallbacks): denied `.forge/pi` and legacy `.pi` direct/settings/package/symlink/junction/case variants must produce no top-level or factory side effects before or after `createAgentSession()`/`bindExtensions()`, while a trusted control loads exactly once and then stays blocked after trust revocation and runtime recreation.
 
 ## Pi 0.80.6 Extension Import Migration
 
@@ -69,6 +69,7 @@ Forge does **not** ship compatibility shim packages for legacy `@mariozechner/pi
 | --- | --- |
 | `@mariozechner/pi-ai` | `@earendil-works/pi-ai/compat` |
 | `@mariozechner/pi-ai/compat` | `@earendil-works/pi-ai/compat` |
+| `@mariozechner/pi-ai/oauth` | `@earendil-works/pi-ai/oauth` |
 | `@mariozechner/pi-coding-agent` | `@earendil-works/pi-coding-agent` |
 | `@mariozechner/pi-agent-core` | `@earendil-works/pi-agent-core` |
 | `@mariozechner/pi-tui` | `@earendil-works/pi-tui` |
@@ -80,7 +81,7 @@ pnpm pi-extension:migrate -- ~/.forge/agent/extensions ~/.forge/agent/manager/ex
 pnpm pi-extension:migrate -- --write <extension-dir>
 ```
 
-Supported legacy roots are rewritten by `--write`; unsupported legacy subpaths fail with a targeted diagnostic. Do not add Forge-owned `@mariozechner/pi-*` shims.
+Supported legacy roots are rewritten by `--write`; unsupported legacy subpaths fail with a targeted diagnostic. At runtime, path-specific `ERR_MODULE_NOT_FOUND` errors for legacy `@mariozechner/pi-*` imports are rewritten into the same migration guidance. Do not add Forge-owned `@mariozechner/pi-*` shims.
 
 ### Profile Overlay Directories
 
