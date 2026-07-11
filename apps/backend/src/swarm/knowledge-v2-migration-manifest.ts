@@ -38,12 +38,6 @@ export interface KnowledgeV2MigrationManifest extends KnowledgeV2MigrationManife
   activation: { targetEnabled: true; state: "authorized_pending" };
 }
 
-/** Exact schema written by the already-shipped v1 migration implementation. */
-export interface LegacyKnowledgeV2MigrationManifest extends KnowledgeV2MigrationManifestCommon {
-  version: 1;
-  settingsAfter: KnowledgeV2Settings;
-}
-
 /** Canonical normalized representation consumed by activation and rollback. */
 export interface ParsedKnowledgeV2MigrationManifest extends KnowledgeV2MigrationManifestCommon {
   sourceVersion: 1 | 2;
