@@ -94,11 +94,13 @@ export interface SettingsAuthLoginAuthUrlEvent {
 }
 
 export interface SettingsAuthLoginPromptEvent {
+  requestId?: string
   message: string
   placeholder?: string
 }
 
 export interface SettingsAuthLoginDeviceCodeEvent {
+  requestId?: string
   userCode: string
   verificationUri: string
   intervalSeconds?: number
@@ -111,6 +113,7 @@ export interface SettingsAuthLoginSelectOption {
 }
 
 export interface SettingsAuthLoginSelectEvent {
+  requestId?: string
   message: string
   options: SettingsAuthLoginSelectOption[]
 }

@@ -522,6 +522,7 @@ export function CredentialPoolPanel({
               promptMessage: event.message,
               promptPlaceholder: event.placeholder,
               selectOptions: undefined,
+              pendingRequestId: event.requestId,
               errorMessage: undefined,
             }))
           },
@@ -532,6 +533,7 @@ export function CredentialPoolPanel({
               promptMessage: event.message,
               promptPlaceholder: event.options[0]?.id,
               selectOptions: event.options,
+              pendingRequestId: event.requestId,
               codeValue: '',
               errorMessage: undefined,
             }))
@@ -589,11 +591,12 @@ export function CredentialPoolPanel({
     if (!value) return
     setOauthFlow((prev) => ({ ...prev, isSubmittingCode: true, errorMessage: undefined }))
     try {
-      await submitPoolAddAccountOAuthPrompt(apiClient, provider, value)
+      await submitPoolAddAccountOAuthPrompt(apiClient, provider, value, oauthFlow.pendingRequestId)
       setOauthFlow((prev) => ({
         ...prev,
         status: 'waiting_for_auth',
         codeValue: '',
+        pendingRequestId: undefined,
         isSubmittingCode: false,
         progressMessage: 'Authorization code submitted. Waiting for completion...',
         errorMessage: undefined,

@@ -736,12 +736,24 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         }
 
         responded = true
+        const requestId = (event.data as { requestId?: string }).requestId
+        expect(requestId).toMatch(/[0-9a-f-]{36}/)
+        const staleResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'stale-code', requestId: 'stale-request' }),
+          },
+        )
+        expect(staleResponse.status).toBe(409)
+
         const respondResponse = await fetch(
           `http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`,
           {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ value: 'code-from-user' }),
+            body: JSON.stringify({ value: 'code-from-user', requestId }),
           },
         )
 
@@ -1144,6 +1156,226 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       const invalidPath = await parseJsonResponse(invalidPathResponse)
       expect(invalidPath.status).toBe(400)
       expect(invalidPath.json.error).toBe('Invalid OAuth login path')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('emits device_code with marked auth_url fallback and select with marked prompt fallback', async () => {
+    oauthMockState.anthropicLogin.mockImplementation(async (callbacks: any) => {
+      callbacks.onDeviceCode?.({
+        userCode: 'ABCD-EFGH',
+        verificationUri: 'https://example.test/device',
+        intervalSeconds: 5,
+        expiresInSeconds: 600,
+      })
+      const selected = await callbacks.onSelect?.({
+        message: 'Choose account',
+        options: [
+          { id: 'acct-1', label: 'Account 1' },
+          { id: 'acct-2', label: 'Account 2' },
+        ],
+      })
+      expect(selected).toBe('acct-2')
+      return {
+        accessToken: 'oauth-access-token',
+        refreshToken: 'oauth-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/login/anthropic`, {
+        method: 'POST',
+      })
+      expect(streamResponse.status).toBe(200)
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'select' || responded) return
+        responded = true
+        const data = event.data as { requestId?: string }
+        expect(typeof data.requestId).toBe('string')
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'acct-2', requestId: data.requestId }),
+          },
+        )
+        expect((await parseJsonResponse(respondResponse)).status).toBe(200)
+      })
+
+      const eventNames = events.map((event) => event.event)
+      expect(eventNames).toEqual(expect.arrayContaining(['device_code', 'auth_url', 'select', 'prompt', 'complete']))
+
+      const deviceCode = events.find((event) => event.event === 'device_code')
+      expect(deviceCode!.data).toMatchObject({
+        userCode: 'ABCD-EFGH',
+        verificationUri: 'https://example.test/device',
+      })
+
+      const fallbackAuthUrl = events.find((event) => {
+        if (event.event !== 'auth_url') return false
+        const data = event.data as { instructions?: string }
+        return typeof data.instructions === 'string' && data.instructions.includes('[forge-oauth-legacy-fallback:device_code]')
+      })
+      expect(fallbackAuthUrl).toBeDefined()
+      expect((fallbackAuthUrl!.data as { instructions: string }).instructions).toContain('ABCD-EFGH')
+
+      const fallbackPrompt = events.find((event) => {
+        if (event.event !== 'prompt') return false
+        const data = event.data as { message?: string }
+        return typeof data.message === 'string' && data.message.includes('[forge-oauth-legacy-fallback:select]')
+      })
+      expect(fallbackPrompt).toBeDefined()
+      expect((fallbackPrompt!.data as { message: string }).message).toContain('acct-1')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects stale OAuth requestId and accepts old-client respond without requestId', async () => {
+    oauthMockState.anthropicLogin.mockImplementation(async (callbacks: any) => {
+      const code = await callbacks.onPrompt?.({
+        message: 'Paste the one-time code',
+        placeholder: 'code-123',
+      })
+      return {
+        accessToken: `token-${code}`,
+        refreshToken: 'oauth-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/login/anthropic`, {
+        method: 'POST',
+      })
+
+      let responded = false
+      await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) return
+        responded = true
+        const data = event.data as { requestId?: string }
+        expect(typeof data.requestId).toBe('string')
+
+        const stale = await parseJsonResponse(
+          await fetch(`http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'stale-code', requestId: 'not-the-pending-id' }),
+          }),
+        )
+        expect(stale.status).toBe(409)
+        expect(stale.json.error).toBe('Stale OAuth login response')
+
+        const ok = await parseJsonResponse(
+          await fetch(`http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'legacy-code-without-id' }),
+          }),
+        )
+        expect(ok.status).toBe(200)
+        expect(ok.json.ok).toBe(true)
+      })
+
+      expect(manager.authCredentialUpdates).toEqual([
+        {
+          provider: 'anthropic',
+          credential: {
+            type: 'oauth',
+            accessToken: 'token-legacy-code-without-id',
+            refreshToken: 'oauth-refresh-token',
+          },
+        },
+      ])
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('supports pool OAuth select correlation ids and rejects stale pool responses', async () => {
+    oauthMockState.openaiLogin.mockImplementation(async (callbacks: any) => {
+      const selected = await callbacks.onSelect?.({
+        message: 'Choose account',
+        options: [{ id: 'pool-1', label: 'Pool 1' }],
+      })
+      expect(selected).toBe('pool-1')
+      return {
+        accessToken: 'pool-access-token',
+        refreshToken: 'pool-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/auth/openai-codex/accounts/login`,
+        { method: 'POST' },
+      )
+      expect(streamResponse.status).toBe(200)
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'select' || responded) return
+        responded = true
+        const data = event.data as { requestId?: string }
+        const stale = await parseJsonResponse(
+          await fetch(`http://${config.host}:${config.port}/api/settings/auth/openai-codex/accounts/login/respond`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'pool-1', requestId: 'stale' }),
+          }),
+        )
+        expect(stale.status).toBe(409)
+
+        const ok = await parseJsonResponse(
+          await fetch(`http://${config.host}:${config.port}/api/settings/auth/openai-codex/accounts/login/respond`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'pool-1', requestId: data.requestId }),
+          }),
+        )
+        expect(ok.status).toBe(200)
+      })
+
+      expect(events.map((event) => event.event)).toEqual(
+        expect.arrayContaining(['select', 'prompt', 'complete']),
+      )
+      expect(manager.pooledCredentialAdds).toHaveLength(1)
     } finally {
       await server.stop()
     }

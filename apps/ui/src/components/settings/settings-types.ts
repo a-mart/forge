@@ -37,6 +37,7 @@ export interface SettingsAuthOAuthFlowState {
   promptMessage?: string
   promptPlaceholder?: string
   selectOptions?: Array<{ id: string; label: string }>
+  pendingRequestId?: string
   progressMessage?: string
   errorMessage?: string
   codeValue: string

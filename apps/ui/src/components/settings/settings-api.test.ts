@@ -9,6 +9,7 @@ import {
   setPrimaryPooledCredential,
   startPoolAddAccountOAuthStream,
   startSettingsAuthOAuthLoginStream,
+  submitSettingsAuthOAuthPrompt,
 } from './settings-api'
 import { createBuilderSettingsApiClient, type SettingsApiClient } from './settings-api-client'
 
@@ -86,17 +87,23 @@ describe('settings-api auth changed events', () => {
   it('parses direct OAuth device-code and select events', async () => {
     const onDeviceCode = vi.fn()
     const onSelect = vi.fn()
+    const onAuthUrl = vi.fn()
+    const onPrompt = vi.fn()
     const client = createMockClient(mockSseResponse([
       'event: device_code\n',
       'data: {"userCode":"ABCD-EFGH","verificationUri":"https://example.test/device","intervalSeconds":5,"expiresInSeconds":600}\n\n',
+      'event: auth_url\n',
+      'data: {"url":"https://example.test/device","instructions":"[forge-oauth-legacy-fallback:device_code] Enter device code ABCD-EFGH at https://example.test/device"}\n\n',
       'event: select\n',
-      'data: {"message":"Choose account","options":[{"id":"acct-1","label":"Account 1"}]}\n\n',
+      'data: {"requestId":"req-select-1","message":"Choose account","options":[{"id":"acct-1","label":"Account 1"}]}\n\n',
+      'event: prompt\n',
+      'data: {"requestId":"req-select-1","message":"[forge-oauth-legacy-fallback:select]\\nChoose account\\nOptions:\\n- acct-1: Account 1","placeholder":"acct-1"}\n\n',
     ]))
 
     await startSettingsAuthOAuthLoginStream(client, 'openai-codex', {
-      onAuthUrl: vi.fn(),
+      onAuthUrl,
       onDeviceCode,
-      onPrompt: vi.fn(),
+      onPrompt,
       onSelect,
       onProgress: vi.fn(),
       onComplete: vi.fn(),
@@ -110,9 +117,28 @@ describe('settings-api auth changed events', () => {
       expiresInSeconds: 600,
     })
     expect(onSelect).toHaveBeenCalledWith({
+      requestId: 'req-select-1',
       message: 'Choose account',
       options: [{ id: 'acct-1', label: 'Account 1' }],
     })
+    // New client ignores marked legacy fallbacks.
+    expect(onAuthUrl).not.toHaveBeenCalled()
+    expect(onPrompt).not.toHaveBeenCalled()
+  })
+
+  it('submits OAuth respond payloads with optional requestId', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }))
+    const client = createMockClient(undefined as never)
+    client.fetch = fetchMock
+
+    await submitSettingsAuthOAuthPrompt(client, 'anthropic', 'code-1', 'req-1')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/auth/login/anthropic/respond',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ value: 'code-1', requestId: 'req-1' }),
+      }),
+    )
   })
 
   it('dispatches after successful pooled OAuth completion', async () => {

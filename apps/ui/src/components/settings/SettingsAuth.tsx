@@ -512,6 +512,7 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
                   promptMessage: event.message,
                   promptPlaceholder: event.placeholder,
                   selectOptions: undefined,
+                  pendingRequestId: event.requestId,
                   errorMessage: undefined,
                 },
               }
@@ -528,6 +529,7 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
                   promptMessage: event.message,
                   promptPlaceholder: event.options[0]?.id,
                   selectOptions: event.options,
+                  pendingRequestId: event.requestId,
                   codeValue: '',
                   errorMessage: undefined,
                 },
@@ -620,13 +622,14 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
       },
     }))
     try {
-      await submitSettingsAuthOAuthPrompt(apiClient, provider, value)
+      await submitSettingsAuthOAuthPrompt(apiClient, provider, value, flow.pendingRequestId)
       setOauthFlowByProvider((prev) => ({
         ...prev,
         [provider]: {
           ...(prev[provider] ?? createIdleSettingsAuthOAuthFlowState()),
           status: 'waiting_for_auth',
           codeValue: '',
+          pendingRequestId: undefined,
           isSubmittingCode: false,
           progressMessage: 'Authorization code submitted. Waiting for completion...',
           errorMessage: undefined,
