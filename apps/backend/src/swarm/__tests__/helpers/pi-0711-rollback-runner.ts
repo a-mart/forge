@@ -1,9 +1,24 @@
 import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../..");
 
 const FROZEN_PI_0711_SESSION_MANAGER_CANDIDATES = [
   process.env.FORGE_PI_0711_SESSION_MANAGER_JS,
+  resolve(
+    repoRoot,
+    ".forge",
+    "pi-upgrade-runners",
+    "0.71.1",
+    "node_modules",
+    "@mariozechner",
+    "pi-coding-agent",
+    "dist",
+    "core",
+    "session-manager.js",
+  ),
+  // Vitest often runs with cwd=apps/backend; keep cwd-relative fallback for local overrides.
   resolve(
     process.cwd(),
     "..",

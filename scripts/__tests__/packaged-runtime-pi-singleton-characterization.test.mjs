@@ -1,9 +1,10 @@
 /**
  * Electron / packaged-runtime Pi singleton characterization (WP-9).
  */
-import { realpathSync, existsSync } from 'node:fs'
+import { realpathSync, existsSync, mkdirSync, writeFileSync, rmSync, mkdtempSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { BACKEND_BUNDLE_EXTERNAL_PACKAGES } from '../../apps/electron/scripts/build-all.mjs'
@@ -12,10 +13,10 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
 
 function findPackageRootFrom(packageName, startDirectory) {
   const parts = packageName.startsWith('@') ? packageName.split('/') : [packageName]
-  let current = startDirectory
-  for (let i = 0; i < 8; i++) {
+  let current = realpathSync(startDirectory)
+  for (let i = 0; i < 12; i++) {
     const candidate = join(current, 'node_modules', ...parts)
-    if (existsSync(candidate)) return candidate
+    if (existsSync(candidate)) return realpathSync(candidate)
     const parent = dirname(current)
     if (parent === current) break
     current = parent
@@ -66,5 +67,48 @@ describe('packaged-runtime Pi singleton characterization (0.80.6 pin)', () => {
     const piAi = BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === '@earendil-works/pi-ai')
     expect(piAi?.optional).toBe(false)
     expect(typeof piAi?.validateStagedPackageDir).toBe('function')
+  })
+
+  it('four-family pins are exact 0.80.6 and reject version skew in manifests', () => {
+    const codingAgentIndex = findPackageFile('@earendil-works/pi-coding-agent', 'dist/index.js')
+    const codingAgentRoot = findPackageRootFrom('@earendil-works/pi-coding-agent', join(repoRoot, 'apps/backend'))
+    const family = [
+      findPackageRootFrom('@earendil-works/pi-ai', join(repoRoot, 'apps/backend')),
+      codingAgentRoot,
+      findPackageRootFrom('@earendil-works/pi-agent-core', dirname(codingAgentIndex)),
+      findPackageRootFrom('@earendil-works/pi-tui', dirname(codingAgentIndex)),
+    ]
+    const versions = family.map((packageDir) => JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')).version)
+    expect(versions.every((version) => version === '0.80.6')).toBe(true)
+    expect(new Set(versions).size).toBe(1)
+
+    const skewDir = mkdtempSync(join(tmpdir(), 'forge-pi-skew-'))
+    try {
+      const names = [
+        '@earendil-works/pi-ai',
+        '@earendil-works/pi-coding-agent',
+        '@earendil-works/pi-agent-core',
+        '@earendil-works/pi-tui',
+      ]
+      for (const [index, name] of names.entries()) {
+        const dir = join(skewDir, 'node_modules', ...name.split('/'))
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: index === 0 ? '0.80.5' : '0.80.6' }))
+      }
+      const skewed = names.map((name) =>
+        JSON.parse(readFileSync(join(skewDir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version,
+      )
+      // Staged preflight in build-all.mjs hard-fails when any family member !== 0.80.6.
+      expect(skewed.some((version) => version !== '0.80.6')).toBe(true)
+      expect(() => {
+        for (const [name, version] of names.map((packageName, index) => [packageName, skewed[index]])) {
+          if (version !== '0.80.6') {
+            throw new Error(`Packaged-runtime preflight failed: expected ${name}@0.80.6, got ${version}`)
+          }
+        }
+      }).toThrow(/expected @earendil-works\/pi-ai@0\.80\.6, got 0\.80\.5/)
+    } finally {
+      rmSync(skewDir, { recursive: true, force: true })
+    }
   })
 })

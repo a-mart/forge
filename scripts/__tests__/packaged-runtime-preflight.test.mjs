@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, access } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   loadRuntimeModuleFromEntry,
@@ -58,6 +58,11 @@ describe('Node engine floor for packaged Electron child', () => {
     try {
       await access(electronBin)
     } catch {
+      if (process.env.FORGE_REQUIRE_ELECTRON_NODE_GATE === '1') {
+        throw new Error(
+          'FORGE_REQUIRE_ELECTRON_NODE_GATE=1 but apps/electron/node_modules/.bin/electron is missing; install Electron workspace deps before this gate',
+        )
+      }
       return
     }
 
@@ -65,9 +70,7 @@ describe('Node engine floor for packaged Electron child', () => {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       encoding: 'utf8',
     })
-    if (result.status !== 0) {
-      return
-    }
+    expect(result.status, `electron -p process.versions.node failed: ${result.stderr || result.error || ''}`).toBe(0)
     const bundledNode = String(result.stdout || '').trim()
     expect(bundledNode.length).toBeGreaterThan(0)
     expect(satisfiesNodeFloor(bundledNode)).toBe(true)
@@ -93,6 +96,35 @@ describe('validateStagedPiCodingAgentPackageDir', () => {
     await writeFile(join(root, 'package.json'), '{}')
 
     expect(validateStagedPiCodingAgentPackageDir(root)).toContain('index.js')
+  })
+})
+
+describe('Pi package-relative theme/export assets (no bundle-relative duplicates)', () => {
+  it('resolves getThemesDir and getExportTemplateDir inside the installed pi-coding-agent package', async () => {
+    const { realpathSync } = await import('node:fs')
+    const candidates = [
+      join(repoRoot, 'apps/backend/node_modules/@earendil-works/pi-coding-agent'),
+      join(repoRoot, 'node_modules/@earendil-works/pi-coding-agent'),
+    ]
+    let packageDir
+    for (const candidate of candidates) {
+      try {
+        await access(join(candidate, 'package.json'))
+        packageDir = realpathSync(candidate)
+        break
+      } catch {
+        // try next
+      }
+    }
+    expect(packageDir, 'installed @earendil-works/pi-coding-agent').toBeTruthy()
+    const config = await import(pathToFileURL(join(packageDir, 'dist', 'config.js')).href)
+    const themesDir = realpathSync(config.getThemesDir())
+    const exportDir = realpathSync(config.getExportTemplateDir())
+
+    expect(themesDir.startsWith(packageDir)).toBe(true)
+    expect(exportDir.startsWith(packageDir)).toBe(true)
+    await access(join(themesDir, 'dark.json'))
+    await access(join(exportDir, 'template.html'))
   })
 })
 

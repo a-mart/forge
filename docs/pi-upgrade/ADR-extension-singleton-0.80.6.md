@@ -47,6 +47,7 @@ Today `BACKEND_BUNDLE_EXTERNAL_PACKAGES` externalizes `@earendil-works/pi-coding
 2. Ship path-specific `ERR_MODULE_NOT_FOUND` diagnostics, local scanner/codemod, and migration notes (WP-10) so extensions rewrite to `@earendil-works/*` (legacy root → `/compat` where required).
 3. Do not document Forge-owned shim support.
 4. After pins, Electron must externalize/stage the entire `@earendil-works/pi-ai` subpath closure (WP-9) so Forge and coding-agent share one implementation.
+5. **Asset adjudication (WP-9):** target `getThemesDir` / `getExportTemplateDir` resolve package-relative under staged `node_modules/@earendil-works/pi-coding-agent`. Bundle-relative `backend/dist/modes/interactive/theme` and `backend/dist/core/export-html` duplicates are removed; packaged preflight asserts package-relative assets and rejects reintroduction of the private copies.
 
 ## Shim expiry
 
@@ -54,4 +55,4 @@ Not applicable — no Forge shims.
 
 ## Follow-up after atomic pins
 
-Still required before merge: old-specifier extension load through real `DefaultResourceLoader + createAgentSession` on `0.80.6` (upstream alias success or Forge diagnostic), packaged Electron singleton/WS identity, and unsupported-subpath diagnostics. Those gates do not reopen temporary shims unless new evidence shows Forge can own resolution without patching upstream loader aliases.
+Source + staged packaged gates now cover old-specifier / unsupported-subpath extension loads through real `DefaultResourceLoader + createAgentSession`, package-relative theme/export asset adjudication, and four-family identity/skew checks. Remaining owner gates before broad rollout: extracted macOS/Windows installer smoke, live provider canary, and copied-data downgrade rehearsal. Those gates do not reopen temporary shims unless new evidence shows Forge can own resolution without patching upstream loader aliases.

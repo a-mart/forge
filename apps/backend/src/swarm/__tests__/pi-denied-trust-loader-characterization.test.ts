@@ -163,6 +163,50 @@ describe("pi denied-trust loader characterization", () => {
     session.dispose();
   });
 
+  it("elevates project trust only through resolveProjectTrust after constructing projectTrusted:false", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-trust-elevate-"));
+    tempDirs.push(root);
+    const agentDir = join(root, "agent");
+    const marker = join(root, "marker-elevate.txt");
+    const settingsPath = join(root, ".forge", "pi", "settings.json");
+    await writeMarkerExtension(join(root, ".forge", "pi", "extensions", "trusted.js"), marker, "elevated");
+    await writeFile(settingsPath, JSON.stringify({ extensions: ["./extensions/trusted.js"] }), "utf8");
+
+    const storage = buildProjectSafePiProjectSettingsStorage({
+      agentDir,
+      projectSettingsPaths: [settingsPath],
+      projectExecutablesTrusted: true,
+    });
+    // Creator-path contract: SettingsManager starts untrusted.
+    const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: false });
+    expect(settingsManager.isProjectTrusted()).toBe(false);
+
+    const loader = new DefaultResourceLoader({
+      cwd: root,
+      agentDir,
+      settingsManager,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
+
+    expect(await readMarker(marker)).toEqual([]);
+    await loader.reload({ resolveProjectTrust: async () => false });
+    expect(settingsManager.isProjectTrusted()).toBe(false);
+    expect(await readMarker(marker)).toEqual([]);
+
+    await loader.reload({ resolveProjectTrust: async () => true });
+    expect(settingsManager.isProjectTrusted()).toBe(true);
+    expect(await readMarker(marker)).toEqual(["elevated:top", "elevated:factory"]);
+
+    const session = await createRealSession({ root, agentDir, loader, settingsManager });
+    await session.bindExtensions({});
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(await readMarker(marker)).toEqual(["elevated:top", "elevated:factory"]);
+    session.dispose();
+  });
+
   it("loads trusted project extensions exactly once and blocks them after trust is revoked and runtime is recreated", async () => {
     const root = await mkdtemp(join(tmpdir(), "forge-pi-trust-revoked-"));
     tempDirs.push(root);
@@ -177,7 +221,9 @@ describe("pi denied-trust loader characterization", () => {
       projectSettingsPaths: [settingsPath],
       projectExecutablesTrusted: true,
     });
-    const trustedSettingsManager = SettingsManager.fromStorage(trustedStorage, { projectTrusted: true });
+    // Mirror runtime creator: construct false, elevate only via resolveProjectTrust.
+    const trustedSettingsManager = SettingsManager.fromStorage(trustedStorage, { projectTrusted: false });
+    expect(trustedSettingsManager.isProjectTrusted()).toBe(false);
     const trustedLoader = new DefaultResourceLoader({
       cwd: root,
       agentDir,
@@ -190,6 +236,7 @@ describe("pi denied-trust loader characterization", () => {
 
     expect(await readMarker(marker)).toEqual([]);
     await trustedLoader.reload({ resolveProjectTrust: async () => true });
+    expect(trustedSettingsManager.isProjectTrusted()).toBe(true);
     expect(await readMarker(marker)).toEqual(["trusted:top", "trusted:factory"]);
     const trustedSession = await createRealSession({ root, agentDir, loader: trustedLoader, settingsManager: trustedSettingsManager });
     expect(await readMarker(marker)).toEqual(["trusted:top", "trusted:factory"]);
@@ -208,12 +255,80 @@ describe("pi denied-trust loader characterization", () => {
   });
 
   it.skipIf(process.platform !== "win32")("blocks Windows junction project-resource escapes when project trust is denied", async () => {
-    // CI-only on Windows: create a directory junction under .forge/pi/extensions to an external extension package.
-    // The denied loader must keep the marker absent before and after createAgentSession()+bindExtensions().
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-denied-junction-"));
+    tempDirs.push(root);
+    const escapedRoot = await mkdtemp(join(tmpdir(), "forge-pi-denied-junction-escape-"));
+    tempDirs.push(escapedRoot);
+    const agentDir = join(root, "agent");
+    const marker = join(root, "marker-junction.txt");
+    const extensionsDir = join(root, ".forge", "pi", "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+    await writeMarkerExtension(join(escapedRoot, "escape.js"), marker, "junction-escape");
+
+    const junctionPath = join(extensionsDir, "escape-pkg");
+    await symlink(escapedRoot, junctionPath, "junction");
+
+    const projectSettingsPath = join(root, ".forge", "pi", "settings.json");
+    await writeFile(
+      projectSettingsPath,
+      JSON.stringify({ extensions: ["./extensions/escape-pkg/escape.js"] }),
+      "utf8",
+    );
+
+    expect(await readMarker(marker)).toEqual([]);
+    const { loader, settingsManager } = await createDeniedLoader(root, agentDir, [projectSettingsPath]);
+    expect(await readMarker(marker)).toEqual([]);
+    expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([]);
+
+    const session = await createRealSession({ root, agentDir, loader, settingsManager });
+    await session.bindExtensions({});
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(await readMarker(marker)).toEqual([]);
+    session.dispose();
   });
 
   it.skipIf(process.platform !== "win32")("blocks Windows case/path variants when project trust is denied", async () => {
-    // CI-only on Windows: use differently-cased project settings paths and extension declarations.
-    // The denied loader must keep the marker absent before and after createAgentSession()+bindExtensions().
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-denied-case-"));
+    tempDirs.push(root);
+    const agentDir = join(root, "agent");
+    const marker = join(root, "marker-case.txt");
+    await writeMarkerExtension(join(root, ".forge", "pi", "extensions", "CaseVariant.js"), marker, "case-variant");
+
+    const projectSettingsPath = join(root, ".forge", "pi", "settings.json");
+    await writeFile(
+      projectSettingsPath,
+      JSON.stringify({
+        extensions: [
+          "./extensions/casevariant.js",
+          "./EXTENSIONS/CaseVariant.js",
+          "./extensions/./CaseVariant.js",
+        ],
+      }),
+      "utf8",
+    );
+
+    expect(await readMarker(marker)).toEqual([]);
+    const { loader, settingsManager } = await createDeniedLoader(root, agentDir, [
+      projectSettingsPath,
+      join(root, ".FORGE", "pi", "settings.json"),
+    ]);
+    expect(await readMarker(marker)).toEqual([]);
+    expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([]);
+
+    const session = await createRealSession({ root, agentDir, loader, settingsManager });
+    await session.bindExtensions({});
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(await readMarker(marker)).toEqual([]);
+    session.dispose();
+  });
+
+  it("fails closed when Windows trust gates are required outside win32", () => {
+    if (process.env.FORGE_REQUIRE_WIN32_TRUST_GATES !== "1") {
+      return;
+    }
+    expect(
+      process.platform,
+      "FORGE_REQUIRE_WIN32_TRUST_GATES=1 requires win32 CI runners for junction/case trust gates",
+    ).toBe("win32");
   });
 });

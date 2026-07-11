@@ -261,6 +261,7 @@ export async function validatePackagedRuntimePreflight() {
   validateBackendMetafileHasNoEmbeddedPiAiImplementation()
   await validateStagedCursorSdkRuntime(stagedRequire)
   await validateStagedPiSingletonRuntime(stagedRequire)
+  await assertStagedPiPackageRelativeAssets()
   await validateStagedPiFunctionalSmoke(stagedRequire)
 
   console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
@@ -474,17 +475,9 @@ function assertPathIsWithinDirectory(targetPath, parentDirectory, failurePrefix)
 }
 
 async function stageBundledDependencyRuntimeAssets() {
-  const piCodingAgent = await resolveInstalledPackage('@earendil-works/pi-coding-agent', backendWorkspaceManifestPath, false)
-
-  await copyRuntimeAsset(
-    path.join(piCodingAgent.packageRoot, 'dist', 'modes', 'interactive', 'theme'),
-    path.join(backendStageDir, 'dist', 'modes', 'interactive', 'theme'),
-  )
-  await copyRuntimeAsset(
-    path.join(piCodingAgent.packageRoot, 'dist', 'core', 'export-html'),
-    path.join(backendStageDir, 'dist', 'core', 'export-html'),
-  )
-
+  // Theme + export-html resolve package-relative via pi-coding-agent getThemesDir /
+  // getExportTemplateDir (dist/modes/interactive/theme, dist/core/export-html under the
+  // staged package). Do not stage redundant bundle-relative copies under backend/dist.
   // photon-node is optional (platform-specific WASM) — skip if not installed
   const photonNode = await resolveInstalledPackage('@silvia-odwyer/photon-node', backendWorkspaceManifestPath, true)
   if (photonNode) {
@@ -790,6 +783,47 @@ async function validateStagedPiSingletonRuntime(stagedRequire) {
   }
 }
 
+async function assertStagedPiPackageRelativeAssets() {
+  const packageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')
+  const configModule = await import(pathToFileURL(path.join(packageDir, 'dist', 'config.js')).href)
+  const themesDir = configModule.getThemesDir()
+  const exportTemplateDir = configModule.getExportTemplateDir()
+
+  assertPathIsWithinDirectory(
+    themesDir,
+    packageDir,
+    'Packaged-runtime preflight failed: getThemesDir resolved outside staged pi-coding-agent package',
+  )
+  assertPathIsWithinDirectory(
+    exportTemplateDir,
+    packageDir,
+    'Packaged-runtime preflight failed: getExportTemplateDir resolved outside staged pi-coding-agent package',
+  )
+
+  for (const relativePath of [
+    path.join(themesDir, 'dark.json'),
+    path.join(themesDir, 'light.json'),
+    path.join(exportTemplateDir, 'template.html'),
+    path.join(exportTemplateDir, 'template.css'),
+  ]) {
+    if (!existsSync(relativePath)) {
+      throw new Error(`Packaged-runtime preflight failed: missing package-relative Pi asset ${relativePath}`)
+    }
+  }
+
+  for (const redundantRelative of [
+    path.join('dist', 'modes', 'interactive', 'theme'),
+    path.join('dist', 'core', 'export-html'),
+  ]) {
+    const redundantPath = path.join(backendStageDir, redundantRelative)
+    if (existsSync(redundantPath)) {
+      throw new Error(
+        `Packaged-runtime preflight failed: redundant bundle-relative ${redundantRelative} must not be staged; package-relative assets under node_modules/@earendil-works/pi-coding-agent are authoritative`,
+      )
+    }
+  }
+}
+
 async function validateStagedPiFunctionalSmoke(stagedRequire) {
   const pi = await import(pathToFileURL(resolveStagedRuntimePackageEntry(stagedRequire, '@earendil-works/pi-coding-agent', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent'))).href)
   const compat = await import(pathToFileURL(resolveStagedPackageSubpathFromManifest(path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai'), './compat')).href)
@@ -798,11 +832,23 @@ async function validateStagedPiFunctionalSmoke(stagedRequire) {
   const sessionFile = path.join(root, 'session.jsonl')
   const marker = path.join(root, 'trusted-extension-marker.txt')
   const extensionPath = path.join(root, '.forge', 'pi', 'extensions', 'trusted.js')
+  const legacySupportedPath = path.join(root, '.forge', 'pi', 'extensions', 'legacy-supported.js')
+  const legacyUnsupportedPath = path.join(root, '.forge', 'pi', 'extensions', 'legacy-unsupported.js')
   await mkdir(path.dirname(extensionPath), { recursive: true })
   await writeFile(path.join(root, 'README.md'), 'staged smoke read-only content\n', 'utf8')
   await writeFile(
     extensionPath,
     `import { writeFileSync } from 'node:fs'; export default function setup() { writeFileSync(${JSON.stringify(marker)}, 'loaded', 'utf8'); }\n`,
+    'utf8',
+  )
+  await writeFile(
+    legacySupportedPath,
+    `import { getModel } from '@mariozechner/pi-ai';\nimport { writeFileSync } from 'node:fs';\nexport default function setup() { writeFileSync(${JSON.stringify(path.join(root, 'legacy-supported-marker.txt'))}, typeof getModel === 'function' ? 'ok' : 'missing', 'utf8'); }\n`,
+    'utf8',
+  )
+  await writeFile(
+    legacyUnsupportedPath,
+    `import '@mariozechner/pi-ai/private-subpath';\nexport default function setup() {}\n`,
     'utf8',
   )
   await writeFile(
@@ -869,7 +915,11 @@ async function validateStagedPiFunctionalSmoke(stagedRequire) {
       fn(current)
     },
   }
-  const settingsManager = pi.SettingsManager.fromStorage(storage, { projectTrusted: true })
+  // Creator-path contract: construct untrusted, elevate only via resolveProjectTrust.
+  const settingsManager = pi.SettingsManager.fromStorage(storage, { projectTrusted: false })
+  if (settingsManager.isProjectTrusted()) {
+    throw new Error('Packaged-runtime preflight failed: SettingsManager must start projectTrusted:false')
+  }
   const resourceLoader = new pi.DefaultResourceLoader({
     cwd: root,
     agentDir,
@@ -880,6 +930,9 @@ async function validateStagedPiFunctionalSmoke(stagedRequire) {
     noContextFiles: true,
   })
   await resourceLoader.reload({ resolveProjectTrust: async () => true })
+  if (!settingsManager.isProjectTrusted()) {
+    throw new Error('Packaged-runtime preflight failed: resolveProjectTrust did not elevate SettingsManager.projectTrusted')
+  }
   const { session } = await pi.createAgentSession({
     cwd: root,
     agentDir,
@@ -925,9 +978,120 @@ async function validateStagedPiFunctionalSmoke(stagedRequire) {
     if (faux.state.callCount < 2) {
       throw new Error('Packaged-runtime preflight failed: staged faux provider did not observe repeated requests')
     }
+
+    await assertStagedLegacyExtensionMigrationCases({
+      pi,
+      authStorage,
+      faux,
+      root,
+      agentDir,
+      legacySupportedPath,
+      legacyUnsupportedPath,
+    })
   } finally {
     faux.unregister()
     session.dispose()
+  }
+}
+
+async function assertStagedLegacyExtensionMigrationCases({
+  pi,
+  authStorage,
+  faux,
+  root,
+  agentDir,
+  legacySupportedPath,
+  legacyUnsupportedPath,
+}) {
+  const supportedMarker = path.join(root, 'legacy-supported-marker.txt')
+  const supportedStorage = {
+    withLock(scope, fn) {
+      fn(
+        scope === 'global'
+          ? undefined
+          : JSON.stringify({
+              extensions: ['!*', './extensions/legacy-supported.js', legacySupportedPath, `+${legacySupportedPath}`],
+              packages: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+            }),
+      )
+    },
+  }
+  const supportedSettings = pi.SettingsManager.fromStorage(supportedStorage, { projectTrusted: false })
+  const supportedLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager: supportedSettings,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await supportedLoader.reload({ resolveProjectTrust: async () => true })
+  const supportedSessionFile = path.join(root, 'legacy-supported-session.jsonl')
+  await writeFile(supportedSessionFile, '', 'utf8')
+  const supportedCreated = await pi.createAgentSession({
+    cwd: root,
+    agentDir,
+    authStorage,
+    modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+    model: faux.getModel(),
+    thinkingLevel: 'off',
+    sessionManager: pi.SessionManager.open(supportedSessionFile, undefined, root),
+    resourceLoader: supportedLoader,
+    settingsManager: supportedSettings,
+    noTools: 'all',
+  })
+  const supportedErrors = (supportedCreated.extensionsResult?.errors ?? [])
+    .map((entry) => String(entry?.error ?? entry?.message ?? entry ?? ''))
+    .join('\n')
+  await supportedCreated.session.bindExtensions({})
+  supportedCreated.session.dispose()
+  const supportedLoaded = existsSync(supportedMarker)
+  const supportedDiagnostic = /@mariozechner\/pi-ai|earendil-works\/pi-ai\/compat|does not ship @mariozechner/i.test(supportedErrors)
+  if (!supportedLoaded && !supportedDiagnostic) {
+    throw new Error(
+      'Packaged-runtime preflight failed: legacy @mariozechner/pi-ai extension neither loaded via upstream alias nor produced migration diagnostic',
+    )
+  }
+
+  const unsupportedStorage = {
+    withLock(scope, fn) {
+      fn(
+        scope === 'global'
+          ? undefined
+          : JSON.stringify({
+              extensions: ['!*', './extensions/legacy-unsupported.js', legacyUnsupportedPath, `+${legacyUnsupportedPath}`],
+              packages: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+            }),
+      )
+    },
+  }
+  const unsupportedSettings = pi.SettingsManager.fromStorage(unsupportedStorage, { projectTrusted: false })
+  const unsupportedLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager: unsupportedSettings,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await unsupportedLoader.reload({ resolveProjectTrust: async () => true })
+  const unsupportedErrors = unsupportedLoader
+    .getExtensions()
+    .errors
+    .map((entry) => String(entry?.error ?? entry?.message ?? entry ?? ''))
+    .join('\n')
+  if (!/@mariozechner\/pi-ai\/private-subpath|Unsupported legacy|Cannot find|ERR_MODULE_NOT_FOUND/i.test(unsupportedErrors)) {
+    throw new Error(
+      `Packaged-runtime preflight failed: unsupported legacy subpath did not surface a module/migration failure (errors=${unsupportedErrors || '<empty>'})`,
+    )
   }
 }
 

@@ -31,6 +31,7 @@
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
     "pi-package:identity": "node scripts/pi-package-identity.mjs",
     "pi-extension:migrate": "node scripts/pi-extension-migration.mjs",
+    "pi-upgrade:provision-0711-runner": "bash scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh",
     "verify:dockerignore": "node scripts/verify-dockerignore-sensitive-context.mjs",
     "package:electron": "pnpm --filter @forge/electron run package",
     "release:electron": "node -e \"console.error('Deprecated: official desktop releases must use the build-first, draft-first flow in apps/electron/README.md. This shortcut is intentionally disabled.'); process.exit(1)\"",

@@ -92,12 +92,16 @@ Bidirectional session/downgrade proof needs an exact old SessionManager outside 
 
 ```bash
 ./scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh
+# or:
+pnpm pi-upgrade:provision-0711-runner
 # optional override:
 # export FORGE_PI_0711_SESSION_MANAGER_JS=/absolute/path/to/session-manager.js
 ```
 
 Default install path: `<worktree>/.forge/pi-upgrade-runners/0.71.1/...` (gitignored).
 The characterization gate hard-fails when the runner is absent or not `@mariozechner/pi-coding-agent@0.71.1`; it does not silently skip.
+
+`pnpm quality:full` and the manual GitHub `quality` workflow (changed/full tiers) provision this runner before tests so the hermetic WP-8 gate is reproducible outside Adam-local machines.
 
 Default rollback for release incidents remains **pre-upgrade data snapshot + old binary**. In-place binary downgrade is allowed only after the bidirectional fixture gate passes.
 

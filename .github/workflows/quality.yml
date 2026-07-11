@@ -36,6 +36,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Provision frozen Pi 0.71.1 rollback runner
+        if: ${{ inputs.tier == 'full' || inputs.tier == 'changed' }}
+        run: ./scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh
+
       - name: Run local quality
         env:
           QUALITY_TIER: ${{ inputs.tier }}
