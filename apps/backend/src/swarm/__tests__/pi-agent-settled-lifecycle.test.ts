@@ -18,8 +18,8 @@ class FakeSession {
   sessionId = "fake-session-id";
   sessionManager = { getEntries: () => [] };
   extensionRunner = {
-    hasHandlers: () => false,
-    emit: async () => undefined,
+    hasHandlers: vi.fn(() => false),
+    emit: vi.fn(async () => undefined),
   };
   modelRegistry = {
     authStorage: { get: vi.fn(), set: vi.fn() },
@@ -85,6 +85,7 @@ function makeRuntime() {
   const onStatusChange = vi.fn(async () => undefined);
   const onRuntimeError = vi.fn(async () => undefined);
   const reportSuccess = vi.fn(async () => undefined);
+  const release = vi.fn(async () => undefined);
 
   const runtime = new AgentRuntime({
     descriptor: makeDescriptor(),
@@ -107,13 +108,13 @@ function makeRuntime() {
     };
   }).openAIAuthBrokerController = {
     reportSuccess,
-    release: async () => undefined,
+    release,
     hasLease: () => false,
     beforeDispatch: async () => undefined,
     shouldHandleErrorBeforeGenericRetry: () => false,
   };
 
-  return { runtime, session, onAgentEnd, onSessionEvent, onStatusChange, onRuntimeError, reportSuccess };
+  return { runtime, session, onAgentEnd, onSessionEvent, onStatusChange, onRuntimeError, reportSuccess, release };
 }
 
 describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
@@ -277,5 +278,73 @@ describe("Pi agent_settled lifecycle adapter (WP-5)", () => {
 
     expect(onAgentEnd).toHaveBeenCalledTimes(1);
     expect(reportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not publish idle when stop abort/waitForIdle fails before settlement", async () => {
+    const { runtime, session, onStatusChange } = makeRuntime();
+    session.waitForIdleImpl = async () => {
+      throw new Error("never settled");
+    };
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 });
+
+    expect(session.abortCalls).toBe(1);
+    expect(session.waitForIdleCalls).toBe(1);
+    expect((runtime as any).suppressSessionEventsUntilIdle).toEqual(expect.objectContaining({ active: true }));
+    const callsAfterStreaming = onStatusChange.mock.calls.slice(
+      onStatusChange.mock.calls.findIndex((call) => call[1] === "streaming") + 1,
+    );
+    expect(callsAfterStreaming.some((call) => call[1] === "idle")).toBe(false);
+  });
+
+  it("propagates terminate waitForIdle failure and does not dispose active Pi session", async () => {
+    const { runtime, session } = makeRuntime();
+    session.waitForIdleImpl = async () => {
+      throw new Error("still active");
+    };
+
+    await (runtime as any).handleEvent({ type: "agent_start" });
+    await expect(runtime.terminate({ abort: true, shutdownTimeoutMs: 25 })).rejects.toThrow("still active");
+
+    expect(session.abortCalls).toBe(1);
+    expect(session.waitForIdleCalls).toBe(1);
+    expect(session.disposeCalls).toBe(0);
+  });
+
+  it("concurrent terminate and replacement share exactly one shutdown, broker release, and dispose", async () => {
+    const { runtime, session, release } = makeRuntime();
+    session.extensionRunner.hasHandlers.mockReturnValue(true);
+    release.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        setTimeout(resolve, 10);
+      }),
+    );
+
+    await Promise.all([
+      runtime.terminate({ abort: false }),
+      runtime.shutdownForReplacement(),
+    ]);
+
+    expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(session.disposeCalls).toBe(1);
+  });
+
+  it("concurrent recycle calls share exactly one reload shutdown, broker release, and dispose", async () => {
+    const { runtime, session, release } = makeRuntime();
+    session.extensionRunner.hasHandlers.mockReturnValue(true);
+    release.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        setTimeout(resolve, 10);
+      }),
+    );
+
+    await Promise.all([runtime.recycle(), runtime.recycle()]);
+
+    expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
+    expect(session.extensionRunner.emit).toHaveBeenCalledWith(expect.objectContaining({ reason: "reload" }));
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(session.disposeCalls).toBe(1);
   });
 });

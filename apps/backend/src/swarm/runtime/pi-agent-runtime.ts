@@ -223,6 +223,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private lastAgentEndWillRetry = false;
   /** True after a run starts until Forge terminal settlement completes (idempotent agent_settled). */
   private awaitingAgentSettlement = false;
+  /** Shared one-shot session shutdown/disposal, used by terminate/replacement/recycle races. */
+  private sessionShutdownPromise: Promise<void> | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -427,17 +429,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
-      try {
-        await this.abortSessionAndWaitForIdle(
-          options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
-          "terminate_abort",
-        );
-      } catch {
-        // abortSessionAndWaitForIdle already logged the failure.
-      }
+      await this.abortSessionAndWaitForIdle(
+        options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
+        "terminate_abort",
+      );
     }
 
-    await this.disposeSessionResources({ reason: "quit" });
+    await this.shutdownSessionResourcesOnce({ reason: "quit" });
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
@@ -449,12 +447,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.assertIdleForReplacementShutdown();
+    await this.assertIdleForReplacementShutdown();
     this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
-    await this.disposeSessionResources({ reason: "reload" });
+    await this.shutdownSessionResourcesOnce({ reason: "reload" });
   }
 
   async recycle(): Promise<void> {
@@ -462,12 +460,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.assertIdleForReplacementShutdown();
+    await this.assertIdleForReplacementShutdown();
     this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
-    await this.disposeSessionResources({ reason: "reload" });
+    await this.shutdownSessionResourcesOnce({ reason: "reload" });
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
@@ -511,10 +509,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.autoCompactionRecoveryInProgress = false;
     this.inFlightPrompts.clear();
 
-    await this.updateStatus("idle");
+    if (!this.suppressSessionEventsUntilIdle) {
+      await this.updateStatus("idle");
+    }
   }
 
-  private assertIdleForReplacementShutdown(): void {
+  private async assertIdleForReplacementShutdown(): Promise<void> {
     if (
       this.status !== "idle" ||
       this.session.isStreaming ||
@@ -524,6 +524,22 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.isContextRecoveryActive()
     ) {
       throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
+    }
+
+    const waitForIdle = (this.session as { waitForIdle?: () => Promise<void> }).waitForIdle;
+    if (typeof waitForIdle === "function") {
+      try {
+        await withTimeout(waitForIdle.call(this.session), DEFAULT_ABORT_TIMEOUT_MS, "replacement_wait_for_idle");
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, { stage: "replacement_wait_for_idle_failed" });
+        throw error;
+      }
+    }
+
+    await this.drainSessionEventQueue("replacement_drain_session_events");
+
+    if (this.session.isStreaming || this.awaitingAgentSettlement) {
+      throw new Error(`Agent ${this.descriptor.agentId} Pi session is still active and cannot be recycled`);
     }
   }
 
@@ -545,11 +561,21 @@ export class AgentRuntime implements SwarmAgentRuntime {
         this.logRuntimeError("interrupt", error, {
           stage: `${stage}_wait_for_idle_failed`,
         });
+        throw error;
       }
     }
 
     // Drain queued agent_end/agent_settled handling before callers dispose the session.
-    await this.sessionEventQueue;
+    await this.drainSessionEventQueue(`${stage}_drain_session_events`);
+  }
+
+  private async drainSessionEventQueue(stage: string): Promise<void> {
+    try {
+      await this.sessionEventQueue;
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, { stage });
+      throw error;
+    }
   }
 
   /**
@@ -574,17 +600,34 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.awaitingAgentSettlement = false;
     this.hiddenOutputResampleState = undefined;
-    await this.openAIAuthBrokerController?.reportSuccess();
+
+    try {
+      await this.openAIAuthBrokerController?.reportSuccess();
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, { stage: "agent_settled_broker_report_success_failed" });
+    }
 
     if (this.callbacks.onSessionEvent) {
-      await this.callbacks.onSessionEvent(this.descriptor.agentId, { type: "agent_end" });
+      try {
+        await this.callbacks.onSessionEvent(this.descriptor.agentId, { type: "agent_end" });
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, { stage: "agent_settled_on_session_event_failed" });
+      }
     }
 
     if (this.status !== "terminated") {
-      await this.updateStatus("idle");
+      try {
+        await this.updateStatus("idle");
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, { stage: "agent_settled_update_status_failed" });
+      }
     }
     if (this.callbacks.onAgentEnd) {
-      await this.callbacks.onAgentEnd(this.descriptor.agentId);
+      try {
+        await this.callbacks.onAgentEnd(this.descriptor.agentId);
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, { stage: "agent_settled_on_agent_end_failed" });
+      }
     }
     this.lastAgentEndWillRetry = false;
   }
@@ -594,7 +637,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.sessionEventQueue;
   }
 
+  private shutdownSessionResourcesOnce(shutdown: PiSessionShutdownMetadata): Promise<void> {
+    if (!this.sessionShutdownPromise) {
+      this.sessionShutdownPromise = this.disposeSessionResources(shutdown);
+    }
+    return this.sessionShutdownPromise;
+  }
+
   private async disposeSessionResources(shutdown: PiSessionShutdownMetadata): Promise<void> {
+    await this.drainSessionEventQueue("dispose_drain_session_events");
+
     try {
       // NOTE: Uses the public AgentSession.extensionRunner API
       // (verified against @earendil-works/pi-coding-agent@0.71.1).
@@ -611,6 +663,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.logRuntimeError("interrupt", error, {
         stage: "dispose_session_shutdown_emit_failed"
       });
+      throw error;
     }
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
