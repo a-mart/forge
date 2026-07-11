@@ -1454,6 +1454,8 @@ describe("RuntimeFactory", () => {
       expect.stringContaining("Focus on deployment details."),
       signal,
       "low",
+      undefined,
+      undefined,
     );
     expect(result).toEqual({
       compaction: expect.objectContaining({

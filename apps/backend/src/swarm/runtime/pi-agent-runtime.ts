@@ -217,6 +217,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
   /** Epoch-ms of the current run's agent_start, for the projector-watermark visibility gate. */
   private currentRunStartedAt = 0;
   private readonly promptDispatchRestoreOptions = new WeakMap<RuntimeUserMessage, PromptDispatchRestoreOptions>();
+  /** Serialize Pi session events so settlement cannot race in-flight agent_end handling. */
+  private sessionEventQueue: Promise<void> = Promise.resolve();
+  /** Latest raw agent_end willRetry observation for diagnostics (nonterminal). */
+  private lastAgentEndWillRetry = false;
+  /** True after a run starts until Forge terminal settlement completes (idempotent agent_settled). */
+  private awaitingAgentSettlement = false;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -239,7 +245,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     clearForgePiCompactionFailure(this.compactionFailureScopeKey);
     this.unsubscribe = this.session.subscribe((event) => {
-      void this.handleEvent(event);
+      this.sessionEventQueue = this.sessionEventQueue
+        .then(() => this.handleEvent(event))
+        .catch((error) => {
+          this.logRuntimeError("interrupt", error, {
+            stage: "session_event_queue",
+            eventType: typeof event === "object" && event && "type" in event ? String((event as { type?: unknown }).type) : undefined,
+          });
+        });
     });
   }
 
@@ -415,15 +428,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
       try {
-        await withTimeout(
-          this.session.abort(),
+        await this.abortSessionAndWaitForIdle(
           options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
-          "terminate_abort"
+          "terminate_abort",
         );
-      } catch (error) {
-        this.logRuntimeError("interrupt", error, {
-          stage: "terminate_abort_failed"
-        });
+      } catch {
+        // abortSessionAndWaitForIdle already logged the failure.
       }
     }
 
@@ -473,16 +483,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
       try {
-        await withTimeout(
-          this.session.abort(),
+        await this.abortSessionAndWaitForIdle(
           options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
-          "stop_in_flight_abort"
+          "stop_in_flight_abort",
         );
       } catch (error) {
         this.suppressSessionEventsUntilIdle = {
           active: true,
           expiresAt: Date.now() + SUPPRESS_SESSION_EVENTS_MAX_MS
         };
+        // Drain any handlers already queued so they observe suppression instead of finalizing.
+        await this.sessionEventQueue;
         this.logRuntimeError("interrupt", error, {
           stage: "stop_in_flight_abort_failed"
         });
@@ -514,6 +525,73 @@ export class AgentRuntime implements SwarmAgentRuntime {
     ) {
       throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
     }
+  }
+
+  private async abortSessionAndWaitForIdle(timeoutMs: number, stage: string): Promise<void> {
+    try {
+      await withTimeout(this.session.abort(), timeoutMs, stage);
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, {
+        stage: `${stage}_failed`,
+      });
+      throw error;
+    }
+
+    const waitForIdle = (this.session as { waitForIdle?: () => Promise<void> }).waitForIdle;
+    if (typeof waitForIdle === "function") {
+      try {
+        await withTimeout(waitForIdle.call(this.session), timeoutMs, `${stage}_wait_for_idle`);
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, {
+          stage: `${stage}_wait_for_idle_failed`,
+        });
+      }
+    }
+
+    // Drain queued agent_end/agent_settled handling before callers dispose the session.
+    await this.sessionEventQueue;
+  }
+
+  /**
+   * Map Pi agent_settled to Forge's single terminal agent_end/idle/onAgentEnd boundary.
+   * Raw agent_end/willRetry must not finalize (retries, overflow compaction, queued continuations).
+   */
+  private async finalizeAgentRunSettlement(): Promise<void> {
+    if (!this.awaitingAgentSettlement) {
+      return;
+    }
+    // stopInFlight abort-failure suppression must not report broker success.
+    if (this.suppressSessionEventsUntilIdle) {
+      this.awaitingAgentSettlement = false;
+      return;
+    }
+
+    this.currentTurnReplayMessages = [];
+    if (await this.maybeResampleUnhandledHiddenOutputTurn()) {
+      // Keep awaitingAgentSettlement armed for the resampled run.
+      return;
+    }
+
+    this.awaitingAgentSettlement = false;
+    this.hiddenOutputResampleState = undefined;
+    await this.openAIAuthBrokerController?.reportSuccess();
+
+    if (this.callbacks.onSessionEvent) {
+      await this.callbacks.onSessionEvent(this.descriptor.agentId, { type: "agent_end" });
+    }
+
+    if (this.status !== "terminated") {
+      await this.updateStatus("idle");
+    }
+    if (this.callbacks.onAgentEnd) {
+      await this.callbacks.onAgentEnd(this.descriptor.agentId);
+    }
+    this.lastAgentEndWillRetry = false;
+  }
+
+  /** @internal Drain the serialized Pi session event queue (tests). */
+  async flushSessionEventQueue(): Promise<void> {
+    await this.sessionEventQueue;
   }
 
   private async disposeSessionResources(shutdown: PiSessionShutdownMetadata): Promise<void> {
@@ -551,6 +629,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.autoCompactionRecoveryInProgress = false;
     this.clearAutoCompactionTimeout();
     this.suppressSessionEventsUntilIdle = null;
+    this.awaitingAgentSettlement = false;
     this.inFlightPrompts.clear();
   }
 
@@ -856,8 +935,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
         const canRetry =
           attempt < MAX_PROMPT_DISPATCH_ATTEMPTS &&
           this.status !== "terminated" &&
-          this.status !== "streaming" &&
-          !this.session.isStreaming;
+          !this.session.isStreaming &&
+          // Forge may still be "streaming" during agent_settled resample before idle/callbacks.
+          (this.status !== "streaming" || this.awaitingAgentSettlement);
 
         if (this.openAIAuthBrokerController?.shouldHandleErrorBeforeGenericRetry(error)) {
           return await this.handlePromptDispatchError(error, message, {
@@ -962,13 +1042,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.noteActivity();
 
     if (this.suppressSessionEventsUntilIdle) {
-      if (event.type === "agent_end") {
+      if (event.type === "agent_settled") {
         this.suppressSessionEventsUntilIdle = null;
+        this.awaitingAgentSettlement = false;
         if (this.status !== "terminated") {
           await this.updateStatus("idle");
         }
       } else if (Date.now() >= this.suppressSessionEventsUntilIdle.expiresAt) {
         this.suppressSessionEventsUntilIdle = null;
+        this.awaitingAgentSettlement = false;
         this.logRuntimeError("interrupt", new Error("Suppressed session events expired before idle"), {
           stage: "suppress_session_events_expired",
           receipt: "suppress_session_events_force_cleared"
@@ -980,6 +1062,25 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    // Raw agent_end is a nonterminal cycle observation (may precede retry/compaction/queue).
+    // Forge terminal agent_end / idle / onAgentEnd happen once at agent_settled.
+    if (event.type === "agent_end") {
+      this.lastAgentEndWillRetry = Boolean(event.willRetry);
+      if (this.lastAgentEndWillRetry) {
+        console.warn(`[swarm][${this.now()}] runtime:agent_end_will_retry`, {
+          runtime: "pi",
+          agentId: this.descriptor.agentId,
+          willRetry: true,
+        });
+      }
+      return;
+    }
+
+    if (event.type === "agent_settled") {
+      await this.finalizeAgentRunSettlement();
+      return;
+    }
+
     const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
@@ -988,30 +1089,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
     if (event.type === "agent_start") {
       this.promptDispatchPending = false;
       this.currentRunStartedAt = Date.now();
+      this.lastAgentEndWillRetry = false;
+      this.awaitingAgentSettlement = true;
       if (this.ignoreNextAgentStart) {
         this.ignoreNextAgentStart = false;
+        this.awaitingAgentSettlement = false;
         if (this.status !== "terminated") {
           await this.updateStatus("idle");
         }
         return;
       }
       await this.updateStatus("streaming");
-      return;
-    }
-
-    if (event.type === "agent_end") {
-      this.currentTurnReplayMessages = [];
-      if (await this.maybeResampleUnhandledHiddenOutputTurn()) {
-        return;
-      }
-      this.hiddenOutputResampleState = undefined;
-      await this.openAIAuthBrokerController?.reportSuccess();
-      if (this.status !== "terminated") {
-        await this.updateStatus("idle");
-      }
-      if (this.callbacks.onAgentEnd) {
-        await this.callbacks.onAgentEnd(this.descriptor.agentId);
-      }
       return;
     }
 
@@ -1445,6 +1533,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         });
       }
     }
+    this.awaitingAgentSettlement = false;
 
     return "failed";
   }
@@ -2874,9 +2963,14 @@ function normalizePiUsage(value: unknown): { usage: RuntimeModelCallMeta["usage"
 function normalizeRuntimeSessionEvent(event: AgentSessionEvent, session?: AgentSession): RuntimeSessionEvent | null {
   switch (event.type) {
     case "agent_start":
-    case "agent_end":
     case "turn_start":
       return { type: event.type };
+
+    // agent_end / agent_settled are handled specially in AgentRuntime.handleEvent.
+    // Intermediate agent_end must not reach Forge protocol as a terminal event.
+    case "agent_end":
+    case "agent_settled":
+      return null;
 
     case "turn_end":
       return {

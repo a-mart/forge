@@ -194,6 +194,11 @@ async function flushPromptDispatch(): Promise<void> {
   await Promise.resolve();
 }
 
+async function emitSessionEvent(runtime: AgentRuntime, session: FakeSession, event: unknown): Promise<void> {
+  session.emit(event);
+  await runtime.flushSessionEventQueue();
+}
+
 const readFileMock = vi.mocked(readFile);
 const rmMock = vi.mocked(rm);
 
@@ -296,7 +301,7 @@ describe("mid-turn context guard", () => {
     const { runtime, session } = createRuntime();
     const checkSpy = vi.spyOn(runtime as any, "checkContextBudget");
 
-    session.emit({
+    await emitSessionEvent(runtime, session, {
       type: "message_end",
       message: {
         role: "assistant",
@@ -304,23 +309,22 @@ describe("mid-turn context guard", () => {
       }
     });
 
-    await Promise.resolve();
     expect(checkSpy).toHaveBeenCalledTimes(1);
   });
 
   it("normalizes Pi auto-compaction events before forwarding them to callbacks", async () => {
     const forwardedEvents: any[] = [];
-    const { session } = createRuntime({
+    const { runtime, session } = createRuntime({
       onSessionEvent: (event) => {
         forwardedEvents.push(event);
       }
     });
 
-    session.emit({
+    await emitSessionEvent(runtime, session, {
       type: "compaction_start",
       reason: "threshold"
     });
-    session.emit({
+    await emitSessionEvent(runtime, session, {
       type: "compaction_end",
       reason: "overflow",
       result: { ok: true },
@@ -328,8 +332,6 @@ describe("mid-turn context guard", () => {
       willRetry: true,
       errorMessage: "retrying"
     });
-
-    await Promise.resolve();
 
     expect(forwardedEvents).toEqual([
       {
@@ -348,25 +350,23 @@ describe("mid-turn context guard", () => {
 
   it("does not forward manual compaction events to runtime callbacks", async () => {
     const forwardedEvents: any[] = [];
-    const { session } = createRuntime({
+    const { runtime, session } = createRuntime({
       onSessionEvent: (event) => {
         forwardedEvents.push(event);
       }
     });
 
-    session.emit({
+    await emitSessionEvent(runtime, session, {
       type: "compaction_start",
       reason: "manual"
     });
-    session.emit({
+    await emitSessionEvent(runtime, session, {
       type: "compaction_end",
       reason: "manual",
       result: { ok: true },
       aborted: false,
       willRetry: false
     });
-
-    await Promise.resolve();
 
     expect(forwardedEvents).toEqual([]);
   });

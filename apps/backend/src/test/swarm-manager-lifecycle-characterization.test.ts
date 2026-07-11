@@ -121,7 +121,8 @@ describe('swarm-manager lifecycle characterization', () => {
       },
     })
     session.isStreaming = false
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(callbackOrder).toEqual([
       'handleRuntimeSessionEvent:agent_start',

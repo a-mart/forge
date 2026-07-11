@@ -74,6 +74,8 @@ class FakeSession {
     this.abortCalls += 1
   }
 
+  async waitForIdle(): Promise<void> {}
+
   async compact(): Promise<{ ok: true }> {
     return { ok: true }
   }
@@ -97,6 +99,12 @@ class FakeSession {
   emit(event: any): void {
     this.listener?.(event)
   }
+}
+
+
+async function emitSessionEvent(runtime: AgentRuntime, session: FakeSession, event: any): Promise<void> {
+  session.emit(event)
+  await runtime.flushSessionEventQueue()
 }
 
 function makeDescriptor(): AgentDescriptor {
@@ -498,7 +506,7 @@ describe('AgentRuntime', () => {
     await runtime.sendMessage('queued one', 'auto')
     expect(runtime.getPendingCount()).toBe(1)
 
-    session.emit({
+    await emitSessionEvent(runtime, session, {
       type: 'message_start',
       message: {
         role: 'user',
@@ -522,7 +530,7 @@ describe('AgentRuntime', () => {
         percent: 12.8,
       }
 
-      new AgentRuntime({
+      const runtime = new AgentRuntime({
         descriptor: makeDescriptor(),
         session: session as any,
         callbacks: {
@@ -533,7 +541,7 @@ describe('AgentRuntime', () => {
       })
 
       nowSpy.mockReturnValue(1_000)
-      session.emit({ type: 'agent_start' })
+      await emitSessionEvent(runtime, session, { type: 'agent_start' })
       await waitForCondition(() => statuses.length === 1)
 
       expect(session.contextUsageCalls).toBe(1)
@@ -552,7 +560,7 @@ describe('AgentRuntime', () => {
         percent: 16,
       }
       nowSpy.mockReturnValue(2_500)
-      session.emit({
+      await emitSessionEvent(runtime, session, {
         type: 'message_update',
         message: {
           role: 'assistant',
@@ -576,7 +584,7 @@ describe('AgentRuntime', () => {
         contextWindow: 1000,
         percent: 19.2,
       }
-      session.emit({
+      await emitSessionEvent(runtime, session, {
         type: 'turn_end',
         toolResults: [],
       })
@@ -588,7 +596,7 @@ describe('AgentRuntime', () => {
         percent: 22.4,
       }
       nowSpy.mockReturnValue(4_000)
-      session.emit({
+      await emitSessionEvent(runtime, session, {
         type: 'message_update',
         message: {
           role: 'assistant',
@@ -612,7 +620,7 @@ describe('AgentRuntime', () => {
         contextWindow: 1000,
         percent: 25.6,
       }
-      session.emit({
+      await emitSessionEvent(runtime, session, {
         type: 'tool_execution_end',
         toolName: 'bash',
         toolCallId: 'tool-1',
@@ -627,7 +635,7 @@ describe('AgentRuntime', () => {
         percent: 32,
       }
       nowSpy.mockReturnValue(5_500)
-      session.emit({
+      await emitSessionEvent(runtime, session, {
         type: 'message_update',
         message: {
           role: 'assistant',
@@ -703,7 +711,7 @@ describe('AgentRuntime', () => {
     let agentEndCalls = 0
 
     session.prompt = async (): Promise<void> => {
-      session.emit({ type: 'agent_start' })
+      await emitSessionEvent(runtime, session, { type: 'agent_start' })
       throw new Error('provider outage')
     }
 
@@ -1176,7 +1184,7 @@ describe('AgentRuntime', () => {
   it('projects cancelled auto compaction separately from configured Forge compaction failures', async () => {
     const session = new FakeSession()
     const runtimeErrors: Array<Record<string, any>> = []
-    new AgentRuntime({
+    const runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
       session: session as any,
       callbacks: {
@@ -1187,7 +1195,7 @@ describe('AgentRuntime', () => {
       },
     })
 
-    session.emit({ type: 'compaction_start', reason: 'threshold' })
+    await emitSessionEvent(runtime, session, { type: 'compaction_start', reason: 'threshold' })
     rememberForgePiCompactionFailure('worker', {
       kind: 'configured_model_unavailable',
       message: 'Configured compaction model is unavailable in the active runtime registry for worker',
@@ -1200,7 +1208,7 @@ describe('AgentRuntime', () => {
         userFacingMessage: 'Configured compaction model is unavailable in the active runtime. Choose a different compaction model or authenticate that provider.',
       },
     })
-    session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
+    await emitSessionEvent(runtime, session, { type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
     await waitForCondition(() => runtimeErrors.length === 2)
 
     expect(runtimeErrors[0]).toMatchObject({
@@ -1222,8 +1230,8 @@ describe('AgentRuntime', () => {
     })
 
     runtimeErrors.length = 0
-    session.emit({ type: 'compaction_start', reason: 'threshold' })
-    session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
+    await emitSessionEvent(runtime, session, { type: 'compaction_start', reason: 'threshold' })
+    await emitSessionEvent(runtime, session, { type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
     await waitForCondition(() => runtimeErrors.length === 2)
 
     expect(runtimeErrors[0]).toMatchObject({
@@ -1252,7 +1260,7 @@ describe('AgentRuntime', () => {
       throw new Error('retry compaction failed')
     }
 
-    new AgentRuntime({
+    const runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
       session: session as any,
       callbacks: {
@@ -1263,8 +1271,8 @@ describe('AgentRuntime', () => {
       },
     })
 
-    session.emit({ type: 'compaction_start', reason: 'threshold' })
-    session.emit({
+    await emitSessionEvent(runtime, session, { type: 'compaction_start', reason: 'threshold' })
+    await emitSessionEvent(runtime, session, {
       type: 'compaction_end',
       reason: 'threshold',
       result: undefined,
@@ -1325,7 +1333,7 @@ describe('AgentRuntime', () => {
   it('clears stale Forge compaction failures at auto-compaction start before an unrelated abort result', async () => {
     const session = new FakeSession()
     const runtimeErrors: Array<Record<string, any>> = []
-    new AgentRuntime({
+    const runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
       session: session as any,
       compactionFailureScopeKey: 'worker::shared',
@@ -1349,8 +1357,8 @@ describe('AgentRuntime', () => {
       },
     })
 
-    session.emit({ type: 'compaction_start', reason: 'threshold' })
-    session.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
+    await emitSessionEvent(runtime, session, { type: 'compaction_start', reason: 'threshold' })
+    await emitSessionEvent(runtime, session, { type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true, willRetry: false })
     await waitForCondition(() => runtimeErrors.length === 2)
 
     expect(runtimeErrors[0]).toMatchObject({
@@ -1654,7 +1662,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
@@ -1675,7 +1685,8 @@ describe('manager empty-turn retry after worker terminal report', () => {
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
 
     await (runtime as any).handleEvent({ type: 'agent_start' })
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toHaveLength(0)
     // The run completes normally and nothing is deleted from model context.
@@ -1690,7 +1701,8 @@ describe('manager empty-turn retry after worker terminal report', () => {
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
 
     await (runtime as any).handleEvent({ type: 'agent_start' })
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
@@ -1701,7 +1713,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(COMPLETED_TERMINAL_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([COMPLETED_TERMINAL_CALLBACK])
@@ -1722,7 +1736,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
@@ -1733,7 +1749,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(LEGACY_SYSTEM_STATUS_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([LEGACY_SYSTEM_STATUS_CALLBACK])
@@ -1744,7 +1762,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(LEGACY_WORKER_COMPLETED_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([LEGACY_WORKER_COMPLETED_CALLBACK])
@@ -1755,7 +1775,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(LEGACY_WORKER_ERROR_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([LEGACY_WORKER_ERROR_CALLBACK])
@@ -1766,7 +1788,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime } = makeRuntime()
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
@@ -1776,12 +1800,16 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime } = makeRuntime()
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
     expect(session.promptCalls[0]).toBe(TERMINAL_CALLBACK)
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 2)
 
     expect(session.promptCalls[1]).toBe(`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`)
@@ -1791,11 +1819,15 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 2)
 
     // The escalated redelivery itself comes back empty: history now holds the
@@ -1804,7 +1836,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       userMessage(`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`),
       emptyAssistantMessage(),
     ]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toHaveLength(2)
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -1815,13 +1849,17 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-      await (runtime as any).handleEvent({ type: 'agent_end' })
+      await (runtime as any).handleEvent({ type: 'agent_start' })
+      await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
       await waitForCondition(() => session.promptCalls.length === attempt)
     }
     expect(onRuntimeError).not.toHaveBeenCalled()
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(onRuntimeError).toHaveBeenCalledTimes(1)
     const [agentId, event] = onRuntimeError.mock.calls[0]
@@ -1840,7 +1878,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-      await (runtime as any).handleEvent({ type: 'agent_end' })
+      await (runtime as any).handleEvent({ type: 'agent_start' })
+      await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
       if (attempt < 3) {
         await waitForCondition(() => session.promptCalls.length === attempt)
       }
@@ -1860,13 +1900,17 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-      await (runtime as any).handleEvent({ type: 'agent_end' })
+      await (runtime as any).handleEvent({ type: 'agent_start' })
+      await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
       await waitForCondition(() => session.promptCalls.length === attempt)
       expect(onAgentEnd).not.toHaveBeenCalled()
     }
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toHaveLength(2)
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -1877,18 +1921,24 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     session.state.messages = [
       userMessage(TERMINAL_CALLBACK),
       { role: 'assistant', content: [{ type: 'toolCall', toolName: 'speak_to_user' }], stopReason: 'toolUse' },
     ]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 2)
     expect(session.promptCalls).toHaveLength(2)
   })
@@ -1897,7 +1947,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage('SYSTEM: ⚠️ [WORKER STALL DETECTED]\nWorker `w-1` has made no progress.'), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -1910,7 +1962,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -1924,10 +1978,14 @@ describe('manager empty-turn retry after worker terminal report', () => {
       userMessage(internalInput),
       { role: 'assistant', content: [{ type: 'text', text: 'Not visible and not required.' }], stopReason: 'stop' },
     ]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     session.state.messages = [userMessage(internalInput), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(2)
@@ -1941,7 +1999,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'plain closeout' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -1954,7 +2014,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([`${DIRECT_CORTEX_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
@@ -1969,7 +2031,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([`${DIRECT_COLLAB_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
@@ -1984,7 +2048,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([`${DIRECT_TELEGRAM_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
@@ -2006,7 +2072,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([`${DIRECT_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
@@ -2020,13 +2088,17 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'toolCall', toolName: 'speak_to_user' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     session.state.messages = [
       userMessage(DIRECT_WEB_INPUT),
       { role: 'assistant', content: [{ type: 'toolCall', toolName: 'spawn_agent' }], stopReason: 'stop' },
     ]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(2)
@@ -2039,7 +2111,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       emptyAssistantMessage(),
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -2052,7 +2126,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'noted, relaying now.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`])
@@ -2068,7 +2144,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'The delegated work is done.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -2082,7 +2160,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'This should be routed explicitly.' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(session.promptCalls).toEqual([`${protectedReport}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`])
@@ -2097,7 +2177,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       { role: 'assistant', content: [{ type: 'toolCall', toolName: 'speak_to_user' }], stopReason: 'stop' },
     ]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -2115,7 +2197,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       throw new Error('dispatch failed')
     }
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => onRuntimeError.mock.calls.length > 0)
     await waitForCondition(() => session.state.messages.length === 2)
 
@@ -2153,7 +2237,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
       throw new Error('provider outage')
     }
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
     await waitForCondition(() => session.promptCalls.length === 4)
     await waitForCondition(() => session.state.messages.length === 2)
 
@@ -2171,7 +2257,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage({ stopReason: 'aborted' })]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -2181,7 +2269,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const { session, runtime, onAgentEnd } = makeRuntime({ descriptor: makeDescriptor() })
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
 
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
@@ -2194,7 +2284,9 @@ describe('manager empty-turn retry after worker terminal report', () => {
     session.isStreaming = false
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
-    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
