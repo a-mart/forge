@@ -498,6 +498,13 @@ async function copyRuntimeAsset(from, to) {
   await cp(from, to, { recursive: true })
 }
 
+const PI_SINGLETON_RUNTIME_PACKAGES = new Set([
+  '@earendil-works/pi-ai',
+  '@earendil-works/pi-coding-agent',
+  '@earendil-works/pi-agent-core',
+  '@earendil-works/pi-tui',
+])
+
 async function collectRuntimePackageClosure(rootPackages) {
   const queuedPackages = rootPackages.map(({ packageName, optional }) => ({
     packageName,
@@ -505,6 +512,7 @@ async function collectRuntimePackageClosure(rootPackages) {
     optional,
   }))
   const discoveredPackages = new Map()
+  const warnedNonSingletonConflicts = new Set()
 
   while (queuedPackages.length > 0) {
     const next = queuedPackages.shift()
@@ -521,9 +529,18 @@ async function collectRuntimePackageClosure(rootPackages) {
       const existingRealpath = await fs.promises.realpath(existing.packageRoot)
       const resolvedRealpath = await fs.promises.realpath(resolved.packageRoot)
       if (existingRealpath !== resolvedRealpath || existing.manifest.version !== resolved.manifest.version) {
-        throw new Error(
-          `Runtime package closure resolved conflicting ${resolved.name}: ${existingRealpath}@${existing.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
-        )
+        if (PI_SINGLETON_RUNTIME_PACKAGES.has(resolved.name)) {
+          throw new Error(
+            `Runtime package closure resolved conflicting Pi singleton ${resolved.name}: ${existingRealpath}@${existing.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
+          )
+        }
+        const warningKey = `${resolved.name}@${existing.manifest.version}->${resolved.manifest.version}`
+        if (!warnedNonSingletonConflicts.has(warningKey)) {
+          warnedNonSingletonConflicts.add(warningKey)
+          console.warn(
+            `[electron/build-all] Non-singleton runtime dependency ${resolved.name} resolved multiple versions; keeping ${existing.manifest.version}, ignoring ${resolved.manifest.version}`,
+          )
+        }
       }
       continue
     }
@@ -747,11 +764,15 @@ async function validateStagedPiSingletonRuntime(stagedRequire) {
     )
   }
 
+  const forgePiAiEntry = resolveStagedPackageEntryFromManifest(piAiPackageDir)
+  const codingAgentPiAiEntry = resolveStagedPackageEntryFromManifest(
+    await findInstalledPackageRoot('@earendil-works/pi-ai', piCodingAgentPackageDir),
+  )
   const [forgeCompat, codingAgentCompat, forgeRoot, codingRoot] = await Promise.all([
     import(pathToFileURL(forgeCompatPath).href),
     import(pathToFileURL(codingAgentCompatPath).href),
-    import(pathToFileURL(createRequire(backendStageBundlePath).resolve('@earendil-works/pi-ai')).href),
-    import(pathToFileURL(createRequire(path.join(piCodingAgentPackageDir, 'package.json')).resolve('@earendil-works/pi-ai')).href),
+    import(pathToFileURL(forgePiAiEntry).href),
+    import(pathToFileURL(codingAgentPiAiEntry).href),
   ])
   if (forgeCompat.registerFauxProvider !== codingAgentCompat.registerFauxProvider || forgeRoot.createProvider !== codingRoot.createProvider) {
     throw new Error('Packaged-runtime preflight failed: pi-ai ESM identity is not shared')
