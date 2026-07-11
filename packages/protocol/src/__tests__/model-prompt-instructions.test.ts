@@ -10,6 +10,9 @@ describe('model-prompt-instructions', () => {
 
     expect(codexInstructions).toContain('Return the requested sections only, in the requested order.')
     expect(codexInstructions).toContain('Do not use em dashes unless the user explicitly asks for them')
+    expect(codexInstructions).toContain('Use proportional effort')
+    expect(codexInstructions).toContain('do not start another review wave by default')
+    expect(codexInstructions).not.toContain('If another action would likely improve correctness or completeness')
     expect(gpt54Instructions).toBe(codexInstructions)
     expect(gpt55Instructions).toBe(codexInstructions)
     expect(gpt56Instructions).toBe(codexInstructions)
@@ -24,6 +27,7 @@ describe('model-prompt-instructions', () => {
 
     expect(instructions).toContain('Prefer concise, direct answers over essay-style framing.')
     expect(instructions).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+    expect(instructions).toContain('Use proportional effort and stop once acceptance criteria are met')
     expect(sonnetInstructions).toBe(instructions)
     expect(variantInstructions).toBe(instructions)
     expect(sdkOpusInstructions).toBe(instructions)

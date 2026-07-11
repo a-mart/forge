@@ -164,7 +164,9 @@ export class MessageRouter {
     }
 
     if (input.origin === "terminal_worker_report") {
-      return render(targetKind, "render:terminal_worker_report_closeout");
+      return targetKind === "session_transcript"
+        ? render(targetKind, "render:terminal_worker_report_closeout")
+        : route(targetKind, "route:worker_report_all_view");
     }
 
     return render(targetKind, "render:user_web");

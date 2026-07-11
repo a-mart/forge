@@ -1722,34 +1722,65 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('projects clean final assistant output for direct-web project-agent worker report continuations', async () => {
+  it('keeps routine direct-web manager worker callbacks internal until explicit acceptance delivery', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const { sessionAgent } = await manager.createSession('manager', { label: 'Ops Director' })
-    await manager.setSessionProjectAgent(sessionAgent.agentId, {
-      whenToUse: 'Coordinate read-only health checks.',
-    })
+    await manager.handleUserMessage('Run the read-only health check.')
+    await activateLastRuntimeUserMessage(manager, 'manager')
 
-    await manager.handleUserMessage('Run the read-only health check.', { targetAgentId: sessionAgent.agentId })
-    await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
-
-    const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Health Worker' })
-    await manager.sendMessage(sessionAgent.agentId, worker.agentId, 'Check all three hosts.', 'auto')
+    const worker = await manager.spawnAgent('manager', { agentId: 'Health Worker' })
+    await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
     await manager.sendMessage(
       worker.agentId,
-      sessionAgent.agentId,
+      'manager',
       'status: done\nsummary: Completed the health check.',
       'auto',
     )
-    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
-    expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
+    expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
 
-    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Health check complete.')
-    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
+    await manager.publishToUser('manager', 'Health check accepted.', 'speak_to_user')
+    await emitCleanAssistantFinal(manager, 'manager', 'Duplicate callback closeout must remain internal.')
+    await manager.handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual(['Health check complete.'])
+    expect(assistantOutputTexts(manager, 'manager')).toEqual([])
+    expect(
+      manager.getConversationHistory('manager').filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'assistant' &&
+          (entry.source === 'speak_to_user' || entry.source === 'assistant_output'),
+      ),
+    ).toEqual([
+      expect.objectContaining({ source: 'speak_to_user', text: 'Health check accepted.' }),
+    ])
+  })
+
+  it('preserves explicit routing for non-web worker-report closeouts', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('Run the Telegram health check.', {
+      sourceContext: { channel: 'telegram', channelId: 'chat-1' },
+    })
+    await activateLastRuntimeUserMessage(manager, 'manager')
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Telegram Health Worker' })
+    await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
+    await manager.sendMessage(
+      worker.agentId,
+      'manager',
+      'status: done\nsummary: Completed the Telegram health check.',
+      'auto',
+    )
+
+    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
+    expect(workerReportRuntimeText).toContain(
+      '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}',
+    )
   })
 
   it('keeps later internal same-manager project-agent self messages hidden after a direct-web turn completes', async () => {

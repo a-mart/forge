@@ -4991,6 +4991,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     const assistantOutputTarget = this.resolveAssistantOutputTargetForAgentMessage(assistantOutputInput);
     const isAssistantOutputEligibleWorkerReport = this.isAssistantOutputEligibleWorkerReportMessage(assistantOutputInput);
+    const assistantOutputWorkerReportSourceAgentId = isAssistantOutputEligibleWorkerReport
+      ? this.resolveAssistantOutputWorkerReportSourceId(assistantOutputInput)
+      : undefined;
     // Keep the runtime input marker as routing guidance for the manager, but derive
     // assistant_output visibility from the target manager/session context.
     const assistantOutputProjectionTarget = this.resolveAssistantOutputProjectionTargetForAgentMessage(
@@ -5035,7 +5038,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         ? "terminal_worker_report"
         : origin,
       internalDeliveryKind: options?.internalDeliveryKind,
-      workerReportSourceAgentId: options?.workerReportSourceAgentId,
+      workerReportSourceAgentId: assistantOutputWorkerReportSourceAgentId,
       rootTurnId: observabilityInput?.rootTurnId,
       parentRootTurnId,
       runtimeMessageText: extractRuntimeMessageText(modelMessage),
@@ -7466,6 +7469,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       // by the manager, summary delivered nowhere).
       if (
         decision.reasonCode === "route:peer_agent" &&
+        routeContext?.origin !== "terminal_worker_report" &&
         this.canProjectManagerFinalTextToWebByDefault({ sender: manager, target: manager }, targetForRouting)
       ) {
         return {
@@ -7538,11 +7542,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
    * Robustness / false-positive guards (mirrors the resample gate, plus the
    * routing rule the passive projector backstop already uses):
    * - Only fires for a running manager whose active route for this report
-   *   resolves to a VISIBLE WEB session transcript. `requiresVisibleCompletion`
-   *   alone is not enough: worker reports are `routed_required`, which also
-   *   covers peer/Telegram obligations — delivering those to the web user would
-   *   be a cross-channel leak. `resolveManagerAssistantFinalOutputRoute` returns
-   *   a web `target` only when the router decided visible && channel === "web".
+   *   explicitly resolves to a VISIBLE WEB session transcript. Routine worker
+   *   callbacks are internal and never qualify; peer/Telegram obligations must
+   *   not leak to web. `resolveManagerAssistantFinalOutputRoute` returns a web
+   *   `target` only when the router decided visible && channel === "web".
    * - Never echoes the raw report (it still carries the internal
    *   `[assistantOutputTarget]` metadata line and internal framing). We surface
    *   only the mechanically-parsed status, manager-attributed, with a pointer to
@@ -7674,16 +7677,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return { kind: "internal_only", reason: "missing_worker_report_provenance" };
     }
 
-    // Truthful markers (restored from 41c054d5, narrowed to compose with the
-    // v2 pipeline): a report continuing a direct-web turn says
-    // `session_transcript` — the runtime's hidden-output policy then agrees
-    // bare finals are visible, so it never resamples a rendered answer — and a
-    // report with no captured handoff stays `internal_only`. Protected
-    // contexts (telegram/collab/peer spawns) keep the v2 explicit contract:
-    // the closeout route still renders the manager's summary to the web
-    // transcript without replaying channel output.
+    // A worker callback is a manager decision point, not another direct-web
+    // user turn. Keep ordinary web callbacks internal so bare acknowledgments
+    // cannot become status chatter; the manager explicitly publishes only an
+    // accepted outcome or material blocker. Protected/non-web handoffs retain
+    // their explicit-tool contract, and reports without a handoff stay quiet.
     const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
-    if (inheritedTarget?.kind === "session_transcript" || inheritedTarget?.kind === "internal_only") {
+    if (inheritedTarget?.kind === "session_transcript" && inheritedTarget.channel === "web") {
+      return { kind: "internal_only", reason: "worker_report_callback" };
+    }
+    if (inheritedTarget?.kind === "session_transcript") {
+      return cloneAssistantOutputTarget(inheritedTarget);
+    }
+    if (inheritedTarget?.kind === "internal_only") {
       return cloneAssistantOutputTarget(inheritedTarget);
     }
     return inheritedTarget
@@ -7695,40 +7701,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     input: {
       sender: AgentDescriptor;
       target: AgentDescriptor;
-      modelMessage: string | RuntimeUserMessage;
-      rawMessage?: string;
       workerReportSourceAgentId?: string;
       sendMessageToolContinuation?: boolean;
     },
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
-    // Only proper WORKER REPORT dispatches ride the captured handoff — a
-    // worker's non-report chatter must not inherit the web turn it was
-    // spawned in.
-    const inheritedRoutingTarget =
-      this.isAssistantOutputEligibleWorkerReportMessage(input) && isWorkerReportRuntimeMessage(input.modelMessage)
-        ? this.resolveInheritedAssistantOutputRoutingTarget(input)
+    // Keep the manager-facing marker explicit while retaining the protected
+    // surface as the server-owned projection target. Otherwise the generic
+    // terminal-report origin can be mistaken for a web closeout.
+    if (inputTarget.kind === "explicit_tool_required" && inputTarget.reason === "worker_report") {
+      const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
+      const inheritedTarget = sourceWorkerId
+        ? this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId)
         : undefined;
-    if (inheritedRoutingTarget) {
-      return inheritedRoutingTarget;
+      if (
+        inheritedTarget?.kind === "external_channel" ||
+        inheritedTarget?.kind === "peer_agent" ||
+        inheritedTarget?.kind === "explicit_tool_required"
+      ) {
+        return cloneAssistantOutputTarget(inheritedTarget);
+      }
     }
 
     const activeWebContinuationTarget = this.resolveActiveWebAssistantOutputContinuationTarget(input, inputTarget);
     if (activeWebContinuationTarget) {
       return activeWebContinuationTarget;
-    }
-
-    // Worker-report closeouts on interactive sessions always default to the
-    // web transcript, even when the captured handoff is missing or stale
-    // (fix-lineage behavior, and what the v2 "closeouts … even without an
-    // active root / without handoff provenance" tests pin). The guard keeps
-    // project-agent/collab/Cortex/system contexts quiet.
-    if (
-      this.isAssistantOutputEligibleWorkerReportMessage(input) &&
-      isWorkerReportRuntimeMessage(input.modelMessage) &&
-      this.canProjectManagerFinalTextToWebByDefault(input, inputTarget)
-    ) {
-      return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
     }
 
     const defaultWebTarget = this.resolveDefaultManagerFinalTextWebProjectionTarget(input, inputTarget);
@@ -7783,6 +7780,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     },
     inputTarget: AssistantOutputTarget,
   ): SessionTranscriptAssistantOutputTarget | undefined {
+    const workerReportSourceAgentId = this.resolveAssistantOutputWorkerReportSourceId(input);
+
     if (inputTarget.kind === "session_transcript") {
       if (inputTarget.channel !== "web") {
         return cloneSessionTranscriptAssistantOutputTarget(inputTarget);
@@ -7795,8 +7794,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         targetKind: "session_transcript",
         sourceContext: inputTarget.sourceContext ?? { channel: "web" },
         routeContext: {
-          origin: input.workerReportSourceAgentId ? "terminal_worker_report" : "internal",
-          ...(input.workerReportSourceAgentId ? { workerReportSourceAgentId: input.workerReportSourceAgentId } : {}),
+          origin: workerReportSourceAgentId ? "terminal_worker_report" : "internal",
+          ...(workerReportSourceAgentId ? { workerReportSourceAgentId } : {}),
         },
       }));
       if (!explicitTranscriptDecision.visible || explicitTranscriptDecision.channel !== "web") {
@@ -7821,8 +7820,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       targetKind: this.routeTargetKindFromAssistantOutputTarget(inputTarget),
       sourceContext: this.sourceContextFromAssistantOutputTarget(inputTarget),
       routeContext: {
-        origin: input.workerReportSourceAgentId ? "terminal_worker_report" : "internal",
-        ...(input.workerReportSourceAgentId ? { workerReportSourceAgentId: input.workerReportSourceAgentId } : {}),
+        origin: workerReportSourceAgentId ? "terminal_worker_report" : "internal",
+        ...(workerReportSourceAgentId ? { workerReportSourceAgentId } : {}),
       },
     }));
     if (!decision.visible || decision.channel !== "web") {
@@ -7840,7 +7839,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       // continuation path above). Protected surfaces (project agents, collab,
       // Cortex, system profiles) are denied inside the guard itself.
       const restoredDefaultWebAllowance =
-        inputTarget.kind === "peer_agent" ||
+        (inputTarget.kind === "peer_agent" && !workerReportSourceAgentId) ||
         (inputTarget.kind === "explicit_tool_required" &&
           inputTarget.reason === "agent_message" &&
           input.sender.role === "manager" &&
@@ -7852,34 +7851,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } };
-  }
-
-  /**
-   * Route a worker report's manager-final through the target captured at
-   * worker dispatch (restored from 41c054d5, narrowed to web targets only).
-   * Protected contexts (telegram/collab/peer spawns) intentionally fall
-   * through to the v2 pipeline's closeout routing, which renders the
-   * manager's summary without replaying channel output.
-   */
-  private resolveInheritedAssistantOutputRoutingTarget(input: {
-    sender: AgentDescriptor;
-    target: AgentDescriptor;
-    workerReportSourceAgentId?: string;
-  }): AssistantOutputTarget | undefined {
-    const sourceWorkerId = this.resolveAssistantOutputWorkerReportSourceId(input);
-    if (!sourceWorkerId) {
-      return undefined;
-    }
-
-    const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
-    if (inheritedTarget?.kind !== "session_transcript") {
-      return undefined;
-    }
-
-    if (inheritedTarget.channel === "web" && !this.canProjectManagerFinalTextToWebByDefault(input, inheritedTarget)) {
-      return undefined;
-    }
-    return cloneAssistantOutputTarget(inheritedTarget);
   }
 
   /**
@@ -7986,9 +7957,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    // Keep this as server-owned input routing guidance for worker reports. The
-    // manager's later clean final text is projected by the manager/session context,
-    // not by this worker handoff; protected targets here still hard-deny projection.
+    // Capture the originating surface as server-owned routing guidance. A
+    // direct-web handoff becomes an internal callback when the worker reports;
+    // protected targets still retain their explicit routing requirement.
     const inheritedTarget = this.getActiveAssistantOutputTargetForDelegation(sender.agentId);
     this.inheritedAssistantOutputTargetByWorkerId.set(target.agentId, inheritedTarget);
   }

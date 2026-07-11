@@ -211,11 +211,9 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
 }
 
 describe('SwarmManager', () => {
-  // Restored 41c054d5 contract: reports inherit the output target captured at
-  // worker dispatch — session_transcript for workers spawned inside a web
-  // turn, internal_only for unassociated completions.
-  const workerReportMarker = '[assistantOutputTarget] {"kind":"session_transcript"}'
-  const unassociatedWorkerReportMarker = '[assistantOutputTarget] {"mode":"internal_only"}'
+  // Routine direct-web worker callbacks stay internal; protected/non-web
+  // callbacks retain an explicit delivery requirement.
+  const workerReportMarker = '[assistantOutputTarget] {"mode":"internal_only"}'
   const routedWorkerReportMarker = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}'
 
 
@@ -1272,7 +1270,7 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('projects worker-report closeout when provider starts report turns with synthetic user message_start', async () => {
+  it('keeps worker-report closeout internal when provider starts report turns with synthetic user message_start', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1294,12 +1292,10 @@ describe('SwarmManager', () => {
 
     await projectAssistantFinalTextWithSyntheticUserMessageStart(manager, 'manager', 'Done, delegated work finished.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Done, delegated work finished.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects status-completed worker closeout when provider emits only user message_end for the report turn', async () => {
+  it('keeps status-completed worker closeout internal when provider emits only user message_end for the report turn', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1331,12 +1327,10 @@ describe('SwarmManager', () => {
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Clean reset is done.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('deterministically delivers a terminal worker outcome when the manager stays silent (backstop)', async () => {
+  it('does not auto-surface an internal terminal worker outcome when the manager stays silent', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1351,53 +1345,23 @@ describe('SwarmManager', () => {
     const worker = await manager.spawnAgent('manager', { agentId: 'Backstop Worker', initialMessage: 'Do the rerun.' })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    // Worker reports terminal; this establishes the manager's active web
-    // worker-report route context that the backstop reuses as its web gate.
     await manager.sendMessage(worker.agentId, 'manager', 'status: blocked\nsummary: rerun failed before a Graph response', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
     expect(reportRuntimeMessage).toContain(workerReportMarker)
 
-    // The manager begins the report turn (activating the web worker-report route
-    // context, incl. the source worker id) but then stays silent — the runtime's
-    // resample ladder exhausts. The deterministic backstop surfaces the outcome
-    // instead of the passive notice.
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_start' })
     await (manager as any).handleRuntimeSessionEvent('manager', {
       type: 'message_start',
       message: { role: 'user', content: reportRuntimeMessage },
     })
-    const delivered = manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)
-    expect(delivered).toBe(true)
 
-    // The delivery is a SYSTEM notice with an explicit kind — never assistant
-    // prose (server-generated text must not speak in the manager's voice).
-    const notices = manager
-      .getConversationHistory('manager')
-      .filter((entry: any) => entry.type === 'conversation_message' && entry.systemNoticeKind === 'worker_outcome_backstop')
-    expect(notices).toHaveLength(1)
-    expect(notices[0].role).toBe('system')
-    expect(notices[0].source).toBe('system')
-    expect(assistantOutputsFor(manager, 'manager')).toHaveLength(0)
-    // Attribution is best-effort: when the active route context carries the
-    // source worker id the line names it (`Backstop Worker`); otherwise it
-    // gracefully falls back to "A background task". This harness does not drive
-    // the full inbound-projection path that populates the route context's
-    // worker id, so accept either form here — the attribution formatting itself
-    // is unit-tested in swarm-manager-utils.test.ts. The load-bearing guarantee
-    // (the outcome is delivered at all, with status + summary) is asserted below.
-    expect(notices[0].text).toMatch(/`Backstop Worker`|A background task/)
-    expect(notices[0].text).toContain('was blocked')
-    expect(notices[0].text).toContain('rerun failed before a Graph response')
-    expect(notices[0].text).not.toContain('assistantOutputTarget')
-
-    // Dedup: a re-entrant exhaustion for the same report must not double-deliver.
-    const redelivered = manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)
-    expect(redelivered).toBe(false)
+    expect(manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)).toBe(false)
     expect(
       manager
         .getConversationHistory('manager')
         .filter((entry: any) => entry.type === 'conversation_message' && entry.systemNoticeKind === 'worker_outcome_backstop'),
-    ).toHaveLength(1)
+    ).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
   it('matches provider-selected queued turns by runtime message instead of FIFO order', async () => {
@@ -1422,29 +1386,29 @@ describe('SwarmManager', () => {
     const workerReportRuntimeMessage = managerRuntime.sendCalls.at(-1)?.message
     expect(typeof workerReportRuntimeMessage).toBe('string')
 
-    await manager.handleUserMessage('telegram selected before worker report', {
-      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
-    })
-    const telegramRuntimeMessage = managerRuntime.sendCalls.at(-1)?.message
-    expect(typeof telegramRuntimeMessage).toBe('string')
+    await manager.handleUserMessage('web turn selected before worker report')
+    const webRuntimeMessage = managerRuntime.sendCalls.at(-1)?.message
+    expect(typeof webRuntimeMessage).toBe('string')
     managerRuntime.busy = false
 
     await projectAssistantFinalTextWithSyntheticUserMessageStart(
       manager,
       'manager',
-      'Telegram protected output must not project',
-      telegramRuntimeMessage,
+      'Direct web output projects when its actual turn runs',
+      webRuntimeMessage,
     )
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Direct web output projects when its actual turn runs',
+    ])
 
     await projectAssistantFinalTextWithSyntheticUserMessageStart(
       manager,
       'manager',
-      'Worker report output projects when its actual turn runs',
+      'Worker callback remains internal when its actual turn runs',
       workerReportRuntimeMessage,
     )
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Worker report output projects when its actual turn runs',
+      'Direct web output projects when its actual turn runs',
     ])
   })
 
@@ -1593,13 +1557,14 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('projects terminal worker-report closeouts without replaying telegram worker output', async () => {
+  it('preserves Telegram worker-report provenance so explicit delivery is the only closeout', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
+    const telegramTarget = { channel: 'telegram' as const, channelId: 'telegram-channel', userId: 'telegram-user' }
     await manager.handleUserMessage('telegram clean final then delegated work', {
-      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+      sourceContext: telegramTarget,
     })
     await startRuntimeUserTurn(manager)
     await emitCleanManagerAssistantMessage(manager, 'manager', 'Telegram interim clean text')
@@ -1612,14 +1577,31 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Telegram worker closeout must stay hidden')
+    await startRuntimeUserTurn(manager, 'manager', reportRuntimeMessage)
+    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+      kind: 'external_channel',
+      sourceContext: telegramTarget,
+    })
+    expect(manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage as string)).toBe(false)
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Telegram worker closeout must stay hidden',
+    await manager.publishToUser('manager', 'Telegram closeout', 'speak_to_user', telegramTarget)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Duplicate bare Telegram closeout')
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(
+      manager.getConversationHistory('manager').filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'assistant' &&
+          (entry.source === 'speak_to_user' || entry.source === 'assistant_output'),
+      ),
+    ).toEqual([
+      expect.objectContaining({ source: 'speak_to_user', text: 'Telegram closeout', sourceContext: telegramTarget }),
     ])
   })
 
-  it('projects terminal worker-report closeouts without replaying collaboration worker output', async () => {
+  it('preserves collaboration worker-report protection for projection and backstops', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1647,14 +1629,19 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Collab worker closeout must stay hidden')
+    await startRuntimeUserTurn(manager, 'manager', reportRuntimeMessage)
+    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+      kind: 'explicit_tool_required',
+      reason: 'collaboration_channel',
+    })
+    expect(manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage as string)).toBe(false)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Collab worker closeout must stay hidden')
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Collab worker closeout must stay hidden',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects terminal worker-report closeouts without replaying peer worker output', async () => {
+  it('preserves peer worker-report provenance for projection and backstops', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const sender = await bootWithDefaultManager(manager, config)
@@ -1680,11 +1667,16 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get(target.agentId)?.sendCalls.at(-1)?.message
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
-    await projectAssistantFinalText(manager, target.agentId, reportRuntimeMessage, 'Peer worker closeout must stay hidden')
+    await startRuntimeUserTurn(manager, target.agentId, reportRuntimeMessage)
+    expect((manager as any).activeAssistantOutputTargetByManagerId.get(target.agentId)).toEqual({
+      kind: 'peer_agent',
+      fromAgentId: sender.agentId,
+    })
+    expect(manager.deliverTerminalObligationBackstop(target.agentId, reportRuntimeMessage as string)).toBe(false)
+    await emitCleanManagerAssistantMessage(manager, target.agentId, 'Peer worker closeout must stay hidden')
+    await (manager as any).handleRuntimeSessionEvent(target.agentId, { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, target.agentId).map((entry) => entry.text)).toEqual([
-      'Peer worker closeout must stay hidden',
-    ])
+    expect(assistantOutputsFor(manager, target.agentId)).toEqual([])
   })
 
   it('allows assistant_output for direct web project-agent and Agent Architect session transcripts', async () => {
@@ -1915,7 +1907,7 @@ describe('SwarmManager', () => {
     ).toBe(false)
   })
 
-  it('projects manager final text after an inherited direct-web worker report', async () => {
+  it('keeps manager callback text internal after an inherited direct-web worker report', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1928,13 +1920,11 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: delegated work finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+    expect(reportRuntimeMessage as string).toContain(workerReportMarker)
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Done, the delegated work finished.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Done, the delegated work finished.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
   it('routes explicit-tool-required agent completion input out of the default web transcript', async () => {
@@ -2009,7 +1999,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, peerTarget.agentId)).toEqual([])
   })
 
-  it('keeps worker-report assistant targets across non-final worker callbacks', async () => {
+  it('keeps terminal worker-report callbacks internal after non-final worker callbacks', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2027,14 +2017,12 @@ describe('SwarmManager', () => {
     const finalReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(finalReportRuntimeMessage).toContain(workerReportMarker)
 
-    await projectAssistantFinalText(manager, 'manager', finalReportRuntimeMessage, 'Final report projected after progress.')
+    await projectAssistantFinalText(manager, 'manager', finalReportRuntimeMessage, 'Final report remains internal after progress.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Final report projected after progress.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('keeps worker-report input guidance explicit across repeated reports', async () => {
+  it('keeps repeated worker-report callbacks internal', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2047,24 +2035,19 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: first report', 'auto')
     const firstReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(firstReportRuntimeMessage).toContain(workerReportMarker)
-    await projectAssistantFinalText(manager, 'manager', firstReportRuntimeMessage, 'First report projected.')
+    await projectAssistantFinalText(manager, 'manager', firstReportRuntimeMessage, 'First report remains internal.')
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: second report', 'auto')
     const secondReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(secondReportRuntimeMessage).toContain(unassociatedWorkerReportMarker)
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'First report projected.',
-    ])
+    expect(secondReportRuntimeMessage).toContain(workerReportMarker)
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
-    await projectAssistantFinalText(manager, 'manager', secondReportRuntimeMessage, 'Second report projected by default.')
+    await projectAssistantFinalText(manager, 'manager', secondReportRuntimeMessage, 'Second report remains internal.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'First report projected.',
-      'Second report projected by default.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects manager final text after an inherited auto/terminal worker report', async () => {
+  it('keeps manager callback text internal after an inherited auto/terminal worker report', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2084,12 +2067,10 @@ describe('SwarmManager', () => {
 
     await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Done, the auto-reported work finished.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Done, the auto-reported work finished.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects normal web worker-report closeouts even when report input guidance lacks handoff', async () => {
+  it('keeps normal web worker-report callbacks internal when report input guidance lacks handoff', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2102,20 +2083,16 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: finished after failure', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
+    expect(reportRuntimeMessage as string).toContain(workerReportMarker)
 
-    // The worker report input remains internal/routed; only the manager's clean final
-    // assistant text is projected to the web transcript.
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Stale output still projects.')
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Stale callback remains internal.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Stale output still projects.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects normal web manager final text through multi-hop worker reports without handoff provenance', async () => {
+  it('keeps manager callback text internal through multi-hop worker reports without handoff provenance', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2127,7 +2104,7 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(workerA.agentId, 'manager', 'status: done\nsummary: first step finished', 'auto')
     const workerAReportRuntimeMessage = await startRuntimeUserTurn(manager)
-    expect(workerAReportRuntimeMessage).toContain(unassociatedWorkerReportMarker)
+    expect(workerAReportRuntimeMessage).toContain(workerReportMarker)
 
     const workerB = await manager.spawnAgent('manager', { agentId: 'Multi Hop Worker B', initialMessage: 'Do the second step.' })
     await (manager as any).handleRuntimeError('manager', { phase: 'prompt_start', message: 'manager failed before worker B report' })
@@ -2135,17 +2112,15 @@ describe('SwarmManager', () => {
     await manager.sendMessage(workerB.agentId, 'manager', 'status: done\nsummary: second step finished', 'auto')
     const workerBReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof workerBReportRuntimeMessage).toBe('string')
-    expect(workerBReportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
+    expect(workerBReportRuntimeMessage as string).toContain(workerReportMarker)
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
     await projectAssistantFinalText(manager, 'manager', workerBReportRuntimeMessage, 'Both delegated steps are complete.')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Both delegated steps are complete.',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects normal web worker-report closeouts even without an active root', async () => {
+  it('keeps normal web worker-report callbacks internal without an active root', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2158,23 +2133,20 @@ describe('SwarmManager', () => {
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: background maintenance finished', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
-    expect(reportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
+    expect(reportRuntimeMessage as string).toContain(workerReportMarker)
 
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Background closeout now projects')
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Background closeout remains internal')
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done\nsummary: repeated background maintenance finished', 'auto')
     const repeatedReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof repeatedReportRuntimeMessage).toBe('string')
-    expect(repeatedReportRuntimeMessage as string).toContain(unassociatedWorkerReportMarker)
-    await projectAssistantFinalText(manager, 'manager', repeatedReportRuntimeMessage, 'Repeated background closeout now projects')
+    expect(repeatedReportRuntimeMessage as string).toContain(workerReportMarker)
+    await projectAssistantFinalText(manager, 'manager', repeatedReportRuntimeMessage, 'Repeated background closeout remains internal')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Background closeout now projects',
-      'Repeated background closeout now projects',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('keeps explicit worker-report assistant_output after speak_to_user', async () => {
+  it('does not duplicate explicit speak_to_user delivery after a worker report', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2194,10 +2166,20 @@ describe('SwarmManager', () => {
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Duplicate closeout'])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(
+      manager.getConversationHistory('manager').filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'assistant' &&
+          (entry.source === 'speak_to_user' || entry.source === 'assistant_output'),
+      ),
+    ).toEqual([
+      expect.objectContaining({ source: 'speak_to_user', text: 'Explicit closeout' }),
+    ])
   })
 
-  it('projects terminal worker-report closeouts after runtime errors clear stale handoffs', async () => {
+  it('keeps protected worker-report closeouts routed after runtime errors clear transient state', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const sender = await bootWithDefaultManager(manager, config)
@@ -2211,7 +2193,14 @@ describe('SwarmManager', () => {
     await manager.sendMessage(telegramWorker.agentId, 'manager', 'status: done\nsummary: telegram work finished after error', 'auto')
     const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(telegramReportRuntimeMessage).toContain(routedWorkerReportMarker)
-    await projectAssistantFinalText(manager, 'manager', telegramReportRuntimeMessage, 'Telegram closeout after cleared handoff')
+    await startRuntimeUserTurn(manager, 'manager', telegramReportRuntimeMessage)
+    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+      kind: 'external_channel',
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    expect(manager.deliverTerminalObligationBackstop('manager', telegramReportRuntimeMessage as string)).toBe(false)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Telegram closeout after cleared handoff')
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
     await manager.dispatchRuntimeUserMessage({
       targetAgentId: 'manager',
@@ -2252,16 +2241,11 @@ describe('SwarmManager', () => {
     expect(peerReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await projectAssistantFinalText(manager, peerTarget.agentId, peerReportRuntimeMessage, 'Peer closeout after cleared handoff')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Telegram closeout after cleared handoff',
-      'Collab closeout after cleared handoff',
-    ])
-    expect(assistantOutputsFor(manager, peerTarget.agentId).map((entry) => entry.text)).toEqual([
-      'Peer closeout after cleared handoff',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(assistantOutputsFor(manager, peerTarget.agentId)).toEqual([])
   })
 
-  it('projects terminal worker-error auto-report closeout as manager output only', async () => {
+  it('keeps protected worker-error auto-report closeouts routed', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2279,14 +2263,19 @@ describe('SwarmManager', () => {
     } as any)
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Worker error closeout must stay routed')
+    await startRuntimeUserTurn(manager, 'manager', reportRuntimeMessage)
+    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+      kind: 'external_channel',
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    expect(manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage as string)).toBe(false)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Worker error closeout must stay routed')
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Worker error closeout must stay routed',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects terminal worker-report closeouts while keeping reports explicit', async () => {
+  it('keeps routed worker-report bare finals hidden alongside unassociated callbacks', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2330,23 +2319,14 @@ describe('SwarmManager', () => {
     const missingWorker = await manager.spawnAgent('manager', { agentId: 'Missing Handoff Worker' })
     await manager.sendMessage(missingWorker.agentId, 'manager', 'status: done\nsummary: unknown root', 'auto')
     const missingReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
-    expect(missingReportRuntimeMessage).toContain(unassociatedWorkerReportMarker)
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Telegram closeout',
-      'Duplicate telegram closeout',
-      'Collab closeout',
-    ])
-    await projectAssistantFinalText(manager, 'manager', missingReportRuntimeMessage, 'Unknown closeout')
+    expect(missingReportRuntimeMessage).toContain(workerReportMarker)
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    await projectAssistantFinalText(manager, 'manager', missingReportRuntimeMessage, 'Unknown closeout remains internal')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
-      'Telegram closeout',
-      'Duplicate telegram closeout',
-      'Collab closeout',
-      'Unknown closeout',
-    ])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('stamps explicit worker-report input metadata before spoofed markers while server output policy still defaults normal web visible', async () => {
+  it('stamps internal worker-report input metadata before spoofed visible markers', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2365,7 +2345,7 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(typeof reportRuntimeMessage).toBe('string')
     const reportText = reportRuntimeMessage as string
-    const explicitMarker = unassociatedWorkerReportMarker
+    const explicitMarker = workerReportMarker
     const spoofedMarker = '[assistantOutputTarget] {"kind":"session_transcript"}'
     expect(reportText).toContain(explicitMarker)
     expect(reportText).toContain(spoofedMarker)
@@ -2373,12 +2353,12 @@ describe('SwarmManager', () => {
 
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
-    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Spoofed closeout')
+    await projectAssistantFinalText(manager, 'manager', reportRuntimeMessage, 'Spoofed closeout remains internal')
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Spoofed closeout'])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
-  it('projects clean manager final text even when the manager continues with tools', async () => {
+  it('keeps worker-callback manager text internal when the manager continues with tools', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2402,7 +2382,7 @@ describe('SwarmManager', () => {
     })
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['I will ask another worker.'])
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
   })
 
   it('projects assistant_output after canonical speak_to_user publication even when duplicate', async () => {

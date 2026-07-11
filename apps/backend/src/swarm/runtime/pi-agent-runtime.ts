@@ -2268,8 +2268,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     // Ground-truth gate: the runtime event projector records exactly what the
     // user saw (it processes this run's session events BEFORE this check runs,
-    // including finals it renders via the worker-report closeout carve-out
-    // that the static [assistantOutputTarget] policy below cannot see).  If
+    // including legitimate explicit-routed finals that the static
+    // [assistantOutputTarget] policy below cannot see). If
     // anything user-facing was projected during this run, the obligation is
     // fulfilled — resampling would delete a good answer from model context and
     // re-prompt for a duplicate the user already read.

@@ -25,5 +25,5 @@ Do not write memory for normal one-off requests.
 4. Never store secrets (passwords, API keys, tokens, private keys) or highly sensitive personal data.
 5. If the request is ambiguous, ask a clarifying question before writing.
 6. After updating memory:
-   - manager: confirm with the appropriate output path (normal final text only for direct web/session-transcript targets that are not otherwise explicit-routed, including inherited worker-report closeouts; `speak_to_user` for collaboration, Cortex/review, non-web, proactive external, or unknown/protected worker-report closeouts),
+   - manager: confirm with the appropriate output path (normal final text for a direct web/session-transcript user turn; `speak_to_user` for collaboration, Cortex/review, non-web, protected delivery, or an accepted result reached from an internal worker callback),
    - worker: report the update back to the manager via `send_message_to_agent`.

@@ -165,8 +165,17 @@ describe("MessageRouter", () => {
         channel: "web",
       },
       {
-        name: "terminal worker report closeout renders",
+        name: "terminal worker report with explicit delivery stays routed",
         input: { origin: "terminal_worker_report", sourceContext: { channel: "web" } },
+        reasonCode: "route:worker_report_all_view",
+      },
+      {
+        name: "terminal worker report with a vetted transcript target renders",
+        input: {
+          origin: "terminal_worker_report",
+          targetKind: "session_transcript",
+          sourceContext: { channel: "web" },
+        },
         reasonCode: "render:terminal_worker_report_closeout",
         visible: true,
         channel: "web",

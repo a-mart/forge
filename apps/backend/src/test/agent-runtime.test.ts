@@ -1991,6 +1991,22 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(onAgentEnd).toHaveBeenCalledTimes(2)
   })
 
+  it('does not resample routine terminal callbacks marked internal-only', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    const internalReport = 'WORKER REPORT: status: done\n[assistantOutputTarget] {"mode":"internal_only"}\nsummary: ready for manager acceptance.'
+    session.state.messages = [
+      userMessage(internalReport),
+      { role: 'assistant', content: [{ type: 'text', text: 'Report dispositioned internally.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
   it('suppresses unmarked terminal reports quietly because provenance is unknown', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     const unmarkedReport = 'WORKER REPORT: status: done\nsummary: unmarked worker report'
