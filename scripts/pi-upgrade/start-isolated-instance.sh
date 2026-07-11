@@ -10,9 +10,13 @@ cd "$ROOT"
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:${HOME}/Library/pnpm:${PATH:-}"
 
-# Live provider calls fail under Socket Firewall HTTP proxies; clear them for isolated E2E.
+# Live provider calls fail under Socket Firewall HTTP proxies / CA injection.
+# Clearing only HTTP(S)_PROXY is insufficient: SSL_CERT_FILE / NODE_EXTRA_CA_CERTS
+# can replace the trust store and break direct TLS when the proxy is unset.
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy \
-  YARN_HTTP_PROXY YARN_HTTPS_PROXY CARGO_HTTP_PROXY GIT_PROXY_SSL_CAINFO || true
+  YARN_HTTP_PROXY YARN_HTTPS_PROXY CARGO_HTTP_PROXY GIT_PROXY_SSL_CAINFO \
+  SSL_CERT_FILE SSL_CERT_DIR NODE_EXTRA_CA_CERTS GIT_SSL_CAINFO PIP_CERT \
+  REQUESTS_CA_BUNDLE CURL_CA_BUNDLE || true
 
 if [[ ! -f "$ROOT/.env" ]]; then
   echo "ERROR: $ROOT/.env missing. Create it with FORGE_DATA_DIR, FORGE_PORT, VITE_FORGE_WS_URL." >&2

@@ -67,7 +67,7 @@ set -a && source .env && set +a
 node scripts/pi-upgrade/assert-isolation.mjs
 ```
 
-**Proxy note:** If the host injects Socket Firewall `HTTP(S)_PROXY`, clear those vars before live provider E2E (the launcher does this). Health checks use `curl --noproxy '*'`.
+**Proxy note:** If the host injects Socket Firewall `HTTP(S)_PROXY` or CA-replacement vars (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`, etc.), clear those before live provider E2E (the launcher does this). Health checks use `curl --noproxy '*'`.
 
 ## Start / stop
 
