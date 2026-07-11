@@ -1,12 +1,15 @@
 /**
- * Electron / packaged-runtime Pi singleton characterization (post-0.80.6 pin).
- * Documents the current split risk: pi-coding-agent is externalized; pi-ai is not (WP-9).
+ * Electron / packaged-runtime Pi singleton characterization (WP-9).
  */
 import { realpathSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BACKEND_BUNDLE_EXTERNAL_PACKAGES } from '../../apps/electron/scripts/build-all.mjs'
+import {
+  BACKEND_BUNDLE_EXTERNAL_PACKAGES,
+  resolveStagedPackageSubpathFromManifest,
+} from '../../apps/electron/scripts/build-all.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -24,28 +27,20 @@ function findPackageFile(packageName, relativeFile) {
 }
 
 describe('packaged-runtime Pi singleton characterization (0.80.6 pin)', () => {
-  it('externalizes pi-coding-agent but not pi-ai (known Electron split risk; WP-9)', () => {
+  it('externalizes one coherent Pi family while preserving clipboard', () => {
     const names = BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => pkg.name)
     expect(names).toContain('@earendil-works/pi-coding-agent')
-    expect(names).not.toContain('@earendil-works/pi-ai')
-    expect(names).not.toContain('@earendil-works/pi-ai/compat')
+    expect(names).toContain('@earendil-works/pi-ai')
     expect(names).toContain('@mariozechner/clipboard')
+    expect(names.filter((name) => name === '@earendil-works/pi-ai')).toHaveLength(1)
+    expect(names.filter((name) => name === '@earendil-works/pi-coding-agent')).toHaveLength(1)
   })
 
   it('source install resolves one pi-ai/compat realpath for Forge and coding-agent parents', async () => {
     const codingAgentIndex = findPackageFile('@earendil-works/pi-coding-agent', 'dist/index.js')
     const compatFromBackendTree = findPackageFile('@earendil-works/pi-ai', 'dist/compat.js')
-    const nestedCandidate = join(
-      dirname(dirname(codingAgentIndex)),
-      'node_modules',
-      '@earendil-works',
-      'pi-ai',
-      'dist',
-      'compat.js',
-    )
-    const fromCoding = existsSync(nestedCandidate)
-      ? realpathSync(nestedCandidate)
-      : realpathSync(compatFromBackendTree)
+    createRequire(codingAgentIndex)
+    const fromCoding = realpathSync(resolveStagedPackageSubpathFromManifest(dirname(dirname(compatFromBackendTree)), './compat'))
     const fromBackend = realpathSync(compatFromBackendTree)
     expect(fromBackend).toBe(fromCoding)
 
@@ -55,11 +50,9 @@ describe('packaged-runtime Pi singleton characterization (0.80.6 pin)', () => {
     expect(backendMod.getModel).toBe(codingMod.getModel)
   })
 
-  it('records that WP-9 must externalize every pi-ai subpath after the earendil pin', () => {
-    const external = BACKEND_BUNDLE_EXTERNAL_PACKAGES.find(
-      (pkg) => pkg.name === '@earendil-works/pi-coding-agent',
-    )
-    expect(external?.optional).toBe(false)
-    expect(BACKEND_BUNDLE_EXTERNAL_PACKAGES.some((pkg) => pkg.name.includes('pi-ai'))).toBe(false)
+  it('externalizes pi-ai root so esbuild package externalization also covers /compat and /api subpaths', () => {
+    const piAi = BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === '@earendil-works/pi-ai')
+    expect(piAi?.optional).toBe(false)
+    expect(typeof piAi?.validateStagedPackageDir).toBe('function')
   })
 })

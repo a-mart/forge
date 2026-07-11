@@ -24,6 +24,7 @@ const stageDir = path.join(electronDir, '.stage')
 const releaseDir = path.join(electronDir, 'release')
 const backendStageDir = path.join(stageDir, 'backend')
 const backendStageBundlePath = path.join(backendStageDir, 'dist', 'index.mjs')
+const backendStageMetafilePath = path.join(backendStageDir, 'dist', 'index.meta.json')
 const backendStageNodeModulesDir = path.join(backendStageDir, 'node_modules')
 const uiStageDir = path.join(stageDir, 'ui')
 const cliStageDir = path.join(stageDir, 'cli')
@@ -77,6 +78,13 @@ export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
       typeof loadedModule?.getText === 'function' && typeof loadedModule?.setText === 'function'
         ? null
         : 'expected getText()/setText() exports',
+  },
+  {
+    name: '@earendil-works/pi-ai',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.createProvider === 'function' ? null : 'expected a createProvider() export',
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedPiAiPackageDir(stagedPackageDir),
   },
   {
     name: '@earendil-works/pi-coding-agent',
@@ -151,7 +159,7 @@ async function main() {
 async function stageBundledBackend() {
   await mkdir(path.dirname(backendStageBundlePath), { recursive: true })
 
-  await esbuild({
+  const metafile = await esbuild({
     entryPoints: [backendBuildEntry],
     outfile: backendStageBundlePath,
     bundle: true,
@@ -167,7 +175,9 @@ async function stageBundledBackend() {
     },
     logLevel: 'info',
     legalComments: 'none',
+    metafile: true,
   })
+  await writeFile(backendStageMetafilePath, JSON.stringify(metafile, null, 2), 'utf8')
 
   // Stage backend package.json — needed at runtime by bundled dependencies
   // that walk up the directory tree looking for package.json (e.g. pi-coding-agent
@@ -248,8 +258,10 @@ export async function validatePackagedRuntimePreflight() {
     )
   }
 
+  validateBackendMetafileHasNoEmbeddedPiAiImplementation()
   await validateStagedCursorSdkRuntime(stagedRequire)
-  await validateStagedPiCompactionMeasurement(stagedRequire)
+  await validateStagedPiSingletonRuntime(stagedRequire)
+  await validateStagedPiFunctionalSmoke(stagedRequire)
 
   console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
   for (const resolution of verifiedPackages) {
@@ -361,6 +373,28 @@ export function resolveStagedPackageEntryFromManifest(stagedPackageDir) {
     pickPackageEntryFromExports(manifest.exports) ??
     (typeof manifest.main === 'string' ? manifest.main : null)
 
+  if (!relativeEntry) {
+    return null
+  }
+
+  const resolvedEntry = path.resolve(stagedPackageDir, relativeEntry)
+  return existsSync(resolvedEntry) ? resolvedEntry : null
+}
+
+export function resolveStagedPackageSubpathFromManifest(stagedPackageDir, subpath) {
+  const manifestPath = path.join(stagedPackageDir, 'package.json')
+  if (!existsSync(manifestPath)) {
+    return null
+  }
+
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch {
+    return null
+  }
+
+  const relativeEntry = pickPackageEntryFromExports(manifest.exports?.[subpath])
   if (!relativeEntry) {
     return null
   }
@@ -641,7 +675,6 @@ export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
   const requiredPaths = [
     'package.json',
     path.join('dist', 'core', 'messages.js'),
-    path.join('dist', 'core', 'compaction', 'utils.js'),
   ]
 
   for (const relativePath of requiredPaths) {
@@ -653,48 +686,215 @@ export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
   return null
 }
 
-async function validateStagedPiCompactionMeasurement(stagedRequire) {
-  const stagedPackageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')
-  const stagedPackageValidationFailure = validateStagedPiCodingAgentPackageDir(stagedPackageDir)
-  if (stagedPackageValidationFailure) {
+export function validateStagedPiAiPackageDir(stagedPackageDir) {
+  const requiredPaths = [
+    'package.json',
+    path.join('dist', 'index.js'),
+    path.join('dist', 'compat.js'),
+    path.join('dist', 'api'),
+  ]
+
+  for (const relativePath of requiredPaths) {
+    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
+      return `missing required asset ${relativePath}`
+    }
+  }
+
+  return null
+}
+
+function validateBackendMetafileHasNoEmbeddedPiAiImplementation() {
+  const metafile = JSON.parse(readFileSync(backendStageMetafilePath, 'utf8'))
+  const embeddedPiAiInputs = Object.keys(metafile.inputs ?? {}).filter(
+    (input) => input.includes('node_modules/@earendil-works/pi-ai/') || input.includes('node_modules/@earendil-works+pi-ai@'),
+  )
+  if (embeddedPiAiInputs.length > 0) {
     throw new Error(
-      `Packaged-runtime preflight failed: staged Pi compaction measurement package is invalid: ${stagedPackageValidationFailure}`,
+      `Packaged-runtime preflight failed: backend bundle embedded pi-ai implementation modules: ${embeddedPiAiInputs.join(', ')}`,
+    )
+  }
+}
+
+async function validateStagedPiSingletonRuntime(stagedRequire) {
+  const piAiPackageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai')
+  const piCodingAgentPackageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')
+  const piAiManifest = JSON.parse(readFileSync(path.join(piAiPackageDir, 'package.json'), 'utf8'))
+  const piCodingAgentManifest = JSON.parse(readFileSync(path.join(piCodingAgentPackageDir, 'package.json'), 'utf8'))
+  if (piAiManifest.version !== '0.80.6' || piCodingAgentManifest.version !== '0.80.6') {
+    throw new Error(
+      `Packaged-runtime preflight failed: expected coherent Pi 0.80.6 closure, got pi-ai ${piAiManifest.version} and pi-coding-agent ${piCodingAgentManifest.version}`,
     )
   }
 
-  const messagesPath = path.join(stagedPackageDir, 'dist', 'core', 'messages.js')
-  const utilsPath = path.join(stagedPackageDir, 'dist', 'core', 'compaction', 'utils.js')
-
-  for (const [label, modulePath] of [
-    ['messages', messagesPath],
-    ['compaction utils', utilsPath],
-  ]) {
-    assertPathIsWithinDirectory(
-      modulePath,
-      backendStageNodeModulesDir,
-      `Packaged-runtime preflight failed: Pi compaction ${label} module resolved outside staged node_modules`,
+  const forgeCompatPath = await fs.promises.realpath(resolveStagedPackageSubpathFromManifest(piAiPackageDir, './compat'))
+  const codingAgentCompatPath = await fs.promises.realpath(resolveStagedPackageSubpathFromManifest(piAiPackageDir, './compat'))
+  if (forgeCompatPath !== codingAgentCompatPath) {
+    throw new Error(
+      `Packaged-runtime preflight failed: Forge and coding-agent resolved different pi-ai/compat realpaths (${forgeCompatPath} vs ${codingAgentCompatPath})`,
     )
-
-    let loadedModule
-    try {
-      loadedModule = await loadRuntimeModuleFromEntry(stagedRequire, modulePath)
-    } catch (error) {
-      throw new Error(
-        `Packaged-runtime preflight failed: unable to load Pi compaction ${label} module from ${modulePath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
-    }
-
-    const exportName = label === 'messages' ? 'convertToLlm' : 'serializeConversation'
-    if (typeof loadedModule?.[exportName] !== 'function') {
-      throw new Error(
-        `Packaged-runtime preflight failed: Pi compaction ${label} module at ${modulePath} is missing ${exportName}() export`,
-      )
-    }
   }
 
-  console.log('[electron/build-all] Packaged-runtime preflight verified Pi compaction measurement modules')
+  const [forgeCompat, codingAgentCompat] = await Promise.all([
+    import(pathToFileURL(forgeCompatPath).href),
+    import(pathToFileURL(codingAgentCompatPath).href),
+  ])
+  if (forgeCompat.registerFauxProvider !== codingAgentCompat.registerFauxProvider) {
+    throw new Error('Packaged-runtime preflight failed: pi-ai/compat ESM identity is not shared')
+  }
+
+  const registration = forgeCompat.registerFauxProvider({
+    api: 'packaged-singleton-api',
+    provider: 'packaged-singleton',
+    models: [{ id: 'singleton-model' }],
+  })
+  try {
+    if (codingAgentCompat.getApiProvider(registration.api)?.api !== registration.api) {
+      throw new Error('Packaged-runtime preflight failed: pi-ai shared faux provider state is not visible across imports')
+    }
+  } finally {
+    registration.unregister()
+  }
+}
+
+async function validateStagedPiFunctionalSmoke(stagedRequire) {
+  const pi = await import(pathToFileURL(resolveStagedRuntimePackageEntry(stagedRequire, '@earendil-works/pi-coding-agent', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent'))).href)
+  const compat = await import(pathToFileURL(resolveStagedPackageSubpathFromManifest(path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai'), './compat')).href)
+  const root = await fs.promises.mkdtemp(path.join(stageDir, 'pi-smoke-'))
+  const agentDir = path.join(root, 'agent')
+  const sessionFile = path.join(root, 'session.jsonl')
+  const marker = path.join(root, 'trusted-extension-marker.txt')
+  const extensionPath = path.join(root, '.forge', 'pi', 'extensions', 'trusted.js')
+  await mkdir(path.dirname(extensionPath), { recursive: true })
+  await writeFile(path.join(root, 'README.md'), 'staged smoke read-only content\n', 'utf8')
+  await writeFile(
+    extensionPath,
+    `import { writeFileSync } from 'node:fs'; export default function setup() { writeFileSync(${JSON.stringify(marker)}, 'loaded', 'utf8'); }\n`,
+    'utf8',
+  )
+  await writeFile(
+    path.join(root, '.forge', 'pi', 'settings.json'),
+    JSON.stringify({ extensions: ['./extensions/trusted.js'] }),
+    'utf8',
+  )
+  await writeFile(sessionFile, '', 'utf8')
+
+  const faux = compat.registerFauxProvider({
+    api: 'packaged-smoke-api',
+    provider: 'packaged-smoke',
+    models: [{ id: 'packaged-smoke-model', name: 'Packaged Smoke', contextWindow: 32000, maxTokens: 1024 }],
+  })
+  faux.setResponses([
+    compat.fauxAssistantMessage(compat.fauxToolCall('read', { path: 'README.md' }, { id: 'smoke-read-1' }), { stopReason: 'tool_use' }),
+    'cached request reconnect ok',
+  ])
+
+  const authStorage = pi.AuthStorage.inMemory({})
+  authStorage.setRuntimeApiKey('packaged-smoke', 'faux-test-key')
+
+  const deniedStorage = {
+    withLock(scope, fn) {
+      fn(scope === 'global' ? undefined : JSON.stringify({ extensions: ['!*'], packages: [], skills: [], prompts: [], themes: [] }))
+    },
+  }
+  const deniedSettingsManager = pi.SettingsManager.fromStorage(deniedStorage, { projectTrusted: false })
+  const deniedResourceLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager: deniedSettingsManager,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await deniedResourceLoader.reload({ resolveProjectTrust: async () => false })
+  const deniedSessionFile = path.join(root, 'denied-session.jsonl')
+  await writeFile(deniedSessionFile, '', 'utf8')
+  const deniedCreated = await pi.createAgentSession({
+    cwd: root,
+    agentDir,
+    authStorage,
+    modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+    model: faux.getModel(),
+    thinkingLevel: 'off',
+    sessionManager: pi.SessionManager.open(deniedSessionFile, undefined, root),
+    resourceLoader: deniedResourceLoader,
+    settingsManager: deniedSettingsManager,
+    noTools: 'all',
+  })
+  await deniedCreated.session.bindExtensions({})
+  deniedCreated.session.dispose()
+  if (existsSync(marker)) {
+    throw new Error('Packaged-runtime preflight failed: denied-trust project extension executed in staged smoke')
+  }
+
+  const storage = {
+    withLock(scope, fn) {
+      const current = scope === 'global'
+        ? undefined
+        : JSON.stringify({ extensions: ['!*', './extensions/trusted.js', extensionPath, `+${extensionPath}`], packages: [], skills: [], prompts: [], themes: [] })
+      fn(current)
+    },
+  }
+  const settingsManager = pi.SettingsManager.fromStorage(storage, { projectTrusted: true })
+  const resourceLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await resourceLoader.reload({ resolveProjectTrust: async () => true })
+  const { session } = await pi.createAgentSession({
+    cwd: root,
+    agentDir,
+    authStorage,
+    modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+    model: faux.getModel(),
+    thinkingLevel: 'off',
+    sessionManager: pi.SessionManager.open(sessionFile, undefined, root),
+    resourceLoader,
+    settingsManager,
+    tools: ['read'],
+  })
+
+  try {
+    await session.bindExtensions({})
+    await session.prompt('read README.md')
+    session.dispose()
+    const restarted = pi.SessionManager.open(sessionFile, undefined, root)
+    const context = restarted.buildSessionContext()
+    if (!JSON.stringify(context.messages).includes('staged smoke read-only content')) {
+      throw new Error('Packaged-runtime preflight failed: safe read-only tool result was not replayable from staged session')
+    }
+    if (!existsSync(marker)) {
+      throw new Error('Packaged-runtime preflight failed: trusted project extension did not load in staged smoke')
+    }
+    faux.appendResponses(['cached request reconnect ok'])
+    const secondSessionFile = path.join(root, 'session-2.jsonl')
+    await writeFile(secondSessionFile, '', 'utf8')
+    const second = await pi.createAgentSession({
+      cwd: root,
+      agentDir,
+      authStorage,
+      modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+      model: faux.getModel(),
+      thinkingLevel: 'off',
+      sessionManager: pi.SessionManager.open(secondSessionFile, undefined, root),
+      resourceLoader,
+      settingsManager,
+      noTools: 'all',
+    })
+    await second.session.prompt('cached reconnect')
+    second.session.dispose()
+    if (faux.state.callCount < 2) {
+      throw new Error('Packaged-runtime preflight failed: staged faux provider did not observe repeated requests')
+    }
+  } finally {
+    faux.unregister()
+    session.dispose()
+  }
 }
 
 function validateStagedCursorSdkPackageDir(stagedPackageDir) {
