@@ -36,20 +36,22 @@ Machine-readable logs belong under `.internal/pi-upgrade-evidence/` (gitignored)
 | Package | Version | Notes |
 |---------|---------|-------|
 | `@mariozechner/pi-ai` | `0.71.1` | Root `pnpm.patchedDependencies` |
-| `@earendil-works/pi-coding-agent` | `0.71.1` | Compaction reentrancy patch |
+| `@mariozechner/pi-coding-agent` | `0.71.1` | Compaction reentrancy patch |
 | `@mariozechner/pi-agent-core` | `0.71.1` | Transitive |
 | `@mariozechner/pi-tui` | `0.71.1` | Transitive |
 
-Inspected target tarball SHA-256 (registry, not yet pinned):
+Inspected target tarball SHA-256 (registry, not yet pinned at baseline capture; later pinned on this branch):
 
 | Package | SHA-256 |
 |---------|---------|
 | `@earendil-works/pi-coding-agent@0.80.6` | `2a77634640b2d86d90d24087bb67559ecf2366e0fb52a42c55eed416147da411` |
 | `@earendil-works/pi-ai@0.80.6` | `1aa05502e0c3d7d4e756ec089ace195fcd9befc9566898d6c870f7be1f7a12b5` |
+| `@earendil-works/pi-agent-core@0.80.6` | see `pnpm-lock.yaml` integrity for exact pin after WP-3 |
+| `@earendil-works/pi-tui@0.80.6` | see `pnpm-lock.yaml` integrity for exact pin after WP-3 |
 
 ## Source singleton (0.71.1)
 
-From `apps/backend`, `import.meta.resolve('@earendil-works/pi-ai/compat')` via Forge parent and via `pi-coding-agent` parent share one realpath and identical `registerFauxProvider` / `getModel` / `closeOpenAICodexWebSocketSessions` function identity. Electron packaging still externalizes only `pi-coding-agent` today — see Electron characterization tests.
+From `apps/backend`, `import.meta.resolve('@mariozechner/pi-ai')` via Forge parent and via `@mariozechner/pi-coding-agent` parent share one realpath and identical `registerFauxProvider` / `getModel` / `closeOpenAICodexWebSocketSessions` function identity. Electron packaging still externalized only `pi-coding-agent` at baseline — see Electron characterization tests. After the 0.80.6 pin, Forge parents resolve `@earendil-works/pi-ai/compat` instead.
 
 ## Focused baseline result (this branch)
 
@@ -81,3 +83,8 @@ Version-labelled session fixtures live at:
 `apps/backend/src/swarm/__tests__/fixtures/pi-sessions/0.71.1/`
 
 See `manifest.json` and `pi-session-fixture-characterization.test.ts`.
+
+## Thinking-level mapping (post-pin)
+
+Forge maps manager thinking levels at the Pi boundary as `none→off`, `ultra→max`, and `x-high→xhigh`. In this release `max` and `ultra` request the same Pi thinking level; release notes must say so. Persistence/display reverse-mapping remains explicit in Forge code.
+

@@ -85,3 +85,19 @@ chmod +x scripts/pi-upgrade/*.sh
 - `.env` is gitignored.
 - Copied data lives under `~/.forge-worktree-*`, outside the worktree/repo.
 - `.internal/` evidence logs are gitignored; committed docs under `docs/pi-upgrade/` contain no secrets.
+
+## Frozen 0.71.1 rollback runner
+
+Bidirectional session/downgrade proof needs an exact old SessionManager outside shipped deps:
+
+```bash
+./scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh
+# optional override:
+# export FORGE_PI_0711_SESSION_MANAGER_JS=/absolute/path/to/session-manager.js
+```
+
+Default install path: `<worktree>/.forge/pi-upgrade-runners/0.71.1/...` (gitignored).
+The characterization gate hard-fails when the runner is absent or not `@mariozechner/pi-coding-agent@0.71.1`; it does not silently skip.
+
+Default rollback for release incidents remains **pre-upgrade data snapshot + old binary**. In-place binary downgrade is allowed only after the bidirectional fixture gate passes.
+

@@ -559,7 +559,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'grok-4',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; Pi 0.80.6 removed grok-4 from the xAI catalog. Forge retains this curated row pending WP-7 retarget (API still overridden to openai-responses via xai-responses behavior adapter).',
+        'Pi 0.80.6 removed grok-4 from the upstream xAI catalog. Forge retains this curated row and continues routing it through the openai-responses xAI behavior adapter.',
     },
     'grok-4-fast': {
       modelId: 'grok-4-fast',
@@ -577,7 +577,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'grok-4-fast',
       intentionalDivergenceNotes:
-        'Pending Pi upstream; Pi 0.80.6 removed grok-4-fast from the xAI catalog. Forge retains this curated row pending WP-7 retarget (API overridden to openai-responses; text-only even when upstream advertised image input).',
+        'Pi 0.80.6 removed grok-4-fast from the upstream xAI catalog. Forge retains this curated text-only row and routes it through the openai-responses xAI behavior adapter.',
     },
     'grok-4.20-0309-reasoning': {
       modelId: 'grok-4.20-0309-reasoning',
