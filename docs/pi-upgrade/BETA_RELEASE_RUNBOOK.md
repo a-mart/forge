@@ -1,0 +1,82 @@
+# Pi 0.80.6 beta / release runbook
+
+Owner-operated gates for shipping the `@earendil-works/pi-*@0.80.6` upgrade. Production `47287` and `~/.forge` stay untouched until an explicit owner promote step.
+
+## Breaking extension migration
+
+1. Scan first (read-only):
+   ```bash
+   pnpm pi-extension:migrate -- ~/.forge/agent/extensions ~/.forge/agent/manager/extensions
+   pnpm pi-extension:migrate -- <cwd>/.forge/pi/extensions <cwd>/.pi/extensions
+   ```
+2. Apply supported rewrites:
+   ```bash
+   pnpm pi-extension:migrate -- --write <extension-dir>
+   ```
+3. Unsupported legacy subpaths (for example `@mariozechner/pi-ai/private-subpath`) fail closed with Forge migration guidance at the runtime extension snapshot seam. There are no `@mariozechner/pi-*` shims.
+4. Re-bind / smoke a trusted project extension after rewrite. Source + staged packaged preflight both exercise unsupported-subpath diagnostics.
+
+## Thinking-level `none` / `ultra` mapping
+
+| Legacy / fixture label | 0.80.6 target-native selector |
+| --- | --- |
+| `none` | `none` / off-equivalent in Forge selectors |
+| `ultra` | `max` |
+
+Fixtures retain `none`/`ultra` labels for cross-version JSONL compatibility proofs. UI/settings selectors expose the target-native set including `max`. Do not invent a silent dual-write of both labels in new sessions.
+
+## Snapshot + old-binary rollback
+
+1. Before upgrade, copy data with `scripts/pi-upgrade/prepare-isolated-data.sh` (refuses production overlap).
+2. Provision the immutable frozen runner:
+   ```bash
+   pnpm pi-upgrade:provision-0711-runner
+   ```
+   This uses committed `scripts/pi-upgrade/pi-0711-rollback-runner/{package.json,package-lock.json}` via `npm ci`.
+3. Characterization gates open 0.80.6-written v3 fixtures under the frozen `@mariozechner/pi-coding-agent@0.71.1` runner and prove bidirectional append/reopen.
+4. If the frozen runner cannot open target-written state, **fail the gate closed**. Retain the pre-upgrade snapshot and the old binary; do **not** downgrade in-place.
+
+## Isolation harness
+
+```bash
+scripts/pi-upgrade/start-isolated-instance.sh
+scripts/pi-upgrade/stop-isolated-instance.sh
+```
+
+Start records the **actual TCP listener PID**, validates wrapper ancestry + nonce + `FORGE_DATA_DIR`, and refuses occupied ports. Stop kills only the verified owned wrapper/listener tree.
+
+## Packaging / Electron
+
+- Pi family (`pi-ai`, `pi-coding-agent`, `pi-agent-core`, `pi-tui`) is a hard singleton: skew fails closed.
+- Non-Pi multi-version deps (for example `@anthropic-ai/sdk` for Claude Agent SDK `^0.80.0` vs Pi `0.91.1`) are staged as nested installs. Flat staging must never warn-and-discard incompatible versions.
+- Exported validators: `assertPiFamilySingletonManifests`, `validateStagedPiSingletonRuntime`, `validatePackagedRuntimePreflight`.
+
+## Windows trust
+
+CI jobs set `FORGE_REQUIRE_WIN32_TRUST_GATES=1` on `windows-latest` and run junction/case trust characterization. Local macOS/Linux runs skip those cases unless the env flag is set (then they fail closed outside win32).
+
+Owner-only residual: extracted installer smoke on real Windows hardware after CI artifacts land.
+
+## Owner gates before broad rollout
+
+These remain owner-operated and are not silently skipped by child CI jobs:
+
+1. Extracted macOS + Windows installer smoke from staged/release artifacts
+2. Live provider canary on the isolated instance (not production)
+3. Copied-data downgrade rehearsal with snapshot + frozen 0.71.1 binary
+4. Model-catalog audit policy warnings reviewed separately from hard failures:
+   ```bash
+   pnpm model-catalog:audit
+   ```
+
+## Validation checklist
+
+```bash
+pnpm pi-package:identity
+pnpm lint
+pnpm exec knip
+pnpm test
+cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
+cd apps/ui && pnpm exec tsc --noEmit
+pnpm build:electron   # or package:electron for full staging preflight
+```
