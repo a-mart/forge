@@ -28,8 +28,19 @@ const tempDirs: string[] = [];
 interface Manifest {
   piSessionFormatVersion: number;
   forgeBaseline: string;
-  fixtures: Array<{ id: string; file: string }>;
+  forgeCommit: string;
+  forgeCommitShort?: string;
+  generatedAt?: string;
+  generation?: {
+    toolchain: string;
+    nodeVersion: string;
+    method: string;
+    integrity: string;
+  };
+  fixtureHashes?: Record<string, string>;
+  fixtures: Array<{ id: string; file: string; sha256?: string }>;
   rollbackPolicy: string;
+  targetNativeSemantics?: Record<string, string>;
 }
 
 afterEach(async () => {
@@ -81,6 +92,10 @@ describe("pi session fixture compatibility (WP-8)", () => {
       const manifest = await readManifest(version);
       expect(manifest.piSessionFormatVersion).toBe(CURRENT_SESSION_VERSION);
       expect(manifest.forgeBaseline).toBe(version);
+      expect(manifest.forgeCommit).toMatch(/^[a-f0-9]{40}$/);
+      expect(manifest.forgeCommit).not.toContain("wp-8");
+      expect(manifest.generation?.integrity).toBe("sha256-per-fixture");
+      expect(manifest.generation?.toolchain).toBe("node");
       expect(manifest.fixtures.map((fixture) => fixture.id)).toEqual([
         "compat-matrix",
         "aborted-stream-tail",
@@ -88,8 +103,19 @@ describe("pi session fixture compatibility (WP-8)", () => {
         "truncated-tail",
         "crash-during-compaction",
       ]);
-      expect(manifest.rollbackPolicy).toContain("snapshot-restore-only");
+      expect(manifest.rollbackPolicy).toContain("snapshot");
+      expect(manifest.rollbackPolicy).toMatch(/do not downgrade in-place/i);
+
+      for (const fixture of manifest.fixtures) {
+        const hash = await sha256File(join(FIXTURE_BASE, version, fixture.file));
+        expect(fixture.sha256).toBe(hash);
+        expect(manifest.fixtureHashes?.[fixture.id]).toBe(hash);
+      }
     }
+
+    const target = await readManifest("0.80.6");
+    expect(target.targetNativeSemantics?.thinkingLevels).toContain("max");
+    expect(target.targetNativeSemantics?.noneUltraMapping).toMatch(/none|ultra|max/i);
   });
 
   it("opens labelled fixtures, preserves stable ids/leaves, and covers all required v3 entry shapes", async () => {
@@ -286,6 +312,7 @@ describe("pi session fixture compatibility (WP-8)", () => {
     const current = SessionManager.open(target);
     expect(current.getEntries().map((entry) => entry.id)).toEqual(old.getEntries().map((entry) => entry.id));
     expect(contextSignature(current.buildSessionContext())).toEqual(contextSignature(old.buildSessionContext()));
+    expect(JSON.stringify(current.buildSessionContext())).toContain("old-runner append before target reopen");
 
     const resumedId = current.appendMessage({
       role: "assistant",
@@ -293,7 +320,31 @@ describe("pi session fixture compatibility (WP-8)", () => {
       timestamp: Date.parse("2026-07-11T10:06:00.000Z"),
     });
     expect(resumedId).toBeTruthy();
-    expect((await readFile(target, "utf8")).startsWith(mid)).toBe(true);
+    const after = await readFile(target, "utf8");
+    expect(after.startsWith(mid)).toBe(true);
     expect(SessionManager.open(target).getLeafId()).toBe(resumedId);
+
+    // Bidirectional reopen: frozen runner must still open the 0.80.6-appended file.
+    const reopenedOld = frozen0711.SessionManager.open(target);
+    expect(reopenedOld.getLeafId()).toBe(resumedId);
+    expect(JSON.stringify(reopenedOld.buildSessionContext())).toContain("0.80.6 resume after old append");
+    expect(contextSignature(reopenedOld.buildSessionContext())).toEqual(
+      contextSignature(SessionManager.open(target).buildSessionContext()),
+    );
+  });
+
+  it("documents fail-closed snapshot+old-binary rollback when in-place downgrade is unproven", async () => {
+    const manifest0711 = await readManifest("0.71.1");
+    const manifest0806 = await readManifest("0.80.6");
+    for (const manifest of [manifest0711, manifest0806]) {
+      expect(manifest.rollbackPolicy).toMatch(/fail closed|snapshot\+old-binary|snapshot-restore-only/i);
+      expect(manifest.rollbackPolicy).toMatch(/do not downgrade in-place/i);
+    }
+
+    // Positive proof path remains the bidirectional append/reopen tests above.
+    // When that proof fails for a future format, operators must retain snapshot + old binary.
+    const frozen0711 = await loadFrozenPi0711SessionModule();
+    expect(frozen0711.CURRENT_SESSION_VERSION).toBe(3);
+    expect(typeof frozen0711.SessionManager.open).toBe("function");
   });
 });

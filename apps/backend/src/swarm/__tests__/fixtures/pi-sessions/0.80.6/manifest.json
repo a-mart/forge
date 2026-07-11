@@ -1,33 +1,68 @@
 {
   "piSessionFormatVersion": 3,
   "forgeBaseline": "0.80.6",
-  "forgeCommit": "wp-8-current",
+  "forgeCommit": "b749c48c7764cee16cf31d71d4da9151d7d4f0a3",
   "fixtures": [
     {
       "id": "compat-matrix",
       "file": "compat-matrix.jsonl",
-      "description": "Full v3 session matrix: user/assistant/tool/custom/custom_message/model/thinking/branch/compaction/labels."
+      "description": "Full v3 session matrix: user/assistant/tool/custom/custom_message/model/thinking/branch/compaction/labels.",
+      "sha256": "b2b97eb3eba6c6968b5f88014fe9be29c1e93b7a74d8be48f183f0f47cec0986"
     },
     {
       "id": "aborted-stream-tail",
       "file": "aborted-stream-tail.jsonl",
-      "description": "Assistant stream aborted after a partial assistant message; file remains valid JSONL."
+      "description": "Assistant stream aborted after a partial assistant message; file remains valid JSONL.",
+      "sha256": "41600b3c6099df9cb3dd388d07acc3989513976fc196ad3da327beb81464d1fe"
     },
     {
       "id": "interrupted-tool-call",
       "file": "interrupted-tool-call.jsonl",
-      "description": "Assistant tool call started but no toolResult was persisted; open must not replay or execute tools."
+      "description": "Assistant tool call started but no toolResult was persisted; open must not replay or execute tools.",
+      "sha256": "438c9b64c11e4f3ed2d958989895bb4633f5ce42823c1b65b130a632c9a63534"
     },
     {
       "id": "truncated-tail",
       "file": "truncated-tail.jsonl",
-      "description": "Crash-truncated malformed tail after a valid prefix; readers must recover prefix and append safely via Forge timeline."
+      "description": "Crash-truncated malformed tail after a valid prefix; readers must recover prefix and append safely via Forge timeline.",
+      "sha256": "31480f7900fcae38097ea74d8cc0fb22b974c41190f86542a7394cf8a3a9b1ea"
     },
     {
       "id": "crash-during-compaction",
       "file": "crash-during-compaction.jsonl",
-      "description": "Compaction start marker without completed compaction summary; old messages remain authoritative."
+      "description": "Compaction start marker without completed compaction summary; old messages remain authoritative.",
+      "sha256": "0c58561cddd6e9205ad359a1447bf4a27fea2e6b8879a28ac37ab3732a9fd7f8"
     }
   ],
-  "rollbackPolicy": "0.80.6-written v3 state opens under the frozen 0.71.1 runner for this fixture matrix. If a future format does not, rollback is snapshot-restore-only from a pre-upgrade data copy; do not downgrade in-place."
+  "rollbackPolicy": "0.80.6-written v3 state opens under the frozen 0.71.1 runner for this fixture matrix. If a future format does not, the gate must fail closed and retain snapshot+old-binary rollback; do not downgrade in-place.",
+  "forgeCommitShort": "b749c48c7764",
+  "generatedAt": "2026-07-11T21:00:00.000Z",
+  "generation": {
+    "toolchain": "node",
+    "nodeMajor": 25,
+    "nodeVersion": "25.6.1",
+    "method": "checked-in-jsonl-fixtures",
+    "integrity": "sha256-per-fixture"
+  },
+  "targetNativeSemantics": {
+    "thinkingLevels": [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "noneUltraMapping": "Forge maps legacy none→off/none and ultra→max for 0.80.6 selectors; fixtures retain none/ultra labels for cross-version JSONL compatibility proofs.",
+    "compaction": "v3 compaction entries remain authoritative; incomplete compaction markers keep pre-compaction messages.",
+    "metadata": "model_change/thinking_level_change/custom/custom_message/label/branch_summary covered in compat-matrix."
+  },
+  "fixtureHashes": {
+    "compat-matrix": "b2b97eb3eba6c6968b5f88014fe9be29c1e93b7a74d8be48f183f0f47cec0986",
+    "aborted-stream-tail": "41600b3c6099df9cb3dd388d07acc3989513976fc196ad3da327beb81464d1fe",
+    "interrupted-tool-call": "438c9b64c11e4f3ed2d958989895bb4633f5ce42823c1b65b130a632c9a63534",
+    "truncated-tail": "31480f7900fcae38097ea74d8cc0fb22b974c41190f86542a7394cf8a3a9b1ea",
+    "crash-during-compaction": "0c58561cddd6e9205ad359a1447bf4a27fea2e6b8879a28ac37ab3732a9fd7f8"
+  }
 }
