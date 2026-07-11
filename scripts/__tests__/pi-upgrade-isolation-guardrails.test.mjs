@@ -51,20 +51,25 @@ describe("pi-upgrade isolation guardrails", () => {
     );
   });
 
-  it("launcher requires vacant ports and binds health to recorded child identity", () => {
+  it("launcher requires vacant ports and binds health to recorded listener identity", () => {
     const script = readFileSync(join(repoRoot, "scripts/pi-upgrade/start-isolated-instance.sh"), "utf8");
     expect(script).toContain("refusing to adopt an existing listener");
     expect(script).toContain("FORGE_PI_UPGRADE_INSTANCE_NONCE");
-    expect(script).toContain("backend health did not match recorded child/data/nonce identity");
+    expect(script).toContain("resolve_listener_pid");
+    expect(script).toContain("is_descendant_of");
+    expect(script).toContain(".wrapper.pid");
+    expect(script).toContain("backend health did not match recorded listener/parent/data/nonce identity");
     expect(script).toContain("isolated identity is empty");
   });
 
-  it("stop script kills only recorded nonce-verified owned PIDs, never arbitrary listeners", () => {
+  it("stop script kills only verified owned listener/wrapper trees, never arbitrary listeners", () => {
     const script = readFileSync(join(repoRoot, "scripts/pi-upgrade/stop-isolated-instance.sh"), "utf8");
-    expect(script).toContain("stop_recorded_pid");
+    expect(script).toContain("stop_owned_tree");
     expect(script).toContain("refusing to stop");
     expect(script).toContain("nonce mismatch");
     expect(script).toContain("refusing arbitrary kill");
+    expect(script).toContain("is_descendant_of");
+    expect(script).toContain(".wrapper.pid");
     expect(script).not.toMatch(/kill \$pids/);
   });
 });

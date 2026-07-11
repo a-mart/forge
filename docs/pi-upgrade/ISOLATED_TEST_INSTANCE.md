@@ -78,6 +78,8 @@ chmod +x scripts/pi-upgrade/*.sh
 ./scripts/pi-upgrade/stop-isolated-instance.sh
 ```
 
+Start records the **actual TCP listener PID** (not the `pnpm` wrapper), validates wrapper ancestry + nonce + `FORGE_DATA_DIR`, and refuses occupied ports. Stop kills only that verified owned wrapper/listener tree.
+
 **Never** use `vite preview` or a production UI build for worktree testing — only `vite dev` honors `VITE_FORGE_WS_URL`. UI ports above `47188` otherwise silently target production backend `47287`.
 
 ## Ignore safety
@@ -98,10 +100,9 @@ pnpm pi-upgrade:provision-0711-runner
 # export FORGE_PI_0711_SESSION_MANAGER_JS=/absolute/path/to/session-manager.js
 ```
 
-Default install path: `<worktree>/.forge/pi-upgrade-runners/0.71.1/...` (gitignored).
-The characterization gate hard-fails when the runner is absent or not `@mariozechner/pi-coding-agent@0.71.1`; it does not silently skip.
+The provisioner copies committed `scripts/pi-upgrade/pi-0711-rollback-runner/{package.json,package-lock.json}` and runs `npm ci` into `<worktree>/.forge/pi-upgrade-runners/0.71.1/...` (gitignored). The characterization gate hard-fails when the runner is absent or not `@mariozechner/pi-coding-agent@0.71.1`; it does not silently skip.
 
 `pnpm quality:full` and the manual GitHub `quality` workflow (changed/full tiers) provision this runner before tests so the hermetic WP-8 gate is reproducible outside Adam-local machines.
 
-Default rollback for release incidents remains **pre-upgrade data snapshot + old binary**. In-place binary downgrade is allowed only after the bidirectional fixture gate passes.
+Default rollback for release incidents remains **pre-upgrade data snapshot + old binary**. If in-place downgrade cannot be proven, fail the gate closed and retain snapshot + old binary. See [`BETA_RELEASE_RUNBOOK.md`](./BETA_RELEASE_RUNBOOK.md).
 
