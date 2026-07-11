@@ -70,7 +70,6 @@ async function loadProjectExtension(root: string, relativeExtension: string): Pr
 }> {
   const agentDir = join(root, "agent");
   const marker = join(root, "marker.txt");
-  const extensionPath = join(root, ".forge", "pi", "extensions", relativeExtension);
   const settingsPath = join(root, ".forge", "pi", "settings.json");
   await writeFile(settingsPath, JSON.stringify({ extensions: [`./extensions/${relativeExtension}`] }), "utf8");
 
