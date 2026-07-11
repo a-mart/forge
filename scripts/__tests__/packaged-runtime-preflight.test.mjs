@@ -78,9 +78,10 @@ describe('validateStagedPiCodingAgentPackageDir', () => {
   it('accepts staged pi-coding-agent dirs with public package assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-pi-coding-agent-'))
 
-    await mkdir(join(root, 'dist', 'core'), { recursive: true })
+    await mkdir(join(root, 'dist', 'core', 'export-html'), { recursive: true })
+    await mkdir(join(root, 'dist', 'modes', 'interactive', 'theme'), { recursive: true })
     await writeFile(join(root, 'package.json'), '{}')
-    await writeFile(join(root, 'dist', 'core', 'messages.js'), 'export function convertToLlm() {}')
+    await writeFile(join(root, 'dist', 'index.js'), 'export class AgentSession {}')
 
     expect(validateStagedPiCodingAgentPackageDir(root)).toBeNull()
   })
@@ -88,10 +89,10 @@ describe('validateStagedPiCodingAgentPackageDir', () => {
   it('reports missing public package assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-pi-coding-agent-missing-'))
 
-    await mkdir(join(root, 'dist', 'core'), { recursive: true })
+    await mkdir(join(root, 'dist'), { recursive: true })
     await writeFile(join(root, 'package.json'), '{}')
 
-    expect(validateStagedPiCodingAgentPackageDir(root)).toContain('messages.js')
+    expect(validateStagedPiCodingAgentPackageDir(root)).toContain('index.js')
   })
 })
 
@@ -176,13 +177,12 @@ describe('resolveStagedPackageEntryFromManifest', () => {
   it('loads staged package modules from public dist paths', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-pi-public-load-'))
 
-    await mkdir(join(root, 'dist', 'core'), { recursive: true })
-    await writeFile(join(root, 'dist', 'core', 'messages.js'), 'export function convertToLlm(messages) { return messages }')
+    await mkdir(join(root, 'dist'), { recursive: true })
+    await writeFile(join(root, 'dist', 'index.js'), 'export class AgentSession {}')
 
     const stagedRequire = createRequire(join(root, 'package.json'))
-    const messagesModule = await loadRuntimeModuleFromEntry(stagedRequire, join(root, 'dist', 'core', 'messages.js'))
+    const publicModule = await loadRuntimeModuleFromEntry(stagedRequire, join(root, 'dist', 'index.js'))
 
-    expect(typeof messagesModule.convertToLlm).toBe('function')
-    expect(messagesModule.convertToLlm([{ role: 'user' }])).toEqual([{ role: 'user' }])
+    expect(typeof publicModule.AgentSession).toBe('function')
   })
 })

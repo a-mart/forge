@@ -6,12 +6,22 @@ import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  BACKEND_BUNDLE_EXTERNAL_PACKAGES,
-  resolveStagedPackageSubpathFromManifest,
-} from '../../apps/electron/scripts/build-all.mjs'
+import { BACKEND_BUNDLE_EXTERNAL_PACKAGES } from '../../apps/electron/scripts/build-all.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
+
+function findPackageRootFrom(packageName, startDirectory) {
+  const parts = packageName.startsWith('@') ? packageName.split('/') : [packageName]
+  let current = startDirectory
+  for (let i = 0; i < 8; i++) {
+    const candidate = join(current, 'node_modules', ...parts)
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  throw new Error(`Unable to locate ${packageName} from ${startDirectory}`)
+}
 
 function findPackageFile(packageName, relativeFile) {
   const parts = packageName.startsWith('@') ? packageName.split('/') : [packageName]
@@ -38,10 +48,12 @@ describe('packaged-runtime Pi singleton characterization (0.80.6 pin)', () => {
 
   it('source install resolves one pi-ai/compat realpath for Forge and coding-agent parents', async () => {
     const codingAgentIndex = findPackageFile('@earendil-works/pi-coding-agent', 'dist/index.js')
-    const compatFromBackendTree = findPackageFile('@earendil-works/pi-ai', 'dist/compat.js')
+    createRequire(join(repoRoot, 'apps/backend/package.json'))
     createRequire(codingAgentIndex)
-    const fromCoding = realpathSync(resolveStagedPackageSubpathFromManifest(dirname(dirname(compatFromBackendTree)), './compat'))
-    const fromBackend = realpathSync(compatFromBackendTree)
+    const backendPiAiRoot = findPackageRootFrom('@earendil-works/pi-ai', join(repoRoot, 'apps/backend'))
+    const codingPiAiRoot = findPackageRootFrom('@earendil-works/pi-ai', dirname(codingAgentIndex))
+    const fromBackend = realpathSync(join(backendPiAiRoot, 'dist', 'compat.js'))
+    const fromCoding = realpathSync(join(codingPiAiRoot, 'dist', 'compat.js'))
     expect(fromBackend).toBe(fromCoding)
 
     const backendMod = await import(pathToFileURL(fromBackend).href)

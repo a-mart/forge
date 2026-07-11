@@ -520,7 +520,18 @@ async function collectRuntimePackageClosure(rootPackages) {
     }
 
     const resolved = await resolveInstalledPackage(next.packageName, next.resolveFromManifestPath, next.optional)
-    if (!resolved || discoveredPackages.has(resolved.name)) {
+    if (!resolved) {
+      continue
+    }
+    const existing = discoveredPackages.get(resolved.name)
+    if (existing) {
+      const existingRealpath = await fs.promises.realpath(existing.packageRoot)
+      const resolvedRealpath = await fs.promises.realpath(resolved.packageRoot)
+      if (existingRealpath !== resolvedRealpath || existing.manifest.version !== resolved.manifest.version) {
+        throw new Error(
+          `Runtime package closure resolved conflicting ${resolved.name}: ${existingRealpath}@${existing.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
+        )
+      }
       continue
     }
 
@@ -674,7 +685,9 @@ async function copyRuntimePackage(runtimePackage, targetDir) {
 export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
   const requiredPaths = [
     'package.json',
-    path.join('dist', 'core', 'messages.js'),
+    path.join('dist', 'index.js'),
+    path.join('dist', 'core', 'export-html'),
+    path.join('dist', 'modes', 'interactive', 'theme'),
   ]
 
   for (const relativePath of requiredPaths) {
@@ -716,30 +729,39 @@ function validateBackendMetafileHasNoEmbeddedPiAiImplementation() {
 }
 
 async function validateStagedPiSingletonRuntime(stagedRequire) {
-  const piAiPackageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai')
-  const piCodingAgentPackageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')
-  const piAiManifest = JSON.parse(readFileSync(path.join(piAiPackageDir, 'package.json'), 'utf8'))
-  const piCodingAgentManifest = JSON.parse(readFileSync(path.join(piCodingAgentPackageDir, 'package.json'), 'utf8'))
-  if (piAiManifest.version !== '0.80.6' || piCodingAgentManifest.version !== '0.80.6') {
-    throw new Error(
-      `Packaged-runtime preflight failed: expected coherent Pi 0.80.6 closure, got pi-ai ${piAiManifest.version} and pi-coding-agent ${piCodingAgentManifest.version}`,
-    )
+  const piPackageDirs = new Map([
+    ['@earendil-works/pi-agent-core', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-agent-core')],
+    ['@earendil-works/pi-ai', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai')],
+    ['@earendil-works/pi-coding-agent', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')],
+    ['@earendil-works/pi-tui', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-tui')],
+  ])
+  for (const [packageName, packageDir] of piPackageDirs) {
+    const manifest = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'))
+    if (manifest.version !== '0.80.6') {
+      throw new Error(`Packaged-runtime preflight failed: expected ${packageName}@0.80.6, got ${manifest.version}`)
+    }
   }
 
-  const forgeCompatPath = await fs.promises.realpath(resolveStagedPackageSubpathFromManifest(piAiPackageDir, './compat'))
-  const codingAgentCompatPath = await fs.promises.realpath(resolveStagedPackageSubpathFromManifest(piAiPackageDir, './compat'))
+  const piAiPackageDir = piPackageDirs.get('@earendil-works/pi-ai')
+  const piCodingAgentPackageDir = piPackageDirs.get('@earendil-works/pi-coding-agent')
+  const forgePiAiRoot = await findInstalledPackageRoot('@earendil-works/pi-ai', path.dirname(backendStageBundlePath))
+  const codingAgentPiAiRoot = await findInstalledPackageRoot('@earendil-works/pi-ai', piCodingAgentPackageDir)
+  const forgeCompatPath = await fs.promises.realpath(path.join(forgePiAiRoot, 'dist', 'compat.js'))
+  const codingAgentCompatPath = await fs.promises.realpath(path.join(codingAgentPiAiRoot, 'dist', 'compat.js'))
   if (forgeCompatPath !== codingAgentCompatPath) {
     throw new Error(
       `Packaged-runtime preflight failed: Forge and coding-agent resolved different pi-ai/compat realpaths (${forgeCompatPath} vs ${codingAgentCompatPath})`,
     )
   }
 
-  const [forgeCompat, codingAgentCompat] = await Promise.all([
+  const [forgeCompat, codingAgentCompat, forgeRoot, codingRoot] = await Promise.all([
     import(pathToFileURL(forgeCompatPath).href),
     import(pathToFileURL(codingAgentCompatPath).href),
+    import(pathToFileURL(createRequire(backendStageBundlePath).resolve('@earendil-works/pi-ai')).href),
+    import(pathToFileURL(createRequire(path.join(piCodingAgentPackageDir, 'package.json')).resolve('@earendil-works/pi-ai')).href),
   ])
-  if (forgeCompat.registerFauxProvider !== codingAgentCompat.registerFauxProvider) {
-    throw new Error('Packaged-runtime preflight failed: pi-ai/compat ESM identity is not shared')
+  if (forgeCompat.registerFauxProvider !== codingAgentCompat.registerFauxProvider || forgeRoot.createProvider !== codingRoot.createProvider) {
+    throw new Error('Packaged-runtime preflight failed: pi-ai ESM identity is not shared')
   }
 
   const registration = forgeCompat.registerFauxProvider({
@@ -749,7 +771,19 @@ async function validateStagedPiSingletonRuntime(stagedRequire) {
   })
   try {
     if (codingAgentCompat.getApiProvider(registration.api)?.api !== registration.api) {
-      throw new Error('Packaged-runtime preflight failed: pi-ai shared faux provider state is not visible across imports')
+      throw new Error('Packaged-runtime preflight failed: pi-ai shared faux provider state is not visible from coding-agent parent')
+    }
+    const reverse = codingAgentCompat.registerFauxProvider({
+      api: 'packaged-singleton-reverse-api',
+      provider: 'packaged-singleton-reverse',
+      models: [{ id: 'singleton-reverse-model' }],
+    })
+    try {
+      if (forgeCompat.getApiProvider(reverse.api)?.api !== reverse.api) {
+        throw new Error('Packaged-runtime preflight failed: pi-ai shared faux provider state is not visible from Forge parent')
+      }
+    } finally {
+      reverse.unregister()
     }
   } finally {
     registration.unregister()
