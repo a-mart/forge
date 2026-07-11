@@ -8,14 +8,6 @@ import type {
 export const OAUTH_LEGACY_DEVICE_CODE_FALLBACK_MARKER = "[forge-oauth-legacy-fallback:device_code]";
 export const OAUTH_LEGACY_SELECT_FALLBACK_MARKER = "[forge-oauth-legacy-fallback:select]";
 
-export function isOAuthLegacyDeviceCodeFallback(instructions?: string): boolean {
-  return typeof instructions === "string" && instructions.includes(OAUTH_LEGACY_DEVICE_CODE_FALLBACK_MARKER);
-}
-
-export function isOAuthLegacySelectFallback(message?: string): boolean {
-  return typeof message === "string" && message.includes(OAUTH_LEGACY_SELECT_FALLBACK_MARKER);
-}
-
 type SendSettingsAuthLoginSseEvent = <TEventName extends SettingsAuthLoginEventName>(
   eventName: TEventName,
   data: SettingsAuthLoginEventPayload[TEventName],
