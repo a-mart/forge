@@ -64,7 +64,7 @@ describe("project executable trust helpers", () => {
     expect(plan.trustedPiSettingsPaths).not.toContain(join(cwd, ".pi", "settings.json"));
   });
 
-  it("uses an empty project Pi settings surface when repo executables are untrusted", () => {
+  it("uses an empty project Pi settings surface when repo executables are untrusted (incomplete security regression boundary, not a demonstrated active exploit)", () => {
     const storage = buildProjectSafePiProjectSettingsStorage({
       agentDir: "/tmp/agent",
       projectExecutablesTrusted: false

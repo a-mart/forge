@@ -252,7 +252,9 @@ export class PiRuntimeCreator {
           });
 
     try {
-      await resourceLoader.reload();
+      await resourceLoader.reload({
+        resolveProjectTrust: async () => projectExecutableTrustPlan.trusted,
+      });
     } catch (error) {
       this.deps.logDebug("runtime:resource_loader:reload_error", {
         agentId: descriptor.agentId,
