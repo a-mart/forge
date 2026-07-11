@@ -58,7 +58,7 @@ From `apps/backend`, `import.meta.resolve('@mariozechner/pi-ai')` via Forge pare
 | Success | true |
 | Total tests | **281** (planning orientation was 254; +new characterization fixtures/tests) |
 | Failed | 0 |
-| Node | `v25.6.1` (above upcoming `>=22.19.0` floor; CI/Docker still need WP-1) |
+| Node | `v25.6.1` (satisfies `>=22.19.0`; CI/Docker/docs now pin the floor via WP-1) |
 | Evidence | `.internal/pi-upgrade-evidence/baseline-focused-summary.json` (gitignored) |
 
 ## Known OpenRouter timeout (baseline note)

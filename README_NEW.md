@@ -55,7 +55,7 @@ On first launch, sign in with your **OpenAI**, **Anthropic**, or **Claude SDK** 
 ```bash
 git clone https://github.com/a-mart/forge.git
 cd middleman
-pnpm install        # requires Node.js 22+ and pnpm 10.30+
+pnpm install        # requires Node.js 22.19.0+ and pnpm 10.30+
 pnpm dev            # starts backend + UI with hot reload
 ```
 

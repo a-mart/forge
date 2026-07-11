@@ -25,7 +25,7 @@ For source builds or server deployments:
 npm install -g @forge/cli
 ```
 
-Requires Node.js 22 or newer.
+Requires Node.js 22.19.0 or newer.
 
 Configure the backend URL and API key with environment variables or flags:
 
