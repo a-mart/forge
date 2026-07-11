@@ -1,9 +1,9 @@
 # Pi 0.71.1 upgrade baseline (WP-0)
 
-**Captured on:** 2026-07-11  
-**Forge commit:** `c751c79c68d0` (`v0.22.0-beta.3`)  
-**Branch:** `pi-upgrade-0.80.6-safety`  
-**Pi family:** patched `@mariozechner/pi-ai@0.71.1` + `@mariozechner/pi-coding-agent@0.71.1`  
+**Captured on:** 2026-07-11
+**Forge commit:** `c751c79c68d0` (`v0.22.0-beta.3`)
+**Branch:** `pi-upgrade-0.80.6-safety`
+**Pi family:** patched `@mariozechner/pi-ai@0.71.1` + `@mariozechner/pi-coding-agent@0.71.1`
 **Node at capture:** see evidence log (host may be newer than the upcoming `>=22.19.0` floor)
 
 ## Exact focused baseline command
@@ -87,4 +87,3 @@ See `manifest.json` and `pi-session-fixture-characterization.test.ts`.
 ## Thinking-level mapping (post-pin)
 
 Forge maps manager thinking levels at the Pi boundary as `none→off`, `ultra→max`, and `x-high→xhigh`. In this release `max` and `ultra` request the same Pi thinking level; release notes must say so. Persistence/display reverse-mapping remains explicit in Forge code.
-

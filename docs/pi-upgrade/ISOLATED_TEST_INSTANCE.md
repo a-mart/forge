@@ -124,4 +124,3 @@ Manifests must record:
 - Node/toolchain metadata and the committed generator command/script
 
 Characterization tests assert field presence, hash equality, and regeneration equivalence against the generator.
-
