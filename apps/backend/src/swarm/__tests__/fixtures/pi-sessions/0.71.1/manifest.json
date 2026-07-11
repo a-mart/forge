@@ -1,0 +1,22 @@
+{
+  "piSessionFormatVersion": 3,
+  "forgeBaseline": "0.71.1",
+  "forgeCommit": "c751c79c68d0",
+  "fixtures": [
+    {
+      "id": "minimal-session",
+      "file": "minimal-session.jsonl",
+      "description": "Header + one user + one assistant message; thinking none"
+    },
+    {
+      "id": "thinking-levels",
+      "file": "thinking-levels.jsonl",
+      "description": "Thinking level change entries covering none, xhigh, and ultra descriptors for upgrade mapping"
+    },
+    {
+      "id": "with-compaction-and-custom",
+      "file": "with-compaction-and-custom.jsonl",
+      "description": "Compaction entry plus custom/custom-message entries for bidirectional resume scaffolding"
+    }
+  ]
+}
