@@ -454,8 +454,10 @@ export class PiRuntimeCreator {
       projectSettingsPaths: trustedProjectSettingsPaths.filter(pathExistsSync),
       projectExecutablesTrusted
     }), {
-      // WP-6 owns the full trust boundary; initialize false unless Forge already elevated trust.
-      projectTrusted: projectExecutablesTrusted,
+      // Keep SettingsManager untrusted at construction. The only project-executable
+      // trust elevation seam is DefaultResourceLoader.reload({ resolveProjectTrust })
+      // using Forge's ProjectExecutableTrustPlan below.
+      projectTrusted: false,
     });
     const transport = resolveOpenAICodexTransport(model);
     if (transport) {
