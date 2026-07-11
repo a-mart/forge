@@ -1,8 +1,10 @@
 /**
  * WP-8: version-labelled Pi v3 JSONL compatibility/recovery fixtures.
  * Uses real SessionManager.open and a test-only frozen 0.71.1 rollback runner alias.
+ * Fixture provenance (producing commit, hashes, Pi/toolchain identity) is its own gate.
  */
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -16,6 +18,10 @@ import {
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  buildAllManifests,
+  stableManifestForCompare,
+} from "../../../../../scripts/pi-upgrade/generate-pi-session-fixture-manifests.mjs";
 import { getConversationHistoryCacheFilePath } from "../session/conversation-history-cache.js";
 import { HistoryCacheStore } from "../session/history-cache-store.js";
 import { appendImmediateCustomEntryViaTimeline, CONVERSATION_ENTRY_TYPE, ConversationTimeline } from "../session/conversation-timeline.js";
@@ -28,19 +34,37 @@ const tempDirs: string[] = [];
 interface Manifest {
   piSessionFormatVersion: number;
   forgeBaseline: string;
+  producingCommit: string;
+  producingCommitShort: string;
   forgeCommit: string;
   forgeCommitShort?: string;
   generatedAt?: string;
-  generation?: {
-    toolchain: string;
-    nodeVersion: string;
+  generation: {
+    command: string;
+    script: string;
+    toolchain: {
+      runtime: string;
+      nodeVersion: string;
+      pnpmVersion: string | null;
+    };
+    targetPi: {
+      family: string;
+      version: string;
+      packages: Array<{ name: string; version: string; integrity: string }>;
+      patches: Array<{ key: string; patchFile: string; sha256: string }>;
+    };
+    frozenRunner: {
+      name: string;
+      version: string;
+      installMethod: string;
+    };
     method: string;
     integrity: string;
   };
-  fixtureHashes?: Record<string, string>;
-  fixtures: Array<{ id: string; file: string; sha256?: string }>;
+  fixtureHashes: Record<string, string>;
+  fixtures: Array<{ id: string; file: string; sha256: string; description?: string }>;
   rollbackPolicy: string;
-  targetNativeSemantics?: Record<string, string>;
+  targetNativeSemantics?: Record<string, unknown>;
 }
 
 afterEach(async () => {
@@ -86,16 +110,103 @@ function contextSignature(context: { messages: Array<{ role: string; content?: u
   };
 }
 
+describe("pi session fixture provenance gate", () => {
+  it("records immutable producing commit, Pi/patch integrities, toolchain, and per-file hashes", async () => {
+    for (const version of FIXTURE_VERSIONS) {
+      const manifest = await readManifest(version);
+      expect(manifest.piSessionFormatVersion).toBe(CURRENT_SESSION_VERSION);
+      expect(manifest.forgeBaseline).toBe(version);
+      expect(manifest.producingCommit).toMatch(/^[a-f0-9]{40}$/);
+      expect(manifest.forgeCommit).toBe(manifest.producingCommit);
+      expect(manifest.producingCommitShort).toBe(manifest.producingCommit.slice(0, 12));
+      expect(manifest.producingCommit).not.toMatch(/wp-8/i);
+      expect(manifest.forgeCommit).not.toMatch(/wp-8/i);
+
+      expect(manifest.generation.command).toBe("pnpm pi-upgrade:generate-session-fixture-manifests");
+      expect(manifest.generation.script).toBe("scripts/pi-upgrade/generate-pi-session-fixture-manifests.mjs");
+      expect(manifest.generation.integrity).toBe("sha256-per-fixture");
+      expect(manifest.generation.toolchain.runtime).toBe("node");
+      expect(manifest.generation.toolchain.nodeVersion).toMatch(/^\d+\.\d+\.\d+/);
+      expect(manifest.generation.targetPi.family).toBe("@earendil-works");
+      expect(manifest.generation.targetPi.version).toBe("0.80.6");
+      expect(manifest.generation.targetPi.packages.map((entry) => entry.name)).toEqual([
+        "@earendil-works/pi-agent-core",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-coding-agent",
+        "@earendil-works/pi-tui",
+      ]);
+      for (const pkg of manifest.generation.targetPi.packages) {
+        expect(pkg.version).toBe("0.80.6");
+        expect(pkg.integrity).toMatch(/^sha512-/);
+      }
+      expect(manifest.generation.targetPi.patches).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: "@earendil-works/pi-ai@0.80.6",
+            patchFile: "patches/@earendil-works__pi-ai@0.80.6.patch",
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          }),
+          expect.objectContaining({
+            key: "@earendil-works/pi-coding-agent@0.80.6",
+            patchFile: "patches/@earendil-works__pi-coding-agent@0.80.6.patch",
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          }),
+        ]),
+      );
+      expect(manifest.generation.frozenRunner).toEqual(
+        expect.objectContaining({
+          name: "@mariozechner/pi-coding-agent",
+          version: "0.71.1",
+          installMethod: "npm ci",
+        }),
+      );
+
+      expect(manifest.fixtures.map((fixture) => fixture.id)).toEqual([
+        "compat-matrix",
+        "aborted-stream-tail",
+        "interrupted-tool-call",
+        "truncated-tail",
+        "crash-during-compaction",
+      ]);
+      for (const fixture of manifest.fixtures) {
+        const hash = await sha256File(join(FIXTURE_BASE, version, fixture.file));
+        expect(fixture.sha256).toBe(hash);
+        expect(manifest.fixtureHashes[fixture.id]).toBe(hash);
+      }
+
+      expect(manifest.rollbackPolicy).toMatch(/snapshot\+old-binary/i);
+      expect(manifest.rollbackPolicy).toMatch(/not a claimed release path|do not downgrade in-place/i);
+      expect(manifest.rollbackPolicy).not.toMatch(/in-place downgrade is allowed/i);
+    }
+
+    const target = await readManifest("0.80.6");
+    expect(String(target.targetNativeSemantics?.thinkingLevels)).toContain("max");
+    expect(String(target.targetNativeSemantics?.noneUltraMapping)).toMatch(/none|ultra|max/i);
+  });
+
+  it("regenerates equivalent provenance manifests from the committed generator", () => {
+    const built = buildAllManifests({ generatedAt: "2026-07-11T00:00:00.000Z" });
+    expect(built).toHaveLength(2);
+    for (const { manifestPath, manifest } of built) {
+      const committed = JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest;
+      expect(stableManifestForCompare(committed)).toEqual(stableManifestForCompare(manifest));
+      expect(manifest.producingCommit).toBe(committed.producingCommit);
+      expect(Object.values(manifest.fixtureHashes).every((hash) => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
+    }
+  });
+});
+
 describe("pi session fixture compatibility (WP-8)", () => {
   it("declares tracked 0.71.1 and 0.80.6 v3 fixture manifests with rollback policy", async () => {
     for (const version of FIXTURE_VERSIONS) {
       const manifest = await readManifest(version);
       expect(manifest.piSessionFormatVersion).toBe(CURRENT_SESSION_VERSION);
       expect(manifest.forgeBaseline).toBe(version);
-      expect(manifest.forgeCommit).toMatch(/^[a-f0-9]{40}$/);
+      expect(manifest.producingCommit).toMatch(/^[a-f0-9]{40}$/);
+      expect(manifest.forgeCommit).toBe(manifest.producingCommit);
       expect(manifest.forgeCommit).not.toContain("wp-8");
-      expect(manifest.generation?.integrity).toBe("sha256-per-fixture");
-      expect(manifest.generation?.toolchain).toBe("node");
+      expect(manifest.generation.integrity).toBe("sha256-per-fixture");
+      expect(manifest.generation.toolchain.runtime).toBe("node");
       expect(manifest.fixtures.map((fixture) => fixture.id)).toEqual([
         "compat-matrix",
         "aborted-stream-tail",
@@ -104,18 +215,18 @@ describe("pi session fixture compatibility (WP-8)", () => {
         "crash-during-compaction",
       ]);
       expect(manifest.rollbackPolicy).toContain("snapshot");
-      expect(manifest.rollbackPolicy).toMatch(/do not downgrade in-place/i);
+      expect(manifest.rollbackPolicy).toMatch(/do not downgrade in-place|not a claimed release path/i);
 
       for (const fixture of manifest.fixtures) {
         const hash = await sha256File(join(FIXTURE_BASE, version, fixture.file));
         expect(fixture.sha256).toBe(hash);
-        expect(manifest.fixtureHashes?.[fixture.id]).toBe(hash);
+        expect(manifest.fixtureHashes[fixture.id]).toBe(hash);
       }
     }
 
     const target = await readManifest("0.80.6");
-    expect(target.targetNativeSemantics?.thinkingLevels).toContain("max");
-    expect(target.targetNativeSemantics?.noneUltraMapping).toMatch(/none|ultra|max/i);
+    expect(String(target.targetNativeSemantics?.thinkingLevels)).toContain("max");
+    expect(String(target.targetNativeSemantics?.noneUltraMapping)).toMatch(/none|ultra|max/i);
   });
 
   it("opens labelled fixtures, preserves stable ids/leaves, and covers all required v3 entry shapes", async () => {
@@ -337,8 +448,9 @@ describe("pi session fixture compatibility (WP-8)", () => {
     const manifest0711 = await readManifest("0.71.1");
     const manifest0806 = await readManifest("0.80.6");
     for (const manifest of [manifest0711, manifest0806]) {
-      expect(manifest.rollbackPolicy).toMatch(/fail closed|snapshot\+old-binary|snapshot-restore-only/i);
-      expect(manifest.rollbackPolicy).toMatch(/do not downgrade in-place/i);
+      expect(manifest.rollbackPolicy).toMatch(/snapshot\+old-binary/i);
+      expect(manifest.rollbackPolicy).toMatch(/not a claimed release path|do not downgrade in-place/i);
+      expect(manifest.rollbackPolicy).not.toMatch(/in-place downgrade is allowed/i);
     }
 
     // Positive proof path remains the bidirectional append/reopen tests above.

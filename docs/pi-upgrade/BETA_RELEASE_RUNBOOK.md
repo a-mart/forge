@@ -33,8 +33,19 @@ Fixtures retain `none`/`ultra` labels for cross-version JSONL compatibility proo
    pnpm pi-upgrade:provision-0711-runner
    ```
    This uses committed `scripts/pi-upgrade/pi-0711-rollback-runner/{package.json,package-lock.json}` via `npm ci`.
-3. Characterization gates open 0.80.6-written v3 fixtures under the frozen `@mariozechner/pi-coding-agent@0.71.1` runner and prove bidirectional append/reopen.
-4. If the frozen runner cannot open target-written state, **fail the gate closed**. Retain the pre-upgrade snapshot and the old binary; do **not** downgrade in-place.
+3. Characterization gates open 0.80.6-written v3 fixtures under the frozen `@mariozechner/pi-coding-agent@0.71.1` runner and prove bidirectional append/reopen for this fixture matrix only.
+4. **In-place downgrade is not a claimed release path** until independently proven for a given format. If unproven or the frozen runner cannot open target-written state, **fail closed** and retain the pre-upgrade snapshot + old binary.
+
+## Session fixture provenance gate
+
+Provenance is required independently of rollback wording:
+
+```bash
+pnpm pi-upgrade:generate-session-fixture-manifests
+pnpm pi-upgrade:generate-session-fixture-manifests -- --check
+```
+
+Manifests under `apps/backend/src/swarm/__tests__/fixtures/pi-sessions/*/manifest.json` must include immutable `producingCommit`, per-file SHA-256, exact Pi `0.80.6` integrities/patch SHA-256, frozen 0.71.1 runner identity, and Node/toolchain metadata. Tests assert regeneration equivalence with the committed generator.
 
 ## Isolation harness
 

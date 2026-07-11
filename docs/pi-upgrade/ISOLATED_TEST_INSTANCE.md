@@ -104,5 +104,24 @@ The provisioner copies committed `scripts/pi-upgrade/pi-0711-rollback-runner/{pa
 
 `pnpm quality:full` and the manual GitHub `quality` workflow (changed/full tiers) provision this runner before tests so the hermetic WP-8 gate is reproducible outside Adam-local machines.
 
-Default rollback for release incidents remains **pre-upgrade data snapshot + old binary**. If in-place downgrade cannot be proven, fail the gate closed and retain snapshot + old binary. See [`BETA_RELEASE_RUNBOOK.md`](./BETA_RELEASE_RUNBOOK.md).
+Default rollback for release incidents remains **pre-upgrade data snapshot + old binary**. In-place downgrade is not a claimed release path until independently proven; fail closed and retain snapshot + old binary. See [`BETA_RELEASE_RUNBOOK.md`](./BETA_RELEASE_RUNBOOK.md).
+
+## Session fixture provenance gate
+
+Checked-in `apps/backend/src/swarm/__tests__/fixtures/pi-sessions/{0.71.1,0.80.6}/manifest.json` files are a required provenance gate (not only rollback wording):
+
+```bash
+pnpm pi-upgrade:generate-session-fixture-manifests
+pnpm pi-upgrade:generate-session-fixture-manifests -- --check
+```
+
+Manifests must record:
+
+- immutable `producingCommit` for the checked-in `.jsonl` files (never `wp-8-current`)
+- per-file SHA-256 (`fixtures[].sha256` + `fixtureHashes`)
+- exact target Pi `0.80.6` lock integrities and patch SHA-256 identity
+- frozen `@mariozechner/pi-coding-agent@0.71.1` runner provenance
+- Node/toolchain metadata and the committed generator command/script
+
+Characterization tests assert field presence, hash equality, and regeneration equivalence against the generator.
 

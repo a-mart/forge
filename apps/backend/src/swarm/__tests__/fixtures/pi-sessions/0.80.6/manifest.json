@@ -1,7 +1,70 @@
 {
   "piSessionFormatVersion": 3,
   "forgeBaseline": "0.80.6",
-  "forgeCommit": "b749c48c7764cee16cf31d71d4da9151d7d4f0a3",
+  "producingCommit": "08a7ab833ab0aaab99d697e9ba7b39adbad76b4f",
+  "producingCommitShort": "08a7ab833ab0",
+  "forgeCommit": "08a7ab833ab0aaab99d697e9ba7b39adbad76b4f",
+  "forgeCommitShort": "08a7ab833ab0",
+  "generatedAt": "2026-07-11T21:42:15.672Z",
+  "generation": {
+    "command": "pnpm pi-upgrade:generate-session-fixture-manifests",
+    "script": "scripts/pi-upgrade/generate-pi-session-fixture-manifests.mjs",
+    "method": "checked-in-jsonl-fixtures",
+    "integrity": "sha256-per-fixture",
+    "toolchain": {
+      "runtime": "node",
+      "nodeVersion": "25.6.1",
+      "nodeMajor": 25,
+      "pnpmVersion": "10.30.1",
+      "platform": "darwin",
+      "arch": "arm64"
+    },
+    "targetPi": {
+      "family": "@earendil-works",
+      "version": "0.80.6",
+      "packages": [
+        {
+          "name": "@earendil-works/pi-agent-core",
+          "version": "0.80.6",
+          "integrity": "sha512-Lvn89ko42h5ETUb6Z0Ku6ldskEqXaTdQBYvSa0+7bdG9V6rUEpXptv5e0OVZ1HDcvi8s6/2lGCQWsxKX+DFHNw=="
+        },
+        {
+          "name": "@earendil-works/pi-ai",
+          "version": "0.80.6",
+          "integrity": "sha512-7xfLk8sANBp+bpPEbjoOZTbPxsa+++b1JXAoSJsNa3vbs9AHHEclmvg54XLQcxH+fuwaeti/g2jeIfJ+mVYLpA=="
+        },
+        {
+          "name": "@earendil-works/pi-coding-agent",
+          "version": "0.80.6",
+          "integrity": "sha512-vcfD6tOk402isLl3Cm/qbn2O10TvgroMp1+/fEGM24ZdvETFCdOYv5VZ7m59EI5fPsjfSJh+CpQ5bhBrhfOg7g=="
+        },
+        {
+          "name": "@earendil-works/pi-tui",
+          "version": "0.80.6",
+          "integrity": "sha512-bSuzS4EVSqEPj/Qr/p9eqCESfKsGuDNbl77EGci8Iaqqt/C/XCBZL1MjXaxSWW1NsT5afjp/Cb0NTPzOLv/aPA=="
+        }
+      ],
+      "patches": [
+        {
+          "key": "@earendil-works/pi-ai@0.80.6",
+          "patchFile": "patches/@earendil-works__pi-ai@0.80.6.patch",
+          "sha256": "706a3210681dd037b19828165082826b1f82d2d5a279b0e800612fca66f9a46d"
+        },
+        {
+          "key": "@earendil-works/pi-coding-agent@0.80.6",
+          "patchFile": "patches/@earendil-works__pi-coding-agent@0.80.6.patch",
+          "sha256": "fa749eff036cc1af3c08757e8f7c523f3f0cd867f36d928ff519005e8c9ed5f1"
+        }
+      ]
+    },
+    "frozenRunner": {
+      "name": "@mariozechner/pi-coding-agent",
+      "version": "0.71.1",
+      "provisionScript": "scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh",
+      "lockSource": "scripts/pi-upgrade/pi-0711-rollback-runner/package-lock.json",
+      "installMethod": "npm ci"
+    }
+  },
   "fixtures": [
     {
       "id": "compat-matrix",
@@ -34,16 +97,14 @@
       "sha256": "0c58561cddd6e9205ad359a1447bf4a27fea2e6b8879a28ac37ab3732a9fd7f8"
     }
   ],
-  "rollbackPolicy": "0.80.6-written v3 state opens under the frozen 0.71.1 runner for this fixture matrix. If a future format does not, the gate must fail closed and retain snapshot+old-binary rollback; do not downgrade in-place.",
-  "forgeCommitShort": "b749c48c7764",
-  "generatedAt": "2026-07-11T21:00:00.000Z",
-  "generation": {
-    "toolchain": "node",
-    "nodeMajor": 25,
-    "nodeVersion": "25.6.1",
-    "method": "checked-in-jsonl-fixtures",
-    "integrity": "sha256-per-fixture"
+  "fixtureHashes": {
+    "compat-matrix": "b2b97eb3eba6c6968b5f88014fe9be29c1e93b7a74d8be48f183f0f47cec0986",
+    "aborted-stream-tail": "41600b3c6099df9cb3dd388d07acc3989513976fc196ad3da327beb81464d1fe",
+    "interrupted-tool-call": "438c9b64c11e4f3ed2d958989895bb4633f5ce42823c1b65b130a632c9a63534",
+    "truncated-tail": "31480f7900fcae38097ea74d8cc0fb22b974c41190f86542a7394cf8a3a9b1ea",
+    "crash-during-compaction": "0c58561cddd6e9205ad359a1447bf4a27fea2e6b8879a28ac37ab3732a9fd7f8"
   },
+  "rollbackPolicy": "Release rollback remains snapshot+old-binary from a pre-upgrade data copy and the frozen 0.71.1 binary. In-place downgrade is not a claimed release path until independently proven for a given format; this fixture matrix may still prove bidirectional open/append characterization only. Do not downgrade in-place.",
   "targetNativeSemantics": {
     "thinkingLevels": [
       "none",
@@ -57,12 +118,5 @@
     "noneUltraMapping": "Forge maps legacy none→off/none and ultra→max for 0.80.6 selectors; fixtures retain none/ultra labels for cross-version JSONL compatibility proofs.",
     "compaction": "v3 compaction entries remain authoritative; incomplete compaction markers keep pre-compaction messages.",
     "metadata": "model_change/thinking_level_change/custom/custom_message/label/branch_summary covered in compat-matrix."
-  },
-  "fixtureHashes": {
-    "compat-matrix": "b2b97eb3eba6c6968b5f88014fe9be29c1e93b7a74d8be48f183f0f47cec0986",
-    "aborted-stream-tail": "41600b3c6099df9cb3dd388d07acc3989513976fc196ad3da327beb81464d1fe",
-    "interrupted-tool-call": "438c9b64c11e4f3ed2d958989895bb4633f5ce42823c1b65b130a632c9a63534",
-    "truncated-tail": "31480f7900fcae38097ea74d8cc0fb22b974c41190f86542a7394cf8a3a9b1ea",
-    "crash-during-compaction": "0c58561cddd6e9205ad359a1447bf4a27fea2e6b8879a28ac37ab3732a9fd7f8"
   }
 }
