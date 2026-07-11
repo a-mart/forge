@@ -194,6 +194,8 @@ export async function runForgePiCompaction(options: {
   );
 
   resolvedAuth.markExecutionAttempted?.();
+  // Leave streamFn undefined so Pi uses compat completeSimple with this explicit auth
+  // instead of re-resolving active-session auth through session.agent.streamFn.
   const result = await runPiCompaction(
     bounded.preparation,
     compactionModel,
@@ -202,6 +204,8 @@ export async function runForgePiCompaction(options: {
     options.combinedInstructions,
     options.event.signal,
     thinkingLevel,
+    undefined,
+    resolvedAuth.env,
   );
 
   return {
@@ -274,6 +278,7 @@ async function resolveActiveRuntimeCompactionAuth(options: {
     model: compactionModel,
     apiKey: auth.apiKey,
     headers: auth.headers,
+    env: auth.env,
     authSource: "active_runtime_registry",
   };
 }

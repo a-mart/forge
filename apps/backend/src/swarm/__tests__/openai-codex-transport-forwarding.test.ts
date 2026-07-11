@@ -730,4 +730,45 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(result.stopReason).toBe('aborted')
     expect(result.errorMessage).toBe('Request was aborted')
   })
+
+  it('fails without SSE after explicit websocket exhausts its one safe pre-output retry', async () => {
+    const sockets: EventTarget[] = []
+
+    class FakeWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+      readyState = FakeWebSocket.OPEN
+
+      constructor(_url: string | URL, _protocols?: unknown) {
+        super()
+        sockets.push(this)
+        queueMicrotask(() => this.dispatchEvent(new Event('open')))
+      }
+
+      send(_payload: string) {
+        queueMicrotask(() => this.dispatchEvent(closeEvent(1006)))
+      }
+
+      close(_code?: number, _reason?: string) {
+        this.readyState = FakeWebSocket.CLOSED
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket
+    const fetchSpy = installFailingFetch('SSE fetch must not run for explicit websocket')
+
+    const result = await streamSimple(codexModel, { messages: [] }, {
+      apiKey: fakeCodexToken,
+      transport: 'websocket',
+      sessionId: 'test-session-websocket-retry-exhaust',
+      reasoning: 'low',
+    }).result()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(sockets.length).toBeGreaterThanOrEqual(2)
+    expect(result.stopReason).toBe('error')
+    expect(result.errorMessage).toContain('WebSocket closed 1006')
+  })
 })

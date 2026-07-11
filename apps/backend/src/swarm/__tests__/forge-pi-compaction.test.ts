@@ -142,6 +142,8 @@ describe("forge pi compaction", () => {
       "Focus on deployment details.",
       signal,
       "low",
+      undefined,
+      undefined,
     );
     expect(runPiCompactionMock.mock.calls[0]?.[1]).not.toEqual(sessionModel);
   });
@@ -192,6 +194,8 @@ describe("forge pi compaction", () => {
       undefined,
       undefined,
       "low",
+      undefined,
+      undefined,
     );
   });
 
@@ -314,6 +318,8 @@ describe("forge pi compaction", () => {
       combinedInstructions,
       undefined,
       "low",
+      undefined,
+      undefined,
     );
   });
 
