@@ -1356,13 +1356,16 @@ describe("mid-turn context guard", () => {
     (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
     (runtime as any).lastContextBudgetCheckAtMs = 1000;
 
-    await expect(runtime.terminate({ abort: true })).resolves.toBeUndefined();
+    // terminate propagates abort/waitForIdle failure and must not dispose while Pi is still active,
+    // but guard/recovery state is cleared before the abort attempt.
+    await expect(runtime.terminate({ abort: true })).rejects.toThrow("abort rejected");
     expect(terminateController.signal.aborted).toBe(true);
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
     expect((runtime as any).contextRecoveryGraceUntilMs).toBe(0);
     expect((runtime as any).guardAbortController).toBeUndefined();
     expect((runtime as any).lastContextBudgetCheckAtMs).toBe(0);
-    expect(runtime.getStatus()).toBe("terminated");
+    expect(runtime.getStatus()).not.toBe("terminated");
+    expect(session.disposeCalls).toBe(0);
   });
 
   it("rotates pooled credentials on auth errors and retries the prompt", async () => {
