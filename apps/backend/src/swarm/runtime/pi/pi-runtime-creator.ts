@@ -39,6 +39,7 @@ import {
   type ProjectExecutableTrustPlan
 } from "../../project-executable-trust.js";
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
+import { mapForgeReasoningToPiThinkingLevel } from "../../pi-thinking-level.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
 import { isCodexPluginWorkerDescriptor } from "../../codex-app-server/codex-plugin-scope-service.js";
@@ -135,7 +136,7 @@ export class PiRuntimeCreator {
       forgeExtensionHost: this.deps.forgeExtensionHost,
       preparedForgeBindings
     });
-    const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
+    const thinkingLevel = mapForgeReasoningToPiThinkingLevel(descriptor.model.thinkingLevel);
     const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
@@ -289,7 +290,7 @@ export class PiRuntimeCreator {
       authStorage,
       modelRegistry,
       model,
-      thinkingLevel: thinkingLevel as any,
+      thinkingLevel,
       sessionManager,
       resourceLoader,
       ...(settingsManager ? { settingsManager } : {}),
@@ -830,13 +831,6 @@ export function resolvePiActiveToolNamesForDescriptor(
 }
 
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-
-function normalizeThinkingLevel(level: string): string {
-  if (level === "none") return "off";
-  if (level === "ultra") return "max";
-  if (level === "x-high") return "xhigh";
-  return level;
-}
 
 function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();

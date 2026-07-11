@@ -83,6 +83,38 @@ describe('settings-api auth changed events', () => {
     expect(listener).toHaveBeenCalledTimes(1)
   })
 
+  it('parses direct OAuth device-code and select events', async () => {
+    const onDeviceCode = vi.fn()
+    const onSelect = vi.fn()
+    const client = createMockClient(mockSseResponse([
+      'event: device_code\n',
+      'data: {"userCode":"ABCD-EFGH","verificationUri":"https://example.test/device","intervalSeconds":5,"expiresInSeconds":600}\n\n',
+      'event: select\n',
+      'data: {"message":"Choose account","options":[{"id":"acct-1","label":"Account 1"}]}\n\n',
+    ]))
+
+    await startSettingsAuthOAuthLoginStream(client, 'openai-codex', {
+      onAuthUrl: vi.fn(),
+      onDeviceCode,
+      onPrompt: vi.fn(),
+      onSelect,
+      onProgress: vi.fn(),
+      onComplete: vi.fn(),
+      onError: vi.fn(),
+    }, new AbortController().signal)
+
+    expect(onDeviceCode).toHaveBeenCalledWith({
+      userCode: 'ABCD-EFGH',
+      verificationUri: 'https://example.test/device',
+      intervalSeconds: 5,
+      expiresInSeconds: 600,
+    })
+    expect(onSelect).toHaveBeenCalledWith({
+      message: 'Choose account',
+      options: [{ id: 'acct-1', label: 'Account 1' }],
+    })
+  })
+
   it('dispatches after successful pooled OAuth completion', async () => {
     const listener = listenForAuthChanged()
     const client = createMockClient(mockSseResponse([

@@ -3,7 +3,8 @@ import type { Api, Model } from "../pi/pi-ai-compat.js";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { compact as runPiCompaction, type CompactionResult } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
-import { normalizeThinkingLevelForProvider, resolveExactModel } from "../swarm-manager-utils.js";
+import { resolveExactModel } from "../swarm-manager-utils.js";
+import { mapForgeReasoningToPiThinkingLevel } from "../pi-thinking-level.js";
 import {
   boundCompactionPreparation,
   type CompactionBoundingStats,
@@ -115,10 +116,10 @@ export function resolveForgeCompactionModel(
 }
 
 export function mapCompactionReasoningToPiThinkingLevel(
-  provider: string,
+  _provider: string,
   reasoningLevel: ManagerReasoningLevel,
 ): PiCompactionThinkingLevel {
-  return normalizeThinkingLevelForProvider(provider, reasoningLevel) as PiCompactionThinkingLevel;
+  return mapForgeReasoningToPiThinkingLevel(reasoningLevel) as PiCompactionThinkingLevel;
 }
 
 interface ForgePiCompactionHookEvent {

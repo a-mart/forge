@@ -106,7 +106,8 @@ function AuthProviderRow({
   const oauthInProgress =
     oauthFlow.status === 'starting' ||
     oauthFlow.status === 'waiting_for_auth' ||
-    oauthFlow.status === 'waiting_for_code'
+    oauthFlow.status === 'waiting_for_code' ||
+    oauthFlow.status === 'waiting_for_select'
   const showOAuthControls = oauthSupported
 
   return (
@@ -247,7 +248,31 @@ function AuthProviderRow({
               <p className="text-[11px] text-muted-foreground">{oauthFlow.progressMessage}</p>
             ) : null}
 
-            {oauthFlow.status === 'waiting_for_code' ? (
+            {oauthFlow.status === 'waiting_for_select' && oauthFlow.selectOptions ? (
+              <div className="space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {oauthFlow.promptMessage ?? 'Choose an account to continue.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {oauthFlow.selectOptions.map((option) => (
+                    <Button
+                      key={option.id}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onOAuthCodeChange(option.id)}
+                      disabled={busy || oauthFlow.isSubmittingCode}
+                      className="text-xs"
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">Select an option above, then submit.</p>
+              </div>
+            ) : null}
+
+            {(oauthFlow.status === 'waiting_for_code' || oauthFlow.status === 'waiting_for_select') ? (
               <div className="space-y-2">
                 <p className="text-[11px] text-muted-foreground">
                   {oauthFlow.promptMessage ?? 'Paste the authorization code to continue.'}
@@ -453,9 +478,24 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
                 ...prev,
                 [provider]: {
                   ...current,
-                  status: current.status === 'waiting_for_code' ? 'waiting_for_code' : 'waiting_for_auth',
+                  status: current.status === 'waiting_for_code' || current.status === 'waiting_for_select' ? current.status : 'waiting_for_auth',
                   authUrl: event.url,
                   instructions: event.instructions,
+                  errorMessage: undefined,
+                },
+              }
+            })
+          },
+          onDeviceCode: (event) => {
+            setOauthFlowByProvider((prev) => {
+              const current = prev[provider] ?? createIdleSettingsAuthOAuthFlowState()
+              return {
+                ...prev,
+                [provider]: {
+                  ...current,
+                  status: 'waiting_for_auth',
+                  authUrl: event.verificationUri,
+                  instructions: `Enter device code ${event.userCode} at ${event.verificationUri}`,
                   errorMessage: undefined,
                 },
               }
@@ -471,6 +511,24 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
                   status: 'waiting_for_code',
                   promptMessage: event.message,
                   promptPlaceholder: event.placeholder,
+                  selectOptions: undefined,
+                  errorMessage: undefined,
+                },
+              }
+            })
+          },
+          onSelect: (event) => {
+            setOauthFlowByProvider((prev) => {
+              const current = prev[provider] ?? createIdleSettingsAuthOAuthFlowState()
+              return {
+                ...prev,
+                [provider]: {
+                  ...current,
+                  status: 'waiting_for_select',
+                  promptMessage: event.message,
+                  promptPlaceholder: event.options[0]?.id,
+                  selectOptions: event.options,
+                  codeValue: '',
                   errorMessage: undefined,
                 },
               }
@@ -483,7 +541,7 @@ export function SettingsAuth({ wsUrl: _wsUrl, target, apiClient }: SettingsAuthP
                 ...prev,
                 [provider]: {
                   ...current,
-                  status: current.status === 'waiting_for_code' ? 'waiting_for_code' : 'waiting_for_auth',
+                  status: current.status === 'waiting_for_code' || current.status === 'waiting_for_select' ? current.status : 'waiting_for_auth',
                   progressMessage: event.message,
                 },
               }

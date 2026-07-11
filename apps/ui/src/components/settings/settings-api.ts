@@ -15,9 +15,11 @@ import type {
   TelegramStatusEvent,
   SettingsAuthLoginAuthUrlEvent,
   SettingsAuthLoginCompleteEvent,
+  SettingsAuthLoginDeviceCodeEvent,
   SettingsAuthLoginEventName,
   SettingsAuthLoginProgressEvent,
   SettingsAuthLoginPromptEvent,
+  SettingsAuthLoginSelectEvent,
   SettingsAuthLoginProviderId,
   SettingsAuthProvider,
   SettingsAuthProviderId,
@@ -177,7 +179,9 @@ function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConf
 
 interface SettingsAuthOAuthStreamHandlers {
   onAuthUrl: (event: SettingsAuthLoginAuthUrlEvent) => void
+  onDeviceCode?: (event: SettingsAuthLoginDeviceCodeEvent) => void
   onPrompt: (event: SettingsAuthLoginPromptEvent) => void
+  onSelect?: (event: SettingsAuthLoginSelectEvent) => void
   onProgress: (event: SettingsAuthLoginProgressEvent) => void
   onComplete: (event: SettingsAuthLoginCompleteEvent) => void
   onError: (message: string) => void
@@ -191,7 +195,7 @@ function parseSettingsAuthOAuthEventData(rawData: string): Record<string, unknow
 }
 
 function parseSettingsAuthEventName(value: string): SettingsAuthLoginEventName | 'message' {
-  if (value === 'auth_url' || value === 'prompt' || value === 'progress' || value === 'complete' || value === 'error') {
+  if (value === 'auth_url' || value === 'device_code' || value === 'prompt' || value === 'select' || value === 'progress' || value === 'complete' || value === 'error') {
     return value
   }
   return 'message'
@@ -356,10 +360,25 @@ export async function startSettingsAuthOAuthLoginStream(
       const payload = parseSettingsAuthOAuthEventData(rawData)
       if (typeof payload.url !== 'string' || !payload.url.trim()) throw new Error('OAuth auth_url event is missing a URL.')
       handlers.onAuthUrl({ url: payload.url, instructions: typeof payload.instructions === 'string' ? payload.instructions : undefined })
+    } else if (eventName === 'device_code') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.userCode !== 'string' || !payload.userCode.trim() || typeof payload.verificationUri !== 'string' || !payload.verificationUri.trim()) throw new Error('OAuth device_code event payload is invalid.')
+      handlers.onDeviceCode?.({
+        userCode: payload.userCode,
+        verificationUri: payload.verificationUri,
+        intervalSeconds: typeof payload.intervalSeconds === 'number' ? payload.intervalSeconds : undefined,
+        expiresInSeconds: typeof payload.expiresInSeconds === 'number' ? payload.expiresInSeconds : undefined,
+      })
     } else if (eventName === 'prompt') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
       if (typeof payload.message !== 'string' || !payload.message.trim()) throw new Error('OAuth prompt event is missing a message.')
       handlers.onPrompt({ message: payload.message, placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined })
+    } else if (eventName === 'select') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.message !== 'string' || !payload.message.trim() || !Array.isArray(payload.options)) throw new Error('OAuth select event payload is invalid.')
+      const options = payload.options.filter((option): option is { id: string; label: string } => Boolean(option) && typeof option === 'object' && typeof (option as { id?: unknown }).id === 'string' && typeof (option as { label?: unknown }).label === 'string')
+      if (options.length === 0) throw new Error('OAuth select event has no options.')
+      handlers.onSelect?.({ message: payload.message, options })
     } else if (eventName === 'progress') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
       if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
@@ -655,10 +674,25 @@ export async function startPoolAddAccountOAuthStream(
       const payload = parseSettingsAuthOAuthEventData(rawData)
       if (typeof payload.url !== 'string' || !payload.url.trim()) throw new Error('OAuth auth_url event is missing a URL.')
       handlers.onAuthUrl({ url: payload.url, instructions: typeof payload.instructions === 'string' ? payload.instructions : undefined })
+    } else if (eventName === 'device_code') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.userCode !== 'string' || !payload.userCode.trim() || typeof payload.verificationUri !== 'string' || !payload.verificationUri.trim()) throw new Error('OAuth device_code event payload is invalid.')
+      handlers.onDeviceCode?.({
+        userCode: payload.userCode,
+        verificationUri: payload.verificationUri,
+        intervalSeconds: typeof payload.intervalSeconds === 'number' ? payload.intervalSeconds : undefined,
+        expiresInSeconds: typeof payload.expiresInSeconds === 'number' ? payload.expiresInSeconds : undefined,
+      })
     } else if (eventName === 'prompt') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
       if (typeof payload.message !== 'string' || !payload.message.trim()) throw new Error('OAuth prompt event is missing a message.')
       handlers.onPrompt({ message: payload.message, placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined })
+    } else if (eventName === 'select') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.message !== 'string' || !payload.message.trim() || !Array.isArray(payload.options)) throw new Error('OAuth select event payload is invalid.')
+      const options = payload.options.filter((option): option is { id: string; label: string } => Boolean(option) && typeof option === 'object' && typeof (option as { id?: unknown }).id === 'string' && typeof (option as { label?: unknown }).label === 'string')
+      if (options.length === 0) throw new Error('OAuth select event has no options.')
+      handlers.onSelect?.({ message: payload.message, options })
     } else if (eventName === 'progress') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
       if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })

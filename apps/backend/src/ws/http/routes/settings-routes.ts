@@ -52,7 +52,7 @@ interface SettingsAuthLoginFlow {
   providerId: SettingsAuthLoginProviderId;
   pendingPrompt:
     | {
-        resolve: (value: string) => void;
+        resolve: (value: string | undefined) => void;
         reject: (error: Error) => void;
       }
     | null;
@@ -751,8 +751,9 @@ async function handlePoolAddAccountOAuthLogin(
   const requestPromptInput = (prompt: {
     message: string;
     placeholder?: string;
-  }): Promise<string> =>
-    new Promise<string>((resolve, reject) => {
+    options?: Array<{ id: string; label: string }>;
+  }): Promise<string | undefined> =>
+    new Promise<string | undefined>((resolve, reject) => {
       if (flow.closed) {
         reject(new Error("OAuth login flow is closed"));
         return;
@@ -762,7 +763,7 @@ async function handlePoolAddAccountOAuthLogin(
         flow.pendingPrompt = null;
         previousPrompt.reject(new Error("OAuth login prompt replaced"));
       }
-      const wrappedResolve = (value: string): void => {
+      const wrappedResolve = (value: string | undefined): void => {
         if (flow.pendingPrompt?.resolve === wrappedResolve) flow.pendingPrompt = null;
         resolve(value);
       };
@@ -771,7 +772,11 @@ async function handlePoolAddAccountOAuthLogin(
         reject(error);
       };
       flow.pendingPrompt = { resolve: wrappedResolve, reject: wrappedReject };
-      sendSseEvent("prompt", prompt);
+      if (prompt.options) {
+        sendSseEvent("select", { message: prompt.message, options: prompt.options });
+      } else {
+        sendSseEvent("prompt", { message: prompt.message, placeholder: prompt.placeholder });
+      }
     });
 
   const onClose = (): void => closeFlow("OAuth login stream closed");
@@ -785,22 +790,21 @@ async function handlePoolAddAccountOAuthLogin(
       onAuth: (info) => {
         sendSseEvent("auth_url", { url: info.url, instructions: info.instructions });
       },
-      // WP-7: full device_code/select protocol + legacy fallbacks. Minimal stubs keep 0.80.6 login typing satisfied until then.
       onDeviceCode: (info) => {
-        sendSseEvent("auth_url", {
-          url: info.verificationUri,
-          instructions: `Enter code ${info.userCode} at ${info.verificationUri}`,
+        sendSseEvent("device_code", {
+          userCode: info.userCode,
+          verificationUri: info.verificationUri,
+          intervalSeconds: info.intervalSeconds,
+          expiresInSeconds: info.expiresInSeconds,
         });
       },
       onPrompt: (prompt) =>
-        requestPromptInput({ message: prompt.message, placeholder: prompt.placeholder }),
-      onSelect: async (prompt) => {
-        const optionsText = prompt.options.map((option) => `${option.id}: ${option.label}`).join("\n");
-        return requestPromptInput({
-          message: `${prompt.message}\n${optionsText}`,
-          placeholder: prompt.options[0]?.id,
-        });
-      },
+        requestPromptInput({ message: prompt.message, placeholder: prompt.placeholder }).then((value) => value ?? ""),
+      onSelect: (prompt) =>
+        requestPromptInput({
+          message: prompt.message,
+          options: prompt.options,
+        }),
       onProgress: (message) => {
         sendSseEvent("progress", { message });
       },
@@ -812,7 +816,7 @@ async function handlePoolAddAccountOAuthLogin(
         requestPromptInput({
           message: "Paste redirect URL below, or complete login in browser:",
           placeholder: "http://localhost:1455/auth/callback?code=..."
-        });
+        }).then((value) => value ?? "");
     }
 
     const credentials = (await provider.login(callbacks)) as OAuthCredentials;
@@ -985,8 +989,9 @@ async function handleSettingsAuthLoginHttpRequest(
   const requestPromptInput = (prompt: {
     message: string;
     placeholder?: string;
-  }): Promise<string> =>
-    new Promise<string>((resolve, reject) => {
+    options?: Array<{ id: string; label: string }>;
+  }): Promise<string | undefined> =>
+    new Promise<string | undefined>((resolve, reject) => {
       if (flow.closed) {
         reject(new Error("OAuth login flow is closed"));
         return;
@@ -998,7 +1003,7 @@ async function handleSettingsAuthLoginHttpRequest(
         previousPrompt.reject(new Error("OAuth login prompt replaced by a newer request"));
       }
 
-      const wrappedResolve = (value: string): void => {
+      const wrappedResolve = (value: string | undefined): void => {
         if (flow.pendingPrompt?.resolve === wrappedResolve) {
           flow.pendingPrompt = null;
         }
@@ -1017,7 +1022,11 @@ async function handleSettingsAuthLoginHttpRequest(
         reject: wrappedReject
       };
 
-      sendSseEvent("prompt", prompt);
+      if (prompt.options) {
+        sendSseEvent("select", { message: prompt.message, options: prompt.options });
+      } else {
+        sendSseEvent("prompt", { message: prompt.message, placeholder: prompt.placeholder });
+      }
     });
 
   const onClose = (): void => {
@@ -1037,25 +1046,24 @@ async function handleSettingsAuthLoginHttpRequest(
           instructions: info.instructions
         });
       },
-      // WP-7: full device_code/select protocol + legacy fallbacks. Minimal stubs keep 0.80.6 login typing satisfied until then.
       onDeviceCode: (info) => {
-        sendSseEvent("auth_url", {
-          url: info.verificationUri,
-          instructions: `Enter code ${info.userCode} at ${info.verificationUri}`,
+        sendSseEvent("device_code", {
+          userCode: info.userCode,
+          verificationUri: info.verificationUri,
+          intervalSeconds: info.intervalSeconds,
+          expiresInSeconds: info.expiresInSeconds,
         });
       },
       onPrompt: (prompt) =>
         requestPromptInput({
           message: prompt.message,
           placeholder: prompt.placeholder
+        }).then((value) => value ?? ""),
+      onSelect: (prompt) =>
+        requestPromptInput({
+          message: prompt.message,
+          options: prompt.options,
         }),
-      onSelect: async (prompt) => {
-        const optionsText = prompt.options.map((option) => `${option.id}: ${option.label}`).join("\n");
-        return requestPromptInput({
-          message: `${prompt.message}\n${optionsText}`,
-          placeholder: prompt.options[0]?.id,
-        });
-      },
       onProgress: (message) => {
         sendSseEvent("progress", { message });
       },
@@ -1067,7 +1075,7 @@ async function handleSettingsAuthLoginHttpRequest(
         requestPromptInput({
           message: "Paste redirect URL below, or complete login in browser:",
           placeholder: "http://localhost:1455/auth/callback?code=..."
-        });
+        }).then((value) => value ?? "");
     }
 
     const credentials = (await provider.login(callbacks)) as OAuthCredentials;

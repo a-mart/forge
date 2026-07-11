@@ -86,7 +86,7 @@ export interface SettingsAuthMutationResponse extends SettingsAuthResponse {
 
 export type SettingsAuthLoginProviderId = Extract<SettingsAuthProviderId, 'anthropic' | 'openai-codex'>
 
-export type SettingsAuthLoginEventName = 'auth_url' | 'prompt' | 'progress' | 'complete' | 'error'
+export type SettingsAuthLoginEventName = 'auth_url' | 'device_code' | 'prompt' | 'select' | 'progress' | 'complete' | 'error'
 
 export interface SettingsAuthLoginAuthUrlEvent {
   url: string
@@ -96,6 +96,23 @@ export interface SettingsAuthLoginAuthUrlEvent {
 export interface SettingsAuthLoginPromptEvent {
   message: string
   placeholder?: string
+}
+
+export interface SettingsAuthLoginDeviceCodeEvent {
+  userCode: string
+  verificationUri: string
+  intervalSeconds?: number
+  expiresInSeconds?: number
+}
+
+export interface SettingsAuthLoginSelectOption {
+  id: string
+  label: string
+}
+
+export interface SettingsAuthLoginSelectEvent {
+  message: string
+  options: SettingsAuthLoginSelectOption[]
 }
 
 export interface SettingsAuthLoginProgressEvent {
@@ -114,7 +131,9 @@ export interface SettingsAuthLoginErrorEvent {
 
 export interface SettingsAuthLoginEventPayload {
   auth_url: SettingsAuthLoginAuthUrlEvent
+  device_code: SettingsAuthLoginDeviceCodeEvent
   prompt: SettingsAuthLoginPromptEvent
+  select: SettingsAuthLoginSelectEvent
   progress: SettingsAuthLoginProgressEvent
   complete: SettingsAuthLoginCompleteEvent
   error: SettingsAuthLoginErrorEvent

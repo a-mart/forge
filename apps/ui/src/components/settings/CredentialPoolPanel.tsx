@@ -500,9 +500,18 @@ export function CredentialPoolPanel({
           onAuthUrl: (event) => {
             setOauthFlow((prev) => ({
               ...prev,
-              status: prev.status === 'waiting_for_code' ? 'waiting_for_code' : 'waiting_for_auth',
+              status: prev.status === 'waiting_for_code' || prev.status === 'waiting_for_select' ? prev.status : 'waiting_for_auth',
               authUrl: event.url,
               instructions: event.instructions,
+              errorMessage: undefined,
+            }))
+          },
+          onDeviceCode: (event) => {
+            setOauthFlow((prev) => ({
+              ...prev,
+              status: 'waiting_for_auth',
+              authUrl: event.verificationUri,
+              instructions: `Enter device code ${event.userCode} at ${event.verificationUri}`,
               errorMessage: undefined,
             }))
           },
@@ -512,13 +521,25 @@ export function CredentialPoolPanel({
               status: 'waiting_for_code',
               promptMessage: event.message,
               promptPlaceholder: event.placeholder,
+              selectOptions: undefined,
+              errorMessage: undefined,
+            }))
+          },
+          onSelect: (event) => {
+            setOauthFlow((prev) => ({
+              ...prev,
+              status: 'waiting_for_select',
+              promptMessage: event.message,
+              promptPlaceholder: event.options[0]?.id,
+              selectOptions: event.options,
+              codeValue: '',
               errorMessage: undefined,
             }))
           },
           onProgress: (event) => {
             setOauthFlow((prev) => ({
               ...prev,
-              status: prev.status === 'waiting_for_code' ? 'waiting_for_code' : 'waiting_for_auth',
+              status: prev.status === 'waiting_for_code' || prev.status === 'waiting_for_select' ? prev.status : 'waiting_for_auth',
               progressMessage: event.message,
             }))
           },
@@ -598,7 +619,8 @@ export function CredentialPoolPanel({
   const oauthInProgress =
     oauthFlow.status === 'starting' ||
     oauthFlow.status === 'waiting_for_auth' ||
-    oauthFlow.status === 'waiting_for_code'
+    oauthFlow.status === 'waiting_for_code' ||
+    oauthFlow.status === 'waiting_for_select'
 
   if (isLoading) {
     return (
@@ -744,13 +766,36 @@ export function CredentialPoolPanel({
               <p className="text-[11px] text-muted-foreground">{oauthFlow.progressMessage}</p>
             )}
 
-            {target.kind === 'collab' && (oauthFlow.status === 'waiting_for_code' || oauthFlow.status === 'waiting_for_auth') && (
+            {target.kind === 'collab' && (oauthFlow.status === 'waiting_for_code' || oauthFlow.status === 'waiting_for_select' || oauthFlow.status === 'waiting_for_auth') && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
                 This authorizes the Collab backend. If the browser ends on a localhost callback URL, paste that full URL/code below.
               </p>
             )}
 
-            {oauthFlow.status === 'waiting_for_code' && (
+            {oauthFlow.status === 'waiting_for_select' && oauthFlow.selectOptions && (
+              <div className="space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {oauthFlow.promptMessage ?? 'Choose an account to continue.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {oauthFlow.selectOptions.map((option) => (
+                    <Button
+                      key={option.id}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setOauthFlow((prev) => ({ ...prev, codeValue: option.id, errorMessage: undefined }))}
+                      disabled={isBusy || oauthFlow.isSubmittingCode}
+                      className="text-xs"
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(oauthFlow.status === 'waiting_for_code' || oauthFlow.status === 'waiting_for_select') && (
               <div className="space-y-2">
                 <p className="text-[11px] text-muted-foreground">
                   {oauthFlow.promptMessage ?? 'Paste the authorization code to continue.'}

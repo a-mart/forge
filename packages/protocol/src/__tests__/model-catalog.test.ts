@@ -215,7 +215,7 @@ const EXPECTED_MODELS = {
   'claude-sonnet-4-5-20250929': {
     provider: 'anthropic',
     familyId: 'pi-sonnet',
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
     maxOutputTokens: 64_000,
     supportsReasoning: true,
     inputModes: ['text', 'image'],
