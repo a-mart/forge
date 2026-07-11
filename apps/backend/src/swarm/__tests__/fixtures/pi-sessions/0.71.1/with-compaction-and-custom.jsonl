@@ -1,7 +1,0 @@
-{"type":"session","version":3,"id":"fixture-compaction-0711","timestamp":"2026-07-11T00:00:00.000Z","cwd":"/tmp/pi-fixture-compaction"}
-{"type":"message","id":"msg-user-1","parentId":null,"timestamp":"2026-07-11T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"long context before compaction"}],"timestamp":1752192001000}}
-{"type":"message","id":"msg-asst-1","parentId":"msg-user-1","timestamp":"2026-07-11T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ack"}],"provider":"faux","api":"faux","model":"fixture","usage":{"input":10,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":11},"stopReason":"stop","timestamp":1752192002000}}
-{"type":"compaction","id":"comp-1","parentId":"msg-asst-1","timestamp":"2026-07-11T00:00:03.000Z","summary":"Baseline compaction summary for 0.71.1 fixture.","firstKeptEntryId":"msg-user-1","tokensBefore":11,"details":{"fromFixture":true}}
-{"type":"custom","id":"custom-1","parentId":"comp-1","timestamp":"2026-07-11T00:00:04.000Z","customType":"forge.pin","data":{"label":"baseline-pin","version":1}}
-{"type":"custom_message","id":"custom-msg-1","parentId":"custom-1","timestamp":"2026-07-11T00:00:05.000Z","customType":"forge.system","message":{"role":"user","content":[{"type":"text","text":"SYSTEM: fixture custom message"}],"timestamp":1752192005000},"display":false}
-{"type":"message","id":"msg-user-2","parentId":"custom-msg-1","timestamp":"2026-07-11T00:00:06.000Z","message":{"role":"user","content":[{"type":"text","text":"after compaction"}],"timestamp":1752192006000}}

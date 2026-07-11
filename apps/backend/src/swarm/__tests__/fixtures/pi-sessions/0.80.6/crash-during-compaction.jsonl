@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"fixture-0806-crash-compact","timestamp":"2026-07-11T04:00:00.000Z","cwd":"/tmp/pi-fixture-0806-crash-compact"}
+{"type":"message","id":"cc-u1","parentId":null,"timestamp":"2026-07-11T04:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"large pre-compaction context"}],"timestamp":1752206401000}}
+{"type":"message","id":"cc-a1","parentId":"cc-u1","timestamp":"2026-07-11T04:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"pre-compaction answer"}],"provider":"anthropic","api":"anthropic","model":"claude-sonnet-4-5","usage":{"input":80,"output":4,"cacheRead":0,"cacheWrite":0,"totalTokens":84},"stopReason":"stop","timestamp":1752206402000}}
+{"type":"custom","id":"cc-start","parentId":"cc-a1","timestamp":"2026-07-11T04:00:03.000Z","customType":"forge.compaction_state","data":{"status":"started","attemptId":"cc-attempt-1"}}

@@ -1,7 +1,7 @@
 {
   "piSessionFormatVersion": 3,
-  "forgeBaseline": "0.71.1",
-  "forgeCommit": "c751c79c68d0",
+  "forgeBaseline": "0.80.6",
+  "forgeCommit": "wp-8-current",
   "fixtures": [
     {
       "id": "compat-matrix",
@@ -29,5 +29,5 @@
       "description": "Compaction start marker without completed compaction summary; old messages remain authoritative."
     }
   ],
-  "rollbackPolicy": "If 0.80.6-written state cannot open under the frozen 0.71.1 runner, rollback is snapshot-restore-only from a pre-upgrade data copy; do not downgrade in-place."
+  "rollbackPolicy": "0.80.6-written v3 state opens under the frozen 0.71.1 runner for this fixture matrix. If a future format does not, rollback is snapshot-restore-only from a pre-upgrade data copy; do not downgrade in-place."
 }

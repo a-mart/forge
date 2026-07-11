@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"fixture-0806-aborted","timestamp":"2026-07-11T01:00:00.000Z","cwd":"/tmp/pi-fixture-0806-aborted"}
+{"type":"message","id":"abort-u1","parentId":null,"timestamp":"2026-07-11T01:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"start an answer then abort"}],"timestamp":1752195601000}}
+{"type":"message","id":"abort-a1","parentId":"abort-u1","timestamp":"2026-07-11T01:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"partial answer before abort"}],"provider":"anthropic","api":"anthropic","model":"claude-sonnet-4-5","usage":{"input":4,"output":3,"cacheRead":0,"cacheWrite":0,"totalTokens":7},"stopReason":"aborted","timestamp":1752195602000}}
