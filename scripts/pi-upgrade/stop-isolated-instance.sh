@@ -30,3 +30,17 @@ for port in "$BACKEND_PORT" "$UI_PORT"; do
     echo "No listener on port $port"
   fi
 done
+
+# After stop, drop destination runtime.lock so the isolated tree does not retain
+# live PID/lock semantics. Never touch production ~/.forge/runtime.lock.
+if [[ -n "${FORGE_DATA_DIR:-}" && -f "${FORGE_DATA_DIR}/runtime.lock" ]]; then
+  PROD_REAL="$(python3 -c 'import os; print(os.path.realpath(os.path.expanduser("~/.forge")))')"
+  DEST_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$FORGE_DATA_DIR")"
+  if [[ "$DEST_REAL" != "$PROD_REAL" && "$DEST_REAL" != "$PROD_REAL"/* ]]; then
+    echo "Removing isolated runtime.lock at destination"
+    rm -f "${FORGE_DATA_DIR}/runtime.lock"
+  else
+    echo "ERROR: refusing to delete runtime.lock — FORGE_DATA_DIR resolves to production" >&2
+    exit 1
+  fi
+fi

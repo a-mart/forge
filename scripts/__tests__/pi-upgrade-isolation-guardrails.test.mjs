@@ -17,6 +17,12 @@ describe("pi-upgrade isolation guardrails", () => {
     expect(() => assertIsolatedForgeDataDir(join(homedir(), ".forge"))).toThrow(/refuses/);
   });
 
+  it("refuses paths nested inside production ~/.forge", () => {
+    expect(() => assertIsolatedForgeDataDir(join(homedir(), ".forge", "nested-copy"))).toThrow(
+      /inside production|refuses/,
+    );
+  });
+
   it("refuses reserved backend ports", () => {
     for (const port of [47187, 47287, 47387]) {
       expect(() => assertIsolatedBackendPort(port)).toThrow(/reserved/);

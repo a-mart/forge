@@ -30,26 +30,24 @@ Secrets are never printed. Auth presence/mode only.
 ## Setup
 
 1. Create the worktree/branch (already done for this milestone).
-2. Copy production data **outside** the repo:
+2. Prepare the isolated data root with disk-space + overlap checks (preferred):
 
 ```bash
-rsync -a \
-  --exclude 'shared/cache/' \
-  --exclude 'uploads/' \
-  --exclude '**/terminals/*/delta.ndjson' \
-  --exclude '**/terminals/*/snapshot.vt' \
-  "$HOME/.forge/" "$HOME/.forge-worktree-pi-upgrade-0.80.6-safety/"
+chmod +x scripts/pi-upgrade/prepare-isolated-data.sh
+./scripts/pi-upgrade/prepare-isolated-data.sh pi-upgrade-0.80.6-safety
+# optional full byte-faithful copy:
+# FORGE_ISOLATED_COPY_FULL=1 ./scripts/pi-upgrade/prepare-isolated-data.sh pi-upgrade-0.80.6-safety
 ```
 
-Preserve permissions (`rsync -a`). Verify `auth.json` remains mode `600`.
+The prepare script:
 
-**After copy, delete the production runtime lock from the isolated tree** so the worktree backend can start:
+- refuses destinations that resolve to, sit inside, or symlink-alias `~/.forge`
+- checks free disk (`source size + 20 GiB` headroom by default)
+- copies with `rsync -a` (permissions preserved; no hardlinks into production)
+- sanitizes destination `runtime.lock` / root `*.pid` / `*.sock` so live PID/socket semantics are not reused
+- verifies `auth.json` exists and is not world-readable / not the same inode as production
 
-```bash
-rm -f "$HOME/.forge-worktree-pi-upgrade-0.80.6-safety/runtime.lock"
-```
-
-Never delete `~/.forge/runtime.lock` while production is running.
+Never delete `~/.forge/runtime.lock` while production is running. `stop-isolated-instance.sh` only removes the lock under the isolated `FORGE_DATA_DIR`.
 
 3. Worktree `.env` (gitignored):
 

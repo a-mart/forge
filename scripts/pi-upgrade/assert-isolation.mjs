@@ -48,6 +48,9 @@ export function assertIsolatedForgeDataDir(dataDir, { label = "FORGE_DATA_DIR" }
         `${label} refuses production data path (${candidate}). Use a copied ~/.forge-worktree-* directory.`,
       );
     }
+    if (real.startsWith(prodReal + "/") || real.startsWith(prodReal + "\\")) {
+      throw new Error(`${label} refuses path inside production data (${candidate})`);
+    }
   }
 
   // Also reject any path that is exactly $HOME/.forge or a symlink to it.
