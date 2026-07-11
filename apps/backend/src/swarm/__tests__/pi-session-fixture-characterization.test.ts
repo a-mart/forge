@@ -266,4 +266,34 @@ describe("pi session fixture compatibility (WP-8)", () => {
     expect(old.getEntries().map((entry) => entry.id)).toEqual(SessionManager.open(target).getEntries().map((entry) => entry.id));
     expect(contextSignature(old.buildSessionContext())).toEqual(contextSignature(SessionManager.open(target).buildSessionContext()));
   });
+
+  it("lets the frozen 0.71.1 runner append then 0.80.6 reopen the same session", async () => {
+    const frozen0711 = await loadFrozenPi0711SessionModule();
+    expect(frozen0711.CURRENT_SESSION_VERSION).toBe(3);
+
+    const { target } = await copyFixtureToTemp("0.71.1", "compat-matrix.jsonl");
+    const before = await readFile(target, "utf8");
+    const old = frozen0711.SessionManager.open(target);
+    const appendedId = old.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "old-runner append before target reopen" }],
+      timestamp: Date.parse("2026-07-11T10:05:00.000Z"),
+    });
+    const mid = await readFile(target, "utf8");
+    expect(mid.startsWith(before)).toBe(true);
+    expect(appendedId).toBeTruthy();
+
+    const current = SessionManager.open(target);
+    expect(current.getEntries().map((entry) => entry.id)).toEqual(old.getEntries().map((entry) => entry.id));
+    expect(contextSignature(current.buildSessionContext())).toEqual(contextSignature(old.buildSessionContext()));
+
+    const resumedId = current.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "0.80.6 resume after old append" }],
+      timestamp: Date.parse("2026-07-11T10:06:00.000Z"),
+    });
+    expect(resumedId).toBeTruthy();
+    expect((await readFile(target, "utf8")).startsWith(mid)).toBe(true);
+    expect(SessionManager.open(target).getLeafId()).toBe(resumedId);
+  });
 });

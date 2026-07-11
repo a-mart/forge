@@ -39,19 +39,30 @@ export interface FrozenPi0711SessionModule {
 
 export async function loadFrozenPi0711SessionModule(): Promise<FrozenPi0711SessionModule> {
   const attempted: string[] = [];
+  const errors: string[] = [];
   for (const candidate of FROZEN_PI_0711_SESSION_MANAGER_CANDIDATES) {
     attempted.push(candidate);
     try {
       await access(candidate);
+    } catch {
+      errors.push(`${candidate}: missing`);
+      continue;
+    }
+    try {
       await assertFrozenPi0711Identity(candidate);
       return await import(pathToFileURL(candidate).href) as FrozenPi0711SessionModule;
-    } catch {
-      // Try the next configured frozen runner location. The old runtime is intentionally not a shipped dependency.
+    } catch (error) {
+      // Identity or import failures are hard errors for a present runner — do not silently skip.
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${candidate}: ${message}`);
+      throw new Error(
+        `Frozen Pi 0.71.1 rollback runner failed identity/import checks. ${message}. Attempted: ${attempted.join(", ")}`,
+      );
     }
   }
 
   throw new Error(
-    `Frozen Pi 0.71.1 rollback runner is required for this gate. Provision it outside shipped deps at .forge/pi-upgrade-runners/0.71.1 or set FORGE_PI_0711_SESSION_MANAGER_JS. Attempted: ${attempted.join(", ")}`,
+    `Frozen Pi 0.71.1 rollback runner is required for this gate. Provision it with ./scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh or set FORGE_PI_0711_SESSION_MANAGER_JS. Attempted: ${attempted.join(", ")}${errors.length ? `; details: ${errors.join("; ")}` : ""}`,
   );
 }
 
