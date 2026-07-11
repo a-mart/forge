@@ -191,7 +191,14 @@ async function stageBundledBackend() {
   await stageRuntimePackages(runtimePackages)
 
   const fileCount = await countFiles(backendStageDir)
-  console.log(`[electron/build-all] Staged bundled backend with ${runtimePackages.length} runtime packages (${fileCount} files)`)
+  const stagedCount = runtimePackages.hoisted.length + runtimePackages.nested.length
+  const nestedNote =
+    runtimePackages.nested.length > 0
+      ? ` (${runtimePackages.nested.length} nested versioned installs preserved)`
+      : ''
+  console.log(
+    `[electron/build-all] Staged bundled backend with ${stagedCount} runtime packages${nestedNote} (${fileCount} files)`,
+  )
 }
 
 export async function validatePackagedRuntimePreflight() {
@@ -505,14 +512,24 @@ const PI_SINGLETON_RUNTIME_PACKAGES = new Set([
   '@earendil-works/pi-tui',
 ])
 
-async function collectRuntimePackageClosure(rootPackages) {
+/**
+ * Collect the packaged-runtime dependency closure.
+ * Pi-family packages must resolve to a single realpath/version (fail-closed).
+ * Non-Pi packages may resolve multiple versions; secondary installs are staged
+ * nested under the requesting parent install (by realpath) so nothing is silently discarded.
+ */
+export async function collectRuntimePackageClosure(rootPackages) {
   const queuedPackages = rootPackages.map(({ packageName, optional }) => ({
     packageName,
     resolveFromManifestPath: backendWorkspaceManifestPath,
     optional,
+    parentPackageName: null,
+    parentPackageRoot: null,
   }))
-  const discoveredPackages = new Map()
-  const warnedNonSingletonConflicts = new Set()
+  const hoistedByName = new Map()
+  const nestedPackages = []
+  const seenRealpaths = new Set()
+  const installsByRealpath = new Map()
 
   while (queuedPackages.length > 0) {
     const next = queuedPackages.shift()
@@ -524,39 +541,79 @@ async function collectRuntimePackageClosure(rootPackages) {
     if (!resolved) {
       continue
     }
-    const existing = discoveredPackages.get(resolved.name)
-    if (existing) {
-      const existingRealpath = await fs.promises.realpath(existing.packageRoot)
-      const resolvedRealpath = await fs.promises.realpath(resolved.packageRoot)
-      if (existingRealpath !== resolvedRealpath || existing.manifest.version !== resolved.manifest.version) {
-        if (PI_SINGLETON_RUNTIME_PACKAGES.has(resolved.name)) {
-          throw new Error(
-            `Runtime package closure resolved conflicting Pi singleton ${resolved.name}: ${existingRealpath}@${existing.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
-          )
-        }
-        const warningKey = `${resolved.name}@${existing.manifest.version}->${resolved.manifest.version}`
-        if (!warnedNonSingletonConflicts.has(warningKey)) {
-          warnedNonSingletonConflicts.add(warningKey)
-          console.warn(
-            `[electron/build-all] Non-singleton runtime dependency ${resolved.name} resolved multiple versions; keeping ${existing.manifest.version}, ignoring ${resolved.manifest.version}`,
-          )
-        }
+
+    const resolvedRealpath = await fs.promises.realpath(resolved.packageRoot)
+    const existingByName = hoistedByName.get(resolved.name)
+    if (existingByName) {
+      const existingRealpath = await fs.promises.realpath(existingByName.packageRoot)
+      if (existingRealpath === resolvedRealpath && existingByName.manifest.version === resolved.manifest.version) {
+        seenRealpaths.add(resolvedRealpath)
+        installsByRealpath.set(resolvedRealpath, existingByName)
+        continue
+      }
+      if (PI_SINGLETON_RUNTIME_PACKAGES.has(resolved.name)) {
+        throw new Error(
+          `Runtime package closure resolved conflicting Pi singleton ${resolved.name}: ${existingRealpath}@${existingByName.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
+        )
+      }
+      if (!next.parentPackageName || !next.parentPackageRoot) {
+        throw new Error(
+          `Runtime package closure resolved conflicting ${resolved.name} at the bundle root with no nest parent: ${existingRealpath}@${existingByName.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
+        )
+      }
+      if (seenRealpaths.has(resolvedRealpath)) {
+        continue
+      }
+      seenRealpaths.add(resolvedRealpath)
+      const nested = {
+        ...resolved,
+        nestUnderPackageName: next.parentPackageName,
+        nestUnderPackageRoot: next.parentPackageRoot,
+      }
+      nestedPackages.push(nested)
+      installsByRealpath.set(resolvedRealpath, nested)
+      for (const dependency of collectRuntimeDependencyDescriptors(resolved.manifest)) {
+        queuedPackages.push({
+          packageName: dependency.packageName,
+          resolveFromManifestPath: resolved.manifestPath,
+          optional: dependency.optional,
+          parentPackageName: resolved.name,
+          parentPackageRoot: resolvedRealpath,
+        })
       }
       continue
     }
 
-    discoveredPackages.set(resolved.name, resolved)
+    if (seenRealpaths.has(resolvedRealpath)) {
+      // Alias of an already-staged physical install (e.g. string-width-cjs -> string-width).
+      hoistedByName.set(resolved.name, resolved)
+      continue
+    }
+
+    seenRealpaths.add(resolvedRealpath)
+    hoistedByName.set(resolved.name, resolved)
+    installsByRealpath.set(resolvedRealpath, resolved)
 
     for (const dependency of collectRuntimeDependencyDescriptors(resolved.manifest)) {
       queuedPackages.push({
         packageName: dependency.packageName,
         resolveFromManifestPath: resolved.manifestPath,
         optional: dependency.optional,
+        parentPackageName: resolved.name,
+        parentPackageRoot: resolvedRealpath,
       })
     }
   }
 
-  return Array.from(discoveredPackages.values()).sort((left, right) => left.name.localeCompare(right.name))
+  const hoisted = Array.from(hoistedByName.values()).sort((left, right) => left.name.localeCompare(right.name))
+  nestedPackages.sort((left, right) => {
+    const byParent = left.nestUnderPackageName.localeCompare(right.nestUnderPackageName)
+    if (byParent !== 0) return byParent
+    const byName = left.name.localeCompare(right.name)
+    if (byName !== 0) return byName
+    return String(left.manifest.version).localeCompare(String(right.manifest.version))
+  })
+  return { hoisted, nested: nestedPackages, installsByRealpath }
 }
 
 function collectRuntimeDependencyDescriptors(manifest) {
@@ -582,7 +639,11 @@ async function resolveInstalledPackage(packageName, resolveFromManifestPath, opt
   let resolvedEntryPath
 
   try {
-    resolvedEntryPath = packageRequire.resolve(packageName)
+    try {
+      resolvedEntryPath = packageRequire.resolve(`${packageName}/package.json`)
+    } catch {
+      resolvedEntryPath = packageRequire.resolve(packageName)
+    }
   } catch (error) {
     const resolvedPackageRoot = await findInstalledPackageRoot(packageName, path.dirname(resolveFromManifestPath))
     if (resolvedPackageRoot) {
@@ -605,6 +666,7 @@ async function resolveInstalledPackage(packageName, resolveFromManifestPath, opt
 
 async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
   let currentPath = path.extname(resolvedEntryPath) ? path.dirname(resolvedEntryPath) : resolvedEntryPath
+  let aliasFallback = null
 
   while (true) {
     const manifestPath = path.join(currentPath, 'package.json')
@@ -612,7 +674,17 @@ async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
       const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
       if (manifest.name === expectedPackageName) {
         return {
-          name: manifest.name,
+          name: expectedPackageName,
+          manifest,
+          manifestPath,
+          packageRoot: currentPath,
+        }
+      }
+      // pnpm alias packages (e.g. string-width-cjs -> string-width) resolve into a
+      // package root whose manifest.name differs from the required specifier.
+      if (!aliasFallback) {
+        aliasFallback = {
+          name: expectedPackageName,
           manifest,
           manifestPath,
           packageRoot: currentPath,
@@ -622,6 +694,9 @@ async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
 
     const parentPath = path.dirname(currentPath)
     if (parentPath === currentPath) {
+      if (aliasFallback) {
+        return aliasFallback
+      }
       throw new Error(`Unable to locate package root for ${expectedPackageName} from ${resolvedEntryPath}`)
     }
 
@@ -671,15 +746,55 @@ function isStagedPackageManifestResolutionError(error) {
 }
 
 async function stageRuntimePackages(runtimePackages) {
-  if (runtimePackages.length === 0) {
+  const hoisted = Array.isArray(runtimePackages) ? runtimePackages : runtimePackages.hoisted
+  const nested = Array.isArray(runtimePackages) ? [] : runtimePackages.nested
+  if (hoisted.length === 0 && nested.length === 0) {
     return
   }
 
   await mkdir(backendStageNodeModulesDir, { recursive: true })
+  const stagedTargetByRealpath = new Map()
 
-  for (const runtimePackage of runtimePackages) {
+  for (const runtimePackage of hoisted) {
     const packageTargetDir = path.join(backendStageNodeModulesDir, ...runtimePackage.name.split('/'))
     await copyRuntimePackage(runtimePackage, packageTargetDir)
+    stagedTargetByRealpath.set(await fs.promises.realpath(runtimePackage.packageRoot), packageTargetDir)
+  }
+
+  // Parents may themselves be nested; stage in waves until all nests are placed.
+  const pending = [...nested]
+  let guard = 0
+  while (pending.length > 0) {
+    guard += 1
+    if (guard > pending.length + nested.length + 32) {
+      const unresolved = pending
+        .map((pkg) => `${pkg.name}@${pkg.manifest.version} under ${pkg.nestUnderPackageName}`)
+        .join(', ')
+      throw new Error(`Unable to resolve nested runtime package parents for staging: ${unresolved}`)
+    }
+
+    let progressed = false
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      const runtimePackage = pending[index]
+      const parentTarget = stagedTargetByRealpath.get(runtimePackage.nestUnderPackageRoot)
+      if (!parentTarget) {
+        continue
+      }
+      const packageTargetDir = path.join(parentTarget, 'node_modules', ...runtimePackage.name.split('/'))
+      await copyRuntimePackage(runtimePackage, packageTargetDir)
+      stagedTargetByRealpath.set(await fs.promises.realpath(runtimePackage.packageRoot), packageTargetDir)
+      console.log(
+        `[electron/build-all] Nested ${runtimePackage.name}@${runtimePackage.manifest.version} under ${runtimePackage.nestUnderPackageName}`,
+      )
+      pending.splice(index, 1)
+      progressed = true
+    }
+    if (!progressed) {
+      const unresolved = pending
+        .map((pkg) => `${pkg.name}@${pkg.manifest.version} under ${pkg.nestUnderPackageName}`)
+        .join(', ')
+      throw new Error(`Unable to resolve nested runtime package parents for staging: ${unresolved}`)
+    }
   }
 }
 
@@ -738,24 +853,47 @@ function validateBackendMetafileHasNoEmbeddedPiAiImplementation() {
   }
 }
 
-async function validateStagedPiSingletonRuntime(stagedRequire) {
+/**
+ * Fail-closed Pi-family version check for staged roots.
+ * Used by packaged preflight and unit tests with duplicate/skew fixtures.
+ */
+export function assertPiFamilySingletonManifests(packageDirsByName, expectedVersion = '0.80.6') {
+  const required = [
+    '@earendil-works/pi-agent-core',
+    '@earendil-works/pi-ai',
+    '@earendil-works/pi-coding-agent',
+    '@earendil-works/pi-tui',
+  ]
+  for (const packageName of required) {
+    const packageDir = packageDirsByName.get(packageName)
+    if (!packageDir || !existsSync(path.join(packageDir, 'package.json'))) {
+      throw new Error(`Packaged-runtime preflight failed: missing staged Pi package ${packageName}`)
+    }
+    const manifest = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'))
+    if (manifest.version !== expectedVersion) {
+      throw new Error(
+        `Packaged-runtime preflight failed: expected ${packageName}@${expectedVersion}, got ${manifest.version}`,
+      )
+    }
+  }
+}
+
+export async function validateStagedPiSingletonRuntime(stagedRequire) {
   const piPackageDirs = new Map([
     ['@earendil-works/pi-agent-core', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-agent-core')],
     ['@earendil-works/pi-ai', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai')],
     ['@earendil-works/pi-coding-agent', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')],
     ['@earendil-works/pi-tui', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-tui')],
   ])
-  for (const [packageName, packageDir] of piPackageDirs) {
-    const manifest = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'))
-    if (manifest.version !== '0.80.6') {
-      throw new Error(`Packaged-runtime preflight failed: expected ${packageName}@0.80.6, got ${manifest.version}`)
-    }
-  }
+  assertPiFamilySingletonManifests(piPackageDirs)
 
   const piAiPackageDir = piPackageDirs.get('@earendil-works/pi-ai')
   const piCodingAgentPackageDir = piPackageDirs.get('@earendil-works/pi-coding-agent')
   const forgePiAiRoot = await findInstalledPackageRoot('@earendil-works/pi-ai', path.dirname(backendStageBundlePath))
   const codingAgentPiAiRoot = await findInstalledPackageRoot('@earendil-works/pi-ai', piCodingAgentPackageDir)
+  if (!forgePiAiRoot || !codingAgentPiAiRoot) {
+    throw new Error('Packaged-runtime preflight failed: unable to resolve staged pi-ai roots for singleton check')
+  }
   const forgeCompatPath = await fs.promises.realpath(path.join(forgePiAiRoot, 'dist', 'compat.js'))
   const codingAgentCompatPath = await fs.promises.realpath(path.join(codingAgentPiAiRoot, 'dist', 'compat.js'))
   if (forgeCompatPath !== codingAgentCompatPath) {
@@ -802,6 +940,8 @@ async function validateStagedPiSingletonRuntime(stagedRequire) {
   } finally {
     registration.unregister()
   }
+
+  void stagedRequire
 }
 
 async function assertStagedPiPackageRelativeAssets() {
@@ -1107,11 +1247,24 @@ async function assertStagedLegacyExtensionMigrationCases({
   const unsupportedErrors = unsupportedLoader
     .getExtensions()
     .errors
-    .map((entry) => String(entry?.error ?? entry?.message ?? entry ?? ''))
-    .join('\n')
-  if (!/@mariozechner\/pi-ai\/private-subpath|Unsupported legacy|Cannot find|ERR_MODULE_NOT_FOUND/i.test(unsupportedErrors)) {
+    .map((entry) => entry?.error ?? entry?.message ?? entry)
+  if (unsupportedErrors.length === 0) {
+    throw new Error('Packaged-runtime preflight failed: unsupported legacy subpath produced no resourceLoader errors')
+  }
+  const { formatPiExtensionLoadError } = await import(
+    pathToFileURL(path.join(repoRoot, 'apps/backend/dist/swarm/pi-extension-migration-diagnostics.js')).href,
+  )
+  const diagnosed = unsupportedErrors.map((error) => {
+    const rawMessage = error instanceof Error ? error.message : String(error ?? '')
+    return formatPiExtensionLoadError(error, rawMessage)
+  })
+  if (
+    !diagnosed.some((message) =>
+      String(message).includes('Unsupported legacy Pi extension import @mariozechner/pi-ai/private-subpath'),
+    )
+  ) {
     throw new Error(
-      `Packaged-runtime preflight failed: unsupported legacy subpath did not surface a module/migration failure (errors=${unsupportedErrors || '<empty>'})`,
+      `Packaged-runtime preflight failed: unsupported legacy subpath did not produce Forge migration guidance (raw=${JSON.stringify(unsupportedErrors.map(String))} diagnosed=${JSON.stringify(diagnosed)})`,
     )
   }
 }

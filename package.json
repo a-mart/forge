@@ -58,8 +58,7 @@
       "@earendil-works/pi-ai": "0.80.6",
       "@earendil-works/pi-agent-core": "0.80.6",
       "@earendil-works/pi-coding-agent": "0.80.6",
-      "@earendil-works/pi-tui": "0.80.6",
-      "@anthropic-ai/sdk": "0.91.1"
+      "@earendil-works/pi-tui": "0.80.6"
     },
     "packageExtensions": {
       "nitro-nightly@3.0.1-20260223-102354-c0b46421": {

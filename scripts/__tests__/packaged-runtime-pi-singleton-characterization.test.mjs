@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { BACKEND_BUNDLE_EXTERNAL_PACKAGES } from '../../apps/electron/scripts/build-all.mjs'
+import { BACKEND_BUNDLE_EXTERNAL_PACKAGES, assertPiFamilySingletonManifests } from '../../apps/electron/scripts/build-all.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -95,20 +95,23 @@ describe('packaged-runtime Pi singleton characterization (0.80.6 pin)', () => {
         mkdirSync(dir, { recursive: true })
         writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: index === 0 ? '0.80.5' : '0.80.6' }))
       }
-      const skewed = names.map((name) =>
-        JSON.parse(readFileSync(join(skewDir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version,
+      const skewed = new Map(
+        names.map((name) => [name, join(skewDir, 'node_modules', ...name.split('/'))]),
       )
-      // Staged preflight in build-all.mjs hard-fails when any family member !== 0.80.6.
-      expect(skewed.some((version) => version !== '0.80.6')).toBe(true)
-      expect(() => {
-        for (const [name, version] of names.map((packageName, index) => [packageName, skewed[index]])) {
-          if (version !== '0.80.6') {
-            throw new Error(`Packaged-runtime preflight failed: expected ${name}@0.80.6, got ${version}`)
-          }
-        }
-      }).toThrow(/expected @earendil-works\/pi-ai@0\.80\.6, got 0\.80\.5/)
+      // Exported production validator hard-fails when any family member !== 0.80.6.
+      expect(() => assertPiFamilySingletonManifests(skewed)).toThrow(
+        /expected @earendil-works\/pi-ai@0\.80\.6, got 0\.80\.5/,
+      )
     } finally {
       rmSync(skewDir, { recursive: true, force: true })
     }
+  })
+
+  it('assertPiFamilySingletonManifests rejects missing duplicate staged roots', () => {
+    const incomplete = new Map([
+      ['@earendil-works/pi-ai', '/tmp/missing-pi-ai'],
+      ['@earendil-works/pi-coding-agent', '/tmp/missing-pi-coding-agent'],
+    ])
+    expect(() => assertPiFamilySingletonManifests(incomplete)).toThrow(/missing staged Pi package/)
   })
 })
