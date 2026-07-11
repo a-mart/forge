@@ -5,7 +5,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerFauxProvider } from "@mariozechner/pi-ai";
+import { registerFauxProvider } from "../pi/pi-ai-compat.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -13,7 +13,7 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProjectSafePiProjectSettingsStorage } from "../project-executable-trust.js";
 

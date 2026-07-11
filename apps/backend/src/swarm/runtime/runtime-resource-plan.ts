@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import type { ExtensionFactory, LoadExtensionsResult, ResourceDiagnostic, Skill } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory, LoadExtensionsResult, ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,

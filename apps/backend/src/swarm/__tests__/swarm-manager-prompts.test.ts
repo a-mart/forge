@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { AuthStorage, SessionManager } from '@mariozechner/pi-coding-agent'
+import { AuthStorage, SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
 import { getConversationHistoryCacheFilePath } from '../conversation-history-cache.js'
 import {

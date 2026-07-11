@@ -7,7 +7,7 @@ const modelRegistryMockState = vi.hoisted(() => ({
   construct: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => {
+vi.mock("@earendil-works/pi-coding-agent", () => {
   return {
     ModelRegistry: {
       create: (...args: unknown[]) => modelRegistryMockState.construct(...args),

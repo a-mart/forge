@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "../../../swarm/pi/pi-ai-compat.js";
 import type {
   AvailableOpenRouterModel,
   ForgeInputMode,

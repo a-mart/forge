@@ -39,7 +39,7 @@ Forge-parent and coding-agent-parent resolution of `@mariozechner/pi-ai` share o
 
 ### Electron split risk (characterization)
 
-Today `BACKEND_BUNDLE_EXTERNAL_PACKAGES` externalizes `@mariozechner/pi-coding-agent` but **not** `@mariozechner/pi-ai`. That packaged split risk is WP-9 after pins; it does not justify shipping temporary shims.
+Today `BACKEND_BUNDLE_EXTERNAL_PACKAGES` externalizes `@earendil-works/pi-coding-agent` but **not** `@mariozechner/pi-ai`. That packaged split risk is WP-9 after pins; it does not justify shipping temporary shims.
 
 ## Consequences
 

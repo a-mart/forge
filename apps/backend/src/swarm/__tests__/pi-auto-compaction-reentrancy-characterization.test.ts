@@ -7,7 +7,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { registerFauxProvider } from "@mariozechner/pi-ai";
+import { registerFauxProvider } from "../pi/pi-ai-compat.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -15,7 +15,7 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProjectSafePiProjectSettingsStorage } from "../project-executable-trust.js";
 
@@ -39,7 +39,7 @@ describe("pi auto-compaction reentrancy characterization (0.71.1 patch)", () => 
       const candidate = join(
         current,
         "node_modules",
-        "@mariozechner",
+        "@earendil-works",
         "pi-coding-agent",
         "dist",
         "core",
@@ -49,7 +49,7 @@ describe("pi auto-compaction reentrancy characterization (0.71.1 patch)", () => 
         const source = readFileSync(candidate, "utf8");
         agentSessionPath = candidate;
         expect(source).toContain("Reentrancy guard: if compaction is already in progress, bail out.");
-        expect(source).toContain("const localAbortController = new AbortController();");
+        expect(source).toContain("localAbortController = new AbortController();");
         expect(source).toContain("if (this._autoCompactionAbortController === localAbortController)");
         break;
       } catch {

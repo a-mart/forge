@@ -1,4 +1,4 @@
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { statSync, writeFileSync } from "node:fs";
 import { renameSyncWithRetry } from "../retry-rename.js";
 import { isEnoentError } from "../../utils/fs-errors.js";

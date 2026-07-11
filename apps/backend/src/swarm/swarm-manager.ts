@@ -3,8 +3,8 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { complete, getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { complete, getModel, type Api, type AssistantMessage, type Model } from "./pi/pi-ai-compat.js";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { isRepoProjectAgentSource, isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,

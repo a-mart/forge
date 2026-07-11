@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type {
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,

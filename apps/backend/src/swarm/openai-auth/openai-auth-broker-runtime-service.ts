@@ -1,4 +1,4 @@
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import type { ProviderAccountUsage, ProviderUsageWindow } from "@forge/protocol";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import {

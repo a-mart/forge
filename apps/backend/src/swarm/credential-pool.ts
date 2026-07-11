@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
-import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@mariozechner/pi-ai/oauth";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import type { CredentialPoolState, CredentialPoolStrategy, PooledCredentialInfo } from "@forge/protocol";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";

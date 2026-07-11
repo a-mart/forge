@@ -1,6 +1,6 @@
 import type { ManagerExactModelSelection } from "@forge/protocol";
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { AuthStorage, type AuthCredential, type ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { Api, Model } from "../pi/pi-ai-compat.js";
+import { AuthStorage, type AuthCredential, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";

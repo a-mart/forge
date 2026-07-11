@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@mariozechner/pi-ai/oauth";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { CredentialPoolService, type CredentialPoolServiceDeps } from "../credential-pool.js";
 import { classifyRuntimeCapacityError } from "../runtime-utils.js";
 

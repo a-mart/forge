@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AuthCredential } from "@mariozechner/pi-coding-agent";
+import type { AuthCredential } from "@earendil-works/pi-coding-agent";
 import {
   type OpenAIBrokerInviteRedeemResponse,
   type OpenAIBrokerSettingsResponse,

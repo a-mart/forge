@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { getCatalogProvider } from "@forge/protocol";
 
 const RESPONSES_REASONING_INCLUDE = "reasoning.encrypted_content";

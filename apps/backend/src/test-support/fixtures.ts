@@ -1,4 +1,4 @@
-import { SessionManager } from '@mariozechner/pi-coding-agent'
+import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { join } from 'node:path'
 import type { ConversationMessageEvent } from '../swarm/types.js'
 import type { AgentDescriptor, AgentModelDescriptor } from '../swarm/types.js'

@@ -14,8 +14,8 @@
  * onPayload before any fetch; we capture the body there and abort.
  */
 import { describe, expect, it } from "vitest";
-import { streamOpenAICodexResponses } from "@mariozechner/pi-ai/openai-codex-responses";
-import { convertMessages } from "@mariozechner/pi-ai/openai-completions";
+import { stream as streamOpenAICodexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
+import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 
 // Fake but structurally valid Codex JWT so buildRequestBody is reached. The
 // account id is read from payload[JWT_CLAIM_PATH].chatgpt_account_id.
@@ -137,7 +137,7 @@ describe("xAI Responses placeholder stays scoped to xAI (prior regression locus)
     // convertResponsesMessages is internal (no public subpath export); import the
     // installed dist file directly by URL so we still exercise the patched code.
     const sharedUrl = new URL(
-      "../../node_modules/@mariozechner/pi-ai/dist/providers/openai-responses-shared.js",
+      "../../node_modules/@earendil-works/pi-ai/dist/api/openai-responses-shared.js",
       import.meta.url,
     ).href;
     const { convertResponsesMessages } = (await import(/* @vite-ignore */ sharedUrl)) as any;

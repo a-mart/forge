@@ -4,7 +4,7 @@ import {
   type OAuthCredentials,
   type OAuthLoginCallbacks,
   type OAuthProviderInterface
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   CredentialPoolState,
@@ -785,8 +785,22 @@ async function handlePoolAddAccountOAuthLogin(
       onAuth: (info) => {
         sendSseEvent("auth_url", { url: info.url, instructions: info.instructions });
       },
+      // WP-7: full device_code/select protocol + legacy fallbacks. Minimal stubs keep 0.80.6 login typing satisfied until then.
+      onDeviceCode: (info) => {
+        sendSseEvent("auth_url", {
+          url: info.verificationUri,
+          instructions: `Enter code ${info.userCode} at ${info.verificationUri}`,
+        });
+      },
       onPrompt: (prompt) =>
         requestPromptInput({ message: prompt.message, placeholder: prompt.placeholder }),
+      onSelect: async (prompt) => {
+        const optionsText = prompt.options.map((option) => `${option.id}: ${option.label}`).join("\n");
+        return requestPromptInput({
+          message: `${prompt.message}\n${optionsText}`,
+          placeholder: prompt.options[0]?.id,
+        });
+      },
       onProgress: (message) => {
         sendSseEvent("progress", { message });
       },
@@ -1023,11 +1037,25 @@ async function handleSettingsAuthLoginHttpRequest(
           instructions: info.instructions
         });
       },
+      // WP-7: full device_code/select protocol + legacy fallbacks. Minimal stubs keep 0.80.6 login typing satisfied until then.
+      onDeviceCode: (info) => {
+        sendSseEvent("auth_url", {
+          url: info.verificationUri,
+          instructions: `Enter code ${info.userCode} at ${info.verificationUri}`,
+        });
+      },
       onPrompt: (prompt) =>
         requestPromptInput({
           message: prompt.message,
           placeholder: prompt.placeholder
         }),
+      onSelect: async (prompt) => {
+        const optionsText = prompt.options.map((option) => `${option.id}: ${option.label}`).join("\n");
+        return requestPromptInput({
+          message: `${prompt.message}\n${optionsText}`,
+          placeholder: prompt.options[0]?.id,
+        });
+      },
       onProgress: (message) => {
         sendSseEvent("progress", { message });
       },

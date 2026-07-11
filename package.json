@@ -51,7 +51,11 @@
       "zod": "^4.3.6",
       "@tanstack/router-generator>zod": "3.25.76",
       "@tanstack/router-plugin>zod": "3.25.76",
-      "@tanstack/start-plugin-core>zod": "3.25.76"
+      "@tanstack/start-plugin-core>zod": "3.25.76",
+      "@earendil-works/pi-ai": "0.80.6",
+      "@earendil-works/pi-agent-core": "0.80.6",
+      "@earendil-works/pi-coding-agent": "0.80.6",
+      "@earendil-works/pi-tui": "0.80.6"
     },
     "packageExtensions": {
       "nitro-nightly@3.0.1-20260223-102354-c0b46421": {
@@ -70,8 +74,8 @@
       "sqlite3"
     ],
     "patchedDependencies": {
-      "@mariozechner/pi-coding-agent@0.71.1": "patches/@mariozechner__pi-coding-agent@0.71.1.patch",
-      "@mariozechner/pi-ai@0.71.1": "patches/@mariozechner__pi-ai@0.71.1.patch"
+      "@earendil-works/pi-coding-agent@0.80.6": "patches/@earendil-works__pi-coding-agent@0.80.6.patch",
+      "@earendil-works/pi-ai@0.80.6": "patches/@earendil-works__pi-ai@0.80.6.patch"
     }
   },
   "devDependencies": {

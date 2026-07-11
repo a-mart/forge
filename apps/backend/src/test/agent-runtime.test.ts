@@ -8,7 +8,7 @@ const openAICodexResponsesMockState = vi.hoisted(() => ({
   getOpenAICodexWebSocketDebugStats: vi.fn(),
 }))
 
-vi.mock('@mariozechner/pi-ai/openai-codex-responses', () => ({
+vi.mock('@earendil-works/pi-ai/api/openai-codex-responses', () => ({
   closeOpenAICodexWebSocketSessions: (...args: unknown[]) =>
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions(...args),
   getOpenAICodexWebSocketDebugStats: (...args: unknown[]) =>

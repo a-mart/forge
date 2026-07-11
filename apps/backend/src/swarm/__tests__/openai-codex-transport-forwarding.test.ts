@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { streamSimple } from '@mariozechner/pi-ai'
-import type { Model } from '@mariozechner/pi-ai'
+import { streamSimple } from '../pi/pi-ai-compat.js'
+import type { Model } from '../pi/pi-ai-compat.js'
 
 const originalWebSocket = globalThis.WebSocket
 const originalFetch = globalThis.fetch
@@ -268,7 +268,8 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(sockets).toHaveLength(1)
     expect(result.stopReason).toBe('error')
     expect(result.errorMessage).toContain('WebSocket closed 1006')
-    expect(result.errorMessage).toContain('phase: response.output_text.delta')
+    // Upstream 0.80.6 close errors no longer embed stream phase text; behavioral
+    // contract is no retry/SSE after partial output has started.
     expect(result.content).toEqual([{ type: 'text', text: 'partial' }])
   })
 
@@ -637,7 +638,8 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(sockets).toHaveLength(1)
     expect(result.stopReason).toBe('error')
     expect(result.errorMessage).toContain('WebSocket closed 1006')
-    expect(result.errorMessage).toContain('phase: response.function_call_arguments.delta')
+    // Upstream 0.80.6 close errors no longer embed stream phase text; behavioral
+    // contract is no retry/SSE after partial tool-call output has started.
     expect(result.content).toEqual([{ type: 'toolCall', id: 'call_partial|fc_partial', name: 'shell', arguments: { cmd: 'ls' } }])
   })
 

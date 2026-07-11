@@ -100,7 +100,7 @@ describe('resolveStagedPackageEntryFromManifest', () => {
     await writeFile(
       join(root, 'package.json'),
       JSON.stringify({
-        name: '@mariozechner/pi-coding-agent',
+        name: '@earendil-works/pi-coding-agent',
         type: 'module',
         exports: {
           '.': {

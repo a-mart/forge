@@ -25,7 +25,7 @@
  *   - Configurable protection rules via a simple array
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as path from "node:path";
 
 function normalizeForMatch(value: string): string {

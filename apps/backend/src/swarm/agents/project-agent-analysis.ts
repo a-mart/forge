@@ -1,4 +1,4 @@
-import { complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import { complete, type Api, type AssistantMessage, type Model } from "../pi/pi-ai-compat.js";
 import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
 import { normalizeProjectAgentInlineText } from "../project-agents.js";
 import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.js";

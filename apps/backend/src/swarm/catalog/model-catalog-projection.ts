@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "../pi/pi-ai-compat.js";
 import {
   FORGE_MODEL_CATALOG,
   getCatalogModel,

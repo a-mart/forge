@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ProviderAccountUsage, ProviderUsageStats } from "@forge/protocol";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import type { CredentialPoolService } from "../swarm/credential-pool.js";
 import {
   evaluateHistoricalProviderUsagePace,

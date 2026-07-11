@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox'
-import type { ToolDefinition } from '@mariozechner/pi-coding-agent'
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import {
   WORK_PLAN_ITEM_STATUSES,
   WORK_PLAN_MODES,

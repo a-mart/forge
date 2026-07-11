@@ -36,7 +36,7 @@ Machine-readable logs belong under `.internal/pi-upgrade-evidence/` (gitignored)
 | Package | Version | Notes |
 |---------|---------|-------|
 | `@mariozechner/pi-ai` | `0.71.1` | Root `pnpm.patchedDependencies` |
-| `@mariozechner/pi-coding-agent` | `0.71.1` | Compaction reentrancy patch |
+| `@earendil-works/pi-coding-agent` | `0.71.1` | Compaction reentrancy patch |
 | `@mariozechner/pi-agent-core` | `0.71.1` | Transitive |
 | `@mariozechner/pi-tui` | `0.71.1` | Transitive |
 
@@ -49,7 +49,7 @@ Inspected target tarball SHA-256 (registry, not yet pinned):
 
 ## Source singleton (0.71.1)
 
-From `apps/backend`, `import.meta.resolve('@mariozechner/pi-ai')` via Forge parent and via `pi-coding-agent` parent share one realpath and identical `registerFauxProvider` / `getModel` / `closeOpenAICodexWebSocketSessions` function identity. Electron packaging still externalizes only `pi-coding-agent` today — see Electron characterization tests.
+From `apps/backend`, `import.meta.resolve('@earendil-works/pi-ai/compat')` via Forge parent and via `pi-coding-agent` parent share one realpath and identical `registerFauxProvider` / `getModel` / `closeOpenAICodexWebSocketSessions` function identity. Electron packaging still externalizes only `pi-coding-agent` today — see Electron characterization tests.
 
 ## Focused baseline result (this branch)
 

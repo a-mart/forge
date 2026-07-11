@@ -14,7 +14,7 @@ Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all
 
 ```typescript
 // ~/.forge/agent/extensions/protected-paths.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {
@@ -87,7 +87,7 @@ Discovery is shallow — top-level files and one-level subdirectories only. Pack
 An extension is a TypeScript file that exports a default function receiving Pi's `ExtensionAPI`:
 
 ```typescript
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -182,12 +182,12 @@ export default function (pi: ExtensionAPI) {
 
 | Package | Purpose |
 |---------|---------|
-| `@mariozechner/pi-coding-agent` | Extension types (`ExtensionAPI`, events, tool helpers) |
+| `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, events, tool helpers) |
 | `@sinclair/typebox` | Schema definitions for tool parameters |
-| `@mariozechner/pi-ai` | AI utilities (e.g., `StringEnum` for Google-compatible enums) |
+| `@earendil-works/pi-ai/compat` | AI utilities (e.g., `StringEnum` for Google-compatible enums) |
 | Node.js built-ins | `node:fs`, `node:path`, `node:child_process`, etc. |
 
-> **Note:** Use `StringEnum` from `@mariozechner/pi-ai` instead of `Type.Union(Type.Literal(...))` for string enum parameters — Google's API requires it.
+> **Note:** Use `StringEnum` from `@earendil-works/pi-ai/compat` instead of `Type.Union(Type.Literal(...))` for string enum parameters — Google's API requires it.
 
 ## Pi Packages
 

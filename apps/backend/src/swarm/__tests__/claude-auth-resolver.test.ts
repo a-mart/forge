@@ -2,7 +2,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { ClaudeAuthResolver } from "../claude-auth-resolver.js";
 import { claudeConfigDir, claudeSessionDir, claudeWorkerDir } from "../claude-data-paths.js";
 import { getSharedAuthFilePath } from "../data-paths.js";

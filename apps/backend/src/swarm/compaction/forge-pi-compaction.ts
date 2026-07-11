@@ -1,7 +1,7 @@
 import type { ManagerExactModelSelection, ManagerReasoningLevel } from "@forge/protocol";
-import type { Api, Model } from "@mariozechner/pi-ai";
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { compact as runPiCompaction, type CompactionResult } from "@mariozechner/pi-coding-agent";
+import type { Api, Model } from "../pi/pi-ai-compat.js";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { compact as runPiCompaction, type CompactionResult } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
 import { normalizeThinkingLevelForProvider, resolveExactModel } from "../swarm-manager-utils.js";
 import {

@@ -4,7 +4,7 @@ import {
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
 } from "@forge/protocol";
-import type { Model, Transport } from "@mariozechner/pi-ai";
+import type { Model, Transport } from "../../pi/pi-ai-compat.js";
 import type { ObservabilityFacade, ObservabilityToolDefinition } from "../../../observability/observability-types.js";
 import {
   AuthStorage,
@@ -15,7 +15,7 @@ import {
   type AgentSession,
   type LoadExtensionsResult,
   type ToolDefinition
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
@@ -450,7 +450,10 @@ export class PiRuntimeCreator {
       agentDir: runtimeAgentDir,
       projectSettingsPaths: trustedProjectSettingsPaths.filter(pathExistsSync),
       projectExecutablesTrusted
-    }));
+    }), {
+      // WP-6 owns the full trust boundary; initialize false unless Forge already elevated trust.
+      projectTrusted: projectExecutablesTrusted,
+    });
     const transport = resolveOpenAICodexTransport(model);
     if (transport) {
       settingsManager.applyOverrides({ transport });
@@ -827,7 +830,10 @@ export function resolvePiActiveToolNamesForDescriptor(
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 
 function normalizeThinkingLevel(level: string): string {
-  return level === "x-high" ? "xhigh" : level;
+  if (level === "none") return "off";
+  if (level === "ultra") return "max";
+  if (level === "x-high") return "xhigh";
+  return level;
 }
 
 function previewForLog(text: string, maxLength = 160): string {

@@ -18,7 +18,7 @@ const oauthMockState = vi.hoisted(() => ({
   openaiLogin: vi.fn(),
 }))
 
-vi.mock('@mariozechner/pi-ai/oauth', () => ({
+vi.mock('@earendil-works/pi-ai/oauth', () => ({
   anthropicOAuthProvider: {
     name: 'Anthropic',
     usesCallbackServer: false,

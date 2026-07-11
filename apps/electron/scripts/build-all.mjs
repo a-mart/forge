@@ -79,7 +79,7 @@ export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
         : 'expected getText()/setText() exports',
   },
   {
-    name: '@mariozechner/pi-coding-agent',
+    name: '@earendil-works/pi-coding-agent',
     optional: false,
     validateLoadedModule: (loadedModule) =>
       typeof loadedModule?.compact === 'function' ? null : 'expected a compact() export',
@@ -440,7 +440,7 @@ function assertPathIsWithinDirectory(targetPath, parentDirectory, failurePrefix)
 }
 
 async function stageBundledDependencyRuntimeAssets() {
-  const piCodingAgent = await resolveInstalledPackage('@mariozechner/pi-coding-agent', backendWorkspaceManifestPath, false)
+  const piCodingAgent = await resolveInstalledPackage('@earendil-works/pi-coding-agent', backendWorkspaceManifestPath, false)
 
   await copyRuntimeAsset(
     path.join(piCodingAgent.packageRoot, 'dist', 'modes', 'interactive', 'theme'),
@@ -654,7 +654,7 @@ export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
 }
 
 async function validateStagedPiCompactionMeasurement(stagedRequire) {
-  const stagedPackageDir = path.join(backendStageNodeModulesDir, '@mariozechner', 'pi-coding-agent')
+  const stagedPackageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')
   const stagedPackageValidationFailure = validateStagedPiCodingAgentPackageDir(stagedPackageDir)
   if (stagedPackageValidationFailure) {
     throw new Error(

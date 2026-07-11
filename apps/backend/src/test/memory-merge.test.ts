@@ -1,4 +1,4 @@
-import type { Api, AssistantMessage, Model } from '@mariozechner/pi-ai'
+import type { Api, AssistantMessage, Model } from '../swarm/pi/pi-ai-compat.js'
 import { describe, expect, it } from 'vitest'
 import {
   buildMemoryMergeUserPrompt,

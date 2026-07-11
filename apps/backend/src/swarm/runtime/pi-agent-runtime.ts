@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentSession, AgentSessionEvent, AuthCredential } from "@mariozechner/pi-coding-agent";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import type { AgentSession, AgentSessionEvent, AuthCredential } from "@earendil-works/pi-coding-agent";
+import type { ImageContent, TextContent } from "../pi/pi-ai-compat.js";
 import {
   closeOpenAICodexWebSocketSessions,
   getOpenAICodexWebSocketDebugStats,
   type OpenAICodexWebSocketDebugStats
-} from "@mariozechner/pi-ai/openai-codex-responses";
+} from "@earendil-works/pi-ai/api/openai-codex-responses";
 import {
   buildRuntimeMessageKey,
   classifyRuntimeCapacityError,
@@ -519,7 +519,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private async disposeSessionResources(shutdown: PiSessionShutdownMetadata): Promise<void> {
     try {
       // NOTE: Uses the public AgentSession.extensionRunner API
-      // (verified against @mariozechner/pi-coding-agent@0.71.1).
+      // (verified against @earendil-works/pi-coding-agent@0.71.1).
       // The try/catch ensures this remains safe against Pi version changes.
       const runner = this.session.extensionRunner;
       if (runner?.hasHandlers("session_shutdown")) {
