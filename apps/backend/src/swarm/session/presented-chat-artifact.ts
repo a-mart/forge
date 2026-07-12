@@ -82,8 +82,9 @@ async function walkFile(target: string): Promise<{ parts: string[]; ids: string[
   return { parts: relative, ids, finalId: ids.at(-1)!, real: resolved };
 }
 
-export async function securelyReadPresentedArtifact(target: string) {
+export async function securelyReadPresentedArtifact(target: string, hooks?: { afterInitialWalk?: () => Promise<void> | void; afterOpen?: () => Promise<void> | void }) {
   const initial = await walkFile(target);
+  await hooks?.afterInitialWalk?.();
   if (process.platform === "win32") fail("stable_identity_unsupported"); // Node cannot promise no-follow open on Windows.
   let handle;
   try {
@@ -91,6 +92,7 @@ export async function securelyReadPresentedArtifact(target: string) {
   } catch (e: any) { if (e?.code === "ENOENT") fail("file_not_found"); if (e?.code === "ELOOP") fail("unsafe_file_identity"); throw e; }
   try {
     const opened = await handle.stat();
+    await hooks?.afterOpen?.();
     if (!opened.isFile()) fail("file_identity_changed");
     if (identity(opened) !== initial.finalId) fail("file_identity_changed");
     if (opened.size > MAX_READ_FILE_CONTENT_BYTES) fail("file_too_large");

@@ -1,0 +1,95 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, rename, symlink, writeFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import {
+  ChatArtifactError,
+  canonicalizeChatArtifactPath,
+  canonicalizePresentedLinkHref,
+  extractPresentedArtifactPaths,
+  findUniquePresentedConversationMessage,
+  readPresentedChatArtifact,
+  securelyReadPresentedArtifact,
+} from "../swarm/session/presented-chat-artifact.js";
+import { getSessionFilePath, getWorkerSessionFilePath } from "../swarm/storage/data-paths.js";
+import { CONVERSATION_ENTRY_TYPE } from "../swarm/session/conversation-timeline.js";
+
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => import("node:fs/promises").then(({ rm }) => rm(root, { recursive: true, force: true })))); });
+async function fixture() {
+  const tempRoot = process.platform === "darwin" ? `/private${tmpdir()}` : tmpdir();
+  const dataDir = await mkdtemp(join(tempRoot, "forge-chat-artifact-")); roots.push(dataDir);
+  const agentId = "manager"; const profileId = "profile"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId);
+  await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true });
+  const manager: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile };
+  const profiles = [{ profileId }];
+  const source: any = { getAgent: (id: string) => id === agentId ? manager : undefined, listProfiles: () => profiles, getConfig: () => ({ paths: { dataDir } }) };
+  return { dataDir, agentId, profileId, sessionFile, manager, profiles, source };
+}
+function line(data: any, id = data.id) { return JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id, data }) + "\n"; }
+function message(id: string | undefined, text: string, source = "speak_to_user", role = "assistant") { return { type: "conversation_message", id, agentId: "some-other-actor", role, source, text, timestamp: new Date().toISOString() }; }
+async function errorCode(fn: () => Promise<unknown>) { try { await fn(); } catch (error) { expect(error).toBeInstanceOf(ChatArtifactError); return (error as ChatArtifactError).code; } throw new Error("expected failure"); }
+
+describe("presented chat artifact authorization", () => {
+  it("uses the wrapper ID without mutating canonical JSONL", async () => {
+    const f = await fixture(); const outside = join(f.dataDir, "outside.txt"); await writeFile(outside, "ok");
+    await writeFile(f.sessionFile, line(message(undefined, `[x](swarm-file://${outside})`), "wrapper-id"));
+    const before = await stat(f.sessionFile); const bytes = await import("node:fs/promises").then(({ readFile }) => readFile(f.sessionFile));
+    const result: any = await readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "wrapper-id", path: outside });
+    expect(result.content).toBe("ok"); expect(await import("node:fs/promises").then(({ readFile }) => readFile(f.sessionFile))).toEqual(bytes); expect((await stat(f.sessionFile)).mtimeMs).toBe(before.mtimeMs);
+  });
+
+  it("requires a unique ID and rejects corrupt JSONL", async () => {
+    const f = await fixture(); const target = join(f.dataDir, "a.txt"); await writeFile(target, "a");
+    await writeFile(f.sessionFile, line(message("same", `[x](swarm-file://${target})`)) + line(message("same", `[x](swarm-file://${target})`)));
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "same", path: target }))).toBe("ambiguous_message_id");
+    await writeFile(f.sessionFile, "not json\n");
+    expect(await errorCode(() => findUniquePresentedConversationMessage(f.sessionFile, "same"))).toBe("corrupt_transcript");
+  });
+
+  it("enforces the exact eligible assistant source matrix", async () => {
+    const f = await fixture(); const target = join(f.dataDir, "a.txt"); await writeFile(target, "a");
+    for (const [role, source] of [["assistant", "worker_report"], ["user", "user_input"], ["system", "system"]]) {
+      await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`, source, role)));
+      expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("ineligible_message");
+    }
+    await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`, "assistant_progress")));
+    expect((await readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }) as any).content).toBe("a");
+  });
+
+  it("only accepts presented link tokens and exact canonical paths", async () => {
+    const f = await fixture(); const target = join(f.dataDir, "my file?.txt"); await writeFile(target, "a");
+    await writeFile(f.sessionFile, line(message("m", `[x](<swarm-file://${target.replace("?", "%3F")}> "t") and \`${target}\` and ![x](${target})`)));
+    expect((await readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }) as any).content).toBe("a");
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: `${target}x` }))).toBe("path_not_presented");
+    expect(extractPresentedArtifactPaths(`[x](file://${target})`)).toEqual([]);
+    expect(canonicalizePresentedLinkHref("swarm-file:///tmp/a%252Fz")).toBe("/tmp/a%2Fz");
+    expect(canonicalizePresentedLinkHref("swarm-file:///tmp/%")).toBeUndefined();
+    expect(() => canonicalizeChatArtifactPath("//host/share")).toThrow(ChatArtifactError);
+  });
+
+  it("rejects collaboration, archived, orphan and noncanonical worker descriptors", async () => {
+    const f = await fixture(); const target = join(f.dataDir, "a"); await writeFile(target, "a"); await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`)));
+    f.manager.collab = { channelId: "c" }; expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("invalid_transcript_owner"); delete f.manager.collab;
+    f.manager.archivedAt = "now"; expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("invalid_transcript_owner"); delete f.manager.archivedAt;
+    const worker: any = { agentId: "worker", managerId: "missing", role: "worker", profileId: f.profileId, sessionFile: getWorkerSessionFilePath(f.dataDir, f.profileId, f.agentId, "worker") };
+    f.source.getAgent = (id: string) => id === "worker" ? worker : id === f.agentId ? f.manager : undefined;
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: "worker", messageId: "m", path: target }))).toBe("invalid_transcript_owner");
+  });
+
+  it("detects ordinary-file and parent-directory replacement before bytes are read", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture(); const target = join(f.dataDir, "target"); const replacement = join(f.dataDir, "replacement"); await writeFile(target, "old"); await writeFile(replacement, "new");
+    expect(await errorCode(() => securelyReadPresentedArtifact(target, { afterInitialWalk: () => rename(replacement, target) }))).toBe("file_identity_changed");
+    const parent = join(f.dataDir, "parent"); const alternate = join(f.dataDir, "alternate"); await mkdir(parent); await mkdir(alternate); await writeFile(join(parent, "file"), "old"); await writeFile(join(alternate, "file"), "new");
+    expect(await errorCode(() => securelyReadPresentedArtifact(join(parent, "file"), { afterInitialWalk: async () => { await rename(parent, `${parent}-old`); await rename(alternate, parent); } }))).toBe("file_identity_changed");
+  });
+
+  it("rejects final and parent symlinks and reads only ordinary files", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture(); const target = join(f.dataDir, "target"); await writeFile(target, "safe"); const link = join(f.dataDir, "link"); await symlink(target, link);
+    expect(await errorCode(() => securelyReadPresentedArtifact(link))).toBe("unsafe_file_identity");
+    const dir = join(f.dataDir, "dir"); await mkdir(dir); await symlink(f.dataDir, join(dir, "parent"));
+    expect(await errorCode(() => securelyReadPresentedArtifact(join(dir, "parent", "target")))).toBe("unsafe_file_identity");
+  });
+});
