@@ -193,7 +193,7 @@ export function evaluateBuilderCommandAccess(options: {
 // ---------------------------------------------------------------------------
 
 const API_PROXY_MEMBER_READ_PATHS = new Set(["/api/read-file", "/api/unread", "/api/slash-commands"]);
-const API_PROXY_MEMBER_WRITE_PATHS = new Set(["/api/read-file", "/api/unread", "/api/feedback"]);
+const API_PROXY_MEMBER_WRITE_PATHS = new Set(["/api/read-file", "/api/chat-artifacts/read", "/api/unread", "/api/feedback"]);
 const API_PROXY_MEMBER_SMART_COMPACT_PATH = /^\/api\/agents\/[^/]+\/smart-compact$/;
 const API_PROXY_TERMINALS_COLLECTION_PATH = "/api/terminals";
 const API_PROXY_TERMINAL_MUTATION_PATH = /^\/api\/terminals\/[^/]+(?:\/(?:ticket|resize))?$/;

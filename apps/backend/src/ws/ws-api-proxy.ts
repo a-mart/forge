@@ -27,9 +27,11 @@ import {
   requireApiProxyQueryString,
 } from "./ws-api-proxy-parse.js";
 import { readApiProxyFile } from "./ws-file-access.js";
+import { ChatArtifactError, chatArtifactStatus, readPresentedChatArtifact } from "../swarm/session/presented-chat-artifact.js";
 
 const API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/smart-compact$/;
 const API_PROXY_READ_FILE_PATH = "/api/read-file";
+const API_PROXY_CHAT_ARTIFACT_READ_PATH = "/api/chat-artifacts/read";
 const API_PROXY_NOTIFICATION_PREFERENCES_PATH = "/api/mobile/notification-preferences";
 const API_PROXY_REGISTER_DEVICE_PATH = "/api/mobile/devices/register";
 const API_PROXY_LEGACY_REGISTER_DEVICE_PATH = "/api/mobile/push/register";
@@ -107,6 +109,10 @@ export class WsApiProxy {
 
       if (pathname === API_PROXY_READ_FILE_PATH) {
         return await this.handleApiProxyReadFile(command, payload);
+      }
+
+      if (pathname === API_PROXY_CHAT_ARTIFACT_READ_PATH) {
+        return await this.handleApiProxyChatArtifactRead(command, payload, subscribedAgentId);
       }
 
       if (pathname === API_PROXY_FEEDBACK_PATH) {
@@ -264,6 +270,20 @@ export class WsApiProxy {
     });
 
     return this.createApiProxyJsonResponse(command.requestId, result.status, result.payload, result.headers);
+  }
+
+  private async handleApiProxyChatArtifactRead(command: ApiProxyCommand, payload: unknown, subscribedAgentId: string): Promise<ApiProxyResponseEvent> {
+    if (command.method !== "POST") return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
+    if (!isRecord(payload) || Object.keys(payload).some(key => key !== "messageId" && key !== "path") || typeof payload.messageId !== "string" || typeof payload.path !== "string") {
+      return this.createApiProxyJsonResponse(command.requestId, 400, { error: "invalid_request", code: "invalid_request" });
+    }
+    try {
+      const result = await readPresentedChatArtifact(this.swarmManager, { transcriptAgentId: subscribedAgentId, messageId: payload.messageId, path: payload.path });
+      return this.createApiProxyJsonResponse(command.requestId, 200, result);
+    } catch (error) {
+      if (error instanceof ChatArtifactError) return this.createApiProxyJsonResponse(command.requestId, chatArtifactStatus(error.code), { error: error.code, code: error.code });
+      return this.createApiProxyJsonResponse(command.requestId, 500, { error: "transcript_read_failed", code: "transcript_read_failed" });
+    }
   }
 
   private async handleApiProxyFeedback(
@@ -626,7 +646,8 @@ export class WsApiProxy {
   ): ApiProxyResponseEvent {
     const message = error instanceof Error ? error.message : String(error);
     return this.createApiProxyJsonResponse(requestId, resolveApiProxyErrorStatusCode(message), {
-      error: message
+      error: message,
+      ...(message.includes("Path is outside allowed roots") ? { code: "PATH_OUTSIDE_ALLOWED_ROOTS" } : {}),
     });
   }
 

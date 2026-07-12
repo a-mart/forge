@@ -260,7 +260,7 @@ export function createFileRoutes(options: {
           }
 
           if (message.includes("Path is outside allowed roots") || message.includes("Path is outside CWD.")) {
-            sendJson(response, 403, { error: message });
+            sendJson(response, 403, { error: message, code: "PATH_OUTSIDE_ALLOWED_ROOTS" });
             return;
           }
 

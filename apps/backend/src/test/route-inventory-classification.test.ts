@@ -92,6 +92,7 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   // --- files (member project reads, R1) ------------------------------------
   { sample: "/api/attachments/file-1", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/read-file", expect: { GET: "member", POST: "member" }, killSwitched: true },
+  { sample: "/api/chat-artifacts/read", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/write-file", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/files/list", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/count", expect: { GET: "member" }, killSwitched: true },
