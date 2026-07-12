@@ -15,10 +15,10 @@ const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactErr
 const hasControl = (value: string) => /[\0-\x1f\x7f]/.test(value);
 
 /** Canonical native absolute path. Body values are application data: never decode them here. */
-export function canonicalizeChatArtifactPath(value: string): string {
+export function canonicalizeChatArtifactPathForPlatform(value: string, platform: NodeJS.Platform = process.platform): string {
   const input = value.trim();
   if (!input || hasControl(input) || /\$\{|\{\{/.test(input) || input === "…") fail("invalid_path");
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     if (/^(?:\\\\|\/\/|\\\\[?.]|\\\\\.)/.test(input) || /^[A-Za-z]:[^\\/]/.test(input) || /:[^\\/]/.test(input.slice(2))) fail("invalid_path");
     if (!/^[A-Za-z]:[\\/]/.test(input)) fail("invalid_path");
     const normalized = path.win32.normalize(input).replace(/\\/g, "/");
@@ -28,14 +28,15 @@ export function canonicalizeChatArtifactPath(value: string): string {
   if (!input.startsWith("/") || input.startsWith("//") || input.includes("\\")) fail("invalid_path");
   return path.posix.normalize(input);
 }
+export function canonicalizeChatArtifactPath(value: string): string { return canonicalizeChatArtifactPathForPlatform(value); }
 
 /** Convert an href emitted by mobile markdown-it to a path, with exactly one URI decode. */
-export function canonicalizePresentedLinkHref(href: string): string | undefined {
+export function canonicalizePresentedLinkHrefForPlatform(href: string, platform: NodeJS.Platform = process.platform): string | undefined {
   let raw: string;
   if (href.startsWith("swarm-file://")) {
     raw = href.slice("swarm-file://".length);
     const suffix = raw.search(/[?#]/); if (suffix >= 0) raw = raw.slice(0, suffix);
-    if (process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(raw)) raw = raw.slice(1);
+    if (platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(raw)) raw = raw.slice(1);
   } else {
     // Markdown-it rejects file: links. Everything URL-like is excluded here.
     if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href) || href.startsWith("//")) return undefined;
@@ -43,8 +44,9 @@ export function canonicalizePresentedLinkHref(href: string): string | undefined 
   }
   try { raw = decodeURIComponent(raw); } catch { return undefined; }
   if (hasControl(raw)) return undefined;
-  try { return canonicalizeChatArtifactPath(raw); } catch { return undefined; }
+  try { return canonicalizeChatArtifactPathForPlatform(raw, platform); } catch { return undefined; }
 }
+export function canonicalizePresentedLinkHref(href: string): string | undefined { return canonicalizePresentedLinkHrefForPlatform(href); }
 
 /** Small link-token scanner intentionally excludes images, code and raw URLs. */
 export function extractPresentedArtifactPaths(markdown: string): string[] {
@@ -61,7 +63,7 @@ export function extractPresentedArtifactPaths(markdown: string): string[] {
 }
 
 function samePath(a: string, b: string) { return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b; }
-function identity(stat: { dev: number | bigint; ino: number | bigint; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }) {
+export function stableFileIdentity(stat: { dev: number | bigint; ino: number | bigint; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }) {
   if ((typeof stat.dev !== "number" && typeof stat.dev !== "bigint") || (typeof stat.ino !== "number" && typeof stat.ino !== "bigint") || stat.dev === 0 || stat.ino === 0) fail("stable_identity_unsupported");
   return `${String(stat.dev)}:${String(stat.ino)}:${stat.isDirectory() ? "d" : stat.isFile() ? "f" : "o"}`;
 }
@@ -72,7 +74,7 @@ async function walkFile(target: string): Promise<{ parts: string[]; ids: string[
     current = path.join(current, relative[i]!);
     let s; try { s = await lstat(current); } catch (e: any) { if (e?.code === "ENOENT") fail("file_not_found"); throw e; }
     if (s.isSymbolicLink()) fail("unsafe_file_identity");
-    const id = identity(s);
+    const id = stableFileIdentity(s);
     if (i < relative.length - 1 && !s.isDirectory()) fail("file_identity_changed");
     if (i === relative.length - 1 && !s.isFile()) fail("invalid_path");
     ids.push(id);
@@ -94,10 +96,10 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
     const opened = await handle.stat();
     await hooks?.afterOpen?.();
     if (!opened.isFile()) fail("file_identity_changed");
-    if (identity(opened) !== initial.finalId) fail("file_identity_changed");
+    if (stableFileIdentity(opened) !== initial.finalId) fail("file_identity_changed");
     if (opened.size > MAX_READ_FILE_CONTENT_BYTES) fail("file_too_large");
     const post = await walkFile(target);
-    if (post.real !== initial.real || post.ids.length !== initial.ids.length || post.ids.some((id, i) => id !== initial.ids[i]) || post.finalId !== identity(opened)) fail("file_identity_changed");
+    if (post.real !== initial.real || post.ids.length !== initial.ids.length || post.ids.some((id, i) => id !== initial.ids[i]) || post.finalId !== stableFileIdentity(opened)) fail("file_identity_changed");
     const buffer = Buffer.alloc(MAX_READ_FILE_CONTENT_BYTES + 1);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead > MAX_READ_FILE_CONTENT_BYTES) fail("file_too_large");

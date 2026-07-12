@@ -5,11 +5,14 @@ import { tmpdir } from "node:os";
 import {
   ChatArtifactError,
   canonicalizeChatArtifactPath,
+  canonicalizeChatArtifactPathForPlatform,
   canonicalizePresentedLinkHref,
+  canonicalizePresentedLinkHrefForPlatform,
   extractPresentedArtifactPaths,
   findUniquePresentedConversationMessage,
   readPresentedChatArtifact,
   securelyReadPresentedArtifact,
+  stableFileIdentity,
 } from "../swarm/session/presented-chat-artifact.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "../swarm/storage/data-paths.js";
 import { CONVERSATION_ENTRY_TYPE } from "../swarm/session/conversation-timeline.js";
@@ -68,6 +71,19 @@ describe("presented chat artifact authorization", () => {
     expect(() => canonicalizeChatArtifactPath("//host/share")).toThrow(ChatArtifactError);
   });
 
+  it("fails closed when stable file identity is unavailable", () => {
+    expect(() => stableFileIdentity({ dev: 0, ino: 1, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })).toThrow(ChatArtifactError);
+    expect(() => stableFileIdentity({ dev: 1, ino: 0, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })).toThrow(ChatArtifactError);
+  });
+
+  it("has platform-independent Windows URI and path canonicalization", () => {
+    expect(canonicalizeChatArtifactPathForPlatform("c:\\tmp\\..\\Report.txt", "win32")).toBe("C:/Report.txt");
+    expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///c:/tmp/a%252Fz", "win32")).toBe("C:/tmp/a%2Fz");
+    expect(canonicalizePresentedLinkHrefForPlatform("C:%5Ctmp%5Ca", "win32")).toBeUndefined();
+    expect(() => canonicalizeChatArtifactPathForPlatform("//server/share", "win32")).toThrow(ChatArtifactError);
+    expect(() => canonicalizeChatArtifactPathForPlatform("C:/tmp/a:stream", "win32")).toThrow(ChatArtifactError);
+  });
+
   it("rejects collaboration, archived, orphan and noncanonical worker descriptors", async () => {
     const f = await fixture(); const target = join(f.dataDir, "a"); await writeFile(target, "a"); await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`)));
     f.manager.collab = { channelId: "c" }; expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("invalid_transcript_owner"); delete f.manager.collab;
@@ -83,6 +99,17 @@ describe("presented chat artifact authorization", () => {
     expect(await errorCode(() => securelyReadPresentedArtifact(target, { afterInitialWalk: () => rename(replacement, target) }))).toBe("file_identity_changed");
     const parent = join(f.dataDir, "parent"); const alternate = join(f.dataDir, "alternate"); await mkdir(parent); await mkdir(alternate); await writeFile(join(parent, "file"), "old"); await writeFile(join(alternate, "file"), "new");
     expect(await errorCode(() => securelyReadPresentedArtifact(join(parent, "file"), { afterInitialWalk: async () => { await rename(parent, `${parent}-old`); await rename(alternate, parent); } }))).toBe("file_identity_changed");
+  });
+
+  it("rejects a handle that grows beyond the bounded read limit", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture(); const target = join(f.dataDir, "target"); await writeFile(target, "small");
+    expect(await errorCode(() => securelyReadPresentedArtifact(target, { afterOpen: () => writeFile(target, Buffer.alloc(2 * 1024 * 1024 + 2)) }))).toBe("file_too_large");
+  });
+
+  it("rejects non-regular targets before any open/read", async () => {
+    const f = await fixture(); const target = join(f.dataDir, "directory"); await mkdir(target);
+    expect(await errorCode(() => securelyReadPresentedArtifact(target))).toBe("invalid_path");
   });
 
   it("rejects final and parent symlinks and reads only ordinary files", async () => {
