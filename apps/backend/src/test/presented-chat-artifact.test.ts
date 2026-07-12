@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rename, symlink, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   ChatArtifactError,
   canonicalizeChatArtifactPath,
@@ -17,6 +19,7 @@ import {
 import { getSessionFilePath, getWorkerSessionFilePath } from "../swarm/storage/data-paths.js";
 import { CONVERSATION_ENTRY_TYPE } from "../swarm/session/conversation-timeline.js";
 
+const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => import("node:fs/promises").then(({ rm }) => rm(root, { recursive: true, force: true })))); });
 async function fixture() {
@@ -110,6 +113,12 @@ describe("presented chat artifact authorization", () => {
   it("rejects non-regular targets before any open/read", async () => {
     const f = await fixture(); const target = join(f.dataDir, "directory"); await mkdir(target);
     expect(await errorCode(() => securelyReadPresentedArtifact(target))).toBe("invalid_path");
+  });
+
+  it("rejects FIFOs by lstat without opening them", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture(); const fifo = join(f.dataDir, "pipe"); await execFileAsync("mkfifo", [fifo]);
+    expect(await errorCode(() => securelyReadPresentedArtifact(fifo))).toBe("invalid_path");
   });
 
   it("rejects final and parent symlinks and reads only ordinary files", async () => {
