@@ -2,6 +2,11 @@
 
 **Date:** 2026-07-06 · **Branch:** `v2/wp-manager-turn` · builds on `docs/MANAGER_SILENCE_INVESTIGATION.md` (2026-06-10).
 
+> **Current scope (as of `d0c37f95`):** This document preserves historical design evidence. Routine
+> direct-web worker callbacks are intentionally internal manager decision turns and are eligible for
+> neither empty-turn resampling nor the worker-outcome backstop. The manager must assess the report,
+> perform focused acceptance, and explicitly deliver an accepted outcome or material blocker.
+
 ## Problem
 `gpt-5.5` (the most-used manager model, `openai-codex`) can end a manager turn with a literally empty
 response — empty/whitespace content, no tool call, `stopReason: "stop"`, ~12 output tokens — instead of
