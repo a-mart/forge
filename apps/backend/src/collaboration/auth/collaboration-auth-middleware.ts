@@ -362,7 +362,10 @@ function isMemberProjectRoute(
   }
 
   // POST /api/read-file is a read (path parameters travel in the body).
-  if ((pathname === MEMBER_READ_FILE_PATH || pathname === MEMBER_CHAT_ARTIFACT_READ_PATH) && (isReadMethod || normalizedMethod === "POST")) {
+  if (pathname === MEMBER_READ_FILE_PATH && (isReadMethod || normalizedMethod === "POST")) {
+    return true;
+  }
+  if (pathname === MEMBER_CHAT_ARTIFACT_READ_PATH && normalizedMethod === "POST") {
     return true;
   }
 

@@ -20,6 +20,7 @@ import {
 } from "./message-routing-receipts.js";
 import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
+import { backfillConversationMessageEntryId } from "./conversation-entry-id.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
   createConversationHistoryDiagnostics,
@@ -478,7 +479,7 @@ export class ConversationProjector {
             continue;
           }
 
-          const hydratedEntry = this.backfillConversationMessageEntryId(entry.data, extractSessionEntryId(entry));
+          const hydratedEntry = backfillConversationMessageEntryId(entry.data, extractSessionEntryId(entry));
           entriesForAgent.push(hydratedEntry);
           if (shouldPersistConversationEntry(hydratedEntry)) {
             persistedEntryCount += 1;
@@ -626,27 +627,6 @@ export class ConversationProjector {
     event.id = preferredId && preferredId.trim().length > 0 ? preferredId : randomUUID().slice(0, 8);
   }
 
-  private backfillConversationMessageEntryId(
-    entry: ConversationEntryEvent,
-    wrapperEntryId: string | undefined
-  ): ConversationEntryEvent {
-    if (entry.type !== "conversation_message") {
-      return entry;
-    }
-
-    if (typeof entry.id === "string" && entry.id.trim().length > 0) {
-      return entry;
-    }
-
-    if (typeof wrapperEntryId !== "string" || wrapperEntryId.trim().length === 0) {
-      return entry;
-    }
-
-    return {
-      ...entry,
-      id: wrapperEntryId
-    };
-  }
 }
 
 function extractConversationEntryStableDedupeKey(entry: ConversationEntryEvent): string | undefined {

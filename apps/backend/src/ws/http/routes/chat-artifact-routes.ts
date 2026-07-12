@@ -12,6 +12,12 @@ export function createChatArtifactRoutes(options: { swarmManager: SwarmManager }
     if (request.method !== "POST") { applyCorsHeaders(request, response, METHODS); response.setHeader("Allow", METHODS); sendJson(response, 405, { error: "Method Not Allowed" }); return; }
     applyCorsHeaders(request, response, METHODS);
     try { const body = await parseJsonBody(request, 64 * 1024); const result = await readPresentedChatArtifact(options.swarmManager, body as any); sendJson(response, 200, result); }
-    catch (error) { if (error instanceof ChatArtifactError) { sendJson(response, chatArtifactStatus(error.code), { error: error.code, code: error.code }); return; } const code = error instanceof Error && error.message.includes("exceeds") ? 413 : 500; sendJson(response, code, { error: "Unable to read chat artifact.", code: code === 413 ? "request_too_large" : "transcript_read_failed" }); }
+    catch (error) {
+      if (error instanceof ChatArtifactError) { sendJson(response, chatArtifactStatus(error.code), { error: error.code, code: error.code }); return; }
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("exceeds")) { sendJson(response, 413, { error: "request_too_large", code: "request_too_large" }); return; }
+      if (message.includes("valid JSON")) { sendJson(response, 400, { error: "invalid_request", code: "invalid_request" }); return; }
+      sendJson(response, 500, { error: "Unable to read chat artifact.", code: "transcript_read_failed" });
+    }
   }}];
 }

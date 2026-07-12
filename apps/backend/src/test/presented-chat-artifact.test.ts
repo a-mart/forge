@@ -55,12 +55,23 @@ describe("presented chat artifact authorization", () => {
 
   it("enforces the exact eligible assistant source matrix", async () => {
     const f = await fixture(); const target = join(f.dataDir, "a.txt"); await writeFile(target, "a");
-    for (const [role, source] of [["assistant", "worker_report"], ["user", "user_input"], ["system", "system"]]) {
+    await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`, "worker_report", "assistant")));
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("corrupt_transcript");
+    for (const [role, source, expected] of [["user", "user_input", "ineligible_message"], ["system", "system", "ineligible_message"], ["assistant", "user_input", "corrupt_transcript"]]) {
       await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`, source, role)));
-      expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("ineligible_message");
+      expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe(expected);
     }
     await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`, "assistant_progress")));
     expect((await readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }) as any).content).toBe("a");
+  });
+
+  it("streams Unicode safely across a read boundary and rejects malformed conversation candidates", async () => {
+    const f = await fixture();
+    const padding = JSON.stringify({ type: "custom", customType: "other", data: "x".repeat(65_500) }) + "\n";
+    await writeFile(f.sessionFile, padding + line(message("unicode", "😀")));
+    expect((await findUniquePresentedConversationMessage(f.sessionFile, "unicode") as any).text).toBe("😀");
+    await writeFile(f.sessionFile, line({ type: "conversation_message", id: "bad", text: 5 }));
+    expect(await errorCode(() => findUniquePresentedConversationMessage(f.sessionFile, "bad"))).toBe("corrupt_transcript");
   });
 
   it("only accepts presented link tokens and exact canonical paths", async () => {
@@ -74,6 +85,12 @@ describe("presented chat artifact authorization", () => {
     expect(() => canonicalizeChatArtifactPath("//host/share")).toThrow(ChatArtifactError);
   });
 
+  it("matches Markdown-It link tokens without authorizing code, images, or malformed destinations", () => {
+    expect(extractPresentedArtifactPaths("[x](/tmp/a(b).txt) [r][ref]\n\n[ref]: /tmp/reference.txt")).toEqual(["/tmp/a(b).txt", "/tmp/reference.txt"]);
+    expect(extractPresentedArtifactPaths("```\n[x](/tmp/fenced)\n```\n~~~\n[x](/tmp/tilde)\n~~~\n    [x](/tmp/indented)\n``code [x](/tmp/inline)``\n![x](/tmp/image)")).toEqual([]);
+    expect(extractPresentedArtifactPaths("<swarm-file:///tmp/autolink> [x](file:///tmp/rejected)")).toEqual(["/tmp/autolink"]);
+  });
+
   it("fails closed when stable file identity is unavailable", () => {
     expect(() => stableFileIdentity({ dev: 0, ino: 1, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })).toThrow(ChatArtifactError);
     expect(() => stableFileIdentity({ dev: 1, ino: 0, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })).toThrow(ChatArtifactError);
@@ -82,13 +99,14 @@ describe("presented chat artifact authorization", () => {
   it("has platform-independent Windows URI and path canonicalization", () => {
     expect(canonicalizeChatArtifactPathForPlatform("c:\\tmp\\..\\Report.txt", "win32")).toBe("C:/Report.txt");
     expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///c:/tmp/a%252Fz", "win32")).toBe("C:/tmp/a%2Fz");
-    expect(canonicalizePresentedLinkHrefForPlatform("C:%5Ctmp%5Ca", "win32")).toBeUndefined();
+    expect(canonicalizePresentedLinkHrefForPlatform("C:%5Ctmp%5Ca", "win32")).toBe("C:/tmp/a");
     expect(() => canonicalizeChatArtifactPathForPlatform("//server/share", "win32")).toThrow(ChatArtifactError);
     expect(() => canonicalizeChatArtifactPathForPlatform("C:/tmp/a:stream", "win32")).toThrow(ChatArtifactError);
   });
 
   it("rejects collaboration, archived, orphan and noncanonical worker descriptors", async () => {
     const f = await fixture(); const target = join(f.dataDir, "a"); await writeFile(target, "a"); await writeFile(f.sessionFile, line(message("m", `[x](swarm-file://${target})`)));
+    f.profiles.splice(0); expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("invalid_transcript_owner"); f.profiles.push({ profileId: f.profileId });
     f.manager.collab = { channelId: "c" }; expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("invalid_transcript_owner"); delete f.manager.collab;
     f.manager.archivedAt = "now"; expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }))).toBe("invalid_transcript_owner"); delete f.manager.archivedAt;
     const worker: any = { agentId: "worker", managerId: "missing", role: "worker", profileId: f.profileId, sessionFile: getWorkerSessionFilePath(f.dataDir, f.profileId, f.agentId, "worker") };

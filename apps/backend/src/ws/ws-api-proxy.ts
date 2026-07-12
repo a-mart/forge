@@ -700,6 +700,10 @@ export class WsApiProxy {
 }
 
 function resolveApiProxyErrorStatusCode(message: string): number {
+  if (message.includes("Path is outside allowed roots")) {
+    return 403;
+  }
+
   if (
     message.includes("Unknown session") ||
     message.includes("Unknown target agent") ||
