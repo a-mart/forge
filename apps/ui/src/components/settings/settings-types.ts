@@ -26,6 +26,7 @@ type SettingsAuthOAuthFlowStatus =
   | 'starting'
   | 'waiting_for_auth'
   | 'waiting_for_code'
+  | 'waiting_for_select'
   | 'complete'
   | 'error'
 
@@ -35,6 +36,8 @@ export interface SettingsAuthOAuthFlowState {
   instructions?: string
   promptMessage?: string
   promptPlaceholder?: string
+  selectOptions?: Array<{ id: string; label: string }>
+  pendingRequestId?: string
   progressMessage?: string
   errorMessage?: string
   codeValue: string

@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { isEnoentError } from "../utils/fs-errors.js";
-import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai";
-import { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { getModel, getModels, type Api, type Model } from "./pi/pi-ai-compat.js";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
   PROJECT_AGENT_CAPABILITIES,
   isTerminalAssistantConversationMessage,

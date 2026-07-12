@@ -1,4 +1,4 @@
-import { complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import { complete, type Api, type AssistantMessage, type Model } from "../pi/pi-ai-compat.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 
 export const MEMORY_MERGE_SYSTEM_PROMPT = [

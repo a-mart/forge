@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "../pi/pi-ai-compat.js";
 import {
   FORGE_MODEL_CATALOG,
   getCatalogModel,
   type ForgeProviderDefinition,
+  type ForgeThinkingLevelMap,
 } from "@forge/protocol";
 import { getSharedCacheGeneratedDir } from "../data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
@@ -35,6 +36,7 @@ interface PiModelDefinition {
   contextWindow?: number;
   maxTokens?: number;
   headers?: Record<string, string>;
+  thinkingLevelMap?: ForgeThinkingLevelMap;
   compat?: Record<string, unknown>;
 }
 
@@ -43,6 +45,7 @@ interface PiModelOverride {
   reasoning?: boolean;
   contextWindow?: number;
   maxTokens?: number;
+  thinkingLevelMap?: ForgeThinkingLevelMap;
 }
 
 export function getPiModelsProjectionPath(dataDir: string): string {
@@ -101,6 +104,12 @@ export async function generatePiProjection(dataDir: string): Promise<string> {
   return outputPath;
 }
 
+
+function projectThinkingLevelMap(model: object | undefined): { thinkingLevelMap?: ForgeThinkingLevelMap } {
+  const thinkingLevelMap = (model as { thinkingLevelMap?: ForgeThinkingLevelMap } | undefined)?.thinkingLevelMap;
+  return thinkingLevelMap ? { thinkingLevelMap: { ...thinkingLevelMap } } : {};
+}
+
 function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderConfig | undefined {
   // Keep curated models in the projection even when user-disabled so existing sessions,
   // specialists, and manual configs still resolve to Forge-owned runtime metadata.
@@ -124,6 +133,7 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
       modelOverrides[model.modelId] = {
         contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
         maxTokens: model.maxOutputTokens,
+        ...projectThinkingLevelMap(model),
       };
       continue;
     }
@@ -136,6 +146,7 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
         input: [...model.inputModes],
         contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
         maxTokens: model.maxOutputTokens,
+        ...projectThinkingLevelMap(model),
       });
     }
   }
@@ -203,6 +214,7 @@ function generateFullProviderProjection(provider: ForgeProviderDefinition): PiMo
           }
         : {}),
       ...(upstream.headers ? { headers: { ...upstream.headers } } : {}),
+      ...projectThinkingLevelMap(curated ?? upstream),
       ...(upstream.compat ? { compat: structuredClone(upstream.compat) } : {}),
     }];
   });
@@ -217,6 +229,7 @@ function generateCatalogOnlyProviderProjection(provider: ForgeProviderDefinition
       input: [...model.inputModes],
       contextWindow: model.contextWindow,
       maxTokens: model.maxOutputTokens,
+      ...projectThinkingLevelMap(model),
     }));
   }
 
@@ -234,5 +247,6 @@ function generateCatalogOnlyProviderProjection(provider: ForgeProviderDefinition
       input: [...model.inputModes],
       contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
       maxTokens: model.maxOutputTokens,
+      ...projectThinkingLevelMap(model),
     }));
 }

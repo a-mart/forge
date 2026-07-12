@@ -14,7 +14,7 @@ Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all
 
 ```typescript
 // ~/.forge/agent/extensions/protected-paths.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {
@@ -59,6 +59,30 @@ All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/ex
 
 Project-local executable Pi resources under `.forge/pi/` are loaded only after the repository `.forge` directory is trusted. Forge injects a project-scope disable-all extension baseline before trusted repo settings so legacy `<cwd>/.pi/extensions` is not auto-loaded unless an explicitly trusted repo setting adds executable paths. For deterministic smoke tests and custom tools, list repo Pi extensions explicitly in `.forge/pi/settings.json`. See [Project Resources](PROJECT_RESOURCES.md) for the repo-root layout, trust prompt, block/manage-later behavior, and override rule.
 
+Packaged Electron acceptance also re-checks denied/trusted project-resource behavior against staged backend assets (not repo fallbacks): denied `.forge/pi` and legacy `.pi` direct/settings/package/symlink/junction/case variants must produce no top-level or factory side effects before or after `createAgentSession()`/`bindExtensions()`, while a trusted control loads exactly once and then stays blocked after trust revocation and runtime recreation.
+
+## Pi 0.80.6 Extension Import Migration
+
+Forge does **not** ship compatibility shim packages for legacy `@mariozechner/pi-*` extension imports. Update extensions to the `@earendil-works` package family before upgrading:
+
+| Legacy specifier | Replacement |
+| --- | --- |
+| `@mariozechner/pi-ai` | `@earendil-works/pi-ai/compat` |
+| `@mariozechner/pi-ai/compat` | `@earendil-works/pi-ai/compat` |
+| `@mariozechner/pi-ai/oauth` | `@earendil-works/pi-ai/oauth` |
+| `@mariozechner/pi-coding-agent` | `@earendil-works/pi-coding-agent` |
+| `@mariozechner/pi-agent-core` | `@earendil-works/pi-agent-core` |
+| `@mariozechner/pi-tui` | `@earendil-works/pi-tui` |
+
+Run the local scanner before release:
+
+```bash
+pnpm pi-extension:migrate -- ~/.forge/agent/extensions ~/.forge/agent/manager/extensions <repo>/.forge/pi/extensions
+pnpm pi-extension:migrate -- --write <extension-dir>
+```
+
+Supported legacy roots are rewritten by `--write`; unsupported legacy subpaths fail with a targeted diagnostic. At runtime, path-specific `ERR_MODULE_NOT_FOUND` errors for legacy `@mariozechner/pi-*` imports are rewritten into the same migration guidance. Do not add Forge-owned `@mariozechner/pi-*` shims.
+
 ### Profile Overlay Directories
 
 Each Forge profile can have its own Pi resource directories under `~/.forge/profiles/<profileId>/pi/`. These are **additive** — they add to the global and project-local directories, they do not replace them.
@@ -87,7 +111,7 @@ Discovery is shallow — top-level files and one-level subdirectories only. Pack
 An extension is a TypeScript file that exports a default function receiving Pi's `ExtensionAPI`:
 
 ```typescript
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -182,12 +206,12 @@ export default function (pi: ExtensionAPI) {
 
 | Package | Purpose |
 |---------|---------|
-| `@mariozechner/pi-coding-agent` | Extension types (`ExtensionAPI`, events, tool helpers) |
+| `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, events, tool helpers) |
 | `@sinclair/typebox` | Schema definitions for tool parameters |
-| `@mariozechner/pi-ai` | AI utilities (e.g., `StringEnum` for Google-compatible enums) |
+| `@earendil-works/pi-ai/compat` | AI utilities (e.g., `StringEnum` for Google-compatible enums) |
 | Node.js built-ins | `node:fs`, `node:path`, `node:child_process`, etc. |
 
-> **Note:** Use `StringEnum` from `@mariozechner/pi-ai` instead of `Type.Union(Type.Literal(...))` for string enum parameters — Google's API requires it.
+> **Note:** Use `StringEnum` from `@earendil-works/pi-ai/compat` instead of `Type.Union(Type.Literal(...))` for string enum parameters — Google's API requires it.
 
 ## Pi Packages
 

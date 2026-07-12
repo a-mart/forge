@@ -14,8 +14,8 @@
  * onPayload before any fetch; we capture the body there and abort.
  */
 import { describe, expect, it } from "vitest";
-import { streamOpenAICodexResponses } from "@mariozechner/pi-ai/openai-codex-responses";
-import { convertMessages } from "@mariozechner/pi-ai/openai-completions";
+import { stream as streamOpenAICodexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
+import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 
 // Fake but structurally valid Codex JWT so buildRequestBody is reached. The
 // account id is read from payload[JWT_CLAIM_PATH].chatgpt_account_id.
@@ -133,14 +133,34 @@ describe("xAI Responses placeholder stays scoped to xAI (prior regression locus)
     maxTokens: 32000,
   } as any;
 
-  it("xAI still gets a non-empty placeholder before its function_call (it requires one)", async () => {
-    // convertResponsesMessages is internal (no public subpath export); import the
-    // installed dist file directly by URL so we still exercise the patched code.
+  const openaiResponsesModel = {
+    id: "gpt-4.1",
+    name: "GPT-4.1",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 32000,
+  } as any;
+
+  async function loadConvertResponsesMessages() {
     const sharedUrl = new URL(
-      "../../node_modules/@mariozechner/pi-ai/dist/providers/openai-responses-shared.js",
+      "../../node_modules/@earendil-works/pi-ai/dist/api/openai-responses-shared.js",
       import.meta.url,
     ).href;
     const { convertResponsesMessages } = (await import(/* @vite-ignore */ sharedUrl)) as any;
+    return convertResponsesMessages as (
+      model: unknown,
+      context: unknown,
+      allowedToolCallProviders: string[],
+    ) => any[];
+  }
+
+  it("xAI still gets a non-empty placeholder before its function_call (it requires one)", async () => {
+    const convertResponsesMessages = await loadConvertResponsesMessages();
     const out = convertResponsesMessages(
       xaiResponsesModel,
       {
@@ -164,6 +184,71 @@ describe("xAI Responses placeholder stays scoped to xAI (prior regression locus)
     );
     expect(placeholder).toHaveLength(1);
     expect(out.some((i: any) => i.type === "function_call")).toBe(true);
+  });
+
+  it("non-xAI Responses tool-only turns do not get an xAI placeholder", async () => {
+    const convertResponsesMessages = await loadConvertResponsesMessages();
+    const out = convertResponsesMessages(
+      openaiResponsesModel,
+      {
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "" },
+              { type: "toolCall", id: "c1", name: "t", arguments: {} },
+            ],
+            provider: "openai",
+            api: "openai-responses",
+            model: "gpt-4.1",
+          },
+        ],
+      },
+      ["openai"],
+    );
+    expect(
+      out.some(
+        (i: any) =>
+          i.type === "message" &&
+          i.role === "assistant" &&
+          (i.content ?? []).some((c: any) => c.type === "output_text" && c.text === " "),
+      ),
+    ).toBe(false);
+    expect(out.some((i: any) => i.type === "function_call")).toBe(true);
+  });
+
+  it("non-xAI Responses still replays historical reasoning; xAI does not", async () => {
+    const convertResponsesMessages = await loadConvertResponsesMessages();
+    const reasoningSignature = JSON.stringify({
+      id: "rs_1",
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "think" }],
+    });
+    const toolTurn = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "think", thinkingSignature: reasoningSignature },
+        { type: "toolCall", id: "c1", name: "t", arguments: {} },
+      ],
+    };
+
+    const openaiOut = convertResponsesMessages(
+      openaiResponsesModel,
+      {
+        messages: [{ ...toolTurn, provider: "openai", api: "openai-responses", model: "gpt-4.1" }],
+      },
+      ["openai"],
+    );
+    expect(openaiOut.some((i: any) => i.type === "reasoning")).toBe(true);
+
+    const xaiOut = convertResponsesMessages(
+      xaiResponsesModel,
+      {
+        messages: [{ ...toolTurn, provider: "xai", api: "openai-responses", model: "grok-4" }],
+      },
+      ["xai"],
+    );
+    expect(xaiOut.some((i: any) => i.type === "reasoning")).toBe(false);
   });
 });
 

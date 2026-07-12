@@ -62,13 +62,13 @@ const sessionFileGuardMockState = vi.hoisted(() => ({
   openSessionManagerWithSizeGuard: vi.fn(() => ({})),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: (provider: unknown, modelId: unknown) => piAiMockState.getModel(provider, modelId),
   getModels: (provider: unknown) => piAiMockState.getModels(provider),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", async () => {
-  const actual = await vi.importActual<typeof import("@mariozechner/pi-coding-agent")>("@mariozechner/pi-coding-agent")
+vi.mock("@earendil-works/pi-coding-agent", async () => {
+  const actual = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>("@earendil-works/pi-coding-agent")
   return {
     ...actual,
     AuthStorage: {
@@ -942,6 +942,7 @@ describe("RuntimeFactory", () => {
 
       expect(piCodingAgentMockState.settingsManagerFromStorage).toHaveBeenCalledWith(
         expect.objectContaining({ withLock: expect.any(Function) }),
+        expect.objectContaining({ projectTrusted: false }),
       );
       expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
         transport,
@@ -987,6 +988,7 @@ describe("RuntimeFactory", () => {
 
     expect(piCodingAgentMockState.settingsManagerFromStorage).toHaveBeenCalledWith(
       expect.objectContaining({ withLock: expect.any(Function) }),
+      expect.objectContaining({ projectTrusted: false }),
     );
     expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalled();
     expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
@@ -1452,6 +1454,8 @@ describe("RuntimeFactory", () => {
       expect.stringContaining("Focus on deployment details."),
       signal,
       "low",
+      undefined,
+      undefined,
     );
     expect(result).toEqual({
       compaction: expect.objectContaining({

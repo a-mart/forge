@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { SessionManager } from '@mariozechner/pi-coding-agent'
+import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCommonKnowledgePath, getWorkerSessionFilePath } from '../swarm/data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({

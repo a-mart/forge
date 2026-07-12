@@ -1,44 +1,153 @@
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { mkdtemp, mkdir, writeFile, access } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   loadRuntimeModuleFromEntry,
   pickPackageEntryFromExports,
   resolveStagedPackageEntryFromManifest,
+  validateStagedPiAiPackageDir,
   validateStagedPiCodingAgentPackageDir,
   BACKEND_BUNDLE_EXTERNAL_PACKAGES,
 } from '../../apps/electron/scripts/build-all.mjs'
 
-describe('BACKEND_BUNDLE_EXTERNAL_PACKAGES koffi packaging', () => {
-  it('requires koffi in packaged-runtime preflight (not optional)', () => {
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
+
+function satisfiesNodeFloor(version, minimum = '22.19.0') {
+  const parse = (value) => {
+    const match = String(value).trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/)
+    if (!match) return null
+    return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) }
+  }
+  const left = parse(version)
+  const right = parse(minimum)
+  if (!left || !right) return false
+  if (left.major !== right.major) return left.major > right.major
+  if (left.minor !== right.minor) return left.minor > right.minor
+  return left.patch >= right.patch
+}
+
+describe('BACKEND_BUNDLE_EXTERNAL_PACKAGES packaging', () => {
+  it('requires koffi and the coherent Pi family in packaged-runtime preflight', () => {
+    const names = BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => pkg.name)
     const koffi = BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === 'koffi')
     expect(koffi).toBeTruthy()
     expect(koffi?.optional).toBe(false)
+    expect(names).toContain('@earendil-works/pi-ai')
+    expect(names).toContain('@earendil-works/pi-coding-agent')
+    expect(names).toContain('@mariozechner/clipboard')
+  })
+})
+
+describe('Node engine floor for packaged Electron child', () => {
+  it('pins package.json engines.node to >=22.19.0', () => {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
+    expect(pkg.engines?.node).toBe('>=22.19.0')
+  })
+
+  it('requires host Node to satisfy >=22.19.0', () => {
+    expect(satisfiesNodeFloor(process.version)).toBe(true)
+  })
+
+  it('asserts Electron bundled Node satisfies >=22.19.0 when electron is available', async () => {
+    const electronBin = join(repoRoot, 'apps/electron/node_modules/.bin/electron')
+    try {
+      await access(electronBin)
+    } catch {
+      if (process.env.FORGE_REQUIRE_ELECTRON_NODE_GATE === '1') {
+        throw new Error(
+          'FORGE_REQUIRE_ELECTRON_NODE_GATE=1 but apps/electron/node_modules/.bin/electron is missing; install Electron workspace deps before this gate',
+        )
+      }
+      return
+    }
+
+    const result = spawnSync(electronBin, ['-p', 'process.versions.node'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      encoding: 'utf8',
+    })
+    expect(result.status, `electron -p process.versions.node failed: ${result.stderr || result.error || ''}`).toBe(0)
+    const bundledNode = String(result.stdout || '').trim()
+    expect(bundledNode.length).toBeGreaterThan(0)
+    expect(satisfiesNodeFloor(bundledNode)).toBe(true)
   })
 })
 
 describe('validateStagedPiCodingAgentPackageDir', () => {
-  it('accepts staged pi-coding-agent dirs with compaction measurement assets', async () => {
+  it('accepts staged pi-coding-agent dirs with public package assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-pi-coding-agent-'))
 
-    await mkdir(join(root, 'dist', 'core', 'compaction'), { recursive: true })
+    await mkdir(join(root, 'dist', 'core', 'export-html'), { recursive: true })
+    await mkdir(join(root, 'dist', 'modes', 'interactive', 'theme'), { recursive: true })
     await writeFile(join(root, 'package.json'), '{}')
-    await writeFile(join(root, 'dist', 'core', 'messages.js'), 'export function convertToLlm() {}')
-    await writeFile(join(root, 'dist', 'core', 'compaction', 'utils.js'), 'export function serializeConversation() {}')
+    await writeFile(join(root, 'dist', 'index.js'), 'export class AgentSession {}')
 
     expect(validateStagedPiCodingAgentPackageDir(root)).toBeNull()
   })
 
-  it('reports missing compaction measurement assets', async () => {
+  it('reports missing public package assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-pi-coding-agent-missing-'))
 
-    await mkdir(join(root, 'dist', 'core'), { recursive: true })
+    await mkdir(join(root, 'dist'), { recursive: true })
     await writeFile(join(root, 'package.json'), '{}')
-    await writeFile(join(root, 'dist', 'core', 'messages.js'), 'export function convertToLlm() {}')
 
-    expect(validateStagedPiCodingAgentPackageDir(root)).toContain('compaction/utils.js')
+    expect(validateStagedPiCodingAgentPackageDir(root)).toContain('index.js')
+  })
+})
+
+describe('Pi package-relative theme/export assets (no bundle-relative duplicates)', () => {
+  it('resolves getThemesDir and getExportTemplateDir inside the installed pi-coding-agent package', async () => {
+    const { realpathSync } = await import('node:fs')
+    const candidates = [
+      join(repoRoot, 'apps/backend/node_modules/@earendil-works/pi-coding-agent'),
+      join(repoRoot, 'node_modules/@earendil-works/pi-coding-agent'),
+    ]
+    let packageDir
+    for (const candidate of candidates) {
+      try {
+        await access(join(candidate, 'package.json'))
+        packageDir = realpathSync(candidate)
+        break
+      } catch {
+        // try next
+      }
+    }
+    expect(packageDir, 'installed @earendil-works/pi-coding-agent').toBeTruthy()
+    const config = await import(pathToFileURL(join(packageDir, 'dist', 'config.js')).href)
+    const themesDir = realpathSync(config.getThemesDir())
+    const exportDir = realpathSync(config.getExportTemplateDir())
+
+    expect(themesDir.startsWith(packageDir)).toBe(true)
+    expect(exportDir.startsWith(packageDir)).toBe(true)
+    await access(join(themesDir, 'dark.json'))
+    await access(join(exportDir, 'template.html'))
+  })
+})
+
+describe('validateStagedPiAiPackageDir', () => {
+  it('accepts staged pi-ai dirs with compat and api subpaths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-pi-ai-'))
+
+    await mkdir(join(root, 'dist', 'api'), { recursive: true })
+    await writeFile(join(root, 'package.json'), JSON.stringify({ version: '0.80.6' }))
+    await writeFile(join(root, 'dist', 'index.js'), 'export function createProvider() {}')
+    await writeFile(join(root, 'dist', 'compat.js'), 'export function registerFauxProvider() {}')
+
+    expect(validateStagedPiAiPackageDir(root)).toBeNull()
+  })
+
+  it('reports missing compat/api assets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-pi-ai-missing-'))
+
+    await mkdir(join(root, 'dist'), { recursive: true })
+    await writeFile(join(root, 'package.json'), '{}')
+    await writeFile(join(root, 'dist', 'index.js'), 'export function createProvider() {}')
+
+    expect(validateStagedPiAiPackageDir(root)).toContain('compat.js')
   })
 })
 
@@ -46,11 +155,11 @@ describe('resolveStagedPackageEntryFromManifest', () => {
   it('resolves import-only package exports to the staged entry path', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-esm-only-package-'))
 
-    await mkdir(join(root, 'dist', 'core', 'compaction'), { recursive: true })
+    await mkdir(join(root, 'dist'), { recursive: true })
     await writeFile(
       join(root, 'package.json'),
       JSON.stringify({
-        name: '@mariozechner/pi-coding-agent',
+        name: '@earendil-works/pi-coding-agent',
         type: 'module',
         exports: {
           '.': {
@@ -61,8 +170,6 @@ describe('resolveStagedPackageEntryFromManifest', () => {
       }),
     )
     await writeFile(join(root, 'dist', 'index.js'), 'export function compact() {}')
-    await writeFile(join(root, 'dist', 'core', 'messages.js'), 'export function convertToLlm() {}')
-    await writeFile(join(root, 'dist', 'core', 'compaction', 'utils.js'), 'export function serializeConversation() {}')
 
     expect(pickPackageEntryFromExports({ import: './dist/index.js' })).toBe('./dist/index.js')
     expect(resolveStagedPackageEntryFromManifest(root)).toBe(join(root, 'dist', 'index.js'))
@@ -99,25 +206,15 @@ describe('resolveStagedPackageEntryFromManifest', () => {
     expect(loadedModule.compact()).toBe(true)
   })
 
-  it('loads pi-coding-agent compaction measurement modules from staged dist paths', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'forge-pi-measurement-load-'))
+  it('loads staged package modules from public dist paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-pi-public-load-'))
 
-    await mkdir(join(root, 'dist', 'core', 'compaction'), { recursive: true })
-    await writeFile(join(root, 'dist', 'core', 'messages.js'), 'export function convertToLlm(messages) { return messages }')
-    await writeFile(
-      join(root, 'dist', 'core', 'compaction', 'utils.js'),
-      'export function serializeConversation(messages) { return JSON.stringify(messages) }',
-    )
+    await mkdir(join(root, 'dist'), { recursive: true })
+    await writeFile(join(root, 'dist', 'index.js'), 'export class AgentSession {}')
 
     const stagedRequire = createRequire(join(root, 'package.json'))
-    const messagesModule = await loadRuntimeModuleFromEntry(stagedRequire, join(root, 'dist', 'core', 'messages.js'))
-    const utilsModule = await loadRuntimeModuleFromEntry(
-      stagedRequire,
-      join(root, 'dist', 'core', 'compaction', 'utils.js'),
-    )
+    const publicModule = await loadRuntimeModuleFromEntry(stagedRequire, join(root, 'dist', 'index.js'))
 
-    expect(typeof messagesModule.convertToLlm).toBe('function')
-    expect(typeof utilsModule.serializeConversation).toBe('function')
-    expect(utilsModule.serializeConversation(messagesModule.convertToLlm([{ role: 'user' }]))).toContain('"role":"user"')
+    expect(typeof publicModule.AgentSession).toBe('function')
   })
 })

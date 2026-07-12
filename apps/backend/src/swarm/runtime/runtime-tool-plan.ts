@@ -1,5 +1,5 @@
 import { getCatalogProvider } from "@forge/protocol";
-import type { ExtensionFactory, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { createConfiguredForgePiCompactionAuthResolver } from "../compaction/forge-pi-compaction-auth.js";
 import { createForgePiCompactionExtensionFactory } from "../compaction/forge-pi-compaction-extension.js";

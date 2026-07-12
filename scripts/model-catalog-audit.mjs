@@ -10,8 +10,8 @@ const __dirname = path.dirname(__filename)
 const repoRoot = path.resolve(__dirname, '..')
 const protocolDistPath = path.join(repoRoot, 'packages', 'protocol', 'dist', 'index.js')
 const piAiEntryPath = await findFirstReadable([
-  path.join(repoRoot, 'apps', 'backend', 'node_modules', '@mariozechner', 'pi-ai', 'dist', 'index.js'),
-  path.join(repoRoot, 'node_modules', '@mariozechner', 'pi-ai', 'dist', 'index.js'),
+  path.join(repoRoot, 'apps', 'backend', 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js'),
+  path.join(repoRoot, 'node_modules', '@earendil-works', 'pi-ai', 'dist', 'compat.js'),
 ])
 
 await assertReadable(

@@ -1,8 +1,8 @@
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { getSessionDir } from "../data-paths.js";
 import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "../pi/pi-ai-compat.js";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
 import type { ResolvedForgePiCompactionAuth } from "./forge-pi-compaction-auth.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";

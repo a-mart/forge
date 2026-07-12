@@ -406,7 +406,7 @@ export const FORGE_MODEL_CATALOG = {
       supportsReasoning: true,
       supportedReasoningLevels: ['low', 'medium', 'high'],
       defaultReasoningLevel: 'medium',
-      contextWindow: 200_000,
+      contextWindow: 1_000_000,
       maxOutputTokens: 64_000,
       inputModes: ['text', 'image'],
       webSearchCapability: 'none',
@@ -559,7 +559,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'grok-4',
       intentionalDivergenceNotes:
-        "Forge overrides Pi's built-in openai-completions API to openai-responses via xai-responses behavior adapter",
+        'Pi 0.80.6 removed grok-4 from the upstream xAI catalog. Forge retains this curated row and continues routing it through the openai-responses xAI behavior adapter.',
     },
     'grok-4-fast': {
       modelId: 'grok-4-fast',
@@ -577,7 +577,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'grok-4-fast',
       intentionalDivergenceNotes:
-        'API overridden to openai-responses; Forge keeps this model text-only even though Pi upstream currently advertises image input',
+        'Pi 0.80.6 removed grok-4-fast from the upstream xAI catalog. Forge retains this curated text-only row and routes it through the openai-responses xAI behavior adapter.',
     },
     'grok-4.20-0309-reasoning': {
       modelId: 'grok-4.20-0309-reasoning',

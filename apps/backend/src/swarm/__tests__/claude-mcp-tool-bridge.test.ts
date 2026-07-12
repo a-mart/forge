@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getSpawnPresetFamilies } from "@forge/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

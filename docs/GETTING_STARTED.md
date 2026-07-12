@@ -628,7 +628,7 @@ For power users who want Pi-native custom tools, event handlers, packages, promp
 
 ```typescript
 // ~/.forge/agent/extensions/protected-paths.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {

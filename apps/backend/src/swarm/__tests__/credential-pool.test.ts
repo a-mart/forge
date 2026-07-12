@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { CredentialPoolService, type CredentialPoolServiceDeps } from "../credential-pool.js";
 
 let tempDir: string;

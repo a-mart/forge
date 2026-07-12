@@ -14,10 +14,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { buildSessionContext } from "@mariozechner/pi-coding-agent";
-// Subpath export maps to dist/providers/openai-codex-responses.js, which also
-// exports the stream function used by production.
-import { streamOpenAICodexResponses } from "@mariozechner/pi-ai/openai-codex-responses";
+import { buildSessionContext } from "@earendil-works/pi-coding-agent";
+// Raw provider export is `stream`; keep the legacy local alias for this script.
+import { stream as streamOpenAICodexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { buildSwarmTools } from "../src/swarm/swarm-tools.js";
 import type { AgentDescriptor } from "../src/swarm/types.js";
 

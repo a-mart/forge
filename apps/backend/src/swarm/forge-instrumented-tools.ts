@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { ToolAfterResultEnvelope } from "./forge-extension-types.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";

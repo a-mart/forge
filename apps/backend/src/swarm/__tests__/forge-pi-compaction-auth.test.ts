@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { createTempConfig, type TempConfigHandle } from "../../test-support/temp-config.js";
 import { makeCompactionGuardDescriptor } from "../../test-support/compaction-guard-harness.js";
 import {

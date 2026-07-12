@@ -1,0 +1,108 @@
+{
+  "piSessionFormatVersion": 3,
+  "forgeBaseline": "0.71.1",
+  "producingCommit": "08a7ab833ab0aaab99d697e9ba7b39adbad76b4f",
+  "producingCommitShort": "08a7ab833ab0",
+  "forgeCommit": "08a7ab833ab0aaab99d697e9ba7b39adbad76b4f",
+  "forgeCommitShort": "08a7ab833ab0",
+  "generatedAt": "2026-07-11T21:42:15.653Z",
+  "generation": {
+    "command": "pnpm pi-upgrade:generate-session-fixture-manifests",
+    "script": "scripts/pi-upgrade/generate-pi-session-fixture-manifests.mjs",
+    "method": "checked-in-jsonl-fixtures",
+    "integrity": "sha256-per-fixture",
+    "toolchain": {
+      "runtime": "node",
+      "nodeVersion": "25.6.1",
+      "nodeMajor": 25,
+      "pnpmVersion": "10.30.1",
+      "platform": "darwin",
+      "arch": "arm64"
+    },
+    "targetPi": {
+      "family": "@earendil-works",
+      "version": "0.80.6",
+      "packages": [
+        {
+          "name": "@earendil-works/pi-agent-core",
+          "version": "0.80.6",
+          "integrity": "sha512-Lvn89ko42h5ETUb6Z0Ku6ldskEqXaTdQBYvSa0+7bdG9V6rUEpXptv5e0OVZ1HDcvi8s6/2lGCQWsxKX+DFHNw=="
+        },
+        {
+          "name": "@earendil-works/pi-ai",
+          "version": "0.80.6",
+          "integrity": "sha512-7xfLk8sANBp+bpPEbjoOZTbPxsa+++b1JXAoSJsNa3vbs9AHHEclmvg54XLQcxH+fuwaeti/g2jeIfJ+mVYLpA=="
+        },
+        {
+          "name": "@earendil-works/pi-coding-agent",
+          "version": "0.80.6",
+          "integrity": "sha512-vcfD6tOk402isLl3Cm/qbn2O10TvgroMp1+/fEGM24ZdvETFCdOYv5VZ7m59EI5fPsjfSJh+CpQ5bhBrhfOg7g=="
+        },
+        {
+          "name": "@earendil-works/pi-tui",
+          "version": "0.80.6",
+          "integrity": "sha512-bSuzS4EVSqEPj/Qr/p9eqCESfKsGuDNbl77EGci8Iaqqt/C/XCBZL1MjXaxSWW1NsT5afjp/Cb0NTPzOLv/aPA=="
+        }
+      ],
+      "patches": [
+        {
+          "key": "@earendil-works/pi-ai@0.80.6",
+          "patchFile": "patches/@earendil-works__pi-ai@0.80.6.patch",
+          "sha256": "706a3210681dd037b19828165082826b1f82d2d5a279b0e800612fca66f9a46d"
+        },
+        {
+          "key": "@earendil-works/pi-coding-agent@0.80.6",
+          "patchFile": "patches/@earendil-works__pi-coding-agent@0.80.6.patch",
+          "sha256": "fa749eff036cc1af3c08757e8f7c523f3f0cd867f36d928ff519005e8c9ed5f1"
+        }
+      ]
+    },
+    "frozenRunner": {
+      "name": "@mariozechner/pi-coding-agent",
+      "version": "0.71.1",
+      "provisionScript": "scripts/pi-upgrade/provision-pi-0711-rollback-runner.sh",
+      "lockSource": "scripts/pi-upgrade/pi-0711-rollback-runner/package-lock.json",
+      "installMethod": "npm ci"
+    }
+  },
+  "fixtures": [
+    {
+      "id": "compat-matrix",
+      "file": "compat-matrix.jsonl",
+      "description": "Full v3 session matrix: user/assistant/tool/custom/custom_message/model/thinking/branch/compaction/labels.",
+      "sha256": "bcd4ea7231e98a043423b4d2b93cad52491d2fb48183997b396fd60ed8d6c00f"
+    },
+    {
+      "id": "aborted-stream-tail",
+      "file": "aborted-stream-tail.jsonl",
+      "description": "Assistant stream aborted after a partial assistant message; file remains valid JSONL.",
+      "sha256": "84f683ed9b7337316582e190086de75d20cf8d5c5bdaf9a59198d98a9d64148f"
+    },
+    {
+      "id": "interrupted-tool-call",
+      "file": "interrupted-tool-call.jsonl",
+      "description": "Assistant tool call started but no toolResult was persisted; open must not replay or execute tools.",
+      "sha256": "6838f86e63df06249ced95694d93d027adf1dc62bd4641d988d7d2ed402e7e8a"
+    },
+    {
+      "id": "truncated-tail",
+      "file": "truncated-tail.jsonl",
+      "description": "Crash-truncated malformed tail after a valid prefix; readers must recover prefix and append safely via Forge timeline.",
+      "sha256": "4b52d7668940c98e9d195e9727e2f8cb8043fa043806c18896a5a17d4cfc44c1"
+    },
+    {
+      "id": "crash-during-compaction",
+      "file": "crash-during-compaction.jsonl",
+      "description": "Compaction start marker without completed compaction summary; old messages remain authoritative.",
+      "sha256": "5f1d1f33179c555fbed0f335660c6da569f6965b8a9a19b49bdd6e76e5d3211d"
+    }
+  ],
+  "fixtureHashes": {
+    "compat-matrix": "bcd4ea7231e98a043423b4d2b93cad52491d2fb48183997b396fd60ed8d6c00f",
+    "aborted-stream-tail": "84f683ed9b7337316582e190086de75d20cf8d5c5bdaf9a59198d98a9d64148f",
+    "interrupted-tool-call": "6838f86e63df06249ced95694d93d027adf1dc62bd4641d988d7d2ed402e7e8a",
+    "truncated-tail": "4b52d7668940c98e9d195e9727e2f8cb8043fa043806c18896a5a17d4cfc44c1",
+    "crash-during-compaction": "5f1d1f33179c555fbed0f335660c6da569f6965b8a9a19b49bdd6e76e5d3211d"
+  },
+  "rollbackPolicy": "Release rollback remains snapshot+old-binary from a pre-upgrade data copy and the frozen 0.71.1 binary. In-place downgrade is not a claimed release path until independently proven for a given format; this fixture matrix may still prove bidirectional open/append characterization only. Do not downgrade in-place."
+}

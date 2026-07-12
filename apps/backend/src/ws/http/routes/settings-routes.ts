@@ -2,9 +2,9 @@ import {
   anthropicOAuthProvider,
   openaiCodexOAuthProvider,
   type OAuthCredentials,
-  type OAuthLoginCallbacks,
   type OAuthProviderInterface
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   CredentialPoolState,
@@ -33,6 +33,11 @@ import {
   sendJson
 } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
+import {
+  createSettingsAuthOAuthLoginCallbacks,
+  emitSettingsAuthOAuthPromptEvents,
+  type SettingsAuthOAuthPromptRequest,
+} from "./settings-oauth-login-adapter.js";
 
 const SETTINGS_ENV_ENDPOINT_PATH = "/api/settings/env";
 const SETTINGS_AUTH_ENDPOINT_PATH = "/api/settings/auth";
@@ -52,7 +57,8 @@ interface SettingsAuthLoginFlow {
   providerId: SettingsAuthLoginProviderId;
   pendingPrompt:
     | {
-        resolve: (value: string) => void;
+        requestId: string;
+        resolve: (value: string | undefined) => void;
         reject: (error: Error) => void;
       }
     | null;
@@ -546,6 +552,10 @@ async function handleCredentialPoolHttpRequest(
       return;
     }
     const pendingPrompt = poolFlow.pendingPrompt;
+    if (payload.requestId && payload.requestId !== pendingPrompt.requestId) {
+      sendJson(response, 409, { error: "Stale OAuth login response" });
+      return;
+    }
     poolFlow.pendingPrompt = null;
     pendingPrompt.resolve(payload.value);
     sendJson(response, 200, { ok: true });
@@ -748,11 +758,8 @@ async function handlePoolAddAccountOAuthLogin(
     }
   };
 
-  const requestPromptInput = (prompt: {
-    message: string;
-    placeholder?: string;
-  }): Promise<string> =>
-    new Promise<string>((resolve, reject) => {
+  const requestPromptInput = (prompt: SettingsAuthOAuthPromptRequest): Promise<string | undefined> =>
+    new Promise<string | undefined>((resolve, reject) => {
       if (flow.closed) {
         reject(new Error("OAuth login flow is closed"));
         return;
@@ -762,7 +769,8 @@ async function handlePoolAddAccountOAuthLogin(
         flow.pendingPrompt = null;
         previousPrompt.reject(new Error("OAuth login prompt replaced"));
       }
-      const wrappedResolve = (value: string): void => {
+      const requestId = randomUUID();
+      const wrappedResolve = (value: string | undefined): void => {
         if (flow.pendingPrompt?.resolve === wrappedResolve) flow.pendingPrompt = null;
         resolve(value);
       };
@@ -770,8 +778,8 @@ async function handlePoolAddAccountOAuthLogin(
         if (flow.pendingPrompt?.reject === wrappedReject) flow.pendingPrompt = null;
         reject(error);
       };
-      flow.pendingPrompt = { resolve: wrappedResolve, reject: wrappedReject };
-      sendSseEvent("prompt", prompt);
+      flow.pendingPrompt = { requestId, resolve: wrappedResolve, reject: wrappedReject };
+      emitSettingsAuthOAuthPromptEvents({ sendSseEvent, requestId, prompt });
     });
 
   const onClose = (): void => closeFlow("OAuth login stream closed");
@@ -781,25 +789,12 @@ async function handlePoolAddAccountOAuthLogin(
   sendSseEvent("progress", { message: `Starting ${provider.name} OAuth login for new account...` });
 
   try {
-    const callbacks: OAuthLoginCallbacks = {
-      onAuth: (info) => {
-        sendSseEvent("auth_url", { url: info.url, instructions: info.instructions });
-      },
-      onPrompt: (prompt) =>
-        requestPromptInput({ message: prompt.message, placeholder: prompt.placeholder }),
-      onProgress: (message) => {
-        sendSseEvent("progress", { message });
-      },
-      signal: flow.abortController.signal
-    };
-
-    if (provider.usesCallbackServer) {
-      callbacks.onManualCodeInput = () =>
-        requestPromptInput({
-          message: "Paste redirect URL below, or complete login in browser:",
-          placeholder: "http://localhost:1455/auth/callback?code=..."
-        });
-    }
+    const callbacks = createSettingsAuthOAuthLoginCallbacks({
+      sendSseEvent,
+      requestPromptInput,
+      signal: flow.abortController.signal,
+      usesCallbackServer: provider.usesCallbackServer === true,
+    });
 
     const credentials = (await provider.login(callbacks)) as OAuthCredentials;
     if (flow.closed) return;
@@ -894,6 +889,10 @@ async function handleSettingsAuthLoginHttpRequest(
     }
 
     const pendingPrompt = flow.pendingPrompt;
+    if (payload.requestId && payload.requestId !== pendingPrompt.requestId) {
+      sendJson(response, 409, { error: "Stale OAuth login response" });
+      return;
+    }
     flow.pendingPrompt = null;
     pendingPrompt.resolve(payload.value);
     sendJson(response, 200, { ok: true });
@@ -968,11 +967,8 @@ async function handleSettingsAuthLoginHttpRequest(
     }
   };
 
-  const requestPromptInput = (prompt: {
-    message: string;
-    placeholder?: string;
-  }): Promise<string> =>
-    new Promise<string>((resolve, reject) => {
+  const requestPromptInput = (prompt: SettingsAuthOAuthPromptRequest): Promise<string | undefined> =>
+    new Promise<string | undefined>((resolve, reject) => {
       if (flow.closed) {
         reject(new Error("OAuth login flow is closed"));
         return;
@@ -984,7 +980,8 @@ async function handleSettingsAuthLoginHttpRequest(
         previousPrompt.reject(new Error("OAuth login prompt replaced by a newer request"));
       }
 
-      const wrappedResolve = (value: string): void => {
+      const requestId = randomUUID();
+      const wrappedResolve = (value: string | undefined): void => {
         if (flow.pendingPrompt?.resolve === wrappedResolve) {
           flow.pendingPrompt = null;
         }
@@ -999,11 +996,12 @@ async function handleSettingsAuthLoginHttpRequest(
       };
 
       flow.pendingPrompt = {
+        requestId,
         resolve: wrappedResolve,
         reject: wrappedReject
       };
 
-      sendSseEvent("prompt", prompt);
+      emitSettingsAuthOAuthPromptEvents({ sendSseEvent, requestId, prompt });
     });
 
   const onClose = (): void => {
@@ -1016,31 +1014,12 @@ async function handleSettingsAuthLoginHttpRequest(
   sendSseEvent("progress", { message: `Starting ${provider.name} OAuth login...` });
 
   try {
-    const callbacks: OAuthLoginCallbacks = {
-      onAuth: (info) => {
-        sendSseEvent("auth_url", {
-          url: info.url,
-          instructions: info.instructions
-        });
-      },
-      onPrompt: (prompt) =>
-        requestPromptInput({
-          message: prompt.message,
-          placeholder: prompt.placeholder
-        }),
-      onProgress: (message) => {
-        sendSseEvent("progress", { message });
-      },
-      signal: flow.abortController.signal
-    };
-
-    if (provider.usesCallbackServer) {
-      callbacks.onManualCodeInput = () =>
-        requestPromptInput({
-          message: "Paste redirect URL below, or complete login in browser:",
-          placeholder: "http://localhost:1455/auth/callback?code=..."
-        });
-    }
+    const callbacks = createSettingsAuthOAuthLoginCallbacks({
+      sendSseEvent,
+      requestPromptInput,
+      signal: flow.abortController.signal,
+      usesCallbackServer: provider.usesCallbackServer === true,
+    });
 
     const credentials = (await provider.login(callbacks)) as OAuthCredentials;
     if (flow.closed) {
@@ -1293,7 +1272,7 @@ function parseSettingsAuthUpdateBody(value: unknown): Record<string, string> {
   return updates;
 }
 
-function parseSettingsAuthLoginRespondBody(value: unknown): { value: string } {
+function parseSettingsAuthLoginRespondBody(value: unknown): { value: string; requestId?: string } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Request body must be a JSON object");
   }
@@ -1308,7 +1287,12 @@ function parseSettingsAuthLoginRespondBody(value: unknown): { value: string } {
     throw new Error("OAuth response value must be a non-empty string");
   }
 
-  return { value: normalized };
+  const rawRequestId = (value as { requestId?: unknown }).requestId;
+  if (rawRequestId !== undefined && (typeof rawRequestId !== "string" || rawRequestId.trim().length === 0)) {
+    throw new Error("OAuth response requestId must be a non-empty string when provided");
+  }
+
+  return { value: normalized, ...(typeof rawRequestId === "string" ? { requestId: rawRequestId.trim() } : {}) };
 }
 
 function resolveSettingsAuthLoginProviderId(rawProvider: string): SettingsAuthLoginProviderId | undefined {

@@ -1,5 +1,5 @@
 import { access, readFile } from "node:fs/promises";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { isEnoentError } from "./claude-utils.js";
 import { getLegacyAuthFilePath, getLegacySecretsFilePath, getSharedAuthFilePath, getSharedSecretsFilePath } from "./data-paths.js";

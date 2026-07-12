@@ -4,7 +4,7 @@ Forge fully supports Windows for the backend daemon, dashboard UI, agent orchest
 
 ## Prerequisites
 
-- **Node.js 22+** — [Download](https://nodejs.org/)
+- **Node.js 22.19.0+** — [Download](https://nodejs.org/)
 - **pnpm** — `npm install -g pnpm`
 - **Git** — [Download](https://git-scm.com/download/win)
 

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExtensionRunner, type Extension, type ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import { ExtensionRunner, type Extension, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import {
   createDefaultCompactionRuntimeSettingsProvider,
   createStaticCompactionRuntimeSettingsProvider,

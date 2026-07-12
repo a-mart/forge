@@ -2,7 +2,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { AuthStorage } from '@mariozechner/pi-coding-agent'
+import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import type { StatsSnapshot } from '@forge/protocol'
 import {
   assembleFullPayload,

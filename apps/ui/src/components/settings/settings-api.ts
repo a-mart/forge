@@ -15,9 +15,11 @@ import type {
   TelegramStatusEvent,
   SettingsAuthLoginAuthUrlEvent,
   SettingsAuthLoginCompleteEvent,
+  SettingsAuthLoginDeviceCodeEvent,
   SettingsAuthLoginEventName,
   SettingsAuthLoginProgressEvent,
   SettingsAuthLoginPromptEvent,
+  SettingsAuthLoginSelectEvent,
   SettingsAuthLoginProviderId,
   SettingsAuthProvider,
   SettingsAuthProviderId,
@@ -175,9 +177,23 @@ function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConf
 /*  OAuth SSE parsing                                                 */
 /* ------------------------------------------------------------------ */
 
+/** Marker prefixes emitted by the backend for old-client compatibility fallbacks. */
+export const OAUTH_LEGACY_DEVICE_CODE_FALLBACK_MARKER = '[forge-oauth-legacy-fallback:device_code]'
+export const OAUTH_LEGACY_SELECT_FALLBACK_MARKER = '[forge-oauth-legacy-fallback:select]'
+
+export function isOAuthLegacyDeviceCodeFallback(instructions?: string): boolean {
+  return typeof instructions === 'string' && instructions.includes(OAUTH_LEGACY_DEVICE_CODE_FALLBACK_MARKER)
+}
+
+export function isOAuthLegacySelectFallback(message?: string): boolean {
+  return typeof message === 'string' && message.includes(OAUTH_LEGACY_SELECT_FALLBACK_MARKER)
+}
+
 interface SettingsAuthOAuthStreamHandlers {
   onAuthUrl: (event: SettingsAuthLoginAuthUrlEvent) => void
+  onDeviceCode?: (event: SettingsAuthLoginDeviceCodeEvent) => void
   onPrompt: (event: SettingsAuthLoginPromptEvent) => void
+  onSelect?: (event: SettingsAuthLoginSelectEvent) => void
   onProgress: (event: SettingsAuthLoginProgressEvent) => void
   onComplete: (event: SettingsAuthLoginCompleteEvent) => void
   onError: (message: string) => void
@@ -191,10 +207,110 @@ function parseSettingsAuthOAuthEventData(rawData: string): Record<string, unknow
 }
 
 function parseSettingsAuthEventName(value: string): SettingsAuthLoginEventName | 'message' {
-  if (value === 'auth_url' || value === 'prompt' || value === 'progress' || value === 'complete' || value === 'error') {
+  if (value === 'auth_url' || value === 'device_code' || value === 'prompt' || value === 'select' || value === 'progress' || value === 'complete' || value === 'error') {
     return value
   }
   return 'message'
+}
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function dispatchSettingsAuthOAuthEvent(
+  eventName: SettingsAuthLoginEventName | 'message',
+  rawData: string,
+  handlers: SettingsAuthOAuthStreamHandlers,
+): void {
+  if (eventName === 'auth_url') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    if (typeof payload.url !== 'string' || !payload.url.trim()) throw new Error('OAuth auth_url event is missing a URL.')
+    const instructions = typeof payload.instructions === 'string' ? payload.instructions : undefined
+    // New clients handle device_code directly; ignore the marked auth_url compatibility fallback.
+    if (isOAuthLegacyDeviceCodeFallback(instructions)) return
+    handlers.onAuthUrl({ url: payload.url, instructions })
+  } else if (eventName === 'device_code') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    if (typeof payload.userCode !== 'string' || !payload.userCode.trim() || typeof payload.verificationUri !== 'string' || !payload.verificationUri.trim()) throw new Error('OAuth device_code event payload is invalid.')
+    handlers.onDeviceCode?.({
+      requestId: optionalNonEmptyString(payload.requestId),
+      userCode: payload.userCode,
+      verificationUri: payload.verificationUri,
+      intervalSeconds: typeof payload.intervalSeconds === 'number' ? payload.intervalSeconds : undefined,
+      expiresInSeconds: typeof payload.expiresInSeconds === 'number' ? payload.expiresInSeconds : undefined,
+    })
+  } else if (eventName === 'prompt') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    if (typeof payload.message !== 'string' || !payload.message.trim()) throw new Error('OAuth prompt event is missing a message.')
+    // New clients handle select directly; ignore the marked prompt compatibility fallback.
+    if (isOAuthLegacySelectFallback(payload.message)) return
+    handlers.onPrompt({
+      requestId: optionalNonEmptyString(payload.requestId),
+      message: payload.message,
+      placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined,
+    })
+  } else if (eventName === 'select') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    if (typeof payload.message !== 'string' || !payload.message.trim() || !Array.isArray(payload.options)) throw new Error('OAuth select event payload is invalid.')
+    const options = payload.options.filter((option): option is { id: string; label: string } => Boolean(option) && typeof option === 'object' && typeof (option as { id?: unknown }).id === 'string' && typeof (option as { label?: unknown }).label === 'string')
+    if (options.length === 0) throw new Error('OAuth select event has no options.')
+    handlers.onSelect?.({
+      requestId: optionalNonEmptyString(payload.requestId),
+      message: payload.message,
+      options,
+    })
+  } else if (eventName === 'progress') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
+  } else if (eventName === 'complete') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
+    if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
+    handlers.onComplete({ provider: providerId, status: 'connected' })
+    dispatchSettingsAuthChanged()
+  } else if (eventName === 'error') {
+    const payload = parseSettingsAuthOAuthEventData(rawData)
+    const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message : 'OAuth login failed.'
+    handlers.onError(message)
+  }
+}
+
+async function consumeSettingsAuthOAuthSseStream(
+  response: Response,
+  handlers: SettingsAuthOAuthStreamHandlers,
+): Promise<void> {
+  if (!response.body) throw new Error('OAuth login stream is unavailable.')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let lineBuffer = ''
+  let eventName: SettingsAuthLoginEventName | 'message' = 'message'
+  let eventDataLines: string[] = []
+
+  const flushEvent = (): void => {
+    if (eventDataLines.length === 0) { eventName = 'message'; return }
+    const rawData = eventDataLines.join('\n')
+    eventDataLines = []
+    dispatchSettingsAuthOAuthEvent(eventName, rawData, handlers)
+    eventName = 'message'
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    lineBuffer += decoder.decode(value, { stream: true })
+    let newlineIndex = lineBuffer.indexOf('\n')
+    while (newlineIndex >= 0) {
+      let line = lineBuffer.slice(0, newlineIndex)
+      lineBuffer = lineBuffer.slice(newlineIndex + 1)
+      if (line.endsWith('\r')) line = line.slice(0, -1)
+      if (!line) flushEvent()
+      else if (line.startsWith(':')) { /* comment */ }
+      else if (line.startsWith('event:')) eventName = parseSettingsAuthEventName(line.slice('event:'.length).trim())
+      else if (line.startsWith('data:')) eventDataLines.push(line.slice('data:'.length).trimStart())
+      newlineIndex = lineBuffer.indexOf('\n')
+    }
+  }
+  flushEvent()
 }
 
 /* ------------------------------------------------------------------ */
@@ -339,65 +455,15 @@ export async function startSettingsAuthOAuthLoginStream(
 ): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}`, { method: 'POST', signal })
   if (!response.ok) throw new Error(await readApiError(response))
-  if (!response.body) throw new Error('OAuth login stream is unavailable.')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let lineBuffer = ''
-  let eventName: SettingsAuthLoginEventName | 'message' = 'message'
-  let eventDataLines: string[] = []
-
-  const flushEvent = (): void => {
-    if (eventDataLines.length === 0) { eventName = 'message'; return }
-    const rawData = eventDataLines.join('\n')
-    eventDataLines = []
-
-    if (eventName === 'auth_url') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      if (typeof payload.url !== 'string' || !payload.url.trim()) throw new Error('OAuth auth_url event is missing a URL.')
-      handlers.onAuthUrl({ url: payload.url, instructions: typeof payload.instructions === 'string' ? payload.instructions : undefined })
-    } else if (eventName === 'prompt') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      if (typeof payload.message !== 'string' || !payload.message.trim()) throw new Error('OAuth prompt event is missing a message.')
-      handlers.onPrompt({ message: payload.message, placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined })
-    } else if (eventName === 'progress') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
-    } else if (eventName === 'complete') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
-      if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
-      handlers.onComplete({ provider: providerId, status: 'connected' })
-      dispatchSettingsAuthChanged()
-    } else if (eventName === 'error') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message : 'OAuth login failed.'
-      handlers.onError(message)
-    }
-    eventName = 'message'
-  }
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    lineBuffer += decoder.decode(value, { stream: true })
-    let newlineIndex = lineBuffer.indexOf('\n')
-    while (newlineIndex >= 0) {
-      let line = lineBuffer.slice(0, newlineIndex)
-      lineBuffer = lineBuffer.slice(newlineIndex + 1)
-      if (line.endsWith('\r')) line = line.slice(0, -1)
-      if (!line) flushEvent()
-      else if (line.startsWith(':')) { /* comment */ }
-      else if (line.startsWith('event:')) eventName = parseSettingsAuthEventName(line.slice('event:'.length).trim())
-      else if (line.startsWith('data:')) eventDataLines.push(line.slice('data:'.length).trimStart())
-      newlineIndex = lineBuffer.indexOf('\n')
-    }
-  }
-  flushEvent()
+  await consumeSettingsAuthOAuthSseStream(response, handlers)
 }
 
-export async function submitSettingsAuthOAuthPrompt(client: SettingsApiClient, provider: SettingsAuthProviderId, value: string): Promise<void> {
-  const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
+export async function submitSettingsAuthOAuthPrompt(client: SettingsApiClient, provider: SettingsAuthProviderId, value: string, requestId?: string): Promise<void> {
+  const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}/respond`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ value, ...(requestId ? { requestId } : {}) }),
+  })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
@@ -638,68 +704,18 @@ export async function startPoolAddAccountOAuthStream(
 ): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`, { method: 'POST', signal })
   if (!response.ok) throw new Error(await readApiError(response))
-  if (!response.body) throw new Error('OAuth login stream is unavailable.')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let lineBuffer = ''
-  let eventName: SettingsAuthLoginEventName | 'message' = 'message'
-  let eventDataLines: string[] = []
-
-  const flushEvent = (): void => {
-    if (eventDataLines.length === 0) { eventName = 'message'; return }
-    const rawData = eventDataLines.join('\n')
-    eventDataLines = []
-
-    if (eventName === 'auth_url') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      if (typeof payload.url !== 'string' || !payload.url.trim()) throw new Error('OAuth auth_url event is missing a URL.')
-      handlers.onAuthUrl({ url: payload.url, instructions: typeof payload.instructions === 'string' ? payload.instructions : undefined })
-    } else if (eventName === 'prompt') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      if (typeof payload.message !== 'string' || !payload.message.trim()) throw new Error('OAuth prompt event is missing a message.')
-      handlers.onPrompt({ message: payload.message, placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined })
-    } else if (eventName === 'progress') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
-    } else if (eventName === 'complete') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
-      if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
-      handlers.onComplete({ provider: providerId, status: 'connected' })
-      dispatchSettingsAuthChanged()
-    } else if (eventName === 'error') {
-      const payload = parseSettingsAuthOAuthEventData(rawData)
-      const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message : 'OAuth login failed.'
-      handlers.onError(message)
-    }
-    eventName = 'message'
-  }
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    lineBuffer += decoder.decode(value, { stream: true })
-    let newlineIndex = lineBuffer.indexOf('\n')
-    while (newlineIndex >= 0) {
-      let line = lineBuffer.slice(0, newlineIndex)
-      lineBuffer = lineBuffer.slice(newlineIndex + 1)
-      if (line.endsWith('\r')) line = line.slice(0, -1)
-      if (!line) flushEvent()
-      else if (line.startsWith(':')) { /* comment */ }
-      else if (line.startsWith('event:')) eventName = parseSettingsAuthEventName(line.slice('event:'.length).trim())
-      else if (line.startsWith('data:')) eventDataLines.push(line.slice('data:'.length).trimStart())
-      newlineIndex = lineBuffer.indexOf('\n')
-    }
-  }
-  flushEvent()
+  await consumeSettingsAuthOAuthSseStream(response, handlers)
 }
 
 /**
  * Submit a prompt response (e.g. authorization code) for the pool add-account OAuth flow.
  */
-export async function submitPoolAddAccountOAuthPrompt(client: SettingsApiClient, provider: string, value: string): Promise<void> {
-  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
+export async function submitPoolAddAccountOAuthPrompt(client: SettingsApiClient, provider: string, value: string, requestId?: string): Promise<void> {
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ value, ...(requestId ? { requestId } : {}) }),
+  })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 

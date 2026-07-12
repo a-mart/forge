@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AuthCredential } from '@mariozechner/pi-coding-agent'
+import type { AuthCredential } from '@earendil-works/pi-coding-agent'
 import type { OpenAIAuthBrokerLeaseHandle } from '../openai-auth/openai-auth-broker-runtime-service.js'
 import { OpenAIAuthBrokerRuntimeController } from '../runtime/pi/openai-auth-broker-runtime-controller.js'
 

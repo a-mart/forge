@@ -72,7 +72,7 @@ You can also customize **Settings → Appearance** with Light, Dark, or System m
 If you need more control over the runtime environment or want to contribute to development:
 
 **Prerequisites:**
-- Node.js 22+
+- Node.js 22.19.0+
 - pnpm (`npm install -g pnpm`)
 - Credentials for at least one supported agent provider (for example, OpenAI, Anthropic, xAI, OpenRouter, Cursor SDK, or Claude SDK via `claude login`). For OpenAI/Codex only, a Forge Auth broker setup link can configure broker-backed access instead of local OpenAI credentials.
 

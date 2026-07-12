@@ -4,7 +4,7 @@ Thanks for your interest in contributing! We welcome bug fixes, docs improvement
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.19.0+
 - pnpm 10.30+
 
 ## Setup

@@ -1,6 +1,6 @@
 import { access, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { CredentialPoolService } from "./credential-pool.js";
 import {

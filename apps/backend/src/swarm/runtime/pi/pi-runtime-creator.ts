@@ -4,7 +4,7 @@ import {
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
 } from "@forge/protocol";
-import type { Model, Transport } from "@mariozechner/pi-ai";
+import type { Model, Transport } from "../../pi/pi-ai-compat.js";
 import type { ObservabilityFacade, ObservabilityToolDefinition } from "../../../observability/observability-types.js";
 import {
   AuthStorage,
@@ -15,7 +15,7 @@ import {
   type AgentSession,
   type LoadExtensionsResult,
   type ToolDefinition
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
@@ -25,6 +25,7 @@ import type {
 } from "../../openai-auth/openai-auth-broker-runtime-service.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
 import { createPiModelRegistry } from "../../pi-model-registry.js";
+import { formatPiExtensionLoadError } from "../../pi-extension-migration-diagnostics.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -39,6 +40,7 @@ import {
   type ProjectExecutableTrustPlan
 } from "../../project-executable-trust.js";
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
+import { mapForgeReasoningToPiThinkingLevel } from "../../pi-thinking-level.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
 import { isCodexPluginWorkerDescriptor } from "../../codex-app-server/codex-plugin-scope-service.js";
@@ -135,7 +137,7 @@ export class PiRuntimeCreator {
       forgeExtensionHost: this.deps.forgeExtensionHost,
       preparedForgeBindings
     });
-    const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
+    const thinkingLevel = mapForgeReasoningToPiThinkingLevel(descriptor.model.thinkingLevel);
     const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
@@ -252,7 +254,9 @@ export class PiRuntimeCreator {
           });
 
     try {
-      await resourceLoader.reload();
+      await resourceLoader.reload({
+        resolveProjectTrust: async () => projectExecutableTrustPlan.trusted,
+      });
     } catch (error) {
       this.deps.logDebug("runtime:resource_loader:reload_error", {
         agentId: descriptor.agentId,
@@ -287,7 +291,7 @@ export class PiRuntimeCreator {
       authStorage,
       modelRegistry,
       model,
-      thinkingLevel: thinkingLevel as any,
+      thinkingLevel,
       sessionManager,
       resourceLoader,
       ...(settingsManager ? { settingsManager } : {}),
@@ -325,7 +329,8 @@ export class PiRuntimeCreator {
             stack: error.stack
           });
 
-          const message = error.error.trim().length > 0 ? error.error.trim() : "Extension handler failed";
+          const rawMessage = error.error.trim().length > 0 ? error.error.trim() : "Extension handler failed";
+          const message = formatPiExtensionLoadError(error.error, rawMessage);
           void this.deps.callbacks
             .onRuntimeError(runtimeToken, descriptor.agentId, {
               phase: "extension",
@@ -347,9 +352,11 @@ export class PiRuntimeCreator {
         }
       });
     } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const message = formatPiExtensionLoadError(error, rawMessage);
       this.deps.logDebug("extension:bind_error", {
         agentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
+        message
       });
     }
 
@@ -450,7 +457,12 @@ export class PiRuntimeCreator {
       agentDir: runtimeAgentDir,
       projectSettingsPaths: trustedProjectSettingsPaths.filter(pathExistsSync),
       projectExecutablesTrusted
-    }));
+    }), {
+      // Keep SettingsManager untrusted at construction. The only project-executable
+      // trust elevation seam is DefaultResourceLoader.reload({ resolveProjectTrust })
+      // using Forge's ProjectExecutableTrustPlan below.
+      projectTrusted: false,
+    });
     const transport = resolveOpenAICodexTransport(model);
     if (transport) {
       settingsManager.applyOverrides({ transport });
@@ -675,10 +687,19 @@ function buildRuntimeExtensionSnapshot(options: BuildRuntimeExtensionSnapshotOpt
 
   const loadErrors = options.extensionsResult.errors
     .filter((entry) => !isInternalInlineExtensionPath(entry.path))
-    .map((entry) => ({
-      path: entry.path,
-      error: entry.error
-    }))
+    .map((entry) => {
+      const rawError: unknown = entry.error;
+      const rawMessage =
+        typeof rawError === "string"
+          ? rawError
+          : rawError instanceof Error
+            ? rawError.message
+            : String(rawError ?? "");
+      return {
+        path: entry.path,
+        error: formatPiExtensionLoadError(rawError, rawMessage || "Extension failed to load"),
+      };
+    })
     .sort((left, right) => left.path.localeCompare(right.path));
 
   return {
@@ -825,10 +846,6 @@ export function resolvePiActiveToolNamesForDescriptor(
 }
 
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-
-function normalizeThinkingLevel(level: string): string {
-  return level === "x-high" ? "xhigh" : level;
-}
 
 function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { LoadExtensionsResult } from "@mariozechner/pi-coding-agent";
+import type { LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 
 type SettingsStorage = {
   withLock(scope: "global" | "project", fn: (current: string | undefined) => string | undefined): void;

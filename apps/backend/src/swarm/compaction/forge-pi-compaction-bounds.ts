@@ -1,18 +1,15 @@
-import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
-import type { compact as runPiCompaction } from "@mariozechner/pi-coding-agent";
+import type { ImageContent, TextContent } from "../pi/pi-ai-compat.js";
+import {
+  convertToLlm,
+  serializeConversation,
+  type compact as runPiCompaction,
+} from "@earendil-works/pi-coding-agent";
 
 type CompactionPreparation = Parameters<typeof runPiCompaction>[0];
 type AgentMessage = CompactionPreparation["messagesToSummarize"][number];
 
 type ConvertToLlmFn = (messages: AgentMessage[]) => unknown[];
 type SerializeConversationFn = (messages: unknown[]) => string;
-
-const require = createRequire(import.meta.url);
-const currentDir = dirname(fileURLToPath(import.meta.url));
 
 interface PiCompactionMeasurementModule {
   convertToLlm: ConvertToLlmFn;
@@ -21,47 +18,20 @@ interface PiCompactionMeasurementModule {
 
 let piCompactionMeasurementModule: PiCompactionMeasurementModule | null | undefined;
 
-function findPiCodingAgentDistDir(startDir: string): string | null {
-  let current = startDir;
-  for (;;) {
-    const candidate = join(current, "node_modules", "@mariozechner", "pi-coding-agent", "dist");
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-    const parent = dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
-}
-
 function loadPiCompactionMeasurementModule(): PiCompactionMeasurementModule | null {
   if (piCompactionMeasurementModule !== undefined) {
     return piCompactionMeasurementModule;
   }
 
   try {
-    const piCodingAgentDistDir = findPiCodingAgentDistDir(currentDir);
-    if (!piCodingAgentDistDir) {
-      throw new Error("Unable to locate @mariozechner/pi-coding-agent/dist for compaction measurement");
-    }
-
-    const { convertToLlm } = require(join(piCodingAgentDistDir, "core/messages.js")) as {
-      convertToLlm: ConvertToLlmFn;
-    };
-    const { serializeConversation } = require(join(
-      piCodingAgentDistDir,
-      "core/compaction/utils.js",
-    )) as {
-      serializeConversation: SerializeConversationFn;
-    };
-
     if (typeof convertToLlm !== "function" || typeof serializeConversation !== "function") {
       throw new Error("Pi compaction measurement modules are missing required exports");
     }
 
-    piCompactionMeasurementModule = { convertToLlm, serializeConversation };
+    piCompactionMeasurementModule = {
+      convertToLlm: convertToLlm as ConvertToLlmFn,
+      serializeConversation: serializeConversation as SerializeConversationFn,
+    };
   } catch (error) {
     console.warn(
       "[swarm] Pi compaction measurement unavailable; using JSON fallback for prompt sizing:",

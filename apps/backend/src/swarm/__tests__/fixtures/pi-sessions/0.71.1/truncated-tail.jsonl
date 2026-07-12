@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"fixture-0711-truncated","timestamp":"2026-07-11T03:00:00.000Z","cwd":"/tmp/pi-fixture-0711-truncated"}
+{"type":"message","id":"trunc-u1","parentId":null,"timestamp":"2026-07-11T03:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"valid prefix before crash"}],"timestamp":1752202801000}}
+{"type":"message","id":"trunc-a1","parentId":"trunc-u1","timestamp":"2026-07-11T03:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"valid assistant prefix"}],"provider":"anthropic","api":"anthropic","model":"claude-sonnet-4-5","usage":{"input":3,"output":3,"cacheRead":0,"cacheWrite":0,"totalTokens":6},"stopReason":"stop","timestamp":1752202802000}}
+{"type":"message","id":"trunc-bad","parentId":"trunc-a1","timestamp":"2026-07-11T03:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"unterminated

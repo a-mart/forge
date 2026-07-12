@@ -2,14 +2,14 @@ import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { getModels } from "@mariozechner/pi-ai";
-import { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { getModels } from "../pi/pi-ai-compat.js";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 const modelRegistryMockState = vi.hoisted(() => ({
   construct: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   ModelRegistry: new Proxy(class {}, {
     construct(_target, args) {
       modelRegistryMockState.construct(...args);
@@ -143,8 +143,8 @@ describe("model-catalog-projection", () => {
   });
 
   it("projects catalog-only built-in Anthropic models missing from Pi upstream through ModelRegistry", async () => {
-    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@mariozechner/pi-coding-agent")>(
-      "@mariozechner/pi-coding-agent",
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
     );
 
     const upstreamAnthropicIds = new Set(getModels("anthropic").map((model) => model.id));

@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type { AgentDescriptor } from "./types.js";

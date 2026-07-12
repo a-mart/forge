@@ -1,0 +1,9 @@
+{
+  "name": "forge-pi-0711-rollback-runner",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Immutable frozen @mariozechner/pi-coding-agent@0.71.1 runner for WP-8 rollback gates",
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.71.1"
+  }
+}

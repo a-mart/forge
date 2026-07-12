@@ -24,6 +24,7 @@ const stageDir = path.join(electronDir, '.stage')
 const releaseDir = path.join(electronDir, 'release')
 const backendStageDir = path.join(stageDir, 'backend')
 const backendStageBundlePath = path.join(backendStageDir, 'dist', 'index.mjs')
+const backendStageMetafilePath = path.join(backendStageDir, 'dist', 'index.meta.json')
 const backendStageNodeModulesDir = path.join(backendStageDir, 'node_modules')
 const uiStageDir = path.join(stageDir, 'ui')
 const cliStageDir = path.join(stageDir, 'cli')
@@ -79,7 +80,14 @@ export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
         : 'expected getText()/setText() exports',
   },
   {
-    name: '@mariozechner/pi-coding-agent',
+    name: '@earendil-works/pi-ai',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.createProvider === 'function' ? null : 'expected a createProvider() export',
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedPiAiPackageDir(stagedPackageDir),
+  },
+  {
+    name: '@earendil-works/pi-coding-agent',
     optional: false,
     validateLoadedModule: (loadedModule) =>
       typeof loadedModule?.compact === 'function' ? null : 'expected a compact() export',
@@ -151,7 +159,7 @@ async function main() {
 async function stageBundledBackend() {
   await mkdir(path.dirname(backendStageBundlePath), { recursive: true })
 
-  await esbuild({
+  const metafile = await esbuild({
     entryPoints: [backendBuildEntry],
     outfile: backendStageBundlePath,
     bundle: true,
@@ -167,7 +175,9 @@ async function stageBundledBackend() {
     },
     logLevel: 'info',
     legalComments: 'none',
+    metafile: true,
   })
+  await writeFile(backendStageMetafilePath, JSON.stringify(metafile, null, 2), 'utf8')
 
   // Stage backend package.json — needed at runtime by bundled dependencies
   // that walk up the directory tree looking for package.json (e.g. pi-coding-agent
@@ -181,7 +191,14 @@ async function stageBundledBackend() {
   await stageRuntimePackages(runtimePackages)
 
   const fileCount = await countFiles(backendStageDir)
-  console.log(`[electron/build-all] Staged bundled backend with ${runtimePackages.length} runtime packages (${fileCount} files)`)
+  const stagedCount = runtimePackages.hoisted.length + runtimePackages.nested.length
+  const nestedNote =
+    runtimePackages.nested.length > 0
+      ? ` (${runtimePackages.nested.length} nested versioned installs preserved)`
+      : ''
+  console.log(
+    `[electron/build-all] Staged bundled backend with ${stagedCount} runtime packages${nestedNote} (${fileCount} files)`,
+  )
 }
 
 export async function validatePackagedRuntimePreflight() {
@@ -248,8 +265,11 @@ export async function validatePackagedRuntimePreflight() {
     )
   }
 
+  validateBackendMetafileHasNoEmbeddedPiAiImplementation()
   await validateStagedCursorSdkRuntime(stagedRequire)
-  await validateStagedPiCompactionMeasurement(stagedRequire)
+  await validateStagedPiSingletonRuntime(stagedRequire)
+  await assertStagedPiPackageRelativeAssets()
+  await validateStagedPiFunctionalSmoke(stagedRequire)
 
   console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
   for (const resolution of verifiedPackages) {
@@ -369,6 +389,28 @@ export function resolveStagedPackageEntryFromManifest(stagedPackageDir) {
   return existsSync(resolvedEntry) ? resolvedEntry : null
 }
 
+export function resolveStagedPackageSubpathFromManifest(stagedPackageDir, subpath) {
+  const manifestPath = path.join(stagedPackageDir, 'package.json')
+  if (!existsSync(manifestPath)) {
+    return null
+  }
+
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch {
+    return null
+  }
+
+  const relativeEntry = pickPackageEntryFromExports(manifest.exports?.[subpath])
+  if (!relativeEntry) {
+    return null
+  }
+
+  const resolvedEntry = path.resolve(stagedPackageDir, relativeEntry)
+  return existsSync(resolvedEntry) ? resolvedEntry : null
+}
+
 function resolveStagedRuntimePackageEntry(stagedRequire, packageName, stagedPackageDir) {
   try {
     return stagedRequire.resolve(packageName)
@@ -440,17 +482,9 @@ function assertPathIsWithinDirectory(targetPath, parentDirectory, failurePrefix)
 }
 
 async function stageBundledDependencyRuntimeAssets() {
-  const piCodingAgent = await resolveInstalledPackage('@mariozechner/pi-coding-agent', backendWorkspaceManifestPath, false)
-
-  await copyRuntimeAsset(
-    path.join(piCodingAgent.packageRoot, 'dist', 'modes', 'interactive', 'theme'),
-    path.join(backendStageDir, 'dist', 'modes', 'interactive', 'theme'),
-  )
-  await copyRuntimeAsset(
-    path.join(piCodingAgent.packageRoot, 'dist', 'core', 'export-html'),
-    path.join(backendStageDir, 'dist', 'core', 'export-html'),
-  )
-
+  // Theme + export-html resolve package-relative via pi-coding-agent getThemesDir /
+  // getExportTemplateDir (dist/modes/interactive/theme, dist/core/export-html under the
+  // staged package). Do not stage redundant bundle-relative copies under backend/dist.
   // photon-node is optional (platform-specific WASM) — skip if not installed
   const photonNode = await resolveInstalledPackage('@silvia-odwyer/photon-node', backendWorkspaceManifestPath, true)
   if (photonNode) {
@@ -471,13 +505,31 @@ async function copyRuntimeAsset(from, to) {
   await cp(from, to, { recursive: true })
 }
 
-async function collectRuntimePackageClosure(rootPackages) {
+const PI_SINGLETON_RUNTIME_PACKAGES = new Set([
+  '@earendil-works/pi-ai',
+  '@earendil-works/pi-coding-agent',
+  '@earendil-works/pi-agent-core',
+  '@earendil-works/pi-tui',
+])
+
+/**
+ * Collect the packaged-runtime dependency closure.
+ * Pi-family packages must resolve to a single realpath/version (fail-closed).
+ * Non-Pi packages may resolve multiple versions; secondary installs are staged
+ * nested under the requesting parent install (by realpath) so nothing is silently discarded.
+ */
+export async function collectRuntimePackageClosure(rootPackages) {
   const queuedPackages = rootPackages.map(({ packageName, optional }) => ({
     packageName,
     resolveFromManifestPath: backendWorkspaceManifestPath,
     optional,
+    parentPackageName: null,
+    parentPackageRoot: null,
   }))
-  const discoveredPackages = new Map()
+  const hoistedByName = new Map()
+  const nestedPackages = []
+  const seenRealpaths = new Set()
+  const installsByRealpath = new Map()
 
   while (queuedPackages.length > 0) {
     const next = queuedPackages.shift()
@@ -486,22 +538,82 @@ async function collectRuntimePackageClosure(rootPackages) {
     }
 
     const resolved = await resolveInstalledPackage(next.packageName, next.resolveFromManifestPath, next.optional)
-    if (!resolved || discoveredPackages.has(resolved.name)) {
+    if (!resolved) {
       continue
     }
 
-    discoveredPackages.set(resolved.name, resolved)
+    const resolvedRealpath = await fs.promises.realpath(resolved.packageRoot)
+    const existingByName = hoistedByName.get(resolved.name)
+    if (existingByName) {
+      const existingRealpath = await fs.promises.realpath(existingByName.packageRoot)
+      if (existingRealpath === resolvedRealpath && existingByName.manifest.version === resolved.manifest.version) {
+        seenRealpaths.add(resolvedRealpath)
+        installsByRealpath.set(resolvedRealpath, existingByName)
+        continue
+      }
+      if (PI_SINGLETON_RUNTIME_PACKAGES.has(resolved.name)) {
+        throw new Error(
+          `Runtime package closure resolved conflicting Pi singleton ${resolved.name}: ${existingRealpath}@${existingByName.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
+        )
+      }
+      if (!next.parentPackageName || !next.parentPackageRoot) {
+        throw new Error(
+          `Runtime package closure resolved conflicting ${resolved.name} at the bundle root with no nest parent: ${existingRealpath}@${existingByName.manifest.version} vs ${resolvedRealpath}@${resolved.manifest.version}`,
+        )
+      }
+      if (seenRealpaths.has(resolvedRealpath)) {
+        continue
+      }
+      seenRealpaths.add(resolvedRealpath)
+      const nested = {
+        ...resolved,
+        nestUnderPackageName: next.parentPackageName,
+        nestUnderPackageRoot: next.parentPackageRoot,
+      }
+      nestedPackages.push(nested)
+      installsByRealpath.set(resolvedRealpath, nested)
+      for (const dependency of collectRuntimeDependencyDescriptors(resolved.manifest)) {
+        queuedPackages.push({
+          packageName: dependency.packageName,
+          resolveFromManifestPath: resolved.manifestPath,
+          optional: dependency.optional,
+          parentPackageName: resolved.name,
+          parentPackageRoot: resolvedRealpath,
+        })
+      }
+      continue
+    }
+
+    if (seenRealpaths.has(resolvedRealpath)) {
+      // Alias of an already-staged physical install (e.g. string-width-cjs -> string-width).
+      hoistedByName.set(resolved.name, resolved)
+      continue
+    }
+
+    seenRealpaths.add(resolvedRealpath)
+    hoistedByName.set(resolved.name, resolved)
+    installsByRealpath.set(resolvedRealpath, resolved)
 
     for (const dependency of collectRuntimeDependencyDescriptors(resolved.manifest)) {
       queuedPackages.push({
         packageName: dependency.packageName,
         resolveFromManifestPath: resolved.manifestPath,
         optional: dependency.optional,
+        parentPackageName: resolved.name,
+        parentPackageRoot: resolvedRealpath,
       })
     }
   }
 
-  return Array.from(discoveredPackages.values()).sort((left, right) => left.name.localeCompare(right.name))
+  const hoisted = Array.from(hoistedByName.values()).sort((left, right) => left.name.localeCompare(right.name))
+  nestedPackages.sort((left, right) => {
+    const byParent = left.nestUnderPackageName.localeCompare(right.nestUnderPackageName)
+    if (byParent !== 0) return byParent
+    const byName = left.name.localeCompare(right.name)
+    if (byName !== 0) return byName
+    return String(left.manifest.version).localeCompare(String(right.manifest.version))
+  })
+  return { hoisted, nested: nestedPackages, installsByRealpath }
 }
 
 function collectRuntimeDependencyDescriptors(manifest) {
@@ -527,7 +639,11 @@ async function resolveInstalledPackage(packageName, resolveFromManifestPath, opt
   let resolvedEntryPath
 
   try {
-    resolvedEntryPath = packageRequire.resolve(packageName)
+    try {
+      resolvedEntryPath = packageRequire.resolve(`${packageName}/package.json`)
+    } catch {
+      resolvedEntryPath = packageRequire.resolve(packageName)
+    }
   } catch (error) {
     const resolvedPackageRoot = await findInstalledPackageRoot(packageName, path.dirname(resolveFromManifestPath))
     if (resolvedPackageRoot) {
@@ -550,6 +666,7 @@ async function resolveInstalledPackage(packageName, resolveFromManifestPath, opt
 
 async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
   let currentPath = path.extname(resolvedEntryPath) ? path.dirname(resolvedEntryPath) : resolvedEntryPath
+  let aliasFallback = null
 
   while (true) {
     const manifestPath = path.join(currentPath, 'package.json')
@@ -557,7 +674,17 @@ async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
       const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
       if (manifest.name === expectedPackageName) {
         return {
-          name: manifest.name,
+          name: expectedPackageName,
+          manifest,
+          manifestPath,
+          packageRoot: currentPath,
+        }
+      }
+      // pnpm alias packages (e.g. string-width-cjs -> string-width) resolve into a
+      // package root whose manifest.name differs from the required specifier.
+      if (!aliasFallback) {
+        aliasFallback = {
+          name: expectedPackageName,
           manifest,
           manifestPath,
           packageRoot: currentPath,
@@ -567,6 +694,9 @@ async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
 
     const parentPath = path.dirname(currentPath)
     if (parentPath === currentPath) {
+      if (aliasFallback) {
+        return aliasFallback
+      }
       throw new Error(`Unable to locate package root for ${expectedPackageName} from ${resolvedEntryPath}`)
     }
 
@@ -616,15 +746,55 @@ function isStagedPackageManifestResolutionError(error) {
 }
 
 async function stageRuntimePackages(runtimePackages) {
-  if (runtimePackages.length === 0) {
+  const hoisted = Array.isArray(runtimePackages) ? runtimePackages : runtimePackages.hoisted
+  const nested = Array.isArray(runtimePackages) ? [] : runtimePackages.nested
+  if (hoisted.length === 0 && nested.length === 0) {
     return
   }
 
   await mkdir(backendStageNodeModulesDir, { recursive: true })
+  const stagedTargetByRealpath = new Map()
 
-  for (const runtimePackage of runtimePackages) {
+  for (const runtimePackage of hoisted) {
     const packageTargetDir = path.join(backendStageNodeModulesDir, ...runtimePackage.name.split('/'))
     await copyRuntimePackage(runtimePackage, packageTargetDir)
+    stagedTargetByRealpath.set(await fs.promises.realpath(runtimePackage.packageRoot), packageTargetDir)
+  }
+
+  // Parents may themselves be nested; stage in waves until all nests are placed.
+  const pending = [...nested]
+  let guard = 0
+  while (pending.length > 0) {
+    guard += 1
+    if (guard > pending.length + nested.length + 32) {
+      const unresolved = pending
+        .map((pkg) => `${pkg.name}@${pkg.manifest.version} under ${pkg.nestUnderPackageName}`)
+        .join(', ')
+      throw new Error(`Unable to resolve nested runtime package parents for staging: ${unresolved}`)
+    }
+
+    let progressed = false
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      const runtimePackage = pending[index]
+      const parentTarget = stagedTargetByRealpath.get(runtimePackage.nestUnderPackageRoot)
+      if (!parentTarget) {
+        continue
+      }
+      const packageTargetDir = path.join(parentTarget, 'node_modules', ...runtimePackage.name.split('/'))
+      await copyRuntimePackage(runtimePackage, packageTargetDir)
+      stagedTargetByRealpath.set(await fs.promises.realpath(runtimePackage.packageRoot), packageTargetDir)
+      console.log(
+        `[electron/build-all] Nested ${runtimePackage.name}@${runtimePackage.manifest.version} under ${runtimePackage.nestUnderPackageName}`,
+      )
+      pending.splice(index, 1)
+      progressed = true
+    }
+    if (!progressed) {
+      const unresolved = pending
+        .map((pkg) => `${pkg.name}@${pkg.manifest.version} under ${pkg.nestUnderPackageName}`)
+        .join(', ')
+      throw new Error(`Unable to resolve nested runtime package parents for staging: ${unresolved}`)
+    }
   }
 }
 
@@ -640,8 +810,9 @@ async function copyRuntimePackage(runtimePackage, targetDir) {
 export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
   const requiredPaths = [
     'package.json',
-    path.join('dist', 'core', 'messages.js'),
-    path.join('dist', 'core', 'compaction', 'utils.js'),
+    path.join('dist', 'index.js'),
+    path.join('dist', 'core', 'export-html'),
+    path.join('dist', 'modes', 'interactive', 'theme'),
   ]
 
   for (const relativePath of requiredPaths) {
@@ -653,48 +824,449 @@ export function validateStagedPiCodingAgentPackageDir(stagedPackageDir) {
   return null
 }
 
-async function validateStagedPiCompactionMeasurement(stagedRequire) {
-  const stagedPackageDir = path.join(backendStageNodeModulesDir, '@mariozechner', 'pi-coding-agent')
-  const stagedPackageValidationFailure = validateStagedPiCodingAgentPackageDir(stagedPackageDir)
-  if (stagedPackageValidationFailure) {
+export function validateStagedPiAiPackageDir(stagedPackageDir) {
+  const requiredPaths = [
+    'package.json',
+    path.join('dist', 'index.js'),
+    path.join('dist', 'compat.js'),
+    path.join('dist', 'api'),
+  ]
+
+  for (const relativePath of requiredPaths) {
+    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
+      return `missing required asset ${relativePath}`
+    }
+  }
+
+  return null
+}
+
+function validateBackendMetafileHasNoEmbeddedPiAiImplementation() {
+  const metafile = JSON.parse(readFileSync(backendStageMetafilePath, 'utf8'))
+  const embeddedPiAiInputs = Object.keys(metafile.inputs ?? {}).filter(
+    (input) => input.includes('node_modules/@earendil-works/pi-ai/') || input.includes('node_modules/@earendil-works+pi-ai@'),
+  )
+  if (embeddedPiAiInputs.length > 0) {
     throw new Error(
-      `Packaged-runtime preflight failed: staged Pi compaction measurement package is invalid: ${stagedPackageValidationFailure}`,
+      `Packaged-runtime preflight failed: backend bundle embedded pi-ai implementation modules: ${embeddedPiAiInputs.join(', ')}`,
+    )
+  }
+}
+
+/**
+ * Fail-closed Pi-family version check for staged roots.
+ * Used by packaged preflight and unit tests with duplicate/skew fixtures.
+ */
+export function assertPiFamilySingletonManifests(packageDirsByName, expectedVersion = '0.80.6') {
+  const required = [
+    '@earendil-works/pi-agent-core',
+    '@earendil-works/pi-ai',
+    '@earendil-works/pi-coding-agent',
+    '@earendil-works/pi-tui',
+  ]
+  for (const packageName of required) {
+    const packageDir = packageDirsByName.get(packageName)
+    if (!packageDir || !existsSync(path.join(packageDir, 'package.json'))) {
+      throw new Error(`Packaged-runtime preflight failed: missing staged Pi package ${packageName}`)
+    }
+    const manifest = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'))
+    if (manifest.version !== expectedVersion) {
+      throw new Error(
+        `Packaged-runtime preflight failed: expected ${packageName}@${expectedVersion}, got ${manifest.version}`,
+      )
+    }
+  }
+}
+
+export async function validateStagedPiSingletonRuntime(stagedRequire) {
+  const piPackageDirs = new Map([
+    ['@earendil-works/pi-agent-core', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-agent-core')],
+    ['@earendil-works/pi-ai', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai')],
+    ['@earendil-works/pi-coding-agent', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')],
+    ['@earendil-works/pi-tui', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-tui')],
+  ])
+  assertPiFamilySingletonManifests(piPackageDirs)
+
+  const piAiPackageDir = piPackageDirs.get('@earendil-works/pi-ai')
+  const piCodingAgentPackageDir = piPackageDirs.get('@earendil-works/pi-coding-agent')
+  const forgePiAiRoot = await findInstalledPackageRoot('@earendil-works/pi-ai', path.dirname(backendStageBundlePath))
+  const codingAgentPiAiRoot = await findInstalledPackageRoot('@earendil-works/pi-ai', piCodingAgentPackageDir)
+  if (!forgePiAiRoot || !codingAgentPiAiRoot) {
+    throw new Error('Packaged-runtime preflight failed: unable to resolve staged pi-ai roots for singleton check')
+  }
+  const forgeCompatPath = await fs.promises.realpath(path.join(forgePiAiRoot, 'dist', 'compat.js'))
+  const codingAgentCompatPath = await fs.promises.realpath(path.join(codingAgentPiAiRoot, 'dist', 'compat.js'))
+  if (forgeCompatPath !== codingAgentCompatPath) {
+    throw new Error(
+      `Packaged-runtime preflight failed: Forge and coding-agent resolved different pi-ai/compat realpaths (${forgeCompatPath} vs ${codingAgentCompatPath})`,
     )
   }
 
-  const messagesPath = path.join(stagedPackageDir, 'dist', 'core', 'messages.js')
-  const utilsPath = path.join(stagedPackageDir, 'dist', 'core', 'compaction', 'utils.js')
+  const forgePiAiEntry = resolveStagedPackageEntryFromManifest(piAiPackageDir)
+  const codingAgentPiAiEntry = resolveStagedPackageEntryFromManifest(
+    await findInstalledPackageRoot('@earendil-works/pi-ai', piCodingAgentPackageDir),
+  )
+  const [forgeCompat, codingAgentCompat, forgeRoot, codingRoot] = await Promise.all([
+    import(pathToFileURL(forgeCompatPath).href),
+    import(pathToFileURL(codingAgentCompatPath).href),
+    import(pathToFileURL(forgePiAiEntry).href),
+    import(pathToFileURL(codingAgentPiAiEntry).href),
+  ])
+  if (forgeCompat.registerFauxProvider !== codingAgentCompat.registerFauxProvider || forgeRoot.createProvider !== codingRoot.createProvider) {
+    throw new Error('Packaged-runtime preflight failed: pi-ai ESM identity is not shared')
+  }
 
-  for (const [label, modulePath] of [
-    ['messages', messagesPath],
-    ['compaction utils', utilsPath],
-  ]) {
-    assertPathIsWithinDirectory(
-      modulePath,
-      backendStageNodeModulesDir,
-      `Packaged-runtime preflight failed: Pi compaction ${label} module resolved outside staged node_modules`,
-    )
-
-    let loadedModule
+  const registration = forgeCompat.registerFauxProvider({
+    api: 'packaged-singleton-api',
+    provider: 'packaged-singleton',
+    models: [{ id: 'singleton-model' }],
+  })
+  try {
+    if (codingAgentCompat.getApiProvider(registration.api)?.api !== registration.api) {
+      throw new Error('Packaged-runtime preflight failed: pi-ai shared faux provider state is not visible from coding-agent parent')
+    }
+    const reverse = codingAgentCompat.registerFauxProvider({
+      api: 'packaged-singleton-reverse-api',
+      provider: 'packaged-singleton-reverse',
+      models: [{ id: 'singleton-reverse-model' }],
+    })
     try {
-      loadedModule = await loadRuntimeModuleFromEntry(stagedRequire, modulePath)
-    } catch (error) {
-      throw new Error(
-        `Packaged-runtime preflight failed: unable to load Pi compaction ${label} module from ${modulePath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
+      if (forgeCompat.getApiProvider(reverse.api)?.api !== reverse.api) {
+        throw new Error('Packaged-runtime preflight failed: pi-ai shared faux provider state is not visible from Forge parent')
+      }
+    } finally {
+      reverse.unregister()
     }
+  } finally {
+    registration.unregister()
+  }
 
-    const exportName = label === 'messages' ? 'convertToLlm' : 'serializeConversation'
-    if (typeof loadedModule?.[exportName] !== 'function') {
-      throw new Error(
-        `Packaged-runtime preflight failed: Pi compaction ${label} module at ${modulePath} is missing ${exportName}() export`,
-      )
+  void stagedRequire
+}
+
+async function assertStagedPiPackageRelativeAssets() {
+  const packageDir = path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent')
+  const configModule = await import(pathToFileURL(path.join(packageDir, 'dist', 'config.js')).href)
+  const themesDir = configModule.getThemesDir()
+  const exportTemplateDir = configModule.getExportTemplateDir()
+
+  assertPathIsWithinDirectory(
+    themesDir,
+    packageDir,
+    'Packaged-runtime preflight failed: getThemesDir resolved outside staged pi-coding-agent package',
+  )
+  assertPathIsWithinDirectory(
+    exportTemplateDir,
+    packageDir,
+    'Packaged-runtime preflight failed: getExportTemplateDir resolved outside staged pi-coding-agent package',
+  )
+
+  for (const relativePath of [
+    path.join(themesDir, 'dark.json'),
+    path.join(themesDir, 'light.json'),
+    path.join(exportTemplateDir, 'template.html'),
+    path.join(exportTemplateDir, 'template.css'),
+  ]) {
+    if (!existsSync(relativePath)) {
+      throw new Error(`Packaged-runtime preflight failed: missing package-relative Pi asset ${relativePath}`)
     }
   }
 
-  console.log('[electron/build-all] Packaged-runtime preflight verified Pi compaction measurement modules')
+  for (const redundantRelative of [
+    path.join('dist', 'modes', 'interactive', 'theme'),
+    path.join('dist', 'core', 'export-html'),
+  ]) {
+    const redundantPath = path.join(backendStageDir, redundantRelative)
+    if (existsSync(redundantPath)) {
+      throw new Error(
+        `Packaged-runtime preflight failed: redundant bundle-relative ${redundantRelative} must not be staged; package-relative assets under node_modules/@earendil-works/pi-coding-agent are authoritative`,
+      )
+    }
+  }
+}
+
+async function validateStagedPiFunctionalSmoke(stagedRequire) {
+  const pi = await import(pathToFileURL(resolveStagedRuntimePackageEntry(stagedRequire, '@earendil-works/pi-coding-agent', path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-coding-agent'))).href)
+  const compat = await import(pathToFileURL(resolveStagedPackageSubpathFromManifest(path.join(backendStageNodeModulesDir, '@earendil-works', 'pi-ai'), './compat')).href)
+  const root = await fs.promises.mkdtemp(path.join(stageDir, 'pi-smoke-'))
+  const agentDir = path.join(root, 'agent')
+  const sessionFile = path.join(root, 'session.jsonl')
+  const marker = path.join(root, 'trusted-extension-marker.txt')
+  const extensionPath = path.join(root, '.forge', 'pi', 'extensions', 'trusted.js')
+  const legacySupportedPath = path.join(root, '.forge', 'pi', 'extensions', 'legacy-supported.js')
+  const legacyUnsupportedPath = path.join(root, '.forge', 'pi', 'extensions', 'legacy-unsupported.js')
+  await mkdir(path.dirname(extensionPath), { recursive: true })
+  await writeFile(path.join(root, 'README.md'), 'staged smoke read-only content\n', 'utf8')
+  await writeFile(
+    extensionPath,
+    `import { writeFileSync } from 'node:fs'; export default function setup() { writeFileSync(${JSON.stringify(marker)}, 'loaded', 'utf8'); }\n`,
+    'utf8',
+  )
+  await writeFile(
+    legacySupportedPath,
+    `import { getModel } from '@mariozechner/pi-ai';\nimport { writeFileSync } from 'node:fs';\nexport default function setup() { writeFileSync(${JSON.stringify(path.join(root, 'legacy-supported-marker.txt'))}, typeof getModel === 'function' ? 'ok' : 'missing', 'utf8'); }\n`,
+    'utf8',
+  )
+  await writeFile(
+    legacyUnsupportedPath,
+    `import '@mariozechner/pi-ai/private-subpath';\nexport default function setup() {}\n`,
+    'utf8',
+  )
+  await writeFile(
+    path.join(root, '.forge', 'pi', 'settings.json'),
+    JSON.stringify({ extensions: ['./extensions/trusted.js'] }),
+    'utf8',
+  )
+  await writeFile(sessionFile, '', 'utf8')
+
+  const faux = compat.registerFauxProvider({
+    api: 'packaged-smoke-api',
+    provider: 'packaged-smoke',
+    models: [{ id: 'packaged-smoke-model', name: 'Packaged Smoke', contextWindow: 32000, maxTokens: 1024 }],
+  })
+  faux.setResponses([
+    compat.fauxAssistantMessage(compat.fauxToolCall('read', { path: 'README.md' }, { id: 'smoke-read-1' }), { stopReason: 'tool_use' }),
+    'cached request reconnect ok',
+  ])
+
+  const authStorage = pi.AuthStorage.inMemory({})
+  authStorage.setRuntimeApiKey('packaged-smoke', 'faux-test-key')
+
+  const deniedStorage = {
+    withLock(scope, fn) {
+      fn(scope === 'global' ? undefined : JSON.stringify({ extensions: ['!*'], packages: [], skills: [], prompts: [], themes: [] }))
+    },
+  }
+  const deniedSettingsManager = pi.SettingsManager.fromStorage(deniedStorage, { projectTrusted: false })
+  const deniedResourceLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager: deniedSettingsManager,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await deniedResourceLoader.reload({ resolveProjectTrust: async () => false })
+  const deniedSessionFile = path.join(root, 'denied-session.jsonl')
+  await writeFile(deniedSessionFile, '', 'utf8')
+  const deniedCreated = await pi.createAgentSession({
+    cwd: root,
+    agentDir,
+    authStorage,
+    modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+    model: faux.getModel(),
+    thinkingLevel: 'off',
+    sessionManager: pi.SessionManager.open(deniedSessionFile, undefined, root),
+    resourceLoader: deniedResourceLoader,
+    settingsManager: deniedSettingsManager,
+    noTools: 'all',
+  })
+  await deniedCreated.session.bindExtensions({})
+  deniedCreated.session.dispose()
+  if (existsSync(marker)) {
+    throw new Error('Packaged-runtime preflight failed: denied-trust project extension executed in staged smoke')
+  }
+
+  const storage = {
+    withLock(scope, fn) {
+      const current = scope === 'global'
+        ? undefined
+        : JSON.stringify({ extensions: ['!*', './extensions/trusted.js', extensionPath, `+${extensionPath}`], packages: [], skills: [], prompts: [], themes: [] })
+      fn(current)
+    },
+  }
+  // Creator-path contract: construct untrusted, elevate only via resolveProjectTrust.
+  const settingsManager = pi.SettingsManager.fromStorage(storage, { projectTrusted: false })
+  if (settingsManager.isProjectTrusted()) {
+    throw new Error('Packaged-runtime preflight failed: SettingsManager must start projectTrusted:false')
+  }
+  const resourceLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await resourceLoader.reload({ resolveProjectTrust: async () => true })
+  if (!settingsManager.isProjectTrusted()) {
+    throw new Error('Packaged-runtime preflight failed: resolveProjectTrust did not elevate SettingsManager.projectTrusted')
+  }
+  const { session } = await pi.createAgentSession({
+    cwd: root,
+    agentDir,
+    authStorage,
+    modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+    model: faux.getModel(),
+    thinkingLevel: 'off',
+    sessionManager: pi.SessionManager.open(sessionFile, undefined, root),
+    resourceLoader,
+    settingsManager,
+    tools: ['read'],
+  })
+
+  try {
+    await session.bindExtensions({})
+    await session.prompt('read README.md')
+    session.dispose()
+    const restarted = pi.SessionManager.open(sessionFile, undefined, root)
+    const context = restarted.buildSessionContext()
+    if (!JSON.stringify(context.messages).includes('staged smoke read-only content')) {
+      throw new Error('Packaged-runtime preflight failed: safe read-only tool result was not replayable from staged session')
+    }
+    if (!existsSync(marker)) {
+      throw new Error('Packaged-runtime preflight failed: trusted project extension did not load in staged smoke')
+    }
+    faux.appendResponses(['cached request reconnect ok'])
+    const secondSessionFile = path.join(root, 'session-2.jsonl')
+    await writeFile(secondSessionFile, '', 'utf8')
+    const second = await pi.createAgentSession({
+      cwd: root,
+      agentDir,
+      authStorage,
+      modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+      model: faux.getModel(),
+      thinkingLevel: 'off',
+      sessionManager: pi.SessionManager.open(secondSessionFile, undefined, root),
+      resourceLoader,
+      settingsManager,
+      noTools: 'all',
+    })
+    await second.session.prompt('cached reconnect')
+    second.session.dispose()
+    if (faux.state.callCount < 2) {
+      throw new Error('Packaged-runtime preflight failed: staged faux provider did not observe repeated requests')
+    }
+
+    await assertStagedLegacyExtensionMigrationCases({
+      pi,
+      authStorage,
+      faux,
+      root,
+      agentDir,
+      legacySupportedPath,
+      legacyUnsupportedPath,
+    })
+  } finally {
+    faux.unregister()
+    session.dispose()
+  }
+}
+
+async function assertStagedLegacyExtensionMigrationCases({
+  pi,
+  authStorage,
+  faux,
+  root,
+  agentDir,
+  legacySupportedPath,
+  legacyUnsupportedPath,
+}) {
+  const supportedMarker = path.join(root, 'legacy-supported-marker.txt')
+  const supportedStorage = {
+    withLock(scope, fn) {
+      fn(
+        scope === 'global'
+          ? undefined
+          : JSON.stringify({
+              extensions: ['!*', './extensions/legacy-supported.js', legacySupportedPath, `+${legacySupportedPath}`],
+              packages: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+            }),
+      )
+    },
+  }
+  const supportedSettings = pi.SettingsManager.fromStorage(supportedStorage, { projectTrusted: false })
+  const supportedLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager: supportedSettings,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await supportedLoader.reload({ resolveProjectTrust: async () => true })
+  const supportedSessionFile = path.join(root, 'legacy-supported-session.jsonl')
+  await writeFile(supportedSessionFile, '', 'utf8')
+  const supportedCreated = await pi.createAgentSession({
+    cwd: root,
+    agentDir,
+    authStorage,
+    modelRegistry: pi.ModelRegistry.inMemory(authStorage),
+    model: faux.getModel(),
+    thinkingLevel: 'off',
+    sessionManager: pi.SessionManager.open(supportedSessionFile, undefined, root),
+    resourceLoader: supportedLoader,
+    settingsManager: supportedSettings,
+    noTools: 'all',
+  })
+  const supportedErrors = (supportedCreated.extensionsResult?.errors ?? [])
+    .map((entry) => String(entry?.error ?? entry?.message ?? entry ?? ''))
+    .join('\n')
+  await supportedCreated.session.bindExtensions({})
+  supportedCreated.session.dispose()
+  const supportedLoaded = existsSync(supportedMarker)
+  const supportedDiagnostic = /@mariozechner\/pi-ai|earendil-works\/pi-ai\/compat|does not ship @mariozechner/i.test(supportedErrors)
+  if (!supportedLoaded && !supportedDiagnostic) {
+    throw new Error(
+      'Packaged-runtime preflight failed: legacy @mariozechner/pi-ai extension neither loaded via upstream alias nor produced migration diagnostic',
+    )
+  }
+
+  const unsupportedStorage = {
+    withLock(scope, fn) {
+      fn(
+        scope === 'global'
+          ? undefined
+          : JSON.stringify({
+              extensions: ['!*', './extensions/legacy-unsupported.js', legacyUnsupportedPath, `+${legacyUnsupportedPath}`],
+              packages: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+            }),
+      )
+    },
+  }
+  const unsupportedSettings = pi.SettingsManager.fromStorage(unsupportedStorage, { projectTrusted: false })
+  const unsupportedLoader = new pi.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager: unsupportedSettings,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  })
+  await unsupportedLoader.reload({ resolveProjectTrust: async () => true })
+  const unsupportedErrors = unsupportedLoader
+    .getExtensions()
+    .errors
+    .map((entry) => entry?.error ?? entry?.message ?? entry)
+  if (unsupportedErrors.length === 0) {
+    throw new Error('Packaged-runtime preflight failed: unsupported legacy subpath produced no resourceLoader errors')
+  }
+  const { formatPiExtensionLoadError } = await import(
+    pathToFileURL(path.join(repoRoot, 'apps/backend/dist/swarm/pi-extension-migration-diagnostics.js')).href,
+  )
+  const diagnosed = unsupportedErrors.map((error) => {
+    const rawMessage = error instanceof Error ? error.message : String(error ?? '')
+    return formatPiExtensionLoadError(error, rawMessage)
+  })
+  if (
+    !diagnosed.some((message) =>
+      String(message).includes('Unsupported legacy Pi extension import @mariozechner/pi-ai/private-subpath'),
+    )
+  ) {
+    throw new Error(
+      `Packaged-runtime preflight failed: unsupported legacy subpath did not produce Forge migration guidance (raw=${JSON.stringify(unsupportedErrors.map(String))} diagnosed=${JSON.stringify(diagnosed)})`,
+    )
+  }
 }
 
 function validateStagedCursorSdkPackageDir(stagedPackageDir) {

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { AuthStorage, SessionManager, type AuthCredential } from '@mariozechner/pi-coding-agent'
+import { AuthStorage, SessionManager, type AuthCredential } from '@earendil-works/pi-coding-agent'
 import { vi } from 'vitest'
 import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { ensureCanonicalAuthFilePath } from '../swarm/auth-storage-paths.js'

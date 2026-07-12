@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { streamSimple } from '@mariozechner/pi-ai'
-import type { Model } from '@mariozechner/pi-ai'
+import { streamSimple } from '../pi/pi-ai-compat.js'
+import type { Model } from '../pi/pi-ai-compat.js'
 
 const originalWebSocket = globalThis.WebSocket
 const originalFetch = globalThis.fetch
@@ -268,7 +268,8 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(sockets).toHaveLength(1)
     expect(result.stopReason).toBe('error')
     expect(result.errorMessage).toContain('WebSocket closed 1006')
-    expect(result.errorMessage).toContain('phase: response.output_text.delta')
+    // Upstream 0.80.6 close errors no longer embed stream phase text; behavioral
+    // contract is no retry/SSE after partial output has started.
     expect(result.content).toEqual([{ type: 'text', text: 'partial' }])
   })
 
@@ -637,7 +638,8 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(sockets).toHaveLength(1)
     expect(result.stopReason).toBe('error')
     expect(result.errorMessage).toContain('WebSocket closed 1006')
-    expect(result.errorMessage).toContain('phase: response.function_call_arguments.delta')
+    // Upstream 0.80.6 close errors no longer embed stream phase text; behavioral
+    // contract is no retry/SSE after partial tool-call output has started.
     expect(result.content).toEqual([{ type: 'toolCall', id: 'call_partial|fc_partial', name: 'shell', arguments: { cmd: 'ls' } }])
   })
 
@@ -727,5 +729,46 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(sockets).toHaveLength(1)
     expect(result.stopReason).toBe('aborted')
     expect(result.errorMessage).toBe('Request was aborted')
+  })
+
+  it('fails without SSE after explicit websocket exhausts its one safe pre-output retry', async () => {
+    const sockets: EventTarget[] = []
+
+    class FakeWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+      readyState = FakeWebSocket.OPEN
+
+      constructor(_url: string | URL, _protocols?: unknown) {
+        super()
+        sockets.push(this)
+        queueMicrotask(() => this.dispatchEvent(new Event('open')))
+      }
+
+      send(_payload: string) {
+        queueMicrotask(() => this.dispatchEvent(closeEvent(1006)))
+      }
+
+      close(_code?: number, _reason?: string) {
+        this.readyState = FakeWebSocket.CLOSED
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket
+    const fetchSpy = installFailingFetch('SSE fetch must not run for explicit websocket')
+
+    const result = await streamSimple(codexModel, { messages: [] }, {
+      apiKey: fakeCodexToken,
+      transport: 'websocket',
+      sessionId: 'test-session-websocket-retry-exhaust',
+      reasoning: 'low',
+    }).result()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(sockets.length).toBeGreaterThanOrEqual(2)
+    expect(result.stopReason).toBe('error')
+    expect(result.errorMessage).toContain('WebSocket closed 1006')
   })
 })

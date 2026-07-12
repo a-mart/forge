@@ -12,7 +12,7 @@ For npm/dev installs:
 npm install -g @forge/cli
 ```
 
-Requires Node.js 22 or newer.
+Requires Node.js 22.19.0 or newer.
 
 Forge Desktop bundles the CLI. Desktop users should open **Settings → CLI Access**, generate a key, and click **Install CLI**. The installed shim uses the packaged app runtime and does not require a separate Node.js install.
 

@@ -247,6 +247,11 @@ function selectChecks(tier, changedFiles) {
       checks: [
         { id: 'lint', label: 'ESLint (repo)', command: [pnpm, ['lint']] },
         { id: 'knip', label: 'Dead code/dependency check', command: [pnpm, ['exec', 'knip']] },
+        {
+          id: 'provision:pi-0711-runner',
+          label: 'Provision frozen Pi 0.71.1 rollback runner',
+          command: ['bash', [path.join('scripts', 'pi-upgrade', 'provision-pi-0711-rollback-runner.sh')]],
+        },
         { id: 'test', label: 'All tests', command: [pnpm, ['test']] },
         { id: 'typecheck', label: 'All workspace typechecks', command: [pnpm, ['typecheck']] },
         helpValidateCheck,

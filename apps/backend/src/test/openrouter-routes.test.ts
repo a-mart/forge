@@ -1,6 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "../swarm/pi/pi-ai-compat.js";
 import type { SwarmConfig } from "../swarm/types.js";
 import { getOpenRouterModelsPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
@@ -10,8 +10,8 @@ import { TestSwarmManager, bootWithDefaultManager, createTempConfig, getAvailabl
 
 const tempRoots: string[] = [];
 const TEST_OPENROUTER_MODEL_ID =
-  getModels("openrouter").find((model) => model.id === "anthropic/claude-3.7-sonnet")?.id ??
-  "anthropic/claude-3.7-sonnet";
+  getModels("openrouter").find((model) => model.id.startsWith("anthropic/claude"))?.id ??
+  "anthropic/claude-sonnet-4";
 
 afterEach(async () => {
   resetLiveOpenRouterModelsCacheForTests();

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { boundCodexMcpToolUiPreview, truncateBytesUtf8 } from "./codex-mcp-args.js";
 import { redactCodexMcpSensitiveText } from "./codex-app-server-event-normalizer.js";
 import {

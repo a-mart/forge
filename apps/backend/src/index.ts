@@ -15,12 +15,15 @@ import {
 import { startServer, type StartedServer } from "./server.js";
 import { readServerVersion } from "./stats/stats-git.js";
 import { checkDataDirMigration } from "./startup-migration.js";
+import { assertNodeEngineFloor } from "./node-engine-floor.js";
 
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(backendRoot, "..", "..");
 loadDotenv({ path: resolve(repoRoot, ".env") });
 
 async function main(): Promise<void> {
+  assertNodeEngineFloor();
+
   const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
 
   await checkDataDirMigration({ isDesktop });

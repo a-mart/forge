@@ -1,4 +1,4 @@
-import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { ensureCanonicalAuthFilePath } from "../../../swarm/auth-storage-paths.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {

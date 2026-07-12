@@ -25,7 +25,7 @@ Keep durable collaboration project tracking in [docs/collaboration/project/](doc
 
 ## Prerequisites
 
-- **Node.js 22+**
+- **Node.js 22.19.0+**
 - **pnpm 10.30+** — install with `npm install -g pnpm` (exact version pinned in `package.json` → `packageManager`)
 - An **OpenAI**, **Anthropic**, or **Claude SDK** account (Settings → Authentication shows provider labels with auth-mode badges; OpenAI/Anthropic can use OAuth or API key auth, while Claude SDK is OAuth-only via Claude Code CLI and does not require an API key)
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCursorSdkMcpToolBridge } from "../runtime/cursor-sdk/cursor-sdk-mcp-tool-bridge.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 async function postJson(url: string, payload: unknown): Promise<unknown> {
   const response = await fetch(url, {

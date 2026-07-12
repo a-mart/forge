@@ -7,6 +7,7 @@ export type ForgeRequestBehaviorId = 'xai-responses' | null
 export type ForgeWebSearchCapability = 'none' | 'native'
 export type ForgeInputMode = 'text' | 'image'
 export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+export type ForgeThinkingLevelMap = Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>
 export type ForgeProviderCredentialAuthType = 'api_key' | 'oauth' | 'unknown'
 export type ForgeProviderCredentialSource = 'auth_file' | 'env' | 'secrets' | 'pool' | 'central_broker'
 
@@ -74,6 +75,7 @@ export interface ForgeModelDefinition {
   maxOutputTokens: number
   inputModes: readonly ForgeInputMode[]
   webSearchCapability: ForgeWebSearchCapability
+  thinkingLevelMap?: ForgeThinkingLevelMap
   enabledByDefault: boolean
   /** Pi upstream source metadata for audit; null for synthetic entries */
   piUpstreamId: string | null
