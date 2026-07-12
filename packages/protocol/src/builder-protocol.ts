@@ -7,10 +7,10 @@
  * builder surface to a server whose version exceeds their ceiling and render
  * an "update Forge to connect" state instead.
  */
-export const BUILDER_PROTOCOL_VERSION = 1 as const
+export const BUILDER_PROTOCOL_VERSION = 2 as const
 
 /** Highest builder protocol version this client build can attach to. */
-export const BUILDER_PROTOCOL_MAX_SUPPORTED = 1
+export const BUILDER_PROTOCOL_MAX_SUPPORTED = 2
 
 export type BuilderProtocolVersion = typeof BUILDER_PROTOCOL_VERSION
 

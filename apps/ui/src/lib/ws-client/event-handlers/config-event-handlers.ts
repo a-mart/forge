@@ -31,14 +31,6 @@ export function handleConfigEvent(
       context.updateState({ modelConfigChangeKey: context.state.modelConfigChangeKey + 1 })
       return true
 
-    case 'work_plans_settings_changed':
-      context.updateState({
-        workPlansEnabled: false,
-        taskSnapshots: {},
-        taskSnapshotLoadingSessionId: null,
-      })
-      return true
-
     case 'model_cache_visualization_settings_changed':
       context.updateState(
         applyLoadedModelCacheVisualizationSetting({

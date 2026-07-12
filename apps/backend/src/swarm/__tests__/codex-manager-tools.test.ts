@@ -54,7 +54,7 @@ function createHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
     },
     publishToUser: async () => ({ targetContext: { channel: "web" } }),
     requestUserChoice: async () => [],
-    runTaskTool: async () => {
+    updatePlan: async () => {
       throw new Error("not needed");
     },
     ...overrides,

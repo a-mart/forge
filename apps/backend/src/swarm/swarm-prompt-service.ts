@@ -177,7 +177,6 @@ export interface SwarmPromptServiceOptions {
     targetSpace?: SpecialistTargetSpace,
   ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSkillRosterForDescriptor?: (descriptor: AgentDescriptor) => Promise<SkillMetadata[] | null | undefined>;
-  getWorkPlansEnabled?: () => boolean;
   getKnowledgeV2Enabled?: () => boolean;
   getIntegrationContext: (profileId: string) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
@@ -847,12 +846,7 @@ export class SwarmPromptService {
   private buildStandardPromptVariables(descriptor: AgentDescriptor): Record<string, string> {
     return {
       ...this.buildRuntimePromptVariables(this.options.getAgentMemoryPath(descriptor.agentId)),
-      ACTIVE_WORK_PLANS_GUIDANCE: this.resolveActiveWorkPlansGuidance(descriptor),
     };
-  }
-
-  private resolveActiveWorkPlansGuidance(_descriptor: AgentDescriptor): string {
-    return "";
   }
 
   private buildRuntimePromptVariables(memoryFilePath: string): Record<string, string> {

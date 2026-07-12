@@ -207,7 +207,12 @@ function createKnowledgeHost(service: KnowledgeService, enabled: boolean): Swarm
     createSessionFromAgent: async () => ({ sessionAgentId: "s1", sessionLabel: "S", profileId: "manager" }),
     publishToUser: async () => ({ targetContext: { channel: "web" } }),
     requestUserChoice: async () => [],
-    runTaskTool: async () => ({ ok: true } as never),
+    updatePlan: async (_agentId, _toolCallId, input) => ({
+      sessionAgentId: "manager",
+      revision: 1,
+      updatedAt: new Date().toISOString(),
+      ...input,
+    }),
     searchKnowledge: async (_caller, input) => {
       assertEnabled();
       return service.searchEntries(input);

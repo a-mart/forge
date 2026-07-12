@@ -67,32 +67,6 @@ function makeChoiceRequest(choiceId: string): ConversationEntryEvent {
   };
 }
 
-function makeWorkPlanCreated(id: string): ConversationEntryEvent {
-  return {
-    type: "work_plan_created",
-    agentId: "manager",
-    id,
-    timestamp: FIXED_NOW,
-    planId: "plan-1",
-    stateRevision: 1,
-    planRevision: 1,
-    plan: {
-      planId: "plan-1",
-      title: "Cached Work Plan",
-      status: "active",
-      createdAt: FIXED_NOW,
-      updatedAt: FIXED_NOW,
-      revision: 1,
-      items: [],
-      itemCount: 0,
-      itemsTruncated: false,
-      warnings: [],
-      warningCount: 0,
-      warningsTruncated: false
-    }
-  };
-}
-
 function makeModelCacheObservation(id: string): ConversationEntryEvent {
   return {
     type: "model_cache_observation",
@@ -200,28 +174,6 @@ describe("HistoryCacheStore", () => {
     expect(validation.persistedEntryCount).toBe(1);
     expect(validation.cachedEntryCount).toBe(1);
     expect(validation.entries?.map((entry) => entry.type)).toEqual(["conversation_message", "conversation_log"]);
-  });
-
-  it("uses compact stable cache identity for work_plan_created receipts", async () => {
-    const root = await createTempDir("history-cache-store-");
-    const sessionFile = join(root, "session.jsonl");
-    const store = makeStore();
-    const history = [makeWorkPlanCreated("work-plan-created-1")];
-    writeSession(sessionFile, history, root);
-
-    const metadata = store.buildMetadata(history, 1, store.readSessionFileCanonicalStat(sessionFile));
-    expect(metadata.firstPersistedEntryKey).toBe("work_plan_created:work-plan-created-1");
-    expect(metadata.lastPersistedEntryKey).toBe("work_plan_created:work-plan-created-1");
-    expect(metadata.firstPersistedEntryKey).not.toContain("Cached Work Plan");
-
-    store.queueCacheSnapshotWrite(sessionFile, history, metadata);
-    await store.flushPendingWrites();
-
-    const header = store.loadConversationHistoryCacheHeader(sessionFile);
-    expect(header.metadata?.firstPersistedEntryKey).toBe("work_plan_created:work-plan-created-1");
-    const validation = store.validateCachedConversationHistory(sessionFile, header.metadata!);
-    expect(validation.ok).toBe(true);
-    expect(validation.entries?.[0]?.type).toBe("work_plan_created");
   });
 
   it("uses compact stable cache identity for choice_request entries", async () => {

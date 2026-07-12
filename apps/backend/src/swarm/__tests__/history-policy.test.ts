@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_CONVERSATION_HISTORY,
-  isProtectedTranscriptEntry,
   isProtectedWebTranscriptEntry,
   selectBootstrapConversationHistory,
   shouldPersistConversationEntry,
@@ -86,32 +85,6 @@ function choice(
   };
 }
 
-function workPlanCreated(id: string): ConversationEntryEvent {
-  return {
-    type: "work_plan_created",
-    agentId: "manager-1",
-    id,
-    timestamp: FIXED_NOW,
-    planId: `plan-${id}`,
-    stateRevision: 1,
-    planRevision: 1,
-    plan: {
-      planId: `plan-${id}`,
-      title: `Plan ${id}`,
-      status: "active",
-      createdAt: FIXED_NOW,
-      updatedAt: FIXED_NOW,
-      revision: 1,
-      items: [],
-      itemCount: 0,
-      itemsTruncated: false,
-      warnings: [],
-      warningCount: 0,
-      warningsTruncated: false
-    }
-  };
-}
-
 function modelCacheObservation(id: string): ConversationEntryEvent {
   return {
     type: "model_cache_observation",
@@ -148,9 +121,6 @@ function ids(entries: ConversationEntryEvent[]): string[] {
     if (entry.type === "choice_request") {
       return entry.choiceId;
     }
-    if (entry.type === "work_plan_created") {
-      return entry.id;
-    }
     if (entry.type === "model_cache_observation") {
       return entry.id;
     }
@@ -167,7 +137,6 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(message("assistant"))).toBe(true);
     expect(shouldPersistConversationEntry(agentActivity("activity"))).toBe(true);
     expect(shouldPersistConversationEntry(choice("choice"))).toBe(true);
-    expect(shouldPersistConversationEntry(workPlanCreated("work-plan-1"))).toBe(true);
   });
 
   it("does not persist Codex stream detail agent_tool_call rows", () => {
@@ -226,27 +195,6 @@ describe("history policy", () => {
     }))).toBe(false);
     expect(isProtectedWebTranscriptEntry(message("system"))).toBe(false);
     expect(isProtectedWebTranscriptEntry(agentActivity("activity"))).toBe(false);
-    expect(isProtectedTranscriptEntry(workPlanCreated("work-plan-protected"))).toBe(true);
-  });
-
-  it("preserves work_plan_created receipts ahead of removable activity and system entries during overflow trim", () => {
-    const overflow = 3;
-    const entries: ConversationEntryEvent[] = [
-      workPlanCreated("receipt-1"),
-      agentActivity("remove-1"),
-      tool("remove-2", "tool_execution_start"),
-      message("remove-3", { source: "system" }),
-      ...Array.from({ length: MAX_CONVERSATION_HISTORY - 1 }, (_, index) => message(`tail-${index}`, { source: "user_input" }))
-    ];
-
-    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY + overflow);
-    trimConversationHistory(entries);
-
-    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
-    expect(ids(entries)[0]).toBe("receipt-1");
-    expect(ids(entries)).not.toContain("remove-1");
-    expect(ids(entries)).not.toContain("remove-2");
-    expect(ids(entries)).not.toContain("remove-3");
   });
 
   it("trims oldest removable entries while preserving protected web transcript entries", () => {
@@ -346,7 +294,6 @@ describe("history policy", () => {
       message("message-1"),
       tool("activity-2", "tool_execution_start"),
       choice("choice-1"),
-      workPlanCreated("work-plan-created-1"),
       agentActivity("activity-3"),
       message("message-2"),
       tool("activity-4", "tool_execution_end")
@@ -358,11 +305,11 @@ describe("history policy", () => {
     });
 
     expect(selection.trimmed).toBe(true);
-    expect(selection.requestedHistoryLength).toBe(8);
+    expect(selection.requestedHistoryLength).toBe(7);
     expect(ids(selection.history)).toEqual([
       "message-1",
+      "activity-2",
       "choice-1",
-      "work-plan-created-1",
       "activity-3",
       "message-2",
       "activity-4"
@@ -374,7 +321,6 @@ describe("history policy", () => {
       message("message-1"),
       agentActivity("activity-1"),
       message("message-2"),
-      workPlanCreated("work-plan-created-1"),
       choice("choice-1"),
       message("message-3")
     ];
@@ -385,7 +331,7 @@ describe("history policy", () => {
     });
 
     expect(selection.trimmed).toBe(true);
-    expect(ids(selection.history)).toEqual(["work-plan-created-1", "choice-1"]);
+    expect(ids(selection.history)).toEqual(["choice-1", "message-3"]);
   });
 
   it("applies requested message count before bootstrap budget selection", () => {

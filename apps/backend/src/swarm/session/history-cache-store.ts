@@ -820,7 +820,6 @@ function extractConversationEntryEventId(entry: ConversationEntryEvent): string 
 
   if (
     entry.type !== "conversation_message" &&
-    entry.type !== "work_plan_created" &&
     entry.type !== "model_cache_observation"
   ) {
     return undefined;
@@ -1037,4 +1036,3 @@ function parsePersistedConversationEntryIdentity(line: string | undefined): Pers
 
   return extractPersistedConversationEntryIdentity(hydratedEntry);
 }
-

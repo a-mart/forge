@@ -8,7 +8,6 @@ import { writeProjectAgentRecord } from "../project-agent-storage.js";
 import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
 import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";
-import { ACTIVE_WORK_PLANS_GUIDANCE_ENABLED } from "../coordination/work-plans-settings.js";
 import { estimateTokens } from "../knowledge-service.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
@@ -165,7 +164,7 @@ function createPromptRegistry(config: SwarmConfig) {
 function createPromptServiceForDescriptor(
   config: SwarmConfig,
   descriptor: AgentDescriptor,
-  options?: { getWorkPlansEnabled?: () => boolean; getKnowledgeV2Enabled?: () => boolean },
+  options?: { getKnowledgeV2Enabled?: () => boolean },
 ): SwarmPromptService {
   const profileId = descriptor.profileId ?? descriptor.agentId;
   return new SwarmPromptService({
@@ -192,7 +191,6 @@ function createPromptServiceForDescriptor(
     refreshSessionMetaStatsBySessionId: async () => {},
     getSessionsForProfile: () => [descriptor],
     loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-    getWorkPlansEnabled: options?.getWorkPlansEnabled,
     getKnowledgeV2Enabled: options?.getKnowledgeV2Enabled,
     getIntegrationContext: () => undefined,
     logDebug: () => {}
@@ -383,40 +381,16 @@ Custom project instruction: always mention the release train when summarizing de
     expect(refreshStats).toHaveBeenCalled();
   });
 
-  it("omits Active Work Context from prompt preview while Active Work Plans are parked", async () => {
+  it("includes concise update_plan guidance in the resolved manager prompt", async () => {
     const { config } = await makeConfig();
-    const workRoot = join(config.paths.dataDir, "work-preview-active-work-parked");
-    await mkdir(workRoot, { recursive: true });
+    const descriptor = createManagerDescriptor(config, repoRoot);
+    const service = createPromptServiceForDescriptor(config, descriptor);
 
-    const descriptor = createManagerDescriptor(config, workRoot);
-    const service = createPromptServiceForDescriptor(config, descriptor, {
-      getWorkPlansEnabled: () => true,
-    });
-    const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
-    const labels = preview.sections.map((section) => section.label);
+    const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
-    expect(labels).not.toContain("Active Work Context");
-    expect(preview.sections[0]?.content).not.toContain("Active Work Plans skill");
-    expect(preview.sections[0]?.content).not.toContain("$" + "{ACTIVE_WORK_PLANS_GUIDANCE}");
-  });
-
-  describe("resolved manager prompt Active Work Plans guidance", () => {
-    it("excludes Active Work Plans and task tool guidance while parked", async () => {
-      const { config } = await makeConfig();
-      const descriptor = createManagerDescriptor(config, repoRoot);
-      const service = createPromptServiceForDescriptor(config, descriptor, {
-        getWorkPlansEnabled: () => true,
-      });
-
-      const resolved = await service.buildResolvedManagerPrompt(descriptor);
-
-      expect(ACTIVE_WORK_PLANS_GUIDANCE_ENABLED).toBe("");
-      expect(resolved).not.toContain("Active Work Plans");
-      expect(resolved).not.toContain("`task` tool");
-      expect(resolved).not.toContain("task tool");
-      expect(resolved).not.toContain("$" + "{ACTIVE_WORK_PLANS_GUIDANCE}");
-      expect(resolved).toContain("Use `present_choices` for structured user decisions.");
-    });
+    expect(resolved).toContain("Use `update_plan` for substantial multi-step work")
+    expect(resolved).toContain("at most one step `in_progress`")
+    expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
   });
 
   it("buildResolvedManagerPrompt inserts model-specific instructions for catalog models", async () => {

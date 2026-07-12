@@ -76,19 +76,12 @@ function createMockHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
       targetContext: defaultPublishContext
     })),
     requestUserChoice: vi.fn(async () => []),
-    runTaskTool: vi.fn(async () => ({
-      action: "get",
-      stateRevision: 0,
-      snapshot: {
-        sessionAgentId: "manager-1",
-        profileId: "profile-1",
-        revision: 0,
-        activeWorkPlan: null,
-        recentWorkPlans: [],
-        recentWorkPlanCount: 0,
-        recentWorkPlansTruncated: false
-      }
-    } satisfies TaskToolResult)),
+    updatePlan: vi.fn(async (_agentId, _toolCallId, input) => ({
+      sessionAgentId: "manager-1",
+      revision: 1,
+      updatedAt: new Date().toISOString(),
+      ...input,
+    })),
     createAndPromoteProjectAgent: vi.fn(async () => ({
       agentId: "new-agent-1",
       handle: "new-handle"
@@ -198,6 +191,7 @@ describe("claude-mcp-tool-bridge", () => {
       "list_agents",
       "send_message_to_agent",
       "knowledge",
+      "update_plan",
       "spawn_agent",
       "retry_codex_plugin_worker",
       "kill_agent",
@@ -209,6 +203,7 @@ describe("claude-mcp-tool-bridge", () => {
       "mcp__forge-swarm__list_agents",
       "mcp__forge-swarm__send_message_to_agent",
       "mcp__forge-swarm__knowledge",
+      "mcp__forge-swarm__update_plan",
       "mcp__forge-swarm__spawn_agent",
       "mcp__forge-swarm__retry_codex_plugin_worker",
       "mcp__forge-swarm__kill_agent",
@@ -386,13 +381,13 @@ describe("claude-mcp-tool-bridge", () => {
     ).toBe(true);
   });
 
-  it("does not register task while Active Work Plans are parked", async () => {
+  it("registers update_plan for manager runtimes", async () => {
     const manager = createMockDescriptor();
     const tools = buildSwarmTools(createMockHost(), manager);
     const { bridge, registeredTools } = await buildBridge(tools);
 
-    expect(registeredTools.map((tool) => tool.name)).not.toContain("task");
-    expect(bridge.allowedTools).not.toContain("mcp__forge-swarm__task");
+    expect(registeredTools.map((tool) => tool.name)).toContain("update_plan");
+    expect(bridge.allowedTools).toContain("mcp__forge-swarm__update_plan");
   });
 
   it("dispatches list_agents and returns JSON content", async () => {

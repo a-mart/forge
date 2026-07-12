@@ -666,26 +666,28 @@ describe('ConversationProjector session tree continuity', () => {
     } as any)
 
     seededSession.appendCustomEntry('swarm_conversation_entry', {
-      type: 'work_plan_created',
+      type: 'model_cache_observation',
       agentId: descriptor.agentId,
       id: 'shared-stable-id',
       timestamp: FIXED_NOW,
-      planId: 'plan-1',
-      stateRevision: 1,
-      planRevision: 1,
-      plan: {
-        planId: 'plan-1',
-        title: 'Disk Work Plan receipt',
-        status: 'active',
-        createdAt: FIXED_NOW,
-        updatedAt: FIXED_NOW,
-        revision: 1,
-        items: [],
-        itemCount: 0,
-        itemsTruncated: false,
-        warnings: [],
-        warningCount: 0,
-        warningsTruncated: false,
+      runtimeType: 'pi',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      tokens: {
+        promptInputTokens: 2_000,
+        cachedInputTokens: 1_600,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 400,
+        outputTokens: 100,
+        totalTokens: 2_100,
+        normalization: 'raw_input_tokens_total',
+      },
+      classification: {
+        version: 1,
+        status: 'hit',
+        cachedRatio: 0.8,
+        thresholdTokens: 1_024,
+        hitRatioThreshold: 0.8,
       },
     })
 
@@ -705,7 +707,7 @@ describe('ConversationProjector session tree continuity', () => {
 
     const history = projector.getConversationHistory(descriptor.agentId)
 
-    expect(history.filter((entry) => entry.type === 'work_plan_created' && entry.id === 'shared-stable-id')).toHaveLength(1)
+    expect(history.filter((entry) => entry.type === 'model_cache_observation' && entry.id === 'shared-stable-id')).toHaveLength(1)
     expect(history.filter((entry) => entry.type === 'conversation_message' && entry.id === 'shared-stable-id')).toHaveLength(1)
   })
 

@@ -16,7 +16,7 @@ export const BOOTSTRAP_COALESCIBLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   'ready',
   'conversation_history',
   'pending_choices_snapshot',
-  'session_task_state_snapshot',
+  'session_plan_snapshot',
   'unread_counts_snapshot',
 ])
 
@@ -32,7 +32,6 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'agent_message',
   'agent_tool_call',
   'choice_request',
-  'work_plan_created',
   'model_cache_observation',
 ])
 
@@ -76,8 +75,6 @@ function conversationEntryMergeKey(entry: ServerEvent): string | undefined {
       return entry.id ? `conversation_message:${entry.id}` : undefined
     case 'choice_request':
       return `choice_request:${entry.choiceId}`
-    case 'work_plan_created':
-      return `work_plan_created:${entry.id}`
     case 'model_cache_observation':
       return entry.id ? `model_cache_observation:${entry.id}` : undefined
     case 'agent_tool_call':
@@ -155,8 +152,7 @@ export function handleConversationEvent(
       return true
 
     case 'conversation_message':
-    case 'conversation_log':
-    case 'work_plan_created': {
+    case 'conversation_log': {
       if (event.agentId !== context.state.targetAgentId) {
         return true
       }
@@ -360,11 +356,18 @@ export function handleConversationEvent(
       return true
     }
 
-    case 'session_task_state_snapshot': {
+    case 'session_plan_snapshot': {
+      const current = context.state.planSnapshots[event.sessionAgentId]
+      if (current && event.revision < current.revision) {
+        return true
+      }
       context.updateState({
-        taskSnapshots: {},
-        ...(context.state.taskSnapshotLoadingSessionId === event.sessionAgentId
-          ? { taskSnapshotLoadingSessionId: null }
+        planSnapshots: {
+          ...context.state.planSnapshots,
+          [event.sessionAgentId]: event,
+        },
+        ...(context.state.planSnapshotLoadingSessionId === event.sessionAgentId
+          ? { planSnapshotLoadingSessionId: null }
           : {}),
       })
       return true
@@ -378,6 +381,7 @@ export function handleConversationEvent(
       context.updateState({
         messages: [],
         activityMessages: [],
+        planSnapshots: {},
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),

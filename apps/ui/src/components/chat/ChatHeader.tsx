@@ -15,12 +15,12 @@ import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator
 import { PinNavigator } from '@/components/chat/PinNavigator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
-import { ActiveWorkHeaderIndicator } from '@/components/chat/active-work'
+import { PlanHeaderIndicator } from '@/components/chat/plan'
 import { ModelCacheHeaderIndicator } from '@/components/chat/model-cache'
 import type { ModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { cn } from '@/lib/utils'
 import { formatElapsed } from '@/lib/format-utils'
-import type { AgentDescriptor, AgentStatus, AgentSessionPurpose, SessionTaskStateSnapshotEvent } from '@forge/protocol'
+import type { AgentStatus, AgentSessionPurpose, SessionPlanSnapshotEvent } from '@forge/protocol'
 
 export type MessageSourceView = 'web' | 'all'
 
@@ -50,10 +50,7 @@ interface ChatHeaderProps {
   onOpenSessionAudit?: () => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
   modelCacheHeaderSummary?: ModelCacheHeaderSummary | null
-  activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
-  activeWorkAgents?: AgentDescriptor[]
-  activeWorkStatuses?: Record<string, { status: AgentStatus }>
-  onNavigateToActiveWorkWorker?: (agentId: string) => void
+  planSnapshot?: SessionPlanSnapshotEvent | null
   compactionCount?: number
   showCompact: boolean
   compactInProgress: boolean
@@ -169,10 +166,7 @@ export function ChatHeader({
   onOpenSessionAudit,
   contextWindowUsage,
   modelCacheHeaderSummary,
-  activeWorkSnapshot,
-  activeWorkAgents = [],
-  activeWorkStatuses = {},
-  onNavigateToActiveWorkWorker,
+  planSnapshot,
   compactionCount,
   showCompact,
   compactInProgress,
@@ -476,14 +470,7 @@ export function ChatHeader({
             <ModelCacheHeaderIndicator summary={modelCacheHeaderSummary} />
           ) : null}
 
-          {activeWorkSnapshot ? (
-            <ActiveWorkHeaderIndicator
-              snapshot={activeWorkSnapshot}
-              agents={activeWorkAgents}
-              statuses={activeWorkStatuses}
-              onNavigateToWorker={onNavigateToActiveWorkWorker}
-            />
-          ) : null}
+          <PlanHeaderIndicator snapshot={planSnapshot} />
         </div>
 
         {/* ── Pinned message navigator ── */}

@@ -210,6 +210,23 @@ describe('ForgeClient', () => {
     })
   })
 
+  it('does not treat a delayed bootstrap plan snapshot as post-dispatch run activity', async () => {
+    const socket = new FakeWebSocket({ delayedBootstrapPlanSnapshot: true })
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: statusFetch,
+      WebSocketImpl: fakeWebSocketImpl(socket),
+    })
+    const startedAt = Date.now()
+
+    await expect(client.run({ command: 'run', target: { kind: 'session', agentId: 'session-1' }, text: 'hello' })).resolves.toMatchObject({
+      status: 'success',
+      finalMessage: null,
+    })
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900)
+  })
+
   it('aborts run waits immediately when the CLI WebSocket disconnects', async () => {
     const socket = new FakeWebSocket({ closeAfterRunAck: true })
     const client = new ForgeClient({
@@ -300,6 +317,7 @@ class FakeWebSocket extends EventEmitter {
       closeBeforeHeadlessReady?: boolean
       compactionUnsupported?: boolean
       progressOnlyAfterRun?: boolean
+      delayedBootstrapPlanSnapshot?: boolean
     } = {},
   ) {
     super()
@@ -337,6 +355,16 @@ class FakeWebSocket extends EventEmitter {
           activeTools: [],
           status: { agentId: 'session-1', status: 'idle', pendingCount: 0 },
         })
+        if (this.options.delayedBootstrapPlanSnapshot) {
+          setTimeout(() => this.emitEvent({
+            type: 'session_plan_snapshot',
+            sessionAgentId: 'session-1',
+            profileId: 'profile-1',
+            revision: 1,
+            updatedAt: 'now',
+            plan: [{ step: 'Existing plan', status: 'in_progress' }],
+          }), 0)
+        }
       }
     }
     if (command.type === 'compact_session' || command.type === 'smart_compact_session') {
@@ -385,6 +413,8 @@ class FakeWebSocket extends EventEmitter {
           timestamp: 'now',
           source: 'assistant_progress',
         })
+      } else if (this.options.delayedBootstrapPlanSnapshot) {
+        // The delayed subscription snapshot is the only event after dispatch.
       } else {
         this.emitEvent({
           type: 'conversation_message',

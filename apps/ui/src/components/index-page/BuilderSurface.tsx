@@ -258,7 +258,7 @@ export function BuilderSurface({
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
-  const [activeWorkExpanded, setActiveWorkExpanded] = useState(false)
+  const [planExpanded, setPlanExpanded] = useState(false)
   const [externalProjectAgentEntries, setExternalProjectAgentEntries] = useState<ProjectAgentExternalDirectoryEntry[]>([])
 
   // ── Active-agent derivation + route→subscription sync ──
@@ -298,14 +298,16 @@ export function BuilderSurface({
   // Reset local chat chrome when switching active agent/session
   useEffect(() => {
     setDetailedAllView(false)
-    setActiveWorkExpanded(false)
+    setPlanExpanded(false)
     setMessageSourceView(defaultMessageSourceViewForAgentRole(activeAgent?.role))
   }, [activeAgentId, activeAgent?.role])
 
   // Derive effective detailed state for hook consumption
   const effectiveDetailedAllView = isActiveManager && messageSourceView === 'all' && detailedAllView
 
-  const activeWorkSnapshot = null
+  const planSnapshot = isActiveManager && activeAgentId && state.planSnapshotLoadingSessionId !== activeAgentId
+    ? state.planSnapshots[activeAgentId] ?? null
+    : null
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager
@@ -972,10 +974,7 @@ export function BuilderSurface({
                   onDetailedAllViewChange: undefined,
                   contextWindowUsage: transcript.contextWindowUsage,
                   modelCacheHeaderSummary,
-                  activeWorkSnapshot,
-                  activeWorkAgents: state.agents,
-                  activeWorkStatuses: state.statuses,
-                  onNavigateToActiveWorkWorker: isActiveManager ? panels.handleSelectAgent : undefined,
+                  planSnapshot,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,
@@ -1068,11 +1067,10 @@ export function BuilderSurface({
                   onChoiceCancel: session.handleChoiceCancel,
                   pendingChoiceIds: state.pendingChoiceIds,
                   missingPendingChoiceIds,
-                  activeWorkSnapshot,
-                  activeWorkExpanded,
-                  onActiveWorkExpandedChange: setActiveWorkExpanded,
+                  planSnapshot,
+                  planExpanded,
+                  onPlanExpandedChange: setPlanExpanded,
                   statuses: state.statuses,
-                  onNavigateToWorker: isActiveManager ? panels.handleSelectAgent : undefined,
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt

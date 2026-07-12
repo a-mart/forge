@@ -26,9 +26,8 @@ import type {
   ManagerExactModelSelection,
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
-  SessionTaskStateSnapshotEvent,
+  SessionPlanSnapshotEvent,
   ModelCacheObservationEvent,
-  WorkPlanCreatedEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
   SessionMemoryMergeResult,
@@ -136,7 +135,7 @@ import {
 } from "./archive/archive-resolver.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
 import { ProjectAgentMirrorReconciler } from "./agents/descriptor-store/project-agent-mirror-reconciler.js";
-import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
+import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout, removeRetiredPlanningArtifacts } from "./shared-config-migration.js";
 import {
   formatAgentCreatorContextMessage,
   gatherAgentCreatorContext
@@ -234,22 +233,16 @@ import {
   ProjectAgentSharingService,
   type ExternalProjectAgentDeliveryAuthorization,
 } from "./project-agent-sharing-service.js";
-import { SessionCoordinationStore } from "./coordination/session-coordination-store.js";
 import {
-  toWorkPlanServiceErrorDescriptor,
-  WorkPlanService,
-  WorkPlanServiceValidationError,
-  type WorkPlanMutationResult,
-  type WorkPlanServiceAction,
-} from "./coordination/work-plan-service.js";
+  type UpdatePlanInput,
+  type UpdatePlanResult,
+} from "./planning/update-plan-tool.js";
+import { normalizeSessionPlanInput, type SessionPlanState } from "./planning/session-plan-state.js";
+import { SessionPlanStore } from "./planning/session-plan-store.js";
 import {
-  normalizeTaskToolInput,
-  type TaskToolGetInput,
-  type TaskToolInput,
-  type TaskToolRecoverableErrorResult,
-  type TaskToolResult,
-} from "./coordination/task-tool.js";
-import { ACTIVE_WORK_PLANS_SKILL_HANDLE } from "./coordination/work-plans-settings.js";
+  appendSessionPlanCompactionInstructions,
+  formatSessionPlanModelContext,
+} from "./planning/session-plan-context.js";
 import { getModelCacheVisualizationEnabled } from "./model-cache-visualization-settings.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
@@ -882,6 +875,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly activeObservabilityRootByAgentId = new Map<string, ActiveObservabilityRootContext>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
+  private readonly sessionPlanStatesByAgentId = new Map<string, SessionPlanState>();
   private pendingAgentsSnapshotEmit = false;
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
@@ -926,7 +920,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly versioningService: VersioningMutationSink | undefined;
   private readonly observability: ObservabilityFacade | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
-  private workPlansEnabled = false;
   private modelCacheVisualizationEnabled = false;
   private readonly liveCompactionRuntimeSettingsProvider: LiveCompactionRuntimeSettingsProvider;
   private compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
@@ -1282,7 +1275,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
-      getWorkPlansEnabled: () => this.isWorkPlansEnabled(),
       getKnowledgeV2Enabled: () => this.knowledgeV2SettingsService.getSettings().enabled,
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
@@ -1405,9 +1397,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       syncPinnedContentForManagerRuntime: async (descriptor, options) => {
         await this.syncPinnedContentForManagerRuntime(descriptor, options);
       },
-      transitionSessionWorkPlansForManualStop: async (descriptor) => {
-        await this.transitionSessionWorkPlansForLifecycle(descriptor, "manual_stop");
-      },
       interruptExternalThreadSidecarTurn:
         options?.interruptExternalThreadSidecarTurn ??
         ((agentId) => this.codexAppServerService.interruptTurn(agentId)),
@@ -1495,12 +1484,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           manualStopNotice: false,
           taskLifecycle: "none",
         }),
-      transitionSessionWorkPlansForArchive: async (session) => {
-        await this.transitionSessionWorkPlansForLifecycle(
-          session as AgentDescriptor & { role: "manager"; profileId: string },
-          "archived"
-        );
-      },
       hydrateSessionLastUsed: async (agentId) => {
         await this.archiveLastUsedHydrator.hydrateSessionIfMissing(agentId);
       },
@@ -1558,8 +1541,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       appendSessionRenameHistoryEntry: (descriptor, entry) => this.appendSessionRenameHistoryEntry(descriptor, entry),
-      clearSessionWorkPlans: async (descriptor) => {
-        await this.transitionSessionWorkPlansForLifecycle(descriptor, "conversation_cleared");
+      clearSessionPlan: async (descriptor) => {
+        const snapshot = await this.createSessionPlanStore(descriptor).clear();
+        this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
+        this.emit("session_plan_snapshot", {
+          type: "session_plan_snapshot",
+          sessionAgentId: descriptor.agentId,
+          profileId: descriptor.profileId,
+          revision: snapshot.revision,
+          updatedAt: snapshot.updatedAt,
+          plan: snapshot.plan,
+        } satisfies SessionPlanSnapshotEvent);
       },
       copySessionHistoryForFork: (sourceSessionFile, targetSessionFile, fromMessageId) =>
         copySessionHistoryForFork({
@@ -1572,9 +1564,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             CURSOR_SDK_USAGE_ENTRY_TYPE
           ]
         }),
-      copySessionWorkPlansForFork: async (sourceDescriptor, forkedDescriptor, fromMessageId) => {
-        await this.copySessionWorkPlansForFork(sourceDescriptor, forkedDescriptor, fromMessageId);
-      },
       copyPinnedMessagesForFork: (sourceDescriptor, forkedDescriptor) =>
         this.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor),
       writeForkedSessionMemoryHeader: (sourceDescriptor, forkedSessionAgentId, fromMessageId) =>
@@ -1634,6 +1623,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureDirectories();
     await migrateSharedConfigLayout(this.config.paths.dataDir);
     await cleanupOldSharedConfigPaths(this.config.paths.dataDir);
+    await removeRetiredPlanningArtifacts(this.config.paths.dataDir);
     await ensureCanonicalAuthFilePath(this.config);
     await this.reloadModelCatalogOverridesAndProjection();
     await this.loadSecretsStore();
@@ -1664,6 +1654,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       prunePersistedCortexStateForBoot: (store) => this.prunePersistedCortexStateForBoot(store),
       prunePersistedWorkerSidecarDescriptorsForBoot: (store) => this.prunePersistedWorkerSidecarDescriptorsForBoot(store),
       preloadPinnedMessageIndexes: () => this.preloadPinnedMessageIndexes(),
+      preloadSessionPlanStates: () => this.preloadSessionPlanStates(),
       reconcileProfilesOnBoot: () => this.reconcileProfilesOnBoot(),
       normalizeSystemProfileTypes: () => this.normalizeSystemProfileTypes(),
       logDebug: (message, details) => this.logDebug(message, details)
@@ -1745,10 +1736,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       loadedArchetypeIds,
       restoredAgentIds: Array.from(this.runtimes.keys())
     });
-  }
-
-  async loadWorkPlansSettings(): Promise<void> {
-    this.workPlansEnabled = false;
   }
 
   async loadModelCacheVisualizationSettings(): Promise<void> {
@@ -1870,10 +1857,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  isWorkPlansEnabled(): boolean {
-    return this.workPlansEnabled;
-  }
-
   isModelCacheVisualizationEnabled(): boolean {
     return this.modelCacheVisualizationEnabled;
   }
@@ -1975,10 +1958,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async applyModelCacheVisualizationSettingsChange(enabled: boolean): Promise<void> {
     this.modelCacheVisualizationEnabled = enabled;
-  }
-
-  async applyWorkPlansSettingsChange(_enabled: boolean): Promise<void> {
-    this.workPlansEnabled = false;
   }
 
   listAgents(): AgentDescriptor[] {
@@ -2094,30 +2073,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sessionActiveTools.buildSnapshotEvent(sessionAgentId);
   }
 
-  async getSessionTaskStateSnapshot(
+  async getSessionPlanSnapshot(
     sessionAgentId: string,
     requestId?: string,
-  ): Promise<SessionTaskStateSnapshotEvent> {
+  ): Promise<SessionPlanSnapshotEvent> {
     const descriptor = this.getRequiredSessionDescriptor(sessionAgentId);
-    if (!this.isWorkPlansEnabled()) {
-      return {
-        type: "session_task_state_snapshot",
-        sessionAgentId: descriptor.agentId,
-        profileId: descriptor.profileId ?? descriptor.agentId,
-        revision: 0,
-        activeWorkPlan: null,
-        recentWorkPlans: [],
-        recentWorkPlanCount: 0,
-        recentWorkPlansTruncated: false,
-        diagnostics: { state: "defaulted" },
-        ...(requestId !== undefined ? { requestId } : {}),
-      };
-    }
-
-    const snapshot = await this.createWorkPlanServiceForDescriptor(descriptor).loadSnapshot();
+    const snapshot = await this.getSessionPlanState(descriptor);
     return {
-      type: "session_task_state_snapshot",
-      ...snapshot,
+      type: "session_plan_snapshot",
+      sessionAgentId: descriptor.agentId,
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      revision: snapshot.revision,
+      updatedAt: snapshot.updatedAt,
+      ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
+      plan: snapshot.plan,
       ...(requestId !== undefined ? { requestId } : {}),
     };
   }
@@ -2145,28 +2114,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
-  async runTaskTool(
+  async updatePlan(
     callerAgentId: string,
-    _toolCallId: string,
-    input: TaskToolInput,
-  ): Promise<TaskToolResult> {
-    if (!this.isWorkPlansEnabled()) {
-      throw new Error("Active Work Plans are disabled in Settings.");
-    }
-
-    this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "task");
+    toolCallId: string,
+    input: UpdatePlanInput,
+  ): Promise<UpdatePlanResult> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "update_plan");
 
     const descriptor = this.descriptors.get(callerAgentId);
     if (!descriptor || descriptor.role !== "manager") {
-      throw new Error("task is only available to manager sessions.");
+      throw new Error("update_plan is only available to manager sessions.");
+    }
+
+    if (descriptor.sessionSurface === "collab") {
+      throw new Error("update_plan is not available for Collaboration sessions.");
     }
 
     if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
-      throw new Error("task is not available for Cortex sessions.");
+      throw new Error("update_plan is not available for Cortex sessions.");
     }
 
     if (!this.isSessionAgent(descriptor)) {
-      throw new Error("task requires a manager session with profile context.");
+      throw new Error("update_plan requires a manager session with profile context.");
     }
 
     this.assertDescriptorNotEffectivelyArchived(descriptor);
@@ -2174,278 +2143,51 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Manager is not running: ${callerAgentId}`);
     }
 
-    const service = this.createWorkPlanServiceForDescriptor(descriptor);
-    let normalizedInput: TaskToolInput | undefined;
-
-    try {
-      normalizedInput = normalizeTaskToolInput(input);
-      if (normalizedInput.action === "get") {
-        const result = await service.get({
-          agentId: descriptor.agentId,
-          role: descriptor.role,
-          profileId: descriptor.profileId,
-          sessionAgentId: descriptor.agentId,
-        });
-        const toolResult = {
-          action: "get" as const,
-          stateRevision: result.stateRevision,
-          snapshot: result.snapshot,
-        };
-        this.recordToolSideEffect(callerAgentId, {
-          toolName: "task",
-          toolCallId: _toolCallId,
-          phase: "side_effect",
-          input: normalizedInput,
-          output: toolResult,
-          metadata: { action: normalizedInput.action },
-        });
-        return toolResult;
-      }
-
-      const mutationResult = await this.runTaskToolMutation(service, descriptor, normalizedInput);
-      if (normalizedInput.action === "upsert_plan" && !normalizedInput.planId) {
-        this.emitWorkPlanCreated({
-          type: "work_plan_created",
-          agentId: descriptor.agentId,
-          id: randomUUID(),
-          timestamp: mutationResult.workPlan.createdAt,
-          planId: mutationResult.workPlan.planId,
-          stateRevision: mutationResult.stateRevision,
-          planRevision: mutationResult.workPlan.revision,
-          plan: mutationResult.workPlan,
-        });
-      }
-      await this.emitSessionTaskStateSnapshotForSession(descriptor.agentId).catch((error) => {
-        this.logDebug("coordination:task_snapshot_emit:error", {
-          agentId: descriptor.agentId,
-          profileId: descriptor.profileId,
-          action: mutationResult.action,
-          planId: mutationResult.planId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-      const toolResult = {
-        action: mutationResult.action,
-        stateRevision: mutationResult.stateRevision,
-        planId: mutationResult.planId,
-        planRevision: mutationResult.planRevision,
-        status: mutationResult.workPlan.status,
-        ...(mutationResult.createdItemIds ? { createdItemIds: mutationResult.createdItemIds } : {}),
-        ...(mutationResult.updatedItemId ? { updatedItemId: mutationResult.updatedItemId } : {}),
-        ...(mutationResult.linkedItemId ? { linkedItemId: mutationResult.linkedItemId } : {}),
-      };
-      this.recordToolSideEffect(callerAgentId, {
-        toolName: "task",
-        toolCallId: _toolCallId,
-        phase: "side_effect",
-        input: normalizedInput,
-        output: toolResult,
-        metadata: { action: normalizedInput.action, planId: mutationResult.planId },
-      });
-      return toolResult;
-    } catch (error) {
-      const taskInput = normalizedInput ?? input;
-      const recoverableResult = await this.toRecoverableTaskToolResult(service, error, taskInput);
-      if (recoverableResult) {
-        this.recordToolSideEffect(callerAgentId, {
-          toolName: "task",
-          toolCallId: _toolCallId,
-          phase: "side_effect",
-          input: taskInput,
-          output: recoverableResult,
-          isError: true,
-          metadata: { action: this.getTaskToolResultAction(taskInput), recoverable: true },
-        });
-        return recoverableResult;
-      }
-      throw new Error(this.mapTaskToolErrorMessage(error, taskInput));
-    }
-  }
-
-  private async toRecoverableTaskToolResult(
-    service: WorkPlanService,
-    error: unknown,
-    input: TaskToolInput,
-  ): Promise<TaskToolRecoverableErrorResult | null> {
-    const descriptor = toWorkPlanServiceErrorDescriptor(error, this.getKnownTaskToolServiceAction(input));
-    if (!this.isRecoverableTaskToolErrorCode(descriptor.code)) {
-      return null;
-    }
-
-    const stateSummary = await this.loadRecoverableTaskToolStateSummary(service, descriptor.actualStateRevision);
-    const suggestedAction = this.getRecoverableTaskToolSuggestedAction(descriptor.code, descriptor.message);
-    return {
-      action: this.getTaskToolResultAction(input),
-      ok: false,
-      error: {
-        code: descriptor.code,
-        message: this.mapTaskToolErrorMessage(error, input),
-        recoverable: true,
-        ...(suggestedAction ? { suggestedAction } : {}),
-      },
-      ...stateSummary,
+    const normalized = normalizeSessionPlanInput(input);
+    const snapshot = await this.createSessionPlanStore(descriptor).update(normalized);
+    this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
+    const result: UpdatePlanResult = {
+      sessionAgentId: descriptor.agentId,
+      revision: snapshot.revision,
+      updatedAt: snapshot.updatedAt,
+      ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
+      plan: snapshot.plan,
     };
+    this.emit("session_plan_snapshot", {
+      type: "session_plan_snapshot",
+      profileId: descriptor.profileId,
+      ...result,
+    } satisfies SessionPlanSnapshotEvent);
+    this.recordToolSideEffect(callerAgentId, {
+      toolName: "update_plan",
+      toolCallId,
+      phase: "side_effect",
+      input: normalized,
+      output: result,
+      metadata: { revision: result.revision, stepCount: result.plan.length },
+    });
+    return result;
   }
 
-  private isRecoverableTaskToolErrorCode(code: string): boolean {
-    return code === "work_plan_not_found"
-      || code === "item_resolution_failed"
-      || code === "state_revision_conflict"
-      || code === "work_plan_immutable"
-      || code === "active_plan_exists"
-      || code === "validation_error";
-  }
-
-  private getRecoverableTaskToolSuggestedAction(
-    code: string,
-    message: string,
-  ): TaskToolRecoverableErrorResult["error"]["suggestedAction"] {
-    switch (code) {
-      case "work_plan_not_found":
-      case "item_resolution_failed":
-      case "state_revision_conflict":
-      case "work_plan_immutable":
-      case "active_plan_exists":
-        return "task.get";
-      case "validation_error":
-        return /\bworkPlans\b|session coordination state/iu.test(message) ? "continue_without_plan" : "retry";
-      default:
-        return undefined;
-    }
-  }
-
-  private async loadRecoverableTaskToolStateSummary(
-    service: WorkPlanService,
-    fallbackStateRevision?: number,
-  ): Promise<Pick<TaskToolRecoverableErrorResult, "stateRevision" | "activePlan">> {
-    const result: Pick<TaskToolRecoverableErrorResult, "stateRevision" | "activePlan"> = {
-      ...(fallbackStateRevision !== undefined ? { stateRevision: fallbackStateRevision } : {}),
-    };
-
-    try {
-      const snapshot = await service.loadSnapshot();
-      if (snapshot.diagnostics?.state === "unavailable") {
-        return result;
-      }
-
-      const activePlan = snapshot.activeWorkPlan;
-      return {
-        stateRevision: snapshot.revision,
-        ...(activePlan
-          ? {
-              activePlan: {
-                planId: activePlan.planId,
-                planRevision: activePlan.revision,
-                status: activePlan.status,
-                itemCount: activePlan.itemCount,
-              },
-            }
-          : {}),
-      };
-    } catch {
-      return result;
-    }
-  }
-
-  private getTaskToolResultAction(input: TaskToolInput): string {
-    const action = (input as { action?: unknown } | undefined)?.action;
-    return typeof action === "string" && action.length > 0 ? action : "unknown";
-  }
-
-  private getKnownTaskToolServiceAction(input: TaskToolInput): WorkPlanServiceAction | undefined {
-    const action = this.getTaskToolResultAction(input);
-    return action === "get"
-      || action === "upsert_plan"
-      || action === "update_item_status"
-      || action === "link"
-      || action === "finish_plan"
-      ? action
-      : undefined;
-  }
-
-  private async runTaskToolMutation(
-    service: WorkPlanService,
+  private createSessionPlanStore(
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    input: Exclude<TaskToolInput, TaskToolGetInput>,
-  ): Promise<WorkPlanMutationResult> {
-    const actor = {
-      agentId: descriptor.agentId,
-      role: descriptor.role,
+  ): SessionPlanStore {
+    return new SessionPlanStore({
+      dataDir: this.config.paths.dataDir,
       profileId: descriptor.profileId,
       sessionAgentId: descriptor.agentId,
-    } as const;
-
-    switch (input.action) {
-      case "upsert_plan":
-        return service.upsertPlan(actor, input);
-      case "update_item_status":
-        return service.updateItemStatus(actor, input);
-      case "link":
-        return service.link(actor, input);
-      case "finish_plan":
-        if (input.status === "completed_with_warnings" && (!input.warnings || input.warnings.length === 0)) {
-          throw new WorkPlanServiceValidationError("warnings must include at least one entry when status is completed_with_warnings")
-        }
-        return service.finishPlan(actor, input);
-    }
-
-    const unsupportedInput: never = input;
-    throw new Error(`Unsupported task action: ${JSON.stringify(unsupportedInput)}`);
-  }
-
-  private createWorkPlanServiceForDescriptor(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-  ): WorkPlanService {
-    return new WorkPlanService({
-      profileId: descriptor.profileId,
-      sessionAgentId: descriptor.agentId,
-      deps: {
-        store: new SessionCoordinationStore({
-          dataDir: this.config.paths.dataDir,
-          profileId: descriptor.profileId,
-          sessionAgentId: descriptor.agentId,
-        }),
-        listAgents: () => this.listAgents(),
-      },
     });
   }
 
-  private mapTaskToolErrorMessage(error: unknown, input: TaskToolInput): string {
-    const descriptor = toWorkPlanServiceErrorDescriptor(error, input.action);
-    const genericUnknownMessage = "Active Work failed unexpectedly. No changes were applied.";
+  private async getSessionPlanState(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+  ): Promise<SessionPlanState> {
+    const cached = this.sessionPlanStatesByAgentId.get(descriptor.agentId);
+    if (cached) return cached;
 
-    switch (descriptor.code) {
-      case "state_unavailable":
-        return "Active Work is temporarily unavailable because Forge could not safely read or preserve the saved task state. No changes were applied.";
-      case "work_plan_not_found":
-        return "The requested work plan no longer exists. Call `task.get` to refresh before retrying.";
-      case "active_plan_exists":
-        return "A non-terminal work plan already exists for this session. Update or finish it before creating another.";
-      case "work_plan_immutable":
-        return "This work plan is already terminal and cannot be modified.";
-      case "item_resolution_failed":
-        if (input.action === "link" && input.itemId === undefined) {
-          return "link.itemId is required when the work plan has multiple items.";
-        }
-        return "The requested work plan item could not be resolved. Call `task.get` to refresh before retrying.";
-      case "invalid_link":
-        if (input.action === "link") {
-          const link = input.link as Record<string, unknown>;
-          if (link.type !== "worker" || hasUnsupportedTaskRefFields(link)) {
-            return "Only worker links are supported in Active Work v1.";
-          }
-          if (typeof link.agentId === "string" && link.agentId.trim().length > 0) {
-            return "Worker links must target an existing worker owned by this manager session.";
-          }
-        }
-        return "Only worker links are supported in Active Work v1.";
-      case "state_revision_conflict":
-      case "validation_error":
-        return descriptor.message;
-      case "unknown_error":
-      default:
-        return genericUnknownMessage;
-    }
+    const state = await this.createSessionPlanStore(descriptor).load();
+    this.sessionPlanStatesByAgentId.set(descriptor.agentId, state);
+    return state;
   }
 
   listProfiles(): ManagerProfile[] {
@@ -2647,6 +2389,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.setPinnedRegistryForAgent(descriptor.agentId, registry);
       })
     );
+  }
+
+  private async preloadSessionPlanStates(): Promise<void> {
+    const sessionDescriptors = Array.from(this.descriptors.values()).filter(
+      (descriptor): descriptor is AgentDescriptor & { role: "manager"; profileId: string } =>
+        descriptor.role === "manager"
+        && descriptor.sessionSurface !== "collab"
+        && normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID
+        && this.isSessionAgent(descriptor),
+    );
+
+    await Promise.all(sessionDescriptors.map(async (descriptor) => {
+      const state = await this.createSessionPlanStore(descriptor).load();
+      this.sessionPlanStatesByAgentId.set(descriptor.agentId, state);
+    }));
   }
 
   private setPinnedRegistryForAgent(agentId: string, registry: PinRegistry): void {
@@ -3484,6 +3241,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions")
     );
     const result = await this.sessionService.deleteSession(agentId);
+    this.sessionPlanStatesByAgentId.delete(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "deleted",
@@ -4667,26 +4425,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
 
-  private async transitionSessionWorkPlansForLifecycle(
-    _descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    _reason: "manual_stop" | "archived" | "conversation_cleared"
-  ): Promise<void> {
-    // Active Work Plans are parked on this rollback/test branch. Do not read,
-    // write, transition, or rebroadcast tasks.json during lifecycle changes.
-  }
-
-  private async emitSessionTaskStateSnapshotForSession(_sessionAgentId: string): Promise<void> {
-    // Active Work Plans are parked on this rollback/test branch.
-  }
-
-  private async copySessionWorkPlansForFork(
-    _sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    _forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    _fromMessageId?: string
-  ): Promise<void> {
-    // Active Work Plans are parked on this rollback/test branch. Do not copy tasks.json into forks.
-  }
-
   private async copyPinnedMessagesForFork(
     sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
     forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string }
@@ -4840,10 +4578,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         fromProjectName: this.profiles.get(senderProfileId)?.displayName ?? senderProfileId,
       };
       const assistantOutputTarget: AssistantOutputTarget = { kind: "peer_agent", fromAgentId: sender.agentId };
-      const runtimeMessageText = appendAssistantOutputTargetMetadataToText(
+      const baseRuntimeMessageText = appendAssistantOutputTargetMetadataToText(
         formatProjectAgentRuntimeMessage(projectAgentContext, message),
         assistantOutputTarget,
       );
+      const runtimeMessageText = await this.appendCurrentPlanToManagerInput(target, baseRuntimeMessageText);
       const parentRootTurnId = this.getActiveObservabilityRootTurnId(sender.agentId);
       const observabilityInput = this.beginObservabilityRuntimeInput({
         target,
@@ -5172,6 +4911,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       text = text.trim().length > 0 ? `${text}\n\n${runtimeAttachments.attachmentMessage}` : runtimeAttachments.attachmentMessage;
     }
 
+    const target = this.descriptors.get(targetAgentId);
+    if (target) {
+      text = await this.appendCurrentPlanToManagerInput(target, text);
+    }
+
     if (runtimeAttachments.images.length === 0) {
       return text;
     }
@@ -5180,6 +4924,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       text,
       images: runtimeAttachments.images
     };
+  }
+
+  private async appendCurrentPlanToManagerInput(
+    descriptor: AgentDescriptor,
+    text: string,
+  ): Promise<string> {
+    if (
+      descriptor.role !== "manager"
+      || descriptor.sessionSurface === "collab"
+      || normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
+      || !this.isSessionAgent(descriptor)
+    ) {
+      return text;
+    }
+
+    const snapshot = await this.getSessionPlanState(descriptor);
+    if (snapshot.revision === 0 && snapshot.plan.length === 0 && !snapshot.explanation) {
+      return text;
+    }
+    const planContext = formatSessionPlanModelContext(snapshot);
+    return text.trim().length > 0 ? `${text}\n\n${planContext}` : planContext;
   }
 
   private async prepareRuntimeAttachments(
@@ -5337,11 +5102,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async resolveCompactionCustomInstructions(
-    descriptor: AgentDescriptor & { role: "manager" },
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
     customInstructions?: string
   ): Promise<string | undefined> {
     const registry = await this.syncPinnedContentForManagerRuntime(descriptor);
-    return combineCompactionCustomInstructions(customInstructions, registry);
+    const instructionsWithPins = combineCompactionCustomInstructions(customInstructions, registry);
+    const plan = await this.getSessionPlanState(descriptor);
+    return appendSessionPlanCompactionInstructions(instructionsWithPins, plan);
   }
 
   async compactAgentContext(
@@ -5367,7 +5134,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     assertBuilderSession(descriptor, "compact Builder sessions");
 
-    const managerDescriptor = descriptor as AgentDescriptor & { role: "manager" };
+    const managerDescriptor = descriptor as AgentDescriptor & { role: "manager"; profileId: string };
     const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
@@ -5469,7 +5236,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     assertBuilderSession(descriptor, "smart-compact Builder sessions");
 
-    const managerDescriptor = descriptor as AgentDescriptor & { role: "manager" };
+    const managerDescriptor = descriptor as AgentDescriptor & { role: "manager"; profileId: string };
     const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
@@ -8044,7 +7811,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       | "create_project_agent"
       | "speak_to_user"
       | "present_choices"
-      | "task",
+      | "update_plan",
   ): void {
     const context = this.getActiveExternalProjectAgentTurn(callerAgentId);
     if (!context) {
@@ -8353,10 +8120,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private emitChoiceRequest(event: ChoiceRequestEvent): void {
     const historyAgentId = event.sessionAgentId?.trim() || event.agentId;
     this.conversationProjector.emitChoiceRequest(event, { historyAgentId });
-  }
-
-  private emitWorkPlanCreated(event: WorkPlanCreatedEvent): void {
-    this.conversationProjector.emitWorkPlanCreated(event);
   }
 
   emitModelCacheObservation(event: ModelCacheObservationEvent): void {
@@ -9753,24 +9516,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private filterWorkPlanSkillsForDescriptor(
-    descriptor: AgentDescriptor,
-    skills: SkillMetadata[] | null,
-  ): SkillMetadata[] | null {
-    if (!skills || this.isWorkPlansEnabled()) {
-      return skills;
-    }
-
-    const managerDescriptor = descriptor.role === "manager"
-      ? descriptor
-      : this.descriptors.get(descriptor.managerId);
-    if (managerDescriptor?.role !== "manager") {
-      return skills;
-    }
-
-    return skills.filter((skill) => skill.directoryName !== ACTIVE_WORK_PLANS_SKILL_HANDLE);
-  }
-
   private async resolveSkillRosterForDescriptor(descriptor: AgentDescriptor): Promise<SkillMetadata[] | null> {
     const managerDescriptor = descriptor.role === "manager"
       ? descriptor
@@ -9791,14 +9536,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             selectionJson: "[]",
             skillMetadataService: this.skillMetadataService,
           });
-          return this.filterWorkPlanSkillsForDescriptor(descriptor, closedRoster.skills);
+          return closedRoster.skills;
         }
 
         const roster = await resolveCollaborationSkillRoster({
           selectionJson: channel.activeSkillHandlesJson,
           skillMetadataService: this.skillMetadataService,
         });
-        return this.filterWorkPlanSkillsForDescriptor(descriptor, roster.skills);
+        return roster.skills;
       } catch (error) {
         this.logDebug("collaboration:skills:resolve_error", {
           agentId: descriptor.agentId,
@@ -9810,7 +9555,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           selectionJson: "[]",
           skillMetadataService: this.skillMetadataService,
         });
-        return this.filterWorkPlanSkillsForDescriptor(descriptor, closedRoster.skills);
+        return closedRoster.skills;
       }
     }
 
@@ -9824,12 +9569,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const workspace = managerDescriptor?.role === "manager"
       ? await this.resolveProjectWorkspaceForManager(managerDescriptor)
       : undefined;
-    return this.filterWorkPlanSkillsForDescriptor(
-      descriptor,
-      await this.skillMetadataService.getProfileSkillMetadataForWorkspace(
-        profileId,
-        workspace?.effectiveForgeDirRealpath,
-      ),
+    return this.skillMetadataService.getProfileSkillMetadataForWorkspace(
+      profileId,
+      workspace?.effectiveForgeDirRealpath,
     );
   }
 
@@ -11413,15 +11155,4 @@ function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescrip
 
 function normalizeModelThinkingLevel(level: string): string {
   return level === "x-high" ? "xhigh" : level;
-}
-
-function hasUnsupportedTaskRefFields(value: Record<string, unknown>): boolean {
-  for (const key of ["choiceId", "messageId", "artifactId", "path", "filePath", "artifactPath", "url", "href"]) {
-    const candidate = value[key];
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return true;
-    }
-  }
-
-  return false;
 }

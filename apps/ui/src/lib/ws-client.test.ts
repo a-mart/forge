@@ -1,5 +1,5 @@
 import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
-import type { WorkPlanCreatedEvent, WsRequestContractType } from '@forge/protocol'
+import type { WsRequestContractType } from '@forge/protocol'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { ManagerWsClient } from './ws-client'
 import { REQUEST_TIMEOUT_MS, WS_REQUEST_ERROR_HINTS, WS_REQUEST_TYPES } from './ws-client/runtime-types'
@@ -113,63 +113,6 @@ function makeWorkerDescriptor(agentId: string, managerId = 'manager') {
       thinkingLevel: 'medium' as const,
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
-  }
-}
-
-function makeWorkPlanCreatedEvent(agentId = 'manager', id = 'work-plan-created-1'): WorkPlanCreatedEvent {
-  const timestamp = new Date().toISOString()
-  return {
-    type: 'work_plan_created',
-    agentId,
-    id,
-    timestamp,
-    planId: `plan-${id}`,
-    stateRevision: 1,
-    planRevision: 1,
-    plan: {
-      planId: `plan-${id}`,
-      title: `Plan ${id}`,
-      status: 'active',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      revision: 1,
-      items: [],
-      itemCount: 0,
-      itemsTruncated: false,
-      warnings: [],
-      warningCount: 0,
-      warningsTruncated: false,
-    },
-  }
-}
-
-function makeTaskSnapshot(
-  sessionAgentId: string,
-  revision: number,
-  title: string,
-): Extract<import('@forge/protocol').ServerEvent, { type: 'session_task_state_snapshot' }> {
-  return {
-    type: 'session_task_state_snapshot',
-    sessionAgentId,
-    profileId: 'profile-1',
-    revision,
-    activeWorkPlan: {
-      planId: `plan-${revision}`,
-      title,
-      status: 'active',
-      createdAt: '2026-05-29T00:00:00Z',
-      updatedAt: '2026-05-29T00:01:00Z',
-      revision,
-      items: [],
-      itemCount: 0,
-      itemsTruncated: false,
-      warnings: [],
-      warningCount: 0,
-      warningsTruncated: false,
-    },
-    recentWorkPlans: [],
-    recentWorkPlanCount: 0,
-    recentWorkPlansTruncated: false,
   }
 }
 
@@ -411,117 +354,6 @@ describe('ManagerWsClient', () => {
       agentId: 'manager',
       choiceId: 'choice-1',
     })
-
-    client.destroy()
-  })
-
-  it('ignores task snapshots on session switch while Active Work Plans are parked', () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    const staleTaskSnapshot = {
-      type: 'session_task_state_snapshot',
-      sessionAgentId: 'session-b',
-      profileId: 'profile-1',
-      revision: 1,
-      activeWorkPlan: {
-        planId: 'plan-1',
-        title: 'Stale cached plan',
-        status: 'active',
-        createdAt: '2026-05-29T00:00:00Z',
-        updatedAt: '2026-05-29T00:01:00Z',
-        revision: 1,
-        items: [],
-        itemCount: 0,
-        itemsTruncated: false,
-        warnings: [],
-        warningCount: 0,
-        warningsTruncated: false,
-      },
-      recentWorkPlans: [],
-      recentWorkPlanCount: 0,
-      recentWorkPlansTruncated: false,
-    }
-
-    client.subscribeToAgent('session-b')
-    emitServerEvent(socket, staleTaskSnapshot)
-    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
-    expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
-
-    client.subscribeToAgent('session-a')
-    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
-
-    client.subscribeToAgent('session-b')
-    expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
-
-    emitServerEvent(socket, {
-      ...staleTaskSnapshot,
-      revision: 2,
-      activeWorkPlan: null,
-    })
-    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
-
-    expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
-
-    client.destroy()
-  })
-
-  it('keeps task snapshots disabled even if Work Plans settings events try to re-enable them', () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    const snapshot = makeTaskSnapshot('manager', 1, 'Active plan')
-    client.subscribeToAgent('manager')
-    emitServerEvent(socket, snapshot)
-    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
-
-    expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().workPlansEnabled).toBe(false)
-
-    emitServerEvent(socket, {
-      type: 'work_plans_settings_changed',
-      enabled: false,
-      updatedAt: new Date().toISOString(),
-    })
-
-    expect(client.getState().workPlansEnabled).toBe(false)
-    expect(client.getState().taskSnapshots).toEqual({})
-
-    emitServerEvent(socket, {
-      type: 'work_plans_settings_changed',
-      enabled: true,
-      updatedAt: new Date().toISOString(),
-    })
-
-    expect(client.getState().workPlansEnabled).toBe(false)
-    expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
-
-    emitServerEvent(socket, {
-      ...snapshot,
-      revision: 2,
-    })
-
-    expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     client.destroy()
   })
@@ -1417,69 +1249,6 @@ describe('ManagerWsClient', () => {
     expect(state.messages).toHaveLength(120)
     expect(state.activityMessages).toHaveLength(480)
     expect(state.messages.filter((message) => message.type === 'conversation_message')).toHaveLength(120)
-
-    client.destroy()
-  })
-
-  it('keeps work_plan_created receipts in visible messages for replay and live events', () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    emitServerEvent(socket, {
-      type: 'conversation_history',
-      agentId: 'manager',
-      messages: [
-        {
-          type: 'conversation_message',
-          agentId: 'manager',
-          role: 'user',
-          text: 'before plan',
-          timestamp: new Date().toISOString(),
-          source: 'user_input',
-        },
-        makeWorkPlanCreatedEvent('manager', 'work-plan-created-history'),
-        {
-          type: 'agent_message',
-          agentId: 'manager',
-          timestamp: new Date().toISOString(),
-          source: 'agent_to_agent',
-          fromAgentId: 'worker-a',
-          toAgentId: 'manager',
-          text: 'activity',
-        },
-      ],
-    })
-
-    expect(client.getState().messages.map((message) => message.type)).toEqual([
-      'conversation_message',
-      'work_plan_created',
-    ])
-    expect(client.getState().activityMessages.map((message) => message.type)).toEqual(['agent_message'])
-
-    emitServerEvent(socket, makeWorkPlanCreatedEvent('other-manager', 'work-plan-created-other'))
-    expect(client.getState().messages).toHaveLength(2)
-
-    emitServerEvent(socket, makeWorkPlanCreatedEvent('manager', 'work-plan-created-live'))
-    expect(client.getState().messages.map((message) => message.type)).toEqual([
-      'conversation_message',
-      'work_plan_created',
-      'work_plan_created',
-    ])
-    expect(client.getState().messages.at(-1)).toMatchObject({
-      type: 'work_plan_created',
-      id: 'work-plan-created-live',
-    })
 
     client.destroy()
   })

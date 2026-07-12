@@ -8,8 +8,7 @@ export type ManagerRuntimeRecycleReason =
   | "auth_source_change"
   | "project_agent_directory_change"
   | "project_resource_trust_change"
-  | "specialist_roster_change"
-  | "work_plans_settings_change";
+  | "specialist_roster_change";
 
 export interface PendingManagerRuntimeRecycleEntry {
   agentId: string;

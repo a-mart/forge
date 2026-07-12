@@ -61,9 +61,7 @@ export class CliHeadlessSubscriptions {
 
     this.subscriptions.set(socket, targetAgent.agentId);
     this.send(socket, this.buildHeadlessReady(command, targetAgent));
-    if (this.swarmManager.isWorkPlansEnabled()) {
-      this.send(socket, await this.swarmManager.getSessionTaskStateSnapshot(targetAgent.agentId));
-    }
+    this.send(socket, await this.swarmManager.getSessionPlanSnapshot(targetAgent.agentId));
   }
 
   broadcast(event: ServerEvent): void {
@@ -183,7 +181,7 @@ export class CliHeadlessSubscriptions {
     switch (event.type) {
       case "session_workers_snapshot":
       case "session_active_tools_snapshot":
-      case "session_task_state_snapshot":
+      case "session_plan_snapshot":
       case "cli_pending_choices_snapshot":
         return event.sessionAgentId === sessionAgentId;
 
@@ -195,7 +193,6 @@ export class CliHeadlessSubscriptions {
       case "agent_message":
       case "agent_tool_call":
       case "choice_request":
-      case "work_plan_created":
       case "model_cache_observation":
       case "conversation_reset":
       case "message_pinned":

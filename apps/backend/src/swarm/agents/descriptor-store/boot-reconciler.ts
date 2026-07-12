@@ -10,6 +10,7 @@ interface BootReconcilerOptions {
   prunePersistedCortexStateForBoot: (store: AgentsStoreFile) => { store: AgentsStoreFile; pruned: boolean };
   prunePersistedWorkerSidecarDescriptorsForBoot: (store: AgentsStoreFile) => { store: AgentsStoreFile; pruned: boolean };
   preloadPinnedMessageIndexes: () => Promise<void>;
+  preloadSessionPlanStates: () => Promise<void>;
   reconcileProfilesOnBoot: () => boolean;
   normalizeSystemProfileTypes: () => boolean;
   logDebug: (message: string, details?: unknown) => void;
@@ -51,6 +52,7 @@ export class BootReconciler {
     }
 
     await this.options.preloadPinnedMessageIndexes();
+    await this.options.preloadSessionPlanStates();
 
     const normalizedSessionModelState = this.options.reconcileProfilesOnBoot();
     const normalizedSystemProfileTypes = this.options.normalizeSystemProfileTypes();

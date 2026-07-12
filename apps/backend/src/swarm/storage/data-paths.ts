@@ -153,8 +153,8 @@ export function getSessionMetaPath(dataDir: string, profileId: string, sessionAg
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "meta.json");
 }
 
-export function getSessionTasksPath(dataDir: string, profileId: string, sessionAgentId: string): string {
-  return join(getSessionDir(dataDir, profileId, sessionAgentId), "tasks.json");
+export function getSessionPlanPath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "plan.json");
 }
 
 export function getSessionContextDir(dataDir: string, profileId: string, sessionAgentId: string): string {
@@ -417,10 +417,6 @@ export function getKnowledgeV2SettingsPath(dataDir: string): string {
 
 export function getCompactionSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "compaction-settings.json");
-}
-
-export function getWorkPlansSettingsPath(dataDir: string): string {
-  return join(getSharedConfigDir(dataDir), "work-plans.json");
 }
 
 export function getModelCacheVisualizationSettingsPath(dataDir: string): string {

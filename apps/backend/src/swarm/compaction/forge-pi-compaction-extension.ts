@@ -2,6 +2,8 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { getSessionDir } from "../data-paths.js";
 import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
+import { appendSessionPlanCompactionInstructions } from "../planning/session-plan-context.js";
+import { SessionPlanStore } from "../planning/session-plan-store.js";
 import type { Api, Model } from "../pi/pi-ai-compat.js";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
 import type { ResolvedForgePiCompactionAuth } from "./forge-pi-compaction-auth.js";
@@ -71,7 +73,17 @@ export function createForgePiCompactionExtensionFactory(options: {
         );
         const registry = await loadPins(sessionDir);
         const existingInstructions = event.customInstructions?.trim() || undefined;
-        const combinedInstructions = combineCompactionCustomInstructions(existingInstructions, registry);
+        const instructionsWithPins = combineCompactionCustomInstructions(existingInstructions, registry);
+        const plan = descriptor.role === "manager" && descriptor.profileId
+          ? await new SessionPlanStore({
+              dataDir: options.config.paths.dataDir,
+              profileId: descriptor.profileId,
+              sessionAgentId: descriptor.agentId,
+            }).load()
+          : undefined;
+        const combinedInstructions = plan
+          ? appendSessionPlanCompactionInstructions(instructionsWithPins, plan)
+          : instructionsWithPins;
         const pinnedInstructionsMerged = Boolean(
           combinedInstructions
             && combinedInstructions !== existingInstructions

@@ -57,7 +57,6 @@ function createHarness(input?: {
     }
     return { terminatedWorkerIds: [`${agentId}-worker`] };
   });
-  const transitionSessionWorkPlansForArchive = vi.fn(async () => undefined);
   const onProfileArchiveStopError = vi.fn();
   const hydrateSessionLastUsed = vi.fn(input?.hydrateSessionLastUsed ?? (async () => undefined));
   const hydrateProfileLastUsed = vi.fn(input?.hydrateProfileLastUsed ?? (async () => undefined));
@@ -81,7 +80,6 @@ function createHarness(input?: {
       return next;
     }),
     stopSessionForArchive,
-    transitionSessionWorkPlansForArchive,
     hydrateSessionLastUsed,
     hydrateProfileLastUsed,
     onProfileArchiveStopError,
@@ -92,7 +90,6 @@ function createHarness(input?: {
     profiles,
     sessions,
     stopSessionForArchive,
-    transitionSessionWorkPlansForArchive,
     hydrateSessionLastUsed,
     hydrateProfileLastUsed,
     onProfileArchiveStopError,
@@ -284,7 +281,6 @@ describe("archive service", () => {
         return next;
       }),
       stopSessionForArchive,
-      transitionSessionWorkPlansForArchive: vi.fn(async () => undefined),
     });
 
     await service.archiveProfile("profile-1");

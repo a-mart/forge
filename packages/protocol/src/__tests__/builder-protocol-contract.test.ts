@@ -15,7 +15,7 @@ import type { ProjectPresenceEvent } from '../presence.js'
  */
 describe('builder protocol contract', () => {
   it('pins the version constants', () => {
-    expect(BUILDER_PROTOCOL_VERSION).toBe(1)
+    expect(BUILDER_PROTOCOL_VERSION).toBe(2)
     expect(BUILDER_PROTOCOL_MAX_SUPPORTED).toBeGreaterThanOrEqual(BUILDER_PROTOCOL_VERSION)
   })
 

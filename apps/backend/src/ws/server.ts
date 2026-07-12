@@ -98,7 +98,6 @@ import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/se
 import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
 import { createSpecialistRoutes } from "./http/routes/specialist-routes.js";
-import { createWorkPlansRoutes } from "./http/routes/work-plans-routes.js";
 import { createModelCacheVisualizationRoutes } from "./http/routes/model-cache-visualization-routes.js";
 import { createRepositorySettingsRoutes } from "./http/routes/repository-settings-routes.js";
 import { createStatsRoutes } from "./http/routes/stats-routes.js";
@@ -222,13 +221,6 @@ export class SwarmWebSocketServer {
     }
   };
 
-  private readonly onWorkPlanCreated = (event: ServerEvent): void => {
-    if (event.type !== "work_plan_created") return;
-    if (!this.swarmManager.isWorkPlansEnabled()) return;
-    this.wsHandler.broadcastToSubscribed(event);
-    this.cliWsHandler.broadcast(event);
-  };
-
   private readonly onModelCacheObservation = (event: ServerEvent): void => {
     if (event.type !== "model_cache_observation") return;
     this.wsHandler.broadcastToSubscribed(event);
@@ -276,9 +268,8 @@ export class SwarmWebSocketServer {
     this.cliWsHandler.broadcast(event);
   };
 
-  private readonly onSessionTaskStateSnapshot = (event: ServerEvent): void => {
-    if (event.type !== "session_task_state_snapshot") return;
-    if (!this.swarmManager.isWorkPlansEnabled()) return;
+  private readonly onSessionPlanSnapshot = (event: ServerEvent): void => {
+    if (event.type !== "session_plan_snapshot") return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
     this.cliWsHandler.broadcast(event);
   };
@@ -677,10 +668,6 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
-      ...createWorkPlansRoutes({
-        swarmManager: this.swarmManager,
-        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
-      }),
       ...createModelCacheVisualizationRoutes({
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
@@ -752,7 +739,6 @@ export class SwarmWebSocketServer {
     await this.notificationSettingsService.load();
     await this.remoteBuildSettingsService.load();
     await this.unreadTracker.load();
-    await this.swarmManager.loadWorkPlansSettings?.();
     await this.swarmManager.loadModelCacheVisualizationSettings?.();
 
     const httpServer = createServer((request, response) => {
@@ -802,14 +788,13 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("agent_message", this.onAgentMessage);
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.on("choice_request", this.onChoiceRequest);
-    this.swarmManager.on("work_plan_created", this.onWorkPlanCreated);
     this.swarmManager.on("model_cache_observation", this.onModelCacheObservation);
     this.swarmManager.on("conversation_reset", this.onConversationReset);
     this.swarmManager.on("message_pinned", this.onMessagePinned);
     this.swarmManager.on("agent_status", this.onAgentStatus);
     this.swarmManager.on("session_workers_snapshot", this.onSessionWorkersSnapshot);
     this.swarmManager.on("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
-    this.swarmManager.on("session_task_state_snapshot", this.onSessionTaskStateSnapshot);
+    this.swarmManager.on("session_plan_snapshot", this.onSessionPlanSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
@@ -861,14 +846,13 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("agent_message", this.onAgentMessage);
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.off("choice_request", this.onChoiceRequest);
-    this.swarmManager.off("work_plan_created", this.onWorkPlanCreated);
     this.swarmManager.off("model_cache_observation", this.onModelCacheObservation);
     this.swarmManager.off("conversation_reset", this.onConversationReset);
     this.swarmManager.off("message_pinned", this.onMessagePinned);
     this.swarmManager.off("agent_status", this.onAgentStatus);
     this.swarmManager.off("session_workers_snapshot", this.onSessionWorkersSnapshot);
     this.swarmManager.off("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
-    this.swarmManager.off("session_task_state_snapshot", this.onSessionTaskStateSnapshot);
+    this.swarmManager.off("session_plan_snapshot", this.onSessionPlanSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);

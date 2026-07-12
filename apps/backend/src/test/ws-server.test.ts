@@ -10,7 +10,6 @@ import type { AgentDescriptor } from '../swarm/types.js'
 import { DAEMONIZED_ENV_VAR, getControlPidFilePath } from '../reboot/control-pid.js'
 import { CliAccessService } from '../swarm/cli-access-service.js'
 import { getProfileUnreadStatePath } from '../swarm/data-paths.js'
-import { getSessionTasksPath } from '../swarm/storage/data-paths.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { CliSessionCompactionResult, ServerEvent } from '@forge/protocol'
@@ -56,20 +55,18 @@ function getUnreadNotifications(
   )
 }
 
-function createTaskSnapshotEvent(
+function createPlanSnapshotEvent(
   sessionAgentId: string,
   profileId: string,
   revision: number,
-): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+): Extract<ServerEvent, { type: 'session_plan_snapshot' }> {
   return {
-    type: 'session_task_state_snapshot',
+    type: 'session_plan_snapshot',
     sessionAgentId,
     profileId,
     revision,
-    activeWorkPlan: null,
-    recentWorkPlans: [],
-    recentWorkPlanCount: 0,
-    recentWorkPlansTruncated: false,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    plan: [],
   }
 }
 
@@ -102,79 +99,6 @@ function createModelCacheObservationEvent(
       hitRatioThreshold: 0.8,
     },
   }
-}
-
-function createWorkPlanCreatedEvent(
-  agentId: string,
-  id: string,
-  title: string,
-): Extract<ServerEvent, { type: 'work_plan_created' }> {
-  const timestamp = '2026-05-29T12:00:00.000Z'
-  return {
-    type: 'work_plan_created',
-    agentId,
-    id,
-    timestamp,
-    planId: `plan-${id}`,
-    stateRevision: 1,
-    planRevision: 1,
-    plan: {
-      planId: `plan-${id}`,
-      title,
-      status: 'active',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      revision: 1,
-      items: [],
-      itemCount: 0,
-      itemsTruncated: false,
-      warnings: [],
-      warningCount: 0,
-      warningsTruncated: false,
-    },
-  }
-}
-
-async function writeActiveWorkPlanFixture(
-  dataDir: string,
-  profileId: string,
-  sessionAgentId: string,
-): Promise<void> {
-  const filePath = getSessionTasksPath(dataDir, profileId, sessionAgentId)
-  await mkdir(dirname(filePath), { recursive: true })
-  await writeFile(
-    filePath,
-    `${JSON.stringify({
-      schemaVersion: 1,
-      revision: 1,
-      updatedAt: '2026-05-29T12:00:00.000Z',
-      workPlans: [
-        {
-          planId: 'plan-1',
-          createdByAgentId: sessionAgentId,
-          title: 'Active plan',
-          status: 'active',
-          createdAt: '2026-05-29T12:00:00.000Z',
-          updatedAt: '2026-05-29T12:00:00.000Z',
-          revision: 1,
-          items: [
-            {
-              itemId: 'item-1',
-              title: 'Investigate backend wiring',
-              status: 'active',
-              workerLinks: [],
-              createdAt: '2026-05-29T12:00:00.000Z',
-              updatedAt: '2026-05-29T12:00:00.000Z',
-            },
-          ],
-          revisionNotes: [],
-          warnings: [],
-          mutationProvenance: [],
-        },
-      ],
-    }, null, 2)}\n`,
-    'utf8',
-  )
 }
 
 async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -482,10 +406,15 @@ describe('SwarmWebSocketServer', () => {
     const unreadAfter = workerEvents.filter((event) => event.type === 'unread_notification').length
     expect(unreadAfter).toBe(unreadBefore)
 
-    manager.emit('work_plan_created', createWorkPlanCreatedEvent('manager', 'work-plan-created-web', 'Live web Work Plan'))
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(managerEvents.some((event) => event.type === 'work_plan_created' && event.agentId === 'manager')).toBe(false)
-    expect(workerEvents.some((event) => event.type === 'work_plan_created' && event.agentId === 'manager')).toBe(false)
+    manager.emit('session_plan_snapshot', {
+      ...createPlanSnapshotEvent('manager', 'manager', 2),
+      plan: [{ step: 'Verify live delivery', status: 'in_progress' }],
+    } satisfies ServerEvent)
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'session_plan_snapshot' && event.sessionAgentId === 'manager',
+    )
+    expect(workerEvents.some((event) => event.type === 'session_plan_snapshot')).toBe(false)
 
     const unreadBeforeCache = workerEvents.filter((event) => event.type === 'unread_notification').length
 
@@ -2182,7 +2111,7 @@ describe('SwarmWebSocketServer', () => {
       (event) => event.type === 'conversation_history' && event.agentId === worker.agentId,
     )
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(events.some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
+    expect(events.some((event) => event.type === 'session_plan_snapshot')).toBe(false)
 
     client.send(JSON.stringify({ type: 'user_message', text: 'hello worker' }))
 
@@ -2291,8 +2220,10 @@ describe('SwarmWebSocketServer', () => {
       expect(ready.status).toMatchObject({ agentId: sessionAgent.agentId, status: 'streaming', pendingCount: 2 })
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(events.some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
+    await waitForEvent(
+      events,
+      (event) => event.type === 'session_plan_snapshot' && event.sessionAgentId === sessionAgent.agentId,
+    )
     const forbiddenBootstrapEvents = new Set([
       'conversation_history',
       'agents_snapshot',
@@ -2412,204 +2343,6 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it.skip('routes live headless session_task_state_snapshot events to exact subscribed sessions (parked)', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port, true)
-    const cliAccessService = new CliAccessService({
-      dataDir: config.paths.dataDir,
-      now: () => '2026-05-11T00:00:00.000Z',
-    })
-    const key = await cliAccessService.generateKey({ name: 'Headless task routing' })
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-      cliAccessService,
-    })
-    await server.start()
-
-    const root = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
-    root.client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-root-task' }))
-    await waitForEvent(root.events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-root-task')
-
-    const secondary = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
-    secondary.client.send(JSON.stringify({ type: 'subscribe_headless', agentId: secondarySession.agentId, requestId: 'sub-secondary-task' }))
-    await waitForEvent(
-      secondary.events,
-      (event) => event.type === 'headless_ready' && event.requestId === 'sub-secondary-task',
-    )
-
-    const rootBaseline = root.events.length
-    const secondaryBaseline = secondary.events.length
-    manager.emit('session_task_state_snapshot', createTaskSnapshotEvent(secondarySession.agentId, 'manager', 2))
-
-    await waitForEventAfter(
-      secondary.events,
-      secondaryBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === secondarySession.agentId &&
-        event.revision === 2,
-    )
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(root.events.slice(rootBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
-
-    const rootSecondBaseline = root.events.length
-    const secondarySecondBaseline = secondary.events.length
-    manager.emit('session_task_state_snapshot', createTaskSnapshotEvent('manager', 'manager', 3))
-
-    await waitForEventAfter(
-      root.events,
-      rootSecondBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' && event.sessionAgentId === 'manager' && event.revision === 3,
-    )
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(secondary.events.slice(secondarySecondBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
-
-    root.client.close()
-    await once(root.client, 'close')
-    secondary.client.close()
-    await once(secondary.client, 'close')
-    await server.stop()
-  })
-
-  it.skip('emits live headless session_task_state_snapshot after task.upsert_plan mutations to exact subscribed sessions (parked)', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port, true)
-    const cliAccessService = new CliAccessService({
-      dataDir: config.paths.dataDir,
-      now: () => '2026-05-11T00:00:00.000Z',
-    })
-    const key = await cliAccessService.generateKey({ name: 'Headless task live mutation' })
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-      cliAccessService,
-    })
-    await server.start()
-
-    const root = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
-    root.client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-root-task-live' }))
-    await waitForEvent(root.events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-root-task-live')
-    await waitForEvent(root.events, (event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === 'manager')
-
-    const secondary = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
-    secondary.client.send(JSON.stringify({ type: 'subscribe_headless', agentId: secondarySession.agentId, requestId: 'sub-secondary-task-live' }))
-    await waitForEvent(
-      secondary.events,
-      (event) => event.type === 'headless_ready' && event.requestId === 'sub-secondary-task-live',
-    )
-    await waitForEvent(
-      secondary.events,
-      (event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === secondarySession.agentId,
-    )
-
-    const rootBaseline = root.events.length
-    const secondaryBaseline = secondary.events.length
-    const secondaryResult = await manager.runTaskTool(secondarySession.agentId, 'task-cli-secondary', {
-      action: 'upsert_plan',
-      title: 'Secondary CLI live plan',
-      itemsText: '[active] Observe CLI live refresh',
-    })
-    expect(secondaryResult).toMatchObject({
-      action: 'upsert_plan',
-      status: 'active',
-      planRevision: 1,
-    })
-    expect(secondaryResult).not.toHaveProperty('snapshot')
-
-    await waitForEventAfter(
-      secondary.events,
-      secondaryBaseline,
-      (event) =>
-        event.type === 'work_plan_created' &&
-        event.agentId === secondarySession.agentId &&
-        event.plan.title === 'Secondary CLI live plan',
-    )
-    const secondaryLiveEvent = await waitForEventAfter(
-      secondary.events,
-      secondaryBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === secondarySession.agentId &&
-        event.activeWorkPlan?.title === 'Secondary CLI live plan',
-    )
-    expect(secondaryLiveEvent).toMatchObject({
-      type: 'session_task_state_snapshot',
-      sessionAgentId: secondarySession.agentId,
-      revision: 1,
-      activeWorkPlan: {
-        title: 'Secondary CLI live plan',
-        status: 'active',
-      },
-    })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(root.events.slice(rootBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
-    expect(root.events.slice(rootBaseline).some((event) => event.type === 'work_plan_created')).toBe(false)
-
-    const rootSecondBaseline = root.events.length
-    const secondarySecondBaseline = secondary.events.length
-    const rootResult = await manager.runTaskTool('manager', 'task-cli-root', {
-      action: 'upsert_plan',
-      title: 'Root CLI live plan',
-      itemsText: '[active] Observe root CLI live refresh',
-    })
-    expect(rootResult).toMatchObject({
-      action: 'upsert_plan',
-      status: 'active',
-      planRevision: 1,
-    })
-    expect(rootResult).not.toHaveProperty('snapshot')
-
-    await waitForEventAfter(
-      root.events,
-      rootSecondBaseline,
-      (event) =>
-        event.type === 'work_plan_created' &&
-        event.agentId === 'manager' &&
-        event.plan.title === 'Root CLI live plan',
-    )
-    const rootLiveEvent = await waitForEventAfter(
-      root.events,
-      rootSecondBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === 'manager' &&
-        event.activeWorkPlan?.title === 'Root CLI live plan',
-    )
-    expect(rootLiveEvent).toMatchObject({
-      type: 'session_task_state_snapshot',
-      sessionAgentId: 'manager',
-      revision: 1,
-      activeWorkPlan: {
-        title: 'Root CLI live plan',
-        status: 'active',
-      },
-    })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(secondary.events.slice(secondarySecondBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
-    expect(secondary.events.slice(secondarySecondBaseline).some((event) => event.type === 'work_plan_created')).toBe(false)
-
-    root.client.close()
-    await once(root.client, 'close')
-    secondary.client.close()
-    await once(secondary.client, 'close')
-    await server.stop()
-  })
 
   it('dispatches CLI messages with cli source context over the isolated socket', async () => {
     const port = await getAvailablePort()
@@ -3700,14 +3433,16 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it.skip('rebroadcasts session_task_state_snapshot after clear_session lifecycle transitions (parked)', async () => {
+
+  it('clears and rebroadcasts the current plan with the conversation', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
-
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
-    const { sessionAgent: createdSession } = await manager.createSession('manager', { label: 'Lifecycle Session' })
-    await writeActiveWorkPlanFixture(config.paths.dataDir, 'manager', createdSession.agentId)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Plan lifecycle' })
+    await manager.updatePlan(sessionAgent.agentId, 'plan-lifecycle', {
+      plan: [{ step: 'Inspect lifecycle', status: 'in_progress' }],
+    })
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -3715,260 +3450,33 @@ describe('SwarmWebSocketServer', () => {
       port: config.port,
       allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
     })
-
     await server.start()
 
     const client = new WebSocket(`ws://${config.host}:${config.port}`)
     const events: ServerEvent[] = []
-    client.on('message', (raw) => {
-      events.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-
+    client.on('message', (raw) => events.push(JSON.parse(raw.toString()) as ServerEvent))
     await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe', agentId: createdSession.agentId }))
+    client.send(JSON.stringify({ type: 'subscribe', agentId: sessionAgent.agentId }))
     await waitForEvent(
       events,
-      (event) => event.type === 'ready' && event.subscribedAgentId === createdSession.agentId,
-    )
-    await waitForEvent(
-      events,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === createdSession.agentId &&
-        event.activeWorkPlan?.planId === 'plan-1',
+      (event) => event.type === 'session_plan_snapshot' && event.plan[0]?.step === 'Inspect lifecycle',
     )
 
     const baseline = events.length
-    client.send(JSON.stringify({ type: 'clear_session', agentId: createdSession.agentId, requestId: 'clear-task-session' }))
-
+    client.send(JSON.stringify({ type: 'clear_session', agentId: sessionAgent.agentId, requestId: 'clear-plan' }))
     await waitForEventAfter(
       events,
       baseline,
-      (event) => event.type === 'session_cleared' && event.agentId === createdSession.agentId,
+      (event) => event.type === 'session_cleared' && event.agentId === sessionAgent.agentId,
     )
-    const lifecycleSnapshot = await waitForEventAfter(
+    await waitForEventAfter(
       events,
       baseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === createdSession.agentId &&
-        event.revision === 2,
+      (event) => event.type === 'session_plan_snapshot' && event.sessionAgentId === sessionAgent.agentId && event.plan.length === 0,
     )
-    expect(lifecycleSnapshot).toMatchObject({
-      type: 'session_task_state_snapshot',
-      sessionAgentId: createdSession.agentId,
-      activeWorkPlan: null,
-      recentWorkPlans: [
-        {
-          planId: 'plan-1',
-          status: 'interrupted',
-          lifecycle: { reason: 'conversation_cleared' },
-        },
-      ],
-    })
 
     client.close()
     await once(client, 'close')
-    await server.stop()
-  })
-
-  it.skip('routes live session_task_state_snapshot events to exact subscribed sessions (parked)', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port, true)
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    })
-
-    await server.start()
-
-    const rootClient = new WebSocket(`ws://${config.host}:${config.port}`)
-    const rootEvents: ServerEvent[] = []
-    const secondaryEvents: ServerEvent[] = []
-
-    rootClient.on('message', (raw) => {
-      rootEvents.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-
-    await once(rootClient, 'open')
-    rootClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
-    await waitForEvent(rootEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
-
-    const secondaryClient = new WebSocket(`ws://${config.host}:${config.port}`)
-    secondaryClient.on('message', (raw) => {
-      secondaryEvents.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-    await once(secondaryClient, 'open')
-    secondaryClient.send(JSON.stringify({ type: 'subscribe', agentId: secondarySession.agentId }))
-    await waitForEvent(
-      secondaryEvents,
-      (event) => event.type === 'ready' && event.subscribedAgentId === secondarySession.agentId,
-    )
-
-    const rootBaseline = rootEvents.length
-    const secondaryBaseline = secondaryEvents.length
-    manager.emit('session_task_state_snapshot', createTaskSnapshotEvent(secondarySession.agentId, 'manager', 5))
-
-    await waitForEventAfter(
-      secondaryEvents,
-      secondaryBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === secondarySession.agentId &&
-        event.revision === 5,
-    )
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(
-      rootEvents
-        .slice(rootBaseline)
-        .some((event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === secondarySession.agentId),
-    ).toBe(false)
-
-    const rootSecondBaseline = rootEvents.length
-    const secondarySecondBaseline = secondaryEvents.length
-    manager.emit('session_task_state_snapshot', createTaskSnapshotEvent('manager', 'manager', 6))
-
-    await waitForEventAfter(
-      rootEvents,
-      rootSecondBaseline,
-      (event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === 'manager' && event.revision === 6,
-    )
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(
-      secondaryEvents
-        .slice(secondarySecondBaseline)
-        .some((event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === 'manager'),
-    ).toBe(false)
-
-    rootClient.close()
-    await once(rootClient, 'close')
-    secondaryClient.close()
-    await once(secondaryClient, 'close')
-    await server.stop()
-  })
-
-  it.skip('emits live session_task_state_snapshot after task.upsert_plan mutations to exact subscribed web sessions (parked)', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port, true)
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    })
-
-    await server.start()
-
-    const rootClient = new WebSocket(`ws://${config.host}:${config.port}`)
-    const rootEvents: ServerEvent[] = []
-    rootClient.on('message', (raw) => {
-      rootEvents.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-    await once(rootClient, 'open')
-    rootClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
-    await waitForEvent(rootEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
-    await waitForEvent(rootEvents, (event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === 'manager')
-
-    const secondaryClient = new WebSocket(`ws://${config.host}:${config.port}`)
-    const secondaryEvents: ServerEvent[] = []
-    secondaryClient.on('message', (raw) => {
-      secondaryEvents.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-    await once(secondaryClient, 'open')
-    secondaryClient.send(JSON.stringify({ type: 'subscribe', agentId: secondarySession.agentId }))
-    await waitForEvent(
-      secondaryEvents,
-      (event) => event.type === 'ready' && event.subscribedAgentId === secondarySession.agentId,
-    )
-    await waitForEvent(
-      secondaryEvents,
-      (event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === secondarySession.agentId,
-    )
-
-    const rootBaseline = rootEvents.length
-    const secondaryBaseline = secondaryEvents.length
-    const secondaryResult = await manager.runTaskTool(secondarySession.agentId, 'task-web-secondary', {
-      action: 'upsert_plan',
-      title: 'Secondary live plan',
-      itemsText: '[active] Observe live refresh',
-    })
-    expect(secondaryResult).toMatchObject({
-      action: 'upsert_plan',
-      status: 'active',
-      planRevision: 1,
-    })
-    expect(secondaryResult).not.toHaveProperty('snapshot')
-
-    const secondaryLiveEvent = await waitForEventAfter(
-      secondaryEvents,
-      secondaryBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === secondarySession.agentId &&
-        event.activeWorkPlan?.title === 'Secondary live plan',
-    )
-    expect(secondaryLiveEvent).toMatchObject({
-      type: 'session_task_state_snapshot',
-      sessionAgentId: secondarySession.agentId,
-      revision: 1,
-      activeWorkPlan: {
-        title: 'Secondary live plan',
-        status: 'active',
-      },
-    })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(rootEvents.slice(rootBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
-
-    const rootSecondBaseline = rootEvents.length
-    const secondarySecondBaseline = secondaryEvents.length
-    const rootResult = await manager.runTaskTool('manager', 'task-web-root', {
-      action: 'upsert_plan',
-      title: 'Root live plan',
-      itemsText: '[active] Observe root live refresh',
-    })
-    expect(rootResult).toMatchObject({
-      action: 'upsert_plan',
-      status: 'active',
-      planRevision: 1,
-    })
-    expect(rootResult).not.toHaveProperty('snapshot')
-
-    const rootLiveEvent = await waitForEventAfter(
-      rootEvents,
-      rootSecondBaseline,
-      (event) =>
-        event.type === 'session_task_state_snapshot' &&
-        event.sessionAgentId === 'manager' &&
-        event.activeWorkPlan?.title === 'Root live plan',
-    )
-    expect(rootLiveEvent).toMatchObject({
-      type: 'session_task_state_snapshot',
-      sessionAgentId: 'manager',
-      revision: 1,
-      activeWorkPlan: {
-        title: 'Root live plan',
-        status: 'active',
-      },
-    })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(secondaryEvents.slice(secondarySecondBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
-
-    rootClient.close()
-    await once(rootClient, 'close')
-    secondaryClient.close()
-    await once(secondaryClient, 'close')
     await server.stop()
   })
 

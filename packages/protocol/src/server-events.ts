@@ -15,7 +15,6 @@ import type {
   PromptChangedEvent,
   SpecialistRosterChangedEvent,
   ModelCacheVisualizationSettingsChangedEvent,
-  WorkPlansSettingsChangedEvent,
 } from './config-events.js'
 import type {
   CollaborationBootstrapEvent,
@@ -102,9 +101,7 @@ import type {
   SessionResumedEvent,
   SessionStoppedEvent,
 } from './session-events.js'
-import type {
-  SessionTaskStateSnapshotEvent,
-} from './tasks.js'
+import type { SessionPlanSnapshotEvent } from './plans.js'
 import type {
   TerminalClosedEvent,
   TerminalCreatedEvent,
@@ -136,7 +133,7 @@ export * from './directory-events.js'
 export * from './notification-events.js'
 export * from './integration-events.js'
 export * from './config-events.js'
-export * from './tasks.js'
+export * from './plans.js'
 export * from './transport-events.js'
 export * from './restart-recovery.js'
 
@@ -170,7 +167,7 @@ export type ServerEvent =
   | PendingChoicesSnapshotEvent
   | RestartRecoverySnapshotEvent
   | ProjectPresenceEvent
-  | SessionTaskStateSnapshotEvent
+  | SessionPlanSnapshotEvent
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent
@@ -230,7 +227,6 @@ export type ServerEvent =
   | TerminalClosedEvent
   | TerminalsSnapshotEvent
   | SpecialistRosterChangedEvent
-  | WorkPlansSettingsChangedEvent
   | ModelCacheVisualizationSettingsChangedEvent
   | ModelConfigChangedEvent
   | ApiProxyResponseEvent

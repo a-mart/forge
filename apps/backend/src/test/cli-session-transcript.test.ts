@@ -297,16 +297,6 @@ function createMixedHistory(): ConversationEntryEvent[] {
       timestamp: "2026-06-15T00:00:09.000Z",
     },
     {
-      type: "work_plan_created",
-      agentId: "session-a",
-      id: "work-plan-row",
-      timestamp: "2026-06-15T00:00:10.000Z",
-      planId: "plan-a",
-      stateRevision: 1,
-      planRevision: 1,
-      plan: { id: "plan-a", title: "Plan", status: "active", items: [] },
-    } as unknown as ConversationEntryEvent,
-    {
       type: "model_cache_observation",
       agentId: "session-a",
       timestamp: "2026-06-15T00:00:11.000Z",

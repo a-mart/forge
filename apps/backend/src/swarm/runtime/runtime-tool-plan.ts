@@ -65,6 +65,10 @@ export function planForgePiToolBridgeFactory(options: {
 export function buildBaseRuntimeTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
   const swarmTools = buildSwarmTools(host, descriptor);
 
+  if (descriptor.sessionSurface === "collab") {
+    return swarmTools.filter((tool) => tool.name !== "update_plan");
+  }
+
   if (descriptor.role !== "manager") {
     return swarmTools;
   }
@@ -175,5 +179,5 @@ function previewForLog(text: string, maxLength = 160): string {
 }
 
 const CORTEX_ARCHETYPE_ID = "cortex";
-const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent", "task", "save_learning"]);
+const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent", "update_plan", "save_learning"]);
 const CAPTURE_CHECK_TOOL_NAMES = new Set(["knowledge", "save_learning"]);

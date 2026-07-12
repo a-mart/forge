@@ -15,7 +15,6 @@ const SESSION_AUDIT_ENTRY_CATEGORY_VALUES = [
   'worker_tool_call',
   'runtime_log',
   'choice_request',
-  'work_plan_created',
   'model_cache_observation',
   'custom',
   'unknown',

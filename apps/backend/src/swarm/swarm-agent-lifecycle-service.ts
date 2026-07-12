@@ -241,7 +241,6 @@ export interface SwarmAgentLifecycleServiceOptions {
       setPinnedContentOptions?: SetPinnedContentOptions;
     }
   ) => Promise<void>;
-  transitionSessionWorkPlansForManualStop: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
   interruptExternalThreadSidecarTurn?: ExternalThreadStopInterruptCallback;
   terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
   sendMessage: (
@@ -1089,8 +1088,6 @@ export class SwarmAgentLifecycleService {
       managerStopped = true;
     }
 
-    await this.options.transitionSessionWorkPlansForManualStop(target as ProvisionedSessionDescriptor);
-
     if (!shouldAllowManualStopMessageEnd && (stoppedWorkerIds.length > 0 || managerRuntime !== undefined)) {
       this.options.emitImmediateManualManagerStopNotice(target.agentId);
     }
@@ -1513,10 +1510,6 @@ export class SwarmAgentLifecycleService {
     }
     await this.shutdownLatestManagerRuntime(descriptor, "terminate", invalidatedManagerRuntime);
     this.clearPendingManagerRuntimeRecycle(agentId);
-
-    if (options.taskLifecycle !== "none" && !options.deleteWorkers) {
-      await this.options.transitionSessionWorkPlansForManualStop(descriptor);
-    }
 
     if (
       shouldEmitManualStopNotice &&

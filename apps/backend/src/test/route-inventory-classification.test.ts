@@ -164,7 +164,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/settings/specialists", expect: { GET: "admin", PUT: "admin", DELETE: "admin" } },
   { sample: "/api/settings/specialists/enabled", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/specialists/tiers", expect: { GET: "admin", PUT: "admin" } },
-  { sample: "/api/settings/work-plans/enabled", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/model-cache-visualization/enabled", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/model-overrides", expect: { GET: "member", PUT: "admin", DELETE: "admin" }, killSwitched: true },
   { sample: "/api/settings/openrouter/available-models", expect: { GET: "admin" } },

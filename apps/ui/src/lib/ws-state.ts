@@ -5,7 +5,7 @@ import type {
   ConversationEntry,
   ManagerProfile,
   ProjectPresenceViewer,
-  SessionTaskStateSnapshotEvent,
+  SessionPlanSnapshotEvent,
   RestartRecoverySnapshot,
   TelegramStatusEvent,
   TerminalDescriptor,
@@ -13,7 +13,7 @@ import type {
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,
-  { type: 'conversation_message' | 'conversation_log' | 'choice_request' | 'work_plan_created' }
+  { type: 'conversation_message' | 'conversation_log' | 'choice_request' }
 >
 export type ModelCacheObservationEntry = Extract<
   ConversationEntry,
@@ -54,10 +54,10 @@ export interface ManagerWsState {
   projectPresence: Record<string, ProjectPresenceViewer[]>
   terminals: TerminalDescriptor[]
   terminalSessionScopeId: string | null
-  taskSnapshots: Record<string, SessionTaskStateSnapshotEvent>
+  planSnapshots: Record<string, SessionPlanSnapshotEvent>
   restartRecovery: RestartRecoverySnapshot | null
-  /** Session whose cached task snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
-  taskSnapshotLoadingSessionId: string | null
+  /** Session whose cached plan snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
+  planSnapshotLoadingSessionId: string | null
   hasReceivedAgentsSnapshot: boolean
   /** True only after the current connection bootstrap has delivered the full profile inventory. */
   hasReceivedProfilesSnapshot: boolean
@@ -67,8 +67,6 @@ export interface ManagerWsState {
   specialistChangeKey: number
   /** Monotonically increasing counter bumped on model_config_changed WS events */
   modelConfigChangeKey: number
-  /** Global Active Work Plans feature toggle; defaults to enabled. */
-  workPlansEnabled: boolean
   /** Prompt/model cache visualization toggle; defaults to off. */
   modelCacheVisualizationEnabled: boolean
 }
@@ -97,15 +95,14 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     projectPresence: {},
     terminals: [],
     terminalSessionScopeId: null,
-    taskSnapshots: {},
+    planSnapshots: {},
     restartRecovery: null,
-    taskSnapshotLoadingSessionId: null,
+    planSnapshotLoadingSessionId: null,
     hasReceivedAgentsSnapshot: false,
     hasReceivedProfilesSnapshot: false,
     promptChangeKey: 0,
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
-    workPlansEnabled: false,
     modelCacheVisualizationEnabled: false,
   }
 }

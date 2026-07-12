@@ -1,6 +1,6 @@
 import type { HelpArticle } from '../help-types'
 
-import conceptsActiveWorkPlansContent from './articles/concepts/concepts-active-work-plans.md?raw'
+import conceptsWorkingPlansContent from './articles/concepts/concepts-working-plans.md?raw'
 import conceptsMemoryContent from './articles/concepts/concepts-memory.md?raw'
 import conceptsMultiAgentContent from './articles/concepts/concepts-multi-agent.md?raw'
 import conceptsProjectAgentsContent from './articles/concepts/concepts-project-agents.md?raw'
@@ -28,16 +28,15 @@ const conceptsMultiAgent: HelpArticle = {
   contextKeys: ['chat.workers', 'chat.main'],
 }
 
-const conceptsActiveWorkPlans: HelpArticle = {
-  id: 'concepts-active-work-plans',
-  title: 'Active Work Plans',
+const conceptsWorkingPlans: HelpArticle = {
+  id: 'concepts-working-plans',
+  title: 'Working Plans',
   category: 'concepts',
-  summary: 'Current parked status and compatibility behavior for historical Work Plan receipts.',
-  content: conceptsActiveWorkPlansContent,
+  summary: 'How managers expose a concise, current checklist for substantial work.',
+  content: conceptsWorkingPlansContent,
   keywords: [
-    'active work',
-    'work plan',
-    'task plan',
+    'working plan',
+    'update plan',
     'plan',
     'coordination',
     'session',
@@ -156,7 +155,7 @@ const conceptsProjectAgents: HelpArticle = {
 
 export const conceptsArticles: HelpArticle[] = [
   conceptsMultiAgent,
-  conceptsActiveWorkPlans,
+  conceptsWorkingPlans,
   conceptsMemory,
   conceptsPromptResolution,
   conceptsSpecialists,

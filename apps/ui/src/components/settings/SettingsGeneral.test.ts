@@ -994,14 +994,6 @@ describe('SettingsGeneral — collab target', () => {
     vi.unstubAllGlobals()
   })
 
-  it('does not render the parked Active Work Plans enable toggle', async () => {
-    renderGeneral()
-    await flush()
-
-    expect(container.textContent).not.toContain('Enable Active Work Plans')
-    expect(container.querySelector('#work-plans-enabled-toggle')).toBeFalsy()
-  })
-
   it('renders prompt cache visualization toggle defaulting off', async () => {
     renderGeneral()
     await flush()

@@ -2355,6 +2355,65 @@ Never use plain assistant text for user communication.`
     expect(runtimeText).not.toContain('[replyToText]')
   })
 
+  it('attaches the authoritative current plan to every manager-bound turn', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updatePlan('manager', 'plan-context-1', {
+      explanation: 'Implementation is ready for validation.',
+      plan: [{ step: 'Run validation', status: 'in_progress' }],
+    })
+    await manager.handleUserMessage('continue after recovery', { targetAgentId: 'manager' })
+
+    const runtime = manager.runtimeByAgentId.get('manager')
+    const plannedRuntimeText = runtime?.sendCalls.at(-1)?.message as string
+    const plannedContextLine = plannedRuntimeText
+      .split('\n')
+      .find((line) => line.startsWith('[workingPlan] '))
+    expect(plannedContextLine).toBeDefined()
+    expect(JSON.parse(plannedContextLine!.slice('[workingPlan] '.length))).toEqual({
+      revision: 1,
+      explanation: 'Implementation is ready for validation.',
+      plan: [{ step: 'Run validation', status: 'in_progress' }],
+    })
+
+    await manager.compactAgentContext('manager')
+    expect(runtime?.compactCalls.at(-1)).toContain('[workingPlan] {"revision":1')
+
+    await manager.clearSessionConversation('manager')
+    await manager.handleUserMessage('start fresh', { targetAgentId: 'manager' })
+
+    const clearedRuntimeText = runtime?.sendCalls.at(-1)?.message as string
+    const clearedContextLine = clearedRuntimeText
+      .split('\n')
+      .find((line) => line.startsWith('[workingPlan] '))
+    expect(JSON.parse(clearedContextLine!.slice('[workingPlan] '.length))).toEqual({
+      revision: 2,
+      plan: [],
+    })
+  })
+
+  it('recovers the persisted plan into model input after backend restart', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.updatePlan('manager', 'plan-before-restart', {
+      plan: [{ step: 'Resume after restart', status: 'in_progress' }],
+    })
+
+    const rebooted = new TestSwarmManager(config)
+    await bootWithDefaultManager(rebooted, config)
+    await rebooted.handleUserMessage('continue', { targetAgentId: 'manager' })
+
+    const runtimeText = rebooted.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
+    const contextLine = runtimeText.split('\n').find((line) => line.startsWith('[workingPlan] '))
+    expect(JSON.parse(contextLine!.slice('[workingPlan] '.length))).toEqual({
+      revision: 1,
+      plan: [{ step: 'Resume after restart', status: 'in_progress' }],
+    })
+  })
+
   it('keeps worker runtime text raw unless reply metadata is present', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

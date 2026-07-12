@@ -38,10 +38,6 @@ export function shouldWriteConversationHistoryCacheEntry(entry: ConversationEntr
 }
 
 export function isProtectedTranscriptEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type === "work_plan_created") {
-    return true;
-  }
-
   return isProtectedWebTranscriptEntry(entry);
 }
 
@@ -419,8 +415,7 @@ function selectBootstrapEntriesWithinBudget(
 function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
   return (
     entry.type === "conversation_message" ||
-    entry.type === "choice_request" ||
-    entry.type === "work_plan_created"
+    entry.type === "choice_request"
   );
 }
 

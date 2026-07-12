@@ -46,11 +46,9 @@ In normal Builder chat, hover a visible user or assistant message and click **Re
 
 The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
 
-## Active Work (currently parked)
+## Working plans
 
-Active Work Plans are currently unavailable. Forge does not show the live Active Work card or header control, managers do not receive the `task` tool or Active Work guidance, and task snapshots do not hydrate plan views.
-
-Older sessions may still show expandable **Work Plan created** rows for persisted `work_plan_created` receipts. These are read-only historical records rendered from their creation snapshots, not editable or resumable live plans.
+For substantial multi-step work, managers can publish a concise working plan. The card at the top of chat highlights the current step, and the header control opens the complete checklist. Plans use only Pending, In progress, and Completed states.
 
 ## Header controls
 

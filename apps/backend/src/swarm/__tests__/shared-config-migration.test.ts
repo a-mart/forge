@@ -15,13 +15,44 @@ import {
   getSharedStateDir,
   getTerminalSettingsPath,
 } from "../data-paths.js";
-import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "../shared-config-migration.js";
+import {
+  cleanupOldSharedConfigPaths,
+  migrateSharedConfigLayout,
+  removeRetiredPlanningArtifacts,
+} from "../shared-config-migration.js";
 
 const MIGRATION_SENTINEL = ".shared-config-migration-done";
 const CLEANUP_SENTINEL = ".shared-config-cleanup-done";
 const BACKFILL_SENTINEL = ".compaction-count-backfill-v2-done";
 
 describe("shared-config-migration", () => {
+  it("removes retired planning files without touching current session plans", async () => {
+    const root = await mkdtemp(join(tmpdir(), "retired-planning-cleanup-"));
+    const dataDir = join(root, "data");
+    const retiredSettings = join(getSharedDir(dataDir), "config", "work-plans.json");
+    const retiredSessionState = join(dataDir, "profiles", "profile-1", "sessions", "session-1", "tasks.json");
+    const retiredBackup = `${retiredSessionState}.corrupt-2026-07-12`;
+    const currentPlan = join(dataDir, "profiles", "profile-1", "sessions", "session-1", "plan.json");
+    const userReferenceFile = join(dataDir, "profiles", "profile-1", "reference", "tasks.json");
+    const sessionReferenceFile = join(dataDir, "profiles", "profile-1", "sessions", "session-1", "reference", "tasks.json");
+
+    await writeText(retiredSettings, "{}\n");
+    await writeText(retiredSessionState, "{}\n");
+    await writeText(retiredBackup, "{}\n");
+    await writeText(currentPlan, "{}\n");
+    await writeText(userReferenceFile, "user-authored\n");
+    await writeText(sessionReferenceFile, "session reference\n");
+
+    await removeRetiredPlanningArtifacts(dataDir);
+
+    await expect(access(retiredSettings)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(retiredSessionState)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(retiredBackup)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(currentPlan)).resolves.toBeUndefined();
+    await expect(readFile(userReferenceFile, "utf8")).resolves.toBe("user-authored\n");
+    await expect(readFile(sessionReferenceFile, "utf8")).resolves.toBe("session reference\n");
+  });
+
   it("copies shared-flat durable files into shared/{config,state} and preserves originals", async () => {
     const root = await mkdtemp(join(tmpdir(), "shared-config-migration-"));
     const dataDir = join(root, "data");

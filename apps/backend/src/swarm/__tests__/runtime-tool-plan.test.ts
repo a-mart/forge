@@ -35,18 +35,11 @@ function createHost(): SwarmToolHost {
       targetContext: { channel: "web" },
     }),
     requestUserChoice: async () => [],
-    runTaskTool: async () => ({
-      action: "get",
-      stateRevision: 0,
-      snapshot: {
-        sessionAgentId: "manager-1",
-        profileId: "profile-1",
-        revision: 0,
-        activeWorkPlan: null,
-        recentWorkPlans: [],
-        recentWorkPlanCount: 0,
-        recentWorkPlansTruncated: false,
-      },
+    updatePlan: async (_agentId, _toolCallId, input) => ({
+      sessionAgentId: "manager-1",
+      revision: 1,
+      updatedAt: new Date().toISOString(),
+      ...input,
     }),
   } as SwarmToolHost;
 }
@@ -174,6 +167,7 @@ describe("runtime tool plan", () => {
       "list_agents",
       "send_message_to_agent",
       "knowledge",
+      "update_plan",
       "spawn_agent",
       "retry_codex_plugin_worker",
       "kill_agent",

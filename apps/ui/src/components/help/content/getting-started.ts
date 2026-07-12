@@ -46,7 +46,7 @@ export const gettingStartedArticles: HelpArticle[] = [
       'getting-started-configuration',
       'chat-overview',
       'concepts-multi-agent',
-      'concepts-active-work-plans',
+      'concepts-working-plans',
       'concepts-project-agents',
     ],
     contextKeys: ['chat.main', 'chat.sidebar'],

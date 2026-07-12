@@ -15,7 +15,7 @@ import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ConversationReplyTargetInput, ProjectAgentInfo, SessionTaskStateSnapshotEvent, WorkPlanSnapshot } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ConversationReplyTargetInput, ProjectAgentInfo, SessionPlanSnapshotEvent } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
@@ -27,14 +27,13 @@ import {
   resolveConversationMessageTargetId,
 } from './message-list/external-thread-stop-eligibility'
 import { EmptyState } from './message-list/EmptyState'
-import { ActiveWorkCard, hasActiveWork } from './active-work'
+import { PlanCard } from './plan'
 import {
   hydrateToolDisplayEntry,
   isToolExecutionEvent,
   resolveToolExecutionEventActorAgentId,
 } from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
-import { WorkPlanCreatedRow } from './message-list/WorkPlanCreatedRow'
 import type {
   ChoiceRequestDisplayEntry,
   ConversationLogEntry,
@@ -89,12 +88,10 @@ interface MessageListProps {
   pendingChoiceIds: Set<string>
   missingPendingChoiceIds?: string[]
   streamingStartedAt?: number
-  activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
-  activeWorkExpanded?: boolean
-  onActiveWorkExpandedChange?: (expanded: boolean) => void
-  activeWorkFocusNonce?: number
+  planSnapshot?: SessionPlanSnapshotEvent | null
+  planExpanded?: boolean
+  onPlanExpandedChange?: (expanded: boolean) => void
   statuses?: Record<string, { status: AgentStatus }>
-  onNavigateToWorker?: (agentId: string) => void
 }
 
 export interface MessageListHandle {
@@ -130,15 +127,6 @@ function buildReplyTargetSnapshot(
   }
 }
 
-function findLatestWorkPlanSnapshot(
-  snapshot: SessionTaskStateSnapshotEvent | null | undefined,
-  planId: string,
-): WorkPlanSnapshot | null {
-  if (!snapshot) return null
-  if (snapshot.activeWorkPlan?.planId === planId) return snapshot.activeWorkPlan
-  return snapshot.recentWorkPlans.find((plan) => plan.planId === planId) ?? null
-}
-
 type DisplayEntry =
   | {
       type: 'conversation_message'
@@ -159,11 +147,6 @@ type DisplayEntry =
       type: 'choice_request'
       id: string
       entry: ChoiceRequestDisplayEntry
-    }
-  | {
-      type: 'work_plan_created'
-      id: string
-      event: Extract<ConversationEntry, { type: 'work_plan_created' }>
     }
   | {
       type: 'runtime_error_log'
@@ -258,15 +241,6 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
       continue
     }
 
-    if (message.type === 'work_plan_created') {
-      displayEntries.push({
-        type: 'work_plan_created',
-        id: `work-plan-created-${message.id}`,
-        event: message,
-      })
-      continue
-    }
-
     if (isToolExecutionEvent(message)) {
       const actorAgentId = resolveToolExecutionEventActorAgentId(message)
       const callId = message.toolCallId?.trim()
@@ -336,7 +310,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
  * vertically-stacked item uniformly, preserving order/grouping exactly.
  */
 type VirtualRow =
-  | { kind: 'active_work'; id: string }
+  | { kind: 'plan'; id: string }
   | { kind: 'missing_choice'; id: string; choiceId: string }
   | { kind: 'entry'; id: string; entry: DisplayEntry }
   | { kind: 'loading'; id: string }
@@ -402,12 +376,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   pendingChoiceIds,
   missingPendingChoiceIds = [],
   streamingStartedAt,
-  activeWorkSnapshot,
-  activeWorkExpanded = false,
-  onActiveWorkExpandedChange,
-  activeWorkFocusNonce,
+  planSnapshot,
+  planExpanded = false,
+  onPlanExpandedChange,
   statuses = {},
-  onNavigateToWorker,
 }, ref) {
   // useState (not useRef) for the scroll element so that the callback ref's
   // re-render lets the virtualizer pick up the real element via getScrollElement.
@@ -438,12 +410,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
   const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
-  const showActiveWorkCard = hasActiveWork(activeWorkSnapshot)
+  const showPlanCard = Boolean(planSnapshot?.plan.length)
 
   const rows = useMemo<VirtualRow[]>(() => {
     const next: VirtualRow[] = []
-    if (showActiveWorkCard) {
-      next.push({ kind: 'active_work', id: 'active-work-card' })
+    if (showPlanCard) {
+      next.push({ kind: 'plan', id: 'plan-card' })
     }
     for (const choiceId of missingPendingChoiceIds) {
       next.push({ kind: 'missing_choice', id: `missing-choice-${choiceId}`, choiceId })
@@ -455,7 +427,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       next.push({ kind: 'loading', id: 'loading-indicator' })
     }
     return next
-  }, [showActiveWorkCard, missingPendingChoiceIds, displayEntries, isLoading])
+  }, [showPlanCard, missingPendingChoiceIds, displayEntries, isLoading])
   rowCountRef.current = rows.length
 
   const loadedConversationMessageIds = useMemo(() => {
@@ -469,7 +441,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     return ids
   }, [displayEntries])
 
-  // Map every scroll-to-able message id (conversation target id, work-plan id)
+  // Map every scroll-to-able conversation message id
   // to its row index, so scrollToMessage can drive the virtualizer to an
   // off-screen row. Mirrors the ids set as data-message-id below.
   const messageIdToRowIndex = useMemo(() => {
@@ -478,8 +450,6 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       if (row.kind !== 'entry') return
       if (row.entry.type === 'conversation_message') {
         map.set(resolveConversationMessageTargetId(row.entry.message), index)
-      } else if (row.entry.type === 'work_plan_created') {
-        map.set(row.entry.event.id, index)
       }
     })
     return map
@@ -799,7 +769,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
   }, [activeAgentId, displayEntries, isLoading, scrollEl])
 
-  if (displayEntries.length === 0 && !isLoading && !showActiveWorkCard && !hasMissingPendingChoices) {
+  if (displayEntries.length === 0 && !isLoading && !showPlanCard && !hasMissingPendingChoices) {
     return (
       <EmptyState
         activeAgentId={activeAgentId}
@@ -814,16 +784,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   }
 
   const renderRow = (row: VirtualRow) => {
-    if (row.kind === 'active_work') {
+    if (row.kind === 'plan') {
       return (
-        <ActiveWorkCard
-          snapshot={activeWorkSnapshot}
-          agents={agents ?? []}
-          statuses={statuses}
-          expanded={activeWorkExpanded}
-          onExpandedChange={onActiveWorkExpandedChange ?? (() => undefined)}
-          focusNonce={activeWorkFocusNonce}
-          onNavigateToWorker={onNavigateToWorker}
+        <PlanCard
+          snapshot={planSnapshot}
+          expanded={planExpanded}
+          onExpandedChange={onPlanExpandedChange ?? (() => undefined)}
         />
       )
     }
@@ -925,20 +891,6 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
     if (entry.type === 'agent_message') {
       return <AgentMessageRow message={entry.message} />
-    }
-
-    if (entry.type === 'work_plan_created') {
-      return (
-        <div data-message-id={entry.event.id}>
-          <WorkPlanCreatedRow
-            event={entry.event}
-            agents={agents ?? []}
-            statuses={statuses}
-            latestPlan={findLatestWorkPlanSnapshot(activeWorkSnapshot, entry.event.planId)}
-            onNavigateToWorker={onNavigateToWorker}
-          />
-        </div>
-      )
     }
 
     return (

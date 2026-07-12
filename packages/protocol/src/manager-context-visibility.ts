@@ -39,8 +39,7 @@ function isUserVisibleManagerTranscriptEntry(entry: ConversationEntry): boolean 
 export function isManagerSessionTranscriptEntry(entry: ConversationEntry): boolean {
   return (
     entry.type === 'conversation_message' ||
-    entry.type === 'choice_request' ||
-    entry.type === 'work_plan_created'
+    entry.type === 'choice_request'
   )
 }
 
@@ -165,10 +164,6 @@ export function isVisibleInManagerAllView(
 
     const sessionAgentId = entry.sessionAgentId?.trim()
     return sessionAgentId !== undefined && sessionAgentId.length > 0 && managerAliasIds.has(sessionAgentId)
-  }
-
-  if (entry.type === 'work_plan_created') {
-    return managerAliasIds.has(entry.agentId.trim())
   }
 
   if (entry.type === 'model_cache_observation') {

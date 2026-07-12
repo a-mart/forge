@@ -259,11 +259,9 @@ Either way, the forked session keeps the source session's model state, including
 
 Click any session in the sidebar to switch to it. Your manager tracks state independently per session, so you can bounce between "fix-auth-bug," "dark-mode-feature," and "api-docs-update" without losing your place.
 
-### Active Work Plans (currently parked)
+### Working plans
 
-Active Work Plans are currently unavailable. There is no Settings toggle, managers do not receive the `task` tool or Active Work guidance, and the live Active Work card/header and task-snapshot hydration are unavailable.
-
-Older sessions may still contain `work_plan_created` receipts. Forge can render these as read-only records from their creation snapshots, but they are not editable, resumable, or live plans. Retained `tasks.json` sidecars and `work-plans.json` files are compatibility data only.
+For substantial multi-step work, a manager can publish a working plan with `update_plan`. The card at the top of chat highlights the current step, while the header popover shows the complete checklist and completion count. Plans use only Pending, In progress, and Completed states; small requests usually skip the plan entirely.
 
 ### Archive and Restore
 
@@ -677,7 +675,7 @@ No database. Everything is files (JSON, JSONL, and Markdown):
     │   └── reference/             # Per-agent reference documents
     └── sessions/<sessionId>/
         ├── session.jsonl          # Conversation history (the source of truth)
-        ├── tasks.json             # Preserved parked Active Work Plans compatibility data
+        ├── plan.json              # Current Builder working plan snapshot
         ├── meta.json              # Session metadata
         ├── memory.md              # Session working memory
         └── workers/               # Individual worker logs

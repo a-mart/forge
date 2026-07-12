@@ -269,7 +269,7 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
     expect(typeof before.instanceName).toBe("string");
     expect((before.instanceName as string).length).toBeGreaterThan(0);
     expect(typeof before.forgeVersion).toBe("string");
-    expect(before.protocolVersion).toBe(1);
+    expect(before.protocolVersion).toBe(2);
     expect(before.capabilities).toEqual({ collab: true, remoteBuild: false, createDirectory: true });
 
     const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);

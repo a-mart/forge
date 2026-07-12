@@ -12,9 +12,9 @@ Use **Settings > General > Repositories** to set a configured repository home fo
 
 Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex, Anthropic Claude, and Cursor SDK when used, with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit/reserve pace and estimated runout times, and use the refresh button in the detail panel to re-poll immediately. Usage state is restored after backend restarts, and weekly estimates follow historical usage curves rather than simple linear interpolation. Pooled OAuth usage polling refreshes tokens first, and pooled auth errors can suppress usage display. When OpenAI/Codex uses Forge Auth broker mode, broker-backed status and usage appear when the broker provides them. The same usage data also feeds Dashboard stats and token analytics. The setting is stored in your browser and applies immediately.
 
-## Active Work Plans (currently parked)
+## Working plans
 
-Active Work Plans are currently unavailable, so General Settings has no Active Work Plans toggle. Managers do not receive the `task` tool or Active Work guidance, and the live Active Work card/header and task-snapshot hydration are unavailable. Older `work_plan_created` receipts may still render in chat as read-only records from their creation snapshots.
+Working plans are always available to Builder managers and do not require a General Settings toggle.
 
 ## Compaction
 

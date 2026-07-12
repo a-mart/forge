@@ -336,7 +336,7 @@ export class ManagerWsClient {
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
-      taskSnapshotLoadingSessionId: this.state.workPlansEnabled ? trimmed : null,
+      planSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
       lastError: null,
       unreadCounts: nextUnread,

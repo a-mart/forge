@@ -1,4 +1,4 @@
-Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge now rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries. Active Work Plans are currently parked, but older read-only `work_plan_created` receipts remain part of the session history that contained them.
+Sessions are individual conversations within a profile. Each session has its own chat history, working plan, and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries.
 
 ## Create a session
 

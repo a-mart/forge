@@ -17,16 +17,14 @@ const NOOP_PERF_RECORDER: SidebarPerfRecorder = {
   readRecentSlowEvents: () => [],
 }
 
-function createTaskSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+function createPlanSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_plan_snapshot' }> {
   return {
-    type: 'session_task_state_snapshot',
+    type: 'session_plan_snapshot',
     sessionAgentId,
     profileId: 'manager',
     revision: 0,
-    activeWorkPlan: null,
-    recentWorkPlans: [],
-    recentWorkPlanCount: 0,
-    recentWorkPlansTruncated: false,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    plan: [],
     diagnostics: { state: 'defaulted' },
   }
 }
@@ -81,8 +79,8 @@ class FakeBootstrapSwarmManager {
     return []
   }
 
-  async getSessionTaskStateSnapshot(sessionAgentId: string): Promise<Extract<ServerEvent, { type: 'session_task_state_snapshot' }>> {
-    return createTaskSnapshotEvent(sessionAgentId)
+  async getSessionPlanSnapshot(sessionAgentId: string): Promise<Extract<ServerEvent, { type: 'session_plan_snapshot' }>> {
+    return createPlanSnapshotEvent(sessionAgentId)
   }
 }
 
@@ -209,7 +207,7 @@ describe('Builder visibility filtering', () => {
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     const agentsSnapshot = sentEvents.find((event) => event.type === 'agents_snapshot')

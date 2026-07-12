@@ -55,16 +55,14 @@ function createPerfStub(): SidebarPerfRecorder {
   }
 }
 
-function createTaskSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+function createPlanSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_plan_snapshot' }> {
   return {
-    type: 'session_task_state_snapshot',
+    type: 'session_plan_snapshot',
     sessionAgentId,
     profileId: 'profile-1',
     revision: 0,
-    activeWorkPlan: null,
-    recentWorkPlans: [],
-    recentWorkPlanCount: 0,
-    recentWorkPlansTruncated: false,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    plan: [],
     diagnostics: { state: 'defaulted' },
   }
 }
@@ -139,7 +137,7 @@ function createManagerStub() {
     }),
     getPendingChoiceIdsForSession: () => [],
     getPendingChoiceRequestsForSession: () => [],
-    getSessionTaskStateSnapshot: async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId),
+    getSessionPlanSnapshot: async (sessionAgentId: string) => createPlanSnapshotEvent(sessionAgentId),
     getAgentsSnapshotVersion: () => agentsSnapshotVersion,
     getProfilesSnapshotVersion: () => profilesSnapshotVersion,
     bumpAgentsSnapshotVersion: () => {
@@ -189,7 +187,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
-      'session_task_state_snapshot',
+      'session_plan_snapshot',
       'terminals_snapshot',
     ])
 
@@ -201,7 +199,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
-      'session_task_state_snapshot',
+      'session_plan_snapshot',
       'terminals_snapshot',
     ])
   })
@@ -276,7 +274,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
-      'session_task_state_snapshot',
+      'session_plan_snapshot',
       'terminals_snapshot',
     ])
   })
@@ -557,8 +555,8 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     process.on('unhandledRejection', handleUnhandledRejection)
 
     try {
-      manager.getSessionTaskStateSnapshot = vi.fn(async () => {
-        throw new Error('persistent task snapshot failure')
+      manager.getSessionPlanSnapshot = vi.fn(async () => {
+        throw new Error('persistent plan snapshot failure')
       })
 
       const subscriptions = new WsSubscriptions({
@@ -579,19 +577,19 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       await flushMicrotasks(20)
       await delay(20)
 
-      expect(manager.getSessionTaskStateSnapshot).toHaveBeenCalledTimes(1)
+      expect(manager.getSessionPlanSnapshot).toHaveBeenCalledTimes(1)
       expect(warnSpy).toHaveBeenCalledTimes(1)
       expect(unhandledRejections).toEqual([])
-      expect(getEventTypes(sentEvents)).not.toContain('session_task_state_snapshot')
+      expect(getEventTypes(sentEvents)).not.toContain('session_plan_snapshot')
       expect(getEventTypes(sentEvents)).not.toContain('terminals_snapshot')
       expect((subscriptions as any).bootstrapControllers.size).toBe(0)
 
       sentEvents.length = 0
-      manager.getSessionTaskStateSnapshot = vi.fn(async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId))
+      manager.getSessionPlanSnapshot = vi.fn(async (sessionAgentId: string) => createPlanSnapshotEvent(sessionAgentId))
 
       await subscriptions.handleSubscribe(socket, 'manager')
 
-      expect(getEventTypes(sentEvents)).toContain('session_task_state_snapshot')
+      expect(getEventTypes(sentEvents)).toContain('session_plan_snapshot')
       expect(getEventTypes(sentEvents)).toContain('terminals_snapshot')
       expect(warnSpy).toHaveBeenCalledTimes(1)
     } finally {
@@ -773,12 +771,12 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     expect(getEventTypes(sentEvents)).toContain('profiles_snapshot')
   })
 
-  it('skips session_task_state_snapshot for bootstrap placeholder and worker subscriptions', async () => {
+  it('skips session_plan_snapshot for bootstrap placeholder and worker subscriptions', async () => {
     const bootstrapSocket = createSocket()
     const workerSocket = createSocket()
     const bootstrapEvents: ServerEvent[] = []
     const workerEvents: ServerEvent[] = []
-    const getSessionTaskStateSnapshot = vi.fn(async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId))
+    const getSessionPlanSnapshot = vi.fn(async (sessionAgentId: string) => createPlanSnapshotEvent(sessionAgentId))
     const manager = {
       getConfig: () => ({}),
       getAgent: (agentId: string) => {
@@ -825,7 +823,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       }),
       getPendingChoiceIdsForSession: () => [],
       getPendingChoiceRequestsForSession: () => [],
-      getSessionTaskStateSnapshot,
+      getSessionPlanSnapshot,
       getAgentsSnapshotVersion: () => 0,
       getProfilesSnapshotVersion: () => 0,
     }
@@ -851,7 +849,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     await subscriptions.handleSubscribe(bootstrapSocket)
     await subscriptions.handleSubscribe(workerSocket, 'worker-1')
 
-    expect(getSessionTaskStateSnapshot).not.toHaveBeenCalled()
+    expect(getSessionPlanSnapshot).not.toHaveBeenCalled()
     expect(getEventTypes(bootstrapEvents)).toEqual([
       'ready',
       'agents_snapshot',

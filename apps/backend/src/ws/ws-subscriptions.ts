@@ -175,7 +175,6 @@ export class WsSubscriptions {
         outboundEvent.type === "agent_tool_call" ||
         outboundEvent.type === "conversation_reset" ||
         outboundEvent.type === "choice_request" ||
-        outboundEvent.type === "work_plan_created" ||
         outboundEvent.type === "model_cache_observation" ||
         outboundEvent.type === "message_pinned"
       ) {
@@ -387,11 +386,7 @@ export class WsSubscriptions {
     return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
   }
 
-  resolveTaskSnapshotSessionAgentId(subscribedAgentId: string): string | undefined {
-    if (this.swarmManager.isWorkPlansEnabled?.() === false) {
-      return undefined;
-    }
-
+  resolvePlanSnapshotSessionAgentId(subscribedAgentId: string): string | undefined {
     const descriptor = this.swarmManager.getAgent(subscribedAgentId);
     return descriptor?.role === "manager" ? descriptor.agentId : undefined;
   }
@@ -579,7 +574,7 @@ export class WsSubscriptions {
       send: this.sendBootstrapCritical,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
-      resolveTaskSnapshotSessionAgentId: (agentId) => this.resolveTaskSnapshotSessionAgentId(agentId),
+      resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
       includeAgentsSnapshot: deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion,
       includeProfilesSnapshot: deliveredVersions?.profilesSnapshotVersion !== currentProfilesSnapshotVersion,
       shouldContinue,
@@ -681,7 +676,6 @@ export class WsSubscriptions {
       | { type: "agent_tool_call" }
       | { type: "conversation_reset" }
       | { type: "choice_request" }
-      | { type: "work_plan_created" }
       | { type: "model_cache_observation" }
       | { type: "message_pinned" }
     >,
@@ -777,4 +771,3 @@ export class WsSubscriptions {
     return status === "idle" || status === "streaming";
   }
 }
-

@@ -62,7 +62,7 @@ export async function sendSubscriptionBootstrap(options: {
   send: (socket: WebSocket, event: ServerEvent) => number | null | Promise<number | null>;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
-  resolveTaskSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
+  resolvePlanSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
   shouldContinue?: () => boolean;
@@ -80,7 +80,7 @@ export async function sendSubscriptionBootstrap(options: {
     send,
     resolveTerminalScopeAgentId,
     resolveManagerContextAgentId,
-    resolveTaskSnapshotSessionAgentId,
+    resolvePlanSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
     shouldContinue,
@@ -248,26 +248,24 @@ export async function sendSubscriptionBootstrap(options: {
     snapshot: swarmManager.getRestartRecoverySnapshot?.() ?? null,
   });
 
-  const taskSnapshotSessionAgentId = resolveTaskSnapshotSessionAgentId(targetAgentId);
-  metricFields.taskSnapshotSessionAgentId = taskSnapshotSessionAgentId ?? null;
-  if (taskSnapshotSessionAgentId) {
-    const taskSnapshotStartedAtMs = performance.now();
-    const taskSnapshotBuildStartedAtMs = performance.now();
-    const taskSnapshot = await swarmManager.getSessionTaskStateSnapshot(taskSnapshotSessionAgentId);
-    metricFields.taskSnapshotBuildMs = performance.now() - taskSnapshotBuildStartedAtMs;
-    metricFields.taskSnapshotRevision = taskSnapshot.revision;
-    metricFields.taskSnapshotDiagnosticsState = taskSnapshot.diagnostics?.state ?? null;
-    metricFields.taskSnapshotRecentWorkPlanCount = taskSnapshot.recentWorkPlanCount;
-    await sendMeasured("taskSnapshot", taskSnapshot);
-    metricFields.taskSnapshotMs = performance.now() - taskSnapshotStartedAtMs;
+  const planSnapshotSessionAgentId = resolvePlanSnapshotSessionAgentId(targetAgentId);
+  metricFields.planSnapshotSessionAgentId = planSnapshotSessionAgentId ?? null;
+  if (planSnapshotSessionAgentId) {
+    const planSnapshotStartedAtMs = performance.now();
+    const planSnapshotBuildStartedAtMs = performance.now();
+    const planSnapshot = await swarmManager.getSessionPlanSnapshot(planSnapshotSessionAgentId);
+    metricFields.planSnapshotBuildMs = performance.now() - planSnapshotBuildStartedAtMs;
+    metricFields.planSnapshotRevision = planSnapshot.revision;
+    metricFields.planSnapshotStepCount = planSnapshot.plan.length;
+    await sendMeasured("planSnapshot", planSnapshot);
+    metricFields.planSnapshotMs = performance.now() - planSnapshotStartedAtMs;
   } else {
-    metricFields.taskSnapshotBuildMs = 0;
-    metricFields.taskSnapshotSendMs = 0;
-    metricFields.taskSnapshotPayloadBytes = 0;
-    metricFields.taskSnapshotRevision = null;
-    metricFields.taskSnapshotDiagnosticsState = null;
-    metricFields.taskSnapshotRecentWorkPlanCount = 0;
-    metricFields.taskSnapshotMs = 0;
+    metricFields.planSnapshotBuildMs = 0;
+    metricFields.planSnapshotSendMs = 0;
+    metricFields.planSnapshotPayloadBytes = 0;
+    metricFields.planSnapshotRevision = null;
+    metricFields.planSnapshotStepCount = 0;
+    metricFields.planSnapshotMs = 0;
   }
 
   const terminalsSnapshotStartedAtMs = performance.now();

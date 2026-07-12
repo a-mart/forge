@@ -97,6 +97,36 @@ describe('handleConversationEvent conversation history merge', () => {
   })
 })
 
+describe('handleConversationEvent plan snapshots', () => {
+  it('does not let a delayed bootstrap snapshot replace a newer live revision', () => {
+    const state = {
+      ...createInitialManagerWsState('manager'),
+      planSnapshots: {
+        manager: {
+          type: 'session_plan_snapshot' as const,
+          sessionAgentId: 'manager',
+          profileId: 'manager',
+          revision: 3,
+          updatedAt: '2026-07-12T12:00:03.000Z',
+          plan: [{ step: 'Current live step', status: 'in_progress' as const }],
+        },
+      },
+    }
+
+    const next = runHandler(state, {
+      type: 'session_plan_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      revision: 2,
+      updatedAt: '2026-07-12T12:00:02.000Z',
+      plan: [{ step: 'Stale bootstrap step', status: 'in_progress' }],
+    })
+
+    expect(next.planSnapshots.manager.revision).toBe(3)
+    expect(next.planSnapshots.manager.plan[0]?.step).toBe('Current live step')
+  })
+})
+
 describe('handleConversationEvent choice requests', () => {
   it('accepts live worker-origin choices targeted at the active session', () => {
     const state = createInitialManagerWsState('manager')

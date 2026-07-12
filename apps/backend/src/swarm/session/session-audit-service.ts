@@ -28,7 +28,6 @@ const SESSION_AUDIT_ENTRY_CATEGORY_VALUES = [
   'worker_tool_call',
   'runtime_log',
   'choice_request',
-  'work_plan_created',
   'model_cache_observation',
   'custom',
   'unknown',
@@ -1148,8 +1147,6 @@ function classifyConversationEntry(entry: Record<string, unknown>): {
       }
     case 'choice_request':
       return { category: 'choice_request', renderable: true, title: 'Choice request' }
-    case 'work_plan_created':
-      return { category: 'work_plan_created', renderable: true, title: 'Work plan created' }
     case 'model_cache_observation':
       return { category: 'model_cache_observation', renderable: true, title: 'Model cache observation' }
     default:

@@ -15,6 +15,7 @@ import {
   type RequestedDeliveryMode,
   type SpawnAgentInput
 } from "./types.js";
+import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
 
 export type { SwarmToolHost } from "./swarm-tool-host.js";
 
@@ -435,6 +436,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
   }
 
   const managerOnly: ToolDefinition[] = [
+    buildUpdatePlanTool(host, descriptor),
     {
       name: "spawn_agent",
       label: "Spawn Agent",

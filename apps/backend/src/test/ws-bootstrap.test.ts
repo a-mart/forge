@@ -21,16 +21,14 @@ function createPerfStub(): SidebarPerfRecorder {
   }
 }
 
-function createTaskSnapshotEvent(agentId: string): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+function createPlanSnapshotEvent(agentId: string): Extract<ServerEvent, { type: 'session_plan_snapshot' }> {
   return {
-    type: 'session_task_state_snapshot',
+    type: 'session_plan_snapshot',
     sessionAgentId: agentId,
     profileId: 'profile-1',
     revision: 0,
-    activeWorkPlan: null,
-    recentWorkPlans: [],
-    recentWorkPlanCount: 0,
-    recentWorkPlansTruncated: false,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    plan: [],
     diagnostics: { state: 'defaulted' },
   }
 }
@@ -128,7 +126,7 @@ describe('sendSubscriptionBootstrap', () => {
           timestamp: '2026-01-01T00:00:00.000Z',
         },
       ]),
-      getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
+      getSessionPlanSnapshot: vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId)),
     } as any
 
     const result = await sendSubscriptionBootstrap({
@@ -142,7 +140,7 @@ describe('sendSubscriptionBootstrap', () => {
       send,
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     const recordDuration = vi.mocked(perf.recordDuration)
@@ -230,7 +228,7 @@ describe('sendSubscriptionBootstrap', () => {
         }),
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
-        getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
         isModelCacheVisualizationEnabled: () => false,
       } as any,
       integrationRegistry: null,
@@ -243,7 +241,7 @@ describe('sendSubscriptionBootstrap', () => {
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
     })
 
     const conversationHistoryEvent = sentEvents.find(
@@ -294,7 +292,7 @@ describe('sendSubscriptionBootstrap', () => {
         }),
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
-        getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
         isModelCacheVisualizationEnabled: () => true,
       } as any,
       integrationRegistry: null,
@@ -307,7 +305,7 @@ describe('sendSubscriptionBootstrap', () => {
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
     })
 
     const conversationHistoryEvent = sentEvents.find(
@@ -377,7 +375,7 @@ describe('sendSubscriptionBootstrap', () => {
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
       getPendingChoiceRequestsForSession: vi.fn(() => []),
-      getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
+      getSessionPlanSnapshot: vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId)),
     } as any
 
     await sendSubscriptionBootstrap({
@@ -391,7 +389,7 @@ describe('sendSubscriptionBootstrap', () => {
       send,
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     const conversationHistoryEvent = send.mock.calls
@@ -442,7 +440,7 @@ describe('sendSubscriptionBootstrap', () => {
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
       getPendingChoiceRequestsForSession: vi.fn(() => []),
-      getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
+      getSessionPlanSnapshot: vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId)),
     } as any
 
     const result = await sendSubscriptionBootstrap({
@@ -456,7 +454,7 @@ describe('sendSubscriptionBootstrap', () => {
       send,
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
       includeAgentsSnapshot: false,
       includeProfilesSnapshot: false,
     })
@@ -481,7 +479,7 @@ describe('sendSubscriptionBootstrap', () => {
     })
   })
 
-  it('sends session_task_state_snapshot after pending choices and before terminals', async () => {
+  it('sends session_plan_snapshot after pending choices and before terminals', async () => {
     const sentEvents: ServerEvent[] = []
     await sendSubscriptionBootstrap({
       socket: {} as any,
@@ -519,8 +517,8 @@ describe('sendSubscriptionBootstrap', () => {
             timestamp: '2026-01-01T00:00:00.000Z',
           },
         ],
-        getSessionTaskStateSnapshot: async (agentId: string) => ({
-          ...createTaskSnapshotEvent(agentId),
+        getSessionPlanSnapshot: async (agentId: string) => ({
+          ...createPlanSnapshotEvent(agentId),
           revision: 7,
         }),
       } as any,
@@ -534,7 +532,7 @@ describe('sendSubscriptionBootstrap', () => {
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     expect(sentEvents.map((event) => event.type)).toEqual([
@@ -544,7 +542,7 @@ describe('sendSubscriptionBootstrap', () => {
       'conversation_history',
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
-      'session_task_state_snapshot',
+      'session_plan_snapshot',
       'terminals_snapshot',
     ])
     expect(sentEvents[4]).toMatchObject({
@@ -560,18 +558,16 @@ describe('sendSubscriptionBootstrap', () => {
       ],
     })
     expect(sentEvents[6]).toMatchObject({
-      type: 'session_task_state_snapshot',
+      type: 'session_plan_snapshot',
       sessionAgentId: 'manager-1',
       revision: 7,
-      activeWorkPlan: null,
-      recentWorkPlans: [],
-      diagnostics: { state: 'defaulted' },
+      plan: [],
     })
   })
 
-  it('skips session_task_state_snapshot for non-session bootstrap targets', async () => {
+  it('skips session_plan_snapshot for non-session bootstrap targets', async () => {
     const sentEvents: ServerEvent[] = []
-    const getSessionTaskStateSnapshot = vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId))
+    const getSessionPlanSnapshot = vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId))
 
     await sendSubscriptionBootstrap({
       socket: {} as any,
@@ -599,7 +595,7 @@ describe('sendSubscriptionBootstrap', () => {
         }),
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
-        getSessionTaskStateSnapshot,
+        getSessionPlanSnapshot,
       } as any,
       integrationRegistry: null,
       terminalService: null,
@@ -611,10 +607,10 @@ describe('sendSubscriptionBootstrap', () => {
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
     })
 
-    expect(getSessionTaskStateSnapshot).not.toHaveBeenCalled()
+    expect(getSessionPlanSnapshot).not.toHaveBeenCalled()
     expect(sentEvents.map((event) => event.type)).toEqual([
       'ready',
       'agents_snapshot',
@@ -655,7 +651,7 @@ describe('sendSubscriptionBootstrap', () => {
         }),
         getPendingChoiceRequestsForSession: () => [],
         getPendingChoiceIdsForSession: () => ['legacy-choice-1'],
-        getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
       } as any,
       integrationRegistry: null,
       terminalService: null,
@@ -667,7 +663,7 @@ describe('sendSubscriptionBootstrap', () => {
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
-      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     expect(sentEvents.find((event) => event.type === 'pending_choices_snapshot')).toEqual({
@@ -729,7 +725,7 @@ describe('sendSubscriptionBootstrap', () => {
           }),
           getPendingChoiceIdsForSession: () => [],
           getPendingChoiceRequestsForSession: () => [],
-          getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+          getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
         } as any,
         integrationRegistry: null,
         terminalService: null,
@@ -740,7 +736,7 @@ describe('sendSubscriptionBootstrap', () => {
           sendWsEventWithBackpressure({ socket: targetSocket, event, onDropSocket, timeoutMs: 2000 }),
         resolveTerminalScopeAgentId: () => undefined,
         resolveManagerContextAgentId: () => undefined,
-        resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+        resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
       })
     } finally {
       clearInterval(drainTimer)

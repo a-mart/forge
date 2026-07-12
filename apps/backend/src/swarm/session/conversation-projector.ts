@@ -4,7 +4,7 @@ import {
   ConversationTimeline,
   extractSessionEntryId
 } from "./conversation-timeline.js";
-import type { ModelCacheObservationEvent, ServerEvent, WorkPlanCreatedEvent } from "@forge/protocol";
+import type { ModelCacheObservationEvent, ServerEvent } from "@forge/protocol";
 import type { SidebarConversationHistoryDiagnostics, SidebarPerfRecorder } from "../../stats/sidebar-perf-types.js";
 import {
   HistoryCacheStore,
@@ -46,7 +46,6 @@ type ConversationEventName =
   | "agent_tool_call"
   | "conversation_reset"
   | "choice_request"
-  | "work_plan_created"
   | "model_cache_observation";
 
 interface ConversationHistoryWithDiagnostics {
@@ -192,11 +191,6 @@ export class ConversationProjector {
   emitChoiceRequest(event: ChoiceRequestEvent, options?: { historyAgentId?: string }): void {
     this.emitConversationEntry(event, options);
     this.deps.emitServerEvent("choice_request", event satisfies ServerEvent);
-  }
-
-  emitWorkPlanCreated(event: WorkPlanCreatedEvent): void {
-    this.emitConversationEntry(event);
-    this.deps.emitServerEvent("work_plan_created", event satisfies ServerEvent);
   }
 
   emitModelCacheObservation(event: ModelCacheObservationEvent): void {
@@ -652,7 +646,6 @@ export class ConversationProjector {
 function extractConversationEntryStableDedupeKey(entry: ConversationEntryEvent): string | undefined {
   if (
     entry.type !== "conversation_message" &&
-    entry.type !== "work_plan_created" &&
     entry.type !== "model_cache_observation"
   ) {
     return undefined;

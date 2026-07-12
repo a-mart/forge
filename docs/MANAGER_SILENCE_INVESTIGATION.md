@@ -18,7 +18,7 @@ The "manager goes silent after a worker reports back" behavior is **a model-beha
 
 1. **Trigger (model behavior):** When a worker's final report is injected into the manager as a `SYSTEM: status: ...` message, gpt-5.5 ends its turn with a literally empty response — a whitespace-only `commentary` block, an empty `final_answer`, no tool calls, `stopReason: "stop"`, ~12 output tokens — instead of calling `speak_to_user`. Measured across all sessions on this machine: **gpt-5.5 does this after ~18% of worker callbacks; gpt-5.4 ~10%; claude-opus-4-6 ~2%; gpt-5.3-codex 0%**. This has been happening since at least early April; it is not new.
 2. **Onset (model migration):** The behavior arrived with gpt-5.5 manager adoption. Weekly time series across all sessions: Claude-managed sessions (through early May) sat at 0–3%; gpt-5.5 shows 10% in its first week of use (W17, week of Apr 20) climbing to 15–22% by early May as it displaced Claude as the manager model. This matches the perception that it was "very rare" before roughly the v0.19.0-beta.1 era (May 18) — the ramp (late April → early May) slightly precedes the beta and tracks the model switch, not the release itself.
-3. **Failed countermeasure (June 3–8):** The `manager-noop-guard` was a short-lived fix attempt for this exact issue — added June 3 (`418760d6`), parked June 8 (`df48b165`, "Park Active Work and callback recovery fixes for testing"). It fired 16 times in real sessions during those 5 days; **7 of 16 recovery nudges were ignored — the manager emitted another empty turn even after being explicitly told to respond** (including 5 consecutive failures in `middleman-project/work-stop-patch-review` on June 8). The guard's mechanism — sending the silent model another `SYSTEM:`-prefixed plea — was unreliable by design, and parking it was a defensible call. Since June 8 there is no countermeasure at all.
+3. **Failed countermeasure (June 3–8):** The `manager-noop-guard` was a short-lived fix attempt for this exact issue — added June 3 (`418760d6`) and removed June 8 (`df48b165`). It fired 16 times in real sessions during those 5 days; **7 of 16 recovery nudges were ignored — the manager emitted another empty turn even after being explicitly told to respond** (including 5 consecutive failures in `middleman-project/work-stop-patch-review` on June 8). The guard's mechanism — sending the silent model another `SYSTEM:`-prefixed plea — was unreliable by design, and removing it was defensible. Since June 8 there is no countermeasure at all.
 4. **Invisibility (design gap):** A silent manager turn leaves no trace anywhere a human or the product looks: plain/empty assistant output is not rendered to the user (by design), is not projected into `session.conversation.jsonl`, produces no log line, no UI state, no metric. The only artifact is an empty `message` record in raw `session.jsonl`. The product cannot distinguish "manager correctly chose silence" from "manager dropped a terminal result on the floor."
 5. **Prompt contradiction (contributing):** The manager prompt simultaneously mandates updates on completion ("You MUST send a user-facing update if the running workers have completed...") and legitimizes silence ("When no response is appropriate, make no user-facing tool call", a worked example whose expected behavior is "No user-facing tool call", "Messages prefixed `SYSTEM:` are internal context, not direct user requests"). Prompt-only fixes (June 9, `4667f1e9`) measurably did not solve it: three more incidents occurred June 10 *after* that wording was live, including two after the user escalated and after thinking level was raised to high.
 
@@ -154,13 +154,11 @@ Conclusions:
 
 Notes:
 - Not every "empty after callback" is harm: for *routine* mid-progress callbacks the prompt explicitly sanctions silence (and the model expresses "say nothing" as an empty turn). The harmful subset is empties after **terminal** reports with nothing else running. But as a like-for-like comparison across models the gap is decisive: this is a strongly model-correlated behavior, present at meaningful rates for every gpt-5.x manager, marginal for Claude.
-- The behavior predates the work-task ("Active Work") system, survived its revert, and survived the June 9 prompt clarification. The work-task system was correctly ruled out — `workPlansEnabled` is now hardcoded false (`swarm-manager.ts:1296`, `:2093`) and the callback path never touched it.
 
 ### Why it felt new
 
 - It effectively *is* new at scale: Claude-managed sessions (≤3%) dominated until late April; gpt-5.5 brought 10–22% rates the moment it became the manager model (see §5.1). Subjective onset "around or before the beta release" is accurate — the ramp completed just before v0.19.0-beta.1.
 - June 3–8 the no-op guard partially absorbed it (9 of 16 fires recovered); since June 8 nothing absorbs it.
-- During the Active Work era, terminal moments more often had a next tool call (`task` updates) keeping turns non-empty, which masked the terminal-silence case.
 
 ---
 
@@ -176,7 +174,7 @@ Notes:
 | Jun 3 17:30 | `418760d6` | **Adds `manager-noop-guard.ts`** (650 lines + ~1,550 lines of tests): on `agent_end`/`idle` with no pending work, if the manager turn completed no action tool (speak_to_user, send_message_to_agent, present_choices, task, spawn_agent, kill_agent, …) and produced no visible output, emit a diagnostic conversation entry and send an internal `SYSTEM:` recovery nudge instructing the manager to respond. Suppression paths for manual stop / runtime recovery. **Also adds a "Worker callback closure" section to manager.md** explicitly forbidding whitespace/empty answers to actionable callbacks |
 | Jun 3 19:17 | `8dac1c50` | Clarifies worker callback manager contract (prompt + guard refinement) |
 | Jun 8 12:14 | `2d8301ec` | Fixes guard races / Pi callback follow-up parity — still stabilizing |
-| Jun 8 14:10 | `df48b165` | **"Park Active Work and callback recovery fixes for testing"** — deletes `manager-noop-guard.ts`, `worker-callback-message.ts`, both guard test suites, Pi runtime recovery hooks (−171 lines in `pi-agent-runtime.ts`), −257 lines in `swarm-manager.ts`, and the manager.md "Worker callback closure" section (the explicit no-empty-turns rule) |
+| Jun 8 14:10 | `df48b165` | Removes `manager-noop-guard.ts`, `worker-callback-message.ts`, both guard test suites, Pi runtime recovery hooks (−171 lines in `pi-agent-runtime.ts`), −257 lines in `swarm-manager.ts`, and the manager.md "Worker callback closure" section (the explicit no-empty-turns rule) |
 | Jun 8 ~14:00 | — | Dev daemon (re)started; has been running parked code since |
 | Jun 9 11:33 | `4667f1e9` | Prompt-only mitigation: adds the "You MUST send a user-facing update if the running workers have completed…" rule. Incidents continued (3× on Jun 10 with this prompt resolved into the session). |
 
@@ -253,7 +251,7 @@ gpt-5.5 is ~9× worse than claude-opus-4-6 on this axis. Whatever else changes, 
 ### Review-filter pass (question/delete/simplify)
 
 - The *recovery nudge → hope* loop from the June 3 guard is the part not worth rebuilding as-is; R2's deterministic fallback subsumes it and is simpler to reason about.
-- `README_NEW.md` and the parked-but-present work-plan code are unrelated clutter discovered in passing; the work-plan files are intentionally retained for un-parking, so leave them, but the guard should not return entangled with them.
+- `README_NEW.md` was unrelated clutter discovered in passing; the guard should not return entangled with it.
 
 ---
 

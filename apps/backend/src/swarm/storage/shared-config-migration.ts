@@ -1,7 +1,7 @@
 import { mkdir, readdir, rm, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
-import { getSharedDir, getSharedStateDir } from "./data-paths.js";
+import { getProfilesDir, getSharedConfigDir, getSharedDir, getSharedStateDir } from "./data-paths.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 import { writeFileAtomic } from "../../utils/atomic-files.js";
 
@@ -99,6 +99,47 @@ export async function cleanupOldSharedConfigPaths(dataDir: string): Promise<void
     await writeFileAtomic(cleanupSentinelPath, `${new Date().toISOString()}\n`);
   } catch (error) {
     logCleanupWarning(`failed to write cleanup sentinel at ${cleanupSentinelPath}`, error);
+  }
+}
+
+/** Removes every persisted artifact from the retired planning implementation. */
+export async function removeRetiredPlanningArtifacts(dataDir: string): Promise<void> {
+  await deletePathIfExists(join(getSharedConfigDir(dataDir), "work-plans.json"), "retired planning settings");
+  await removeRetiredSessionPlanningFiles(getProfilesDir(dataDir));
+}
+
+async function removeRetiredSessionPlanningFiles(profilesDir: string): Promise<void> {
+  const profiles = await readDirectoryEntries(profilesDir, "profile directory");
+  if (!profiles) return;
+
+  for (const profile of profiles) {
+    if (!profile.isDirectory()) continue;
+    const sessionsDir = join(profilesDir, profile.name, "sessions");
+    const sessions = await readDirectoryEntries(sessionsDir, "session directory");
+    if (!sessions) continue;
+
+    for (const session of sessions) {
+      if (!session.isDirectory()) continue;
+      const sessionDir = join(sessionsDir, session.name);
+      const files = await readDirectoryEntries(sessionDir, "session planning directory");
+      if (!files) continue;
+
+      for (const file of files) {
+        if (file.isFile() && /^tasks\.json(?:\.|$)/u.test(file.name)) {
+          await deletePathIfExists(join(sessionDir, file.name), "retired session planning artifact");
+        }
+      }
+    }
+  }
+}
+
+async function readDirectoryEntries(directory: string, label: string) {
+  try {
+    return await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isEnoentError(error)) return undefined;
+    logCleanupWarning(`failed to scan retired planning ${label} at ${directory}`, error);
+    return undefined;
   }
 }
 

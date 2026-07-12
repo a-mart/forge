@@ -72,20 +72,8 @@ function makeHost(spawnImpl: (callerAgentId: string, input: SpawnAgentInput) => 
     async requestUserChoice() {
       return []
     },
-    async runTaskTool() {
-      return {
-        action: 'get',
-        stateRevision: 0,
-        snapshot: {
-          sessionAgentId: 'manager',
-          profileId: 'profile-1',
-          revision: 0,
-          activeWorkPlan: null,
-          recentWorkPlans: [],
-          recentWorkPlanCount: 0,
-          recentWorkPlansTruncated: false,
-        },
-      }
+    async updatePlan(_agentId, _toolCallId, input) {
+      return { sessionAgentId: 'manager', revision: 1, updatedAt: new Date().toISOString(), ...input }
     },
   }
 }
@@ -116,20 +104,8 @@ function makeHostWithAgents(
     async requestUserChoice() {
       return []
     },
-    async runTaskTool() {
-      return {
-        action: 'get',
-        stateRevision: 0,
-        snapshot: {
-          sessionAgentId: 'manager',
-          profileId: 'profile-1',
-          revision: 0,
-          activeWorkPlan: null,
-          recentWorkPlans: [],
-          recentWorkPlanCount: 0,
-          recentWorkPlansTruncated: false,
-        },
-      }
+    async updatePlan(_agentId, _toolCallId, input) {
+      return { sessionAgentId: 'manager', revision: 1, updatedAt: new Date().toISOString(), ...input }
     },
   }
 }
@@ -865,18 +841,11 @@ describe('buildSwarmTools', () => {
         }
       },
       requestUserChoice: async () => [],
-      runTaskTool: async () => ({
-        action: 'get',
-        stateRevision: 0,
-        snapshot: {
-          sessionAgentId: 'manager',
-          profileId: 'profile-1',
-          revision: 0,
-          activeWorkPlan: null,
-          recentWorkPlans: [],
-          recentWorkPlanCount: 0,
-          recentWorkPlansTruncated: false,
-        },
+      updatePlan: async (_agentId, _toolCallId, input) => ({
+        sessionAgentId: 'manager',
+        revision: 1,
+        updatedAt: new Date().toISOString(),
+        ...input,
       }),
     }
 
@@ -914,7 +883,7 @@ describe('buildSwarmTools', () => {
     })
   })
 
-  it('omits the task tool for managers while Active Work Plans are parked', () => {
+  it('includes update_plan for managers', () => {
     const host: SwarmToolHost = {
       listAgents: () => [makeManagerDescriptor()],
       getWorkerActivity: () => undefined,
@@ -927,14 +896,16 @@ describe('buildSwarmTools', () => {
       }),
       publishToUser: async () => ({ targetContext: { channel: 'web' } }),
       requestUserChoice: async () => [],
-      runTaskTool: async () => {
-        throw new Error('task should not be callable when disabled')
-      },
-      isWorkPlansEnabled: () => false,
+      updatePlan: async (_agentId, _toolCallId, input) => ({
+        sessionAgentId: 'manager',
+        revision: 1,
+        updatedAt: new Date().toISOString(),
+        ...input,
+      }),
     }
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())
-    expect(tools.some((tool) => tool.name === 'task')).toBe(false)
+    expect(tools.some((tool) => tool.name === 'update_plan')).toBe(true)
   })
 
 })

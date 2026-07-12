@@ -31,12 +31,6 @@ export interface ModelConfigChangedEvent {
   updatedAt: string
 }
 
-export interface WorkPlansSettingsChangedEvent {
-  type: 'work_plans_settings_changed'
-  enabled: boolean
-  updatedAt: string
-}
-
 export interface ModelCacheVisualizationSettingsChangedEvent {
   type: 'model_cache_visualization_settings_changed'
   enabled: boolean
