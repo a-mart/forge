@@ -131,6 +131,44 @@ function mountedMessageIds(): string[] {
 }
 
 describe('MessageList virtualization — windowing', () => {
+  it('defers ResizeObserver row measurements to a frame to avoid dropped layout updates', async () => {
+    virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })
+
+    const offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    if (!offsetHeight?.get) throw new Error('virtualization harness did not install offsetHeight')
+
+    let insideObserverCallback = false
+    let measuredSynchronously = false
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (insideObserverCallback) measuredSynchronously = true
+        return offsetHeight.get?.call(this) as number
+      },
+    })
+
+    class ImmediateRowResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        if (!target.hasAttribute('data-index')) return
+        insideObserverCallback = true
+        this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver)
+        insideObserverCallback = false
+      }
+      disconnect() {}
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ImmediateRowResizeObserver as unknown as typeof ResizeObserver
+
+    render(makeMessages(30))
+
+    // react-virtual must schedule the measurement rather than reading layout
+    // inside ResizeObserver delivery, where synchronous repositioning can make
+    // Chromium drop later notifications and leave rows at estimated heights.
+    expect(measuredSynchronously).toBe(false)
+    await flushFrames()
+  })
+
   it('mounts only the viewport subset, not every message', async () => {
     // 500px viewport, 96px rows → ~5-6 visible + overscan; far fewer than 300.
     virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })

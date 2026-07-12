@@ -502,6 +502,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
     getItemKey: (index) => rows[index]?.id ?? index,
     overscan: OVERSCAN,
+    // Row measurements can synchronously reposition other absolutely-positioned
+    // rows. In Chromium that feedback can exhaust ResizeObserver's delivery loop,
+    // leaving later rows at the 96px estimate (and visibly overlapping) until the
+    // next window resize. Batch observer measurements onto the next frame so each
+    // layout settles before react-virtual applies the next position update.
+    useAnimationFrameWithResizeObserver: true,
     // Reset the `isScrolling` flag from the native `scrollend` event instead of
     // a 150ms debounce timer. Avoids a stray timer that can fire after unmount
     // (React state update on a torn-down tree); supported in all target browsers
