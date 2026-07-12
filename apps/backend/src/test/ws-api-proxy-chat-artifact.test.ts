@@ -23,5 +23,7 @@ describe("WS chat artifact API proxy", () => {
     expect(injected.status).toBe(400); expect(JSON.parse(injected.body)).toMatchObject({ code: "invalid_request" });
     const method = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r3", method: "GET", path: "/api/chat-artifacts/read", body: undefined } as any, agentId);
     expect(method.status).toBe(405);
+    const mismatch = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r4", method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: `${file}x` }) } as any, agentId);
+    expect(mismatch.status).toBe(403); expect(JSON.parse(mismatch.body)).toMatchObject({ code: "path_not_presented" });
   });
 });
