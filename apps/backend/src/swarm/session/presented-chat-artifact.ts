@@ -78,10 +78,10 @@ export function stableFileIdentity(stat: StableStat) {
   return `${String(stat.dev)}:${String(stat.ino)}:${stat.isDirectory() ? "d" : stat.isFile() ? "f" : "o"}`;
 }
 async function statBigint(target: string) { return lstat(target, { bigint: true }); }
-async function walkFile(target: string, stage: "initial" | "post"): Promise<{ ids: string[]; finalId: string; real: string }> {
+async function walkFile(target: string, stage: "initial" | "post"): Promise<{ ids: string[]; finalId: string; finalSize: bigint; real: string }> {
   const api = process.platform === "win32" ? path.win32 : path;
   const parsed = api.parse(target); const relative = target.slice(parsed.root.length).split(api.sep).filter(Boolean);
-  let current = parsed.root; const ids: string[] = [];
+  let current = parsed.root; const ids: string[] = []; let finalSize = 0n;
   for (let i = 0; i < relative.length; i++) {
     current = api.join(current, relative[i]!);
     let s!: Awaited<ReturnType<typeof statBigint>>;
@@ -93,6 +93,7 @@ async function walkFile(target: string, stage: "initial" | "post"): Promise<{ id
     const id = stableFileIdentity(s);
     if (i < relative.length - 1 && !s.isDirectory()) fail(stage === "initial" ? "invalid_path" : "file_identity_changed");
     if (i === relative.length - 1 && !s.isFile()) fail(stage === "initial" ? "invalid_path" : "file_identity_changed");
+    if (i === relative.length - 1) finalSize = s.size;
     ids.push(id);
   }
   let resolved!: string;
@@ -101,14 +102,14 @@ async function walkFile(target: string, stage: "initial" | "post"): Promise<{ id
     fail(stage === "initial" ? "transcript_read_failed" : "file_identity_changed");
   }
   if (!samePath(resolved, target)) fail("unsafe_file_identity");
-  return { ids, finalId: ids.at(-1)!, real: resolved };
+  return { ids, finalId: ids.at(-1)!, finalSize, real: resolved };
 }
 
-export async function securelyReadPresentedArtifact(target: string, hooks?: { afterInitialWalk?: () => Promise<void> | void; afterOpen?: () => Promise<void> | void }) {
+export async function securelyReadPresentedArtifact(target: string, hooks?: { afterInitialWalk?: () => Promise<void> | void; afterOpen?: () => Promise<void> | void; platform?: NodeJS.Platform }) {
   const initial = await walkFile(target, "initial");
   await hooks?.afterInitialWalk?.();
   // Node does not expose a no-follow open guarantee on Windows. Keep Windows explicitly unavailable rather than authorizing a race.
-  if (process.platform === "win32" || typeof fsConstants.O_NOFOLLOW !== "number" || fsConstants.O_NOFOLLOW === 0) fail("stable_identity_unsupported");
+  if ((hooks?.platform ?? process.platform) === "win32" || typeof fsConstants.O_NOFOLLOW !== "number" || fsConstants.O_NOFOLLOW === 0) fail("stable_identity_unsupported");
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try { handle = await open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch (error: unknown) {
     const code = (error as { code?: string })?.code;
@@ -118,12 +119,23 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
   }
   const openedHandle = handle!;
   try {
-    const opened = await openedHandle.stat({ bigint: true }).catch(() => fail("transcript_read_failed"));
+    const verifyHandle = async () => {
+      const checked = await openedHandle.stat({ bigint: true }).catch(() => fail("transcript_read_failed"));
+      if (!checked.isFile() || stableFileIdentity(checked) !== initial.finalId) fail("file_identity_changed");
+      if (checked.size > BigInt(MAX_READ_FILE_CONTENT_BYTES)) fail("file_too_large");
+      if (checked.size !== initial.finalSize) fail("file_identity_changed");
+      return checked;
+    };
+    await verifyHandle();
     await hooks?.afterOpen?.();
-    if (!opened.isFile() || stableFileIdentity(opened) !== initial.finalId) fail("file_identity_changed");
-    if (opened.size > BigInt(MAX_READ_FILE_CONTENT_BYTES)) fail("file_too_large");
-    const post = await walkFile(target, "post");
-    if (post.real !== initial.real || post.ids.length !== initial.ids.length || post.ids.some((id, i) => id !== initial.ids[i]) || post.finalId !== stableFileIdentity(opened)) fail("file_identity_changed");
+    const opened = await verifyHandle();
+    const verifyPath = async () => {
+      const post = await walkFile(target, "post");
+      if (post.real !== initial.real || post.ids.length !== initial.ids.length || post.ids.some((id, i) => id !== initial.ids[i]) || post.finalId !== stableFileIdentity(opened)) fail("file_identity_changed");
+      if (post.finalSize > BigInt(MAX_READ_FILE_CONTENT_BYTES)) fail("file_too_large");
+      if (post.finalSize !== initial.finalSize) fail("file_identity_changed");
+    };
+    await verifyPath();
     const buffer = Buffer.alloc(MAX_READ_FILE_CONTENT_BYTES + 1); let offset = 0;
     while (offset < buffer.length) {
       let bytesRead = 0;
@@ -132,6 +144,8 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
       offset += bytesRead;
     }
     if (offset > MAX_READ_FILE_CONTENT_BYTES) fail("file_too_large");
+    await verifyHandle();
+    await verifyPath();
     const content = buffer.subarray(0, offset); const contentType = resolveReadFileContentType(target);
     const binary = contentType.startsWith("image/") || content.subarray(0, 4000).some((b) => b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13));
     return binary ? { path: target, binary: true, encoding: "base64", contentType, content: content.toString("base64") } : { path: target, content: content.toString("utf8"), contentType };

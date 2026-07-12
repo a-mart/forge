@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   ChatArtifactError,
+  chatArtifactStatus,
   canonicalizeChatArtifactPath,
   canonicalizeChatArtifactPathForPlatform,
   canonicalizePresentedLinkHref,
@@ -112,6 +113,20 @@ describe("presented chat artifact authorization", () => {
     const worker: any = { agentId: "worker", managerId: "missing", role: "worker", profileId: f.profileId, sessionFile: getWorkerSessionFilePath(f.dataDir, f.profileId, f.agentId, "worker") };
     f.source.getAgent = (id: string) => id === "worker" ? worker : id === f.agentId ? f.manager : undefined;
     expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: "worker", messageId: "m", path: target }))).toBe("invalid_transcript_owner");
+  });
+
+  it("rejects bounded in-place size mutations between every pre-read stage", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture(); const target = join(f.dataDir, "target"); await writeFile(target, "old");
+    expect(await errorCode(() => securelyReadPresentedArtifact(target, { afterInitialWalk: () => writeFile(target, "changed") }))).toBe("file_identity_changed");
+    await writeFile(target, "old");
+    expect(await errorCode(() => securelyReadPresentedArtifact(target, { afterOpen: () => writeFile(target, "changed") }))).toBe("file_identity_changed");
+  });
+
+  it("fails closed as unsupported and maps to 501 when Windows no-follow is unavailable", async () => {
+    const f = await fixture(); const target = join(f.dataDir, "target"); await writeFile(target, "safe");
+    expect(await errorCode(() => securelyReadPresentedArtifact(target, { platform: "win32" }))).toBe("stable_identity_unsupported");
+    expect(chatArtifactStatus("stable_identity_unsupported")).toBe(501);
   });
 
   it("detects ordinary-file and parent-directory replacement before bytes are read", async () => {
