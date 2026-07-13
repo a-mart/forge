@@ -336,6 +336,8 @@ export interface AgentMessageEvent {
   requestedDelivery?: RequestedDeliveryMode;
   acceptedMode?: AcceptedDeliveryMode;
   attachmentCount?: number;
+  /** Marks peer-manager activity that belongs in the normal project-agent conversation. */
+  projectAgentExchange?: true;
 }
 
 export type AgentToolCallKind = Extract<

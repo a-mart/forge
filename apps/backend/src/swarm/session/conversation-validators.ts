@@ -534,6 +534,7 @@ function isAgentMessageEvent(value: unknown): value is AgentMessageEvent {
   ) {
     return false;
   }
+  if (maybe.projectAgentExchange !== undefined && maybe.projectAgentExchange !== true) return false;
 
   return true;
 }

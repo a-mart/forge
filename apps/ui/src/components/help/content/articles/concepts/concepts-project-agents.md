@@ -21,7 +21,7 @@ Worker agents never see the project agent directory — this is a manager-to-man
 
 ## Fire-and-forget messaging
 
-Project agents communicate through the existing `send_message_to_agent` tool. Messages are asynchronous and one-way — there's no reply threading or delivery confirmation. This keeps the model simple: a manager sends work to a project agent, the project agent processes it in its own session, and results appear in that agent's conversation. If a project agent has session-creation capability, it can create new manager sessions in the same profile and continue messaging those sessions through the normal routing path.
+Project agents communicate through the existing `send_message_to_agent` tool. Messages are asynchronous and one-way — there's no reply threading or delivery confirmation. The exchange appears in both participating Builder conversations, using distinct right/left blue bubbles so the current session and peer are easy to distinguish; ordinary worker coordination remains in **All**. If a project agent has session-creation capability, it can create new manager sessions in the same profile and continue messaging those sessions through the normal routing path.
 
 If the receiving session is idle when a message arrives, Forge wakes it up automatically to handle the incoming work. Project Agent sends reject attachments.
 

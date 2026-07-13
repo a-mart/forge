@@ -4858,7 +4858,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           text: message,
           requestedDelivery: delivery,
           acceptedMode: receipt.acceptedMode,
-          attachmentCount: attachments.length > 0 ? attachments.length : undefined
+          attachmentCount: attachments.length > 0 ? attachments.length : undefined,
+          projectAgentExchange: true,
         });
       }
 
@@ -5064,6 +5065,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     if (origin !== "user" && fromAgentId !== targetAgentId) {
+      const projectAgentExchange =
+        sender.role === "manager" &&
+        target.role === "manager" &&
+        (sender.projectAgent !== undefined || target.projectAgent !== undefined);
       for (const managerContextId of managerContextIds) {
         this.emitAgentMessage({
           type: "agent_message",
@@ -5075,7 +5080,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           text: message,
           requestedDelivery: delivery,
           acceptedMode: receipt.acceptedMode,
-          attachmentCount: attachments.length > 0 ? attachments.length : undefined
+          attachmentCount: attachments.length > 0 ? attachments.length : undefined,
+          ...(projectAgentExchange ? { projectAgentExchange: true } : {}),
         });
       }
     }

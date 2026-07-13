@@ -34,7 +34,7 @@ Project agents appear pinned at the top of their profile section in the sidebar 
 
 To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type `@`). Autocomplete includes local agents in the current profile and shared agents explicitly granted from another profile; shared agents are labeled separately so you can tell them apart. The manager interprets your intent and uses the `send_message_to_agent` tool to deliver the message asynchronously. If a project agent created the session, it can keep messaging that session through the same routing path.
 
-Messages to project agents are fire-and-forget — there's no reply threading. If the receiving session is idle, Forge wakes it up to handle the incoming work. Project Agent sends reject attachments, so send text instructions and references instead of attached files.
+Messages to project agents are fire-and-forget — there's no reply threading. The exchange still appears chronologically in both participating Builder conversations: the open session's messages use a deep-blue bubble on the right, while peer replies use a lighter sky-blue bubble on the left. Ordinary worker coordination stays out of the normal Web conversation. If the receiving session is idle, Forge wakes it up to handle the incoming work. Project Agent sends reject attachments, so send text instructions and references instead of attached files.
 
 ## Sharing project agents
 

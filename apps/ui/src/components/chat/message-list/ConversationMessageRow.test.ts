@@ -167,4 +167,32 @@ describe('ConversationMessageRow', () => {
 
     expect(container.querySelector('button')).toBeNull()
   })
+
+  it('renders project-agent input as a left-side sky conversation bubble', () => {
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message',
+      agentId: 'manager-1',
+      role: 'user',
+      text: 'The documentation check is complete.',
+      timestamp: '2026-07-13T20:01:58.181Z',
+      source: 'project_agent_input',
+      projectAgentContext: {
+        fromAgentId: 'documentation',
+        fromDisplayName: 'Documentation',
+      },
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message,
+          activeAgentDisplayName: 'Manager',
+        }),
+      )
+    })
+
+    const bubble = container.querySelector('[data-project-agent-direction="incoming"]')
+    expect(bubble?.getAttribute('data-project-agent-tone')).toBe('sky')
+    expect(bubble?.textContent).toContain('Documentation → Manager')
+  })
 })

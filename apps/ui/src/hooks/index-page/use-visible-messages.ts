@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { MessageSourceView } from '@/components/chat/ChatHeader'
+import { isProjectAgentExchange } from '@/lib/project-agent-exchange'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 import {
   collectKnownWorkerIds,
@@ -88,6 +89,7 @@ export function deriveVisibleMessages({
 } {
   const isManager = activeAgent?.role === 'manager'
   const allMessages = mergeConversationAndActivityMessages(messages, activityMessages)
+  const agentsById = new Map(agents.map((agent) => [agent.agentId, agent]))
 
   const visibleMessages =
     channelView === 'all'
@@ -106,8 +108,31 @@ export function deriveVisibleMessages({
               }),
             )
           })()
-      : messages.filter((entry) => {
+      : mergeConversationAndActivityMessages(
+          messages,
+          isManager && activeAgent
+            ? activityMessages.filter(
+                (entry) =>
+                  entry.type === 'agent_message' &&
+                  entry.agentId === activeAgent.agentId &&
+                  isProjectAgentExchange(entry, agentsById),
+              )
+            : [],
+        ).filter((entry) => {
           if (entry.type === 'conversation_log') {
+            return false
+          }
+
+          if (entry.type === 'agent_message') {
+            return Boolean(
+              isManager &&
+              activeAgent &&
+              entry.agentId === activeAgent.agentId &&
+              isProjectAgentExchange(entry, agentsById),
+            )
+          }
+
+          if (entry.type === 'agent_tool_call') {
             return false
           }
 

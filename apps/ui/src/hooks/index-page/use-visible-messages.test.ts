@@ -36,6 +36,18 @@ const foreignManager: AgentDescriptor = {
   sessionFile: '/tmp/project/foreign-manager.jsonl',
 }
 
+const projectAgent: AgentDescriptor = {
+  ...foreignManager,
+  agentId: 'documentation',
+  displayName: 'Documentation',
+  managerId: 'documentation',
+  sessionFile: '/tmp/project/documentation.jsonl',
+  projectAgent: {
+    handle: 'documentation',
+    whenToUse: 'Review documentation impact.',
+  },
+}
+
 const foreignWorker: AgentDescriptor = {
   ...manager,
   agentId: 'foreign-worker',
@@ -186,6 +198,91 @@ describe('deriveVisibleMessages', () => {
       'conversation_message',
     ])
     expect(result.visibleMessages).toEqual(result.allMessages)
+  })
+
+  it('merges only project-agent exchanges into the normal web conversation', () => {
+    const userMessage: ConversationEntry = {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'user',
+      text: 'Ship the UI change.',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'user_input',
+    }
+    const assistantMessage: ConversationEntry = {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'The change is complete.',
+      timestamp: '2026-01-01T00:00:04.000Z',
+      source: 'assistant_output',
+    }
+    const outboundProjectAgentMessage: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'manager',
+      toAgentId: 'documentation',
+      text: 'Check the docs.',
+    }
+    const workerMessage: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'worker-1',
+      toAgentId: 'manager',
+      text: 'status: done',
+    }
+    const inboundProjectAgentMessage: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:03.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'documentation',
+      toAgentId: 'manager',
+      text: 'No documentation changes needed.',
+      projectAgentExchange: true,
+    }
+
+    const result = deriveVisibleMessages({
+      messages: [userMessage, assistantMessage],
+      activityMessages: [outboundProjectAgentMessage, workerMessage, inboundProjectAgentMessage],
+      agents: [manager, worker, projectAgent],
+      activeAgent: manager,
+      channelView: 'web',
+    })
+
+    expect(result.visibleMessages).toEqual([
+      userMessage,
+      outboundProjectAgentMessage,
+      inboundProjectAgentMessage,
+      assistantMessage,
+    ])
+  })
+
+  it('keeps marked project-agent history visible without a current project-agent descriptor', () => {
+    const historicalExchange: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'manager',
+      toAgentId: 'former-project-agent',
+      text: 'Historical handoff',
+      projectAgentExchange: true,
+    }
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages: [historicalExchange],
+      agents: [manager],
+      activeAgent: manager,
+      channelView: 'web',
+    })
+
+    expect(result.visibleMessages).toEqual([historicalExchange])
   })
 
   it('shows assistant output and progress rows in web and all manager views while hiding runtime logs', () => {
@@ -602,7 +699,6 @@ describe('deriveVisibleMessages', () => {
     expect(result.allMessages).toEqual(messages)
     expect(result.visibleMessages.map((entry) => entry.type === 'conversation_message' ? entry.text : entry.type)).toEqual([
       'web-visible',
-      'agent_message',
     ])
   })
 

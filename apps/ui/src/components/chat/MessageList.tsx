@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
+import { isProjectAgentExchange } from '@/lib/project-agent-exchange'
 import { cn } from '@/lib/utils'
 import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ConversationReplyTargetInput, ProjectAgentInfo, SessionPlanSnapshotEvent } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
@@ -491,6 +492,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     () => (agents ? buildAgentDisplayMap(agents) : new Map()),
     [agents],
   )
+  const agentsById = useMemo<Map<string, AgentDescriptor>>(
+    () => new Map((agents ?? []).map((agent) => [agent.agentId, agent])),
+    [agents],
+  )
 
   // eslint-disable-next-line react-hooks/incompatible-library -- useVirtualizer returns unstable functions by design; MessageList does not pass them into memoized children.
   const virtualizer = useVirtualizer({
@@ -852,6 +857,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             wsUrl={wsUrl}
             surface={surface}
             currentCollabUserId={currentCollabUserId}
+            activeAgentDisplayName={
+              activeAgentId ? agentDisplayMap.get(activeAgentId)?.primaryLabel : undefined
+            }
             feedbackTargetId={feedbackTargetId}
             feedbackLegacyTargetId={feedbackLegacyTargetId}
             onArtifactClick={onArtifactClick}
@@ -917,7 +925,19 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
 
     if (entry.type === 'agent_message') {
-      return <AgentMessageRow message={entry.message} />
+      return (
+        <AgentMessageRow
+          message={entry.message}
+          activeAgentId={activeAgentId}
+          fromDisplayName={
+            entry.message.fromAgentId
+              ? agentDisplayMap.get(entry.message.fromAgentId)?.primaryLabel
+              : undefined
+          }
+          toDisplayName={agentDisplayMap.get(entry.message.toAgentId)?.primaryLabel}
+          projectAgentExchange={isProjectAgentExchange(entry.message, agentsById)}
+        />
+      )
     }
 
     if (entry.type === 'plan_summary') {

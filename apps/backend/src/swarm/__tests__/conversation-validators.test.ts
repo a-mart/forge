@@ -242,6 +242,21 @@ describe("conversation validators", () => {
     ).toBe(true);
   });
 
+  it("accepts only the true project-agent exchange marker", () => {
+    const entry = {
+      type: "agent_message",
+      agentId: "manager-1",
+      timestamp: FIXED_NOW,
+      source: "agent_to_agent",
+      fromAgentId: "manager-1",
+      toAgentId: "docs",
+      text: "Check the docs.",
+    };
+
+    expect(isConversationEntryEvent({ ...entry, projectAgentExchange: true })).toBe(true);
+    expect(isConversationEntryEvent({ ...entry, projectAgentExchange: false })).toBe(false);
+  });
+
   it("accepts a valid model_cache_observation entry", () => {
     expect(isConversationEntryEvent(makeModelCacheObservation())).toBe(true);
   });

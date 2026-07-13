@@ -1,19 +1,41 @@
 import { memo } from 'react'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
+import { ProjectAgentMessageRow } from './ProjectAgentMessageRow'
 import type { AgentMessageEntry } from './types'
 
 export const AgentMessageRow = memo(function AgentMessageRow({
   message,
+  activeAgentId,
+  fromDisplayName,
+  toDisplayName,
+  projectAgentExchange = false,
 }: {
   message: AgentMessageEntry
+  activeAgentId?: string | null
+  fromDisplayName?: string
+  toDisplayName?: string
+  projectAgentExchange?: boolean
 }) {
   const fromLabel =
-    message.source === 'user_to_agent' ? 'User' : message.fromAgentId?.trim() || 'Agent'
-  const toLabel = message.toAgentId.trim() || 'Unknown'
+    fromDisplayName?.trim() ||
+    (message.source === 'user_to_agent' ? 'User' : message.fromAgentId?.trim() || 'Agent')
+  const toLabel = toDisplayName?.trim() || message.toAgentId.trim() || 'Unknown'
   const normalizedText = message.text.trim()
   const attachmentCount = message.attachmentCount ?? 0
   const timestampLabel = formatTimestamp(message.timestamp)
   const sourceContext = message.sourceContext
+
+  if (projectAgentExchange) {
+    return (
+      <ProjectAgentMessageRow
+        text={message.text}
+        fromLabel={fromLabel}
+        toLabel={toLabel}
+        outgoing={Boolean(activeAgentId && message.fromAgentId === activeAgentId)}
+        timestamp={message.timestamp}
+      />
+    )
+  }
 
   const deliveryLabel =
     message.requestedDelivery || message.acceptedMode

@@ -700,6 +700,29 @@ describe('SwarmManager', () => {
         (entry) => entry.type === 'conversation_message' && entry.source === 'project_agent_input' && entry.text === 'local delivery',
       ),
     ).toBe(true)
+
+    expect(
+      manager.getConversationHistory('manager').some(
+        (entry) =>
+          entry.type === 'agent_message' &&
+          entry.fromAgentId === 'manager' &&
+          entry.toAgentId === created.sessionAgent.agentId &&
+          entry.projectAgentExchange === true,
+      ),
+    ).toBe(true)
+
+    await manager.sendMessage(created.sessionAgent.agentId, 'manager', 'local reply', 'auto')
+
+    expect(
+      manager.getConversationHistory('manager').some(
+        (entry) =>
+          entry.type === 'agent_message' &&
+          entry.fromAgentId === created.sessionAgent.agentId &&
+          entry.toAgentId === 'manager' &&
+          entry.text === 'local reply' &&
+          entry.projectAgentExchange === true,
+      ),
+    ).toBe(true)
   })
 
   it('backs up local project-agent sidecars before linking to a repo source', async () => {

@@ -303,7 +303,7 @@ Agent Creator sessions cannot be promoted, forked, or created within the Cortex 
 
 **Session creation capability:** Some project agents can be given a **Can create sessions** toggle in Settings. When enabled, that project agent can create new manager sessions in the same profile. Those created sessions show a subtle `Created by @handle` attribution in the sidebar, and the creator can keep messaging them through the normal routing path.
 
-**Messaging:** When a project agent receives a message, it appears as a blue right-justified bubble in its chat (similar to user messages but with sender attribution). The project agent wakes up if idle and can respond by sending a message back to the sender. Project Agent sends are text-only; attachments are rejected.
+**Messaging:** Project Agent exchanges appear inline in both participating Builder conversations. Messages sent by the currently open session are right-aligned in deep blue; replies from the peer session are left-aligned in a lighter sky-blue, with both session names shown. Ordinary worker coordination remains in **All** rather than the normal Web conversation. The project agent wakes up if idle and can respond by sending a message back to the sender. Project Agent sends are text-only; attachments are rejected.
 
 **@mentions:** Type `@` in the chat composer to see autocomplete suggestions for local project agents in the current profile and shared project agents explicitly granted from another profile. Selecting one inserts a mention chip. This is purely UI convenience — the actual routing happens when your session agent interprets your message and decides to use `send_message_to_agent`.
 
