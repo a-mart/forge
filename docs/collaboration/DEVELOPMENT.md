@@ -16,6 +16,8 @@ Keep Collaboration-channel changes isolated from Builder behavior unless the tas
 | Remote Projects policy | `apps/backend/src/collaboration/remote-build-settings-service.ts`, `apps/backend/src/ws/http/routes/remote-build-settings-routes.ts` |
 | Auth middleware / remote HTTP allowlist | `apps/backend/src/collaboration/auth/collaboration-auth-middleware.ts` |
 | Remote Builder WS allowlist | `apps/backend/src/ws/builder-command-access.ts` |
+| Transcript-authorized chat artifacts | `apps/backend/src/ws/http/routes/chat-artifact-routes.ts`, `apps/backend/src/swarm/session/presented-chat-artifact.ts`, `apps/backend/src/ws/ws-api-proxy.ts` |
+| Workspace-scoped file reads | `apps/backend/src/ws/http/routes/file-routes.ts`, `apps/backend/src/ws/ws-file-access.ts` |
 | HTTP routes | `apps/backend/src/ws/http/routes/collaboration-routes.ts`, `apps/backend/src/ws/http/routes/collaboration/*` |
 | WS handler/commands | `apps/backend/src/ws/ws-handler.ts`, `apps/backend/src/ws/commands/parse-collab-command.ts`, `collab-command-handler.ts` |
 | WS fanout | `apps/backend/src/ws/collab-subscription-manager.ts` |
@@ -79,6 +81,19 @@ Never duplicate shared DTOs in app-local files when they belong in protocol.
 - Project presence means subscribed viewer identities only—never typing, editing, cursors, or locks.
 - Origin-scoped events must mutate only their `(originId, id)` store. Non-chat local-only surfaces must not silently derive endpoints from the active remote origin.
 - Unified order is local-instance-owned and retains offline/hidden remote anchors.
+
+### File-read authorization seams
+
+Keep the two read contracts distinct:
+
+- `GET`/`POST /api/read-file` is workspace-scoped. Relative paths resolve against the requested agent/worktree, absolute paths must remain inside its allowed roots, and symlinks that escape those roots are rejected. Outside-root failures return HTTP 403 with stable code `PATH_OUTSIDE_ALLOWED_ROOTS`; clients should branch on the code rather than matching the human-readable message.
+- `POST /api/chat-artifacts/read` is a narrower transcript-derived capability for an absolute path that an eligible assistant message actually presented as a Markdown link. It is not a general outside-CWD file API and must not be replaced with or folded into `/api/read-file`.
+
+The direct HTTP chat-artifact body is `{ transcriptAgentId, messageId, path }`. The WebSocket `api_proxy` body is exactly `{ messageId, path }`; the proxy derives `transcriptAgentId` from the socket's subscribed agent and must not accept a caller-supplied owner. Authorization requires a unique user-visible assistant `conversation_message` in an active, non-archived Builder manager/worker transcript, and the canonical native absolute path must appear in that message's parsed link tokens. Plain text, image tokens, templated/placeholder paths, Collaboration-channel transcripts, internal workers, external threads, and archived owners are ineligible.
+
+The artifact reader caps transcript scanning at 256 MiB and file content at 2 MiB. It rejects symlinks in every path component and verifies stable device/inode identity, size, and real path before and after a no-follow open/read so replacements fail closed. The stable no-follow identity contract is currently unavailable on Windows and returns HTTP 501 / `stable_identity_unsupported`. Preserve the typed error/status mapping when changing this path; do not collapse authorization, missing, conflict, size, unsupported, and internal failures into an ambiguous success or generic 404.
+
+Both routes are explicitly classified Remote Projects member surfaces behind the server `enabled` policy in the HTTP middleware, and the chat-artifact POST is separately allowlisted through the WS API proxy. That classification grants access to the authorization checks, not to arbitrary server files. New variants, trailing-slash aliases, or proxy shapes remain denied until they are deliberately classified and tested.
 
 ## SQLite migration policy
 

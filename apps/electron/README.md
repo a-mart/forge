@@ -19,7 +19,7 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 - **Forge resources** — `.stage/forge-resources/`, containing built-in skills, archetypes, operational prompts, specialists, static assets, and related runtime resources
 - **CLI runtime** — `.stage/cli/cli.js`, copied from `packages/cli/dist/cli.js` and packaged as `resources/cli/cli.js` for the desktop CLI shim
 - **Claude SDK runtime assets** — staged when available for native Claude Agent SDK support; if they are not present in the packaged build, the desktop app falls back to the Pi-proxied Anthropic path
-- **Cursor SDK runtime assets** — staged when available for native specialist support via `@cursor/sdk`; packaging preflights `@cursor/sdk`, `sqlite3`, and the platform-native binaries before the app ships
+- **Cursor SDK runtime assets** — staged when available for native manager and specialist support via `@cursor/sdk`; packaging preflights `@cursor/sdk`, `sqlite3`, and the platform-native binaries before the app ships
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
@@ -45,7 +45,7 @@ To run the Electron app in dev mode from the repository root:
 pnpm dev:electron
 ```
 
-This command starts the UI dev server (`pnpm dev:ui`) and waits for it to be ready, then launches Electron. The Electron window loads from `http://127.0.0.1:47188` (the dev server). The backend is forked as a child process on the default dev port (`47187`).
+This command starts the UI dev server (`pnpm dev:ui`) and waits for it to be ready, then launches Electron. The Electron window loads from `http://127.0.0.1:47188` (the dev server). Electron forks its backend child on `47287`, and the root script sets `VITE_FORGE_WS_URL=ws://127.0.0.1:47287` so the renderer targets that child.
 
 Changes to UI code hot-reload. Changes to Electron main process code (`src/main.ts`, etc.) require restarting the app.
 
@@ -187,7 +187,7 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 
 The Electron app uses port `47287` for the backend by default in packaged mode. You can override this by setting `FORGE_PORT` before launching the app.
 
-When running in dev mode via `pnpm dev:electron`, the backend uses the dev port (`47187`) instead.
+The root `pnpm dev:electron` workflow also uses backend port `47287`; only its UI remains on the Vite dev port `47188`.
 
 ## Platform Notes
 
