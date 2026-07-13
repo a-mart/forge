@@ -65,6 +65,7 @@ import {
   consumeForgePiCompactionFailure,
 } from "../compaction/forge-pi-compaction-extension.js";
 import { runtimeInputAssistantOutputPolicyFacts, type AssistantOutputPolicyFacts } from "./manager-assistant-output-target-metadata.js";
+import { isIntentionalNoReplyText } from "./manager-assistant-final-message.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -2256,10 +2257,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    const unhandledKind = classifyUnhandledAssistantMessage(assistantMessage);
-    if (!unhandledKind) {
+    const classifiedUnhandledKind = classifyUnhandledAssistantMessage(assistantMessage);
+    if (!classifiedUnhandledKind) {
       return false;
     }
+    const unhandledKind =
+      classifiedUnhandledKind === "hidden_text" &&
+      isIntentionalNoReplyText(extractTextFromMessageRecord(assistantMessage))
+        ? "empty"
+        : classifiedUnhandledKind;
 
     const trigger = classifyHiddenOutputTrigger(extractTextFromMessageRecord(triggerMessage));
     if (!trigger) {
@@ -2324,7 +2330,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     const attempt = previousAttempts + 1;
     const directiveAdded =
-      trigger.kind === "terminal_report" ? unhandledKind === "hidden_text" || attempt >= MAX_TERMINAL_REPORT_RESAMPLES : true;
+      trigger.kind === "terminal_report"
+        ? classifiedUnhandledKind === "hidden_text" || attempt >= MAX_TERMINAL_REPORT_RESAMPLES
+        : true;
     const redeliveryDirective =
       trigger.kind === "terminal_report" ? TERMINAL_REPORT_REDELIVERY_DIRECTIVE : DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE;
     const redeliveryText = directiveAdded ? `${trigger.text}\n\n${redeliveryDirective}` : trigger.text;

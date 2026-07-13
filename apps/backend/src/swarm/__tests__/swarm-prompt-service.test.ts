@@ -44,10 +44,12 @@ afterEach(async () => {
 
 function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
   expect(prompt).toContain("Worker reports require same-turn disposition");
-  expect(prompt).toContain("routine callbacks are not user update triggers");
+  expect(prompt).toContain("routine callbacks are not automatic user update triggers");
   expect(prompt).toContain("Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.");
-  expect(prompt).toContain("an accepted outcome/material blocker reached from an internal callback");
+  expect(prompt).toContain("even when callback metadata is internal; otherwise end with exactly `NO_REPLY`");
+  expect(prompt).toContain("After `speak_to_user` fully delivers a response, end the provider cycle with exactly `NO_REPLY`");
   expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
+  expect(prompt).not.toContain("an accepted outcome/material blocker reached from an internal callback");
 }
 
 async function makeConfig(): Promise<{ config: SwarmConfig; cleanup: () => Promise<void> }> {
@@ -221,8 +223,9 @@ Never use plain assistant text for user communication.`;
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user for explicit routed delivery or for an accepted outcome/material blocker reached from an internal worker callback. Do not use it for ordinary direct-web replies initiated by the user's current message."
+      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn came from a worker callback."
     );
+    expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
       prompt.indexOf("Never use plain assistant text for user communication.")
@@ -287,8 +290,9 @@ Custom project instruction: always mention the release train when summarizing de
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user for explicit routed delivery or for an accepted outcome/material blocker reached from an internal worker callback. Do not use it for ordinary direct-web replies initiated by the user's current message."
+      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn came from a worker callback."
     );
+    expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
       prompt.indexOf("Never use plain assistant text for user communication.")

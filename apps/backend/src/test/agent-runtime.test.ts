@@ -1970,6 +1970,54 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
   })
 
+  it('resamples exact NO_REPLY when a direct web user has not received any response', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_WEB_INPUT),
+      { role: 'assistant', content: [{ type: 'text', text: 'NO_REPLY' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${DIRECT_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('accepts exact NO_REPLY for an internal worker callback', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    const internalReport = 'WORKER REPORT: status: done\n[assistantOutputTarget] {"kind":"internal_only","reason":"worker_report_callback"}\nsummary: ready for manager acceptance.'
+    session.state.messages = [
+      userMessage(internalReport),
+      { role: 'assistant', content: [{ type: 'text', text: 'NO_REPLY' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('adds the corrective directive on the first retry after NO_REPLY for a routed worker report', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(TERMINAL_CALLBACK),
+      { role: 'assistant', content: [{ type: 'text', text: 'NO_REPLY' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_start' })
+    await (runtime as any).handleEvent({ type: 'agent_end', willRetry: false, messages: [] })
+    await (runtime as any).handleEvent({ type: 'agent_settled' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
   it('does not resample internal-only non-empty or empty assistant turns', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     const internalInput = '[assistantOutputTarget] {"mode":"internal_only"}\n\nSYSTEM: background notification'

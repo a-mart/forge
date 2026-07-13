@@ -28,7 +28,10 @@ import {
   type AssistantOutputTarget,
   type SessionTranscriptAssistantOutputTarget,
 } from "./manager-assistant-output-tracker.js";
-import { extractCleanManagerAssistantFinalMessage } from "./manager-assistant-final-message.js";
+import {
+  extractCleanManagerAssistantFinalMessage,
+  isIntentionalNoReplyManagerAssistantFinalMessage,
+} from "./manager-assistant-final-message.js";
 import {
   appendMessageRoutingReceipt,
   buildMessageRoutingReceipt,
@@ -96,6 +99,7 @@ export interface ManagerAssistantOutputRouteResult {
   target?: SessionTranscriptAssistantOutputTarget;
   decision: MessageRouteDecision;
   sourceWorkerId?: string;
+  intentionalSilenceAllowed?: boolean;
 }
 
 export interface RuntimeEventProjectionInput {
@@ -128,6 +132,8 @@ export class RuntimeEventProjector {
    * armed notice.  Reset at `agent_end`.
    */
   private readonly visibleManagerOutputAgentIds = new Set<string>();
+  /** Managers that deliberately ended the current internal run with exact `NO_REPLY`. */
+  private readonly intentionalSilenceManagerAgentIds = new Set<string>();
   /**
    * Monotonic watermark: epoch-ms of the last user-facing manager output this
    * projector actually emitted, per agent.  This is the single source of truth
@@ -175,7 +181,27 @@ export class RuntimeEventProjector {
     });
   }
 
-  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget, options?: { turnId?: string }): void {
+  activateManagerAssistantOutputTurn(
+    agentId: string,
+    target: AssistantOutputTarget,
+    options?: { turnId?: string; beginUserVisibleObligation?: boolean },
+  ): void {
+    // A silence grant belongs only to the callback/output obligation that
+    // produced it. Pi can steer a fresh direct-web user message into the same
+    // provider run, without another agent_start, so reset the grant when that
+    // new visible obligation becomes active.
+    if (target.kind === "session_transcript" && target.channel === "web") {
+      this.intentionalSilenceManagerAgentIds.delete(agentId);
+      if (options?.beginUserVisibleObligation) {
+        // Delivery state is run-scoped because most provider cycles belong to
+        // one obligation. A steered user message is the exception: it starts a
+        // new obligation inside the same run, so earlier output must not count
+        // as its answer or suppress its own passive backstop.
+        this.visibleManagerOutputAgentIds.delete(agentId);
+        this.pendingSilentManagerNotices.delete(agentId);
+        this.lastEmittedSilentNoticeTextByAgentId.delete(agentId);
+      }
+    }
     this.managerAssistantOutputTracker.activateTurn(agentId, target, options);
   }
 
@@ -272,6 +298,9 @@ export class RuntimeEventProjector {
 
   async projectEvent({ agentId, runtimeToken, event, transientTerminatedExpired = false }: RuntimeEventProjectionInput): Promise<void> {
     const descriptor = this.deps.descriptors.get(agentId);
+    if (descriptor?.role === "manager" && event.type === "agent_start") {
+      this.intentionalSilenceManagerAgentIds.delete(agentId);
+    }
     if (descriptor?.role === "worker" && !transientTerminatedExpired && isPositiveWorkerRuntimeProgressEvent(event)) {
       this.deps.cancelPendingTransientWorkerTerminatedError(agentId, "runtime_progress");
     }
@@ -359,6 +388,7 @@ export class RuntimeEventProjector {
       this.managerAssistantOutputTracker.clearTurn(agentId);
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
+      this.maybeAcceptIntentionalManagerSilence(agentId, descriptor, effectiveEvent);
       this.maybeProjectCleanManagerAssistantFinalMessage(agentId, descriptor, effectiveEvent, activeTurnId);
       // Presenting choices IS a visible response: the user sees an
       // interactive prompt even though no assistant text is emitted, so it
@@ -392,6 +422,36 @@ export class RuntimeEventProjector {
     }
 
     this.logManagerDebug(descriptor, event, effectiveEvent);
+  }
+
+  private maybeAcceptIntentionalManagerSilence(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    effectiveEvent: RuntimeSessionEvent,
+  ): void {
+    if (
+      descriptor?.role !== "manager" ||
+      !isIntentionalNoReplyManagerAssistantFinalMessage(effectiveEvent)
+    ) {
+      return;
+    }
+
+    const activeTarget = this.managerAssistantOutputTracker.getActiveTarget(agentId);
+    const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(agentId, descriptor, activeTarget);
+    const target = route
+      ? route.target
+      : this.deps.resolveManagerAssistantFinalOutputTarget(agentId, descriptor, activeTarget);
+    const alreadyDelivered = this.visibleManagerOutputAgentIds.has(agentId);
+    const protectedOrNonWebTurn = !target || target.channel !== "web";
+
+    if (alreadyDelivered || route?.intentionalSilenceAllowed || protectedOrNonWebTurn) {
+      this.intentionalSilenceManagerAgentIds.add(agentId);
+      this.pendingSilentManagerNotices.delete(agentId);
+    } else {
+      // An exact sentinel on a newly visible, unanswered obligation must not
+      // inherit permission from an earlier callback in the same provider run.
+      this.intentionalSilenceManagerAgentIds.delete(agentId);
+    }
   }
 
   private maybeProjectCleanManagerAssistantFinalMessage(
@@ -497,6 +557,15 @@ export class RuntimeEventProjector {
       return;
     }
 
+    if (this.intentionalSilenceManagerAgentIds.has(agentId)) {
+      this.pendingSilentManagerNotices.delete(agentId);
+      if (effectiveEvent.type === "agent_end") {
+        this.intentionalSilenceManagerAgentIds.delete(agentId);
+        this.visibleManagerOutputAgentIds.delete(agentId);
+      }
+      return;
+    }
+
     if (turnId && this.visibleManagerOutputTurnIds.has(turnId)) {
       this.visibleManagerOutputTurnIds.delete(turnId);
       this.pendingSilentManagerNotices.delete(agentId);
@@ -562,6 +631,7 @@ export class RuntimeEventProjector {
       this.visibleManagerOutputTurnIds.add(turnId);
     }
     this.visibleManagerOutputAgentIds.add(agentId);
+    this.intentionalSilenceManagerAgentIds.delete(agentId);
     this.pendingSilentManagerNotices.delete(agentId);
     this.lastEmittedSilentNoticeTextByAgentId.delete(agentId);
     const at = Date.parse(this.deps.now());

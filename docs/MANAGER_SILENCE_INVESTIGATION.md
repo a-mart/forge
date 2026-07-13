@@ -4,12 +4,10 @@
 **Status:** Root cause identified; recommendations pending decision
 **Primary evidence:** `~/.forge/profiles/rapa-teams-gateway/sessions/mammo-sch` (gpt-5.5 manager), cross-session scan of all profiles, git history
 
-> **Current scope (as of `d0c37f95`):** This document preserves the original investigation and later
-> design evidence. Routine direct-web worker callbacks are now intentionally internal manager decision
-> turns and are eligible for neither empty-turn resampling nor the worker-outcome backstop. Raw terminal
-> reports remain available in the manager's All view; the manager must assess them, perform focused
-> acceptance, and explicitly deliver an accepted outcome or material blocker. Silent-turn notices and
-> outcome backstops remain limited to independently eligible explicit web-visible obligations; see
+> **Current behavior (2026-07-13):** This document preserves the original investigation and later design
+> evidence. Raw worker reports remain internal and available in All, while a substantive manager final
+> from an owned-worker callback renders normally in an eligible Builder web session. Exact `NO_REPLY`
+> expresses intentional silence; protected/non-web routes remain explicit. See
 > [Manager Empty-Turn Fix](MANAGER_EMPTY_TURN_FIX.md).
 
 ---

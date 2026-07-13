@@ -1722,7 +1722,7 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('keeps routine direct-web manager worker callbacks internal until explicit acceptance delivery', async () => {
+  it('shows substantive manager finals from routine direct-web worker callbacks', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1742,10 +1742,12 @@ describe('SwarmManager', () => {
     expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
 
     await manager.publishToUser('manager', 'Health check accepted.', 'speak_to_user')
-    await emitCleanAssistantFinal(manager, 'manager', 'Duplicate callback closeout must remain internal.')
+    await emitCleanAssistantFinal(manager, 'manager', 'The full health-check report is ready.')
     await manager.handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
-    expect(assistantOutputTexts(manager, 'manager')).toEqual([])
+    expect(assistantOutputTexts(manager, 'manager')).toEqual([
+      'The full health-check report is ready.',
+    ])
     expect(
       manager.getConversationHistory('manager').filter(
         (entry) =>
@@ -1755,6 +1757,10 @@ describe('SwarmManager', () => {
       ),
     ).toEqual([
       expect.objectContaining({ source: 'speak_to_user', text: 'Health check accepted.' }),
+      expect.objectContaining({
+        source: 'assistant_output',
+        text: 'The full health-check report is ready.',
+      }),
     ])
   })
 
