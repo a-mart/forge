@@ -330,7 +330,11 @@ export class SwarmRuntimeController {
     this.getRuntimeEventProjector().clearTrackedToolPaths(agentId);
   }
 
-  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget, options?: { turnId?: string }): void {
+  activateManagerAssistantOutputTurn(
+    agentId: string,
+    target: AssistantOutputTarget,
+    options?: { turnId?: string; beginUserVisibleObligation?: boolean },
+  ): void {
     this.getRuntimeEventProjector().activateManagerAssistantOutputTurn(agentId, target, options);
   }
 

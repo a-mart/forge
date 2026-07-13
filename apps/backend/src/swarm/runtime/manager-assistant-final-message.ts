@@ -12,6 +12,16 @@ export interface CleanManagerAssistantFinalMessage {
   text: string;
 }
 
+export const INTENTIONAL_NO_REPLY_TEXT = "NO_REPLY";
+
+export function isIntentionalNoReplyText(text: string | null | undefined): boolean {
+  return text?.trim() === INTENTIONAL_NO_REPLY_TEXT;
+}
+
+export function isIntentionalNoReplyManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {
+  return isIntentionalNoReplyText(extractEligibleManagerAssistantFinalText(event));
+}
+
 export function isCleanManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {
   return extractCleanManagerAssistantFinalMessage(event) !== undefined;
 }
@@ -19,6 +29,15 @@ export function isCleanManagerAssistantFinalMessage(event: RuntimeSessionEvent):
 export function extractCleanManagerAssistantFinalMessage(
   event: RuntimeSessionEvent,
 ): CleanManagerAssistantFinalMessage | undefined {
+  const text = extractEligibleManagerAssistantFinalText(event);
+  if (!text || isIntentionalNoReplyText(text)) {
+    return undefined;
+  }
+
+  return { text };
+}
+
+function extractEligibleManagerAssistantFinalText(event: RuntimeSessionEvent): string | undefined {
   if (event.type !== "message_end") {
     return undefined;
   }
@@ -40,7 +59,7 @@ export function extractCleanManagerAssistantFinalMessage(
     return undefined;
   }
 
-  return { text };
+  return text;
 }
 
 export function messageHasIneligibleStopOrError(message: unknown): boolean {

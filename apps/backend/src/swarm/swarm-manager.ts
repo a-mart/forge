@@ -524,6 +524,7 @@ interface PendingInboundTurnContext {
   routeOrigin?: MessageRouteOrigin;
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
   workerReportSourceAgentId?: string;
+  normalBuilderWorkerCallback?: boolean;
   rootTurnId?: string;
   parentRootTurnId?: string;
   runtimeMessageText?: string;
@@ -557,6 +558,7 @@ interface ActiveMessageRouteContext {
   origin: MessageRouteOrigin;
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
   workerReportSourceAgentId?: string;
+  normalBuilderWorkerCallback?: boolean;
   collaboration?: boolean;
 }
 
@@ -638,6 +640,7 @@ const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 // frame for a final report that requires closing the loop with the user.
 const WORKER_REPORT_MESSAGE_PREFIX = "WORKER REPORT: ";
 const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked|completed)\b/i;
+const WORKER_COMPLETION_REPORT_BODY_PATTERN = /^SYSTEM:\s*##\s*Completion Report:\s*\S/i;
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this specific project/profile.
 
 Cortex may already have captured durable cross-project user defaults such as preferred name, technical level, and response preferences.
@@ -4849,6 +4852,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const assistantOutputWorkerReportSourceAgentId = isAssistantOutputEligibleWorkerReport
       ? this.resolveAssistantOutputWorkerReportSourceId(assistantOutputInput)
       : undefined;
+    const inheritedWorkerTarget = sender.role === "worker"
+      ? this.inheritedAssistantOutputTargetByWorkerId.get(sender.agentId)
+      : undefined;
+    const normalBuilderWorkerCallback =
+      isAssistantOutputEligibleWorkerReport &&
+      target.role === "manager" &&
+      sender.role === "worker" &&
+      sender.managerId === target.agentId &&
+      (
+        inheritedWorkerTarget === undefined ||
+        inheritedWorkerTarget.kind === "internal_only" ||
+        (inheritedWorkerTarget.kind === "session_transcript" && inheritedWorkerTarget.channel === "web")
+      ) &&
+      this.canProjectManagerFinalTextToWebByDefault(
+        assistantOutputInput,
+        inheritedWorkerTarget ?? assistantOutputTarget,
+      );
     // Keep the runtime input marker as routing guidance for the manager, but derive
     // assistant_output visibility from the target manager/session context.
     const assistantOutputProjectionTarget = this.resolveAssistantOutputProjectionTargetForAgentMessage(
@@ -4894,6 +4914,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         : origin,
       internalDeliveryKind: options?.internalDeliveryKind,
       workerReportSourceAgentId: assistantOutputWorkerReportSourceAgentId,
+      normalBuilderWorkerCallback,
       rootTurnId: observabilityInput?.rootTurnId,
       parentRootTurnId,
       runtimeMessageText: extractRuntimeMessageText(modelMessage),
@@ -7147,12 +7168,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         origin: nextContext?.routeOrigin ?? "internal",
         ...(nextContext?.internalDeliveryKind ? { internalDeliveryKind: nextContext.internalDeliveryKind } : {}),
         ...(nextContext?.workerReportSourceAgentId ? { workerReportSourceAgentId: nextContext.workerReportSourceAgentId } : {}),
+        ...(nextContext?.normalBuilderWorkerCallback ? { normalBuilderWorkerCallback: true } : {}),
         // Collab-CHANNEL turns only: builder-attributed turns carry an author
         // without channelId and must keep session-transcript routing (Wave R).
         ...(nextContext?.collaborationAuthor?.channelId ? { collaboration: true } : {}),
       });
       this.runtimeController.activateManagerAssistantOutputTurn(agentId, assistantOutputProjectionTarget, {
         turnId: nextContext?.turnId,
+        beginUserVisibleObligation: nextContext?.source === "user_input",
       });
       if (assistantOutputProjectionTarget.kind === "session_transcript" && assistantOutputProjectionTarget.channel === "web") {
         this.activeWebAssistantOutputTurnByManagerId.set(agentId, cloneSessionTranscriptAssistantOutputTarget(assistantOutputProjectionTarget));
@@ -7262,7 +7285,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.activeWebAssistantOutputTurnByManagerId.delete(agentId);
       this.expireActiveWebAssistantOutputTargetIfUncontinued(agentId);
       this.activeObservabilityRootByAgentId.delete(agentId);
-      this.activeMessageRouteContextByManagerId.delete(agentId);
+      // `turn_end` closes one provider cycle, not necessarily the whole manager
+      // run. Keep the narrow callback route while same-run tool/acceptance work
+      // continues so a later substantive final still reaches normal Builder
+      // chat. `agent_end` and the next inbound context clear or replace it.
+      if (!this.activeMessageRouteContextByManagerId.get(agentId)?.normalBuilderWorkerCallback) {
+        this.activeMessageRouteContextByManagerId.delete(agentId);
+      }
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
@@ -7355,6 +7384,43 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }));
 
     if (!decision.visible || decision.channel !== "web") {
+      // Owned workers are always behind the scenes in a normal Builder chat,
+      // but the manager's answer still belongs to that chat. The runtime input
+      // remains marked internal so the model may deliberately choose
+      // `NO_REPLY`; only a substantive final crosses this narrow projection
+      // seam. Protected and non-web handoffs never set this flag.
+      if (
+        routeContext?.normalBuilderWorkerCallback &&
+        targetForRouting.kind === "internal_only" &&
+        this.canProjectManagerFinalTextToWebByDefault(
+          { sender: manager, target: manager },
+          { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+        )
+      ) {
+        const webTarget: SessionTranscriptAssistantOutputTarget = {
+          kind: "session_transcript",
+          channel: "web",
+          sourceContext: { channel: "web" },
+        };
+        const closeoutDecision = this.messageRouter.resolve(this.buildMessageRouteProvenance({
+          manager,
+          sender: manager,
+          target: manager,
+          targetKind: "session_transcript",
+          sourceContext: webTarget.sourceContext,
+          routeContext,
+        }));
+        if (!closeoutDecision.visible || closeoutDecision.channel !== "web") {
+          return { decision };
+        }
+        return {
+          decision: closeoutDecision,
+          ...(routeContext.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
+          target: webTarget,
+          intentionalSilenceAllowed: true,
+        };
+      }
+
       // Peer-routed finals on an interactive session render to its web
       // transcript: the only way a plain web manager receives peer input is as
       // a reply to an exchange it initiated (project-agent references), and
@@ -7440,10 +7506,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
    * Robustness / false-positive guards (mirrors the resample gate, plus the
    * routing rule the passive projector backstop already uses):
    * - Only fires for a running manager whose active route for this report
-   *   explicitly resolves to a VISIBLE WEB session transcript. Routine worker
-   *   callbacks are internal and never qualify; peer/Telegram obligations must
-   *   not leak to web. `resolveManagerAssistantFinalOutputRoute` returns a web
-   *   `target` only when the router decided visible && channel === "web".
+   *   explicitly resolves to a VISIBLE WEB session transcript that requires a
+   *   response. Normal Builder worker callbacks allow deliberate `NO_REPLY`
+   *   and do not qualify; peer/Telegram obligations must not leak to web.
    * - Never echoes the raw report (it still carries the internal
    *   `[assistantOutputTarget]` metadata line and internal framing). We surface
    *   only the mechanically-parsed status, manager-attributed, with a pointer to
@@ -7465,9 +7530,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.activeAssistantOutputTargetByManagerId.get(agentId),
     );
     const target = route.target;
-    if (!target || target.channel !== "web") {
+    if (!target || target.channel !== "web" || route.intentionalSilenceAllowed) {
       // Non-web (peer/Telegram/internal) obligation — do not surface to the web
-      // user. Fall back to the existing passive notice.
+      // user. A normal Builder worker callback also permits exact NO_REPLY, so
+      // this emergency backstop must not override that deliberate silence.
+      // Fall back to the existing passive notice for accidental empty turns.
       return false;
     }
 
@@ -7563,7 +7630,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }): AssistantOutputTarget {
     const reportLike =
       input.target.role === "manager" &&
-      (isWorkerReportRuntimeMessage(input.modelMessage) || isWorkerStatusCloseoutMessage(input.rawMessage));
+      (
+        isWorkerReportRuntimeMessage(input.modelMessage) ||
+        isWorkerStatusCloseoutMessage(input.rawMessage) ||
+        (input.sender.role === "worker" && isWorkerCompletionReportMessage(input.rawMessage))
+      );
     if (!this.isAssistantOutputEligibleWorkerReportMessage(input)) {
       return reportLike
         ? { kind: "internal_only", reason: "missing_worker_report_provenance" }
@@ -7576,10 +7647,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     // A worker callback is a manager decision point, not another direct-web
-    // user turn. Keep ordinary web callbacks internal so bare acknowledgments
-    // cannot become status chatter; the manager explicitly publishes only an
-    // accepted outcome or material blocker. Protected/non-web handoffs retain
-    // their explicit-tool contract, and reports without a handoff stay quiet.
+    // user turn. Keep the runtime marker internal so the model may use exact
+    // NO_REPLY for routine callbacks; the projection layer still surfaces a
+    // substantive manager final in normal Builder chat. Protected/non-web
+    // handoffs retain their explicit-tool contract.
     const inheritedTarget = this.inheritedAssistantOutputTargetByWorkerId.get(sourceWorkerId);
     if (inheritedTarget?.kind === "session_transcript" && inheritedTarget.channel === "web") {
       return { kind: "internal_only", reason: "worker_report_callback" };
@@ -7900,7 +7971,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
-    return isWorkerReportRuntimeMessage(input.modelMessage) || isWorkerStatusCloseoutMessage(input.rawMessage);
+    return (
+      isWorkerReportRuntimeMessage(input.modelMessage) ||
+      isWorkerStatusCloseoutMessage(input.rawMessage) ||
+      isWorkerCompletionReportMessage(input.rawMessage)
+    );
   }
 
   private resolveAssistantOutputWorkerReportSourceId(input: {
@@ -11091,6 +11166,10 @@ function isWorkerReportRuntimeMessage(message: string | RuntimeUserMessage): boo
 
 function isWorkerStatusCloseoutMessage(message: string | undefined): boolean {
   return typeof message === "string" && TERMINAL_WORKER_REPORT_BODY_PATTERN.test(message.trimStart());
+}
+
+function isWorkerCompletionReportMessage(message: string | undefined): boolean {
+  return typeof message === "string" && WORKER_COMPLETION_REPORT_BODY_PATTERN.test(message.trimStart());
 }
 
 function appendAssistantOutputTargetMetadataToRuntimeMessage(

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtime/runtime-event-projector.js";
 import {
   extractCleanManagerAssistantFinalMessage,
+  isIntentionalNoReplyManagerAssistantFinalMessage,
   isCleanManagerAssistantFinalMessage,
 } from "../runtime/manager-assistant-final-message.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
@@ -159,6 +160,18 @@ describe("clean manager assistant final message detection", () => {
         stopReason: "stop",
       },
     })?.text).toBe("Visible final.");
+  });
+
+  it("recognizes exact NO_REPLY as intentional silence instead of a clean final", () => {
+    const event = assistantEnd("  NO_REPLY  ", { stopReason: "stop" });
+
+    expect(isIntentionalNoReplyManagerAssistantFinalMessage(event)).toBe(true);
+    expect(isCleanManagerAssistantFinalMessage(event)).toBe(false);
+    expect(extractCleanManagerAssistantFinalMessage(event)).toBeUndefined();
+
+    expect(isIntentionalNoReplyManagerAssistantFinalMessage(
+      assistantEnd("NO_REPLY because this is internal", { stopReason: "stop" }),
+    )).toBe(false);
   });
 
   it("rejects empty, error, aborted, tool-call, and tool-result finals", () => {
@@ -410,6 +423,209 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
     );
+  });
+
+  it("accepts exact NO_REPLY for an internal callback without rendering text or a silent-turn notice", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:terminal_worker_report_closeout",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      intentionalSilenceAllowed: true,
+    }));
+    projector.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "internal_only",
+      reason: "worker_report_callback",
+    });
+
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("NO_REPLY", { stopReason: "stop" }) });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not carry an internal callback silence grant into a steered direct-web turn", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    let activeTurnId = "manager-1:callback";
+    vi.mocked(deps.getActiveTurnId).mockImplementation(() => activeTurnId);
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn((_agentId, _descriptor, activeTarget) => {
+      if (activeTarget?.kind === "internal_only") {
+        return {
+          decision: {
+            visible: true,
+            decision: "render",
+            channel: "web",
+            reasonCode: "render:terminal_worker_report_closeout",
+            targetKind: "session_transcript",
+          },
+          target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+          sourceWorkerId: "worker-1",
+          intentionalSilenceAllowed: true,
+        } as const;
+      }
+      return {
+        decision: {
+          visible: true,
+          decision: "render",
+          channel: "web",
+          reasonCode: "render:user_web",
+          targetKind: "session_transcript",
+        },
+        target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      } as const;
+    });
+
+    // One provider run: an internal callback deliberately stays silent...
+    projector.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "internal_only",
+      reason: "worker_report_callback",
+    });
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("NO_REPLY", { stopReason: "stop" }) });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+    // ...then a fresh direct user message is steered into that same run and
+    // receives no response. The earlier silence grant must not hide this turn.
+    activeTurnId = "manager-1:user";
+    projector.activateManagerAssistantOutputTurn(
+      manager.agentId,
+      { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      { turnId: activeTurnId, beginUserVisibleObligation: true },
+    );
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("   ", { stopReason: "stop" }) });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      turnId: "manager-1:user",
+      role: "system",
+      source: "system",
+      text: "The manager completed this turn without a visible response.",
+    }));
+  });
+
+  it("does not count output from an earlier callback as the answer to a steered direct-web turn", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    let activeTurnId = "manager-1:callback";
+    vi.mocked(deps.getActiveTurnId).mockImplementation(() => activeTurnId);
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn((_agentId, _descriptor, activeTarget) => {
+      const callback = activeTarget?.kind === "internal_only";
+      return {
+        decision: {
+          visible: true,
+          decision: "render",
+          channel: "web",
+          reasonCode: callback ? "render:terminal_worker_report_closeout" : "render:user_web",
+          targetKind: "session_transcript",
+        },
+        target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+        ...(callback ? { sourceWorkerId: "worker-1", intentionalSilenceAllowed: true } : {}),
+      } as const;
+    });
+
+    projector.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "internal_only",
+      reason: "worker_report_callback",
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: assistantEnd("The delegated work is complete.", { stopReason: "stop" }),
+    });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+    activeTurnId = "manager-1:user";
+    projector.activateManagerAssistantOutputTurn(
+      manager.agentId,
+      { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      { turnId: activeTurnId, beginUserVisibleObligation: true },
+    );
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("   ", { stopReason: "stop" }) });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
+
+    const emitted = vi.mocked(deps.conversationProjector.emitConversationMessage).mock.calls.map(([event]) => event);
+    expect(emitted).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      source: "assistant_output",
+      text: "The delegated work is complete.",
+    }));
+    expect(emitted).toContainEqual(expect.objectContaining({
+      turnId: "manager-1:user",
+      role: "system",
+      source: "system",
+      text: "The manager completed this turn without a visible response.",
+    }));
+  });
+
+  it("treats exact NO_REPLY on an unanswered direct user turn as a missing response", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("NO_REPLY", { stopReason: "stop" }) });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: "system",
+      source: "system",
+      text: "The manager completed this turn without a visible response.",
+    }));
+  });
+
+  it("suppresses exact NO_REPLY after explicit delivery while keeping substantive trailing finals visible", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+    projector.markExplicitManagerAssistantOutput(manager.agentId);
+
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("NO_REPLY", { stopReason: "stop" }) });
+    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("A distinct closeout.", { stopReason: "stop" }) });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    const emitted = vi.mocked(deps.conversationProjector.emitConversationMessage).mock.calls.map(([event]) => event);
+    expect(emitted).toEqual([expect.objectContaining({
+      role: "assistant",
+      source: "assistant_output",
+      text: "A distinct closeout.",
+    })]);
   });
 
   it("advances the user-facing watermark on visible output and via noteUserFacingManagerDelivery", async () => {

@@ -60,6 +60,21 @@ describe("ManagerAssistantOutputTracker", () => {
     expect(emitted).toEqual([]);
   });
 
+  it("never turns exact NO_REPLY into progress when tool work follows", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+
+    tracker.handleRuntimeEvent("manager-1", assistantMessageUpdate("NO_REPLY"));
+    tracker.handleRuntimeEvent("manager-1", {
+      type: "tool_execution_start",
+      toolName: "shell",
+      toolCallId: "shell-1",
+      args: {},
+    });
+
+    expect(emitted).toEqual([]);
+  });
+
   it("does not project peer, external, explicit-tool, or missing target turns", () => {
     const targets: AssistantOutputTarget[] = [
       { kind: "peer_agent", fromAgentId: "agent-2" },
