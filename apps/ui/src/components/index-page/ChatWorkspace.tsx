@@ -116,6 +116,7 @@ export function ChatWorkspace({
             <MessageList ref={messageListRef} {...messageListProps} />
           </div>
 
+          <PlanDockIndicator snapshot={planSnapshot} />
           {workerPillBarProps ? <WorkerPillBar {...workerPillBarProps} /> : null}
           {workerBackBarProps ? <WorkerBackBar {...workerBackBarProps} /> : null}
 
@@ -123,7 +124,6 @@ export function ChatWorkspace({
             <TerminalPanel {...terminalPanelProps} />
           </div>
 
-          <PlanDockIndicator snapshot={planSnapshot} />
           <MessageInput ref={messageInputRef} {...messageInputProps} />
         </>
       )}

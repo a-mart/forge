@@ -23,7 +23,7 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
         })()
 
   return (
-    <div className="relative z-20 flex shrink-0 justify-center bg-background px-3 pt-1">
+    <div className="relative z-20 flex shrink-0 justify-center bg-background px-3 pb-1 pt-1">
       <Popover>
         <PopoverTrigger asChild>
           <Button
