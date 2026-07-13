@@ -49,7 +49,10 @@ function sanitizeOverrideEntry(value: unknown): ModelOverrideEntry | null {
     if (typeof candidate.modelSpecificInstructions !== "string") {
       return null;
     }
-    next.modelSpecificInstructions = normalizeModelSpecificInstructions(candidate.modelSpecificInstructions);
+    const normalizedInstructions = normalizeModelSpecificInstructions(candidate.modelSpecificInstructions);
+    if (normalizedInstructions.length > 0) {
+      next.modelSpecificInstructions = normalizedInstructions;
+    }
   }
 
   return next;
@@ -126,7 +129,5 @@ export async function resetAllModelOverrides(dataDir: string): Promise<void> {
 }
 
 function normalizeModelSpecificInstructions(value: string): string {
-  const normalized = value.replace(/\r\n?/g, "\n").trim();
-  return normalized.length > 0 ? normalized : "";
+  return value.replace(/\r\n?/g, "\n").trim();
 }
-

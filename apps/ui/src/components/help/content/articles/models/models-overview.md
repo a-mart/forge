@@ -17,6 +17,4 @@ Three things affect the quality and speed of what you get back:
 
 ## Model-specific instructions
 
-Each model card in Settings > Models has a "Model-specific instructions" field. These are prompt instructions automatically injected into the manager prompt when that model is active. Built-in defaults exist for GPT-5 and Claude families. You can override, clear (to suppress defaults), or leave unchanged to use the built-in.
-
-Start with the defaults. Adjust when you notice a task is too slow, too expensive, or not producing good enough results.
+Each model card in Settings > Models has a "Model-specific instructions" field. User-authored instructions are injected into the manager prompt when that model is active. Forge does not add built-in model-specific instructions. Leave the field empty to use only the manager prompt, or add a narrow instruction when a particular model needs different behavior. Reset removes the custom instructions.

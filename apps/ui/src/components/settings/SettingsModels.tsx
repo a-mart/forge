@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
 import {
   FORGE_MODEL_CATALOG,
-  getBuiltInModelSpecificInstructions,
   getCatalogModelKey,
   getDefaultManagerEnabled,
   isCatalogModelManagerSupported,
@@ -61,12 +60,8 @@ function getEffectiveEnabled(model: ForgeModelDefinition, override?: ModelOverri
   return override?.enabled ?? model.enabledByDefault
 }
 
-function getBuiltInInstructionsForModel(model: ForgeModelDefinition): string | null {
-  return getBuiltInModelSpecificInstructions(model.familyId)
-}
-
-function getActiveModelSpecificInstructions(model: ForgeModelDefinition, override?: ModelOverrideEntry): string {
-  return override?.modelSpecificInstructions ?? getBuiltInInstructionsForModel(model) ?? ''
+function getActiveModelSpecificInstructions(override?: ModelOverrideEntry): string {
+  return override?.modelSpecificInstructions ?? ''
 }
 
 function hasOverrideField<K extends keyof ModelOverrideEntry>(
@@ -145,7 +140,7 @@ function ModelCard({
   onCardSaveEnd?: (modelKey: string) => void
 }) {
   const [contextCapDraft, setContextCapDraft] = useState(override?.contextWindowCap?.toString() ?? '')
-  const [instructionsDraft, setInstructionsDraft] = useState(getActiveModelSpecificInstructions(model, override))
+  const [instructionsDraft, setInstructionsDraft] = useState(getActiveModelSpecificInstructions(override))
   const [isSavingEnabled, setIsSavingEnabled] = useState(false)
   const [isSavingManagerEnabled, setIsSavingManagerEnabled] = useState(false)
   const [isSavingCap, setIsSavingCap] = useState(false)
@@ -155,7 +150,6 @@ function ModelCard({
 
   const enabled = getEffectiveEnabled(model, override)
   const effectiveContextWindow = getEffectiveContextWindow(model, override)
-  const builtInInstructions = getBuiltInInstructionsForModel(model)
   const hasAnyOverride = Boolean(override && Object.keys(override).length > 0)
 
   // Manager availability
@@ -163,10 +157,8 @@ function ModelCard({
   const defaultManagerEnabledValue = getDefaultManagerEnabled(model, 'change') || getDefaultManagerEnabled(model, 'create')
   const effectiveManagerEnabled = enabled && managerSupported && (override?.managerEnabled ?? defaultManagerEnabledValue)
   const instructionsStatusText = hasOverrideField(override, 'modelSpecificInstructions')
-    ? 'Custom override active'
-    : builtInInstructions
-      ? 'Using built-in default'
-      : 'No built-in instructions for this model'
+    ? 'Custom instructions active'
+    : 'No custom instructions for this model'
 
   useEffect(() => {
     setContextCapDraft(override?.contextWindowCap?.toString() ?? '')
@@ -174,7 +166,7 @@ function ModelCard({
 
   const overrideModelSpecificInstructions = override?.modelSpecificInstructions
   useEffect(() => {
-    setInstructionsDraft(getActiveModelSpecificInstructions(model, override))
+    setInstructionsDraft(getActiveModelSpecificInstructions(override))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally depend on the specific field, not the full override object
   }, [model, modelKey, overrideModelSpecificInstructions])
 
@@ -249,11 +241,7 @@ function ModelCard({
     setError(null)
 
     const normalizedDraft = instructionsDraft.replace(/\r\n?/g, '\n')
-    const nextInstructions = normalizedDraft.trim().length === 0
-      ? ''
-      : builtInInstructions !== null && normalizedDraft === builtInInstructions
-        ? null
-        : normalizedDraft
+    const nextInstructions = normalizedDraft.trim().length === 0 ? null : normalizedDraft
 
     setIsSavingInstructions(true)
     onCardSaveStart?.(modelKey)
@@ -266,11 +254,11 @@ function ModelCard({
       setIsSavingInstructions(false)
       onCardSaveEnd?.(modelKey)
     }
-  }, [builtInInstructions, clientOrWsUrl, instructionsDraft, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
+  }, [clientOrWsUrl, instructionsDraft, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
 
   const resetModelSpecificInstructions = useCallback(async () => {
     setError(null)
-    setInstructionsDraft(builtInInstructions ?? '')
+    setInstructionsDraft('')
 
     setIsSavingInstructions(true)
     onCardSaveStart?.(modelKey)
@@ -283,7 +271,7 @@ function ModelCard({
       setIsSavingInstructions(false)
       onCardSaveEnd?.(modelKey)
     }
-  }, [builtInInstructions, clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
+  }, [clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
 
   const resetEnabled = useCallback(async () => {
     setError(null)
@@ -491,13 +479,13 @@ function ModelCard({
             </div>
             <p className="text-xs text-muted-foreground">{instructionsStatusText}</p>
             <p className="text-xs text-muted-foreground">
-              Delete the text and click Apply to suppress instructions for this model. Reset restores the built-in default.
+              Optional instructions are added to the manager prompt only when this model is active. Reset removes them.
             </p>
             <Textarea
               value={instructionsDraft}
               onChange={(event) => setInstructionsDraft(event.target.value)}
               rows={5}
-              placeholder={builtInInstructions ? undefined : 'No built-in instructions for this model.'}
+              placeholder="Optional instructions for this model."
               className="resize-y font-mono text-xs"
             />
             <div className="flex flex-wrap items-center gap-2">

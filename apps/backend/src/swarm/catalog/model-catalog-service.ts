@@ -1,6 +1,5 @@
 import {
   FORGE_MODEL_CATALOG,
-  getBuiltInModelSpecificInstructions,
   getCatalogFamily,
   getCatalogModel,
   getCatalogModelsByFamily,
@@ -188,12 +187,7 @@ export class ModelCatalogService {
       return overrideValue.length > 0 ? overrideValue : undefined;
     }
 
-    const family = getCatalogFamily(model.familyId);
-    if (!family) {
-      return undefined;
-    }
-
-    return getBuiltInModelSpecificInstructions(family.familyId) ?? undefined;
+    return undefined;
   }
 
   supportsNativeWebSearch(modelId: string, provider?: string): boolean {

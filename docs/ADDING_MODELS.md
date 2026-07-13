@@ -1,6 +1,6 @@
 # Adding a new OpenAI Codex model
 
-Forge treats the model catalog as the source of truth. Adding a new Pi-side OpenAI Codex model is not a one-file change. In practice you update the catalog first, then the prompt instructions, then the backend fallbacks that assume a known set of Codex models.
+Forge treats the model catalog as the source of truth. Adding a new Pi-side OpenAI Codex model is not a one-file change. In practice you update the catalog first, then the backend fallbacks that assume a known set of Codex models.
 
 This guide is the minimal path for adding a new model like GPT-5.5.
 
@@ -56,25 +56,7 @@ A few practical notes:
 - Mirror an existing same-provider model when you are unsure about shape or defaults. For GPT-5.5, GPT-5.4 is the closest template.
 - Keep the catalog entry consistent with the rest of the provider family. If the upstream model is a new top-tier Codex option, the default reasoning level usually stays `xhigh`.
 
-## 2. Update model-specific prompt instructions in `packages/protocol/src/model-prompt-instructions.ts`
-
-Add the new family ID to the GPT-5 instruction check.
-
-The built-in GPT-5 instruction block is selected with a `normalizedFamilyId.startsWith(...)` condition. Make sure the new family is included there, for example:
-
-```ts
-if (
-  normalizedFamilyId.startsWith('pi-codex') ||
-  normalizedFamilyId.startsWith('pi-5.4') ||
-  normalizedFamilyId.startsWith('pi-5.5')
-) {
-  return GPT5_MODEL_SPECIFIC_INSTRUCTIONS;
-}
-```
-
-This keeps the runtime prompt guidance aligned with the new family.
-
-## 3. Update project-agent analysis fallbacks in `apps/backend/src/swarm/swarm-manager.ts`
+## 2. Update project-agent analysis fallbacks in `apps/backend/src/swarm/swarm-manager.ts`
 
 Project-agent analysis has a hard-coded candidate list and a hard-coded error message.
 
@@ -82,13 +64,13 @@ Add the new Codex model to the candidate list in priority order. For GPT-5.5, th
 
 Also update the fallback error text so it matches the new tried chain. Otherwise failures will report stale model names.
 
-## 4. Update Codex capacity fallback ordering in `apps/backend/src/swarm/swarm-manager-utils.ts`
+## 3. Update Codex capacity fallback ordering in `apps/backend/src/swarm/swarm-manager-utils.ts`
 
 Add the new model to `OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN`.
 
 That chain drives the capacity fallback path for OpenAI Codex models. If you add a model to the catalog but forget this chain, fallback logic can stop at the wrong model or skip the new one entirely.
 
-## 5. Update specialist preset routing in `apps/backend/src/swarm/agents/specialists/specialist-registry.ts`
+## 4. Update specialist preset routing in `apps/backend/src/swarm/agents/specialists/specialist-registry.ts`
 
 If the new model is the new top-tier Codex option, update the `complexCodingPreset` family reference.
 
@@ -142,7 +124,6 @@ Backend tests resolve the built `dist` export, so skipping the protocol build ca
 These are the test files that usually need an update when a new model is added:
 
 - `packages/protocol/src/__tests__/model-catalog.test.ts`
-- `packages/protocol/src/__tests__/model-prompt-instructions.test.ts`
 - `apps/backend/src/swarm/__tests__/swarm-manager-utils.test.ts`
 - `apps/backend/src/swarm/__tests__/model-presets.test.ts`
 - any snapshot or registry tests that enumerate the full model list
