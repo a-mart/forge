@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
-import { getSessionDir } from '../data-paths.js'
+import { getSessionDir, getSessionPlanHistoryPath } from '../data-paths.js'
 import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
@@ -2382,6 +2382,17 @@ Never use plain assistant text for user communication.`
     expect(runtime?.compactCalls.at(-1)).toContain('[workingPlan] {"revision":1')
 
     await manager.clearSessionConversation('manager')
+    await expect(readJsonlFile(getSessionPlanHistoryPath(
+      config.paths.dataDir,
+      'manager',
+      'manager',
+    ))).resolves.toEqual([{
+      schemaVersion: 1,
+      revision: 1,
+      updatedAt: expect.any(String),
+      explanation: 'Implementation is ready for validation.',
+      plan: [{ step: 'Run validation', status: 'in_progress' }],
+    }])
     await manager.handleUserMessage('start fresh', { targetAgentId: 'manager' })
 
     const clearedRuntimeText = runtime?.sendCalls.at(-1)?.message as string

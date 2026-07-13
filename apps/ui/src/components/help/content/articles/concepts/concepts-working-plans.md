@@ -10,6 +10,6 @@ The plan card appears at the top of chat and highlights the current step. The ch
 
 Managers use plans for substantial, multi-stage, or uncertain work. Small and obvious requests usually do not need one. Updating the checklist never substitutes for implementation, verification, or a final response.
 
-Plans are scoped to one Builder session and saved in that session's `plan.json`. Clearing the conversation clears the plan; stopping or archiving preserves it; a fork starts without copying the parent's plan.
+Plans are scoped to one Builder session and saved in that session's `plan.json`. Before Forge replaces or clears a plan revision, it appends the outgoing snapshot to the session's `plan-history.ndjson` file for future offline review. Clearing the conversation clears the current plan; stopping or archiving preserves it; a fork starts without copying the parent's plan or history.
 
 Forge also supplies the latest plan revision to the manager as private runtime context and asks compaction to preserve it. This lets a restarted or compacted manager continue from the visible plan without adding a separate read tool or exposing internal recovery metadata in chat.

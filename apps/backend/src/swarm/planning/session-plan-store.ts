@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { readFile, rename } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { PlanStep } from '@forge/protocol'
-import { writeJsonFileAtomic } from '../../utils/atomic-files.js'
-import { getSessionPlanPath } from '../storage/data-paths.js'
+import { appendJsonl, writeJsonFileAtomic } from '../../utils/atomic-files.js'
+import { getSessionPlanHistoryPath, getSessionPlanPath } from '../storage/data-paths.js'
 import {
   createEmptySessionPlanState,
   normalizeSessionPlanState,
@@ -14,6 +14,7 @@ const planStoreLocks = new Map<string, Promise<void>>()
 
 export class SessionPlanStore {
   readonly filePath: string
+  readonly historyFilePath: string
 
   constructor(private readonly options: {
     dataDir: string
@@ -21,9 +22,13 @@ export class SessionPlanStore {
     sessionAgentId: string
     now?: () => Date
     randomId?: () => string
+    appendHistory?: typeof appendJsonl
   }) {
     this.filePath = resolve(
       getSessionPlanPath(options.dataDir, options.profileId, options.sessionAgentId),
+    )
+    this.historyFilePath = resolve(
+      getSessionPlanHistoryPath(options.dataDir, options.profileId, options.sessionAgentId),
     )
   }
 
@@ -53,6 +58,7 @@ export class SessionPlanStore {
         ...(input.explanation ? { explanation: input.explanation } : {}),
         plan: input.plan.map((step) => ({ ...step })),
       }
+      await this.archiveCurrentState(current)
       await this.writeAtomically(next)
       return next
     })
@@ -67,6 +73,7 @@ export class SessionPlanStore {
         updatedAt: (this.options.now ?? (() => new Date()))().toISOString(),
         plan: [],
       }
+      await this.archiveCurrentState(current)
       await this.writeAtomically(next)
       return next
     })
@@ -85,6 +92,11 @@ export class SessionPlanStore {
 
   private async writeAtomically(state: SessionPlanState): Promise<void> {
     await writeJsonFileAtomic(this.filePath, state)
+  }
+
+  private async archiveCurrentState(state: SessionPlanState): Promise<void> {
+    if (state.revision === 0) return
+    await (this.options.appendHistory ?? appendJsonl)(this.historyFilePath, state)
   }
 }
 
