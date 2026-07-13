@@ -19,6 +19,8 @@ import type {
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
+const MANAGER_ERROR_IMAGE_DIMENSION_HINT =
+  "Try compacting the conversation or start a new session to remove older images from the model request.";
 const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
 const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
 const WORKER_ERROR_GENERIC_HINT = "The manager may need to retry after checking provider auth, quotas, or rate limits.";
@@ -461,11 +463,19 @@ function buildManagerErrorConversationText(options: {
     return `⚠️ Manager reply failed because the prompt exceeded the model context window. ${MANAGER_ERROR_CONTEXT_HINT}`;
   }
 
+  if (isManyImageDimensionError(options.errorMessage)) {
+    return `⚠️ Manager reply failed because images exceeded the provider's many-image dimension limit (${options.errorMessage}). ${MANAGER_ERROR_IMAGE_DIMENSION_HINT}`;
+  }
+
   if (options.errorMessage) {
     return `⚠️ Manager reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${MANAGER_ERROR_GENERIC_HINT}`;
   }
 
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
+}
+
+function isManyImageDimensionError(errorMessage: string | undefined): errorMessage is string {
+  return Boolean(errorMessage && /image dimensions?\s+exceeds?[\s\S]*many-image/i.test(errorMessage));
 }
 
 function buildWorkerErrorConversationText(options: {
