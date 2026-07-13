@@ -127,14 +127,15 @@ async function expandModel(displayName: string): Promise<void> {
 }
 
 describe('SettingsModels', () => {
-  it('shows the built-in default instructions when no override exists', async () => {
+  it('shows no model-specific instructions when no override exists', async () => {
     await renderSettingsModels({})
     await expandProvider('OpenAI Codex')
     await expandModel('GPT-5.5')
 
-    expect(getByText(container, 'Using built-in default')).toBeTruthy()
+    expect(getByText(container, 'No custom instructions for this model')).toBeTruthy()
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
-    expect(textarea.value).toContain('Return the requested sections only, in the requested order.')
+    expect(textarea.value).toBe('')
+    expect(textarea.placeholder).toBe('Optional instructions for this model.')
   })
 
   it('shows custom override text when present', async () => {
@@ -146,20 +147,20 @@ describe('SettingsModels', () => {
     await expandProvider('OpenAI Codex')
     await expandModel('GPT-5.5')
 
-    expect(getByText(container, 'Custom override active')).toBeTruthy()
+    expect(getByText(container, 'Custom instructions active')).toBeTruthy()
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
     expect(textarea.value).toBe('Custom override text')
   })
 
-  it('shows an empty state for models without built-in defaults', async () => {
+  it('uses the same empty state for every model family', async () => {
     await renderSettingsModels({})
     await expandProvider('xAI')
     await expandModel('Grok 4')
 
-    expect(getByText(container, 'No built-in instructions for this model')).toBeTruthy()
+    expect(getByText(container, 'No custom instructions for this model')).toBeTruthy()
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
     expect(textarea.value).toBe('')
-    expect(textarea.placeholder).toBe('No built-in instructions for this model.')
+    expect(textarea.placeholder).toBe('Optional instructions for this model.')
   })
 
   it('disables Reset all button while a card-level save is in flight', async () => {
@@ -421,7 +422,7 @@ describe('SettingsModels', () => {
     expect(resetAllAfter!.disabled).toBe(true)
   })
 
-  it('resets back to the built-in default view', async () => {
+  it('resets back to an empty model-specific instruction view', async () => {
     modelsApiMock.fetchModelOverrides
       .mockResolvedValueOnce({
         version: 1,
@@ -469,10 +470,8 @@ describe('SettingsModels', () => {
       expect(modelsApiMock.updateModelOverride).toHaveBeenCalledWith('ws://127.0.0.1:47187', 'gpt-5.5', {
         modelSpecificInstructions: null,
       })
-      expect(getByText(container, 'Using built-in default')).toBeTruthy()
-      expect((getByRole(container, 'textbox') as HTMLTextAreaElement).value).toContain(
-        'Return the requested sections only, in the requested order.',
-      )
+      expect(getByText(container, 'No custom instructions for this model')).toBeTruthy()
+      expect((getByRole(container, 'textbox') as HTMLTextAreaElement).value).toBe('')
     })
   })
 })

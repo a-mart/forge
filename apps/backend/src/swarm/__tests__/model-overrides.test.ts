@@ -103,7 +103,7 @@ describe("model-overrides", () => {
     });
   });
 
-  it("preserves empty and non-empty model-specific instruction overrides", async () => {
+  it("preserves non-empty model-specific instructions and omits empty overrides on write", async () => {
     const dataDir = await makeTempDataDir();
     await writeModelOverrides(dataDir, {
       version: 1,
@@ -127,17 +127,38 @@ describe("model-overrides", () => {
         "gpt-5.5": {
           modelSpecificInstructions: "Line one\nLine two",
         },
-        "claude-opus-4-6": {
+      },
+    });
+  });
+
+  it("ignores empty model-specific instructions in an existing legacy override file", async () => {
+    const dataDir = await makeTempDataDir();
+    const filePath = getSharedModelOverridesPath(dataDir);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      overrides: {
+        "gpt-5.5": {
           modelSpecificInstructions: "",
         },
-        "claude-sdk/claude-opus-4-6": {
-          modelSpecificInstructions: "",
+        "claude-opus-4-6": {
+          enabled: false,
+          modelSpecificInstructions: "   \r\n\t  ",
+        },
+      },
+    }), "utf8");
+
+    await expect(readModelOverrides(dataDir)).resolves.toEqual({
+      version: 1,
+      overrides: {
+        "claude-opus-4-6": {
+          enabled: false,
         },
       },
     });
   });
 
-  it("resolves built-in, override, and explicit-clear model-specific instructions", async () => {
+  it("resolves only user-authored model-specific instructions", async () => {
     const dataDir = await makeTempDataDir();
     await writeModelOverrides(dataDir, {
       version: 1,
@@ -154,15 +175,9 @@ describe("model-overrides", () => {
     const service = new ModelCatalogService();
     await service.loadOverrides(dataDir);
 
-    expect(service.getEffectiveModelSpecificInstructions("gpt-5.4")).toContain(
-      "Return the requested sections only, in the requested order.",
-    );
-    expect(service.getEffectiveModelSpecificInstructions("claude-haiku-4-5-20251001")).toContain(
-      "Prefer concise, direct answers over essay-style framing.",
-    );
-    expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6", "claude-sdk")).toContain(
-      "Prefer concise, direct answers over essay-style framing.",
-    );
+    expect(service.getEffectiveModelSpecificInstructions("gpt-5.4")).toBeUndefined();
+    expect(service.getEffectiveModelSpecificInstructions("claude-haiku-4-5-20251001")).toBeUndefined();
+    expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6", "claude-sdk")).toBeUndefined();
     expect(service.getEffectiveModelSpecificInstructions("grok-4")).toBeUndefined();
     expect(service.getEffectiveModelSpecificInstructions("gpt-5.5")).toBe("Custom GPT instructions");
     expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6")).toBeUndefined();

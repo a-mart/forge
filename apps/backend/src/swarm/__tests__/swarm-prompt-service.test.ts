@@ -398,7 +398,33 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
   });
 
-  it("buildResolvedManagerPrompt inserts model-specific instructions for catalog models", async () => {
+  it("allows bounded read-only manager orientation without allowing project mutations", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot);
+    const service = createPromptServiceForDescriptor(config, descriptor);
+
+    const resolved = await service.buildResolvedManagerPrompt(descriptor);
+
+    expect(resolved).toContain("bounded read-only orientation");
+    expect(resolved).toContain("If the lookup exposes implementation work");
+    expect(resolved).toContain("Manager direct project work is read-only");
+    expect(resolved).toContain("Do not use `edit`/`write` for project work");
+    expect(resolved).toContain("non-mutating focused `bash` or status commands");
+    expect(resolved).toContain("do not use shell or browser actions as an indirect way");
+  });
+
+  it("keeps the Other choice conditional instead of contradictory", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot);
+    const service = createPromptServiceForDescriptor(config, descriptor);
+
+    const resolved = await service.buildResolvedManagerPrompt(descriptor);
+
+    expect(resolved).toContain('Include an "Other / Custom" option when reasonable answers may fall outside the listed choices');
+    expect(resolved).not.toContain("always give the user an 'other' option");
+  });
+
+  it("buildResolvedManagerPrompt removes the model-specific placeholder when no user instructions exist", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot);
     const profiles = new Map<string, ManagerProfile>([["manager", createProfile("manager")]]);
@@ -430,8 +456,8 @@ Custom project instruction: always mention the release train when summarizing de
     });
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
-    expect(resolved).toContain("# Model-Specific Instructions");
-    expect(resolved).toContain("Return the requested sections only");
+    expect(resolved).not.toContain("# Model-Specific Instructions");
+    expect(resolved).not.toContain("$" + "{MODEL_SPECIFIC_INSTRUCTIONS}");
     expect(resolved).toContain("Legacy routing guidance for tests.");
   });
 
@@ -913,7 +939,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).not.toContain("Descriptor role should be ignored.");
   });
 
-  it("project-agent base prompt preserves model-specific placeholder injection", async () => {
+  it("project-agent base prompt removes the model-specific placeholder when no user instructions exist", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot, {
       agentId: "agent-model-instructions",
@@ -930,7 +956,7 @@ Custom project instruction: always mention the release train when summarizing de
     const service = createPromptServiceForDescriptor(config, descriptor);
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
-    expect(resolved).toContain("# Model-Specific Instructions");
+    expect(resolved).not.toContain("# Model-Specific Instructions");
     expect(resolved).not.toContain("$" + "{MODEL_SPECIFIC_INSTRUCTIONS}");
   });
 

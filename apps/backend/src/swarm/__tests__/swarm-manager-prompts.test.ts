@@ -55,6 +55,7 @@ import { readSessionMeta, writeSessionMeta } from '../session-manifest.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../onboarding-state.js'
 import { AgentRuntime } from '../agent-runtime.js'
 import { modelCatalogService } from '../model-catalog-service.js'
+import { writeModelOverrides } from '../model-overrides.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm-manager.js'
 import type {
@@ -500,7 +501,7 @@ describe('SwarmManager', () => {
     expect(systemPrompt).toContain('Coordinate the main manager session.')
   })
 
-  it('includes GPT-5 model-specific instructions in the resolved manager prompt', async () => {
+  it('does not include built-in GPT-5 model-specific instructions in the resolved manager prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -508,12 +509,11 @@ describe('SwarmManager', () => {
     const preview = await manager.previewManagerSystemPrompt('manager')
     const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
 
-    expect(systemPrompt).toContain('# Model-Specific Instructions')
-    expect(systemPrompt).toContain('Return the requested sections only, in the requested order.')
-    expect(systemPrompt).toContain('Do not use em dashes unless the user explicitly asks for them')
+    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
+    expect(systemPrompt).not.toContain('$' + '{MODEL_SPECIFIC_INSTRUCTIONS}')
   })
 
-  it('includes Claude model-specific instructions for pi-opus managers', async () => {
+  it('does not include built-in Claude model-specific instructions for pi-opus managers', async () => {
     const config = await makeTempConfig()
     config.defaultModel = {
       provider: 'anthropic',
@@ -526,12 +526,10 @@ describe('SwarmManager', () => {
     const preview = await manager.previewManagerSystemPrompt('manager')
     const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
 
-    expect(systemPrompt).toContain('# Model-Specific Instructions')
-    expect(systemPrompt).toContain('Prefer concise, direct answers over essay-style framing.')
-    expect(systemPrompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
   })
 
-  it('includes the model-specific instructions block for Claude SDK managers in prompt preview', async () => {
+  it('does not include built-in model-specific instructions for Claude SDK managers in prompt preview', async () => {
     const config = await makeTempConfig()
     config.defaultModel = {
       provider: 'claude-sdk',
@@ -544,13 +542,19 @@ describe('SwarmManager', () => {
     const preview = await manager.previewManagerSystemPrompt('manager')
     const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
 
-    expect(systemPrompt).toContain('# Model-Specific Instructions')
-    expect(systemPrompt).toContain('Prefer concise, direct answers over essay-style framing.')
-    expect(systemPrompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
   })
 
   it('injects model-specific instructions through the Project Agent base prompt even when role instructions lack the slot', async () => {
     const config = await makeTempConfig()
+    await writeModelOverrides(config.paths.dataDir, {
+      version: 1,
+      overrides: {
+        'gpt-5.5': {
+          modelSpecificInstructions: 'Custom project-agent instructions.',
+        },
+      },
+    })
     const manager = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
@@ -565,7 +569,7 @@ describe('SwarmManager', () => {
     expect(systemPrompt).toContain('Forge Project Agent Operating Contract')
     expect(systemPrompt).toContain('You are a custom manager prompt without the model instructions slot.')
     expect(systemPrompt).toContain('# Model-Specific Instructions')
-    expect(systemPrompt).toContain('Return the requested sections only, in the requested order.')
+    expect(systemPrompt).toContain('Custom project-agent instructions.')
   })
 
   it('labels prompt preview sections with the composed project-agent prompt sources when overridden', async () => {
@@ -770,7 +774,7 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('silently establish three things before delegating')
     expect(managerPrompt).toContain('Default review budget: one implementation pass, one bounded manager acceptance pass')
     expect(managerPrompt).toContain('A `done` status is evidence, not acceptance.')
-    expect(managerPrompt).toContain('Manager acceptance may use `read`, focused `bash` commands, and relevant browser tools.')
+    expect(managerPrompt).toContain('Bounded manager direct work may use `read`, non-mutating focused `bash` or status commands, and browser inspection.')
     expect(managerPrompt).toContain('unless the user has already clearly authorized that action or action class')
     expect(managerPrompt).not.toContain('other routed user-facing delivery')
     expect(managerPrompt).toContain('Do not both call `speak_to_user` and emit a normal assistant final answer')
@@ -1330,19 +1334,17 @@ describe('SwarmManager', () => {
     expect(claudePrompt).toContain(profileSkillFile)
   })
 
-  it('injects GPT-5 model-specific instructions into the default manager prompt', async () => {
+  it('omits built-in GPT-5 model-specific instructions from the default manager prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const prompt = manager.systemPromptByAgentId.get('manager')
 
-    expect(prompt).toContain('# Model-Specific Instructions')
-    expect(prompt).toContain('Return the requested sections only, in the requested order.')
-    expect(prompt).toContain('Do not use em dashes unless the user explicitly asks for them')
+    expect(prompt).not.toContain('# Model-Specific Instructions')
   })
 
-  it('injects Claude model-specific instructions for pi-opus managers', async () => {
+  it('omits built-in Claude model-specific instructions for pi-opus managers', async () => {
     const config = await makeTempConfig()
     config.defaultModel = {
       provider: 'anthropic',
@@ -1355,27 +1357,27 @@ describe('SwarmManager', () => {
 
     const prompt = manager.systemPromptByAgentId.get('manager')
 
-    expect(prompt).toContain('# Model-Specific Instructions')
-    expect(prompt).toContain('Prefer concise, direct answers over essay-style framing.')
-    expect(prompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+    expect(prompt).not.toContain('# Model-Specific Instructions')
   })
 
-  it('omits model-specific instructions when the manager model has no built-in default', async () => {
+  it('injects user-authored model-specific instructions into the default manager prompt', async () => {
     const config = await makeTempConfig()
-    config.defaultModel = {
-      provider: 'xai',
-      modelId: 'grok-4',
-      thinkingLevel: 'high',
-    }
+    await writeModelOverrides(config.paths.dataDir, {
+      version: 1,
+      overrides: {
+        'gpt-5.5': {
+          modelSpecificInstructions: 'Use the user-authored model policy.',
+        },
+      },
+    })
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const prompt = manager.systemPromptByAgentId.get('manager')
 
-    expect(prompt).not.toContain('# Model-Specific Instructions')
-    expect(prompt).not.toContain('Return the requested sections only, in the requested order.')
-    expect(prompt).not.toContain('Prefer concise, direct answers over essay-style framing.')
+    expect(prompt).toContain('# Model-Specific Instructions')
+    expect(prompt).toContain('Use the user-authored model policy.')
   })
 
   it('does not inject model-specific instructions when a custom manager prompt omits the placeholder', async () => {
@@ -1393,7 +1395,6 @@ describe('SwarmManager', () => {
 
     expect(prompt).toContain('You are the repo manager override.')
     expect(prompt).not.toContain('# Model-Specific Instructions')
-    expect(prompt).not.toContain('Return the requested sections only, in the requested order.')
   })
 
   it('uses merger archetype prompt for merger workers', async () => {

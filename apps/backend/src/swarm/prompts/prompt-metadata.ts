@@ -43,7 +43,7 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
       { name: 'SWARM_MEMORY_FILE', description: "Path to the agent's memory file" },
       {
         name: 'MODEL_SPECIFIC_INSTRUCTIONS',
-        description: 'Model-specific manager instructions injected from the model catalog.',
+        description: 'Optional user-authored instructions for the active manager model.',
       },
       {
         name: 'SPECIALIST_ROSTER',
@@ -88,7 +88,7 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     variables: [
       {
         name: 'MODEL_SPECIFIC_INSTRUCTIONS',
-        description: 'Model-specific manager instructions injected from the model catalog.',
+        description: 'Optional user-authored instructions for the active manager model.',
       },
       {
         name: 'SPECIALIST_ROSTER',
