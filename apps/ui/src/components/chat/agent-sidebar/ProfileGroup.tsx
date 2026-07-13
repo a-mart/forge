@@ -3,7 +3,6 @@ import {
   BellOff,
   CheckCheck,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Edit3,
   FolderOpen,
@@ -83,17 +82,6 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0 || inactiveRepoProjectAgents.length > 0
   const defaultSession = sessions.find((s) => s.isDefault)
-  const isSelectedSessionOrWorkerForHeader = (s: SessionRow) =>
-    s.sessionAgent.agentId === selectedAgentId ||
-    s.workers.some((w) => w.agentId === selectedAgentId)
-  const isHiddenCliForHeader = (s: SessionRow) =>
-    hideCliSessions &&
-    Boolean(s.sessionAgent.cli) &&
-    !isSelectedSessionOrWorkerForHeader(s)
-  const firstVisibleSession = sessions.find((s) =>
-    !s.sessionAgent.agentCreatorResult &&
-    !isHiddenCliForHeader(s)
-  )
 
   // Profile summary for tooltip
   const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
@@ -117,28 +105,10 @@ export const ProfileGroup = React.memo(function ProfileGroup({
 
   return (
     <>
-      {/* Profile header */}
+      {/* Profile header — row click expands/collapses; no dedicated chevron */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div className="relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
-            <button
-              type="button"
-              onClick={() => onToggleProfileCollapsed()}
-              aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${profile.displayName}`}
-              aria-expanded={!isCollapsed}
-              className={cn(
-                'group absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
-                'hover:text-sidebar-foreground',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-              )}
-            >
-              {isCollapsed ? (
-                <ChevronRight className="size-3" aria-hidden="true" />
-              ) : (
-                <ChevronDown className="size-3" aria-hidden="true" />
-              )}
-            </button>
-
             <TooltipProvider delayDuration={400}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -147,14 +117,11 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     ref={dragHandleRef}
                     {...dragHandleAttributes}
                     {...dragHandleListeners}
-                    aria-label={`${dragHandleListeners ? 'Open or drag' : 'Open'} project ${profile.displayName}`}
-                    onClick={() => {
-                      // Click profile header → select the first session visible in the list.
-                      const targetId = firstVisibleSession?.sessionAgent.agentId
-                      if (targetId) onSelect(targetId)
-                    }}
+                    aria-label={`${isCollapsed ? 'Expand' : 'Collapse'}${dragHandleListeners ? ' or drag' : ''} project ${profile.displayName}`}
+                    aria-expanded={!isCollapsed}
+                    onClick={() => onToggleProfileCollapsed()}
                     className={cn(
-                      'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-5.5 pr-1.5 text-left transition-colors',
+                      'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-2.5 pr-1.5 text-left transition-colors',
                       'hover:bg-sidebar-accent/50',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                       dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',

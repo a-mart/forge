@@ -287,7 +287,7 @@ describe('AgentSidebar', () => {
     expect(onArchiveProfile).toHaveBeenCalledWith('project-a')
   })
 
-  it('shows workers under sessions and allows collapsing profile groups', () => {
+  it('shows workers under sessions and allows collapsing profile groups via the project row', () => {
     const mgr = sessionManager('manager-alpha', 'manager-alpha')
     const wrk = worker('worker-alpha', 'manager-alpha')
 
@@ -295,11 +295,14 @@ describe('AgentSidebar', () => {
 
     const sidebar = getDesktopSidebar()
 
-    // Profile header shows the displayName
+    // Profile header shows the displayName; dedicated project chevron controls are gone.
     expect(queryByText(sidebar, 'manager-alpha')).toBeTruthy()
+    expect(sidebar.querySelector('button[aria-label="Expand manager-alpha"]')).toBeNull()
+    expect(sidebar.querySelector('button[aria-label="Collapse manager-alpha"]')).toBeNull()
+
     // Ensure the profile group + session workers are expanded before checking worker visibility.
     const maybeExpandProfileButton = sidebar.querySelector(
-      'button[aria-label="Expand manager-alpha"]',
+      'button[aria-label="Expand project manager-alpha"]',
     ) as HTMLButtonElement | null
     if (maybeExpandProfileButton) {
       click(maybeExpandProfileButton)
@@ -314,13 +317,13 @@ describe('AgentSidebar', () => {
 
     expect(queryByText(sidebar, 'worker-alpha')).toBeTruthy()
 
-    // Collapse the profile group
-    click(getByRole(sidebar, 'button', { name: 'Collapse manager-alpha' }))
+    // Collapse the profile group by clicking the project row
+    click(getByRole(sidebar, 'button', { name: 'Collapse project manager-alpha' }))
     // Session row and worker should be hidden
     expect(queryByText(sidebar, 'worker-alpha')).toBeNull()
 
-    // Expand again
-    click(getByRole(sidebar, 'button', { name: 'Expand manager-alpha' }))
+    // Expand again via the project row
+    click(getByRole(sidebar, 'button', { name: 'Expand project manager-alpha' }))
     expect(queryByText(sidebar, 'worker-alpha')).toBeTruthy()
   })
 
@@ -345,7 +348,7 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, 'worker-codex')).toBeTruthy()
   })
 
-  it('keeps profile/session selection behavior working', () => {
+  it('keeps session selection working while project row click toggles expand/collapse', () => {
     const onSelectAgent = vi.fn()
     const mgr = sessionManager('manager-alpha', 'manager-alpha')
     const wrk = worker('worker-alpha', 'manager-alpha')
@@ -357,9 +360,16 @@ describe('AgentSidebar', () => {
 
     const sidebar = getDesktopSidebar()
 
-    // Clicking the profile header selects the default session
-    const profileButton = getByText(sidebar, 'manager-alpha').closest('button') as HTMLButtonElement
+    // Clicking the project row toggles collapse (does not select a session)
+    const profileButton = getByRole(sidebar, 'button', { name: 'Collapse project manager-alpha' })
     click(profileButton)
+    expect(onSelectAgent).not.toHaveBeenCalled()
+    expect(queryByText(sidebar, 'Main')).toBeNull()
+
+    // Expand again, then select via the session row
+    click(getByRole(sidebar, 'button', { name: 'Expand project manager-alpha' }))
+    const sessionButton = getByText(sidebar, 'Main').closest('button') as HTMLButtonElement
+    click(sessionButton)
     expect(onSelectAgent).toHaveBeenCalledTimes(1)
     expect(onSelectAgent).toHaveBeenLastCalledWith('manager-alpha')
   })
@@ -568,7 +578,7 @@ describe('AgentSidebar', () => {
 
   })
 
-  it('selects the first visible session from a profile header when CLI sessions are hidden', () => {
+  it('toggles the project row without selecting when CLI sessions are hidden', () => {
     localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
     const onSelectAgent = vi.fn()
 
@@ -595,10 +605,16 @@ describe('AgentSidebar', () => {
     })
 
     const sidebar = getDesktopSidebar()
-    const profileButton = getByText(sidebar, 'My Project').closest('button') as HTMLButtonElement
-    click(profileButton)
-    expect(onSelectAgent).toHaveBeenCalledTimes(1)
-    expect(onSelectAgent).toHaveBeenLastCalledWith('regular-session')
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+    expect(queryByText(sidebar, 'CLI Run')).toBeNull()
+
+    click(getByRole(sidebar, 'button', { name: 'Collapse project My Project' }))
+    expect(onSelectAgent).not.toHaveBeenCalled()
+    expect(queryByText(sidebar, 'regular-session')).toBeNull()
+
+    click(getByRole(sidebar, 'button', { name: 'Expand project My Project' }))
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+    expect(queryByText(sidebar, 'CLI Run')).toBeNull()
   })
 
   it('keeps a selected CLI session visible even when hide-cli-sessions is set', () => {
@@ -1257,8 +1273,8 @@ describe('AgentSidebar', () => {
     const activators = list?.querySelectorAll('button[aria-roledescription="sortable"]') ?? []
     expect(activators).toHaveLength(2)
     expect(Array.from(activators).map((element) => element.getAttribute('aria-label'))).toEqual([
-      'Open or drag remote project Delimiter Remote on Delimiter Instance',
-      'Open or drag project Delimiter Local',
+      'Collapse or drag remote project Delimiter Remote on Delimiter Instance',
+      'Collapse or drag project Delimiter Local',
     ])
     expect(Array.from(list?.children ?? []).every((element) => !element.hasAttribute('aria-roledescription'))).toBe(true)
   })
