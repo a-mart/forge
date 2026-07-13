@@ -1,461 +1,130 @@
-# Forge — Contributor & Development Guide
+# Forge — Repository Instructions
 
-> This file is auto-loaded by AI coding agents (e.g., the `pi` runtime) when working in this
-> directory. It also serves as the primary development reference for human contributors. Instructions
-> here apply to both audiences unless otherwise noted.
+> This file is auto-loaded for work in this repository. Keep it limited to durable, repository-wide
+> rules and routing. Detailed behavior belongs in the nearest tracked `AGENTS.md` or subsystem doc.
 
-## What This Project Is
+## Product and repository
 
-Forge is a local-first multi-agent orchestration platform. It provides:
+Forge is a local-first multi-agent orchestration platform with a Node.js backend, a React SPA, an
+Electron desktop app, shared protocol packages, and real-time WebSocket updates.
 
-1. A **Node.js backend** for manager/worker agent orchestration, persistence, and integrations.
-2. A **React SPA** (TanStack Start + Vite) for dashboard, chat, settings, and artifacts.
-3. An **Electron desktop app** that bundles backend, UI, and all dependencies for macOS and Windows.
-4. **Real-time updates** over WebSocket.
+The built-in manager experience is concise and outcome-first. Product copy and documentation should
+not promise constant progress narration.
 
-The builtin manager archetype is intentionally concise and outcome-first in user-facing communication, so docs and UI copy should avoid promising constant progress narration.
+Use the Node.js and pnpm versions declared by the repository. `package.json` is authoritative for the
+package manager version.
 
-**Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, Electron, pnpm monorepo
+## Workspace and path discipline
 
-## Collaboration mode
+- Work in the repository and worktree the user selected. Treat an exact user-provided path literally;
+  do not silently substitute another clone or worktree.
+- Always pass an explicit `cwd` before reading, editing, generating, or validating repository files.
+- Before editing, confirm the repository root and inspect `git status`. Preserve unrelated user changes.
+- Read the nearest nested `AGENTS.md` before changing files in that subtree. Its local rules supplement
+  this file.
+- Keep local plans, reviews, and investigation notes under `.internal/`. It is gitignored and must not
+  be committed.
 
-Use this repo/worktree as the source of truth for collaboration work, including the collaboration server/runtime target, backend auth/DB/routes/WS, UI, protocol, and Docker Compose/full UI serving path. Start with [docs/collaboration/](docs/collaboration/) for current architecture, operations, and development guidance. Always pass an explicit `cwd` before editing.
+## Repository map
 
-Keep durable collaboration project tracking in [docs/collaboration/project/](docs/collaboration/project/). For any Collab SQLite schema or migration work, follow [docs/collaboration/DEVELOPMENT.md](docs/collaboration/DEVELOPMENT.md#sqlite-migration-policy). Structured Collab state belongs in SQLite, while user-authored specialist markdown, prompts, reference docs, and skill definitions stay file-backed.
+- `apps/backend/` — orchestration, persistence, HTTP/WebSocket APIs, integrations, and terminals.
+- `apps/ui/` — TanStack Start/Vite React application.
+- `apps/electron/` — desktop packaging, runtime staging, updates, and releases.
+- `packages/protocol/` — shared wire types, API contracts, and event definitions.
+- `packages/cli/` — first-party Forge CLI.
+- `docs/collaboration/` — Collaboration architecture, development, operations, and project tracking.
 
-## Prerequisites
+## Sources of truth
 
-- **Node.js 22.19.0+**
-- **pnpm 10.30+** — install with `npm install -g pnpm` (exact version pinned in `package.json` → `packageManager`)
-- An **OpenAI**, **Anthropic**, or **Claude SDK** account (Settings → Authentication shows provider labels with auth-mode badges; OpenAI/Anthropic can use OAuth or API key auth, while Claude SDK is OAuth-only via Claude Code CLI and does not require an API key)
+| Topic | Authoritative source |
+|---|---|
+| Setup, common commands, ports, project layout | [`README.md`](README.md) |
+| Configuration, environment variables, data layout | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) and `.env.example` |
+| Local validation tiers and reports | [`docs/QUALITY.md`](docs/QUALITY.md) |
+| Collaboration | [`docs/collaboration/`](docs/collaboration/) |
+| Remote Projects | [`docs/collaboration/REMOTE_PROJECTS.md`](docs/collaboration/REMOTE_PROJECTS.md) |
+| Model catalog and model additions | [`docs/MODEL_CATALOG.md`](docs/MODEL_CATALOG.md) and [`docs/ADDING_MODELS.md`](docs/ADDING_MODELS.md) |
+| Specialists | [`docs/SPECIALISTS.md`](docs/SPECIALISTS.md) |
+| Project resources | [`docs/PROJECT_RESOURCES.md`](docs/PROJECT_RESOURCES.md) |
+| Forge and Pi extensions | [`docs/FORGE_EXTENSIONS.md`](docs/FORGE_EXTENSIONS.md) and [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
+| Electron build and release workflow | [`apps/electron/README.md`](apps/electron/README.md) |
 
-## Getting Started
+Do not copy changing feature inventories, recent protocol changes, full storage trees, environment
+variable catalogs, or release runbooks back into this file. Link to their maintained source instead.
 
-```bash
-git clone https://github.com/a-mart/forge.git
-cd forge
-cp .env.example .env          # Review and set any needed env vars
-pnpm install
-pnpm dev                      # Starts backend + UI in dev mode
-```
+## Cross-repository invariants
 
-See the [README](README.md) for full setup instructions, including Windows-specific notes.
+- Preserve existing behavior unless the task explicitly changes it.
+- Shared messages and transport types belong in `packages/protocol/`. Do not duplicate DTOs across
+  backend and UI packages.
+- For a protocol change, update the shared contract first, then every producer, parser, consumer,
+  persistence/replay path, and relevant test in the same change.
+- Conversation behavior must remain correct for both live WebSocket events and replayed JSONL history.
+- Treat public facades and exported contracts as stable. When changing one, audit and update all
+  downstream consumers; use a narrow compatibility seam only when the migration actually requires it.
+- If a task explicitly calls for complete replacement, remove obsolete code, routes, prompts, docs,
+  settings, and compatibility artifacts rather than leaving two competing systems.
+- Use `apps/backend/src/swarm/storage/data-paths.ts` for Forge data-path resolution. Do not recreate
+  storage paths ad hoc.
+- Structured Collaboration state belongs in SQLite. User-authored specialist markdown, prompts,
+  reference docs, and skill definitions remain file-backed.
+- Keep durable Collaboration project tracking in `docs/collaboration/project/`, not in local scratch
+  files or transient chat context.
+- Model-specific instructions are optional, user-authored per-model additions. Forge does not provide
+  built-in model-specific instruction defaults.
 
-## Architecture Overview
+## Safety
 
-### Frontend
+- Never run destructive Git operations such as `git reset --hard`, `git push --force`, or rebase of a
+  protected branch without first verifying local and remote state. If unpushed work exists, preserve it
+  on a branch or worktree. Do not push unless the user requests it.
+- For Collaboration SQLite schema or migration work, follow the
+  [migration policy](docs/collaboration/DEVELOPMENT.md#sqlite-migration-policy). Migrations must not
+  delete, overwrite, or normalize user-authored file-backed content.
+- Treat authentication data, credential-pool files, exported connector artifacts, and session data as
+  sensitive. Do not print secrets or copy sensitive payloads into chat, fixtures, or committed docs.
+- Desktop release work must follow `apps/electron/README.md`. Build and validate before publishing,
+  use the draft-first beta-first workflow, and never treat validation branches as published releases.
+- Keep platform support intact on macOS, Linux, and Windows. Use Node path APIs, `os.tmpdir()`, guarded
+  signal handling, and graceful `ENOENT`/permission-error handling instead of platform assumptions.
 
-- SPA with TanStack Start + Vite in `apps/ui`.
-- Real-time client state and WebSocket transport in `apps/ui/src/lib/ws-client.ts`.
-- Origin-scoped state built on top of the transport: `apps/ui/src/lib/origin-store/` keys per-slice `useSyncExternalStore` subscriptions by `(originId, id)` so an event on one connection only re-renders its own subscribers — the substrate for multi-origin (remote project) support.
-- Core UI surfaces in `apps/ui/src/components/chat/*` and `apps/ui/src/components/settings/*`.
+## Validation
 
-### Backend
+Validation must match the changed surface and its downstream consumers. Follow `docs/QUALITY.md` for
+the current command definitions.
 
-- HTTP + WebSocket server in `apps/backend/src/ws/server.ts`.
-- Route handlers in `apps/backend/src/ws/http/routes/*` (one file per domain: agents, sessions, settings, etc.).
-  - `agent-routes.ts` includes `GET /api/agents/:agentId/system-prompt` for retrieving persisted system prompts (used by the System Prompt Viewer UI).
-- Agent orchestration and runtime logic in `apps/backend/src/swarm/*`.
-- Integrated terminal system in `apps/backend/src/terminal/*`.
-- Integrations (Telegram) in `apps/backend/src/integrations/*`.
-- Scheduler in `apps/backend/src/scheduler/*`.
+- Start with explicit targeted Vitest files for changed behavior. Avoid loose filters that accidentally
+  launch broad suites.
+- Use `pnpm quality:quick` for small focused changes, `pnpm quality:changed` for normal pre-merge
+  validation, and `pnpm quality:full` for broad, structural, release, or cross-package work.
+- Protocol/API changes require targeted protocol, backend handler, and UI client/consumer tests.
+- Persistence changes require write/read/restart or migration coverage, not only unit checks of the
+  serializer.
+- UI event changes require both live-event and replay/bootstrap coverage when both paths consume the
+  behavior.
+- Platform-specific changes require validation of the affected platform path; state any platform that
+  could not be exercised.
+- In-app help changes require `pnpm help:validate` plus the routed UI quality check described by the
+  local help instructions.
+- Run `git diff --check` before handoff. Report every validation command run, any failure, and anything
+  not run with the reason.
 
-### Terminals
-
-Per-session integrated terminals backed by `node-pty` (backend) and `xterm.js` (frontend). Each terminal gets a dedicated WebSocket for raw I/O, separate from the main app WebSocket. A headless `xterm.js` instance on the backend tracks terminal state for snapshot/restore.
-
-- **Persistence:** Periodic VT state snapshots + an output journal (`delta.ndjson`). On server restart, terminals are restored from the most recent snapshot plus any subsequent journal entries, preserving scrollback and screen state.
-- **Session scoping:** Terminals belong to a manager session and are cleaned up when the session is deleted. Project archives suspend running profile terminals and restore brings them back; archived sessions cannot use terminals until restored. Archive does not delete terminal data, and deletion cleanup is separate.
-- **Cross-platform:** macOS/Linux use the user's default shell; Windows uses ConPTY. Shell can be overridden via `FORGE_TERMINAL_DEFAULT_SHELL`.
-- **Access control:** Terminal WebSocket connections use short-lived tickets issued over the authenticated main WebSocket.
-
-For design details, see `.internal/research/integrated-terminals/`.
-
-### Protocol
-
-Shared TypeScript types and API message definitions live in `packages/protocol/`. Both backend and UI import from this package — any changes to message shapes must be made here first.
-
-**Recent protocol changes:**
-- `UnreadNotificationEvent` now includes optional `reason?: 'message' | 'choice_request'` to distinguish notification triggers, and `sessionAgentId?: string` for per-manager preference resolution on worker-originated events. This supports dedicated question notification sounds that take priority over regular unread sounds.
-- Normal Builder chat `conversation_message` events can include optional `replyTo` metadata. Backend send handling resolves the target from session history when possible and injects a structured `[replyTo]` JSON block into manager model input; Collaboration remains out of scope for Quote/Reply v1.
-- Remote Projects protocol seams live in `packages/protocol/src/builder-protocol.ts`, `presence.ts`, and `builder-sidebar-order.ts`. Status capability and wire changes are additive within a protocol version; removals or semantic repurposing require a protocol bump. `clientRequestId` supports optimistic reconciliation but is not an exactly-once/idempotency guarantee, and project presence means subscribed viewers only.
-
-### Additional Subsystems
-
-These are briefly described for orientation. Most have both backend and UI components.
-
-| Subsystem | Backend | UI | Purpose |
-|-----------|---------|-----|---------|
-| **Prompt system** | `swarm/prompt-registry.ts`, `swarm/archetypes/` | Settings UI | Prompt templates, archetypes (including Agent Architect for project agent creation), and resolution (profile → repo → builtin) |
-| **Memory system** | `swarm/memory-merge.ts`, `swarm/storage/data-paths.ts` (path resolution) | Chat UI | Per-session and per-profile persistent memory with merge lifecycle. The canonical profile and session `memory.md` files continue to be maintained in both knowledge modes, but prompt sourcing changes: v2 injects session memory only, while legacy mode injects profile and session memory. |
-| **Remote Projects** | `collaboration/remote-build-settings-service.ts`, `collaboration/auth/collaboration-auth-middleware.ts`, `ws/builder-command-access.ts`, `ws/http/routes/{remote-build-settings,collaboration/status,builder-sidebar-order}-routes.ts`, `ws/ws-subscriptions.ts` | `lib/origin-store/`, `lib/collaboration-connections.ts`, `components/index-page/BuilderSurface.tsx`, `components/chat/AgentSidebarConnected.tsx`, `components/chat/agent-sidebar/RemoteOriginSections.tsx`, `components/settings/SettingsCollaboration.tsx` | Unified Builder access to normal projects hosted by configured collaboration servers. Supported project-scoped surfaces follow the selected active origin (chat/execution, Files, Source Control, attachments, Session Audit, model availability, and terminals when allowed); non-chat Settings, Stats, Archive, onboarding, Cortex, provider usage, and sidebar-order persistence stay local. Server policy defaults to `enabled:false`, `terminalsEnabled:true`, `instanceName:null` and is admin-only at `GET`/partial `PUT /api/settings/remote-build`; there is no admin UI or env override. Client `remoteProjectsEnabled` is browser-local presentation state, never authorization. Members are trusted operators with broad allowlisted Builder read/write and no per-project ACL; member HTTP/WS classification is default-deny/admin-only unless explicitly allowlisted, and CWD roots/terminal disable are not tenant sandboxes. Policy disable and normal sign-out/expiry do not terminate existing sockets/subscriptions; never document them as live revocation. See [`docs/collaboration/REMOTE_PROJECTS.md`](docs/collaboration/REMOTE_PROJECTS.md). |
-| **Cortex knowledge (v2)** | `swarm/knowledge-service.ts`, `swarm/knowledge-consolidator-api.ts`, `swarm/capture-check.ts`, `swarm/swarm-cortex-service.ts`, `swarm/cortex-auto-review-settings.ts`, `swarm/knowledge-v2-{migration-manifest,migration-lock,settings-service}.ts`, `ws/http/routes/knowledge-v2-settings-routes.ts`, `ws/http/routes/cortex-auto-review-routes.ts` | `components/chat/cortex/` (Index/Entries/Log/Run tabs), `components/settings/{cortex-auto-review-api,knowledge-v2-api}.ts` | Default-off preview with provenance-bearing global/profile entries (`shared/knowledge/entries/`, `profiles/<id>/knowledge/entries/`) and token-capped indexes (global 1,500 / profile 800 tok). When ON, prompts inject global/profile `INDEX.md` plus session `memory.md`; canonical profile `memory.md` continues to be maintained, while legacy `shared/knowledge/common.md` is preserved during normal switching, but neither is injected. Normal switching preserves both stores, and OFF restores legacy injection while the originals remain; explicit confirmed cleanup archives and removes them. `knowledge` (search/read) and manager-only `save_learning` operate on entries; capture checks run at verified compaction, idle, archive, and feedback points, while the ON-only consolidator reads entries to merge/archive/reindex and never mines transcripts or creates entries. The dashboard's Entries detail is read-only; Log exposes consolidation activity; Run exposes Consolidate now, Last run, and the Promotion review queue. False→true activation requires a strictly valid completed v1/v2 migration manifest under the ownership-safe cross-process migration/activation lock. A successful migration commits its truthful v2 `authorized_pending` manifest and immediately activates; if activation persistence fails, that manifest authorizes recovery while v2 remains OFF, and it also authorizes re-enable after a later disable. Capability reads fail closed, unsafe PUT returns 409 `KNOWLEDGE_V2_MIGRATION_REQUIRED`, and Settings/onboarding do not start migration or issue unsafe activation. Replaces the deleted transcript-review fleet. |
-| **Agent runtime dispatch** | `swarm/runtime/runtime-factory.ts`, `swarm/runtime/runtime-{binding,callback-gate,prompt-plan,resource-plan,recovery-state,tool-plan}.ts`, `swarm/runtime/{claude,cursor-sdk,pi}/` | Settings UI (manager model selectors and specialist selectors) | Thin provider-dispatch facade plus shared planning/projector helpers and provider-specific runtime creators. Keep provider construction inside the creator modules, keep the facade stable, and preserve the public import surface while refactoring. |
-| **Cursor SDK runtime** | `swarm/runtime/cursor-sdk/` | Settings UI (manager and specialist selectors) | Native Cursor SDK agent runtime via `@cursor/sdk` for manager and specialist agents. Composer 2.5 and Cursor Grok 4.5 are available in both selector types when credentials and model-catalog visibility allow them. Uses API-key auth from `CURSOR_API_KEY` in Settings → Authentication, secrets, or env, persists Forge-owned `stateRoot` and `sdkAgentId`. Runtime containment is provider-local and fail-closed: Cursor/ConnectRPC/HTTP2 failures are classified before projection, attributed transient transport or throttle failures may retry once pre-output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures stay fatal. This prevents background ConnectRPC/HTTP2 errors like `NGHTTP2_ENHANCE_YOUR_CALM` from crashing backend/Electron child processes without implying broad exception swallowing. Usage is recorded from turn-ended deltas into session custom entries, which feed dashboard stats, token analytics, and telemetry provider inference. Electron packaging stages and preflights `@cursor/sdk`, `sqlite3`, and platform binaries. |
-| **Codex app-server sidecar** | `swarm/codex-app-server/`, `swarm-manager.ts`, `session/conversation-*` | `components/chat/*`, `hooks/index-page/*` | Builder web supports two Codex entry paths: a plain leading `@Codex` / `[@Codex]` text turn stays a direct Codex app-server sidecar thread, while selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it to the visible `Codex Plugin` specialist worker. The plugin-scoped path uses server-owned scoped exact plugin tools, stays read-only/safety-gated, and returns preview/metadata-bounded normal tool output. Full exportable connector payloads use `export_scoped_codex_plugin_result`, which writes redacted JSON artifacts plus `.manifest.json` sidecars under `artifacts/codex-plugin/<delegationId>/` in the session data and returns only path/metadata/bounded preview; treat these artifacts as sensitive local storage and never relay transcript/summary chunks through chat. Direct sidecar threads persist by default as worker-like external-thread cards; plugin-scoped turns stay in the normal `agent_tool_call` audit trail and do not create external-thread audit cards. Parent-session display cards are append-only and excluded from manager/model context; forked sessions omit historical Codex display cards. Lifecycle guardrails separate stop/preserve reuse from kill/delete cleanup, keep CWD synchronized for fresh and reused sends, and allow only one active Codex turn globally. Detailed worker-view rows are projected from live app-server notifications through existing `conversation_log` / `agent_tool_call` primitives with normalized and bounded stream details, stable `toolCallId`, strict turn/item routing, redaction/truncation, model-context exclusion, and boot cleanup for stale in-progress rows. Minimal ToolLogRow labels are `codex_command`, `codex_plugin_tool`, `codex_file_change`, and `codex_plan`. Retry after stopped/failed scoped Codex Plugin workers is server-authorized only for explicit continuation/retry turns or turns that explicitly reference Codex/plugin/Fireflies connector context; unrelated turns clear/deny stale retry, retry reuses only the stored selector scope, direct Codex Plugin spawn remains active-selector-only, and raw manager MCP remains denied. Builder/web only; Collaboration excluded. |
-| **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
-| **Voice/transcription** | `ws/http/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
-| **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
-| **Phoenix observability** | `observability/`, `ws/http/routes/phoenix-observability-routes.ts` | `components/settings/SettingsObservability.tsx` | Builder-only Arize Phoenix tracing over loopback OTLP HTTP/protobuf. Settings live under Settings → Observability and persist to `shared/config/phoenix-observability.json`. Rich traces cover runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback paths with redaction, caps, capture toggles, and fail-open export safeguards. Collaboration runtime uses the no-op/fail-closed facade and does not export traces. Live Phoenix/golden-trace and Electron package/preflight validation remain user-owned gates. |
-| **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
-| **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
-| **Repo-root .forge project resources** | `.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/extensions/`, `.forge/pi/extensions/`, `.forge/pi/settings.json` | Repo-scoped resources that live in the repository root. Passive text resources stay visible if executable trust is denied; only executable surfaces are gated. Do not introduce split `.forge/manager` or `.forge/worker` trees in v1. See [docs/PROJECT_RESOURCES.md](docs/PROJECT_RESOURCES.md) |
-| **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; projects worker turn failures into system messages with preserved error context, suppresses duplicate callback/summary reports, and suppresses nudge/report/auto-kill while worker or parent runtime recovery is active. Bare runtime `errorMessage: "terminated"` is held behind a 60-second grace before failure projection; progress or self-report cancels the transient error. |
-| **Idle worker watchdog** | `swarm/swarm-manager.ts` (WorkerWatchdogState, finalizeWorkerIdleTurn) | — | Dual-path detection (onAgentEnd + status-idle) of workers that complete their turn without reporting back to the parent manager. Auto-report can succeed on `agent_end`/turn end before the runtime flips to idle; the idle watchdog/status-idle path is a fallback and noise-suppression layer, not the only completion gate. It still auto-sends the worker's last output to the manager and emits a batched ⚠️ system notification in chat, but suppresses that path while worker or parent runtime recovery is active. Complementary to the stall detector (which handles workers stuck mid-tool-execution); if a transient terminated error does not recover, it expires through the normal watchdog/error path exactly once. |
-| **Message routing** | `swarm/message-router.ts`, `swarm/turn-ledger.ts`, `swarm/runtime/runtime-event-projector.ts` | Manager All view / worker transcript | `MessageRouter.resolve()` is the single choke point for render/route/drop decisions — visible-by-default for user-facing origin, each decision reason-coded (`render:*`/`route:*`/`deny:*`) and receipted. A terminal worker result is persisted in the manager session as a system `conversation_message` with `source: worker_report`, `terminal`, and `sourceWorkerId`; it is excluded from model context, hidden from the manager's focused Web view, and visible in manager All. Workers remain behind the scenes: their callbacks are internal manager decision turns, while a substantive manager final from an owned-worker callback renders normally in an eligible Builder web session. Exact `NO_REPLY` suppresses the provider final for intentional internal silence or after explicit delivery; it is not accepted as the sole response to an unanswered direct user turn. Protected/non-web/peer contexts keep explicit routing. Selecting a worker opens that worker's transcript and defaults its Web/All filter to All; the dormant Detailed flag does not expand visibility. |
-| **Liveness / turn watchdog** | `swarm/manager-turn-watchdog.ts`, `swarm/turn-ledger.ts`, `ws/http/routes/restart-recovery-routes.ts` | Builder ChatWorkspace banner below the header | Manager-only turn watchdog evaluates on a 60-second sweep and escalates after approximately 30s → 5m → 10m without progress; tool execution, recovery, and compaction affect its clock/suppression, while a hung tool can still reach the 10-minute tier. Progress resets the ladder. There is no inline recycle action: practical recovery is Stop All then send again, though a pending recycle may run once the runtime becomes idle. Boot creates a global in-memory recovery snapshot rather than auto-resuming; Resume all is best effort from persisted state and Dismiss only hides the snapshot. Per-session `turns.jsonl` is a rotating, fail-open internal ledger, not an exact crash-safe guarantee. Only bounded recovery/suppression markers use TTL expiry. |
-| **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points. Choice requests trigger a dedicated notification sound (configurable per-manager, default ON) that takes priority over regular notification sounds. |
-| **Working plans** | `swarm/planning/` | `components/chat/plan/`, chat header/composer dock | Builder managers have one always-available `update_plan` tool with the Codex-style full-snapshot schema: optional explanation plus ordered steps in `pending`, `in_progress`, or `completed` state; parallel work may mark multiple steps in progress. The current plan persists in per-session `plan.json`; outgoing revisions append to `plan-history.ndjson`. `spawn_agent` and `send_message_to_agent` accept optional exact `planStep` text, and internal worker-assignment plus completed step/plan token estimates append to `plan-usage.ndjson` with manager, assigned-worker, unassigned, and coverage fields. Whole-plan usage finalizes at the first accepted empty-queue manager idle/agent-end boundary; recovery or delayed fallback receipts stop at the recorded plan completion time and remain explicitly partial. No plan/task IDs or accounting UI are exposed. A compact control above the composer keeps current progress in view. Each plan also creates one durable inline card at plan start; live revisions update that anchored row and completion freezes it in place. Legacy completed-plan summaries remain readable. The latest revision is injected as bounded runtime-only context and preserved through compaction. There is no settings toggle or Collaboration surface. Clearing a conversation clears its current plan while preserving offline history; stop/archive preserves it, and forks do not copy live plan or plan history/accounting files. |
-| **Forge extensions** | `swarm/forge-extension-*.ts`, `runtime/*`, provider creators, `swarm-manager.ts`, `versioning/embedded-git-versioning-service.ts` | Settings Extensions UI | Forge-native hook system for session lifecycle, runtime errors, versioning commits, and cross-runtime tool interception. Auto-discovered from `~/.forge/extensions/`, `~/.forge/profiles/<id>/extensions/`, and `<cwd>/.forge/extensions/`. See [`docs/FORGE_EXTENSIONS.md`](docs/FORGE_EXTENSIONS.md) |
-| **Skill sharing** | `swarm/skills/skill-sharing-service.ts` | `apps/skill-share-worker/` | Temporary anonymous skill transfer service for user-created global/project skills. Share links and imports use the configured worker origin (default `https://forgeskills.radops.ai`); see [`apps/skill-share-worker/README.md`](apps/skill-share-worker/README.md) for quotas, TTL, and Cloudflare guardrails. |
-| **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | Settings Extensions UI | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
-| **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
-| **Archive** | `swarm/archive/*`, `swarm/agents.json` | `components/index-page/ArchiveView.tsx` | Reversible, lossless project/session archive state stored inline in `swarm/agents.json` via `ManagerProfile.archivedAt` and `AgentDescriptor.archivedAt`. Builder Archive shows archived projects and directly archived sessions with restore actions, sorted by last user-message activity and displaying the last-used date. |
-| **Specialists** | `swarm/agents/specialists/specialist-registry.ts` (`swarm/specialists/` kept as a compat re-export) | `components/settings/SettingsSpecialists.tsx` | Worker spawns resolve through **effort tiers** (`light`/`fast`/`standard`/`deep`/`max` — model, provider, reasoning, fallback) crossed with **specialist lenses** (`architect`/`planner`/`code-reviewer`/`code-reviewer-2`/`researcher`/`codex-plugin` — persona, prompt, when-to-use); `specialist: <handle>` is sugar over a tier+lens pair via a legacy-handle rewrite table. Custom specialist markdown files with explicit model overrides remain supported directly. See [`docs/SPECIALISTS.md`](docs/SPECIALISTS.md). |
-| **Model catalog** | `swarm/model-catalog-service.ts`, `swarm/model-catalog-projection.ts` | `components/settings/SettingsModels.tsx` | Authoritative single-source model metadata catalog with Pi projection, local overrides, and audit workflow for upstream sync. See [`docs/ADDING_MODELS.md`](docs/ADDING_MODELS.md) for how to add new models. |
-| **Model overrides** | `swarm/model-overrides.ts` | Settings Models UI | User-scoped model visibility and context-window caps persisted to `model-overrides.json` |
-| **Model-specific instructions** | `swarm/model-catalog-service.ts`, `packages/protocol/src/model-prompt-instructions.ts` | Settings Models UI | Per-model prompt instructions injected into the manager prompt via `${MODEL_SPECIFIC_INSTRUCTIONS}`. Built-in defaults for GPT-5 and Claude families; user overrides in `model-overrides.json`. Custom prompts must include the placeholder to opt in. |
-| **Mermaid diagrams** | `ws/http/routes/mermaid-preview-routes.ts` | `components/chat/message-list/MermaidBlock.tsx`, artifact/file/diff markdown previews | Sandboxed iframe rendering for Mermaid code fences with inline toolbar controls for code/diagram toggle, copy source, SVG/PNG export, fullscreen, and theme-reactive/error fallback |
-| **File browser / workspace editor** | `ws/http/routes/file-browser-routes.ts`, `ws/http/services/file-browser-service.ts` | `components/file-browser/*`, `hooks/index-page/use-panel-state.ts` | Selected-worktree repository browser with one replaceable single-click preview tab plus coexisting sticky tabs (double-click, first dirty transition, or create). React-memory state is keyed by `(agentId, worktreeId)` and retains tabs/active/preview identity, tree/filter/search/scroll, and text/Markdown content scroll across mounted-surface hide/show and scope switches, not restart. Markdown (`.md`/`.markdown`/`.mdx`) defaults to rendered current-draft Preview; Source is CodeMirror on desktop and read-only highlighted text on mobile. `GET`/`PUT`/`DELETE /api/files/content` provides versioned reads/saves with required `baseVersion`, explicit stale conflict handling, and file/folder deletion; `POST /api/files/create` creates empty files only, `PATCH /api/files/rename` renames files/directories, and `/api/files/raw` is PDF-only. Create/rename names are one component, preserve whitespace, reject slash/backslash/NUL/dot/dotdot and overwrite; all mutations reject root/traversal/outside/symlink-parent escapes. Success refreshes Files metadata/tree plus Source Control; create opens sticky, rename remaps tabs, and delete removes affected tabs. Dirty guards cover dirty-tab close, session/route navigation, affected rename/delete, and same-scope Source Control write mutations—not file selection, hiding Files, or entering Source Control. |
-| **Source Control workspace** | `ws/http/routes/git-source-control-routes.ts`, `ws/http/services/git-source-control-service.ts`, `ws/http/services/git-hosted-provider.ts`, `versioning/git-cli.ts` | `components/diff-viewer/*`, `components/file-browser/*`, `hooks/index-page/use-panel-state.ts` | Desktop workspace rail Source Control surface for selected-worktree Changes, History, Worktrees, and Pull Requests. Selecting a worktree scopes Source Control and Files without changing chat session CWD. Entering Source Control or changing context may auto-fetch stale origin data; auto-fetch failures stay quiet/non-blocking, while manual fetch errors surface. Branch actions support fetch, switch, create, and fast-forward-only pull with confirmation plus head/status preflight. File create/rename/save/delete refresh Changes; entering Source Control preserves drafts, while branch switch/create and FF-only pull guard dirty tabs in the matching scope with Save/Discard/Cancel. Pull Requests use GitHub `gh`, lazy-load open-count badge data after the PR tab is visited, and degrade when no GitHub remote or `gh` auth/availability is missing; merge confirmation uses GitHub match-head-commit and does not delete branches or use admin bypass. Force push, stash, discard, rebase, branch deletion, and worktree create/remove are out of scope. |
-| **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts`, `window-state.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Persists and restores window position, size, maximized state, and fullscreen state across launches. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. Provides shell integration for revealing files in Finder/Explorer. |
-| **Message pins** | `swarm/message-pins.ts` | `components/chat/message-list/` | Pin up to 10 messages per session; pinned content is preserved through all compaction types via custom instructions and extension hooks. Pin count badge in chat header opens a navigator popover with prev/next buttons to jump directly to any pinned message. |
-| **Session pins** | `swarm/swarm-manager.ts` (pinSession method) | `components/chat/AgentSidebar.tsx` | Pin sessions to top of sidebar; right-click pin/unpin with three-tier sort (project agents → pinned → regular). Pinned sessions never hidden by pagination. State stored as `pinnedAt` timestamp on `AgentDescriptor`. |
-| **Project Agents** | `swarm/project-agents.ts`, `swarm/project-agent-*` (registry/mutation/delivery/sharing helpers), `swarm/project-agent-analysis.ts` | `components/chat/AgentSidebar.tsx`, `components/chat/MessageInput.tsx`, `components/chat/message-list/ConversationMessageRow.tsx` | Cross-session agent messaging via lightweight session promotion with discovery, AI-assisted configuration, fire-and-forget async messaging, and source-owned cross-profile sharing grants. Promoted agents live in dedicated per-handle storage directories with `config.json`, editable `prompt.md` files, and per-agent reference docs. Handles are immutable after promotion. Local discovery covers same-profile agents; external discovery covers only explicitly granted shared agents, with sanitized metadata/prompt rendering, separate local/shared prompt caps, authorized external delivery/contact replies, attachment rejection for Project Agent sends, capability suppression on external/shared turns, and runtime/prompt refresh after sharing changes. Some project agents can be granted same-profile session creation capability, and created sessions show creator attribution in the sidebar. |
-| **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 3,200-char seed context budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Created agents are stored in dedicated per-handle directories with editable `prompt.md` files and scoped reference docs. Cannot be promoted, forked, or created in Cortex profile. Some created agents may later be configured to create sessions from their Settings panel. |
-| **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Uses a restart-persistent cache (`shared/cache/provider-usage-cache.json`), shows 5-hour rolling and weekly windows with deficit/reserve pace labels, supports manual refresh in the sidebar detail panel, and estimates weekly pace from historical usage curves. Pooled OAuth tokens are refreshed before usage polling. API-key or malformed auth stays unavailable silently. |
-| **Credential pool** | `swarm/credential-pool.ts`, `ws/http/routes/settings-routes.ts` | `components/settings/CredentialPoolPanel.tsx` | Multi-account OpenAI and Anthropic OAuth credential pooling with failover. Pool metadata stored in `shared/config/auth/credential-pool.json`; pooled OAuth credentials refresh through the shared auth path before runtime selection and persist back into `auth.json` under the pooled key. Missing or obviously expired pooled OAuth creds surface as `auth_error`. Supports add/remove/rename/set-primary and strategy selection (fill_first, least_used). Auth modes are mutually exclusive per provider (API key or pooled OAuth, not both). |
-| **Token analytics** | `stats/token-analytics-service.ts` | `components/stats/token-analytics/` | Per-worker, per-specialist, and Cursor SDK token usage analytics with attribution tracking, filtering, drill-down, and disk-cached scanning. Stats page adds an Overview \| Token Analytics tab layout. |
-
-Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
-
-## Project Structure
-
-```
-forge/
-├── apps/
-│   ├── backend/           # Node.js daemon — orchestration, persistence, integrations
-│   ├── ui/                # React SPA — dashboard, chat, settings
-│   └── electron/          # Electron desktop app wrapper
-├── packages/
-│   └── protocol/          # Shared TypeScript types and API message definitions
-├── scripts/               # Production daemon scripts, test helpers, migration tools
-└── .env.example           # Environment variable reference
-```
-
-### Data Storage
-
-All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), overridable via `FORGE_DATA_DIR`. The layout is profile-scoped:
-
-```
-~/.forge/
-├── swarm/
-│   └── agents.json                        # Global agent registry (ManagerProfile.archivedAt, AgentDescriptor.archivedAt)
-├── extensions/                            # Global Forge extensions (auto-created)
-├── agent/                                 # Pi agent runtime config
-│   ├── extensions/                        #   Global worker extensions (auto-created)
-│   ├── manager/extensions/                #   Global manager extensions (auto-created)
-│   ├── skills/                            #   Global worker skills (Pi-discovered, auto-created)
-│   ├── manager/skills/                    #   Global manager skills (Pi-discovered, auto-created)
-│   ├── settings.json                      #   Global worker package config (optional)
-│   └── manager/settings.json             #   Global manager package config (optional)
-├── uploads/                               # User-uploaded files
-├── shared/
-│   ├── config/
-│   │   ├── auth/
-│   │   │   ├── auth.json                  # Authentication credentials
-│   │   │   └── credential-pool.json       # Multi-account credential pool metadata
-│   │   ├── secrets.json                   # Encrypted secrets
-│   │   ├── model-overrides.json           # User model visibility/context caps
-│   │   ├── cortex-auto-review.json        # Consolidator run cadence settings
-│   │   ├── knowledge-v2.json              # Cortex knowledge (v2) default-off mode switch + settings
-│   │   ├── mobile-notification-prefs.json # Mobile push preferences
-│   │   ├── slash-commands.json            # Global slash commands
-│   │   ├── terminal-settings.json         # Terminal runtime settings
-│   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
-│   │   ├── repository-settings.json       # Builder-only clone base path (configured home + last-used)
-│   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
-│   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
-│   │   ├── collaboration/
-│   │   │   ├── auth.db                    # Collaboration auth + structured collaboration state
-│   │   │   └── auth-secret.key            # Generated collaboration auth secret when env secret is unset
-│   │   └── integrations/                  # Telegram integration configs
-│   ├── cache/
-│   │   ├── generated/
-│   │   │   └── pi-models.json             # Generated Pi-compatible model projection
-│   │   ├── stats-cache.json               # Cached dashboard statistics
-│   │   ├── provider-usage-cache.json      # Cached provider subscription usage snapshots
-│   │   ├── provider-usage-history.jsonl   # Historical provider usage samples
-│   │   └── token-analytics-cache.json     # Cached token analytics scan results
-│   ├── state/
-│   │   ├── mobile-devices.json            # Registered mobile devices
-│   │   ├── .compaction-count-backfill-v2-done  # Legacy compaction-count backfill sentinel
-│   │   ├── .compaction-count-reconcile-v3-done  # Monotonic compaction-count reconciliation sentinel
-│   │   ├── .shared-config-migration-done  # Shared-config layout migration sentinel
-│   │   └── .shared-config-cleanup-done    # Shared-config old-path cleanup sentinel
-│   ├── knowledge/                         # Legacy knowledge base + global Cortex knowledge (v2)
-│   │   ├── common.md                      #   Legacy common knowledge; preserved during normal switching, prompt-injected only with v2 OFF
-│   │   ├── onboarding-state.json          #   First-launch user preferences
-│   │   ├── profiles/<profileId>.md        #   Preserved legacy per-profile knowledge
-│   │   ├── entries/*.md                   #   Cortex v2 global entries with provenance frontmatter
-│   │   ├── archive/                       #   Cortex v2 archived global entries
-│   │   ├── .archive/                      #   Migration backups and explicit legacy-cleanup archives
-│   │   ├── INDEX.md                       #   Cortex v2 generated, token-capped global index
-│   │   ├── .knowledge-v2-migration-manifest.json # Completed migration authorization/record
-│   │   └── .knowledge-v2-migration.lock.json/    # Ownership-safe cross-process lock directory while busy
-│   └── specialists/                       # Global specialist definitions (.md files)
-└── profiles/<profileId>/
-    ├── memory.md                          # Canonical profile memory; maintained in both modes, prompt-injected only with v2 OFF
-    ├── knowledge/entries/*.md             # Cortex knowledge (v2): per-profile entries
-    ├── knowledge/archive/                 # Cortex knowledge (v2): archived per-profile entries
-    ├── knowledge/INDEX.md                 # Cortex knowledge (v2): generated per-profile index
-    ├── extensions/                        # Profile-scoped Forge extensions (auto-created)
-    ├── specialists/                       # Profile-specific specialist overrides
-    ├── project-agents/<handle>/
-    │   ├── config.json                    # Agent config (handle, whenToUse, agentId, timestamps)
-    │   ├── prompt.md                      # System prompt (editable, takes effect on restart)
-    │   └── reference/                     # Per-agent reference documents
-    ├── reference/                         # Profile reference documents
-    ├── integrations/                      # Profile integration configs
-    ├── pi/                                # Profile-scoped Pi runtime resources
-    │   ├── extensions/                    #   Profile extensions (auto-created)
-    │   ├── skills/                        #   Profile skills (auto-created)
-    │   ├── prompts/                       #   Profile prompts (auto-created)
-    │   └── themes/                        #   Profile themes (auto-created)
-    ├── schedules/schedules.json           # Scheduled tasks
-    ├── slash-commands.json                # Profile slash commands
-    └── sessions/<sessionId>/
-        ├── session.jsonl                  # Conversation history
-        ├── turns.jsonl                    # Rotating, fail-open liveness ledger used for boot reconciliation
-        ├── receipts.jsonl                 # Reason-coded message-routing receipts (rotates at 5 MiB)
-        ├── receipts.jsonl.1               # Optional previous routing-receipt segment after rotation
-        ├── memory.md                      # Session working memory
-        ├── meta.json                      # Session metadata (includes sessionPurpose: 'agent_creator' for Agent Architect sessions)
-        ├── feedback.jsonl                 # User feedback
-        ├── pinned-messages.json           # Pin state (up to 10 message IDs)
-        ├── plan.json                      # Current Builder working plan snapshot
-        ├── plan-history.ndjson            # Outgoing working-plan revisions
-        ├── plan-usage.ndjson              # Append-only plan assignment and token-usage receipts
-        ├── specialists/<handle>.md        # Channel-local specialist definitions (under _collaboration sessions)
-        ├── workers/<workerId>.jsonl       # Worker conversation logs
-        └── terminals/<terminalId>/
-            ├── meta.json                  # Terminal metadata (shell, cwd, title, cols/rows)
-            ├── snapshot.vt                # Serialized terminal state (xterm.js headless)
-            └── delta.ndjson               # Raw output journal for replay between snapshots
-```
-
-Session forks now support a **partial fork** from a specific message: the forked `session.jsonl` is copied up to that message only.
-The forked session memory header also records that truncation point so the parent history boundary is explicit. Cursor SDK runtime state and usage records are omitted from forks so resumes do not leak prior SDK state or double-count usage. Historical Codex app-server sidecar display cards are also omitted from forks. Manager-routed Codex turns are preserved only as normal manager audit rows; forked sessions omit the external-thread cards. Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, including after async project-agent deliveries. Archive ordering uses last user-message activity rather than a generic activity timestamp, with lazy hydration of that value and no global backfill.
-
-Repo-root project resources live beside the checkout, not under `~/.forge`: `.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/extensions/`, `.forge/pi/extensions/`, and `.forge/pi/settings.json`. Only executable repo resources are trust-gated; passive text resources remain available if trust is denied. Do not introduce split `.forge/manager` or `.forge/worker` trees in v1.
-
-See `apps/backend/src/swarm/storage/data-paths.ts` for the canonical path resolution logic (`swarm/data-paths.ts` is a compat re-export).
-
-## Development Commands
-
-### Development
+Focused Vitest examples:
 
 ```bash
-pnpm dev                    # Start backend + UI in dev mode (with hot reload)
-pnpm dev:backend            # Start backend only
-pnpm dev:ui                 # Start UI only
-pnpm dev:electron           # Start Electron desktop app in dev mode
+cd apps/backend && pnpm exec vitest run src/path/to/test.ts
+cd apps/ui && pnpm exec vitest run src/path/to/test.ts
+cd packages/protocol && pnpm exec vitest run src/path/to/test.ts
 ```
 
-Dev ports:
-- Backend HTTP + WS: `http://127.0.0.1:47187`
-- UI: `http://127.0.0.1:47188`
-- Electron: Launches desktop window (UI runs on port 47188)
+## Local instruction index
 
-### Production
-
-```bash
-pnpm prod                   # Build all packages, then start backend + UI
-pnpm prod:daemon            # Start as a background daemon (recommended for production)
-pnpm prod:restart           # Restart a running daemon
-pnpm package:electron       # Build standalone desktop app for distribution (build only; no publish)
-pnpm release:electron       # Intentionally disabled; use the guarded draft-first desktop release flow in apps/electron/README.md
-```
-
-Desktop release rules:
-- **Build first, publish last.** Bump and push the Electron version before any release build.
-- **Beta-first channel policy.** New desktop rollouts go out on beta first. Beta versions must be published as GitHub prereleases; stable rollout happens later as a separate intentional release.
-- **Draft-first only.** Create the GitHub Release as a draft, upload the full updater asset set (`.dmg`, `.zip`, `.exe`, `latest*.yml`, `*.blockmap`, and related files), then publish.
-- **Never publish beta assets to stable.** If the version is a beta/prerelease version, keep the GitHub Release marked as a prerelease when publishing.
-- **Windows release builds use `workflow_dispatch`.** Pushes to `electron/*` branches are validation-only and must not be treated as published release builds.
-- **`apps/electron/release/` is disposable build output.** `pnpm package:electron` now clears it before packaging so stale installers/blockmaps do not get mixed into validation or manual upload steps.
-- **Packaged-runtime smoke should come from staged assets, not repo fallbacks.** The Electron package build now resolves and loads staged runtime externals from `.stage/backend/node_modules/`; if you change packaged dependencies, keep that preflight passing.
-- See `apps/electron/README.md` for the current packaged layout and release workflow.
-
-> `pnpm prod` implicitly runs `pnpm build` before starting. The daemon commands in `scripts/` manage PID tracking and process lifecycle.
-
-Production ports:
-- Backend HTTP + WS: `http://127.0.0.1:47287`
-- UI preview: `http://127.0.0.1:47189`
-- Electron: Defaults to port 47287 for backend, configurable via `FORGE_PORT`
-
-### In-app help content
-
-In-app help article **bodies** live in Markdown under `apps/ui/src/components/help/content/articles/<category>/<article-id>.md`. Article **metadata** (`id`, `title`, `category`, `summary`, `keywords`, `relatedIds`, `contextKeys`) stays in `apps/ui/src/components/help/content/*-articles.ts` with explicit per-article `?raw` imports. Do not use frontmatter in v1.
-
-When adding or editing help content:
-
-1. Edit the `.md` body directly; do not put Markdown bodies in TS template literals.
-2. Update the matching metadata entry and `?raw` import in the owning `*-articles.ts` module.
-3. Run `pnpm help:validate` (permanent structural checks only; no baseline file required).
-4. Run UI typecheck and, for help-content changes, `pnpm quality:changed` or `pnpm quality:quick` (the local quality runner routes help-content paths to `pnpm help:validate`).
-
-**Migration-only fidelity:** To compare against a one-time pre-migration baseline (handoff/review only), use `pnpm help:validate:migration` with a provenance-safe `.internal/help-content-baseline.json` captured from unmigrated TS via `pnpm help:baseline`. Do not regenerate that baseline from migrated sources, and do not require it for normal authoring.
-
-### Validation
-
-```bash
-pnpm help:validate                                        # Permanent strict help structural checks (no baseline)
-pnpm help:validate:migration                              # One-time migration fidelity vs provenance-safe baseline
-pnpm quality:quick                                        # Fast changed-file validation with a local JSON report
-pnpm quality:changed                                      # Conservative path-aware validation before merge/push
-pnpm quality:full                                         # Full local validation, including build
-pnpm quality:report                                       # Print the latest .forge/quality/latest.json report
-pnpm build                                                # Build all packages
-pnpm lint                                                 # Run repo-wide ESLint
-pnpm exec knip                                            # Detect unused code, exports, and dependency issues
-pnpm test                                                 # Run all tests (backend + UI, including backend test files)
-cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend production typecheck only (tests excluded by tsconfig.build.json)
-cd apps/ui && pnpm exec tsc --noEmit                               # UI typecheck
-pnpm model-catalog:audit                                  # Audit model catalog against Pi upstream
-```
-
-The local quality runner writes agent-readable results to `.forge/quality/latest.json` by default. Use `pnpm quality:changed -- --json --no-write` for machine-readable output without updating the local artifact. Git hooks remain optional and run local quality checks only after `core.hooksPath` opt-in on protected-branch push/merge paths.
-
-Run individual test files with Vitest:
-```bash
-cd apps/backend && pnpm exec vitest run src/swarm/__tests__/some-test.ts
-cd apps/ui && pnpm exec vitest run src/components/chat/SomeComponent.test.ts
-```
-
-**Before finishing any task, run `pnpm lint`, `pnpm exec knip`, `pnpm test`, plus both typecheck commands above and fix all reported errors.**
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FORGE_HOST` | `127.0.0.1` | Backend bind address |
-| `FORGE_PORT` | `47187` | Backend port (production uses `47287`) |
-| `FORGE_DATA_DIR` | `~/.forge` | Data storage root |
-| `FORGE_DEBUG` | `false` | Enable debug logging (also enables extension tool-call logging) |
-| `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. Only aggregate counts are sent. |
-| `FORGE_CORTEX_ENABLED` | `true` | Enable or disable the Cortex subsystem |
-| `VITE_FORGE_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
-| `BRAVE_API_KEY` | — | Brave Search skill |
-| `GEMINI_API_KEY` | — | Image generation skill |
-| `XAI_API_KEY` | — | xAI/Grok models (when using external API key mode) |
-| `CURSOR_API_KEY` | — | Cursor SDK runtime API key (enables Composer 2.5 and Cursor Grok 4.5 in manager and specialist selectors when model-catalog visibility allows them; detached auth/connect errors stay inside the runtime and fail closed as agent failures) |
-| `FORGE_TERMINAL_ENABLED` | `true` | Enable integrated terminal subsystem |
-| `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Max terminals per session |
-| `FORGE_TERMINAL_SNAPSHOT_INTERVAL_MS` | `30000` | Terminal state snapshot interval |
-| `FORGE_TERMINAL_SCROLLBACK_LINES` | `5000` | Max scrollback lines per terminal |
-| `FORGE_TERMINAL_DEFAULT_SHELL` | auto-detected | Override default shell |
-| `FORGE_DESKTOP` | auto-detected | Set to `true` when running in Electron desktop app |
-| `FORGE_RESOURCES_DIR` | auto-detected | Path to bundled resources in Electron app |
-| `FORGE_SKILL_SHARE_BASE_URL` | `https://forgeskills.radops.ai` | Skill share worker origin used for share links and preview/import. |
-| `FORGE_SKILL_SHARE_DISABLED` | `false` | Disable skill sharing and import from share URLs. |
-
-For compatibility, legacy `MIDDLEMAN_*` names are still accepted during startup, and legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` / `MIDDLEMAN_SKILL_SHARE_DISABLED` aliases are still accepted.
-
-See `.env.example` for the full reference.
-
-## Working Conventions
-
-### Conventions
-
-- Review/design markdown artifacts (plans, review docs) should be kept in the `.internal/` directory locally. This directory is gitignored and must never be committed — it is strictly for local working documents.
-- A pre-commit hook is provided in `.githooks/pre-commit` to block accidental commits of internal files. Enable it with: `git config core.hooksPath .githooks`
-- **Never run destructive git operations** (`git reset --hard`, `git push --force`, `git rebase`) on `main` or `master` without first verifying there are no unpushed local commits. Check with `git log --oneline origin/main..HEAD` before any hard reset. If unpushed commits exist, push them first or move the work to a feature branch. A Pi extension (`protected-git.ts`) enforces this at runtime, but agents should avoid attempting these operations in the first place.
-
-### UI Components
-
-Use [shadcn/ui](https://ui.shadcn.com/) for all shared UI primitives. Prefer shadcn components over hand-rolled HTML elements.
-
-To add a new shadcn component:
-```bash
-cd apps/ui                                      # Must run from apps/ui/ (where components.json lives)
-pnpm dlx shadcn@latest add <component-name>     # e.g., button, dialog, tabs
-```
-
-Generated components go to `apps/ui/src/components/ui/`. Check that directory for currently installed components. Browse the [shadcn docs](https://ui.shadcn.com/docs) for usage and available components.
-
-### Code Quality
-
-1. **Preserve existing behavior** unless explicitly asked to change it. The UI replays conversation history from JSONL files — event handling must work identically for both live-streamed and replayed messages.
-2. **Respect backend/frontend boundaries.** Shared types go in `packages/protocol/`. Don't duplicate type definitions across apps.
-3. **Validate changes** with smoke checks: manager creation, chat send/stop, settings updates.
-4. **Run validation** before finishing any task:
-   ```bash
-   pnpm lint
-   pnpm exec knip
-   pnpm test
-   cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # production-only backend typecheck; tests are covered by pnpm test
-   cd apps/ui && pnpm exec tsc --noEmit
-   ```
-
-## Structural Refactor Conventions
-
-When changing file layout or module boundaries, keep the old surface stable until callers have moved.
-
-### Core rules
-
-- **Test first for risky refactors:** add characterization tests before structural changes so behavior stays pinned.
-- **Seam first:** keep facades thin and stable, then delegate into extracted services or modules behind compatibility seams. For runtime construction, keep provider-specific setup in `swarm/runtime/{claude,cursor-sdk,pi}/` creator modules and shared planning in `runtime-*plan.ts` helpers.
-- **Compatibility shims:** use re-exports from old paths during moves; remove them only after dependent imports are updated.
-- **Protocol DTO placement:** shared message and transport types live in `packages/protocol/`; keep domain-specific leaf modules there and re-export through package barrels.
-- **Worktree and rollback:** use isolated git worktree branches for non-trivial or high-risk structural changes, and keep a rollback path before merging.
-
-### Directory-specific rules
-
-- **`swarm/`:** treat `swarm-manager.ts` as the facade/orchestrator. Extract runtime, agents, storage, catalog, skills, prompts, and session logic into dedicated subdirectories and services. Keep runtime provider dispatch in `swarm/runtime/runtime-factory.ts` and move provider-specific construction into creator modules rather than widening the facade.
-- **`ws/`:** keep HTTP routes in `ws/http/routes/`, WebSocket commands in `ws/commands/`, and shared HTTP services in `ws/http/services/`.
-- **`packages/protocol/`:** organize by domain leaf modules, with barrel re-exports at package boundaries and event-family files grouped by protocol surface.
-- **Frontend:** decompose large components into leaf components and hooks, then expose stable barrel exports for shared UI surfaces.
-
-## Platform Support
-
-Forge supports **macOS**, **Linux**, and **Windows**. When working on cross-platform code:
-
-### Path Handling
-- Use `path.join()` and `path.resolve()` instead of string concatenation.
-- Use `os.tmpdir()` for temporary directories.
-- Use `path.isAbsolute()` to check path types.
-- Normalize paths with `path.normalize()` when comparing.
-
-### Process & Signals
-- Signal handling (e.g., `SIGTERM`, `SIGINT`) should be gated for Windows compatibility.
-- Use `process.platform` checks when platform-specific behavior is required.
-
-### File System
-- Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is case-sensitive).
-- Use `fs.promises` for async file operations.
-- Handle `ENOENT` and permission errors gracefully.
-
-## Testing
-
-### Automated Tests
-
-```bash
-pnpm test                                       # Run all tests
-cd apps/backend && pnpm exec vitest run          # Backend tests only
-cd apps/ui && pnpm exec vitest run               # UI tests only
-cd apps/backend && pnpm exec vitest run path/to/test.ts   # Single test file
-```
-
-### Smoke Test Checklist
-
-After making changes, manually verify these core flows in the UI (at `http://127.0.0.1:47188` in dev mode):
-
-- Create a new manager session
-- Send a chat message and verify the response streams correctly
-- Stop an active manager mid-response
-- Update settings (model, system prompt, etc.) and verify they persist
-- Verify WebSocket reconnection after a backend restart
-- If making platform-specific changes, test on macOS, Linux, and Windows
+- [`apps/backend/src/swarm/AGENTS.md`](apps/backend/src/swarm/AGENTS.md) — orchestration boundaries and runtime invariants.
+- [`apps/backend/src/ws/AGENTS.md`](apps/backend/src/ws/AGENTS.md) — HTTP/WebSocket composition and import rules.
+- [`apps/backend/src/terminal/AGENTS.md`](apps/backend/src/terminal/AGENTS.md) — terminal persistence, lifecycle, and access rules.
+- [`apps/ui/AGENTS.md`](apps/ui/AGENTS.md) — shared UI conventions.
+- [`apps/ui/src/components/chat/AGENTS.md`](apps/ui/src/components/chat/AGENTS.md) — chat component boundaries.
+- [`apps/ui/src/components/settings/AGENTS.md`](apps/ui/src/components/settings/AGENTS.md) — settings component boundaries.
+- [`apps/ui/src/components/help/AGENTS.md`](apps/ui/src/components/help/AGENTS.md) — in-app help authoring and validation.
+- [`apps/ui/src/lib/AGENTS.md`](apps/ui/src/lib/AGENTS.md) — client infrastructure and WebSocket state.
+- [`packages/protocol/AGENTS.md`](packages/protocol/AGENTS.md) — shared contract compatibility and consumer validation.
