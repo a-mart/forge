@@ -10,6 +10,7 @@ import type {
   MessageSourceContext,
 } from './shared-types.js'
 import type { ModelCacheObservationEvent } from './model-cache.js'
+import type { PlanSummaryEvent } from './plans.js'
 
 export type {
   ModelCacheClassification,
@@ -244,6 +245,7 @@ export type ConversationEntry =
   | AgentMessageEvent
   | AgentToolCallEvent
   | ChoiceRequestEvent
+  | PlanSummaryEvent
   | ModelCacheObservationEvent
 
 export function isUserVisibleAssistantConversationMessage(

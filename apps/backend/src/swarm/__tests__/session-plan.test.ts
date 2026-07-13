@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { buildUpdatePlanTool } from '../planning/update-plan-tool.js'
+import { shouldCreateCompletedPlanSummary } from '../planning/plan-summary.js'
 import {
   appendSessionPlanCompactionInstructions,
   formatSessionPlanModelContext,
@@ -12,7 +13,7 @@ import {
   SessionPlanValidationError,
 } from '../planning/session-plan-state.js'
 import { SessionPlanStore } from '../planning/session-plan-store.js'
-import { getSessionPlanPath } from '../storage/data-paths.js'
+import { getSessionPlanHistoryPath, getSessionPlanPath } from '../storage/data-paths.js'
 import type { SwarmToolHost } from '../swarm-tool-host.js'
 import type { AgentDescriptor } from '../types.js'
 
@@ -40,6 +41,28 @@ describe('Codex-style session plans', () => {
     })).toThrow(SessionPlanValidationError)
   })
 
+  it('creates a summary only when a completed snapshot is actually replaced', () => {
+    const completed = {
+      schemaVersion: 1 as const,
+      revision: 2,
+      updatedAt: '2026-07-13T00:00:00.000Z',
+      explanation: 'Done.',
+      plan: [{ step: 'Finish the work', status: 'completed' as const }],
+    }
+
+    expect(shouldCreateCompletedPlanSummary(completed, completed.plan)).toBe(false)
+    expect(shouldCreateCompletedPlanSummary(completed, [
+      { step: 'Start the next plan', status: 'in_progress' },
+    ])).toBe(true)
+    expect(shouldCreateCompletedPlanSummary(completed, [])).toBe(true)
+    expect(shouldCreateCompletedPlanSummary({
+      ...completed,
+      plan: [{ step: 'Finish the work', status: 'in_progress' }],
+    }, [
+      { step: 'Start the next plan', status: 'in_progress' },
+    ])).toBe(false)
+  })
+
   it('persists atomic snapshots and increments the revision', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'forge-session-plan-'))
     const store = new SessionPlanStore({
@@ -61,6 +84,19 @@ describe('Codex-style session plans', () => {
 
     expect(updated).toMatchObject({ revision: 2, explanation: 'Inspection complete.' })
     expect(JSON.parse(await readFile(getSessionPlanPath(dataDir, 'profile-1', 'session-1'), 'utf8'))).toEqual(updated)
+    await store.clear()
+    expect(readJsonl(await readFile(
+      getSessionPlanHistoryPath(dataDir, 'profile-1', 'session-1'),
+      'utf8',
+    ))).toEqual([
+      {
+        schemaVersion: 1,
+        revision: 1,
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        plan: [{ step: 'Inspect', status: 'in_progress' }],
+      },
+      updated,
+    ])
   })
 
   it('backs up malformed state and safely returns an empty plan', async () => {
@@ -89,6 +125,63 @@ describe('Codex-style session plans', () => {
     await expect(update).resolves.toMatchObject({ revision: 1 })
     await expect(clear).resolves.toMatchObject({ revision: 2, plan: [] })
     await expect(store.load()).resolves.toMatchObject({ revision: 2, plan: [] })
+    expect(readJsonl(await readFile(store.historyFilePath, 'utf8'))).toEqual([{
+      schemaVersion: 1,
+      revision: 1,
+      updatedAt: '2026-07-12T00:00:00.000Z',
+      plan: [{ step: 'Inspect', status: 'in_progress' }],
+    }])
+  })
+
+  it('returns the exact outgoing snapshot from inside the serialized update', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-session-plan-outgoing-'))
+    const store = new SessionPlanStore({
+      dataDir,
+      profileId: 'profile-1',
+      sessionAgentId: 'session-1',
+      now: () => new Date('2026-07-12T00:00:00.000Z'),
+    })
+
+    await store.update({ plan: [{ step: 'First plan', status: 'completed' }] })
+    const first = store.updateWithOutgoingState({
+      plan: [{ step: 'Second plan', status: 'in_progress' }],
+    })
+    const second = store.updateWithOutgoingState({
+      plan: [{ step: 'Third plan', status: 'in_progress' }],
+    })
+
+    await expect(first).resolves.toMatchObject({
+      outgoing: { revision: 1, plan: [{ step: 'First plan', status: 'completed' }] },
+      snapshot: { revision: 2, plan: [{ step: 'Second plan', status: 'in_progress' }] },
+    })
+    await expect(second).resolves.toMatchObject({
+      outgoing: { revision: 2, plan: [{ step: 'Second plan', status: 'in_progress' }] },
+      snapshot: { revision: 3, plan: [{ step: 'Third plan', status: 'in_progress' }] },
+    })
+  })
+
+  it('keeps the current plan unchanged when history archival fails', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-session-plan-history-failure-'))
+    const appendHistory = vi.fn(async () => { throw new Error('history unavailable') })
+    const store = new SessionPlanStore({
+      dataDir,
+      profileId: 'profile-1',
+      sessionAgentId: 'session-1',
+      appendHistory,
+    })
+
+    await store.update({ plan: [{ step: 'Preserve me', status: 'in_progress' }] })
+    await expect(store.update({ plan: [{ step: 'Replace me', status: 'in_progress' }] }))
+      .rejects.toThrow('history unavailable')
+
+    expect(appendHistory).toHaveBeenCalledWith(store.historyFilePath, expect.objectContaining({
+      revision: 1,
+      plan: [{ step: 'Preserve me', status: 'in_progress' }],
+    }))
+    await expect(store.load()).resolves.toMatchObject({
+      revision: 1,
+      plan: [{ step: 'Preserve me', status: 'in_progress' }],
+    })
   })
 
   it('formats a bounded authoritative model context block', () => {
@@ -138,3 +231,7 @@ describe('Codex-style session plans', () => {
     expect(result.details).toMatchObject({ revision: 1, plan: input.plan })
   })
 })
+
+function readJsonl(raw: string): unknown[] {
+  return raw.trim().split('\n').map((line) => JSON.parse(line))
+}

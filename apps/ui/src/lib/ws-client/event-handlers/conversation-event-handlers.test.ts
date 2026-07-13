@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCacheObservationEntry } from '@/lib/ws-state'
 import { createInitialManagerWsState } from '@/lib/ws-state'
-import type { ChoiceRequestEvent, ConversationMessageEvent } from '@forge/protocol'
+import type { ChoiceRequestEvent, ConversationMessageEvent, PlanSummaryEvent } from '@forge/protocol'
 import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state'
 import { handleConversationEvent } from './conversation-event-handlers'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -58,6 +58,18 @@ function makeMessage(id: string, text: string): ConversationMessageEvent {
   }
 }
 
+function makePlanSummary(id = 'summary-1'): PlanSummaryEvent {
+  return {
+    type: 'plan_summary',
+    id,
+    agentId: 'manager',
+    timestamp: '2026-07-13T01:00:00.000Z',
+    revision: 2,
+    updatedAt: '2026-07-13T00:59:00.000Z',
+    plan: [{ step: 'Finish the first plan', status: 'completed' }],
+  }
+}
+
 function runHandler(
   state: ManagerWsState,
   event: Parameters<typeof handleConversationEvent>[0],
@@ -94,6 +106,20 @@ describe('handleConversationEvent conversation history merge', () => {
       ['msg-bootstrap-only', 'from bootstrap'],
       ['msg-live-only', 'arrived during bootstrap'],
     ])
+  })
+
+  it('retains one durable plan summary across live and bootstrap delivery', () => {
+    const liveSummary = makePlanSummary()
+    const liveState = runHandler(createInitialManagerWsState('manager'), liveSummary)
+    expect(liveState.messages).toEqual([liveSummary])
+
+    const next = runHandler(liveState, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [liveSummary],
+    })
+
+    expect(next.messages.filter((entry) => entry.type === 'plan_summary')).toEqual([liveSummary])
   })
 })
 

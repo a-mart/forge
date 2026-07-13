@@ -1,0 +1,53 @@
+/** @vitest-environment jsdom */
+
+import { act, createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { PlanSummaryEvent } from '@forge/protocol'
+import { PlanSummaryRow } from './PlanSummaryRow'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+let root: Root
+let container: HTMLDivElement
+
+const summary: PlanSummaryEvent = {
+  type: 'plan_summary',
+  id: 'summary-1',
+  agentId: 'session-1',
+  timestamp: '2026-07-13T01:00:00.000Z',
+  revision: 3,
+  updatedAt: '2026-07-13T00:59:00.000Z',
+  explanation: 'The implementation and verification are complete.',
+  plan: [
+    { step: 'Implement the change', status: 'completed' },
+    { step: 'Verify the result', status: 'completed' },
+  ],
+}
+
+beforeEach(() => {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+})
+
+afterEach(() => {
+  act(() => root.unmount())
+  container.remove()
+})
+
+describe('PlanSummaryRow', () => {
+  it('renders a collapsed completed receipt and expands to the frozen steps', () => {
+    act(() => root.render(createElement(PlanSummaryRow, { summary })))
+
+    expect(container.textContent).toContain('Completed plan')
+    expect(container.textContent).toContain('2/2')
+    expect(container.textContent).not.toContain('Implement the change')
+
+    act(() => container.querySelector('button')?.click())
+
+    expect(container.textContent).toContain('Implement the change')
+    expect(container.textContent).toContain('Verify the result')
+    expect(container.textContent).toContain('2 of 2 completed')
+  })
+})

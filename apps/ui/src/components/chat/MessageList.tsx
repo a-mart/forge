@@ -27,7 +27,7 @@ import {
   resolveConversationMessageTargetId,
 } from './message-list/external-thread-stop-eligibility'
 import { EmptyState } from './message-list/EmptyState'
-import { PlanCard } from './plan'
+import { PlanCard, PlanSummaryRow } from './plan'
 import {
   hydrateToolDisplayEntry,
   isToolExecutionEvent,
@@ -153,6 +153,11 @@ type DisplayEntry =
       id: string
       entry: ConversationLogEntry
     }
+  | {
+      type: 'plan_summary'
+      id: string
+      entry: Extract<ConversationEntry, { type: 'plan_summary' }>
+    }
 
 function isNearBottom(container: HTMLElement, threshold = AUTO_SCROLL_THRESHOLD_PX): boolean {
   const distanceFromBottom =
@@ -208,6 +213,15 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
         type: 'agent_message',
         id: `agent-message-${message.timestamp}-${index}`,
         message,
+      })
+      continue
+    }
+
+    if (message.type === 'plan_summary') {
+      displayEntries.push({
+        type: 'plan_summary',
+        id: `plan-summary-${message.id}`,
+        entry: message,
       })
       continue
     }
@@ -891,6 +905,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
     if (entry.type === 'agent_message') {
       return <AgentMessageRow message={entry.message} />
+    }
+
+    if (entry.type === 'plan_summary') {
+      return <PlanSummaryRow summary={entry.entry} />
     }
 
     return (

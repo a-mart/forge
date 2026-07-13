@@ -415,7 +415,8 @@ function selectBootstrapEntriesWithinBudget(
 function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
   return (
     entry.type === "conversation_message" ||
-    entry.type === "choice_request"
+    entry.type === "choice_request" ||
+    entry.type === "plan_summary"
   );
 }
 

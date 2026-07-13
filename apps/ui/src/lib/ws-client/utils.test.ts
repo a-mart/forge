@@ -88,4 +88,21 @@ describe('splitConversationHistory', () => {
     expect(result.modelCacheObservations).toHaveLength(1)
     expect(result.modelCacheObservations[0]?.id).toBe('cache-obs-1')
   })
+
+  it('keeps completed plan summaries in the renderable conversation bucket', () => {
+    const summary: ConversationEntry = {
+      type: 'plan_summary',
+      id: 'summary-1',
+      agentId: 'manager',
+      timestamp: '2026-07-13T01:00:00.000Z',
+      revision: 2,
+      updatedAt: '2026-07-13T00:59:00.000Z',
+      plan: [{ step: 'Finish the first plan', status: 'completed' }],
+    }
+
+    const result = splitConversationHistory([summary])
+
+    expect(result.messages).toEqual([summary])
+    expect(result.activityMessages).toEqual([])
+  })
 })

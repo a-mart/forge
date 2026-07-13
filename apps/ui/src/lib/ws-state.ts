@@ -13,7 +13,7 @@ import type {
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,
-  { type: 'conversation_message' | 'conversation_log' | 'choice_request' }
+  { type: 'conversation_message' | 'conversation_log' | 'choice_request' | 'plan_summary' }
 >
 export type ModelCacheObservationEntry = Extract<
   ConversationEntry,

@@ -28,6 +28,7 @@ const SESSION_AUDIT_ENTRY_CATEGORY_VALUES = [
   'worker_tool_call',
   'runtime_log',
   'choice_request',
+  'plan_summary',
   'model_cache_observation',
   'custom',
   'unknown',
@@ -1147,6 +1148,8 @@ function classifyConversationEntry(entry: Record<string, unknown>): {
       }
     case 'choice_request':
       return { category: 'choice_request', renderable: true, title: 'Choice request' }
+    case 'plan_summary':
+      return { category: 'plan_summary', renderable: true, title: 'Completed plan' }
     case 'model_cache_observation':
       return { category: 'model_cache_observation', renderable: true, title: 'Model cache observation' }
     default:
@@ -1169,6 +1172,10 @@ function buildConversationSummary(entry: Record<string, unknown>, title: string,
     const from = stringValue(entry.fromAgentId) || 'user'
     const to = stringValue(entry.toAgentId) || 'agent'
     return `${from} -> ${to}: ${preview}`
+  }
+  if (type === 'plan_summary') {
+    const revision = numberValue(entry.revision)
+    return revision === undefined ? title : `${title}: revision ${revision}`
   }
   if (type === 'agent_tool_call') {
     const actor = stringValue(entry.actorAgentId) || stringValue(entry.agentId) || 'agent'

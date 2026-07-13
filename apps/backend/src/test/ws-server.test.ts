@@ -3462,6 +3462,22 @@ describe('SwarmWebSocketServer', () => {
       (event) => event.type === 'session_plan_snapshot' && event.plan[0]?.step === 'Inspect lifecycle',
     )
 
+    await manager.updatePlan(sessionAgent.agentId, 'plan-lifecycle-complete', {
+      explanation: 'Lifecycle inspection complete.',
+      plan: [{ step: 'Inspect lifecycle', status: 'completed' }],
+    })
+    const summaryBaseline = events.length
+    await manager.updatePlan(sessionAgent.agentId, 'plan-lifecycle-next', {
+      plan: [{ step: 'Start next plan', status: 'in_progress' }],
+    })
+    await waitForEventAfter(
+      events,
+      summaryBaseline,
+      (event) => event.type === 'plan_summary'
+        && event.agentId === sessionAgent.agentId
+        && event.plan[0]?.step === 'Inspect lifecycle',
+    )
+
     const baseline = events.length
     client.send(JSON.stringify({ type: 'clear_session', agentId: sessionAgent.agentId, requestId: 'clear-plan' }))
     await waitForEventAfter(

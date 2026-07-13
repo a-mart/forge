@@ -1076,6 +1076,7 @@ export function BuilderSurface({
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt
                       : undefined,
                 }}
+                planSnapshot={planSnapshot}
                 workerPillBarProps={
                   isActiveManager
                     ? {

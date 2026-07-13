@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   PLAN_STEP_STATUSES,
+  type PlanSummaryEvent,
   type PlanStepStatus,
   type SessionPlanSnapshotEvent,
 } from '../plans.js'
@@ -27,5 +28,19 @@ describe('plan protocol', () => {
 
     expect(event.plan).toHaveLength(2)
     expect(event.plan[1]?.status).toBe('in_progress')
+  })
+
+  it('represents one frozen completed-plan transcript summary', () => {
+    const summary = {
+      type: 'plan_summary',
+      id: 'summary-1',
+      agentId: 'session-1',
+      timestamp: '2026-07-13T01:00:00.000Z',
+      revision: 3,
+      updatedAt: '2026-07-13T00:59:00.000Z',
+      plan: [{ step: 'Verify the result', status: 'completed' }],
+    } satisfies PlanSummaryEvent
+
+    expect(summary.plan[0]?.status).toBe('completed')
   })
 })

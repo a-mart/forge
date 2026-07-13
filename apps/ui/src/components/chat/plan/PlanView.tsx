@@ -1,9 +1,9 @@
 import { Check, Circle, LoaderCircle } from 'lucide-react'
-import type { SessionPlanSnapshotEvent } from '@forge/protocol'
+import type { SessionPlanSnapshot } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 
 interface PlanViewProps {
-  snapshot: SessionPlanSnapshotEvent
+  snapshot: SessionPlanSnapshot
   compact?: boolean
 }
 
