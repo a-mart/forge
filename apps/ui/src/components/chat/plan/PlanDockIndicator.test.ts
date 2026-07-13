@@ -42,6 +42,7 @@ describe('PlanDockIndicator', () => {
     expect(container.textContent).toContain('Step 2/3')
     expect(container.querySelector('button')?.getAttribute('aria-label'))
       .toBe('Open working plan, Step 2/3')
+    expect(container.firstElementChild?.className).toContain('pb-1')
   })
 
   it('shows a completed state and hides when no plan exists', () => {
