@@ -526,7 +526,7 @@ describe('AgentSidebarConnected', () => {
       (button) => button.textContent?.trim() === 'profile-a',
     )
     expect(projectButtons.length).toBeGreaterThan(0)
-    expect(projectButtons.every((button) => button.getAttribute('aria-label') === 'Open project profile-a')).toBe(true)
+    expect(projectButtons.every((button) => button.getAttribute('aria-label') === 'Collapse project profile-a')).toBe(true)
     expect(api.put).not.toHaveBeenCalled()
   })
 

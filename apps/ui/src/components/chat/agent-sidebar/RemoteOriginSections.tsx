@@ -149,33 +149,14 @@ export const RemoteProfileRow = memo(function RemoteProfileRow({
       >
         <button
           type="button"
-          onClick={() => setCollapsed((value) => !value)}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} remote project ${profile.displayName} on ${instanceName}`}
-          aria-expanded={!collapsed}
-          className={cn(
-            'group absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-blue-300/80 transition',
-            'hover:text-blue-200',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-          )}
-        >
-          {collapsed ? (
-            <ChevronRight className="size-3" aria-hidden="true" />
-          ) : (
-            <ChevronDown className="size-3" aria-hidden="true" />
-          )}
-        </button>
-
-        <button
-          type="button"
           ref={dragHandleRef}
           {...dragHandleAttributes}
           {...dragHandleListeners}
-          aria-label={`${dragHandleListeners ? 'Open or drag' : 'Open'} remote project ${profile.displayName} on ${instanceName}`}
-          onClick={() => {
-            if (firstSession) onSelectAgent(originId, firstSession.agentId)
-          }}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'}${dragHandleListeners ? ' or drag' : ''} remote project ${profile.displayName} on ${instanceName}`}
+          aria-expanded={!collapsed}
+          onClick={() => setCollapsed((value) => !value)}
           className={cn(
-            'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-5.5 pr-1.5 text-left transition-colors',
+            'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-2.5 pr-1.5 text-left transition-colors',
             'hover:bg-sidebar-accent/50',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
             dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',

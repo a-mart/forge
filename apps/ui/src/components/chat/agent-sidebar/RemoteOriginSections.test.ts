@@ -174,10 +174,72 @@ describe('remote row/status rendering without nested DnD', () => {
     expect(projectButton.getAttribute('aria-roledescription')).toBe('sortable')
     expect(projectButton.getAttribute('aria-describedby')).toBe('dnd-description')
     expect(projectButton.getAttribute('aria-label')).toBe(
-      'Open or drag remote project Empty Remote Project on Remote East',
+      'Collapse or drag remote project Empty Remote Project on Remote East',
     )
     projectButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     expect(keyDown).toHaveBeenCalledOnce()
+  })
+
+  it('omits a project chevron and toggles expand/collapse from the remote project row', () => {
+    const onSelectAgent = vi.fn()
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(RemoteProfileRow, {
+        originId: 'remote:test',
+        treeRow: makeRow(
+          makeProfile({ displayName: 'Remote Project' }),
+          [makeSession(makeAgent({ agentId: 'normal-1', sessionLabel: 'Normal Session' }))],
+        ),
+        selectedAgentId: null,
+        isActiveOrigin: true,
+        instanceName: 'Remote Forge',
+        onSelectAgent,
+      }))
+    })
+
+    const row = container.querySelector('[data-testid="remote-profile-row-remote:test::project-1"]') as HTMLElement
+    expect(row.querySelector('button.absolute')).toBeNull()
+    expect(row.querySelector('[aria-label="Expand remote project Remote Project on Remote Forge"]')).toBeNull()
+    expect(container.textContent).toContain('Normal Session')
+
+    const projectButton = Array.from(container.querySelectorAll('button'))
+      .find((candidate) => (candidate.getAttribute('aria-label') ?? '').includes('remote project Remote Project')) as HTMLButtonElement
+    expect(projectButton.getAttribute('aria-label')).toBe('Collapse remote project Remote Project on Remote Forge')
+    expect(projectButton.getAttribute('aria-expanded')).toBe('true')
+
+    flushSync(() => projectButton.click())
+    expect(onSelectAgent).not.toHaveBeenCalled()
+    expect(container.textContent).not.toContain('Normal Session')
+    expect(projectButton.getAttribute('aria-label')).toBe('Expand remote project Remote Project on Remote Forge')
+    expect(projectButton.getAttribute('aria-expanded')).toBe('false')
+
+    flushSync(() => projectButton.click())
+    expect(container.textContent).toContain('Normal Session')
+  })
+
+  it('keeps remote session worker expand controls after removing the project chevron', () => {
+    const originId = 'remote:workers' as OriginId
+    const store = originRegistry.createOrigin({ originId, wsUrl: 'ws://workers.test', offline: true })
+    const fetchWorkers = vi.spyOn(store.getClient(), 'getSessionWorkers').mockResolvedValue({ sessionAgentId: 'session-workers', workers: [] })
+    const onSelectAgent = vi.fn()
+    const session = makeAgent({ agentId: 'session-workers', workerCount: 1 })
+    const worker = makeWorker({ agentId: 'worker-remote', managerId: 'session-workers', status: 'streaming' })
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(RemoteProfileRow, {
+        originId,
+        treeRow: makeRow(makeProfile(), [makeSession(session, true, [worker])]),
+        selectedAgentId: null,
+        isActiveOrigin: true,
+        onSelectAgent,
+      }))
+    })
+
+    expect(container.querySelector('[aria-label="Expand session workers"]')).toBeTruthy()
+    flushSync(() => (container.querySelector('[aria-label="Expand session workers"]') as HTMLButtonElement).click())
+    expect(fetchWorkers).toHaveBeenCalledWith('session-workers')
+    expect(container.textContent).toContain('Worker 1')
   })
 
   it('expands remote workers, fetches from the row origin, and routes worker selection to it', () => {
@@ -295,10 +357,10 @@ describe('remote row/status rendering without nested DnD', () => {
 
     const labels = Array.from(container.querySelectorAll('button'))
       .map((button) => button.getAttribute('aria-label'))
-      .filter((label) => label?.startsWith('Open remote'))
+      .filter((label) => label?.includes('remote project Shared Project'))
     expect(labels).toEqual([
-      'Open remote project Shared Project on Forge East',
-      'Open remote project Shared Project on Forge West',
+      'Collapse remote project Shared Project on Forge East',
+      'Collapse remote project Shared Project on Forge West',
     ])
   })
 
