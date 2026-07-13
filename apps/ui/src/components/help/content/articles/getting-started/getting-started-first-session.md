@@ -30,7 +30,7 @@ Type in the chat input at the bottom. Start with something concrete:
 - "Add dark mode support to the settings page"
 - "Review the last three PRs and summarize the changes"
 
-The manager reads your message, plans the work, and spawns workers as needed. You may see fewer routine status updates while it focuses on useful results, blockers, and completion updates.
+The manager reads your message, plans the work, and spawns workers as needed. Workers execute focused tasks and report evidence; the manager remains accountable and performs the smallest focused check needed before reporting an accepted result or material blocker. You may see fewer routine status updates while it focuses on useful outcomes.
 
 ## Watch workers run
 

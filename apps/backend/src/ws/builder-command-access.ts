@@ -229,6 +229,10 @@ export function evaluateApiProxyMemberAccess(options: {
     return { ok: true };
   }
 
+  if (normalizedMethod === "POST" && pathname === "/api/chat-artifacts/read") {
+    return { ok: true };
+  }
+
   if (!isRead && API_PROXY_MEMBER_WRITE_PATHS.has(pathname)) {
     return { ok: true };
   }

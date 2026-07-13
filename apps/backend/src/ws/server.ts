@@ -66,6 +66,7 @@ import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createBuilderSidebarOrderRoutes } from "./http/routes/builder-sidebar-order-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
+import { createChatArtifactRoutes } from "./http/routes/chat-artifact-routes.js";
 import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
 import { createCliRoutes } from "./http/routes/cli-routes.js";
@@ -607,6 +608,7 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
+      ...createChatArtifactRoutes({ swarmManager: this.swarmManager }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),

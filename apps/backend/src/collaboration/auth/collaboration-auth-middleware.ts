@@ -51,6 +51,8 @@ const MEMBER_FILE_BROWSER_READ_PATHS = new Set([
 ]);
 /** Transcript file reads; POST /api/read-file is a read with body params. */
 const MEMBER_READ_FILE_PATH = "/api/read-file";
+/** Privileged transcript-authorized artifact reads remain Builder project surface. */
+const MEMBER_CHAT_ARTIFACT_READ_PATH = "/api/chat-artifacts/read";
 /** Conversation attachment downloads (R1). */
 const MEMBER_ATTACHMENTS_PATH_PREFIX = "/api/attachments/";
 /** Git read surfaces (R1). */
@@ -361,6 +363,9 @@ function isMemberProjectRoute(
 
   // POST /api/read-file is a read (path parameters travel in the body).
   if (pathname === MEMBER_READ_FILE_PATH && (isReadMethod || normalizedMethod === "POST")) {
+    return true;
+  }
+  if (pathname === MEMBER_CHAT_ARTIFACT_READ_PATH && normalizedMethod === "POST") {
     return true;
   }
 

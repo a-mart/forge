@@ -100,7 +100,7 @@ Sessions are where work actually happens. The manager is just the container.
 
 ### The Manager–Worker Relationship
 
-When you ask your manager to do something ("fix the login bug," "add dark mode," "refactor the auth module"), the manager breaks the task down, spawns one or more worker agents, and delegates the actual coding. Workers run in their own processes, execute tool calls (file edits, terminal commands, web searches), and report results back to the manager.
+When you ask your manager to do something ("fix the login bug," "add dark mode," "refactor the auth module"), the manager breaks the task down, spawns one or more worker agents, and delegates the actual coding. Workers run in their own processes, execute tool calls (file edits, terminal commands, web searches), and report evidence back to the manager. The manager retains accountability, performs the smallest focused check needed to accept the work, and reports an accepted result or material blocker.
 
 The key insight: **your manager writes better prompts than you do.** Especially at 2am when you're tired, you're not giving the best instructions. But your manager takes your casual, imprecise request and translates it into precise, well-structured worker prompts. It handles the "write a prompt to write a prompt" step that you used to do manually across different chat windows.
 
@@ -119,7 +119,7 @@ Two view modes, toggled at the top:
 
 Selecting a worker pill or worker row opens that worker's own transcript, which defaults to **All**. Return to the manager and switch to All manually when you want to inspect terminal worker reports that are hidden from the manager's Web view.
 
-If a worker finishes but the manager does not summarize the result, Forge may show either a system notice directing you to All or a calm **Worker outcome · auto-surfaced** card with a bounded outcome summary. The card is informational rather than a manager-authored reply; use All for the full terminal report.
+Raw terminal worker reports remain inspectable in **All**. The manager treats a report as evidence rather than an inherited conclusion, performs focused acceptance, and publishes the accepted result or a material blocker.
 
 Use **Session Audit Log** from the chat header menu when you need the canonical persisted rows and runtime internals. It opens a list/detail inspector: the row list stays compact and paginated, and selecting a row loads the full JSON detail for inspection and copy. On desktop, the list and detail panes are separated by a draggable, keyboard-accessible divider that remembers its width locally. Supported native provider rows, including provider text, tool calls/results, system rows, and hidden thinking blocks, are classified as hidden runtime rows instead of appearing as `Unknown row: message`. Provider internals such as thinking, tool arguments/results, and system content stay out of normal Web/All summaries and list previews; inspect the JSON detail view when you need the underlying row and have access to it.
 
@@ -712,6 +712,8 @@ For your first few sessions, send one task at a time and watch how the manager h
 ### Be Careful with Permissions
 
 These agents have real system access. They can run commands, modify files, install packages, and interact with databases. This is exactly what makes them useful, but it also means they can do damage.
+
+A clear instruction authorizes the named action or action class for the current conversation, so Forge should not ask twice for the same scoped permission. Broad autonomy does not authorize unrelated destructive, externally visible, costly, security-sensitive, or production-impacting actions.
 
 Real story: agents have hard-deleted a Postgres database. Twice. On a local development machine, fortunately, but with data that was actually wanted. No recovery.
 

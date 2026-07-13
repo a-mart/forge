@@ -129,7 +129,7 @@ Then start rating messages. Thumbs up when the manager nails it, thumbs down whe
 
 Every Forge manager is tied to a project directory. You talk to the manager; the manager talks to the workers. Describe work at a high level ("implement the search feature," "fix these three bugs," "refactor the auth module") and the manager breaks it down, spawns workers, and coordinates the results.
 
-Workers run in isolated worktrees so they don't step on each other. The manager tracks status, handles merging, and reports back. You can watch it all happen in real time from the dashboard, or walk away and check in later.
+Workers run in isolated worktrees so they don't step on each other. They execute focused tasks and report evidence; the manager retains accountability, performs the smallest focused check needed to accept their work, handles merging, and reports the accepted result or a material blocker. You can watch it all happen in real time from the dashboard, or walk away and check in later.
 
 Need to run unrelated tasks at the same time? Just tell the manager. It'll figure out what can run concurrently and spin up workers in parallel.
 

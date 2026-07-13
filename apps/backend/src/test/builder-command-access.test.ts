@@ -181,6 +181,7 @@ describe("api_proxy member access", () => {
     const allowed: Array<[string, string]> = [
       ["/api/read-file", "GET"],
       ["/api/read-file", "POST"],
+      ["/api/chat-artifacts/read", "POST"],
       ["/api/unread", "GET"],
       ["/api/unread", "POST"],
       ["/api/slash-commands", "GET"],
@@ -207,6 +208,8 @@ describe("api_proxy member access", () => {
       ["/api/mobile/push/test", "POST"],
       ["/api/slash-commands", "POST"],
       ["/api/anything-else", "GET"],
+      ["/api/chat-artifacts/read/", "POST"],
+      ["/api/chat-artifacts/read%2f", "POST"],
     ];
     for (const [pathname, method] of denied) {
       expect(
