@@ -8,14 +8,19 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
   if (!snapshot || snapshot.plan.length === 0) return null
 
   const completed = snapshot.plan.filter((step) => step.status === 'completed').length
+  const active = snapshot.plan.filter((step) => step.status === 'in_progress').length
   const isComplete = completed === snapshot.plan.length
-  const activeIndex = snapshot.plan.findIndex((step) => step.status === 'in_progress')
-  const nextIndex = activeIndex >= 0
-    ? activeIndex
-    : snapshot.plan.findIndex((step) => step.status === 'pending')
   const label = isComplete
     ? `${completed}/${snapshot.plan.length} complete`
-    : `Step ${Math.max(0, nextIndex) + 1}/${snapshot.plan.length}`
+    : active > 1
+      ? `${active} active · ${completed}/${snapshot.plan.length} complete`
+      : (() => {
+          const activeIndex = snapshot.plan.findIndex((step) => step.status === 'in_progress')
+          const nextIndex = activeIndex >= 0
+            ? activeIndex
+            : snapshot.plan.findIndex((step) => step.status === 'pending')
+          return `Step ${Math.max(0, nextIndex) + 1}/${snapshot.plan.length}`
+        })()
 
   return (
     <div className="relative z-20 flex shrink-0 justify-center bg-background px-3 pt-1">

@@ -47,10 +47,6 @@ export function normalizeSessionPlanInput(value: unknown): {
   }
 
   const plan = input.plan.map((step, index) => normalizePlanStep(step, index))
-  const inProgressCount = plan.filter((step) => step.status === 'in_progress').length
-  if (inProgressCount > 1) {
-    throw new SessionPlanValidationError('At most one plan step can be in_progress.')
-  }
 
   return {
     ...(explanation ? { explanation } : {}),

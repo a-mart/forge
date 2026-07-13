@@ -10,7 +10,6 @@ import {
 } from '../planning/session-plan-context.js'
 import {
   normalizeSessionPlanInput,
-  SessionPlanValidationError,
 } from '../planning/session-plan-state.js'
 import { SessionPlanStore } from '../planning/session-plan-store.js'
 import { getSessionPlanHistoryPath, getSessionPlanPath } from '../storage/data-paths.js'
@@ -18,7 +17,7 @@ import type { SwarmToolHost } from '../swarm-tool-host.js'
 import type { AgentDescriptor } from '../types.js'
 
 describe('Codex-style session plans', () => {
-  it('normalizes a full plan and enforces one in-progress step', () => {
+  it('normalizes a full plan and supports parallel in-progress steps', () => {
     expect(normalizeSessionPlanInput({
       explanation: '  Narrowed after inspection.  ',
       plan: [
@@ -33,12 +32,17 @@ describe('Codex-style session plans', () => {
       ],
     })
 
-    expect(() => normalizeSessionPlanInput({
+    expect(normalizeSessionPlanInput({
       plan: [
         { step: 'First', status: 'in_progress' },
         { step: 'Second', status: 'in_progress' },
       ],
-    })).toThrow(SessionPlanValidationError)
+    })).toEqual({
+      plan: [
+        { step: 'First', status: 'in_progress' },
+        { step: 'Second', status: 'in_progress' },
+      ],
+    })
   })
 
   it('creates a summary only when a completed snapshot is actually replaced', () => {

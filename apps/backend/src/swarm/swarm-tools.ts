@@ -309,17 +309,21 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "send_message_to_agent",
       label: "Send Message To Agent",
       description:
-        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer.",
+        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass that step's exact text in planStep.",
       parameters: Type.Object({
         targetAgentId: Type.String({ description: "Agent id to receive the message." }),
         message: Type.String({ description: "Message text to deliver." }),
-        delivery: Type.Optional(deliveryModeSchema)
+        delivery: Type.Optional(deliveryModeSchema),
+        planStep: Type.Optional(Type.String({
+          description: "Exact text of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
+        }))
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
           targetAgentId: string;
           message: string;
           delivery?: RequestedDeliveryMode;
+          planStep?: string;
         };
 
         const receipt = await host.sendMessage(
@@ -333,6 +337,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
               toolCallId: _toolCallId,
               toolName: "send_message_to_agent",
             },
+            ...(parsed.planStep ? { planStep: parsed.planStep } : {}),
           }
         );
         recordToolSideEffect(host, descriptor, {
@@ -345,6 +350,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             targetAgentId: parsed.targetAgentId,
             acceptedMode: receipt.acceptedMode,
             deliveryId: receipt.deliveryId,
+            planStep: parsed.planStep,
           },
         });
 
@@ -441,12 +447,17 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        `Create and start a new worker agent. Prefer tier/lens mode via \`tier\` and optional \`lens\`; legacy \`specialist\` handles remain supported for custom specialists and compatibility. Use ad-hoc archetype/prompt/model overrides only when no tier/lens fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
+        `Create and start a new worker agent. Prefer tier/lens mode via \`tier\` and optional \`lens\`; legacy \`specialist\` handles remain supported for custom specialists and compatibility. When the assignment maps to one current plan step, pass that step's exact text in planStep. Use ad-hoc archetype/prompt/model overrides only when no tier/lens fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
       parameters: Type.Object({
         agentId: Type.String({
           description:
             "Required agent identifier. Normalized to lowercase kebab-case; collisions are suffixed numerically."
         }),
+        planStep: Type.Optional(
+          Type.String({
+            description: "Exact text of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
+          })
+        ),
         specialist: Type.Optional(
           Type.String({
             description:
@@ -495,6 +506,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       async execute(_toolCallId, params) {
         const parsed = params as {
           agentId: string;
+          planStep?: string;
           specialist?: string;
           tier?: "light" | "fast" | "standard" | "deep" | "max";
           lens?: string;
@@ -510,6 +522,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
         const spawnInput: SpawnAgentInput = {
           agentId: parsed.agentId,
+          planStep: parsed.planStep,
           specialist: parsed.specialist,
           tier: parsed.tier,
           lens: parsed.lens,
@@ -532,6 +545,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           output: { agentId: spawned.agentId, role: spawned.role, displayName: spawned.displayName },
           metadata: {
             spawnedAgentId: spawned.agentId,
+            planStep: spawnInput.planStep,
             specialist: spawnInput.specialist,
             tier: spawnInput.tier,
             lens: spawnInput.lens,

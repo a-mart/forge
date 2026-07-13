@@ -145,6 +145,7 @@ export interface SendMessageReceipt {
 
 export interface SpawnAgentInput {
   agentId: string;
+  planStep?: string;
   specialist?: string;
   tier?: EffortTier;
   lens?: string;

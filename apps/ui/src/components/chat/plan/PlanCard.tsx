@@ -16,7 +16,10 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
 
   const completed = snapshot.plan.filter((step) => step.status === 'completed').length
   const isComplete = completed === snapshot.plan.length
-  const current = snapshot.plan.find((step) => step.status === 'in_progress')
+  const active = snapshot.plan.filter((step) => step.status === 'in_progress')
+  const currentLabel = active.length > 1
+    ? `${active.length} steps in progress`
+    : active[0]?.step
 
   return (
     <section className="mx-auto w-full max-w-3xl px-4 pt-3" aria-label="Working plan">
@@ -42,7 +45,7 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
               <span className="text-[11px] tabular-nums text-muted-foreground">{completed}/{snapshot.plan.length}</span>
             </span>
             <span className="block truncate text-sm text-foreground">
-              {current?.step ?? snapshot.explanation ?? 'All planned steps completed'}
+              {currentLabel ?? snapshot.explanation ?? 'All planned steps completed'}
             </span>
           </span>
           <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')} />

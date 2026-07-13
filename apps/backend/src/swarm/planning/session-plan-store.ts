@@ -52,7 +52,13 @@ export class SessionPlanStore {
     return (await this.updateWithOutgoingState(input)).snapshot
   }
 
-  async updateWithOutgoingState(input: { explanation?: string; plan: PlanStep[] }): Promise<{
+  async updateWithOutgoingState(
+    input: { explanation?: string; plan: PlanStep[] },
+    onUpdated?: (transition: {
+      outgoing: SessionPlanState
+      snapshot: SessionPlanState
+    }) => Promise<void>,
+  ): Promise<{
     outgoing: SessionPlanState
     snapshot: SessionPlanState
   }> {
@@ -67,11 +73,25 @@ export class SessionPlanStore {
       }
       await this.archiveCurrentState(current)
       await this.writeAtomically(next)
-      return { outgoing: current, snapshot: next }
+      const transition = { outgoing: current, snapshot: next }
+      await onUpdated?.(transition)
+      return transition
     })
   }
 
   async clear(): Promise<SessionPlanState> {
+    return (await this.clearWithOutgoingState()).snapshot
+  }
+
+  async clearWithOutgoingState(
+    onUpdated?: (transition: {
+      outgoing: SessionPlanState
+      snapshot: SessionPlanState
+    }) => Promise<void>,
+  ): Promise<{
+    outgoing: SessionPlanState
+    snapshot: SessionPlanState
+  }> {
     return withPlanStoreLock(this.filePath, async () => {
       const current = await this.load()
       const next: SessionPlanState = {
@@ -82,7 +102,9 @@ export class SessionPlanStore {
       }
       await this.archiveCurrentState(current)
       await this.writeAtomically(next)
-      return next
+      const transition = { outgoing: current, snapshot: next }
+      await onUpdated?.(transition)
+      return transition
     })
   }
 

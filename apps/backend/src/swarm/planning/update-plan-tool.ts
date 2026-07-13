@@ -30,7 +30,7 @@ export const updatePlanToolSchema = Type.Object({
     step: Type.String({
       minLength: 1,
       maxLength: MAX_PLAN_STEP_LENGTH,
-      description: 'A concise, verifiable unit of work.',
+      description: 'A concise, verifiable unit of work. Keep step text distinct within the plan so worker attribution is unambiguous.',
     }),
     status: Type.Union([
       Type.Literal('pending'),
@@ -39,7 +39,7 @@ export const updatePlanToolSchema = Type.Object({
     ]),
   }, { additionalProperties: false }), {
     maxItems: MAX_PLAN_STEPS,
-    description: 'The complete current plan. At most one step may be in_progress.',
+    description: 'The complete current plan. Mark every step with work actively underway as in_progress.',
   }),
 }, { additionalProperties: false })
 
@@ -48,7 +48,7 @@ export function buildUpdatePlanTool(host: SwarmToolHost, descriptor: AgentDescri
     name: UPDATE_PLAN_TOOL_NAME,
     label: 'Update Plan',
     description:
-      'Create or replace the current working plan for this session. Use it for substantial multi-step work, not simple requests. Keep steps concise and verifiable, keep at most one step in_progress, and mark steps completed only after the work is actually done. The plan records coordination state; it does not perform the work.',
+      'Create or replace the current working plan for this session. Use it for substantial multi-step work, not simple requests. Keep steps concise and verifiable, mark every concurrently active step in_progress, and mark steps completed only after the work is actually done. The plan records coordination state; it does not perform the work.',
     parameters: updatePlanToolSchema,
     async execute(toolCallId, params) {
       const result = await host.updatePlan(descriptor.agentId, toolCallId, params as UpdatePlanInput)

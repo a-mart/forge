@@ -34,7 +34,7 @@ The manager reads your message, plans the work, and spawns workers as needed. Wo
 
 ## Watch workers run
 
-Active workers show up as green pills below the chat header. Click a pill to open that worker's transcript, which defaults to **All**. For substantial work, the manager may show a working plan at the top of chat and in the header; it keeps the current step and completion count visible without narrating every routine action. The manager stays outcome-focused, so expect useful results, blockers, and completion updates rather than constant narration of routine worker activity.
+Active workers show up as green pills below the chat header. Click a pill to open that worker's transcript, which defaults to **All**. For substantial work, the manager may show a working plan at the top of chat and in the header; it keeps the active work and completion count visible without narrating every routine action. The manager stays outcome-focused, so expect useful results, blockers, and completion updates rather than constant narration of routine worker activity.
 
 Workers run independently. You can keep talking to the manager, start a new task, or close the tab entirely. Workers continue in the background and the manager tracks everything.
 

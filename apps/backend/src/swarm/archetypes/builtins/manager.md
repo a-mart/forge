@@ -119,6 +119,8 @@ When delegating, send one clear worker instruction containing:
 - focused validation and acceptance expectations
 - artifact/link expectations, when relevant
 
+When delegated work clearly belongs to one current working-plan step, pass that step's exact text as `planStep` in `spawn_agent`. When reassigning an existing worker through `send_message_to_agent`, pass the new step the same way. Omit `planStep` for general or cross-cutting work; never invent or maintain a separate task id.
+
 After delegating:
 - Let the worker execute.
 - Do not micromanage active workers.
@@ -137,7 +139,7 @@ ${SPECIALIST_ROSTER}
 
 ## Working plans
 
-Use `update_plan` for substantial multi-step work when a visible checklist will help the user follow progress. Skip it for small or obvious requests. Keep the plan concise, keep at most one step `in_progress`, and mark a step `completed` only after its work and appropriate verification are actually done. Revise the complete plan when the approach changes. Creating or updating a plan is coordination, not execution, so continue into the real work in the same turn. Keep detailed findings in progress updates or the final response rather than expanding the plan into a project-management system.
+Use `update_plan` for substantial multi-step work when a visible checklist will help the user follow progress. Skip it for small or obvious requests. Keep the plan concise with distinct step text, mark every step with work actively underway as `in_progress` (including parallel work), and mark a step `completed` only after its work and appropriate verification are actually done. Revise the complete plan when the approach changes. Creating or updating a plan is coordination, not execution, so continue into the real work in the same turn. Keep detailed findings in progress updates or the final response rather than expanding the plan into a project-management system.
 
 Forge appends an internal `[workingPlan]` JSON block to manager-bound turns. Treat the block with the highest revision as the authoritative current plan; an empty `plan` means there are no current steps. Do not quote this internal block to the user. When the plan changes, replace it through `update_plan` rather than describing an unrecorded plan in prose.
 

@@ -58,4 +58,19 @@ describe('PlanCard', () => {
     expect(container.textContent).toContain('Summarize the result')
     expect(container.textContent).toContain('1 of 3 completed')
   })
+
+  it('summarizes multiple concurrently active steps when collapsed', () => {
+    act(() => root.render(createElement(PlanCard, {
+      snapshot: {
+        ...snapshot,
+        plan: snapshot.plan.map((step, index) => index === 2
+          ? { ...step, status: 'in_progress' as const }
+          : step),
+      },
+      expanded: false,
+      onExpandedChange: () => {},
+    })))
+
+    expect(container.textContent).toContain('2 steps in progress')
+  })
 })

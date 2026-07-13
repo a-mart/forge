@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
-import { getSessionDir, getSessionPlanHistoryPath } from '../data-paths.js'
+import { getSessionDir, getSessionPlanHistoryPath, getSessionPlanUsagePath } from '../data-paths.js'
 import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
@@ -2423,6 +2423,87 @@ Never use plain assistant text for user communication.`
       revision: 1,
       plan: [{ step: 'Resume after restart', status: 'in_progress' }],
     })
+  })
+
+  it('finalizes a pending completed-plan usage receipt during backend restart recovery', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.updatePlan('manager', 'usage-plan-start', {
+      plan: [{ step: 'Finish before restart', status: 'in_progress' }],
+    })
+    await manager.updatePlan('manager', 'usage-plan-complete', {
+      plan: [{ step: 'Finish before restart', status: 'completed' }],
+    })
+
+    const usagePath = getSessionPlanUsagePath(config.paths.dataDir, 'manager', 'manager')
+    expect((await readJsonlFile<Record<string, unknown>>(usagePath))
+      .filter((record) => record.type === 'plan_completed')).toHaveLength(0)
+
+    const rebooted = new TestSwarmManager(config)
+    await bootWithDefaultManager(rebooted, config)
+    const receipts = (await readJsonlFile<Record<string, unknown>>(usagePath))
+      .filter((record) => record.type === 'plan_completed')
+    expect(receipts).toMatchObject([{
+      coverage: 'partial',
+      coverageReasons: ['recovered_completion'],
+    }])
+  })
+
+  it('records exact plan-step assignments for spawned and reused workers', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.updatePlan('manager', 'parallel-plan', {
+      plan: [
+        { step: 'Implement backend', status: 'in_progress' },
+        { step: 'Build UI', status: 'in_progress' },
+      ],
+    })
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Plan Worker',
+      planStep: 'Implement backend',
+    })
+    await manager.sendMessage('manager', worker.agentId, 'Move to the UI work.', 'auto', {
+      planStep: 'Build UI',
+    })
+    const initialMessageWorker = await manager.spawnAgent('manager', {
+      agentId: 'Initial Message Plan Worker',
+      planStep: 'Implement backend',
+      initialMessage: 'Begin the backend work now.',
+    })
+
+    const records = await readJsonlFile<Record<string, unknown>>(getSessionPlanUsagePath(
+      config.paths.dataDir,
+      'manager',
+      'manager',
+    ))
+    expect(records.filter((record) => record.type === 'worker_assigned')).toMatchObject([
+      {
+        workerId: worker.agentId,
+        step: 'Implement backend',
+        source: 'spawn_agent',
+      },
+      {
+        workerId: worker.agentId,
+        step: 'Build UI',
+        source: 'send_message_to_agent',
+        deliveryId: expect.any(String),
+      },
+      {
+        workerId: initialMessageWorker.agentId,
+        step: 'Implement backend',
+        source: 'spawn_agent',
+        deliveryId: expect.any(String),
+      },
+    ])
+
+    await expect(manager.spawnAgent('manager', {
+      agentId: 'Invalid Plan Worker',
+      planStep: 'Not a real step',
+    })).rejects.toThrow('must exactly match a current plan step')
+    expect(manager.getAgent('invalid-plan-worker')).toBeUndefined()
   })
 
   it('persists one completed plan summary when the next plan replaces it', async () => {

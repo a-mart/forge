@@ -351,12 +351,14 @@ describe("claude-mcp-tool-bridge", () => {
     expect(
       getRegisteredTool(registeredTools, "send_message_to_agent").shape.safeParse({
         targetAgentId: "worker-1",
-        message: "hello"
+        message: "hello",
+        planStep: "Implement backend"
       }).success
     ).toBe(true);
     expect(
       getRegisteredTool(registeredTools, "spawn_agent").shape.safeParse({
         agentId: "worker-1",
+        planStep: "Implement backend",
         model: spawnPreset,
         reasoningLevel: "high"
       }).success
@@ -435,7 +437,8 @@ describe("claude-mcp-tool-bridge", () => {
     const result = await invokeTool(registeredTools, "send_message_to_agent", {
       targetAgentId: "worker-1",
       message: "please investigate",
-      delivery: "steer"
+      delivery: "steer",
+      planStep: "Investigate the failure"
     });
 
     expect(host.sendMessage).toHaveBeenCalledWith(
@@ -449,6 +452,7 @@ describe("claude-mcp-tool-bridge", () => {
           toolCallId: expect.any(String),
           toolName: "send_message_to_agent",
         },
+        planStep: "Investigate the failure",
       },
     );
     expect(result.content[0].text).toContain("Queued message for worker-1");
@@ -463,6 +467,7 @@ describe("claude-mcp-tool-bridge", () => {
 
     await invokeTool(registeredTools, "spawn_agent", {
       agentId: "backend-worker",
+      planStep: "Implement backend",
       specialist: "backend",
       model: spawnPreset,
       reasoningLevel: "high"
@@ -472,6 +477,7 @@ describe("claude-mcp-tool-bridge", () => {
       manager.agentId,
       expect.objectContaining({
         agentId: "backend-worker",
+        planStep: "Implement backend",
         specialist: "backend",
         model: spawnPreset,
         reasoningLevel: "high"

@@ -248,7 +248,12 @@ export interface SwarmAgentLifecycleServiceOptions {
     targetAgentId: string,
     message: string,
     delivery?: RequestedDeliveryMode,
-    options?: { origin?: "user" | "internal"; attachments?: ConversationAttachment[] }
+    options?: {
+      origin?: "user" | "internal";
+      attachments?: ConversationAttachment[];
+      planStep?: string;
+      planAssignmentSource?: "spawn_agent" | "send_message_to_agent";
+    }
   ) => Promise<SendMessageReceipt>;
   sendManagerBootstrapMessage: (managerId: string) => Promise<void>;
   materializeSortOrder: () => void;
@@ -879,7 +884,11 @@ export class SwarmAgentLifecycleService {
     }
 
     if (input.initialMessage && input.initialMessage.trim().length > 0) {
-      await this.options.sendMessage(callerAgentId, agentId, input.initialMessage, "auto", { origin: "internal" });
+      await this.options.sendMessage(callerAgentId, agentId, input.initialMessage, "auto", {
+        origin: "internal",
+        ...(input.planStep ? { planStep: input.planStep } : {}),
+        planAssignmentSource: "spawn_agent",
+      });
     }
 
     return cloneDescriptor(descriptor);

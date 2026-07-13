@@ -239,6 +239,10 @@ import {
 } from "./planning/update-plan-tool.js";
 import { normalizeSessionPlanInput, type SessionPlanState } from "./planning/session-plan-state.js";
 import { SessionPlanStore } from "./planning/session-plan-store.js";
+import {
+  SessionPlanUsageTracker,
+  type PlanStepAssignment,
+} from "./planning/plan-usage-tracker.js";
 import { shouldCreateCompletedPlanSummary } from "./planning/plan-summary.js";
 import {
   appendSessionPlanCompactionInstructions,
@@ -1543,7 +1547,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       appendSessionRenameHistoryEntry: (descriptor, entry) => this.appendSessionRenameHistoryEntry(descriptor, entry),
       clearSessionPlan: async (descriptor) => {
-        const snapshot = await this.createSessionPlanStore(descriptor).clear();
+        const tracker = this.createSessionPlanUsageTracker(descriptor);
+        const { snapshot } = await this.createSessionPlanStore(descriptor).clearWithOutgoingState(
+          ({ outgoing, snapshot: next }) => tracker.recordPlanTransition(outgoing, next).catch((error) => {
+            this.logDebug("plan_usage:clear:error", {
+              agentId: descriptor.agentId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }),
+        );
         this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
         this.emit("session_plan_snapshot", {
           type: "session_plan_snapshot",
@@ -2145,8 +2157,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const normalized = normalizeSessionPlanInput(input);
+    const tracker = this.createSessionPlanUsageTracker(descriptor);
     const { outgoing, snapshot } = await this.createSessionPlanStore(descriptor)
-      .updateWithOutgoingState(normalized);
+      .updateWithOutgoingState(normalized, ({ outgoing: current, snapshot: next }) => (
+        tracker.recordPlanTransition(current, next).catch((error) => {
+          this.logDebug("plan_usage:transition:error", {
+            agentId: descriptor.agentId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        })
+      ));
     this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
     if (shouldCreateCompletedPlanSummary(outgoing, normalized.plan)) {
       this.conversationProjector.emitPlanSummary({
@@ -2191,6 +2211,59 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId: descriptor.profileId,
       sessionAgentId: descriptor.agentId,
     });
+  }
+
+  private createSessionPlanUsageTracker(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+  ): SessionPlanUsageTracker {
+    return new SessionPlanUsageTracker({
+      dataDir: this.config.paths.dataDir,
+      profileId: descriptor.profileId,
+      sessionAgentId: descriptor.agentId,
+      now: this.now,
+    });
+  }
+
+  private async resolvePlanStepAssignment(
+    callerAgentId: string,
+    requestedStep: string,
+  ): Promise<{
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string };
+    assignment: PlanStepAssignment;
+  }> {
+    const descriptor = this.descriptors.get(callerAgentId);
+    if (!descriptor || descriptor.role !== "manager" || !this.isSessionAgent(descriptor)) {
+      throw new Error("planStep is only available to manager sessions with a current working plan.");
+    }
+    if (descriptor.sessionSurface === "collab") {
+      throw new Error("planStep is not available for Collaboration sessions.");
+    }
+    const state = await this.getSessionPlanState(descriptor);
+    const assignment = await this.createSessionPlanUsageTracker(descriptor)
+      .resolveAssignment(state, requestedStep);
+    return { descriptor, assignment };
+  }
+
+  private async recordWorkerPlanAssignment(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    assignment: PlanStepAssignment,
+    input: {
+      workerId: string;
+      source: "spawn_agent" | "send_message_to_agent";
+      deliveryId?: string;
+      acceptedMode?: SendMessageReceipt["acceptedMode"];
+    },
+  ): Promise<void> {
+    await this.createSessionPlanUsageTracker(descriptor)
+      .recordWorkerAssignment({ ...assignment, ...input })
+      .catch((error) => {
+        this.logDebug("plan_usage:assignment:error", {
+          agentId: descriptor.agentId,
+          workerId: input.workerId,
+          planStep: assignment.step,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   private async getSessionPlanState(
@@ -2417,6 +2490,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await Promise.all(sessionDescriptors.map(async (descriptor) => {
       const state = await this.createSessionPlanStore(descriptor).load();
       this.sessionPlanStatesByAgentId.set(descriptor.agentId, state);
+      await this.createSessionPlanUsageTracker(descriptor)
+        .finalizePendingPlan({ recovered: true })
+        .catch((error) => {
+          this.logDebug("plan_usage:boot_finalize:error", {
+            agentId: descriptor.agentId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
     }));
   }
 
@@ -3577,12 +3658,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
     this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "spawn_agent");
+    const planAssignment = input.planStep
+      ? await this.resolvePlanStepAssignment(callerAgentId, input.planStep)
+      : undefined;
     const requestedSpecialistId = input.specialist ? specialistNormalizeSpecialistHandle(input.specialist) : "";
-    if (requestedSpecialistId === CODEX_PLUGIN_SPECIALIST_ID) {
-      return this.spawnCodexPluginSpecialistWorker(callerAgentId, input);
+    const spawned = requestedSpecialistId === CODEX_PLUGIN_SPECIALIST_ID
+      ? await this.spawnCodexPluginSpecialistWorker(callerAgentId, input)
+      : await this.lifecycleService.spawnAgent(callerAgentId, input);
+    const assignmentRecordedByInitialDelivery = requestedSpecialistId === CODEX_PLUGIN_SPECIALIST_ID
+      || Boolean(input.initialMessage?.trim());
+    if (planAssignment && !assignmentRecordedByInitialDelivery) {
+      await this.recordWorkerPlanAssignment(
+        planAssignment.descriptor,
+        planAssignment.assignment,
+        { workerId: spawned.agentId, source: "spawn_agent" },
+      );
     }
-
-    return this.lifecycleService.spawnAgent(callerAgentId, input);
+    return spawned;
   }
 
   async killAgent(callerAgentId: string, targetAgentId: string): Promise<void> {
@@ -4535,6 +4627,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       };
       workerReportSourceAgentId?: string;
       skipTurnLedger?: boolean;
+      planStep?: string;
+      planAssignmentSource?: "spawn_agent" | "send_message_to_agent";
     }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
@@ -4558,6 +4652,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (sender.role === "manager" && target.role === "worker" && target.managerId !== sender.agentId) {
       throw new Error(`Manager ${sender.agentId} does not own worker ${targetAgentId}`);
     }
+
+    if (options?.planStep && (sender.role !== "manager" || target.role !== "worker")) {
+      throw new Error("planStep can only accompany a manager assignment to one of its workers.");
+    }
+
+    const planAssignment = options?.planStep
+      ? await this.resolvePlanStepAssignment(sender.agentId, options.planStep)
+      : undefined;
 
     if (sender.role === "worker" && target.role === "manager" && sender.managerId !== target.agentId) {
       throw new Error(
@@ -4871,6 +4973,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         rootSource,
       },
     });
+
+    if (planAssignment) {
+      await this.recordWorkerPlanAssignment(
+        planAssignment.descriptor,
+        planAssignment.assignment,
+        {
+          workerId: target.agentId,
+          source: options?.planAssignmentSource ?? "send_message_to_agent",
+          deliveryId: receipt.deliveryId,
+          acceptedMode: receipt.acceptedMode,
+        },
+      );
+    }
 
     this.logDebug("agent:send_message", {
       fromAgentId,
@@ -5790,6 +5905,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         await this.sendMessage(manager.agentId, descriptor.agentId, initialTask, "auto", {
           origin: "internal",
           internalDeliveryKind: "codex_plugin_bootstrap",
+          ...(input.planStep ? { planStep: input.planStep } : {}),
+          planAssignmentSource: "spawn_agent",
         });
         this.pendingCodexPluginInitialTaskByWorkerId.delete(descriptor.agentId);
       }
@@ -9938,6 +10055,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.runtimeController.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
+    if (descriptor?.role === "manager" && this.isSessionAgent(descriptor)) {
+      await this.createSessionPlanUsageTracker(descriptor)
+        .finalizePendingPlan()
+        .catch((error) => {
+          this.logDebug("plan_usage:finalize:error", {
+            agentId: descriptor.agentId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
   }
 
   async queueVersionedToolMutation(

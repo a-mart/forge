@@ -56,4 +56,19 @@ describe('PlanDockIndicator', () => {
     act(() => root.render(createElement(PlanDockIndicator, { snapshot: null })))
     expect(container.textContent).toBe('')
   })
+
+  it('summarizes multiple active steps and completed progress', () => {
+    act(() => root.render(createElement(PlanDockIndicator, {
+      snapshot: {
+        ...snapshot,
+        plan: snapshot.plan.map((step, index) => index === 2
+          ? { ...step, status: 'in_progress' as const }
+          : step),
+      },
+    })))
+
+    expect(container.textContent).toContain('2 active · 1/3 complete')
+    expect(container.querySelector('button')?.getAttribute('aria-label'))
+      .toBe('Open working plan, 2 active · 1/3 complete')
+  })
 })

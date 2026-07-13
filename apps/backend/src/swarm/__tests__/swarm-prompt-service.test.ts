@@ -389,7 +389,8 @@ Custom project instruction: always mention the release train when summarizing de
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
     expect(resolved).toContain("Use `update_plan` for substantial multi-step work")
-    expect(resolved).toContain("at most one step `in_progress`")
+    expect(resolved).toContain("including parallel work")
+    expect(resolved).toContain("pass that step's exact text as `planStep`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
   });
 

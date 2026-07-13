@@ -261,7 +261,9 @@ Click any session in the sidebar to switch to it. Your manager tracks state inde
 
 ### Working plans
 
-For substantial multi-step work, a manager can publish a working plan with `update_plan`. The card at the top of chat highlights the current step, while the header popover shows the complete checklist and completion count. Plans use only Pending, In progress, and Completed states; small requests usually skip the plan entirely.
+For substantial multi-step work, a manager can publish a working plan with `update_plan`. The card at the top of chat highlights the current work, while the header popover shows the complete checklist and completion count. Plans use only Pending, In progress, and Completed states, and multiple steps can be In progress during parallel work; small requests usually skip the plan entirely.
+
+When a manager delegates work that clearly belongs to one plan step, Forge can associate that worker assignment with the exact step text. The visible checklist stays unchanged. After steps and the plan complete, Forge writes append-only token-usage estimates to the session's `plan-usage.ndjson` for future offline analysis, including manager totals, per-step worker totals, unassigned usage, and attribution coverage.
 
 ### Archive and Restore
 
@@ -676,6 +678,8 @@ No database. Everything is files (JSON, JSONL, and Markdown):
     └── sessions/<sessionId>/
         ├── session.jsonl          # Conversation history (the source of truth)
         ├── plan.json              # Current Builder working plan snapshot
+        ├── plan-history.ndjson    # Outgoing working-plan revisions
+        ├── plan-usage.ndjson      # Append-only worker assignment and token-usage receipts
         ├── meta.json              # Session metadata
         ├── memory.md              # Session working memory
         └── workers/               # Individual worker logs

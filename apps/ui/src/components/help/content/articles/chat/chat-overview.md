@@ -48,7 +48,7 @@ The ring icon next to the channel toggle shows how full the context window is. W
 
 ## Working plans
 
-For substantial multi-step work, managers can publish a concise working plan. The card at the top of chat highlights the current step, and the header control opens the complete checklist. Plans use only Pending, In progress, and Completed states.
+For substantial multi-step work, managers can publish a concise working plan. The card at the top of chat highlights the current work, and the header control opens the complete checklist. Plans use only Pending, In progress, and Completed states and can show multiple active steps during parallel work.
 
 ## Header controls
 

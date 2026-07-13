@@ -64,7 +64,9 @@ The OpenAI Codex Responses transport settings above apply to normal Codex model 
 
 ### Working plans
 
-Builder managers always have access to `update_plan` for substantial multi-step work. The tool publishes the complete current checklist with optional explanation and Pending, In progress, or Completed steps. There is no settings toggle or shared configuration file. Plans are session-scoped and saved in `plan.json`.
+Builder managers always have access to `update_plan` for substantial multi-step work. The tool publishes the complete current checklist with optional explanation and Pending, In progress, or Completed steps; multiple steps may be In progress when work runs concurrently. There is no settings toggle or shared configuration file. Plans are session-scoped and saved in `plan.json`.
+
+When a worker assignment clearly belongs to one current step, `spawn_agent` and `send_message_to_agent` accept that step's exact text through optional `planStep`. Forge keeps the association internal and appends step-completion and whole-plan token estimates to `plan-usage.ndjson` beside the plan. Receipts separate manager, assigned worker, and unassigned worker usage and include coverage plus concrete reasons such as recovered runs or completion boundaries, missing timestamps, unassigned usage, or busy-worker assignment boundaries. This accounting is file-backed, has no UI, and does not change the visible plan schema.
 
 ### Repositories
 
@@ -258,6 +260,8 @@ All persistent state lives in a single data directory:
 │       ├── feedback.jsonl     # User feedback
 │       ├── pinned-messages.json  # Pin state (up to 10 message IDs)
 │       ├── plan.json          # Current Builder working plan snapshot
+│       ├── plan-history.ndjson # Outgoing working-plan revisions
+│       ├── plan-usage.ndjson   # Append-only worker assignment and token-usage receipts
 │       ├── context/
 │       │   └── prompt.md      # Collaboration channel additional instructions
 │       ├── reference/         # Collaboration channel reference docs

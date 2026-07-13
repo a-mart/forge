@@ -161,6 +161,10 @@ export function getSessionPlanHistoryPath(dataDir: string, profileId: string, se
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "plan-history.ndjson");
 }
 
+export function getSessionPlanUsagePath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "plan-usage.ndjson");
+}
+
 export function getSessionContextDir(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "context");
 }
