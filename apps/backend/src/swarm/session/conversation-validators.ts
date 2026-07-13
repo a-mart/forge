@@ -7,7 +7,8 @@ import {
   MODEL_CACHE_STATUSES,
   MODEL_CACHE_TOKEN_NORMALIZATIONS,
   type ConversationReplyTarget,
-  type ModelCacheObservationEvent
+  type ModelCacheObservationEvent,
+  type PlanSummaryEvent,
 } from "@forge/protocol";
 import {
   areModelCacheTokenFactsConsistent,
@@ -46,8 +47,26 @@ export function isConversationEntryEvent(value: unknown): value is ConversationE
     isAgentMessageEvent(value) ||
     isAgentToolCallEvent(value) ||
     isChoiceRequestEvent(value) ||
+    isPlanSummaryEvent(value) ||
     isModelCacheObservationEvent(value)
   );
+}
+
+function isPlanSummaryEvent(value: unknown): value is PlanSummaryEvent {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<PlanSummaryEvent>;
+  if (maybe.type !== "plan_summary") return false;
+  if (!isNonEmptyString(maybe.id) || !isNonEmptyString(maybe.agentId)) return false;
+  if (!isNonEmptyString(maybe.timestamp) || !isNonEmptyString(maybe.updatedAt)) return false;
+  if (!isNonNegativeInteger(maybe.revision) || !Array.isArray(maybe.plan) || maybe.plan.length === 0) return false;
+  if (maybe.explanation !== undefined && !isNonEmptyString(maybe.explanation)) return false;
+
+  return maybe.plan.every((step) => {
+    if (!step || typeof step !== "object") return false;
+    const item = step as { step?: unknown; status?: unknown };
+    return isNonEmptyString(item.step) && item.status === "completed";
+  });
 }
 
 function isConversationMessageEvent(value: unknown): value is ConversationMessageEvent {

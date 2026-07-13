@@ -1,3 +1,5 @@
 export { PlanCard } from './PlanCard'
+export { PlanDockIndicator } from './PlanDockIndicator'
 export { PlanHeaderIndicator } from './PlanHeaderIndicator'
+export { PlanSummaryRow } from './PlanSummaryRow'
 export { PlanView } from './PlanView'

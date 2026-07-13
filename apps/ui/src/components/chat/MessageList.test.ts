@@ -220,3 +220,21 @@ describe('MessageList choice requests', () => {
     expect(container.textContent).toContain('Pick one')
   })
 })
+
+describe('MessageList plan summaries', () => {
+  it('renders a durable completed-plan card in transcript order', () => {
+    render([{
+      type: 'plan_summary',
+      id: 'summary-1',
+      agentId: 'session-1',
+      timestamp: now,
+      revision: 2,
+      updatedAt: now,
+      explanation: 'The first plan is complete.',
+      plan: [{ step: 'Finish the first plan', status: 'completed' }],
+    }])
+
+    expect(container.textContent).toContain('Completed plan')
+    expect(container.textContent).toContain('The first plan is complete.')
+  })
+})

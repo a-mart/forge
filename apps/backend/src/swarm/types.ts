@@ -16,6 +16,7 @@ import {
   type ExternalThreadMessageContext,
   type ProjectAgentInfo,
   type ProjectAgentMessageContext,
+  type PlanSummaryEvent,
 } from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 import type Database from "better-sqlite3";
@@ -28,6 +29,7 @@ export type AgentArchetypeId = string;
 export type { AgentStatus };
 export type { AgentCollaborationLink, AgentModelOrigin, AgentSessionSurface, CliSessionMetadata, ManagerProfile };
 export type { ExternalThreadInfo, ExternalThreadMessageContext, ProjectAgentMessageContext };
+export type { PlanSummaryEvent } from "@forge/protocol";
 export {
   isCodexAppServerExternalThreadDescriptor,
   isExternalThreadDescriptor,
@@ -387,6 +389,7 @@ export type ConversationEntryEvent =
   | AgentMessageEvent
   | AgentToolCallEvent
   | ChoiceRequestEvent
+  | PlanSummaryEvent
   | ModelCacheObservationEvent;
 
 export interface AgentStatusEvent {

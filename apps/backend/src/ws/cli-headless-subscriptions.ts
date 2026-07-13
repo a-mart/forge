@@ -193,6 +193,7 @@ export class CliHeadlessSubscriptions {
       case "agent_message":
       case "agent_tool_call":
       case "choice_request":
+      case "plan_summary":
       case "model_cache_observation":
       case "conversation_reset":
       case "message_pinned":

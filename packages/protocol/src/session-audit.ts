@@ -22,6 +22,7 @@ export const SESSION_AUDIT_ENTRY_CATEGORIES = [
   'worker_tool_call',
   'runtime_log',
   'choice_request',
+  'plan_summary',
   'model_cache_observation',
   'custom',
   'unknown',

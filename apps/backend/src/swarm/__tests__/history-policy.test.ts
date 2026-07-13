@@ -85,6 +85,18 @@ function choice(
   };
 }
 
+function planSummary(id: string): ConversationEntryEvent {
+  return {
+    type: "plan_summary",
+    id,
+    agentId: "manager-1",
+    timestamp: FIXED_NOW,
+    revision: 2,
+    updatedAt: FIXED_NOW,
+    plan: [{ step: "Finish the work", status: "completed" }]
+  };
+}
+
 function modelCacheObservation(id: string): ConversationEntryEvent {
   return {
     type: "model_cache_observation",
@@ -124,6 +136,9 @@ function ids(entries: ConversationEntryEvent[]): string[] {
     if (entry.type === "model_cache_observation") {
       return entry.id;
     }
+    if (entry.type === "plan_summary") {
+      return entry.id;
+    }
     return entry.text;
   });
 }
@@ -137,6 +152,7 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(message("assistant"))).toBe(true);
     expect(shouldPersistConversationEntry(agentActivity("activity"))).toBe(true);
     expect(shouldPersistConversationEntry(choice("choice"))).toBe(true);
+    expect(shouldPersistConversationEntry(planSummary("plan-summary"))).toBe(true);
   });
 
   it("does not persist Codex stream detail agent_tool_call rows", () => {
@@ -332,6 +348,23 @@ describe("history policy", () => {
 
     expect(selection.trimmed).toBe(true);
     expect(ids(selection.history)).toEqual(["choice-1", "message-3"]);
+  });
+
+  it("keeps completed plan summaries in size-limited transcript bootstrap", () => {
+    const history = [
+      agentActivity("activity-1"),
+      message("message-1"),
+      planSummary("plan-summary-1"),
+      agentActivity("activity-2")
+    ];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      isWithinBudget: (messages) => messages.length <= 2
+    });
+
+    expect(selection.trimmed).toBe(true);
+    expect(ids(selection.history)).toEqual(["message-1", "plan-summary-1"]);
   });
 
   it("applies requested message count before bootstrap budget selection", () => {

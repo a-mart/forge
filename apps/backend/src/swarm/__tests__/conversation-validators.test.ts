@@ -246,6 +246,26 @@ describe("conversation validators", () => {
     expect(isConversationEntryEvent(makeModelCacheObservation())).toBe(true);
   });
 
+  it("accepts completed plan summaries and rejects mutable or malformed snapshots", () => {
+    const summary = {
+      type: "plan_summary",
+      id: "plan-summary-1",
+      agentId: "manager-1",
+      timestamp: FIXED_NOW,
+      revision: 2,
+      updatedAt: FIXED_NOW,
+      explanation: "The plan is complete.",
+      plan: [{ step: "Verify the result", status: "completed" }],
+    };
+
+    expect(isConversationEntryEvent(summary)).toBe(true);
+    expect(isConversationEntryEvent({ ...summary, id: "" })).toBe(false);
+    expect(isConversationEntryEvent({
+      ...summary,
+      plan: [{ step: "Verify the result", status: "in_progress" }],
+    })).toBe(false);
+  });
+
   it("rejects malformed model_cache_observation token and classification invariants", () => {
     expect(isConversationEntryEvent(makeModelCacheObservation({ id: "" }))).toBe(false);
     expect(

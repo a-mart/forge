@@ -75,6 +75,36 @@ describe('manager All view choice_request visibility', () => {
   })
 })
 
+describe('manager All view plan_summary visibility', () => {
+  it('shows summaries that belong to the active manager session', () => {
+    const entry: ConversationEntry = {
+      type: 'plan_summary',
+      id: 'plan-summary-1',
+      agentId: activeManagerId,
+      timestamp: '2026-06-21T00:00:00.000Z',
+      revision: 2,
+      updatedAt: '2026-06-21T00:00:00.000Z',
+      plan: [{ step: 'Finish the work', status: 'completed' }],
+    }
+
+    expect(isVisibleInManagerAllView(entry, visibilityOptions())).toBe(true)
+  })
+
+  it('hides summaries from another manager session', () => {
+    const entry: ConversationEntry = {
+      type: 'plan_summary',
+      id: 'plan-summary-2',
+      agentId: 'manager-2',
+      timestamp: '2026-06-21T00:00:00.000Z',
+      revision: 2,
+      updatedAt: '2026-06-21T00:00:00.000Z',
+      plan: [{ step: 'Finish the work', status: 'completed' }],
+    }
+
+    expect(isVisibleInManagerAllView(entry, visibilityOptions())).toBe(false)
+  })
+})
+
 describe('PendingChoicesSnapshotEvent protocol shape', () => {
   it('keeps choiceIds and accepts optional hydrated choice payloads', () => {
     const snapshot: PendingChoicesSnapshotEvent = {

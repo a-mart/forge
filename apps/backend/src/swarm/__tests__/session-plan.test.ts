@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { buildUpdatePlanTool } from '../planning/update-plan-tool.js'
+import { shouldCreateCompletedPlanSummary } from '../planning/plan-summary.js'
 import {
   appendSessionPlanCompactionInstructions,
   formatSessionPlanModelContext,
@@ -38,6 +39,28 @@ describe('Codex-style session plans', () => {
         { step: 'Second', status: 'in_progress' },
       ],
     })).toThrow(SessionPlanValidationError)
+  })
+
+  it('creates a summary only when a completed snapshot is actually replaced', () => {
+    const completed = {
+      schemaVersion: 1 as const,
+      revision: 2,
+      updatedAt: '2026-07-13T00:00:00.000Z',
+      explanation: 'Done.',
+      plan: [{ step: 'Finish the work', status: 'completed' as const }],
+    }
+
+    expect(shouldCreateCompletedPlanSummary(completed, completed.plan)).toBe(false)
+    expect(shouldCreateCompletedPlanSummary(completed, [
+      { step: 'Start the next plan', status: 'in_progress' },
+    ])).toBe(true)
+    expect(shouldCreateCompletedPlanSummary(completed, [])).toBe(true)
+    expect(shouldCreateCompletedPlanSummary({
+      ...completed,
+      plan: [{ step: 'Finish the work', status: 'in_progress' }],
+    }, [
+      { step: 'Start the next plan', status: 'in_progress' },
+    ])).toBe(false)
   })
 
   it('persists atomic snapshots and increments the revision', async () => {
@@ -108,6 +131,33 @@ describe('Codex-style session plans', () => {
       updatedAt: '2026-07-12T00:00:00.000Z',
       plan: [{ step: 'Inspect', status: 'in_progress' }],
     }])
+  })
+
+  it('returns the exact outgoing snapshot from inside the serialized update', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-session-plan-outgoing-'))
+    const store = new SessionPlanStore({
+      dataDir,
+      profileId: 'profile-1',
+      sessionAgentId: 'session-1',
+      now: () => new Date('2026-07-12T00:00:00.000Z'),
+    })
+
+    await store.update({ plan: [{ step: 'First plan', status: 'completed' }] })
+    const first = store.updateWithOutgoingState({
+      plan: [{ step: 'Second plan', status: 'in_progress' }],
+    })
+    const second = store.updateWithOutgoingState({
+      plan: [{ step: 'Third plan', status: 'in_progress' }],
+    })
+
+    await expect(first).resolves.toMatchObject({
+      outgoing: { revision: 1, plan: [{ step: 'First plan', status: 'completed' }] },
+      snapshot: { revision: 2, plan: [{ step: 'Second plan', status: 'in_progress' }] },
+    })
+    await expect(second).resolves.toMatchObject({
+      outgoing: { revision: 2, plan: [{ step: 'Second plan', status: 'in_progress' }] },
+      snapshot: { revision: 3, plan: [{ step: 'Third plan', status: 'in_progress' }] },
+    })
   })
 
   it('keeps the current plan unchanged when history archival fails', async () => {

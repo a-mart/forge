@@ -17,6 +17,15 @@ describe('SessionAuditService', () => {
     await writeSessionLines(fixture.dataDir, fixture.manager, [
       sessionHeader(),
       conversationRow('entry-1', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'hello', timestamp: now, source: 'user_input' }),
+      conversationRow('plan-summary-1', {
+        type: 'plan_summary',
+        id: 'summary-1',
+        agentId: fixture.manager.agentId,
+        timestamp: now,
+        revision: 2,
+        updatedAt: now,
+        plan: [{ step: 'Finish the work', status: 'completed' }],
+      }),
       '{not json',
       conversationRow('entry-2', { type: 'agent_tool_call', agentId: fixture.manager.agentId, actorAgentId: fixture.manager.agentId, timestamp: now, kind: 'tool_execution_start', toolName: 'spawn_agent', text: 'spawn' }),
     ])
@@ -28,13 +37,15 @@ describe('SessionAuditService', () => {
     expect(page.items.map((item) => item.category)).toEqual([
       'session_header',
       'conversation_message',
+      'plan_summary',
       'malformed',
       'manager_tool_call',
     ])
     expect(page.items[1]).toMatchObject({ conversationSource: 'user_input' })
     expect(page.items[1].id).toMatch(/^canonical_session_jsonl:session:\d+$/)
-    expect(page.items[2].parseError).toBeTruthy()
-    expect(page.items[3]).toMatchObject({ toolName: 'spawn_agent', renderable: true })
+    expect(page.items[2]).toMatchObject({ title: 'Completed plan', summary: 'Completed plan: revision 2' })
+    expect(page.items[3].parseError).toBeTruthy()
+    expect(page.items[4]).toMatchObject({ toolName: 'spawn_agent', renderable: true })
     expect('conversationEntry' in page.items[1]).toBe(false)
   })
 

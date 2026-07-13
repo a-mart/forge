@@ -32,6 +32,7 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'agent_message',
   'agent_tool_call',
   'choice_request',
+  'plan_summary',
   'model_cache_observation',
 ])
 
@@ -77,6 +78,8 @@ function conversationEntryMergeKey(entry: ServerEvent): string | undefined {
       return `choice_request:${entry.choiceId}`
     case 'model_cache_observation':
       return entry.id ? `model_cache_observation:${entry.id}` : undefined
+    case 'plan_summary':
+      return `plan_summary:${entry.id}`
     case 'agent_tool_call':
       return entry.toolCallId ? `agent_tool_call:${entry.agentId}:${entry.toolCallId}:${entry.kind}` : undefined
     default:
@@ -152,7 +155,8 @@ export function handleConversationEvent(
       return true
 
     case 'conversation_message':
-    case 'conversation_log': {
+    case 'conversation_log':
+    case 'plan_summary': {
       if (event.agentId !== context.state.targetAgentId) {
         return true
       }
@@ -187,6 +191,18 @@ export function handleConversationEvent(
             context.updateState({ messages: nextMessages })
             return true
           }
+        }
+      }
+
+      if (event.type === 'plan_summary') {
+        const existingIndex = context.state.messages.findIndex(
+          (message) => message.type === 'plan_summary' && message.id === event.id,
+        )
+        if (existingIndex >= 0) {
+          const nextMessages = [...context.state.messages]
+          nextMessages[existingIndex] = event
+          context.updateState({ messages: nextMessages })
+          return true
         }
       }
 

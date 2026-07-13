@@ -49,6 +49,13 @@ export class SessionPlanStore {
   }
 
   async update(input: { explanation?: string; plan: PlanStep[] }): Promise<SessionPlanState> {
+    return (await this.updateWithOutgoingState(input)).snapshot
+  }
+
+  async updateWithOutgoingState(input: { explanation?: string; plan: PlanStep[] }): Promise<{
+    outgoing: SessionPlanState
+    snapshot: SessionPlanState
+  }> {
     return withPlanStoreLock(this.filePath, async () => {
       const current = await this.load()
       const next: SessionPlanState = {
@@ -60,7 +67,7 @@ export class SessionPlanStore {
       }
       await this.archiveCurrentState(current)
       await this.writeAtomically(next)
-      return next
+      return { outgoing: current, snapshot: next }
     })
   }
 

@@ -20,3 +20,12 @@ export interface SessionPlanSnapshotEvent extends SessionPlanSnapshot {
   profileId: string
   requestId?: string
 }
+
+/** Durable transcript receipt emitted once when a completed plan is replaced. */
+export interface PlanSummaryEvent extends SessionPlanSnapshot {
+  type: 'plan_summary'
+  id: string
+  agentId: string
+  timestamp: string
+  updatedAt: string
+}

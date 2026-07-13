@@ -4,12 +4,13 @@ import { ChatHeader } from '@/components/chat/ChatHeader'
 import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import { PlanDockIndicator } from '@/components/chat/plan'
 import { SessionAuditDrawer } from '@/components/chat/SessionAuditDrawer'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { cn } from '@/lib/utils'
-import type { RestartRecoverySnapshot } from '@forge/protocol'
+import type { RestartRecoverySnapshot, SessionPlanSnapshotEvent } from '@forge/protocol'
 
 interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
@@ -26,6 +27,7 @@ interface ChatWorkspaceProps {
   isMessageListHidden: boolean
   messageListRef: RefObject<MessageListHandle | null>
   messageListProps: ComponentPropsWithoutRef<typeof MessageList>
+  planSnapshot?: SessionPlanSnapshotEvent | null
   workerPillBarProps?: ComponentPropsWithoutRef<typeof WorkerPillBar>
   workerBackBarProps?: ComponentPropsWithoutRef<typeof WorkerBackBar>
   terminalPanelProps: ComponentPropsWithoutRef<typeof TerminalPanel>
@@ -48,6 +50,7 @@ export function ChatWorkspace({
   isMessageListHidden,
   messageListRef,
   messageListProps,
+  planSnapshot,
   workerPillBarProps,
   workerBackBarProps,
   terminalPanelProps,
@@ -120,6 +123,7 @@ export function ChatWorkspace({
             <TerminalPanel {...terminalPanelProps} />
           </div>
 
+          <PlanDockIndicator snapshot={planSnapshot} />
           <MessageInput ref={messageInputRef} {...messageInputProps} />
         </>
       )}

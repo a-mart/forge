@@ -239,6 +239,7 @@ import {
 } from "./planning/update-plan-tool.js";
 import { normalizeSessionPlanInput, type SessionPlanState } from "./planning/session-plan-state.js";
 import { SessionPlanStore } from "./planning/session-plan-store.js";
+import { shouldCreateCompletedPlanSummary } from "./planning/plan-summary.js";
 import {
   appendSessionPlanCompactionInstructions,
   formatSessionPlanModelContext,
@@ -2144,8 +2145,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const normalized = normalizeSessionPlanInput(input);
-    const snapshot = await this.createSessionPlanStore(descriptor).update(normalized);
+    const { outgoing, snapshot } = await this.createSessionPlanStore(descriptor)
+      .updateWithOutgoingState(normalized);
     this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
+    if (shouldCreateCompletedPlanSummary(outgoing, normalized.plan)) {
+      this.conversationProjector.emitPlanSummary({
+        type: "plan_summary",
+        id: randomUUID(),
+        agentId: descriptor.agentId,
+        timestamp: this.now(),
+        revision: outgoing.revision,
+        updatedAt: outgoing.updatedAt!,
+        ...(outgoing.explanation ? { explanation: outgoing.explanation } : {}),
+        plan: outgoing.plan.map((step) => ({ ...step })),
+      });
+    }
     const result: UpdatePlanResult = {
       sessionAgentId: descriptor.agentId,
       revision: snapshot.revision,
