@@ -40,7 +40,7 @@ describe('PlanSummaryRow', () => {
   it('renders a collapsed completed receipt and expands to the frozen steps', () => {
     act(() => root.render(createElement(PlanSummaryRow, { summary })))
 
-    expect(container.textContent).toContain('Completed plan')
+    expect(container.textContent).toContain('Plan complete')
     expect(container.textContent).toContain('2/2')
     expect(container.textContent).not.toContain('Implement the change')
 
@@ -49,5 +49,33 @@ describe('PlanSummaryRow', () => {
     expect(container.textContent).toContain('Implement the change')
     expect(container.textContent).toContain('Verify the result')
     expect(container.textContent).toContain('2 of 2 completed')
+  })
+
+  it('renders the latest current snapshot inside an active anchored card', () => {
+    act(() => root.render(createElement(PlanSummaryRow, {
+      summary: {
+        ...summary,
+        state: 'active',
+        revision: 1,
+        explanation: 'Starting work.',
+        plan: [{ step: 'Implement the change', status: 'in_progress' }],
+      },
+      currentSnapshot: {
+        type: 'session_plan_snapshot',
+        sessionAgentId: 'session-1',
+        profileId: 'profile-1',
+        revision: 2,
+        updatedAt: '2026-07-13T01:01:00.000Z',
+        explanation: 'Parallel work is underway.',
+        plan: [
+          { step: 'Implement the change', status: 'in_progress' },
+          { step: 'Verify the result', status: 'in_progress' },
+        ],
+      },
+    })))
+
+    expect(container.textContent).toContain('Working plan')
+    expect(container.textContent).toContain('2 steps in progress')
+    expect(container.textContent).toContain('0/2')
   })
 })

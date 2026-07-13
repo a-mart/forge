@@ -1149,7 +1149,11 @@ function classifyConversationEntry(entry: Record<string, unknown>): {
     case 'choice_request':
       return { category: 'choice_request', renderable: true, title: 'Choice request' }
     case 'plan_summary':
-      return { category: 'plan_summary', renderable: true, title: 'Completed plan' }
+      return {
+        category: 'plan_summary',
+        renderable: true,
+        title: entry.state === 'active' ? 'Working plan' : 'Completed plan',
+      }
     case 'model_cache_observation':
       return { category: 'model_cache_observation', renderable: true, title: 'Model cache observation' }
     default:

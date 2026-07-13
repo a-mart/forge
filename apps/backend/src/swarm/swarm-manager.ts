@@ -25,6 +25,7 @@ import type {
   PromptPreviewResponse,
   ManagerExactModelSelection,
   ServerEvent,
+  PlanSummaryEvent,
   SessionActiveToolsSnapshotEvent,
   SessionPlanSnapshotEvent,
   ModelCacheObservationEvent,
@@ -2165,28 +2166,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const normalized = normalizeSessionPlanInput(input);
     const tracker = this.createSessionPlanUsageTracker(descriptor);
-    const { outgoing, snapshot } = await this.createSessionPlanStore(descriptor)
-      .updateWithOutgoingState(normalized, ({ outgoing: current, snapshot: next }) => (
-        tracker.recordPlanTransition(current, next).catch((error) => {
+    const { snapshot } = await this.createSessionPlanStore(descriptor)
+      .updateWithOutgoingState(normalized, async ({ outgoing: current, snapshot: next }) => {
+        await tracker.recordPlanTransition(current, next).catch((error) => {
           this.logDebug("plan_usage:transition:error", {
             agentId: descriptor.agentId,
             message: error instanceof Error ? error.message : String(error),
           });
-        })
-      ));
-    this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
-    if (shouldCreateCompletedPlanSummary(outgoing, normalized.plan)) {
-      this.conversationProjector.emitPlanSummary({
-        type: "plan_summary",
-        id: randomUUID(),
-        agentId: descriptor.agentId,
-        timestamp: this.now(),
-        revision: outgoing.revision,
-        updatedAt: outgoing.updatedAt!,
-        ...(outgoing.explanation ? { explanation: outgoing.explanation } : {}),
-        plan: outgoing.plan.map((step) => ({ ...step })),
+        });
+        this.recordPlanCardTransition(descriptor, current, next);
       });
-    }
+    this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
     const result: UpdatePlanResult = {
       sessionAgentId: descriptor.agentId,
       revision: snapshot.revision,
@@ -2208,6 +2198,51 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       metadata: { revision: result.revision, stepCount: result.plan.length },
     });
     return result;
+  }
+
+  private recordPlanCardTransition(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    outgoing: SessionPlanState,
+    snapshot: SessionPlanState,
+  ): void {
+    const history = this.conversationProjector.getConversationHistory(descriptor.agentId);
+    const latestById = new Map<string, PlanSummaryEvent>();
+    for (const entry of history) {
+      if (entry.type === "plan_summary") latestById.set(entry.id, entry);
+    }
+    let active = Array.from(latestById.values()).reverse().find((entry) => entry.state === "active");
+    const replacingCompletedPlan = shouldCreateCompletedPlanSummary(outgoing, snapshot.plan);
+
+    const needsAnchor = snapshot.plan.length > 0 && (
+      outgoing.plan.length === 0
+      || replacingCompletedPlan
+      || (!active && outgoing.plan.some((step) => step.status !== "completed"))
+    );
+    if (needsAnchor) {
+      active = {
+        type: "plan_summary",
+        id: randomUUID(),
+        agentId: descriptor.agentId,
+        timestamp: this.now(),
+        state: "active",
+        revision: snapshot.revision,
+        updatedAt: snapshot.updatedAt!,
+        ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
+        plan: snapshot.plan.map((step) => ({ ...step })),
+      };
+      this.conversationProjector.emitPlanSummary(active);
+    }
+
+    if (active && snapshot.plan.length > 0 && snapshot.plan.every((step) => step.status === "completed")) {
+      this.conversationProjector.emitPlanSummary({
+        ...active,
+        state: "completed",
+        revision: snapshot.revision,
+        updatedAt: snapshot.updatedAt!,
+        ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
+        plan: snapshot.plan.map((step) => ({ ...step })),
+      });
+    }
   }
 
   private createSessionPlanStore(
@@ -10098,6 +10133,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     contextUsage?: AgentContextUsage
   ): Promise<void> {
     await this.runtimeController.handleRuntimeStatus(runtimeToken, agentId, status, pendingCount, contextUsage);
+    const descriptor = this.descriptors.get(agentId);
+    if (
+      status === "idle"
+      && pendingCount === 0
+      && descriptor?.status === "idle"
+      && descriptor.role === "manager"
+      && this.isSessionAgent(descriptor)
+    ) {
+      await this.finalizePendingSessionPlanUsage(descriptor);
+    }
   }
 
   async handleRuntimeSessionEvent(
@@ -10151,15 +10196,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.runtimeController.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
     if (descriptor?.role === "manager" && this.isSessionAgent(descriptor)) {
-      await this.createSessionPlanUsageTracker(descriptor)
-        .finalizePendingPlan()
-        .catch((error) => {
-          this.logDebug("plan_usage:finalize:error", {
-            agentId: descriptor.agentId,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
+      await this.finalizePendingSessionPlanUsage(descriptor);
     }
+  }
+
+  private async finalizePendingSessionPlanUsage(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+  ): Promise<void> {
+    await this.createSessionPlanUsageTracker(descriptor)
+      .finalizePendingPlan()
+      .catch((error) => {
+        this.logDebug("plan_usage:finalize:error", {
+          agentId: descriptor.agentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   async queueVersionedToolMutation(

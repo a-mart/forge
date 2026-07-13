@@ -26,6 +26,7 @@ export type PlanUsageCoverage = 'complete' | 'estimated' | 'partial' | 'unknown'
 export type PlanUsageCoverageReason =
   | 'recovered_run'
   | 'recovered_completion'
+  | 'delayed_completion'
   | 'missing_timestamps'
   | 'unassigned_worker_usage'
   | 'busy_assignment_boundary'
@@ -168,7 +169,11 @@ export class SessionPlanUsageTracker {
       const now = this.now()
 
       if (run && findCompletionRequest(records, run.planRunId) && plansDiffer(outgoing.plan, snapshot.plan)) {
-        const completed = await this.appendPlanCompleted(records, run, now)
+        const completion = findCompletionRequest(records, run.planRunId)!
+        const completed = await this.appendPlanCompleted(records, run, {
+          accountedThrough: completion.completedAt,
+          uncertainCompletionReason: 'delayed_completion',
+        })
         if (completed) records.push(completed)
         run = undefined
       }
@@ -310,7 +315,13 @@ export class SessionPlanUsageTracker {
       const records = await this.readRecords()
       const run = findOpenRun(records)
       if (!run || !findCompletionRequest(records, run.planRunId)) return
-      await this.appendPlanCompleted(records, run, this.now(), options.recovered === true)
+      const completion = findCompletionRequest(records, run.planRunId)!
+      await this.appendPlanCompleted(records, run, {
+        accountedThrough: options.recovered === true ? completion.completedAt : this.now(),
+        ...(options.recovered === true
+          ? { uncertainCompletionReason: 'recovered_completion' as const }
+          : {}),
+      })
     })
   }
 
@@ -387,15 +398,17 @@ export class SessionPlanUsageTracker {
   private async appendPlanCompleted(
     records: PlanUsageRecord[],
     run: PlanStartedRecord,
-    accountedThrough: string,
-    recoveredCompletion = false,
+    options: {
+      accountedThrough: string
+      uncertainCompletionReason?: 'recovered_completion' | 'delayed_completion'
+    },
   ): Promise<PlanCompletedRecord | undefined> {
     const completion = findCompletionRequest(records, run.planRunId)
     if (!completion) return undefined
 
     const assignments = workerAssignments(records, run.planRunId)
-    const managerScan = await this.scanManagerUsage(run.startedAt, accountedThrough)
-    const workerScan = await this.scanWorkerUsage(run.startedAt, accountedThrough)
+    const managerScan = await this.scanManagerUsage(run.startedAt, options.accountedThrough)
+    const workerScan = await this.scanWorkerUsage(run.startedAt, options.accountedThrough)
     const allowedSteps = new Set(completion.steps.map((step) => step.stepKey))
     const attribution = attributeWorkerUsage(workerScan.events, assignments, allowedSteps)
     const workerUsage = sumUsage(workerScan.events.map((event) => event.usage))
@@ -411,7 +424,7 @@ export class SessionPlanUsageTracker {
 
     const coverage = resolveCoverage({
       recovered: run.recovered,
-      recoveredCompletion,
+      uncertainCompletionReason: options.uncertainCompletionReason,
       missingTimestampCount:
         managerScan.missingTimestampCount + workerScan.missingTimestampCount,
       unassignedUsage: attribution.unassigned,
@@ -421,11 +434,11 @@ export class SessionPlanUsageTracker {
       version: PLAN_USAGE_VERSION,
       type: 'plan_completed',
       planRunId: run.planRunId,
-      recordedAt: accountedThrough,
+      recordedAt: this.now(),
       planRevision: completion.planRevision,
       startedAt: run.startedAt,
       completedAt: completion.completedAt,
-      accountedThrough,
+      accountedThrough: options.accountedThrough,
       managerUsage,
       workerUsage,
       totalUsage: addUsage(managerUsage, workerUsage),
@@ -611,14 +624,14 @@ function findAssignmentAt(
 
 function resolveCoverage(input: {
   recovered: boolean
-  recoveredCompletion?: boolean
+  uncertainCompletionReason?: 'recovered_completion' | 'delayed_completion'
   missingTimestampCount: number
   unassignedUsage: TokenUsageTotals
   assignments: WorkerAssignedRecord[]
 }): { coverage: PlanUsageCoverage; reasons: PlanUsageCoverageReason[] } {
   const reasons: PlanUsageCoverageReason[] = []
   if (input.recovered) reasons.push('recovered_run')
-  if (input.recoveredCompletion) reasons.push('recovered_completion')
+  if (input.uncertainCompletionReason) reasons.push(input.uncertainCompletionReason)
   if (input.missingTimestampCount > 0) reasons.push('missing_timestamps')
   if (input.unassignedUsage.total > 0) reasons.push('unassigned_worker_usage')
   if (hasBusyAssignmentBoundary(input.assignments)) {

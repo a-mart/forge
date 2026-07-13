@@ -62,11 +62,16 @@ function isPlanSummaryEvent(value: unknown): value is PlanSummaryEvent {
   if (!isNonNegativeInteger(maybe.revision) || !Array.isArray(maybe.plan) || maybe.plan.length === 0) return false;
   if (maybe.explanation !== undefined && !isNonEmptyString(maybe.explanation)) return false;
 
-  return maybe.plan.every((step) => {
+  const validSteps = maybe.plan.every((step) => {
     if (!step || typeof step !== "object") return false;
     const item = step as { step?: unknown; status?: unknown };
-    return isNonEmptyString(item.step) && item.status === "completed";
+    return isNonEmptyString(item.step) && (
+      item.status === "pending" || item.status === "in_progress" || item.status === "completed"
+    );
   });
+  if (!validSteps) return false;
+  if (maybe.state !== undefined && maybe.state !== "active" && maybe.state !== "completed") return false;
+  return maybe.state === "active" || maybe.plan.every((step) => step.status === "completed");
 }
 
 function isConversationMessageEvent(value: unknown): value is ConversationMessageEvent {
