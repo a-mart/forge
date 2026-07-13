@@ -21,11 +21,13 @@ export interface SessionPlanSnapshotEvent extends SessionPlanSnapshot {
   requestId?: string
 }
 
-/** Durable transcript receipt emitted once when a completed plan is replaced. */
+/** Durable transcript card anchored when a plan starts and updated in place when it completes. */
 export interface PlanSummaryEvent extends SessionPlanSnapshot {
   type: 'plan_summary'
   id: string
   agentId: string
   timestamp: string
   updatedAt: string
+  /** Missing on legacy records and therefore treated as completed. */
+  state?: 'active' | 'completed'
 }

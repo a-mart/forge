@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
-import { getSessionDir, getSessionPlanHistoryPath, getSessionPlanUsagePath } from '../data-paths.js'
+import { getSessionDir, getSessionPlanHistoryPath, getSessionPlanPath, getSessionPlanUsagePath } from '../data-paths.js'
 import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
@@ -2450,6 +2450,40 @@ Never use plain assistant text for user communication.`
     }])
   })
 
+  it('finalizes completed-plan usage when an accepted manager runtime becomes idle', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Plan usage idle' })
+    await manager.handleUserMessage('Prepare the runtime.', { targetAgentId: sessionAgent.agentId })
+    await manager.updatePlan(sessionAgent.agentId, 'usage-plan-start', {
+      plan: [{ step: 'Finish before idle', status: 'in_progress' }],
+    })
+    await manager.updatePlan(sessionAgent.agentId, 'usage-plan-complete', {
+      plan: [{ step: 'Finish before idle', status: 'completed' }],
+    })
+
+    const state = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: 'idle',
+        pendingCount: number,
+      ) => Promise<void>
+    }
+    const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
+    expect(runtimeToken).toBeTypeOf('number')
+    await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
+
+    const completed = (await readJsonlFile<Record<string, unknown>>(getSessionPlanUsagePath(
+      config.paths.dataDir,
+      'manager',
+      sessionAgent.agentId,
+    ))).filter((record) => record.type === 'plan_completed')
+    expect(completed).toMatchObject([{ coverage: 'complete', coverageReasons: [] }])
+  })
+
   it('records exact plan-step assignments for spawned and reused workers', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -2506,7 +2540,7 @@ Never use plain assistant text for user communication.`
     expect(manager.getAgent('invalid-plan-worker')).toBeUndefined()
   })
 
-  it('persists one completed plan summary when the next plan replaces it', async () => {
+  it('anchors a plan summary at creation and updates it in place through completion', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2518,7 +2552,12 @@ Never use plain assistant text for user communication.`
       explanation: 'The first plan is verified.',
       plan: [{ step: 'Complete the first plan', status: 'completed' }],
     })
-    expect(manager.getConversationHistory('manager').filter((entry) => entry.type === 'plan_summary')).toEqual([])
+    expect(manager.getConversationHistory('manager').filter((entry) => entry.type === 'plan_summary'))
+      .toMatchObject([{
+        state: 'completed',
+        revision: 2,
+        explanation: 'The first plan is verified.',
+      }])
 
     await manager.updatePlan('manager', 'plan-next', {
       plan: [{ step: 'Begin the next plan', status: 'in_progress' }],
@@ -2530,18 +2569,47 @@ Never use plain assistant text for user communication.`
 
     const summaries = manager.getConversationHistory('manager')
       .filter((entry) => entry.type === 'plan_summary')
-    expect(summaries).toHaveLength(1)
+    expect(summaries).toHaveLength(2)
     expect(summaries[0]).toMatchObject({
       agentId: 'manager',
+      state: 'completed',
       revision: 2,
       explanation: 'The first plan is verified.',
       plan: [{ step: 'Complete the first plan', status: 'completed' }],
+    })
+    expect(summaries[1]).toMatchObject({
+      state: 'active',
+      revision: 3,
+      plan: [{ step: 'Begin the next plan', status: 'in_progress' }],
     })
 
     const rebooted = new TestSwarmManager(config)
     await bootWithDefaultManager(rebooted, config)
     expect(rebooted.getConversationHistory('manager').filter((entry) => entry.type === 'plan_summary'))
-      .toHaveLength(1)
+      .toHaveLength(2)
+  })
+
+  it('does not insert a late card for a completed plan that predates inline anchors', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await writeFile(getSessionPlanPath(config.paths.dataDir, 'manager', 'manager'), JSON.stringify({
+      schemaVersion: 1,
+      revision: 4,
+      updatedAt: '2026-07-13T00:00:00.000Z',
+      plan: [{ step: 'Legacy completed plan', status: 'completed' }],
+    }))
+
+    await manager.updatePlan('manager', 'new-plan', {
+      plan: [{ step: 'New anchored plan', status: 'in_progress' }],
+    })
+
+    expect(manager.getConversationHistory('manager').filter((entry) => entry.type === 'plan_summary'))
+      .toMatchObject([{
+        state: 'active',
+        revision: 5,
+        plan: [{ step: 'New anchored plan', status: 'in_progress' }],
+      }])
   })
 
   it('emits one completed plan summary when replacement updates overlap', async () => {
@@ -2564,11 +2632,13 @@ Never use plain assistant text for user communication.`
 
     const summaries = manager.getConversationHistory('manager')
       .filter((entry) => entry.type === 'plan_summary')
-    expect(summaries).toHaveLength(1)
+    expect(summaries).toHaveLength(2)
     expect(summaries[0]).toMatchObject({
+      state: 'completed',
       revision: 1,
       plan: [{ step: 'Complete the first plan', status: 'completed' }],
     })
+    expect(summaries[1]).toMatchObject({ state: 'active', revision: 2 })
     await expect(manager.getSessionPlanSnapshot('manager')).resolves.toMatchObject({
       revision: 3,
       plan: [{ step: 'Begin the third plan', status: 'in_progress' }],

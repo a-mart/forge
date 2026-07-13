@@ -194,6 +194,7 @@ function resolveChoiceResponseAgentId(
 
 function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   const displayEntries: DisplayEntry[] = []
+  const planSummaryIndexById = new Map<string, number>()
   const toolEntriesByCallId = new Map<string, ToolExecutionDisplayEntry>()
   const choiceEntriesByChoiceId = new Map<string, ChoiceRequestDisplayEntry>()
 
@@ -218,11 +219,18 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
     }
 
     if (message.type === 'plan_summary') {
-      displayEntries.push({
+      const nextEntry: DisplayEntry = {
         type: 'plan_summary',
         id: `plan-summary-${message.id}`,
         entry: message,
-      })
+      }
+      const existingIndex = planSummaryIndexById.get(message.id)
+      if (existingIndex === undefined) {
+        planSummaryIndexById.set(message.id, displayEntries.length)
+        displayEntries.push(nextEntry)
+      } else {
+        displayEntries[existingIndex] = nextEntry
+      }
       continue
     }
 
@@ -424,7 +432,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
   const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
-  const showPlanCard = Boolean(planSnapshot?.plan.length)
+  const latestPlanSummary = [...displayEntries].reverse().find((entry) => entry.type === 'plan_summary')
+  const hasCurrentPlanAnchor = latestPlanSummary?.type === 'plan_summary' && (
+    latestPlanSummary.entry.state === 'active'
+    || latestPlanSummary.entry.revision === planSnapshot?.revision
+  )
+  const showPlanCard = Boolean(planSnapshot?.plan.length) && !hasCurrentPlanAnchor
 
   const rows = useMemo<VirtualRow[]>(() => {
     const next: VirtualRow[] = []
@@ -908,7 +921,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
 
     if (entry.type === 'plan_summary') {
-      return <PlanSummaryRow summary={entry.entry} />
+      return <PlanSummaryRow summary={entry.entry} currentSnapshot={planSnapshot} />
     }
 
     return (

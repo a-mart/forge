@@ -234,7 +234,46 @@ describe('MessageList plan summaries', () => {
       plan: [{ step: 'Finish the first plan', status: 'completed' }],
     }])
 
-    expect(container.textContent).toContain('Completed plan')
+    expect(container.textContent).toContain('Plan complete')
     expect(container.textContent).toContain('The first plan is complete.')
+  })
+
+  it('keeps one inline row at its original position while an anchored plan updates', () => {
+    render([
+      {
+        type: 'plan_summary',
+        id: 'plan-card-1',
+        agentId: 'session-1',
+        timestamp: now,
+        state: 'active',
+        revision: 1,
+        updatedAt: now,
+        plan: [{ step: 'Start implementation', status: 'in_progress' }],
+      },
+      {
+        type: 'plan_summary',
+        id: 'plan-card-1',
+        agentId: 'session-1',
+        timestamp: now,
+        state: 'completed',
+        revision: 2,
+        updatedAt: now,
+        explanation: 'Implementation is complete.',
+        plan: [{ step: 'Start implementation', status: 'completed' }],
+      },
+    ], {
+      planSnapshot: {
+        type: 'session_plan_snapshot',
+        sessionAgentId: 'session-1',
+        profileId: 'profile-1',
+        revision: 2,
+        updatedAt: now,
+        explanation: 'Implementation is complete.',
+        plan: [{ step: 'Start implementation', status: 'completed' }],
+      },
+    })
+
+    expect(container.querySelectorAll('section[aria-label="Completed plan"]')).toHaveLength(1)
+    expect(container.textContent).toContain('Implementation is complete.')
   })
 })

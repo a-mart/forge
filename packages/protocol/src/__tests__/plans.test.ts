@@ -43,4 +43,19 @@ describe('plan protocol', () => {
 
     expect(summary.plan[0]?.status).toBe('completed')
   })
+
+  it('represents an active inline plan anchor', () => {
+    const anchor = {
+      type: 'plan_summary',
+      id: 'plan-card-1',
+      agentId: 'session-1',
+      timestamp: '2026-07-13T01:00:00.000Z',
+      state: 'active',
+      revision: 1,
+      updatedAt: '2026-07-13T01:00:00.000Z',
+      plan: [{ step: 'Implement the change', status: 'in_progress' }],
+    } satisfies PlanSummaryEvent
+
+    expect(anchor.state).toBe('active')
+  })
 })

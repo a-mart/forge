@@ -263,7 +263,42 @@ describe('plan token usage accounting', () => {
     expect(receipt).toMatchObject({
       coverage: 'partial',
       coverageReasons: ['recovered_completion'],
-      accountedThrough: '2026-07-13T00:02:00.000Z',
+      accountedThrough: '2026-07-13T00:01:00.000Z',
+    })
+  })
+
+  it('does not absorb a later turn when a plan completion is finalized late', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-plan-delayed-completion-'))
+    let now = '2026-07-13T00:00:00.000Z'
+    const tracker = new SessionPlanUsageTracker({
+      dataDir,
+      profileId: 'profile-1',
+      sessionAgentId: 'session-1',
+      now: () => now,
+      randomId: () => 'run-delayed',
+    })
+    const active = state(1, now, [{ step: 'Finish this turn', status: 'in_progress' }])
+    await tracker.recordPlanTransition(state(0, null, []), active)
+    await writeUsageFile(getSessionFilePath(dataDir, 'profile-1', 'session-1'), [
+      usageMessage('2026-07-13T00:00:30.000Z', 10, 1),
+      usageMessage('2026-07-13T00:02:00.000Z', 20, 2),
+    ])
+    now = '2026-07-13T00:01:00.000Z'
+    const completed = state(2, now, [{ step: 'Finish this turn', status: 'completed' }])
+    await tracker.recordPlanTransition(active, completed)
+
+    now = '2026-07-13T00:03:00.000Z'
+    await tracker.recordPlanTransition(completed, state(3, now, [
+      { step: 'Start a later plan', status: 'in_progress' },
+    ]))
+
+    const receipt = (await readRecords(tracker.filePath))
+      .find((record) => record.type === 'plan_completed')
+    expect(receipt).toMatchObject({
+      accountedThrough: '2026-07-13T00:01:00.000Z',
+      managerUsage: { total: 11 },
+      coverage: 'partial',
+      coverageReasons: ['delayed_completion'],
     })
   })
 })
