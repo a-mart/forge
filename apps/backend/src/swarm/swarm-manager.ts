@@ -525,6 +525,8 @@ interface PendingInboundTurnContext {
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
   workerReportSourceAgentId?: string;
   normalBuilderWorkerCallback?: boolean;
+  /** Whether ending this inbound obligation silently is a user-facing failure. */
+  requiresVisibleResponse?: boolean;
   rootTurnId?: string;
   parentRootTurnId?: string;
   runtimeMessageText?: string;
@@ -559,6 +561,8 @@ interface ActiveMessageRouteContext {
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
   workerReportSourceAgentId?: string;
   normalBuilderWorkerCallback?: boolean;
+  /** Independent from whether a substantive final is allowed to render. */
+  requiresVisibleResponse?: boolean;
   collaboration?: boolean;
 }
 
@@ -4875,6 +4879,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       assistantOutputInput,
       assistantOutputTarget,
     );
+    const requiresVisibleResponse =
+      assistantOutputInput.sendMessageToolContinuation && sender.agentId === target.agentId
+        ? this.activeMessageRouteContextByManagerId.get(target.agentId)?.requiresVisibleResponse === true
+        : false;
     if (target.role === "manager") {
       modelMessage = appendAssistantOutputTargetMetadataToRuntimeMessage(modelMessage, assistantOutputTarget);
     }
@@ -4915,6 +4923,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       internalDeliveryKind: options?.internalDeliveryKind,
       workerReportSourceAgentId: assistantOutputWorkerReportSourceAgentId,
       normalBuilderWorkerCallback,
+      requiresVisibleResponse,
       rootTurnId: observabilityInput?.rootTurnId,
       parentRootTurnId,
       runtimeMessageText: extractRuntimeMessageText(modelMessage),
@@ -7163,12 +7172,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const assistantOutputProjectionTarget = nextContext?.assistantOutputProjectionTarget ?? nextContext?.assistantOutputTarget;
     if (assistantOutputProjectionTarget) {
+      const requiresVisibleResponse =
+        nextContext?.requiresVisibleResponse ??
+        (nextContext?.source === "user_input" || nextContext?.routeOrigin === "scheduled");
       this.activeAssistantOutputTargetByManagerId.set(agentId, assistantOutputProjectionTarget);
       this.activeMessageRouteContextByManagerId.set(agentId, {
         origin: nextContext?.routeOrigin ?? "internal",
         ...(nextContext?.internalDeliveryKind ? { internalDeliveryKind: nextContext.internalDeliveryKind } : {}),
         ...(nextContext?.workerReportSourceAgentId ? { workerReportSourceAgentId: nextContext.workerReportSourceAgentId } : {}),
         ...(nextContext?.normalBuilderWorkerCallback ? { normalBuilderWorkerCallback: true } : {}),
+        requiresVisibleResponse,
         // Collab-CHANNEL turns only: builder-attributed turns carry an author
         // without channelId and must keep session-transcript routing (Wave R).
         ...(nextContext?.collaborationAuthor?.channelId ? { collaboration: true } : {}),
@@ -7367,12 +7380,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           targetKind: "internal_only",
           role: "worker",
         }),
+        requiresVisibleResponse: false,
       };
     }
 
     const rememberedTarget = activeTarget ?? this.activeAssistantOutputTargetByManagerId.get(agentId);
     const fallbackTarget: AssistantOutputTarget = { kind: "explicit_tool_required", reason: "missing_active_target" };
     const routeContext = this.activeMessageRouteContextByManagerId.get(agentId);
+    const requiresVisibleResponse = routeContext
+      ? routeContext.requiresVisibleResponse ?? (routeContext.origin === "user" || routeContext.origin === "scheduled")
+      : true;
     const targetForRouting = rememberedTarget ?? fallbackTarget;
     const decision = this.messageRouter.resolve(this.buildMessageRouteProvenance({
       manager,
@@ -7417,7 +7434,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           decision: closeoutDecision,
           ...(routeContext.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
           target: webTarget,
-          intentionalSilenceAllowed: true,
+          requiresVisibleResponse,
         };
       }
 
@@ -7446,6 +7463,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           },
           ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
           target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+          requiresVisibleResponse,
         };
       }
 
@@ -7472,12 +7490,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           },
           ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
           target: cloneSessionTranscriptAssistantOutputTarget(rememberedTarget),
+          requiresVisibleResponse,
         };
       }
 
       return {
         decision,
         ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
+        requiresVisibleResponse,
       };
     }
 
@@ -7487,6 +7507,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return {
         decision,
         ...(routeContext?.workerReportSourceAgentId ? { sourceWorkerId: routeContext.workerReportSourceAgentId } : {}),
+        requiresVisibleResponse,
         target: {
         kind: "session_transcript",
         channel: "web",
@@ -7530,11 +7551,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.activeAssistantOutputTargetByManagerId.get(agentId),
     );
     const target = route.target;
-    if (!target || target.channel !== "web" || route.intentionalSilenceAllowed) {
+    if (!target || target.channel !== "web" || route.requiresVisibleResponse === false) {
       // Non-web (peer/Telegram/internal) obligation — do not surface to the web
-      // user. A normal Builder worker callback also permits exact NO_REPLY, so
-      // this emergency backstop must not override that deliberate silence.
-      // Fall back to the existing passive notice for accidental empty turns.
+      // user. Internal callbacks also permit exact NO_REPLY, so neither this
+      // emergency backstop nor the passive notice may override that silence.
       return false;
     }
 

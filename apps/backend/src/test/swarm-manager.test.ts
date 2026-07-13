@@ -1001,6 +1001,29 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('still warns when a direct web user turn ends without anything visible', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('Please answer this request.')
+    await startRuntimeUserTurn(manager)
+    expect((manager as any).resolveManagerAssistantFinalOutputRoute('manager', undefined)).toEqual(
+      expect.objectContaining({ requiresVisibleResponse: true }),
+    )
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'agent_end' })
+
+    expect(
+      manager.getConversationHistory('manager').filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text === 'The manager completed this turn without a visible response.',
+      ),
+    ).toHaveLength(1)
+  })
+
   it('flushes preserved present_choices assistant text only after opening the choice request', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1348,7 +1371,9 @@ describe('SwarmManager', () => {
       message: { role: 'user', content: delegationRuntimeMessage },
     })
     const worker = await manager.spawnAgent('manager', { agentId: 'Backstop Worker', initialMessage: 'Do the rerun.' })
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'I am checking the rerun now.')
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'agent_end' })
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: blocked\nsummary: rerun failed before a Graph response', 'auto')
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
@@ -1359,14 +1384,29 @@ describe('SwarmManager', () => {
       type: 'message_start',
       message: { role: 'user', content: reportRuntimeMessage },
     })
+    expect((manager as any).resolveManagerAssistantFinalOutputRoute('manager', undefined)).toEqual(
+      expect.objectContaining({ requiresVisibleResponse: false }),
+    )
 
     expect(manager.deliverTerminalObligationBackstop('manager', reportRuntimeMessage)).toBe(false)
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'agent_end' })
     expect(
       manager
         .getConversationHistory('manager')
         .filter((entry: any) => entry.type === 'conversation_message' && entry.systemNoticeKind === 'worker_outcome_backstop'),
     ).toEqual([])
-    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+    expect(
+      manager.getConversationHistory('manager').filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text === 'The manager completed this turn without a visible response.',
+      ),
+    ).toEqual([])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'I am checking the rerun now.',
+    ])
   })
 
   it('matches provider-selected queued turns by runtime message instead of FIFO order', async () => {
@@ -1832,6 +1872,65 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
       'IT Ops responded with the access guidance.',
     ])
+  })
+
+  it('does not warn after a tool-only project-agent callback follows a visible completion', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const sessionManager = await bootWithDefaultManager(manager, config)
+    const documentation = await manager.createManager(sessionManager.agentId, {
+      name: 'Documentation',
+      cwd: config.defaultCwd,
+    })
+    await manager.setSessionProjectAgent(documentation.agentId, { whenToUse: 'Review documentation impact.' })
+
+    await manager.handleUserMessage('Finish the UI change and report back.')
+    await startRuntimeUserTurn(manager)
+    await emitCleanManagerAssistantMessage(manager, 'manager', 'Done. The UI change is complete.')
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'agent_end' })
+
+    await manager.sendMessage('manager', documentation.agentId, 'Check whether the docs need an update.', 'auto')
+    await manager.sendMessage(
+      documentation.agentId,
+      'manager',
+      'Received. I am checking the relevant help and documentation now.',
+      'auto',
+    )
+    await startRuntimeUserTurn(manager)
+    expect((manager as any).resolveManagerAssistantFinalOutputRoute('manager', undefined)).toEqual(
+      expect.objectContaining({
+        decision: expect.objectContaining({ visible: true, channel: 'web' }),
+        requiresVisibleResponse: false,
+      }),
+    )
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_start',
+      toolCallId: 'continue-docs-check',
+      toolName: 'send_message_to_agent',
+      args: {},
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolCallId: 'continue-docs-check',
+      toolName: 'send_message_to_agent',
+      result: { content: [{ type: 'text', text: 'Queued message for Documentation.' }] },
+      isError: false,
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'agent_end' })
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Done. The UI change is complete.',
+    ])
+    expect(
+      manager.getConversationHistory('manager').filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text === 'The manager completed this turn without a visible response.',
+      ),
+    ).toEqual([])
   })
 
   it('routes internal manager messages and project-agent peer context out of the default web transcript', async () => {

@@ -99,7 +99,8 @@ export interface ManagerAssistantOutputRouteResult {
   target?: SessionTranscriptAssistantOutputTarget;
   decision: MessageRouteDecision;
   sourceWorkerId?: string;
-  intentionalSilenceAllowed?: boolean;
+  /** False when a substantive final may render but silence is valid for this internal turn. */
+  requiresVisibleResponse?: boolean;
 }
 
 export interface RuntimeEventProjectionInput {
@@ -444,7 +445,7 @@ export class RuntimeEventProjector {
     const alreadyDelivered = this.visibleManagerOutputAgentIds.has(agentId);
     const protectedOrNonWebTurn = !target || target.channel !== "web";
 
-    if (alreadyDelivered || route?.intentionalSilenceAllowed || protectedOrNonWebTurn) {
+    if (alreadyDelivered || route?.requiresVisibleResponse === false || protectedOrNonWebTurn) {
       this.intentionalSilenceManagerAgentIds.add(agentId);
       this.pendingSilentManagerNotices.delete(agentId);
     } else {
@@ -573,9 +574,12 @@ export class RuntimeEventProjector {
       const route = this.deps.resolveManagerAssistantFinalOutputRoute?.(agentId, descriptor, activeTarget);
       const reasonCode = route?.decision.reasonCode;
       if (
-        reasonCode === "render:user_web" ||
-        reasonCode === "render:scheduled_web" ||
-        reasonCode === "render:terminal_worker_report_closeout"
+        route?.requiresVisibleResponse !== false &&
+        (
+          reasonCode === "render:user_web" ||
+          reasonCode === "render:scheduled_web" ||
+          reasonCode === "render:terminal_worker_report_closeout"
+        )
       ) {
         const text = route?.sourceWorkerId
           ? `Worker \`${route.sourceWorkerId}\` completed and reported back; the manager did not summarize it. View worker report in All.`

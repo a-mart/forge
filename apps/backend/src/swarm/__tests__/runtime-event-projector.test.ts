@@ -439,7 +439,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
         targetKind: "session_transcript",
       },
       target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
-      intentionalSilenceAllowed: true,
+      requiresVisibleResponse: false,
     }));
     projector.activateManagerAssistantOutputTurn(manager.agentId, {
       kind: "internal_only",
@@ -471,7 +471,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
           },
           target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
           sourceWorkerId: "worker-1",
-          intentionalSilenceAllowed: true,
+          requiresVisibleResponse: false,
         } as const;
       }
       return {
@@ -532,7 +532,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
           targetKind: "session_transcript",
         },
         target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
-        ...(callback ? { sourceWorkerId: "worker-1", intentionalSilenceAllowed: true } : {}),
+        ...(callback ? { sourceWorkerId: "worker-1", requiresVisibleResponse: false } : {}),
       } as const;
     });
 
