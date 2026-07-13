@@ -826,10 +826,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           scrollbarColor: 'var(--sidebar-border) transparent',
         }}
       >
-        {/* Pinned Cortex entry */}
+        {/* Pinned Cortex entry — modest inset beneath Builder/Collab switch */}
         {cortexRow ? (
-          <CortexSection
-            cortexRow={cortexRow}
+          <div className="mt-2">
+            <CortexSection
+              cortexRow={cortexRow}
               statuses={statuses}
               unreadCounts={unreadCounts}
               selectedAgentId={localSelectedAgentId}
@@ -855,6 +856,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               onToggleMute={handleToggleMute}
               onMuteAllSessions={handleMuteAllSessions}
             />
+          </div>
         ) : null}
 
         {/* Search bar below Cortex, above profile sections */}
@@ -974,23 +976,25 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           onRetry={onRemoteOriginRetry}
         />
 
-        {/* Archive button pinned to the bottom of the scrollable content when space allows */}
+        {/* Archive button pinned to the bottom; outer pad creates gap above the divider */}
         {onOpenArchive && hasArchivedItems ? (
-          <div className="mt-auto border-t border-sidebar-border px-0 pt-1.5">
-            <button
-              type="button"
-              onClick={onOpenArchive}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                isArchiveActive
-                  ? 'bg-sidebar-accent text-sidebar-foreground'
-                  : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-              )}
-              aria-current={isArchiveActive ? 'page' : undefined}
-            >
-              <Archive className="size-4" aria-hidden="true" />
-              <span>Archive</span>
-            </button>
+          <div className="mt-auto pt-2.5">
+            <div className="border-t border-sidebar-border pt-1.5">
+              <button
+                type="button"
+                onClick={onOpenArchive}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                  isArchiveActive
+                    ? 'bg-sidebar-accent text-sidebar-foreground'
+                    : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                )}
+                aria-current={isArchiveActive ? 'page' : undefined}
+              >
+                <Archive className="size-4" aria-hidden="true" />
+                <span>Archive</span>
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

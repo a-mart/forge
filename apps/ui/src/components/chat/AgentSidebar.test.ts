@@ -225,7 +225,14 @@ describe('AgentSidebar', () => {
       onOpenArchive,
     })
 
-    click(getByRole(getDesktopSidebar(), 'button', { name: 'Archive' }))
+    const archiveButton = getByRole(getDesktopSidebar(), 'button', { name: 'Archive' })
+    const archiveInner = archiveButton.parentElement
+    const archiveOuter = archiveInner?.parentElement
+    expect(archiveOuter?.className).toContain('mt-auto')
+    expect(archiveOuter?.className).toContain('pt-2.5')
+    expect(archiveInner?.className).toContain('border-t')
+    expect(archiveInner?.className).toContain('pt-1.5')
+    click(archiveButton)
 
     expect(onOpenArchive).toHaveBeenCalledTimes(1)
   })
@@ -470,6 +477,9 @@ describe('AgentSidebar', () => {
     const sidebar = getDesktopSidebar()
     expect(getByText(sidebar, 'Review Run · Full Queue')).toBeTruthy()
     expect(queryByText(sidebar, /^Review \d+$/)).toBeNull()
+    const cortexLabel = getByText(sidebar, 'Cortex')
+    const cortexInset = cortexLabel.closest('.mt-2')
+    expect(cortexInset).toBeTruthy()
   })
 
   it('hides the Cortex review badge when there are no outstanding sessions needing review', async () => {
