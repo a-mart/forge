@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
+import { resizeImageIfNeeded } from "../image-utils.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
 import type {
   OpenAIAuthBrokerLeaseHandle,
@@ -58,6 +59,99 @@ import type { CompactionRuntimeSettingsProvider } from "../../compaction-runtime
 import { buildForgePiCompactionFailureScopeKey } from "../../compaction/forge-pi-compaction-extension.js";
 import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
+
+type PiProviderContextMessages = Parameters<
+  NonNullable<AgentSession["agent"]["transformContext"]>
+>[0];
+
+type PiProviderContextMessage = PiProviderContextMessages[number];
+
+export function installPiProviderContextImageResize(session: AgentSession): void {
+  const existingTransformContext = session.agent.transformContext;
+
+  session.agent.transformContext = async (messages, signal) => {
+    let transformedMessages = messages;
+    if (existingTransformContext) {
+      try {
+        transformedMessages = await existingTransformContext.call(session.agent, messages, signal);
+      } catch {
+        transformedMessages = messages;
+      }
+    }
+
+    try {
+      return await resizePiProviderContextImages(transformedMessages);
+    } catch {
+      return transformedMessages;
+    }
+  };
+}
+
+export async function resizePiProviderContextImages(
+  messages: PiProviderContextMessages
+): Promise<PiProviderContextMessages> {
+  let resizedMessages: PiProviderContextMessages | undefined;
+
+  for (const [messageIndex, message] of messages.entries()) {
+    const content = readArrayContent(message);
+    if (!content) {
+      continue;
+    }
+
+    let resizedContent: unknown[] | undefined;
+    for (const [blockIndex, block] of content.entries()) {
+      if (!isValidPiImageBlock(block)) {
+        continue;
+      }
+
+      const resized = await resizeImageIfNeeded(block.data, block.mimeType);
+      if (resized.data === block.data && resized.mimeType === block.mimeType) {
+        continue;
+      }
+
+      resizedContent ??= [...content];
+      resizedContent[blockIndex] = {
+        ...block,
+        data: resized.data,
+        mimeType: resized.mimeType
+      };
+    }
+
+    if (!resizedContent) {
+      continue;
+    }
+
+    resizedMessages ??= [...messages];
+    resizedMessages[messageIndex] = {
+      ...message,
+      content: resizedContent
+    } as PiProviderContextMessage;
+  }
+
+  return resizedMessages ?? messages;
+}
+
+function readArrayContent(message: PiProviderContextMessage): unknown[] | undefined {
+  const content = (message as { content?: unknown }).content;
+  return Array.isArray(content) ? content : undefined;
+}
+
+function isValidPiImageBlock(value: unknown): value is Record<string, unknown> & {
+  type: "image";
+  data: string;
+  mimeType: string;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const block = value as Record<string, unknown>;
+  return block.type === "image"
+    && typeof block.data === "string"
+    && block.data.trim().length > 0
+    && typeof block.mimeType === "string"
+    && block.mimeType.trim().toLowerCase().startsWith("image/");
+}
 
 interface PiRuntimeCreatorDependencies {
   host: SwarmToolHost;
@@ -297,6 +391,7 @@ export class PiRuntimeCreator {
       ...(settingsManager ? { settingsManager } : {}),
       customTools: swarmTools
     });
+    installPiProviderContextImageResize(session);
 
     const extensionSnapshot = buildRuntimeExtensionSnapshot({
       descriptor,
