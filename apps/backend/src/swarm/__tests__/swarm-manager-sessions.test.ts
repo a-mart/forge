@@ -222,8 +222,8 @@ describe('SwarmManager', () => {
 
       runtime!.busy = false
       descriptor!.status = 'idle'
-      await (manager as unknown as { applyPendingManagerRuntimeRecycleBeforeRuntimeUse: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> })
-        .applyPendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor as AgentDescriptor & { role: 'manager' })
+      await (manager as unknown as { applyFacadePendingManagerRuntimeRecycleBeforeRuntimeUse: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> })
+        .applyFacadePendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor as AgentDescriptor & { role: 'manager' })
       expect(runtime?.recycleCalls).toBe(1)
     } finally {
       fetchMock.mockRestore()
@@ -1906,13 +1906,19 @@ Never use plain assistant text for user communication.`
 
     await mkdir(nextCwd, { recursive: true })
 
-    const originalApplyManagerRuntimeRecyclePolicy = (
+    const projectExecutableTrustCoordinator = (
       manager as unknown as {
-        applyManagerRuntimeRecyclePolicy: (agentId: string, reason: string) => Promise<'recycled' | 'deferred' | 'none'>
+        projectExecutableTrustCoordinator: {
+          applyManagerRuntimeRecyclePolicy: (agentId: string, reason: string) => Promise<'recycled' | 'deferred' | 'none'>
+        }
       }
-    ).applyManagerRuntimeRecyclePolicy.bind(manager)
+    ).projectExecutableTrustCoordinator
+    const originalApplyManagerRuntimeRecyclePolicy =
+      projectExecutableTrustCoordinator.applyManagerRuntimeRecyclePolicy.bind(
+        projectExecutableTrustCoordinator,
+      )
     const applyManagerRuntimeRecyclePolicySpy = vi
-      .spyOn(manager as unknown as { applyManagerRuntimeRecyclePolicy: (agentId: string, reason: string) => Promise<'recycled' | 'deferred' | 'none'> }, 'applyManagerRuntimeRecyclePolicy')
+      .spyOn(projectExecutableTrustCoordinator, 'applyManagerRuntimeRecyclePolicy')
       .mockImplementation(async (agentId, reason) => {
         if (agentId === rootSession.agentId) {
           throw new Error('recycle boom')
@@ -2196,9 +2202,9 @@ Never use plain assistant text for user communication.`
     const rootSession = await bootWithDefaultManager(manager, config)
     const { sessionAgent } = await manager.createSession('manager', { label: 'Alt Session' })
 
-    const applyRecyclePolicySpy = vi
-      .spyOn(
-        manager as unknown as {
+    const projectExecutableTrustCoordinator = (
+      manager as unknown as {
+        projectExecutableTrustCoordinator: {
           applyManagerRuntimeRecyclePolicy: (
             agentId: string,
             reason:
@@ -2209,9 +2215,11 @@ Never use plain assistant text for user communication.`
               | 'project_agent_directory_change'
               | 'specialist_roster_change',
           ) => Promise<'recycled' | 'deferred' | 'none'>
-        },
-        'applyManagerRuntimeRecyclePolicy',
-      )
+        }
+      }
+    ).projectExecutableTrustCoordinator
+    const applyRecyclePolicySpy = vi
+      .spyOn(projectExecutableTrustCoordinator, 'applyManagerRuntimeRecyclePolicy')
       .mockResolvedValue('deferred')
 
     await invoke(manager, rootSession, sessionAgent, config)

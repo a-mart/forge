@@ -654,8 +654,11 @@ describe('SwarmManager', () => {
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session merge detail\n', 'utf8')
 
     const descriptorSaveSpy = vi.spyOn((manager as any).descriptorStore, 'save')
-    const auditSpy = vi.spyOn(manager as any, 'appendSessionMemoryMergeAuditEntry')
-    const snapshotSpy = vi.spyOn(manager as any, 'emitAgentsSnapshot')
+    const auditSpy = vi.spyOn(
+      (manager as any).knowledgeMemoryCoordinator,
+      'appendSessionMemoryMergeAuditEntry',
+    )
+    const snapshotSpy = vi.spyOn((manager as any).eventCoordinator, 'emitAgentsSnapshot')
     descriptorSaveSpy.mockClear()
     auditSpy.mockClear()
     snapshotSpy.mockClear()
@@ -980,7 +983,7 @@ describe('SwarmManager', () => {
       'utf8',
     )
 
-    ;(manager as any).appendSessionMemoryMergeAuditEntry = async () => {
+    ;(manager as any).knowledgeMemoryCoordinator.appendSessionMemoryMergeAuditEntry = async () => {
       throw new Error('audit disk full')
     }
 
@@ -1020,9 +1023,11 @@ describe('SwarmManager', () => {
       'utf8',
     )
 
-    const originalAppendSessionMemoryMergeAuditEntry = (manager as any).appendSessionMemoryMergeAuditEntry.bind(manager)
+    const coordinator = (manager as any).knowledgeMemoryCoordinator
+    const originalAppendSessionMemoryMergeAuditEntry =
+      coordinator.appendSessionMemoryMergeAuditEntry.bind(coordinator)
     let appendFailuresRemaining = 1
-    ;(manager as any).appendSessionMemoryMergeAuditEntry = async (...args: any[]) => {
+    coordinator.appendSessionMemoryMergeAuditEntry = async (...args: any[]) => {
       if (appendFailuresRemaining > 0) {
         appendFailuresRemaining -= 1
         throw new Error('audit disk full')
@@ -1110,7 +1115,7 @@ describe('SwarmManager', () => {
     )
 
     const redundantSave = vi
-      .spyOn(manager as unknown as { saveStore: () => Promise<void> }, 'saveStore')
+      .spyOn((manager as any).descriptorStoreAdapter, 'saveStore')
       .mockRejectedValue(new Error('redundant agents store write failed'))
 
     const result = await manager.mergeSessionMemory(sessionAgent.agentId)
@@ -1149,7 +1154,7 @@ describe('SwarmManager', () => {
       'utf8',
     )
 
-    ;(manager as any).recordSessionMemoryMergeAttempt = async () => {
+    ;(manager as any).knowledgeMemoryCoordinator.recordSessionMemoryMergeAttempt = async () => {
       throw new Error('meta persistence unavailable')
     }
 

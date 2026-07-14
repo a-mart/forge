@@ -117,8 +117,8 @@ export default tseslint.config(
     },
   },
   {
-    // SwarmManager is a stable facade and composition root, not the default
-    // owner for new feature workflows or mutable state. These error-level
+    // SwarmManager is the composition root behind a stateless inherited facade,
+    // not the default owner for new feature workflows or mutable state. These error-level
     // limits ratchet the current extraction forward: when the file or its
     // constructor shrinks, lower the matching maximum to the new raw line
     // count. Do not raise either limit to land a feature; move that feature to
@@ -128,7 +128,7 @@ export default tseslint.config(
       'max-lines': [
         'error',
         {
-          max: 11259,
+          max: 1403,
           skipBlankLines: false,
           skipComments: false,
         },
@@ -136,10 +136,41 @@ export default tseslint.config(
       'max-lines-per-function': [
         'error',
         {
-          max: 686,
+          max: 301,
           skipBlankLines: false,
           skipComments: false,
           IIFEs: true,
+        },
+      ],
+    },
+  },
+  {
+    // Keep the explicit manager application API below the repository's preferred
+    // file ceiling. Lower this exact ratchet whenever facade methods move to a
+    // more cohesive supported surface; never raise it to expose owner internals.
+    files: ['apps/backend/src/swarm/swarm-manager-facade.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 1454,
+          skipBlankLines: false,
+          skipComments: false,
+        },
+      ],
+    },
+  },
+  {
+    // Runtime construction order is intentionally explicit but must not become
+    // another monolith. Lower this exact ratchet after further extractions.
+    files: ['apps/backend/src/swarm/swarm-manager-runtime-composition.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 1032,
+          skipBlankLines: false,
+          skipComments: false,
         },
       ],
     },

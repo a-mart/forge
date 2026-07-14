@@ -571,13 +571,13 @@ describe("SwarmManager Codex mention routing", () => {
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
+    const projectAgents = (manager as unknown as {
+      projectAgentCoordinator: {
+        preflightRuntime(descriptor: AgentDescriptor): Promise<void>;
+      };
+    }).projectAgentCoordinator;
     const preflightSpy = vi
-      .spyOn(
-        manager as unknown as {
-          preflightRepoProjectAgentRuntime(descriptor: AgentDescriptor): Promise<void>;
-        },
-        "preflightRepoProjectAgentRuntime",
-      )
+      .spyOn(projectAgents, "preflightRuntime")
       .mockRejectedValue(new Error("preflight should not run for routed Codex turns"));
 
     await manager.handleUserMessage("@Codex bypass manager preflight", {
@@ -1114,8 +1114,10 @@ describe("SwarmManager Codex mention routing", () => {
       });
       expect(manager.getCodexPluginScopeForWorker("codex-plugin-first")?.selectors).toEqual(["fireflies"]);
       const pendingInitialTasks = (manager as unknown as {
-        pendingCodexPluginInitialTaskByWorkerId: Map<string, string>;
-      }).pendingCodexPluginInitialTaskByWorkerId;
+        codexPluginDelegationCoordinator: {
+          pendingInitialTaskByWorkerId: Map<string, string>;
+        };
+      }).codexPluginDelegationCoordinator.pendingInitialTaskByWorkerId;
       expect(pendingInitialTasks.has("codex-plugin-first")).toBe(true);
 
       await manager.handleUserMessage("@Codex -fireflies list meetings from second manager", {
@@ -1505,8 +1507,10 @@ describe("SwarmManager Codex mention routing", () => {
       initialMessage: "List meetings",
     });
     const retryContextId = (manager as unknown as {
-      lastCodexPluginDelegationByManagerId: Map<string, { retryContextId: string }>;
-    }).lastCodexPluginDelegationByManagerId.get("manager")!.retryContextId;
+      codexPluginDelegationCoordinator: {
+        retryContextByManagerId: Map<string, { retryContextId: string }>;
+      };
+    }).codexPluginDelegationCoordinator.retryContextByManagerId.get("manager")!.retryContextId;
 
     await expect(
       manager.retryCodexPluginWorker(secondManager.agentId, {
@@ -1648,7 +1652,9 @@ describe("SwarmManager Codex mention routing", () => {
     });
 
     expect(manager.getAgent("manager--codex")?.status).toBe("streaming");
-    const codexService = (manager as unknown as { codexAppServerService: CodexAppServerService }).codexAppServerService;
+    const codexService = (manager as unknown as {
+      codexDirectSidecarCoordinator: { appServerService: CodexAppServerService };
+    }).codexDirectSidecarCoordinator.appServerService;
     expect(codexService.getRuntimeStateForTest("manager--codex")?.activeTurn).toBeDefined();
 
     await manager.killAgent("manager", "manager--codex");

@@ -886,6 +886,7 @@ export class SwarmWebSocketServer {
     this.cliWsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
     this.telemetryService?.stop();
+    await this.swarmManager.flushPendingPersistence?.();
 
     await Promise.allSettled([
       this.mobilePushService.stop(),

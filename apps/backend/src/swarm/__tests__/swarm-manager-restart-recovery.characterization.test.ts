@@ -197,4 +197,38 @@ describe('SwarmManager restart recovery characterization', () => {
       await fixture.cleanup()
     }
   })
+
+  it('claims restart recovery before awaiting delivery so concurrent resumes do not duplicate work', async () => {
+    const fixture = await createRecoveryFixture()
+    try {
+      const recovered = new TestSwarmManager(fixture.config, { now: () => NOW })
+      await recovered.boot()
+
+      let markCreationStarted!: () => void
+      let releaseCreation!: () => void
+      const creationStarted = new Promise<void>((resolve) => {
+        markCreationStarted = resolve
+      })
+      const creationGate = new Promise<void>((resolve) => {
+        releaseCreation = resolve
+      })
+      recovered.onCreateRuntime = async ({ descriptor }) => {
+        if (descriptor.agentId !== fixture.workerId) return
+        markCreationStarted()
+        await creationGate
+      }
+
+      const firstResume = recovered.resumeRestartRecovery()
+      await creationStarted
+      const secondResume = recovered.resumeRestartRecovery()
+      releaseCreation()
+      await Promise.all([firstResume, secondResume])
+
+      expect(sentMessageText(recovered.runtimeByAgentId.get(fixture.workerId))).toHaveLength(1)
+      expect(sentMessageText(recovered.runtimeByAgentId.get('manager'))).toHaveLength(2)
+      expect(recovered.getRestartRecoverySnapshot()).toMatchObject({ resumedAt: NOW })
+    } finally {
+      await fixture.cleanup()
+    }
+  })
 })

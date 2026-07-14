@@ -158,6 +158,7 @@ function baseLifecycleOptions(
         runtimes.delete(agentId);
         return true;
       }),
+    clearAgentTurnState: overrides.clearAgentTurnState ?? vi.fn(),
     detachRuntimeIfMatches:
       overrides.detachRuntimeIfMatches ??
       vi.fn((agentId: string, expectedRuntime: SwarmAgentRuntime) => {

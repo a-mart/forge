@@ -260,7 +260,8 @@ describe('SwarmManager', () => {
 
     const liveDescriptor = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors.get(result.agentId)!
     liveDescriptor.sessionSystemPrompt = 'Private session role instructions from repo prompt composition.'
-    ;(manager as unknown as { emitAgentsSnapshot: () => void }).emitAgentsSnapshot()
+    ;(manager as unknown as { eventCoordinator: { emitAgentsSnapshot: () => void } })
+      .eventCoordinator.emitAgentsSnapshot()
     await new Promise<void>((resolve) => queueMicrotask(resolve))
 
     const assertPublicProjectAgent = (projectAgent: AgentDescriptor['projectAgent'] | undefined) => {
@@ -758,9 +759,14 @@ describe('SwarmManager', () => {
     await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo prompt' })
     const manager = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(manager, config)
-    const originalSaveStore = (manager as unknown as { saveStore: () => Promise<void> }).saveStore.bind(manager)
+    const descriptorStoreAdapter = (
+      manager as unknown as {
+        descriptorStoreAdapter: { saveStore: () => Promise<void> }
+      }
+    ).descriptorStoreAdapter
+    const originalSaveStore = descriptorStoreAdapter.saveStore.bind(descriptorStoreAdapter)
     let failNextSave = false
-    ;(manager as unknown as { saveStore: () => Promise<void> }).saveStore = async () => {
+    descriptorStoreAdapter.saveStore = async () => {
       if (failNextSave) {
         failNextSave = false
         throw new Error('save failed')
@@ -1368,7 +1374,10 @@ describe('SwarmManager', () => {
     const profileSessionsDir = join(config.paths.dataDir, 'profiles', 'manager', 'sessions')
     const sessionDirsBefore = (await readdir(profileSessionsDir)).sort()
 
-    vi.spyOn(manager as any, 'writeInitialSessionMeta').mockRejectedValueOnce(new Error('meta boom'))
+    vi.spyOn(
+      (manager as any).knowledgeMemoryCoordinator,
+      'writeInitialSessionMeta',
+    ).mockRejectedValueOnce(new Error('meta boom'))
 
     await expect(
       manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {

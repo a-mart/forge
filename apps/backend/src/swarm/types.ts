@@ -406,11 +406,6 @@ export interface AgentStatusEvent {
   streamingStartedAt?: number;
 }
 
-export interface AgentsSnapshotEvent {
-  type: "agents_snapshot";
-  agents: AgentDescriptor[];
-}
-
 export interface SessionLifecycleEvent {
   action: "created" | "deleted" | "renamed" | "forked" | "archived" | "restored";
   sessionAgentId: string;

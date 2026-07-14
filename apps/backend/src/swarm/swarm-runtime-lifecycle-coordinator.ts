@@ -1,0 +1,527 @@
+import type { ConversationMessageEvent } from "./types.js";
+import type {
+  AgentContextUsage,
+  AgentDescriptor,
+  AgentStatus,
+} from "./types.js";
+import type {
+  RuntimeErrorEvent,
+  RuntimeSessionEvent,
+  RuntimeShutdownOptions,
+  SwarmAgentRuntime,
+} from "./runtime-contracts.js";
+import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
+import type { SwarmRuntimeControllerHost } from "./swarm-runtime-controller.js";
+import type {
+  SwarmWorkerHealthService,
+  WatchdogBatchEntry,
+  WorkerActivityState,
+  WorkerStallState,
+  WorkerWatchdogState,
+} from "./swarm-worker-health-service.js";
+import { ManagerTurnWatchdog } from "./manager-turn-watchdog.js";
+import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
+import {
+  extractMessageErrorMessage,
+  extractMessageStopReason,
+  extractMessageText,
+  extractRole,
+  hasMessageErrorMessageField,
+  isAbortLikeErrorMessage,
+  normalizeProviderErrorMessage,
+} from "./message-utils.js";
+import type { TurnLedgerSessionTarget } from "./turn-ledger.js";
+import { isRuntimeRecoveryActiveForRuntime } from "./runtime/runtime-recovery-state.js";
+
+export const PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS = 15_000;
+
+export interface RuntimeLifecycleController {
+  readonly runtimes: Map<string, SwarmAgentRuntime>;
+  allocateRuntimeToken(agentId: string): number;
+  clearRuntimeToken(agentId: string, runtimeToken?: number): void;
+  detachRuntime(agentId: string, runtimeToken?: number): boolean;
+  runRuntimeShutdown(
+    descriptor: AgentDescriptor,
+    action: "terminate" | "stopInFlight",
+    options?: RuntimeShutdownOptions,
+  ): Promise<{ timedOut: boolean; runtimeToken?: number }>;
+  handleRuntimeStatus(
+    runtimeToken: number,
+    agentId: string,
+    status: AgentStatus,
+    pendingCount: number,
+    contextUsage?: AgentContextUsage,
+  ): Promise<void>;
+  handleRuntimeSessionEvent(
+    runtimeTokenOrAgentId: number | string,
+    agentIdOrEvent: string | RuntimeSessionEvent,
+    maybeEvent?: RuntimeSessionEvent,
+  ): Promise<boolean>;
+  handleRuntimeError(
+    runtimeTokenOrAgentId: number | string,
+    agentIdOrError: string | RuntimeErrorEvent,
+    maybeError?: RuntimeErrorEvent,
+  ): Promise<void>;
+  handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void>;
+  clearInvalidatedManualStopMessageEndAllowance(agentId: string): void;
+}
+
+export interface RuntimeLifecycleTurnContext {
+  beforeRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
+  afterRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
+  getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined;
+  handleRuntimeError(agentId: string): void;
+  discard(agentId: string): void;
+  clearAgentState(agentId: string): void;
+}
+
+export interface RuntimeLifecycleCodexScopes {
+  closeWorkerScope(agentId: string): void;
+  recordManagerAgentEnd(agentId: string): void;
+}
+
+export interface RuntimeLifecyclePlans {
+  finalizeUsage(owner: AgentDescriptor & { role: "manager"; profileId: string }): Promise<void>;
+}
+
+export interface RuntimeLifecycleEvents {
+  emitConversationMessage(event: ConversationMessageEvent): void;
+}
+
+export interface SwarmRuntimeLifecycleCoordinatorOptions {
+  dataDir: string;
+  descriptors: Map<string, AgentDescriptor>;
+  controller: RuntimeLifecycleController;
+  recoveryState: Pick<RuntimeRecoveryState, "setPendingManagerRuntimeRecycle">;
+  workerHealth: SwarmWorkerHealthService;
+  turnContext: RuntimeLifecycleTurnContext;
+  codexScopes: RuntimeLifecycleCodexScopes;
+  plans: RuntimeLifecyclePlans;
+  events: RuntimeLifecycleEvents;
+  now: () => string;
+  logDebug(message: string, details?: unknown): void;
+}
+
+type RuntimeLifecycleHostCallbackKey =
+  | "consumePendingManualManagerStopNoticeIfApplicable"
+  | "stripManagerAbortErrorFromEvent"
+  | "getOrCreateWorkerWatchdogState"
+  | "clearWatchdogTimer"
+  | "removeWorkerFromWatchdogBatchQueues"
+  | "beginPendingTransientWorkerTerminatedError"
+  | "cancelPendingTransientWorkerTerminatedError"
+  | "hasPendingTransientWorkerTerminatedError"
+  | "finalizeWorkerIdleTurn"
+  | "isRuntimeRecoveryActive"
+  | "beforeRuntimeEventProjection"
+  | "getActiveTurnId"
+  | "recordManagerTurnWatchdogStatus"
+  | "recordManagerTurnWatchdogEvent"
+  | "recordManagerTurnWatchdogRuntimeError"
+  | "recordManagerTurnWatchdogTerminal"
+  | "afterRuntimeEventProjection";
+
+export type RuntimeLifecycleControllerHostCallbacks = Pick<
+  SwarmRuntimeControllerHost,
+  RuntimeLifecycleHostCallbackKey
+>;
+
+/**
+ * Creates the callback slice required by SwarmRuntimeController without making
+ * the manager facade repeat seventeen forwarding closures. Resolution is lazy
+ * because the controller is constructed before this coordinator.
+ */
+export function createRuntimeLifecycleControllerHostCallbacks(
+  getCoordinator: () => SwarmRuntimeLifecycleCoordinator,
+): RuntimeLifecycleControllerHostCallbacks {
+  return {
+    consumePendingManualManagerStopNoticeIfApplicable: (agentId, event) =>
+      getCoordinator().consumePendingManualManagerStopNoticeIfApplicable(agentId, event),
+    stripManagerAbortErrorFromEvent: (event) => getCoordinator().stripManagerAbortErrorFromEvent(event),
+    getOrCreateWorkerWatchdogState: (agentId) => getCoordinator().getOrCreateWorkerWatchdogState(agentId),
+    clearWatchdogTimer: (agentId) => getCoordinator().clearWatchdogTimer(agentId),
+    removeWorkerFromWatchdogBatchQueues: (agentId) =>
+      getCoordinator().removeWorkerFromWatchdogBatchQueues(agentId),
+    beginPendingTransientWorkerTerminatedError: (agentId, event, expire) =>
+      getCoordinator().beginPendingTransientWorkerTerminatedError(agentId, event, expire),
+    cancelPendingTransientWorkerTerminatedError: (agentId, reason) =>
+      getCoordinator().cancelPendingTransientWorkerTerminatedError(agentId, reason),
+    hasPendingTransientWorkerTerminatedError: (agentId) =>
+      getCoordinator().hasPendingTransientWorkerTerminatedError(agentId),
+    finalizeWorkerIdleTurn: (agentId, descriptor, source) =>
+      getCoordinator().finalizeWorkerIdleTurn(agentId, descriptor, source),
+    isRuntimeRecoveryActive: (agentId) => getCoordinator().isRuntimeRecoveryActive(agentId),
+    beforeRuntimeEventProjection: (agentId, runtimeToken, event) =>
+      getCoordinator().beforeRuntimeEventProjection(agentId, runtimeToken, event),
+    getActiveTurnId: (agentId, runtimeToken) => getCoordinator().getActiveTurnId(agentId, runtimeToken),
+    recordManagerTurnWatchdogStatus: (agentId, runtimeToken, status, pendingCount) =>
+      getCoordinator().recordManagerTurnWatchdogStatus(agentId, runtimeToken, status, pendingCount),
+    recordManagerTurnWatchdogEvent: (agentId, runtimeToken, event) =>
+      getCoordinator().recordManagerTurnWatchdogEvent(agentId, runtimeToken, event),
+    recordManagerTurnWatchdogRuntimeError: (agentId, runtimeToken, error) =>
+      getCoordinator().recordManagerTurnWatchdogRuntimeError(agentId, runtimeToken, error),
+    recordManagerTurnWatchdogTerminal: (agentId, outcome) =>
+      getCoordinator().recordManagerTurnWatchdogTerminal(agentId, outcome),
+    afterRuntimeEventProjection: (agentId, runtimeToken, event) =>
+      getCoordinator().afterRuntimeEventProjection(agentId, runtimeToken, event),
+  };
+}
+
+/**
+ * Owns runtime callback ordering, health/watchdog projection, turn-ledger target
+ * resolution, and manual-stop callback reconciliation. Provider construction
+ * remains in SwarmRuntimeController; worker-health policy remains in its leaf
+ * service.
+ */
+export class SwarmRuntimeLifecycleCoordinator {
+  private readonly managerTurnWatchdog: ManagerTurnWatchdog;
+  private readonly pendingManualStopNoticeTimers = new Map<string, NodeJS.Timeout>();
+
+  constructor(private readonly options: SwarmRuntimeLifecycleCoordinatorOptions) {
+    this.managerTurnWatchdog = new ManagerTurnWatchdog({
+      dataDir: options.dataDir,
+      descriptors: options.descriptors,
+      now: options.now,
+      getSessionTarget: (agentId) => this.getTurnLedgerSessionTarget(agentId),
+      getActiveTurnId: (agentId, runtimeToken) => options.turnContext.getActiveTurnId(agentId, runtimeToken),
+      isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
+      emitConversationMessage: (event) => options.events.emitConversationMessage(event),
+      offerRuntimeRecycle: (agentId) => options.recoveryState.setPendingManagerRuntimeRecycle(agentId, "idle_transition"),
+      logDebug: options.logDebug,
+    });
+  }
+
+  get workerHealth(): SwarmWorkerHealthService {
+    return this.options.workerHealth;
+  }
+
+  get runtimes(): Map<string, SwarmAgentRuntime> {
+    return this.options.controller.runtimes;
+  }
+
+  getTurnLedgerSessionTarget(agentId: string): TurnLedgerSessionTarget | null {
+    const descriptor = this.options.descriptors.get(agentId);
+    if (!descriptor) return null;
+
+    const manager = descriptor.role === "manager"
+      ? descriptor
+      : this.options.descriptors.get(descriptor.managerId);
+    if (!manager || manager.role !== "manager") return null;
+
+    return {
+      dataDir: this.options.dataDir,
+      profileId: manager.profileId ?? manager.agentId,
+      sessionAgentId: manager.agentId,
+    };
+  }
+
+  allocateRuntimeToken(agentId: string): number {
+    return this.options.controller.allocateRuntimeToken(agentId);
+  }
+
+  clearRuntimeToken(agentId: string, runtimeToken?: number): void {
+    this.options.controller.clearRuntimeToken(agentId, runtimeToken);
+  }
+
+  detachRuntime(agentId: string, runtimeToken?: number): boolean {
+    const detached = this.options.controller.detachRuntime(agentId, runtimeToken);
+    if (detached) {
+      this.options.turnContext.discard(agentId);
+      this.options.codexScopes.closeWorkerScope(agentId);
+    }
+    return detached;
+  }
+
+  clearAgentState(agentId: string): void {
+    this.options.turnContext.clearAgentState(agentId);
+  }
+
+  runRuntimeShutdown(
+    descriptor: AgentDescriptor,
+    action: "terminate" | "stopInFlight",
+    options?: RuntimeShutdownOptions,
+  ): Promise<{ timedOut: boolean; runtimeToken?: number }> {
+    return this.options.controller.runRuntimeShutdown(descriptor, action, options);
+  }
+
+  async handleRuntimeStatus(
+    runtimeToken: number,
+    agentId: string,
+    status: AgentStatus,
+    pendingCount: number,
+    contextUsage?: AgentContextUsage,
+  ): Promise<void> {
+    await this.options.controller.handleRuntimeStatus(runtimeToken, agentId, status, pendingCount, contextUsage);
+    const descriptor = this.options.descriptors.get(agentId);
+    if (status === "idle" && pendingCount === 0 && descriptor?.status === "idle" && isSessionManager(descriptor)) {
+      await this.options.plans.finalizeUsage(descriptor);
+    }
+  }
+
+  async handleRuntimeSessionEvent(
+    runtimeTokenOrAgentId: number | string,
+    agentIdOrEvent: string | RuntimeSessionEvent,
+    maybeEvent?: RuntimeSessionEvent,
+  ): Promise<void> {
+    await this.options.controller.handleRuntimeSessionEvent(
+      runtimeTokenOrAgentId,
+      agentIdOrEvent,
+      maybeEvent,
+    );
+  }
+
+  async handleRuntimeError(
+    runtimeTokenOrAgentId: number | string,
+    agentIdOrError: string | RuntimeErrorEvent,
+    maybeError?: RuntimeErrorEvent,
+  ): Promise<void> {
+    const agentId = typeof runtimeTokenOrAgentId === "number"
+      ? agentIdOrError as string
+      : runtimeTokenOrAgentId;
+    this.options.turnContext.handleRuntimeError(agentId);
+    await this.options.controller.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
+  }
+
+  async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
+    const agentId = typeof runtimeTokenOrAgentId === "number" ? maybeAgentId : runtimeTokenOrAgentId;
+    const descriptor = agentId ? this.options.descriptors.get(agentId) : undefined;
+    if (agentId && descriptor?.role === "manager") {
+      this.options.codexScopes.recordManagerAgentEnd(agentId);
+    }
+
+    await this.options.controller.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
+    if (isSessionManager(descriptor)) {
+      await this.options.plans.finalizeUsage(descriptor);
+    }
+  }
+
+  beforeRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.options.turnContext.beforeRuntimeEventProjection(agentId, runtimeToken, event);
+  }
+
+  afterRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.options.turnContext.afterRuntimeEventProjection(agentId, runtimeToken, event);
+  }
+
+  getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined {
+    return this.options.turnContext.getActiveTurnId(agentId, runtimeToken);
+  }
+
+  runLivenessHealthSweep(): void {
+    this.managerTurnWatchdog.check();
+  }
+
+  recordManagerTurnWatchdogStatus(
+    agentId: string,
+    runtimeToken: number | undefined,
+    status: AgentStatus,
+    pendingCount: number,
+  ): void {
+    this.managerTurnWatchdog.recordStatus(agentId, runtimeToken, status, pendingCount);
+  }
+
+  recordManagerTurnWatchdogEvent(
+    agentId: string,
+    runtimeToken: number | undefined,
+    event: RuntimeSessionEvent,
+  ): void {
+    this.managerTurnWatchdog.recordEvent(agentId, runtimeToken, event);
+  }
+
+  recordManagerTurnWatchdogRuntimeError(
+    agentId: string,
+    _runtimeToken: number | undefined,
+    error: RuntimeErrorEvent,
+  ): void {
+    this.managerTurnWatchdog.recordRuntimeError(agentId, error);
+  }
+
+  recordManagerTurnWatchdogTerminal(agentId: string, outcome: "agent_end" | "idle" | "error"): void {
+    this.managerTurnWatchdog.recordTerminal(agentId, outcome);
+  }
+
+  isRuntimeInContextRecovery(agentId: string): boolean {
+    return Boolean(this.runtimes.get(agentId)?.isContextRecoveryInProgress?.());
+  }
+
+  isRuntimeRecoveryActive(agentId: string): boolean {
+    return isRuntimeRecoveryActiveForRuntime(this.runtimes.get(agentId));
+  }
+
+  markPendingManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNoticeTimer(agentId);
+    const timer = setTimeout(() => {
+      this.pendingManualStopNoticeTimers.delete(agentId);
+      this.options.controller.clearInvalidatedManualStopMessageEndAllowance(agentId);
+    }, PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS);
+    timer.unref?.();
+    this.pendingManualStopNoticeTimers.set(agentId, timer);
+  }
+
+  clearPendingManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNoticeTimer(agentId);
+  }
+
+  emitImmediateManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNotice(agentId);
+    this.options.controller.clearInvalidatedManualStopMessageEndAllowance(agentId);
+    this.options.events.emitConversationMessage({
+      type: "conversation_message",
+      agentId,
+      role: "system",
+      text: MANUAL_MANAGER_STOP_NOTICE,
+      timestamp: this.options.now(),
+      source: "system",
+    });
+  }
+
+  consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean {
+    if (!this.pendingManualStopNoticeTimers.has(agentId) || event.type !== "message_end") return false;
+    if (extractRole(event.message) !== "assistant") return false;
+
+    const stopReason = extractMessageStopReason(event.message);
+    if (stopReason !== "error" && !hasMessageErrorMessageField(event.message)) return false;
+
+    const normalizedErrorMessage = normalizeProviderErrorMessage(
+      extractMessageErrorMessage(event.message) ?? extractMessageText(event.message),
+    );
+    this.clearPendingManualManagerStopNotice(agentId);
+    return isAbortLikeErrorMessage(normalizedErrorMessage);
+  }
+
+  stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent {
+    if (event.type !== "message_end") return event;
+    const message = event.message as typeof event.message & { errorMessage?: unknown; stopReason?: unknown };
+    const { errorMessage: _errorMessage, ...messageWithoutError } = message;
+    return {
+      ...event,
+      message: { ...messageWithoutError, stopReason: "stop" } as typeof event.message,
+    };
+  }
+
+  startWorkerHealth(): void {
+    this.options.workerHealth.ensureStarted();
+  }
+
+  getWorkerActivity(agentId: string): ReturnType<SwarmWorkerHealthService["getWorkerActivity"]> {
+    return this.options.workerHealth.getWorkerActivity(agentId);
+  }
+
+  checkForStalledWorkers(): Promise<void> {
+    return this.options.workerHealth.checkForStalledWorkers();
+  }
+
+  handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
+    return this.options.workerHealth.handleStallNudge(agentId, elapsedMs);
+  }
+
+  handleStallDetailedReport(agentId: string, elapsedMs: number): Promise<void> {
+    return this.options.workerHealth.handleStallDetailedReport(agentId, elapsedMs);
+  }
+
+  handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
+    return this.options.workerHealth.handleStallAutoKill(agentId, elapsedMs);
+  }
+
+  finalizeWorkerIdleTurn(
+    agentId: string,
+    descriptor: AgentDescriptor,
+    source: "agent_end" | "status_idle" | "deferred",
+  ): Promise<void> {
+    return this.options.workerHealth.finalizeWorkerIdleTurn(agentId, descriptor, source);
+  }
+
+  seedWorkerCompletionReportTimestamp(agentId: string): void {
+    this.options.workerHealth.seedWorkerCompletionReportTimestamp(agentId);
+  }
+
+  deleteWorkerStallState(agentId: string): void {
+    this.options.workerHealth.deleteWorkerStallState(agentId);
+  }
+
+  deleteWorkerActivityState(agentId: string): void {
+    this.options.workerHealth.deleteWorkerActivityState(agentId);
+  }
+
+  deleteWorkerCompletionReportState(agentId: string): void {
+    this.options.workerHealth.deleteWorkerCompletionReportState(agentId);
+  }
+
+  getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogState {
+    return this.options.workerHealth.getOrCreateWorkerWatchdogState(agentId);
+  }
+
+  clearWatchdogTimer(agentId: string): void {
+    this.options.workerHealth.clearWatchdogTimer(agentId);
+  }
+
+  clearWatchdogState(agentId: string): void {
+    this.options.workerHealth.clearWatchdogState(agentId);
+  }
+
+  removeWorkerFromWatchdogBatchQueues(agentId: string): void {
+    this.options.workerHealth.removeWorkerFromWatchdogBatchQueues(agentId);
+  }
+
+  beginPendingTransientWorkerTerminatedError(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    expire: (event: RuntimeSessionEvent) => void | Promise<void>,
+  ): boolean {
+    return this.options.workerHealth.beginPendingTransientWorkerTerminatedError(agentId, event, expire);
+  }
+
+  cancelPendingTransientWorkerTerminatedError(
+    agentId: string,
+    reason: "runtime_progress" | "worker_reported" | "clear_state",
+  ): void {
+    this.options.workerHealth.cancelPendingTransientWorkerTerminatedError(agentId, reason);
+  }
+
+  hasPendingTransientWorkerTerminatedError(agentId: string): boolean {
+    return this.options.workerHealth.hasPendingTransientWorkerTerminatedError(agentId);
+  }
+
+  get workerWatchdogState(): Map<string, WorkerWatchdogState> {
+    return this.options.workerHealth.workerWatchdogState;
+  }
+
+  get workerStallState(): Map<string, WorkerStallState> {
+    return this.options.workerHealth.workerStallState;
+  }
+
+  get workerActivityState(): Map<string, WorkerActivityState> {
+    return this.options.workerHealth.workerActivityState;
+  }
+
+  get watchdogTimers(): Map<string, NodeJS.Timeout> {
+    return this.options.workerHealth.watchdogTimers;
+  }
+
+  get watchdogTimerTokens(): Map<string, number> {
+    return this.options.workerHealth.watchdogTimerTokens;
+  }
+
+  get watchdogBatchQueueByManager(): Map<string, Map<string, WatchdogBatchEntry>> {
+    return this.options.workerHealth.watchdogBatchQueueByManager;
+  }
+
+  get watchdogBatchTimersByManager(): Map<string, NodeJS.Timeout> {
+    return this.options.workerHealth.watchdogBatchTimersByManager;
+  }
+
+  private clearPendingManualManagerStopNoticeTimer(agentId: string): void {
+    const timer = this.pendingManualStopNoticeTimers.get(agentId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pendingManualStopNoticeTimers.delete(agentId);
+  }
+}
+
+function isSessionManager(
+  descriptor: AgentDescriptor | undefined,
+): descriptor is AgentDescriptor & { role: "manager"; profileId: string } {
+  return descriptor?.role === "manager"
+    && typeof descriptor.profileId === "string"
+    && descriptor.profileId.trim().length > 0;
+}

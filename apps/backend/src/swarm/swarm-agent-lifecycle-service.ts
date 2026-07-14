@@ -229,6 +229,7 @@ export interface SwarmAgentLifecycleServiceOptions {
     options?: RuntimeShutdownOptions
   ) => Promise<{ timedOut: boolean; runtimeToken?: number }>;
   detachRuntime: (agentId: string, runtimeToken?: number) => boolean;
+  clearAgentTurnState: (agentId: string) => void;
   detachRuntimeIfMatches: (
     agentId: string,
     expectedRuntime: SwarmAgentRuntime,
@@ -865,6 +866,7 @@ export class SwarmAgentLifecycleService {
       this.options.deleteWorkerStallState(agentId);
       this.options.deleteWorkerActivityState(agentId);
       this.options.deleteWorkerCompletionReportState(agentId);
+      this.options.clearAgentTurnState(agentId);
 
       this.deleteDescriptor(agentId);
       this.options.emitAgentsSnapshot();
@@ -1596,6 +1598,7 @@ export class SwarmAgentLifecycleService {
     if (isExternalThreadDescriptor(descriptor)) {
       await this.cleanupExternalThreadWorkerForTermination(descriptor);
       this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
+      this.options.clearAgentTurnState(descriptor.agentId);
 
       descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
       descriptor.contextUsage = undefined;
@@ -1624,6 +1627,7 @@ export class SwarmAgentLifecycleService {
       }
     }
     this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
+    this.options.clearAgentTurnState(descriptor.agentId);
 
     descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
     descriptor.contextUsage = undefined;

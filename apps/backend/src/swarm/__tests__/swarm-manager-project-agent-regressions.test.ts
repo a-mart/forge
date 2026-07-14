@@ -236,7 +236,12 @@ describe("SwarmManager project-agent regressions", () => {
       cwd: config.defaultCwd
     });
 
-    vi.spyOn(manager as unknown as { saveStore: () => Promise<void> }, "saveStore").mockRejectedValueOnce(new Error("save boom"));
+    const descriptorStoreAdapter = (
+      manager as unknown as {
+        descriptorStoreAdapter: { saveStore: () => Promise<void> };
+      }
+    ).descriptorStoreAdapter;
+    vi.spyOn(descriptorStoreAdapter, "saveStore").mockRejectedValueOnce(new Error("save boom"));
 
     const result = await manager.setSessionProjectAgent(target.agentId, {
       handle: "docs",

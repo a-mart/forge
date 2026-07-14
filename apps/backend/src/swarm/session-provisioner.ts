@@ -44,7 +44,7 @@ export interface SessionProvisionerOptions {
   dataDir: string;
   descriptorMutations: SessionProvisionerDescriptorMutations;
   runtimes: Map<string, SwarmAgentRuntime>;
-  pinnedMessageIdsBySessionAgentId: Map<string, Set<string>>;
+  forgetPinnedMessages: (agentId: string) => void;
   conversationProjector: SessionProvisionerConversationProjector;
   ensureProfilePiDirectories: (profileId: string) => Promise<void>;
   ensureSessionFileParentDirectory: (sessionFile: string) => Promise<void>;
@@ -57,6 +57,7 @@ export interface SessionProvisionerOptions {
     options?: { abort?: boolean }
   ) => Promise<{ timedOut: boolean; runtimeToken?: number }>;
   detachRuntime: (agentId: string, runtimeToken?: number) => boolean;
+  clearAgentTurnState: (agentId: string) => void;
   deleteManagerSessionFile: (sessionFile: string) => Promise<void>;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
 }
@@ -140,8 +141,9 @@ export class SessionProvisioner {
       managerId: descriptor.managerId
     });
 
+    this.options.clearAgentTurnState(descriptor.agentId);
     this.options.descriptorMutations.deleteDescriptor(descriptor.agentId);
-    this.options.pinnedMessageIdsBySessionAgentId.delete(descriptor.agentId);
+    this.options.forgetPinnedMessages(descriptor.agentId);
     this.options.conversationProjector.deleteConversationHistory(descriptor.agentId, descriptor.sessionFile);
 
     if (descriptor.sessionFile === canonicalSessionFile) {

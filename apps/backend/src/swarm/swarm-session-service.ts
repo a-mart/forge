@@ -1,6 +1,5 @@
 import { writeFile } from "node:fs/promises";
 import { assertBuilderSession, assertCollabSession, cloneDescriptor } from "./swarm-manager-utils.js";
-import { savePins, type PinRegistry } from "./message-pins.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { AgentDescriptor, AgentModelDescriptor, ManagerProfile, SessionLifecycleEvent } from "./types.js";
@@ -71,15 +70,7 @@ export interface SwarmSessionServiceOptions {
   emitConversationReset: (agentId: string, source: string) => void;
   injectAgentCreatorContext: (agentId: string, profileId: string) => Promise<void>;
   cancelAllPendingChoicesForAgent: (agentId: string) => void;
-  getSessionDirForDescriptor: (descriptor: { agentId: string; profileId?: string }) => string;
-  syncPinnedContentForManagerRuntime: (
-    descriptor: ProvisionedSessionDescriptor,
-    options?: {
-      registry?: PinRegistry;
-      runtime?: SwarmAgentRuntime;
-      setPinnedContentOptions?: { suppressRecycle?: boolean };
-    }
-  ) => Promise<void>;
+  clearPinsForConversationReset: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
   resetConversationHistory: (agentId: string) => void;
   captureSessionRuntimePromptMeta: (
     descriptor: AgentDescriptor,
@@ -286,12 +277,7 @@ export class SwarmSessionService {
       }
     }
 
-    const emptyRegistry: PinRegistry = { version: 1, pins: {} };
-    await savePins(this.options.getSessionDirForDescriptor(descriptor), emptyRegistry);
-    await this.options.syncPinnedContentForManagerRuntime(descriptor, {
-      registry: emptyRegistry,
-      setPinnedContentOptions: { suppressRecycle: true }
-    });
+    await this.options.clearPinsForConversationReset(descriptor);
 
     this.options.resetConversationHistory(agentId);
     await this.options.clearSessionPlan(descriptor);

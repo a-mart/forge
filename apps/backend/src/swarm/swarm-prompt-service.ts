@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace, type TierConfig } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
+import { isSessionAgentDescriptor } from "./agent-directory.js";
 import {
   getCommonKnowledgePath,
   getKnowledgeIndexPath,
@@ -195,8 +196,8 @@ export class SwarmPromptService {
 
     const defaultDescriptor = this.options.descriptors.get(profile.defaultSessionAgentId);
     const descriptor =
-      (isSessionAgent(defaultDescriptor) ? defaultDescriptor : undefined) ??
-      this.options.getSessionsForProfile(profileId).find(isSessionAgent);
+      (isSessionAgentDescriptor(defaultDescriptor) ? defaultDescriptor : undefined) ??
+      this.options.getSessionsForProfile(profileId).find(isSessionAgentDescriptor);
 
     if (!descriptor || descriptor.role !== "manager") {
       throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
@@ -207,7 +208,7 @@ export class SwarmPromptService {
 
   async previewManagerSystemPromptForAgent(agentId: string): Promise<PromptPreviewResponse> {
     const descriptor = this.options.descriptors.get(agentId);
-    if (!isSessionAgent(descriptor)) {
+    if (!isSessionAgentDescriptor(descriptor)) {
       throw new Error(`Unknown manager session: ${agentId}`);
     }
 
@@ -1191,17 +1192,6 @@ export class SwarmPromptService {
     skillLines.push("</available_skills>");
     return systemPrompt.trimEnd() + skillLines.join("\n");
   }
-}
-
-function isSessionAgent(
-  descriptor: AgentDescriptor | undefined,
-): descriptor is AgentDescriptor & { role: "manager"; profileId: string } {
-  return (
-    !!descriptor &&
-    descriptor.role === "manager" &&
-    typeof descriptor.profileId === "string" &&
-    descriptor.profileId.trim().length > 0
-  );
 }
 
 function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {

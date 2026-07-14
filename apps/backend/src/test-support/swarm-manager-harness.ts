@@ -10,6 +10,7 @@ import type {
 } from '../swarm/runtime-contracts.js'
 import type { ProjectExecutableTrustPlan } from '../swarm/project-executable-trust.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
+import type { SwarmRuntimeLifecycleCoordinator } from '../swarm/swarm-runtime-lifecycle-coordinator.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -185,6 +186,60 @@ export class TestSwarmManager extends SwarmManager {
   onCreateRuntime:
     | ((options: { descriptor: AgentDescriptor; runtime: FakeRuntime; creationCount: number; runtimeToken?: number }) => Promise<void> | void)
     | undefined
+
+  private get runtimeLifecycleForTest(): SwarmRuntimeLifecycleCoordinator {
+    return (this as unknown as {
+      runtimeLifecycleCoordinator: SwarmRuntimeLifecycleCoordinator
+    }).runtimeLifecycleCoordinator
+  }
+
+  handleRuntimeStatus(
+    runtimeToken: number,
+    agentId: string,
+    status: AgentDescriptor['status'],
+    pendingCount: number,
+    contextUsage?: AgentContextUsage,
+  ): Promise<void> {
+    return this.runtimeLifecycleForTest.handleRuntimeStatus(
+      runtimeToken,
+      agentId,
+      status,
+      pendingCount,
+      contextUsage,
+    )
+  }
+
+  handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
+    return this.runtimeLifecycleForTest.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId)
+  }
+
+  get workerStallState() {
+    return this.runtimeLifecycleForTest.workerStallState
+  }
+
+  get workerActivityState() {
+    return this.runtimeLifecycleForTest.workerActivityState
+  }
+
+  checkForStalledWorkers(): Promise<void> {
+    return this.runtimeLifecycleForTest.checkForStalledWorkers()
+  }
+
+  handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
+    return this.runtimeLifecycleForTest.handleStallNudge(agentId, elapsedMs)
+  }
+
+  handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
+    return this.runtimeLifecycleForTest.handleStallAutoKill(agentId, elapsedMs)
+  }
+
+  markPendingManualManagerStopNotice(agentId: string): void {
+    this.runtimeLifecycleForTest.markPendingManualManagerStopNotice(agentId)
+  }
+
+  emitImmediateManualManagerStopNotice(agentId: string): void {
+    this.runtimeLifecycleForTest.emitImmediateManualManagerStopNotice(agentId)
+  }
 
   override async publishToUser(
     agentId: string,

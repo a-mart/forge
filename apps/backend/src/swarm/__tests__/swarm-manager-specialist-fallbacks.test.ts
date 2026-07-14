@@ -32,6 +32,8 @@ vi.mock('../project-agent-analysis.js', async () => {
 
 import { readSessionMeta, writeSessionMeta } from '../session-manifest.js'
 import { AgentRuntime } from '../agent-runtime.js'
+import type { KnowledgeMemoryCoordinator } from '../knowledge-memory-coordinator.js'
+import type { SwarmSpecialistFallbackManager } from '../swarm-specialist-fallback-manager.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -55,6 +57,18 @@ import {
 } from '../../test-support/index.js'
 
 class TestSwarmManager extends TestSwarmManagerBase {
+  getSpecialistFallbackManagerForTest(): SwarmSpecialistFallbackManager {
+    return (this as unknown as {
+      specialistFallbackManager: SwarmSpecialistFallbackManager
+    }).specialistFallbackManager
+  }
+
+  updateSessionMetaForWorkerDescriptorForTest(descriptor: AgentDescriptor): Promise<void> {
+    return (this as unknown as {
+      knowledgeMemoryCoordinator: KnowledgeMemoryCoordinator
+    }).knowledgeMemoryCoordinator.updateSessionMetaForWorkerDescriptor(descriptor)
+  }
+
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
@@ -309,7 +323,7 @@ describe('SwarmManager', () => {
     managerRuntime!.sendCalls = []
     const dispatchRuntimeErrorSpy = vi.spyOn(forgeExtensionHost, 'dispatchRuntimeError')
     const fallbackSpy = vi
-      .spyOn(manager as any, 'maybeRecoverWorkerWithSpecialistFallback')
+      .spyOn(manager.getSpecialistFallbackManagerForTest(), 'maybeRecoverWorkerWithSpecialistFallback')
       .mockImplementation(async () => {
         expect(dispatchRuntimeErrorSpy).toHaveBeenCalledTimes(1)
         return true
@@ -469,7 +483,7 @@ describe('SwarmManager', () => {
       percent: 32.1,
     }
 
-    await (manager as any).updateSessionMetaForWorkerDescriptor(workerDescriptor)
+    await manager.updateSessionMetaForWorkerDescriptorForTest(workerDescriptor)
 
     const updatedMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
     const updatedWorkerMeta = updatedMeta?.workers.find((entry) => entry.id === worker.agentId)
