@@ -85,7 +85,7 @@ export interface SwarmToolHost {
     text: string,
     source?: "speak_to_user" | "system",
     targetContext?: MessageTargetContext
-  ): Promise<{ targetContext: MessageSourceContext }>;
+  ): Promise<{ targetContext: MessageSourceContext; published?: boolean; reason?: "superseded_by_user_input" }>;
   requestUserChoice(
     agentId: string,
     questions: ChoiceQuestion[],

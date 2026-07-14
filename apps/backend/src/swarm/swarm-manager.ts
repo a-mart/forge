@@ -2588,6 +2588,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
     this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "present_choices");
+    const activeTurnId = this.getActiveTurnId(agentId);
+    if (this.hasPendingSupersedingUserInput(agentId, activeTurnId)) {
+      this.logDebug("manager:present_choices:suppressed_superseded_turn", {
+        agentId,
+        activeTurnId,
+      });
+      throw new Error("Choice request skipped because a newer user message superseded this turn.");
+    }
     const pending = this.choiceService.requestUserChoiceWithId(agentId, questions);
     this.rememberPendingChoiceAssistantOutputContinuation(pending.choiceId, agentId);
     this.runtimeController.flushPreservedManagerAssistantOutputForTool(agentId, "present_choices");
@@ -5254,7 +5262,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     text: string,
     source: "speak_to_user" | "system" = "speak_to_user",
     targetContext?: MessageTargetContext
-  ): Promise<{ targetContext: MessageSourceContext }> {
+  ): Promise<{ targetContext: MessageSourceContext; published?: boolean; reason?: "superseded_by_user_input" }> {
     if (source === "speak_to_user") {
       this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "speak_to_user");
     }
@@ -5265,6 +5273,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (source === "speak_to_user") {
       const descriptor = this.assertManager(agentId, "speak to user");
       resolvedTargetContext = this.resolveReplyTargetContext(targetContext);
+
+      const activeTurnId = this.getActiveTurnId(agentId);
+      if (this.hasPendingSupersedingUserInput(agentId, activeTurnId)) {
+        this.logDebug("manager:publish_to_user:suppressed_superseded_turn", {
+          agentId,
+          activeTurnId,
+          targetContext: resolvedTargetContext,
+          textPreview: previewForLog(text),
+        });
+        return {
+          targetContext: resolvedTargetContext,
+          published: false,
+          reason: "superseded_by_user_input",
+        };
+      }
 
       if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
         normalizedText = normalizeCortexUserVisiblePaths(text);
@@ -5297,7 +5320,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     return {
-      targetContext: resolvedTargetContext
+      targetContext: resolvedTargetContext,
+      published: true,
     };
   }
 
@@ -7061,6 +7085,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return activeTurn.turnId;
+  }
+
+  hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean {
+    // A newly enqueued user turn becomes the provisional active id before the
+    // runtime echoes it. Until some inbound turn is actually active, that
+    // queued user message is the current turn, not a superseding one.
+    if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
+      return false;
+    }
+
+    const queue = this.pendingInboundTurnContextsByAgentId.get(agentId);
+    return Boolean(queue?.some((context) =>
+      context.source === "user_input" && context.turnId !== activeTurnId
+    ));
   }
 
   private async enqueueInboundTurnContext(agentId: string, context: PendingInboundTurnContext): Promise<() => void> {

@@ -204,6 +204,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     agentId: string,
     activeTarget: AssistantOutputTarget | undefined
   ): ManagerAssistantOutputRouteResult;
+  hasPendingSupersedingUserInput?(agentId: string, activeTurnId?: string): boolean;
   deliverTerminalObligationBackstop?(agentId: string, reportText: string): boolean;
 }
 
@@ -607,6 +608,8 @@ export class SwarmRuntimeController {
         isModelCacheVisualizationEnabled: () => this.host.isModelCacheVisualizationEnabled(),
         emitModelCacheObservation: (event) => this.host.emitModelCacheObservation(event),
         getActiveTurnId: (agentId, runtimeToken) => this.host.getActiveTurnId?.(agentId, runtimeToken),
+        hasPendingSupersedingUserInput: (agentId, activeTurnId) =>
+          this.host.hasPendingSupersedingUserInput?.(agentId, activeTurnId) ?? false,
         resolveManagerAssistantFinalOutputTarget: (agentId, _descriptor, activeTarget) =>
           this.host.resolveManagerAssistantFinalOutputTarget(agentId, activeTarget),
         resolveManagerAssistantFinalOutputRoute: (agentId, _descriptor, activeTarget) =>

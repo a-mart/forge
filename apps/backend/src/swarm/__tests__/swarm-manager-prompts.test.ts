@@ -784,6 +784,7 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('Workers do not receive the project-agent directory.')
     expect(managerPrompt).toContain('[projectAgentContext] { ... }')
     expect(managerPrompt).toContain('Treat new user messages as high-priority steering input')
+    expect(managerPrompt).toContain('Hand control to the user only after confirming that shared resource is stable')
     expect(managerPrompt).toContain('do not rely on `present_choices` as the only response')
     expect(managerPrompt).toContain('respond with `send_message_to_agent` to the source `fromAgentId`')
     expect(managerPrompt).toContain('This does not require extra confirmation for direct replies to the user in the channel they used')

@@ -527,6 +527,22 @@ describe("claude-mcp-tool-bridge", () => {
     expect(result.content[0].text).toContain("Published message to user (web).");
   });
 
+  it("reports when speak_to_user is skipped for a superseded turn", async () => {
+    const manager = createMockDescriptor();
+    const host = createMockHost({
+      publishToUser: vi.fn(async () => ({
+        targetContext: { channel: "web" },
+        published: false,
+        reason: "superseded_by_user_input" as const,
+      })),
+    });
+    const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
+
+    const result = await invokeTool(registeredTools, "speak_to_user", { text: "Stale answer" });
+
+    expect(result.content[0].text).toContain("newer user message superseded this turn");
+  });
+
   it("dispatches present_choices and returns answered JSON", async () => {
     const manager = createMockDescriptor();
     const host = createMockHost({
