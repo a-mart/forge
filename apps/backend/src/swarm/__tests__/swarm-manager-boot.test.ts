@@ -1471,11 +1471,13 @@ describe('SwarmManager', () => {
 
     const state = manager as any as {
       runtimeTokensByAgentId: Map<string, number>
-      clearRuntimeToken: (agentId: string, runtimeToken?: number) => void
+      runtimeLifecycleCoordinator: {
+        clearRuntimeToken: (agentId: string, runtimeToken?: number) => void
+      }
     }
 
     state.runtimeTokensByAgentId.set('manager', 22)
-    state.clearRuntimeToken('manager', 11)
+    state.runtimeLifecycleCoordinator.clearRuntimeToken('manager', 11)
 
     expect(state.runtimeTokensByAgentId.get('manager')).toBe(22)
   })
@@ -1495,17 +1497,19 @@ describe('SwarmManager', () => {
     const state = manager as any as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      detachRuntime: (agentId: string, runtimeToken?: number) => boolean
+      runtimeLifecycleCoordinator: {
+        detachRuntime: (agentId: string, runtimeToken?: number) => boolean
+      }
     }
 
     state.runtimes.set('manager', freshRuntime as unknown as SwarmAgentRuntime)
     state.runtimeTokensByAgentId.set('manager', 44)
 
-    expect(state.detachRuntime('manager', 33)).toBe(false)
+    expect(state.runtimeLifecycleCoordinator.detachRuntime('manager', 33)).toBe(false)
     expect(state.runtimes.get('manager')).toBe(freshRuntime)
     expect(state.runtimeTokensByAgentId.get('manager')).toBe(44)
 
-    expect(state.detachRuntime('manager', 44)).toBe(true)
+    expect(state.runtimeLifecycleCoordinator.detachRuntime('manager', 44)).toBe(true)
     expect(state.runtimes.has('manager')).toBe(false)
     expect(state.runtimeTokensByAgentId.has('manager')).toBe(false)
   })

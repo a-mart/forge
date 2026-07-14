@@ -186,6 +186,29 @@ describe("SwarmSessionMetaService", () => {
     });
   });
 
+  it("flushes turn-sequence persistence without a delayed timer", async () => {
+    const { config, service, manager } = await createTurnIdFixture();
+
+    await service.mintTurnIdForDescriptor(manager);
+    await service.mintTurnIdForDescriptor(manager);
+    await service.flushPendingTurnSeqPersists();
+
+    const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
+    expect(meta?.lastTurnSeq).toBe(2);
+  });
+
+  it("waits for an in-flight turn mint at the shutdown flush boundary", async () => {
+    const { config, service, manager } = await createTurnIdFixture();
+
+    const mint = service.mintTurnIdForDescriptor(manager);
+    await Promise.resolve();
+    await service.flushPendingTurnSeqPersists();
+    await expect(mint).resolves.toBe("manager:1");
+
+    const meta = await readSessionMeta(config.paths.dataDir, "manager", "manager");
+    expect(meta?.lastTurnSeq).toBe(1);
+  });
+
   it("writeInitialSessionMeta creates session meta with model, label, and timestamps", async () => {
     const config = await makeConfig();
     const dataDir = config.paths.dataDir;

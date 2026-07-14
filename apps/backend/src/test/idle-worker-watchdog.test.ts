@@ -1,6 +1,8 @@
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SwarmManager } from '../swarm/swarm-manager.js'
+import type { AgentMessageDispatcher } from '../swarm/agent-message-dispatcher.js'
+import type { SwarmRuntimeLifecycleCoordinator } from '../swarm/swarm-runtime-lifecycle-coordinator.js'
 import { bootWithDefaultManager as bootWithDefaultManagerFromSupport } from '../test-support/index.js'
 import type {
   AgentContextUsage,
@@ -99,6 +101,86 @@ class TestSwarmManager extends SwarmManager {
     targetContext?: MessageTargetContext
   }> = []
 
+  private get runtimeLifecycleForTest(): SwarmRuntimeLifecycleCoordinator {
+    return (this as unknown as {
+      runtimeLifecycleCoordinator: SwarmRuntimeLifecycleCoordinator
+    }).runtimeLifecycleCoordinator
+  }
+
+  private get agentMessageDispatcherForTest(): AgentMessageDispatcher {
+    return (this as unknown as {
+      agentMessageDispatcher: AgentMessageDispatcher
+    }).agentMessageDispatcher
+  }
+
+  get workerWatchdogState() {
+    return this.runtimeLifecycleForTest.workerWatchdogState
+  }
+
+  get workerStallState() {
+    return this.runtimeLifecycleForTest.workerStallState
+  }
+
+  get workerActivityState() {
+    return this.runtimeLifecycleForTest.workerActivityState
+  }
+
+  get watchdogTimers() {
+    return this.runtimeLifecycleForTest.watchdogTimers
+  }
+
+  get watchdogTimerTokens() {
+    return this.runtimeLifecycleForTest.watchdogTimerTokens
+  }
+
+  get watchdogBatchQueueByManager() {
+    return this.runtimeLifecycleForTest.watchdogBatchQueueByManager
+  }
+
+  get watchdogBatchTimersByManager() {
+    return this.runtimeLifecycleForTest.watchdogBatchTimersByManager
+  }
+
+  get prepareModelInboundMessage(): AgentMessageDispatcher['prepareModelInboundMessage'] {
+    return this.agentMessageDispatcherForTest.prepareModelInboundMessage
+  }
+
+  set prepareModelInboundMessage(value: AgentMessageDispatcher['prepareModelInboundMessage']) {
+    this.agentMessageDispatcherForTest.prepareModelInboundMessage = value
+  }
+
+  handleRuntimeStatus(
+    runtimeToken: number | undefined,
+    agentId: string,
+    status: AgentDescriptor['status'],
+    pendingCount: number,
+    contextUsage?: AgentContextUsage,
+  ): Promise<void> {
+    return this.runtimeLifecycleForTest.handleRuntimeStatus(
+      runtimeToken as number,
+      agentId,
+      status,
+      pendingCount,
+      contextUsage,
+    )
+  }
+
+  handleRuntimeSessionEvent(
+    ...args: Parameters<SwarmRuntimeLifecycleCoordinator['handleRuntimeSessionEvent']>
+  ): ReturnType<SwarmRuntimeLifecycleCoordinator['handleRuntimeSessionEvent']> {
+    return this.runtimeLifecycleForTest.handleRuntimeSessionEvent(...args)
+  }
+
+  handleRuntimeAgentEnd(
+    ...args: Parameters<SwarmRuntimeLifecycleCoordinator['handleRuntimeAgentEnd']>
+  ): ReturnType<SwarmRuntimeLifecycleCoordinator['handleRuntimeAgentEnd']> {
+    return this.runtimeLifecycleForTest.handleRuntimeAgentEnd(...args)
+  }
+
+  clearWatchdogState(agentId: string): void {
+    this.runtimeLifecycleForTest.clearWatchdogState(agentId)
+  }
+
   override async publishToUser(
     agentId: string,
     text: string,
@@ -114,7 +196,7 @@ class TestSwarmManager extends SwarmManager {
     _systemPrompt: string,
     runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
-    const resolvedRuntimeToken = runtimeToken ?? (this as any).allocateRuntimeToken(descriptor.agentId)
+    const resolvedRuntimeToken = runtimeToken ?? this.runtimeLifecycleForTest.allocateRuntimeToken(descriptor.agentId)
     const runtime = new FakeRuntime(descriptor)
     runtime.runtimeToken = resolvedRuntimeToken
     ;(this as any).runtimeTokensByAgentId.set(descriptor.agentId, resolvedRuntimeToken)

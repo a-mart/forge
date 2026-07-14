@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getSpawnPresetFamilies } from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
-import { ChoiceRequestCancelledError } from "./swarm-manager.js";
+import { ChoiceRequestCancelledError } from "./swarm-choice-service.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import {
   buildCodexPluginScopedToolDefinitions,

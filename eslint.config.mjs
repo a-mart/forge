@@ -117,6 +117,65 @@ export default tseslint.config(
     },
   },
   {
+    // SwarmManager is the composition root behind a stateless inherited facade,
+    // not the default owner for new feature workflows or mutable state. These error-level
+    // limits ratchet the current extraction forward: when the file or its
+    // constructor shrinks, lower the matching maximum to the new raw line
+    // count. Do not raise either limit to land a feature; move that feature to
+    // a cohesive owner behind the facade instead.
+    files: ['apps/backend/src/swarm/swarm-manager.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 1400,
+          skipBlankLines: false,
+          skipComments: false,
+        },
+      ],
+      'max-lines-per-function': [
+        'error',
+        {
+          max: 301,
+          skipBlankLines: false,
+          skipComments: false,
+          IIFEs: true,
+        },
+      ],
+    },
+  },
+  {
+    // Keep the explicit manager application API below the repository's preferred
+    // file ceiling. Lower this exact ratchet whenever facade methods move to a
+    // more cohesive supported surface; never raise it to expose owner internals.
+    files: ['apps/backend/src/swarm/swarm-manager-facade.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 1454,
+          skipBlankLines: false,
+          skipComments: false,
+        },
+      ],
+    },
+  },
+  {
+    // Runtime construction order is intentionally explicit but must not become
+    // another monolith. Lower this exact ratchet after further extractions.
+    files: ['apps/backend/src/swarm/swarm-manager-runtime-composition.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 1014,
+          skipBlankLines: false,
+          skipComments: false,
+        },
+      ],
+    },
+  },
+  {
     // Guard against new hand-rolled atomic-file and timeout helpers in the
     // backend. Shared helpers live in apps/backend/src/utils/: atomic-files.ts
     // (writeFileAtomic, writeJsonFileAtomic, updateJsonFileAtomic) covers

@@ -28,8 +28,6 @@ const MANAGER_ARCHETYPE_ID = "manager";
  * after minting but before async persistence cannot reuse recently issued ids.
  */
 export const TURN_SEQ_RESTART_GAP = 1000;
-const TURN_SEQ_PERSIST_DELAY_MS = 250;
-
 export interface SessionMemoryMergeAttemptMetaUpdate {
   attemptId?: string | null;
   timestamp: string;
@@ -67,8 +65,6 @@ export class SwarmSessionMetaService {
   private readonly turnSeqBySessionId = new Map<string, number>();
   private readonly turnSeqHydrationBySessionId = new Map<string, Promise<number>>();
   private readonly turnSeqUpdateBySessionId = new Map<string, Promise<unknown>>();
-  private readonly turnSeqPersistTimerBySessionId = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly turnSeqPendingPersistBySessionId = new Map<string, { target: SessionMetaTarget; nextSeq: number }>();
 
   constructor(private readonly options: SwarmSessionMetaServiceOptions) {}
 
@@ -334,7 +330,7 @@ export class SwarmSessionMetaService {
 
     const nextSeq = (this.turnSeqBySessionId.get(target.sessionId) ?? 0) + 1;
     this.turnSeqBySessionId.set(target.sessionId, nextSeq);
-    this.persistLastTurnSeq(target, nextSeq);
+    void this.persistLastTurnSeqNow(target, nextSeq);
     return `${target.sessionId}:${nextSeq}`;
   }
 
@@ -511,36 +507,14 @@ export class SwarmSessionMetaService {
     }
   }
 
-  private persistLastTurnSeq(target: SessionMetaTarget, nextSeq: number): void {
-    // True debounce: one pending timer per session, latest seq wins. Timers are
-    // tracked so they can be cancelled/flushed — no stray fire-and-forget I/O
-    // after teardown (matters for deterministic tests as much as for shutdown).
-    this.turnSeqPendingPersistBySessionId.set(target.sessionId, { target, nextSeq });
-    const existing = this.turnSeqPersistTimerBySessionId.get(target.sessionId);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const timer = setTimeout(() => {
-      this.turnSeqPersistTimerBySessionId.delete(target.sessionId);
-      const pending = this.turnSeqPendingPersistBySessionId.get(target.sessionId);
-      this.turnSeqPendingPersistBySessionId.delete(target.sessionId);
-      if (pending) {
-        void this.persistLastTurnSeqNow(pending.target, pending.nextSeq);
-      }
-    }, TURN_SEQ_PERSIST_DELAY_MS);
-    timer.unref?.();
-    this.turnSeqPersistTimerBySessionId.set(target.sessionId, timer);
-  }
-
-  /** Cancel pending debounce timers and persist any outstanding turn seqs now. */
+  /** Wait for any turn-sequence hydration or persistence already in progress. */
   async flushPendingTurnSeqPersists(): Promise<void> {
-    for (const timer of this.turnSeqPersistTimerBySessionId.values()) {
-      clearTimeout(timer);
+    while (this.turnSeqHydrationBySessionId.size > 0 || this.turnSeqUpdateBySessionId.size > 0) {
+      await Promise.all([
+        ...this.turnSeqHydrationBySessionId.values(),
+        ...this.turnSeqUpdateBySessionId.values(),
+      ]);
     }
-    this.turnSeqPersistTimerBySessionId.clear();
-    const pending = [...this.turnSeqPendingPersistBySessionId.values()];
-    this.turnSeqPendingPersistBySessionId.clear();
-    await Promise.all(pending.map((p) => this.persistLastTurnSeqNow(p.target, p.nextSeq)));
   }
 
   private async persistLastTurnSeqNow(target: SessionMetaTarget, nextSeq: number): Promise<void> {

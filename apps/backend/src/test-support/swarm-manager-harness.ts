@@ -10,10 +10,16 @@ import type {
 } from '../swarm/runtime-contracts.js'
 import type { ProjectExecutableTrustPlan } from '../swarm/project-executable-trust.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
+import type { SwarmRuntimeLifecycleCoordinator } from '../swarm/swarm-runtime-lifecycle-coordinator.js'
+import type {
+  InboundTurnContextInput,
+  TurnContextCoordinator,
+} from '../swarm/turn-context-coordinator.js'
+import type { SessionGoalCoordinator } from '../swarm/goals/session-goal-coordinator.js'
+import type { RestartRecoveryCoordinator } from '../swarm/restart-recovery-coordinator.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
-  MessageSourceContext,
   MessageTargetContext,
   RequestedDeliveryMode,
   SendMessageReceipt,
@@ -186,12 +192,98 @@ export class TestSwarmManager extends SwarmManager {
     | ((options: { descriptor: AgentDescriptor; runtime: FakeRuntime; creationCount: number; runtimeToken?: number }) => Promise<void> | void)
     | undefined
 
+  private get runtimeLifecycleForTest(): SwarmRuntimeLifecycleCoordinator {
+    return (this as unknown as {
+      runtimeLifecycleCoordinator: SwarmRuntimeLifecycleCoordinator
+    }).runtimeLifecycleCoordinator
+  }
+
+  private get turnContextForTest(): TurnContextCoordinator {
+    return (this as unknown as { turnContextCoordinator: TurnContextCoordinator })
+      .turnContextCoordinator
+  }
+
+  private get goalsForTest(): SessionGoalCoordinator {
+    return (this as unknown as {
+      facadeServices: { goals: SessionGoalCoordinator }
+    }).facadeServices.goals
+  }
+
+  private get restartRecoveryForTest(): RestartRecoveryCoordinator {
+    return (this as unknown as {
+      facadeServices: { recovery: RestartRecoveryCoordinator }
+    }).facadeServices.recovery
+  }
+
+  handleRuntimeStatus(
+    runtimeToken: number,
+    agentId: string,
+    status: AgentDescriptor['status'],
+    pendingCount: number,
+    contextUsage?: AgentContextUsage,
+  ): Promise<void> {
+    return this.runtimeLifecycleForTest.handleRuntimeStatus(
+      runtimeToken,
+      agentId,
+      status,
+      pendingCount,
+      contextUsage,
+    )
+  }
+
+  handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
+    return this.runtimeLifecycleForTest.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId)
+  }
+
+  get workerStallState() {
+    return this.runtimeLifecycleForTest.workerStallState
+  }
+
+  get workerActivityState() {
+    return this.runtimeLifecycleForTest.workerActivityState
+  }
+
+  checkForStalledWorkers(): Promise<void> {
+    return this.runtimeLifecycleForTest.checkForStalledWorkers()
+  }
+
+  handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
+    return this.runtimeLifecycleForTest.handleStallNudge(agentId, elapsedMs)
+  }
+
+  handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
+    return this.runtimeLifecycleForTest.handleStallAutoKill(agentId, elapsedMs)
+  }
+
+  markPendingManualManagerStopNotice(agentId: string): void {
+    this.runtimeLifecycleForTest.markPendingManualManagerStopNotice(agentId)
+  }
+
+  emitImmediateManualManagerStopNotice(agentId: string): void {
+    this.runtimeLifecycleForTest.emitImmediateManualManagerStopNotice(agentId)
+  }
+
+  enqueueInboundTurnContextForTest(
+    agentId: string,
+    context: InboundTurnContextInput,
+  ): Promise<{ turnId: string; rollback(): void }> {
+    return this.turnContextForTest.enqueue(agentId, context)
+  }
+
+  runGoalContinuationForTest(agentId: string): Promise<void> {
+    return this.goalsForTest.runContinuation(agentId)
+  }
+
+  isRestartRecoveryDecisionPendingForTest(): boolean {
+    return this.restartRecoveryForTest.isDecisionPending()
+  }
+
   override async publishToUser(
     agentId: string,
     text: string,
     source: 'speak_to_user' | 'system' = 'speak_to_user',
     targetContext?: MessageTargetContext,
-  ): Promise<{ targetContext: MessageSourceContext }> {
+  ): ReturnType<SwarmManager['publishToUser']> {
     this.publishedToUserCalls.push({ agentId, text, source, targetContext })
     return super.publishToUser(agentId, text, source, targetContext)
   }

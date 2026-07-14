@@ -41,8 +41,7 @@ import type {
   AgentModelDescriptor,
   AgentStatus,
   ConversationMessageEvent,
-  SwarmConfig,
-  SwarmReasoningLevel
+  SwarmConfig
 } from "./types.js";
 import { readStringDetail, withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
@@ -52,12 +51,6 @@ import type { MessageRoutingReceiptRecord } from "./session/message-routing-rece
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
-
-interface ResolvedSpecialistDefinitionLike {
-  specialistId: string;
-  fallbackModelId?: string;
-  fallbackReasoningLevel?: SwarmReasoningLevel;
-}
 
 export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   config: SwarmConfig;
@@ -104,24 +97,12 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     descriptor: AgentDescriptor;
     sessionDescriptor?: AgentDescriptor;
   }): Promise<ProjectExecutableTrustPlan>;
-  resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string>;
-  injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string;
-  resolveSpecialistRosterForProfile(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
-  resolveSpecialistFallbackModelForDescriptor(
-    descriptor: AgentDescriptor
-  ): Promise<AgentModelDescriptor | undefined>;
   maybeRecoverWorkerWithSpecialistFallback(
     agentId: string,
     errorMessage: string,
     sourcePhase: "prompt_dispatch" | "prompt_start",
     runtimeToken?: number
   ): Promise<boolean>;
-  resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor;
-  createRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    systemPrompt: string,
-    runtimeToken?: number
-  ): Promise<SwarmAgentRuntime>;
   updateSessionMetaForWorkerDescriptor(
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
@@ -197,7 +178,6 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): Promise<"recycled" | "deferred" | "none">;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
-  getRuntime(agentId: string): SwarmAgentRuntime | undefined;
   isModelCacheVisualizationEnabled(): boolean;
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
   resolveManagerAssistantFinalOutputTarget(

@@ -42,8 +42,10 @@ vi.mock('../memory-merge.js', async () => {
   }
 })
 
-vi.mock('../project-agent-analysis.js', async () => {
-  const actual = await vi.importActual<typeof import('../project-agent-analysis.js')>('../project-agent-analysis.js')
+vi.mock('../agents/project-agent-analysis.js', async () => {
+  const actual = await vi.importActual<typeof import('../agents/project-agent-analysis.js')>(
+    '../agents/project-agent-analysis.js',
+  )
   return {
     ...actual,
     analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>
@@ -1319,8 +1321,10 @@ describe('SwarmManager', () => {
 
     const state = manager as unknown as {
       descriptors: Map<string, AgentDescriptor>
-      promptService: {
-        buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>
+      configurationCoordinator: {
+        prompts: {
+          buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>
+        }
       }
     }
     const descriptor = state.descriptors.get('manager')
@@ -1330,7 +1334,10 @@ describe('SwarmManager', () => {
     const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
     expect(resources.additionalSkillPaths).toContain(profileSkillFile)
 
-    const claudePrompt = await state.promptService.buildClaudeRuntimeSystemPrompt(descriptor!, 'Base prompt')
+    const claudePrompt = await state.configurationCoordinator.prompts.buildClaudeRuntimeSystemPrompt(
+      descriptor!,
+      'Base prompt',
+    )
     expect(claudePrompt).toContain('<name>legacy-profile-skill</name>')
     expect(claudePrompt).toContain(profileSkillFile)
   })

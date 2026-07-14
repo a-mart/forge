@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ManagerProfile, ProjectAgentExternalDirectoryEntry } from '@forge/protocol'
-import { SwarmManager } from '../swarm-manager.js'
+import {
+  ProjectAgentCoordinator,
+  type ProjectAgentCoordinatorOptions,
+} from '../project-agent-coordinator.js'
 
-describe('SwarmManager.getProjectAgentExternalDirectory', () => {
+describe('ProjectAgentCoordinator.getExternalDirectory', () => {
   it('returns empty entries for system-managed profiles without consulting sharing service', async () => {
     const entries: ProjectAgentExternalDirectoryEntry[] = [{
       agentId: 'docs--s1',
@@ -14,14 +17,7 @@ describe('SwarmManager.getProjectAgentExternalDirectory', () => {
     }]
     const getExternalDirectoryEntries = vi.fn(() => entries)
 
-    const manager = Object.create(SwarmManager.prototype) as SwarmManager & {
-      profiles: Map<string, ManagerProfile>
-      projectAgentSharingService: {
-        getExternalDirectoryEntries: (profileId: string) => ProjectAgentExternalDirectoryEntry[]
-      }
-    }
-
-    manager.profiles = new Map([
+    const profiles = new Map<string, ManagerProfile>([
       [
         'cortex',
         {
@@ -39,9 +35,13 @@ describe('SwarmManager.getProjectAgentExternalDirectory', () => {
         },
       ],
     ])
-    manager.projectAgentSharingService = { getExternalDirectoryEntries }
+    const coordinator = new ProjectAgentCoordinator({
+      profiles,
+      descriptors: new Map(),
+      sharing: { getExternalDirectoryEntries },
+    } as unknown as ProjectAgentCoordinatorOptions)
 
-    await expect(manager.getProjectAgentExternalDirectory('cortex')).resolves.toEqual([])
+    await expect(coordinator.getExternalDirectory('cortex')).resolves.toEqual([])
     expect(getExternalDirectoryEntries).not.toHaveBeenCalled()
   })
 })

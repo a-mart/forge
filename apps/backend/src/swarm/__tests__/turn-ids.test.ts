@@ -25,11 +25,7 @@ function collectEvents<T>(manager: TestSwarmManager, eventName: "conversation_me
 }
 
 function activeAssistantOutputTarget(manager: TestSwarmManager, agentId: string): AssistantOutputTarget | undefined {
-  return (manager as any).activeAssistantOutputTargetByManagerId.get(agentId);
-}
-
-function queuedTurnId(manager: TestSwarmManager, agentId: string): string | undefined {
-  return (manager as any).pendingInboundTurnContextsByAgentId.get(agentId)?.at(-1)?.turnId;
+  return (manager as any).assistantOutputRouter.getActiveTarget(agentId);
 }
 
 function oldAgentMessageContextActivationEligible(input: {
@@ -79,7 +75,7 @@ describe("server-owned turn ids", () => {
       sourceContext: { channel: "web" },
     };
 
-    await (manager as any).enqueueInboundTurnContext(session.agentId, {
+    await manager.enqueueInboundTurnContextForTest(session.agentId, {
       source: "user_input",
       runtimeMessageText: "first request",
       assistantOutputTarget: target,
@@ -91,7 +87,7 @@ describe("server-owned turn ids", () => {
     });
     const firstTurnId = manager.getActiveTurnId(session.agentId);
 
-    await (manager as any).enqueueInboundTurnContext(session.agentId, {
+    await manager.enqueueInboundTurnContextForTest(session.agentId, {
       source: "user_input",
       runtimeMessageText: "newer request",
       assistantOutputTarget: target,
@@ -167,7 +163,7 @@ describe("server-owned turn ids", () => {
       const targetAgentId = matrixCase.targetRole === "manager" ? session.agentId : worker.agentId;
       const activationEligible = oldAgentMessageContextActivationEligible(matrixCase);
 
-      await (manager as any).enqueueInboundTurnContext(targetAgentId, {
+      const queuedTurn = await (manager as any).turnContextCoordinator.enqueue(targetAgentId, {
         source: "agent_message",
         runtimeMessageText: `runtime input for ${matrixCase.name}`,
         rootTurnId: matrixCase.hasObservabilityInput ? `root-${matrixCase.name}` : undefined,
@@ -175,7 +171,7 @@ describe("server-owned turn ids", () => {
         assistantOutputProjectionTarget: matrixCase.assistantOutputProjectionTarget,
         activationEligible,
       });
-      const turnId = queuedTurnId(manager, targetAgentId);
+      const turnId = queuedTurn.turnId;
 
       manager.beforeRuntimeEventProjection(targetAgentId, undefined, { type: "turn_start" });
       expect(activeAssistantOutputTarget(manager, targetAgentId), `${matrixCase.name}: turn_start`).toBeUndefined();

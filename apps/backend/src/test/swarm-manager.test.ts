@@ -115,7 +115,7 @@ async function enqueueProjectAgentPeerInput(
   message: string,
 ): Promise<string> {
   const runtimeMessage = formatProjectAgentPeerRuntimeMessage(context, message)
-  await (manager as any).enqueueInboundTurnContext(agentId, {
+  await (manager as any).turnContextCoordinator.enqueue(agentId, {
     source: 'project_agent_input',
     runtimeMessageText: runtimeMessage,
     projectAgentContext: context,
@@ -162,6 +162,27 @@ function assistantOutputsFor(manager: TestSwarmManager, agentId: string): any[] 
   return manager
     .getConversationHistory(agentId)
     .filter((entry) => entry.type === 'conversation_message' && entry.source === 'assistant_output')
+}
+
+function activeAssistantOutputTarget(
+  manager: TestSwarmManager,
+  agentId: string,
+): unknown {
+  return (manager as any).assistantOutputRouter.getActiveTarget(agentId)
+}
+
+function setActiveAssistantOutputTarget(
+  manager: TestSwarmManager,
+  agentId: string,
+  target: any,
+): void {
+  const router = (manager as any).assistantOutputRouter
+  const routeContext = router.getActiveRoute(agentId)
+  router.activateManagerTurn(agentId, {
+    target,
+    ...(routeContext ? { routeContext } : {}),
+    beginUserVisibleObligation: false,
+  })
 }
 
 async function startRuntimeUserTurn(
@@ -1154,7 +1175,10 @@ describe('SwarmManager', () => {
       { text: 'Final clean answer.', source: 'assistant_output' },
     ])
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text).join('\n')).not.toContain('hidden')
-    expect((manager as any).pendingChoiceAssistantOutputContinuationByChoiceId.size).toBe(0)
+    expect((manager as any).assistantOutputRouter.activateChoiceContinuation(
+      choiceRequest.choiceId,
+      'manager',
+    )).toBe(false)
 
     await (manager as any).handleRuntimeSessionEvent('manager', {
       type: 'message_end',
@@ -1249,7 +1273,7 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('does not let a Pi user message_start consume the next identical queued context', async () => {
+  it('keeps the next identical Pi context while suppressing the superseded final', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1257,18 +1281,20 @@ describe('SwarmManager', () => {
     const runtimeText = 'identical queued Pi runtime text'
     const firstSourceContext = { channel: 'web' as const, messageId: 'first-turn' }
     const secondSourceContext = { channel: 'web' as const, messageId: 'second-turn' }
-    const enqueueInboundTurnContext = (manager as any).enqueueInboundTurnContext.bind(manager) as (
+    const enqueueInboundTurnContext = (manager as any).turnContextCoordinator.enqueue.bind(
+      (manager as any).turnContextCoordinator,
+    ) as (
       agentId: string,
       context: any,
-    ) => () => void
+    ) => Promise<unknown>
 
-    enqueueInboundTurnContext('manager', {
+    await enqueueInboundTurnContext('manager', {
       source: 'user_input',
       runtimeMessageText: runtimeText,
       sourceContext: firstSourceContext,
       assistantOutputTarget: { kind: 'session_transcript', channel: 'web', sourceContext: firstSourceContext },
     })
-    enqueueInboundTurnContext('manager', {
+    await enqueueInboundTurnContext('manager', {
       source: 'user_input',
       runtimeMessageText: runtimeText,
       sourceContext: secondSourceContext,
@@ -1289,9 +1315,10 @@ describe('SwarmManager', () => {
     await projectAssistantFinalTextWithSyntheticUserMessageStart(manager, 'manager', 'Second identical turn final', runtimeText)
 
     expect(assistantOutputsFor(manager, 'manager')).toMatchObject([
-      { text: 'First identical turn final', sourceContext: { channel: firstSourceContext.channel } },
       { text: 'Second identical turn final', sourceContext: { channel: secondSourceContext.channel } },
     ])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text))
+      .not.toContain('First identical turn final')
   })
 
   it('shows worker-report closeout when provider starts report turns with synthetic user message_start', async () => {
@@ -1577,13 +1604,10 @@ describe('SwarmManager', () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
-    const state = manager as unknown as {
-      descriptors: Map<string, AgentDescriptor>
-      activeAssistantOutputTargetByManagerId: Map<string, unknown>
-    }
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
 
     state.descriptors.get('manager')!.sessionSurface = 'collab'
-    state.activeAssistantOutputTargetByManagerId.set('manager', {
+    setActiveAssistantOutputTarget(manager, 'manager', {
       kind: 'session_transcript',
       channel: 'web',
       sourceContext: { channel: 'web' },
@@ -1592,7 +1616,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
 
     state.descriptors.get('manager')!.sessionSurface = undefined
-    state.activeAssistantOutputTargetByManagerId.set('manager', {
+    setActiveAssistantOutputTarget(manager, 'manager', {
       kind: 'session_transcript',
       channel: 'web',
       sourceContext: { channel: 'web' },
@@ -1624,7 +1648,7 @@ describe('SwarmManager', () => {
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
     await startRuntimeUserTurn(manager, 'manager', reportRuntimeMessage)
-    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+    expect(activeAssistantOutputTarget(manager, 'manager')).toEqual({
       kind: 'external_channel',
       sourceContext: telegramTarget,
     })
@@ -1676,7 +1700,7 @@ describe('SwarmManager', () => {
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
     await startRuntimeUserTurn(manager, 'manager', reportRuntimeMessage)
-    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+    expect(activeAssistantOutputTarget(manager, 'manager')).toEqual({
       kind: 'explicit_tool_required',
       reason: 'collaboration_channel',
     })
@@ -1699,7 +1723,7 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(sender.agentId, target.agentId, 'peer clean final then delegated work', 'auto')
     await startRuntimeUserTurn(manager, target.agentId)
-    ;(manager as any).activeAssistantOutputTargetByManagerId.set(target.agentId, {
+    setActiveAssistantOutputTarget(manager, target.agentId, {
       kind: 'peer_agent',
       fromAgentId: sender.agentId,
     })
@@ -1714,7 +1738,7 @@ describe('SwarmManager', () => {
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
 
     await startRuntimeUserTurn(manager, target.agentId, reportRuntimeMessage)
-    expect((manager as any).activeAssistantOutputTargetByManagerId.get(target.agentId)).toEqual({
+    expect(activeAssistantOutputTarget(manager, target.agentId)).toEqual({
       kind: 'peer_agent',
       fromAgentId: sender.agentId,
     })
@@ -2051,7 +2075,7 @@ describe('SwarmManager', () => {
     expect(
       (manager as any).resolveManagerAssistantFinalOutputRoute(
         'manager',
-        (manager as any).activeAssistantOutputTargetByManagerId.get('manager'),
+        activeAssistantOutputTarget(manager, 'manager'),
       ),
     ).toEqual(expect.objectContaining({
       decision: expect.objectContaining({
@@ -2410,7 +2434,7 @@ describe('SwarmManager', () => {
     const telegramReportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(telegramReportRuntimeMessage).toContain(routedWorkerReportMarker)
     await startRuntimeUserTurn(manager, 'manager', telegramReportRuntimeMessage)
-    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+    expect(activeAssistantOutputTarget(manager, 'manager')).toEqual({
       kind: 'external_channel',
       sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
     })
@@ -2446,7 +2470,7 @@ describe('SwarmManager', () => {
     await manager.sendMessage(sender.agentId, peerTarget.agentId, 'peer delegated work before runtime error', 'auto')
     await startRuntimeUserTurn(manager, peerTarget.agentId)
     const peerWorker = await manager.spawnAgent(peerTarget.agentId, { agentId: 'Cleared Peer Worker' })
-    ;(manager as any).activeAssistantOutputTargetByManagerId.set(peerTarget.agentId, {
+    setActiveAssistantOutputTarget(manager, peerTarget.agentId, {
       kind: 'peer_agent',
       fromAgentId: sender.agentId,
     })
@@ -2480,7 +2504,7 @@ describe('SwarmManager', () => {
     const reportRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
     expect(reportRuntimeMessage).toContain(routedWorkerReportMarker)
     await startRuntimeUserTurn(manager, 'manager', reportRuntimeMessage)
-    expect((manager as any).activeAssistantOutputTargetByManagerId.get('manager')).toEqual({
+    expect(activeAssistantOutputTarget(manager, 'manager')).toEqual({
       kind: 'external_channel',
       sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
     })
@@ -2606,7 +2630,7 @@ describe('SwarmManager', () => {
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
 
     expect(assistantOutputsFor(manager, 'manager')).toEqual([])
-    expect((manager as any).activeMessageRouteContextByManagerId.get('manager')).toEqual(
+    expect((manager as any).assistantOutputRouter.getActiveRoute('manager')).toEqual(
       expect.objectContaining({ normalBuilderWorkerCallback: true }),
     )
 
@@ -2622,7 +2646,7 @@ describe('SwarmManager', () => {
     ])
 
     await (manager as any).handleRuntimeSessionEvent('manager', { type: 'agent_end' })
-    expect((manager as any).activeMessageRouteContextByManagerId.get('manager')).toBeUndefined()
+    expect((manager as any).assistantOutputRouter.getActiveRoute('manager')).toBeUndefined()
   })
 
   it('projects assistant_output after canonical speak_to_user publication even when duplicate', async () => {
@@ -2838,9 +2862,10 @@ describe('SwarmManager', () => {
     })
 
     const initialVersion = manager.getAgentsSnapshotVersion()
-    ;(manager as any).emitAgentsSnapshot()
-    ;(manager as any).emitAgentsSnapshot()
-    ;(manager as any).emitAgentsSnapshot()
+    const eventCoordinator = (manager as any).eventCoordinator
+    eventCoordinator.emitAgentsSnapshot()
+    eventCoordinator.emitAgentsSnapshot()
+    eventCoordinator.emitAgentsSnapshot()
 
     expect(snapshots).toHaveLength(0)
 

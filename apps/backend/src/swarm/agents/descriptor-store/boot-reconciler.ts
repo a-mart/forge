@@ -1,5 +1,7 @@
 import { migrateDataDirectory } from "../../data-migration.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "../../types.js";
+import type { ProfileBootReconciler } from "./profile-boot-reconciler.js";
+import { prunePersistedWorkerSidecars } from "./worker-boot-recovery.js";
 
 interface BootReconcilerOptions {
   config: SwarmConfig;
@@ -7,12 +9,9 @@ interface BootReconcilerOptions {
   profiles: Map<string, ManagerProfile>;
   loadStore: () => Promise<AgentsStoreFile>;
   saveStore: () => Promise<void>;
-  prunePersistedCortexStateForBoot: (store: AgentsStoreFile) => { store: AgentsStoreFile; pruned: boolean };
-  prunePersistedWorkerSidecarDescriptorsForBoot: (store: AgentsStoreFile) => { store: AgentsStoreFile; pruned: boolean };
+  profileReconciler: ProfileBootReconciler;
   preloadPinnedMessageIndexes: () => Promise<void>;
   preloadSessionPlanStates: () => Promise<void>;
-  reconcileProfilesOnBoot: () => boolean;
-  normalizeSystemProfileTypes: () => boolean;
   logDebug: (message: string, details?: unknown) => void;
 }
 
@@ -39,9 +38,9 @@ export class BootReconciler {
       agents: migrationResult.updatedAgents
     };
 
-    const cortexPruneResult = this.options.prunePersistedCortexStateForBoot(loaded);
+    const cortexPruneResult = this.options.profileReconciler.prunePersistedCortexStateForBoot(loaded);
     loaded = cortexPruneResult.store;
-    const workerSidecarPruneResult = this.options.prunePersistedWorkerSidecarDescriptorsForBoot(loaded);
+    const workerSidecarPruneResult = prunePersistedWorkerSidecars(loaded, this.options.logDebug);
     loaded = workerSidecarPruneResult.store;
 
     for (const descriptor of loaded.agents) {
@@ -54,8 +53,8 @@ export class BootReconciler {
     await this.options.preloadPinnedMessageIndexes();
     await this.options.preloadSessionPlanStates();
 
-    const normalizedSessionModelState = this.options.reconcileProfilesOnBoot();
-    const normalizedSystemProfileTypes = this.options.normalizeSystemProfileTypes();
+    const normalizedSessionModelState = this.options.profileReconciler.reconcileProfilesOnBoot();
+    const normalizedSystemProfileTypes = this.options.profileReconciler.normalizeSystemProfileTypes();
     if (
       cortexPruneResult.pruned ||
       workerSidecarPruneResult.pruned ||

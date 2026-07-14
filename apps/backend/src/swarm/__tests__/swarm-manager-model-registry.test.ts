@@ -106,13 +106,13 @@ describe("SwarmManager Pi model registry usage", () => {
 
     try {
       const config = await makeTempConfig();
-      const piModelsJsonPath = await generatePiProjection(config.paths.dataDir);
+      await generatePiProjection(config.paths.dataDir);
       const authStorage = AuthStorage.create(config.paths.sharedAuthFile);
       authStorage.set("openai-codex", { type: "api_key", key: "sk-project-agent-analysis" } as never);
 
       const manager = new SwarmManager(config);
-      (manager as any).piModelsJsonPath = piModelsJsonPath;
-      const result = await (manager as any).resolveProjectAgentAnalysisModel();
+      await manager.reloadModelCatalogOverridesAndProjection();
+      const result = await (manager as any).projectAgentCoordinator.resolveDefaultAnalysisModel();
 
       expect([
         {
@@ -141,13 +141,13 @@ describe("SwarmManager Pi model registry usage", () => {
 
   it("uses the generated Pi projection when resolving the session memory merge model", async () => {
     const config = await makeTempConfig(8792);
-    const piModelsJsonPath = await generatePiProjection(config.paths.dataDir);
+    await generatePiProjection(config.paths.dataDir);
     const authStorage = AuthStorage.create(config.paths.sharedAuthFile);
     authStorage.set("openai-codex", { type: "api_key", key: "sk-memory-merge" } as never);
     memoryMergeMockState.executeLLMMerge.mockResolvedValue("# Swarm Memory\n\n## Decisions\n- merged\n");
 
     const manager = new SwarmManager(config);
-    (manager as any).piModelsJsonPath = piModelsJsonPath;
+    await manager.reloadModelCatalogOverridesAndProjection();
     const descriptor = buildDescriptor(config);
     const result = await (manager as any).executeSessionMemoryLLMMerge(descriptor, "# Profile", "# Session");
 

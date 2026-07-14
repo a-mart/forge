@@ -15,7 +15,8 @@ type ChildResult = {
 async function runScenario(scenario: string): Promise<ChildResult> {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--unhandled-rejections=strict", "--import", "tsx", fixturePath, scenario], {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, NO_COLOR: undefined }
     });
 
     let stdout = "";
