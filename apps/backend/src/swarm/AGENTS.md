@@ -4,6 +4,10 @@
 
 `SwarmManager` is the facade and orchestration root for this directory. It coordinates the extracted services below and owns the public API that other backend modules call into. Service code should stay behind that facade unless a consumer is explicitly updated with it.
 
+The tracked post-decomposition architecture backlog is
+[`docs/SWARM_MANAGER_ARCHITECTURE_FOLLOW_UPS.md`](../../../../docs/SWARM_MANAGER_ARCHITECTURE_FOLLOW_UPS.md).
+Treat those items as separate follow-up changes, not reasons to broaden unrelated work.
+
 ## Service inventory
 
 - `agent-directory.ts` - read-only live registry projections, deterministic ordering, manager/worker visibility, session lookups, archive guards, and collision-free agent identity allocation.
