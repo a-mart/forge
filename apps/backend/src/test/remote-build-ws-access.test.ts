@@ -435,6 +435,63 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
     expect(body.sources.enabled).toBe("environment");
     expect(body.sources.terminalsEnabled).toBe("settings");
   }, 30_000);
+
+  it("grants member builder access when env enabled is true", async () => {
+    const { baseUrl } = await startCollaborationServer({
+      remoteProjectsEnv: { enabled: true },
+    });
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const memberCookie = await createMember(baseUrl, adminCookie);
+    const member = await openAuthenticatedWs(baseUrl, memberCookie);
+    member.send({ type: "subscribe" });
+    const snapshot = await member.waitForEvent("agents_snapshot");
+    expect(Array.isArray(snapshot.agents)).toBe(true);
+  }, 30_000);
+
+  it("denies member builder access when env enabled is false", async () => {
+    const { baseUrl } = await startCollaborationServer({
+      remoteProjectsEnv: { enabled: false },
+    });
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const memberCookie = await createMember(baseUrl, adminCookie);
+    const member = await openAuthenticatedWs(baseUrl, memberCookie);
+    await expectCommandDenied(member, { type: "subscribe" }, "Remote projects are disabled");
+  }, 30_000);
+
+  it("denies member terminal mutations/tickets when env terminalsEnabled is false", async () => {
+    const { baseUrl } = await startCollaborationServer({
+      remoteProjectsEnv: {
+        enabled: true,
+        terminalsEnabled: false,
+      },
+    });
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const memberCookie = await createMember(baseUrl, adminCookie);
+
+    const createTerminal = await fetch(`${baseUrl}/api/terminals`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: memberCookie },
+      body: JSON.stringify({ sessionAgentId: "any", cwd: "/tmp" }),
+    });
+    expect(createTerminal.status).toBe(403);
+
+    const ticket = await fetch(`${baseUrl}/api/terminals/term-1/ticket`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: memberCookie },
+      body: JSON.stringify({}),
+    });
+    expect(ticket.status).toBe(403);
+
+    // Contrast: with terminals enabled via settings only, the same member
+    // mutation path is member-class (auth passes; missing TerminalService may
+    // still yield a non-auth error). Keep this assertion focused on env-disable.
+    const resize = await fetch(`${baseUrl}/api/terminals/term-1/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: memberCookie },
+      body: JSON.stringify({ cols: 80, rows: 24 }),
+    });
+    expect(resize.status).toBe(403);
+  }, 30_000);
 });
 
 describe("project presence (R3)", () => {

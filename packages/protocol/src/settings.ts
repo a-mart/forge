@@ -71,13 +71,15 @@ export interface RemoteBuildSettingsSources {
 
 /**
  * Admin GET/PUT payload. `settings` is the effective runtime policy
- * (environment overrides win per field). `persistedSettings` is the v1 JSON
- * file contents; `updatedAt` remains the last persisted write.
+ * (environment overrides win per field). Current collaboration-server responses
+ * also include `persistedSettings` (v1 JSON file contents) and per-field
+ * `sources`; both remain optional on the wire so legacy `{ settings }` payloads
+ * stay assignable. `updatedAt` remains the last persisted write.
  */
 export interface RemoteBuildSettingsResponse {
   settings: RemoteBuildSettings
-  persistedSettings: RemoteBuildSettings
-  sources: RemoteBuildSettingsSources
+  persistedSettings?: RemoteBuildSettings
+  sources?: RemoteBuildSettingsSources
 }
 
 export interface RemoteBuildSettingsMutationResponse extends RemoteBuildSettingsResponse {

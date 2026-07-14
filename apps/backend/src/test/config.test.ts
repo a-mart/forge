@@ -479,15 +479,19 @@ describe('createConfig', () => {
   })
 
   it('ignores Remote Projects env overrides on Builder runtime', async () => {
+    // Invalid/overlong values must not fail Builder startup — these vars are
+    // collaboration-server only and Builder must ignore them entirely.
     await withEnv(
       {
         FORGE_RUNTIME_TARGET: 'builder',
-        FORGE_REMOTE_PROJECTS_ENABLED: 'true',
-        FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: 'false',
-        FORGE_REMOTE_PROJECTS_INSTANCE_NAME: 'Should Ignore',
+        FORGE_REMOTE_PROJECTS_ENABLED: 'definitely-not-a-boolean',
+        FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: 'yep',
+        FORGE_REMOTE_PROJECTS_INSTANCE_NAME: `  ${'x'.repeat(121)}  `,
       },
       () => {
-        expect(createConfig().remoteProjectsEnv).toBeUndefined()
+        const config = createConfig()
+        expect(config.runtimeTarget).toBe('builder')
+        expect(config.remoteProjectsEnv).toBeUndefined()
       },
     )
   })

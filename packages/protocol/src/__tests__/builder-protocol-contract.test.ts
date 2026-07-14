@@ -136,6 +136,21 @@ describe('project_presence contract (R3)', () => {
 })
 
 describe('remote build settings response contract', () => {
+  it('keeps legacy { settings } payloads assignable to RemoteBuildSettingsResponse', () => {
+    const legacy = {
+      settings: {
+        enabled: false,
+        terminalsEnabled: true,
+        instanceName: null,
+        updatedAt: null,
+      },
+    } satisfies RemoteBuildSettingsResponse
+
+    expect(legacy.settings.enabled).toBe(false)
+    expect(legacy.persistedSettings).toBeUndefined()
+    expect(legacy.sources).toBeUndefined()
+  })
+
   it('exposes additive effective/persisted/source fields without bumping protocol version', () => {
     const response = {
       settings: {
@@ -163,7 +178,8 @@ describe('remote build settings response contract', () => {
       controlledFields: ['enabled'],
     } satisfies RemoteBuildSettingsEnvOverrideErrorBody
 
-    expect(response.sources.enabled).toBe('environment')
+    expect(response.sources?.enabled).toBe('environment')
+    expect(response.persistedSettings?.enabled).toBe(false)
     expect(conflict.code).toBe('REMOTE_BUILD_SETTINGS_ENV_OVERRIDE')
     expect(BUILDER_PROTOCOL_VERSION).toBe(2)
   })
