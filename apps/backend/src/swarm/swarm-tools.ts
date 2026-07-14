@@ -16,6 +16,7 @@ import {
   type SpawnAgentInput
 } from "./types.js";
 import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
+import { buildGoalTools } from "./goals/goal-tools.js";
 
 export type { SwarmToolHost } from "./swarm-tool-host.js";
 
@@ -443,6 +444,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
   const managerOnly: ToolDefinition[] = [
     buildUpdatePlanTool(host, descriptor),
+    ...buildGoalTools(host, descriptor),
     {
       name: "spawn_agent",
       label: "Spawn Agent",
@@ -664,7 +666,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           phase: "side_effect",
           input: parsed,
           output: published,
-          userVisible: true,
+          userVisible: published.published !== false,
           metadata: {
             targetChannel: published.targetContext.channel,
           },
@@ -674,12 +676,15 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           content: [
             {
               type: "text",
-              text: `Published message to user (${published.targetContext.channel}).`
+              text: published.published === false
+                ? "Message not published because a newer user message superseded this turn. Respond to the newer message instead."
+                : `Published message to user (${published.targetContext.channel}).`
             }
           ],
           details: {
-            published: true,
-            targetContext: published.targetContext
+            published: published.published !== false,
+            targetContext: published.targetContext,
+            ...(published.reason ? { reason: published.reason } : {}),
           }
         };
       }

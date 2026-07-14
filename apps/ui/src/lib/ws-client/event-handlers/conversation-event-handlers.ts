@@ -17,6 +17,7 @@ export const BOOTSTRAP_COALESCIBLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   'conversation_history',
   'pending_choices_snapshot',
   'session_plan_snapshot',
+  'session_goal_snapshot',
   'unread_counts_snapshot',
 ])
 
@@ -389,6 +390,21 @@ export function handleConversationEvent(
       return true
     }
 
+    case 'session_goal_snapshot': {
+      const current = context.state.goalSnapshots[event.sessionAgentId]
+      if (current && event.revision < current.revision) return true
+      context.updateState({
+        goalSnapshots: {
+          ...context.state.goalSnapshots,
+          [event.sessionAgentId]: event,
+        },
+        ...(context.state.goalSnapshotLoadingSessionId === event.sessionAgentId
+          ? { goalSnapshotLoadingSessionId: null }
+          : {}),
+      })
+      return true
+    }
+
     case 'conversation_reset':
       if (event.agentId !== context.state.targetAgentId) {
         return true
@@ -398,6 +414,7 @@ export function handleConversationEvent(
         messages: [],
         activityMessages: [],
         planSnapshots: {},
+        goalSnapshots: {},
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),

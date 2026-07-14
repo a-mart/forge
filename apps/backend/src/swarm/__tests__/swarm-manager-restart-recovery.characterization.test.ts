@@ -220,6 +220,7 @@ describe('SwarmManager restart recovery characterization', () => {
 
       const firstResume = recovered.resumeRestartRecovery()
       await creationStarted
+      expect(recovered.isRestartRecoveryDecisionPendingForTest()).toBe(true)
       const secondResume = recovered.resumeRestartRecovery()
       releaseCreation()
       await Promise.all([firstResume, secondResume])
@@ -227,6 +228,7 @@ describe('SwarmManager restart recovery characterization', () => {
       expect(sentMessageText(recovered.runtimeByAgentId.get(fixture.workerId))).toHaveLength(1)
       expect(sentMessageText(recovered.runtimeByAgentId.get('manager'))).toHaveLength(2)
       expect(recovered.getRestartRecoverySnapshot()).toMatchObject({ resumedAt: NOW })
+      expect(recovered.isRestartRecoveryDecisionPendingForTest()).toBe(false)
     } finally {
       await fixture.cleanup()
     }

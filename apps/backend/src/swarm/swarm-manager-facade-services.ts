@@ -6,6 +6,7 @@ import type { CodexPluginDelegationCoordinator } from "./codex-app-server/codex-
 import type { CollaborationStorageProvisioner } from "./collaboration-storage-provisioner.js";
 import type { ConversationProjector } from "./conversation-projector.js";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
+import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import type { KnowledgeMemoryCoordinator } from "./knowledge-memory-coordinator.js";
 import type { ProfileSessionBookkeepingCoordinator } from "./profile-session-bookkeeping-coordinator.js";
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
@@ -74,6 +75,10 @@ export interface SwarmManagerFacadeHostServices {
 
 export interface SwarmManagerSessionFacadeServices {
   interactions: SessionInteractionCoordinator;
+  goals: Pick<
+    SessionGoalCoordinator,
+    "control" | "create" | "get" | "getSnapshotEvent" | "update"
+  >;
   sessions: SessionLifecycleCoordinator;
   pins: SessionPinCoordinator;
   projectAgents: ProjectAgentCoordinator;

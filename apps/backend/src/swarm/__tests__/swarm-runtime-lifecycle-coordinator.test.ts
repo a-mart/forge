@@ -93,6 +93,9 @@ function createHarness() {
   const plans = {
     finalizeUsage: vi.fn(async () => { calls.push("plans:finalize"); }),
   };
+  const goals = {
+    scheduleContinuation: vi.fn(() => { calls.push("goals:schedule"); }),
+  };
   const events = {
     emitConversationMessage: vi.fn(),
   };
@@ -108,6 +111,7 @@ function createHarness() {
     turnContext,
     codexScopes,
     plans,
+    goals,
     events,
     now: () => "2026-07-13T10:01:00.000Z",
     logDebug: vi.fn(),
@@ -122,6 +126,7 @@ function createHarness() {
     turnContext,
     codexScopes,
     plans,
+    goals,
     events,
     recoveryState,
     coordinator,
@@ -181,7 +186,7 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
     }));
 
     await coordinator.handleRuntimeStatus(5, "manager", "idle", 0);
-    expect(calls).toEqual(["controller:status", "plans:finalize"]);
+    expect(calls).toEqual(["controller:status", "plans:finalize", "goals:schedule"]);
 
     calls.length = 0;
     await coordinator.handleRuntimeStatus(5, "manager", "idle", 1);

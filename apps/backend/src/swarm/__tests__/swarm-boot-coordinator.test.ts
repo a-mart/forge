@@ -63,6 +63,7 @@ describe("SwarmBootCoordinator", () => {
       "emitProfilesSnapshot",
       "scheduleProjectExecutableTrustPrompts",
       "startWorkerHealth",
+      "scheduleGoalContinuations",
     ]);
     expect(harness.readyLog).toHaveBeenCalledWith("boot:ready", expect.objectContaining({
       loadedArchetypeIds: ["manager", "researcher"],
@@ -263,6 +264,7 @@ function createHarness(
     emitProfilesSnapshot: () => order.push("emitProfilesSnapshot"),
     scheduleProjectExecutableTrustPrompts: () => order.push("scheduleProjectExecutableTrustPrompts"),
     startWorkerHealth: () => order.push("startWorkerHealth"),
+    scheduleGoalContinuations: () => order.push("scheduleGoalContinuations"),
   };
   const readyLog = vi.fn();
   const logDebug = vi.fn((message: string, details?: unknown) => {

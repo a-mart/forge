@@ -30,6 +30,40 @@ const ALL_PROFILES: ManagerProfile[] = [
 ];
 
 describe("session command handler", () => {
+  it("routes user goal controls to the scoped Builder session", async () => {
+    const send = vi.fn();
+    const controlSessionGoal = vi.fn(async () => undefined);
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      controlSessionGoal,
+    };
+
+    const handled = await handleSessionCommand({
+      command: {
+        type: "session_goal_control",
+        agentId: "manager--s2",
+        action: "edit",
+        objective: "Refined outcome",
+        tokenBudget: 20_000,
+      },
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(controlSessionGoal).toHaveBeenCalledWith("manager--s2", expect.objectContaining({
+      action: "edit",
+      objective: "Refined outcome",
+      tokenBudget: 20_000,
+    }));
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("handles archive_session and restore_session commands with request-correlated events", async () => {
     const send = vi.fn();
     const swarmManager = {

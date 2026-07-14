@@ -4,6 +4,7 @@ import {
   type PinRegistry,
 } from "./message-pins.js";
 import type { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
+import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import type {
   SmartCompactResult,
@@ -36,6 +37,7 @@ export interface SwarmCompactionCoordinatorOptions {
   getOrCreateRuntime: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>;
   syncPinnedContent: (descriptor: ManagerDescriptor) => Promise<PinRegistry>;
   sessionPlans: SessionPlanCoordinator;
+  sessionGoals: Pick<SessionGoalCoordinator, "appendCompactionInstructions">;
   captureCascade: CaptureCascadeCoordinator;
   incrementCompactionCount: (
     profileId: string,
@@ -207,10 +209,11 @@ export class SwarmCompactionCoordinator {
       customInstructions?.trim() || undefined,
       registry,
     );
-    return this.options.sessionPlans.appendCompactionInstructions(
+    const instructionsWithPlan = await this.options.sessionPlans.appendCompactionInstructions(
       descriptor,
       instructionsWithPins,
     );
+    return this.options.sessionGoals.appendCompactionInstructions(descriptor, instructionsWithPlan);
   }
 
   private async recordSuccessfulCompaction(

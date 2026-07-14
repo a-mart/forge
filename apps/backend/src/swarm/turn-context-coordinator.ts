@@ -217,6 +217,13 @@ export class TurnContextCoordinator<
     return this.pendingByAgentId.get(agentId)?.length ?? 0;
   }
 
+  hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean {
+    if (!this.activatedByAgentId.has(agentId)) return false;
+    return Boolean(this.pendingByAgentId.get(agentId)?.some(
+      (context) => context.source === "user_input" && context.turnId !== activeTurnId,
+    ));
+  }
+
   markProviderCycleActivated(agentId: string): void {
     this.activatedByAgentId.add(agentId);
   }

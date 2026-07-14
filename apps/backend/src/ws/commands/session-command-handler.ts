@@ -48,6 +48,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "restore_session" &&
     command.type !== "delete_session" &&
     command.type !== "clear_session" &&
+    command.type !== "session_goal_control" &&
     command.type !== "rename_session" &&
     command.type !== "pin_session" &&
     command.type !== "update_session_model" &&
@@ -73,7 +74,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       type: "error",
       code: "UNKNOWN_AGENT",
       message: `Agent ${subscribedAgentId} does not exist.`,
-      requestId: command.requestId
+      requestId: "requestId" in command ? command.requestId : undefined
     });
     return true;
   }
@@ -286,6 +287,24 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       });
     }
 
+    return true;
+  }
+
+  if (command.type === "session_goal_control") {
+    try {
+      requireNonSystemSessionProfile(
+        command.agentId,
+        swarmManager.listProfiles(),
+        (agentId) => swarmManager.getAgent(agentId),
+      );
+      await swarmManager.controlSessionGoal(command.agentId, command);
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "SESSION_GOAL_CONTROL_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     return true;
   }
 

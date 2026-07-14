@@ -223,6 +223,31 @@ describe("TurnContextCoordinator", () => {
     expect(harness.coordinator.getActiveTurnId("manager-1", 41)).toBe(first.turnId);
   });
 
+  it("reports only activated turns superseded by a different queued user input", async () => {
+    const { coordinator } = createHarness();
+    const first = await coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "first",
+    });
+    const newer = await coordinator.enqueue("manager-1", {
+      source: "user_input",
+      runtimeMessageText: "newer",
+    });
+
+    expect(coordinator.hasPendingSupersedingUserInput("manager-1", first.turnId)).toBe(false);
+    coordinator.beforeRuntimeEventProjection(
+      "manager-1",
+      41,
+      runtimeMessageEvent("message_start", "user", "first"),
+    );
+    expect(coordinator.hasPendingSupersedingUserInput("manager-1", first.turnId)).toBe(true);
+
+    newer.rollback();
+    expect(coordinator.hasPendingSupersedingUserInput("manager-1", first.turnId)).toBe(false);
+    await coordinator.enqueue("manager-1", { source: "agent_message" });
+    expect(coordinator.hasPendingSupersedingUserInput("manager-1", first.turnId)).toBe(false);
+  });
+
   it("keeps ledger failure fail-open and honors skipTurnLedger", async () => {
     const harness = createHarness();
     const record = vi.fn().mockRejectedValueOnce(new Error("disk full"));

@@ -195,6 +195,11 @@ function createHarness() {
         order.push("project-agent:preflight");
       }),
     },
+    goals: {
+      noteUserTurn: vi.fn(async () => {
+        order.push("goals:user-turn");
+      }),
+    },
     turns: {
       enqueue: vi.fn(async () => {
         order.push("turn:enqueue");

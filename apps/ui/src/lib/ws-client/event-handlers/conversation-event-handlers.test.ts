@@ -153,6 +153,41 @@ describe('handleConversationEvent plan snapshots', () => {
   })
 })
 
+describe('handleConversationEvent goal snapshots', () => {
+  it('applies live goal state and ignores an older bootstrap revision', () => {
+    const initial = createInitialManagerWsState('manager')
+    const live = runHandler(initial, {
+      type: 'session_goal_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      revision: 3,
+      measuredAt: '2026-07-12T12:00:03.000Z',
+      goal: {
+        id: 'goal-1',
+        objective: 'Current live goal',
+        status: 'active',
+        createdAt: '2026-07-12T12:00:00.000Z',
+        updatedAt: '2026-07-12T12:00:03.000Z',
+        activeElapsedMs: 3_000,
+        turnCount: 2,
+        usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12 },
+        usageCoverage: 'complete',
+      },
+    })
+    const next = runHandler(live, {
+      type: 'session_goal_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      revision: 2,
+      measuredAt: '2026-07-12T12:00:02.000Z',
+      goal: null,
+    })
+
+    expect(next.goalSnapshots.manager.revision).toBe(3)
+    expect(next.goalSnapshots.manager.goal?.objective).toBe('Current live goal')
+  })
+})
+
 describe('handleConversationEvent choice requests', () => {
   it('accepts live worker-origin choices targeted at the active session', () => {
     const state = createInitialManagerWsState('manager')

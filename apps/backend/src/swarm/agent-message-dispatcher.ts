@@ -173,6 +173,13 @@ export interface AgentMessagePlanPort {
   ): Promise<void>;
 }
 
+export interface AgentMessageGoalPort {
+  appendToManagerInput(
+    owner: AgentDescriptor & { role: "manager"; profileId: string },
+    text: string,
+  ): Promise<string>;
+}
+
 export interface AgentMessageProjectAgentPort {
   authorizeExternalDelivery(input: {
     senderAgentId: string;
@@ -219,6 +226,7 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
   workerHealth: AgentMessageWorkerHealthPort;
   observability: AgentMessageObservabilityPort;
   plans: AgentMessagePlanPort;
+  goals: AgentMessageGoalPort;
   projectAgents: AgentMessageProjectAgentPort;
   codex: AgentMessageCodexPort<TCodexGate>;
   getOrCreateRuntime(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime>;
@@ -352,7 +360,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       formatProjectAgentRuntimeMessage(projectAgentContext, input.message),
       outputTarget,
     );
-    const runtimeText = await this.appendCurrentPlan(target, baseRuntimeText);
+    const runtimeText = await this.appendCoordinationContext(target, baseRuntimeText);
     const parentRootTurnId = this.options.observability.getActiveRootTurnId(sender.agentId);
     const observabilityInput = this.options.observability.beginRuntimeInput({
       target,
@@ -747,7 +755,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     }
     const target = this.options.descriptors.get(targetAgentId);
     if (target) {
-      text = await this.appendCurrentPlan(target, text);
+      text = await this.appendCoordinationContext(target, text);
     }
 
     return runtimeAttachments.images.length === 0
@@ -755,15 +763,16 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       : { text, images: runtimeAttachments.images };
   }
 
-  private appendCurrentPlan(target: AgentDescriptor, text: string): Promise<string> {
+  private async appendCoordinationContext(target: AgentDescriptor, text: string): Promise<string> {
     if (
       !isSessionAgentDescriptor(target) ||
       target.sessionSurface === "collab" ||
       normalizeArchetypeId(target.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
     ) {
-      return Promise.resolve(text);
+      return text;
     }
-    return this.options.plans.appendToManagerInput(target, text);
+    const withGoal = await this.options.goals.appendToManagerInput(target, text);
+    return this.options.plans.appendToManagerInput(target, withGoal);
   }
 
   private logAcceptedDispatch(

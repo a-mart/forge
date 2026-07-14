@@ -1,0 +1,1 @@
+export { GoalBar } from './GoalBar'

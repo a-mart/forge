@@ -8,6 +8,57 @@ function parseJsonCommand(payload: unknown) {
 }
 
 describe('ws command parser session commands', () => {
+  it('parses session goal controls and rejects malformed edits', () => {
+    expect(parseJsonCommand({
+      type: 'session_goal_control',
+      agentId: ' session-a ',
+      action: 'edit',
+      objective: '  Refined outcome  ',
+      tokenBudget: null,
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'session_goal_control',
+        agentId: 'session-a',
+        action: 'edit',
+        objective: 'Refined outcome',
+        tokenBudget: null,
+      },
+    })
+    expect(parseJsonCommand({
+      type: 'session_goal_control',
+      agentId: 'session-a',
+      action: 'pause',
+    })).toEqual({
+      ok: true,
+      command: { type: 'session_goal_control', agentId: 'session-a', action: 'pause' },
+    })
+    expect(parseJsonCommand({
+      type: 'session_goal_control',
+      agentId: 'session-a',
+      action: 'edit',
+      objective: ' ',
+    })).toEqual({
+      ok: false,
+      error: 'session_goal_control.objective must be a non-empty string for edit',
+    })
+    expect(parseJsonCommand({
+      type: 'session_goal_control',
+      agentId: 'session-a',
+      action: 'edit',
+      objective: 'Outcome',
+      tokenBudget: 0,
+    })).toEqual({
+      ok: false,
+      error: 'session_goal_control.tokenBudget must be a positive integer or null when provided',
+    })
+    expect(extractRequestId({
+      type: 'session_goal_control',
+      agentId: 'session-a',
+      action: 'cancel',
+    })).toBeUndefined()
+  })
+
   it('parses create_session and normalizes optional label + name', () => {
     const parsed = parseJsonCommand({
       type: 'create_session',

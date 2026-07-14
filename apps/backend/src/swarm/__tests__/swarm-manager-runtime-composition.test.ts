@@ -66,6 +66,9 @@ function toolHost(): SwarmToolHost {
     publishToUser: noResult,
     requestUserChoice: noResult,
     updatePlan: noResult,
+    createGoal: noResult,
+    getGoal: noResult,
+    updateGoal: noResult,
   } as unknown as SwarmToolHost;
 }
 
@@ -119,6 +122,7 @@ function createOptions(late: ReturnType<typeof vi.fn>): SwarmManagerRuntimeCompo
       emitProfilesSnapshot: late,
       emitSessionLifecycle: late,
       emitSessionActiveToolsSnapshot: late,
+      emitSessionGoalSnapshot: late,
       clearSessionActiveTools: late,
       saveStore: late,
       queueVersionedToolMutation: late,

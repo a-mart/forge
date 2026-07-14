@@ -70,6 +70,7 @@ export interface RuntimeLifecycleTurnContext {
   beforeRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   afterRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined;
+  hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean;
   handleRuntimeError(agentId: string): void;
   discard(agentId: string): void;
   clearAgentState(agentId: string): void;
@@ -82,6 +83,10 @@ export interface RuntimeLifecycleCodexScopes {
 
 export interface RuntimeLifecyclePlans {
   finalizeUsage(owner: AgentDescriptor & { role: "manager"; profileId: string }): Promise<void>;
+}
+
+export interface RuntimeLifecycleGoals {
+  scheduleContinuation(owner: AgentDescriptor & { role: "manager"; profileId: string }): void;
 }
 
 export interface RuntimeLifecycleEvents {
@@ -97,6 +102,7 @@ export interface SwarmRuntimeLifecycleCoordinatorOptions {
   turnContext: RuntimeLifecycleTurnContext;
   codexScopes: RuntimeLifecycleCodexScopes;
   plans: RuntimeLifecyclePlans;
+  goals: RuntimeLifecycleGoals;
   events: RuntimeLifecycleEvents;
   now: () => string;
   logDebug(message: string, details?: unknown): void;
@@ -115,6 +121,7 @@ type RuntimeLifecycleHostCallbackKey =
   | "isRuntimeRecoveryActive"
   | "beforeRuntimeEventProjection"
   | "getActiveTurnId"
+  | "hasPendingSupersedingUserInput"
   | "recordManagerTurnWatchdogStatus"
   | "recordManagerTurnWatchdogEvent"
   | "recordManagerTurnWatchdogRuntimeError"
@@ -154,6 +161,8 @@ export function createRuntimeLifecycleControllerHostCallbacks(
     beforeRuntimeEventProjection: (agentId, runtimeToken, event) =>
       getCoordinator().beforeRuntimeEventProjection(agentId, runtimeToken, event),
     getActiveTurnId: (agentId, runtimeToken) => getCoordinator().getActiveTurnId(agentId, runtimeToken),
+    hasPendingSupersedingUserInput: (agentId, activeTurnId) =>
+      getCoordinator().hasPendingSupersedingUserInput(agentId, activeTurnId),
     recordManagerTurnWatchdogStatus: (agentId, runtimeToken, status, pendingCount) =>
       getCoordinator().recordManagerTurnWatchdogStatus(agentId, runtimeToken, status, pendingCount),
     recordManagerTurnWatchdogEvent: (agentId, runtimeToken, event) =>
@@ -255,6 +264,7 @@ export class SwarmRuntimeLifecycleCoordinator {
     const descriptor = this.options.descriptors.get(agentId);
     if (status === "idle" && pendingCount === 0 && descriptor?.status === "idle" && isSessionManager(descriptor)) {
       await this.options.plans.finalizeUsage(descriptor);
+      this.options.goals.scheduleContinuation(descriptor);
     }
   }
 
@@ -305,6 +315,10 @@ export class SwarmRuntimeLifecycleCoordinator {
 
   getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined {
     return this.options.turnContext.getActiveTurnId(agentId, runtimeToken);
+  }
+
+  hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean {
+    return this.options.turnContext.hasPendingSupersedingUserInput(agentId, activeTurnId);
   }
 
   runLivenessHealthSweep(): void {

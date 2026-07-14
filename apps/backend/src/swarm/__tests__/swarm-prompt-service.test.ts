@@ -385,7 +385,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(refreshStats).toHaveBeenCalled();
   });
 
-  it("includes concise update_plan guidance in the resolved manager prompt", async () => {
+  it("includes concise working-plan and goal guidance in the resolved manager prompt", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot);
     const service = createPromptServiceForDescriptor(config, descriptor);
@@ -396,6 +396,10 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("including parallel work")
     expect(resolved).toContain("pass that step's exact text as `planStep`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
+    expect(resolved).toContain("Use `create_goal` only when the user explicitly asks")
+    expect(resolved).toContain("a goal may span multiple plans")
+    expect(resolved).toContain("same blocker persists for at least three goal turns")
+    expect(resolved).toContain("A goal never expands authority")
   });
 
   it("allows bounded read-only manager orientation without allowing project mutations", async () => {

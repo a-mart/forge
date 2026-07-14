@@ -237,6 +237,12 @@ function createHarness() {
         observedDeliveries.push(input);
       },
     },
+    goals: {
+      appendToManagerInput: async (_owner, text) => {
+        order.push("goals:append");
+        return text;
+      },
+    },
     plans: {
       resolveAssignment: async (_owner, requestedStep) => {
         order.push("plans:resolve");
@@ -546,6 +552,9 @@ describe("AgentMessageDispatcher", () => {
     expect(text).toContain("SYSTEM: review");
     expect(text).toContain("The user attached a file.\n\n[plan]");
     expect(text).toContain("[assistantOutputTarget]");
+    expect(harness.order.indexOf("goals:append")).toBeLessThan(
+      harness.order.indexOf("plans:append"),
+    );
     expect(harness.order.indexOf("plans:append")).toBeLessThan(harness.order.indexOf("output:prepare"));
   });
 
@@ -580,6 +589,7 @@ describe("AgentMessageDispatcher", () => {
 
     expect(receipt).toBe(acceptedReceipt);
     const relevantOrder = harness.order.filter((entry) => [
+      "goals:append",
       "plans:append",
       "observability:get-root",
       "observability:begin",
@@ -593,6 +603,7 @@ describe("AgentMessageDispatcher", () => {
       "event:agent-message",
     ].includes(entry));
     expect(relevantOrder).toEqual([
+      "goals:append",
       "plans:append",
       "observability:get-root",
       "observability:begin",
@@ -654,6 +665,7 @@ describe("AgentMessageDispatcher", () => {
       { attachments: [{ type: "text", mimeType: "text/plain", text: "data" }] },
     )).rejects.toThrow("Project-agent deliveries do not support attachments.");
 
+    expect(harness.order).not.toContain("goals:append");
     expect(harness.order).not.toContain("plans:append");
     expect(harness.order).not.toContain("observability:begin");
     expect(harness.order).not.toContain("turn:enqueue");

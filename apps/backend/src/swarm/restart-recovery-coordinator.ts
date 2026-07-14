@@ -27,12 +27,14 @@ export interface RestartRecoveryCoordinatorOptions {
     options: InternalSendOptions,
   ) => Promise<SendMessageReceipt>;
   now: () => string;
+  onDecisionResolved?: () => void;
   logDebug: (message: string, details?: unknown) => void;
 }
 
 /** Owns boot-time turn-ledger reconciliation and one-shot restart recovery. */
 export class RestartRecoveryCoordinator {
   private snapshot: RestartRecoverySnapshot | null = null;
+  private resumeInProgress = false;
 
   constructor(private readonly options: RestartRecoveryCoordinatorOptions) {}
 
@@ -147,9 +149,16 @@ export class RestartRecoveryCoordinator {
     return this.snapshot ? cloneSnapshot(this.snapshot) : null;
   }
 
+  isDecisionPending(): boolean {
+    return this.resumeInProgress || Boolean(
+      this.snapshot && !this.snapshot.resumedAt && !this.snapshot.dismissedAt,
+    );
+  }
+
   dismiss(): RestartRecoverySnapshot | null {
     if (!this.snapshot) return null;
     this.snapshot = { ...this.snapshot, dismissedAt: this.options.now() };
+    this.options.onDecisionResolved?.();
     return this.getSnapshot();
   }
 
@@ -158,9 +167,10 @@ export class RestartRecoveryCoordinator {
     if (!snapshot || snapshot.resumedAt || snapshot.dismissedAt) {
       return this.getSnapshot();
     }
+    this.resumeInProgress = true;
     this.snapshot = { ...snapshot, resumedAt: this.options.now() };
-
-    for (const workerId of snapshot.interruptedWorkers) {
+    try {
+      for (const workerId of snapshot.interruptedWorkers) {
       const worker = this.options.descriptors.get(workerId);
       if (!worker || worker.role !== "worker") continue;
       await this.options
@@ -172,9 +182,9 @@ export class RestartRecoveryCoordinator {
           { origin: "internal" },
         )
         .catch((error) => this.logResumeError("worker", workerId, error));
-    }
+      }
 
-    for (const managerId of snapshot.interruptedManagers) {
+      for (const managerId of snapshot.interruptedManagers) {
       await this.options
         .sendMessage(
           managerId,
@@ -184,10 +194,10 @@ export class RestartRecoveryCoordinator {
           { origin: "internal" },
         )
         .catch((error) => this.logResumeError("manager", managerId, error));
-    }
+      }
 
-    const pendingMessages = await this.resolvePendingReportMessages(snapshot);
-    for (const report of snapshot.undeliveredReports) {
+      const pendingMessages = await this.resolvePendingReportMessages(snapshot);
+      for (const report of snapshot.undeliveredReports) {
       const message = pendingMessages.get(report.deliveryId);
       if (!message) continue;
       await this.options
@@ -203,9 +213,13 @@ export class RestartRecoveryCoordinator {
             message: error instanceof Error ? error.message : String(error),
           });
         });
-    }
+      }
 
-    return this.getSnapshot();
+      return this.getSnapshot();
+    } finally {
+      this.resumeInProgress = false;
+      this.options.onDecisionResolved?.();
+    }
   }
 
   private async resolvePendingReportMessages(

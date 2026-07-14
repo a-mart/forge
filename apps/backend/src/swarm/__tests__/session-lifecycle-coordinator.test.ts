@@ -51,6 +51,7 @@ describe("SessionLifecycleCoordinator", () => {
 
     expect(result.terminatedWorkerIds).toEqual(["worker-1"]);
     expect(harness.calls).toEqual([
+      "goals.cancel:forge--s2",
       "capture",
       "codex.close:forge--s2",
       "archive",
@@ -83,7 +84,9 @@ describe("SessionLifecycleCoordinator", () => {
 
     expect(harness.calls).toEqual([
       "codex.close:forge",
+      "goals.cancel:forge",
       "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
       "archive.profile",
       "tools:forge",
       "tools:forge--s2",
@@ -110,6 +113,7 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "sessions.delete",
       "plans:forge--s2",
+      "goals.forget:forge--s2",
       "tools:forge--s2",
       "extensions.deleted",
     ]);
@@ -138,6 +142,7 @@ describe("SessionLifecycleCoordinator", () => {
     await harness.coordinator.stopSession("forge--s2");
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
       "lifecycle.stop",
       "tools:forge--s2",
     ]);
@@ -343,6 +348,11 @@ function createHarness(): Harness {
     },
     plans: {
       forget: (agentId) => calls.push(`plans:${agentId}`),
+    },
+    goals: {
+      cancelScheduledContinuation: (agentId) => calls.push(`goals.cancel:${agentId}`),
+      forget: (agentId) => calls.push(`goals.forget:${agentId}`),
+      scheduleContinuation: (owner) => calls.push(`goals.schedule:${owner.agentId}`),
     },
     extensions: {
       dispatchSessionLifecycle: vi.fn(async () => undefined),

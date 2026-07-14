@@ -18,6 +18,7 @@ import type { ConversationAttachmentService } from "./conversation-attachment-se
 import { resolveConversationReplyTarget } from "./conversation-reply.js";
 import { isExternalThreadDescriptor } from "./external-thread-compatibility.js";
 import type { KnowledgeMemoryCoordinator } from "./knowledge-memory-coordinator.js";
+import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
 import type { ProjectExecutableTrustCoordinator } from "./project-executable-trust-coordinator.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "./runtime-contracts.js";
@@ -212,6 +213,7 @@ export interface UserMessageCoordinatorOptions {
     "compact" | "maybeRunCortexConsolidationFromIncomingMessage"
   >;
   projectAgents: Pick<ProjectAgentCoordinator, "preflightRuntime">;
+  goals: Pick<SessionGoalCoordinator, "noteUserTurn">;
   turns: Pick<
     TurnContextCoordinator<
       CodexMcpToolGateEvaluation,
@@ -347,6 +349,8 @@ export class UserMessageCoordinator {
       });
       return;
     }
+
+    await this.options.goals.noteUserTurn(target);
 
     const codexClassification = target.role === "manager"
       ? this.options.codex.plugin.classifyAndPreflightUserTurn(

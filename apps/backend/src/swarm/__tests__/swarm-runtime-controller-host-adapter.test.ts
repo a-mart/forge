@@ -30,6 +30,9 @@ function createToolHost(onListAgents: (receiver: unknown) => void): SwarmToolHos
     publishToUser: vi.fn(async () => ({ targetContext: { channel: "web" as const } })),
     requestUserChoice: vi.fn(),
     updatePlan: vi.fn(),
+    createGoal: vi.fn(),
+    getGoal: vi.fn(),
+    updateGoal: vi.fn(),
   };
   return toolHost;
 }

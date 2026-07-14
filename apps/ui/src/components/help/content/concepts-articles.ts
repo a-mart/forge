@@ -1,6 +1,7 @@
 import type { HelpArticle } from '../help-types'
 
 import conceptsWorkingPlansContent from './articles/concepts/concepts-working-plans.md?raw'
+import conceptsGoalsContent from './articles/concepts/concepts-goals.md?raw'
 import conceptsMemoryContent from './articles/concepts/concepts-memory.md?raw'
 import conceptsMultiAgentContent from './articles/concepts/concepts-multi-agent.md?raw'
 import conceptsProjectAgentsContent from './articles/concepts/concepts-project-agents.md?raw'
@@ -42,7 +43,27 @@ const conceptsWorkingPlans: HelpArticle = {
     'session',
     'progress',
   ],
-  relatedIds: ['concepts-multi-agent', 'concepts-sessions', 'chat-overview'],
+  relatedIds: ['concepts-goals', 'concepts-multi-agent', 'concepts-sessions', 'chat-overview'],
+  contextKeys: ['chat.main'],
+}
+
+const conceptsGoals: HelpArticle = {
+  id: 'concepts-goals',
+  title: 'Session Goals',
+  category: 'concepts',
+  summary: 'How a manager keeps pursuing one explicit outcome across turns and working plans.',
+  content: conceptsGoalsContent,
+  keywords: [
+    'goal',
+    'pursuing goal',
+    'token budget',
+    'pause goal',
+    'resume goal',
+    'autonomous',
+    'continuation',
+    'session',
+  ],
+  relatedIds: ['concepts-working-plans', 'concepts-sessions', 'concepts-multi-agent'],
   contextKeys: ['chat.main'],
 }
 
@@ -155,6 +176,7 @@ const conceptsProjectAgents: HelpArticle = {
 
 export const conceptsArticles: HelpArticle[] = [
   conceptsMultiAgent,
+  conceptsGoals,
   conceptsWorkingPlans,
   conceptsMemory,
   conceptsPromptResolution,

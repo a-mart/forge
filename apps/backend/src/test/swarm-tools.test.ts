@@ -883,7 +883,7 @@ describe('buildSwarmTools', () => {
     })
   })
 
-  it('includes update_plan for managers', () => {
+  it('includes working-plan and goal tools for managers', () => {
     const host: SwarmToolHost = {
       listAgents: () => [makeManagerDescriptor()],
       getWorkerActivity: () => undefined,
@@ -906,6 +906,11 @@ describe('buildSwarmTools', () => {
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())
     expect(tools.some((tool) => tool.name === 'update_plan')).toBe(true)
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'create_goal',
+      'get_goal',
+      'update_goal',
+    ]))
   })
 
 })

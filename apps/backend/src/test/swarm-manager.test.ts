@@ -1273,7 +1273,7 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('does not let a Pi user message_start consume the next identical queued context', async () => {
+  it('keeps the next identical Pi context while suppressing the superseded final', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1315,9 +1315,10 @@ describe('SwarmManager', () => {
     await projectAssistantFinalTextWithSyntheticUserMessageStart(manager, 'manager', 'Second identical turn final', runtimeText)
 
     expect(assistantOutputsFor(manager, 'manager')).toMatchObject([
-      { text: 'First identical turn final', sourceContext: { channel: firstSourceContext.channel } },
       { text: 'Second identical turn final', sourceContext: { channel: secondSourceContext.channel } },
     ])
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text))
+      .not.toContain('First identical turn final')
   })
 
   it('shows worker-report closeout when provider starts report turns with synthetic user message_start', async () => {

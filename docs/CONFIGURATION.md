@@ -72,6 +72,12 @@ Builder managers always have access to `update_plan` for substantial multi-step 
 
 When a worker assignment clearly belongs to one current step, `spawn_agent` and `send_message_to_agent` accept that step's exact text through optional `planStep`. Forge keeps the association internal and appends assignment, step-completion, and whole-plan token estimates to `plan-usage.ndjson` beside the plan. Receipts separate manager, assigned worker, and unassigned worker usage and include coverage plus concrete reasons such as recovered runs or completion boundaries, missing timestamps, unassigned usage, or busy-worker assignment boundaries. This accounting is file-backed, has no separate UI, and does not change the visible plan schema. Clearing a conversation clears its current plan; stop and archive preserve it; forks omit the live plan, plan history, and accounting files.
 
+### Session goals
+
+Builder managers also expose `create_goal`, `get_goal`, and `update_goal` for explicit sustained-pursuit requests. A session may have one unfinished goal at a time, and that goal may span multiple working plans. Active goals continue from safe settled-idle boundaries, but wait while the session is stopped or archived, a choice or runtime recovery is pending, or workers are still running. Goals do not expand the manager's authority. The manager may complete a goal only after its objective and current plan are complete, and may mark it blocked only after the same blocker persists for at least three goal turns. Resuming a blocked goal starts a fresh three-turn blocking audit.
+
+The current goal is file-backed in `goal.json`; completed and cancelled records append to `goal-history.ndjson`. The header bar lets users edit, pause, resume, or cancel an unfinished goal. An optional user-requested token budget estimates manager plus worker usage, including parallel workers, and pauses pursuit at a safe idle boundary when exhausted. Stop, archive, restart, and compaction preserve the goal. Clearing a conversation cancels and archives an unfinished goal before clearing it. Forks omit current goal state and goal history. Goals are unavailable to Collaboration and Cortex sessions and have no settings toggle.
+
 ### Integrated terminals
 
 Terminal runtime settings use `FORGE_*` names below; the matching legacy `MIDDLEMAN_*` aliases are also accepted.
@@ -317,6 +323,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │       ├── plan.json
 │       ├── plan-history.ndjson
 │       ├── plan-usage.ndjson
+│       ├── goal.json
+│       ├── goal-history.ndjson
 │       ├── artifacts/                     # Session non-repo artifacts/exports
 │       ├── context/prompt.md               # Collaboration additional instructions
 │       ├── cursor-sdk-state/<sessionId>/   # Manager Cursor SDK state root

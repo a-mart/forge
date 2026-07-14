@@ -4,9 +4,7 @@ import type { ObservabilityFacade } from "../observability/observability-types.j
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
-import type {
-  SidebarPerfRecorder,
-} from "../stats/sidebar-perf-types.js";
+import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import {
   createLiveCompactionRuntimeSettingsProvider,
   type CompactionRuntimeSettingsProvider,
@@ -45,9 +43,7 @@ import { ArchiveLastUsedHydrator } from "./archive/archive-last-used-hydrator.js
 import { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
 import { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
-import {
-  RuntimeRecoveryState
-} from "./runtime/runtime-recovery-state.js";
+import { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import { SwarmRuntimeController } from "./swarm-runtime-controller.js";
 import {
   SwarmRuntimeLifecycleCoordinator,
@@ -79,9 +75,7 @@ import { SessionProvisioner } from "./session-provisioner.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
 import { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import { SessionLifecycleCoordinator } from "./session-lifecycle-coordinator.js";
-import {
-  TurnContextCoordinator,
-} from "./turn-context-coordinator.js";
+import { TurnContextCoordinator } from "./turn-context-coordinator.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { ProjectAgentSharingService } from "./project-agent-sharing-service.js";
 import { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
@@ -261,8 +255,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
             this.agentDirectory.isSessionAgent(descriptor),
         ),
         requireSession: (agentId) => this.agentDirectory.getRequiredSessionDescriptor(agentId),
-        requireBuilderSession: (agentId, action) =>
-          this.agentDirectory.getRequiredBuilderSessionDescriptor(agentId, action),
+        requireBuilderSession: (agentId, action) => this.agentDirectory.getRequiredBuilderSessionDescriptor(agentId, action),
         assertMutable: (descriptor) =>
           this.agentDirectory.assertDescriptorNotEffectivelyArchived(descriptor),
         getConversationHistory: (agentId) => this.getConversationHistory(agentId),
@@ -435,7 +428,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       compactionRuntimeSettingsProvider,
       liveCompactionRuntimeSettingsProvider,
     );
-    const sessionComposition = this.createSessionComposition();
+    const sessionComposition = this.createSessionComposition(runtimeComposition);
     this.sessionProvisioner = sessionComposition.provisioner;
     this.archiveLastUsedHydrator = sessionComposition.archiveLastUsedHydrator;
     this.archiveService = sessionComposition.archiveService;
@@ -494,10 +487,11 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.sessionLifecycleCoordinator = completedRuntime.sessionLifecycle;
     this.bootCoordinator = completedRuntime.boot;
     this.sessionInteractionCoordinator = this.createSessionInteractionCoordinator();
-    this.agentMessageDispatcher = this.createAgentMessageDispatcher();
-    this.userMessageCoordinator = this.createUserMessageCoordinator();
+    this.agentMessageDispatcher = this.createAgentMessageDispatcher(completedRuntime.goals);
+    this.userMessageCoordinator = this.createUserMessageCoordinator(completedRuntime.goals);
     this.facadeServices = {
       interactions: this.sessionInteractionCoordinator,
+      goals: completedRuntime.goals,
       sessions: this.sessionLifecycleCoordinator,
       pins: this.sessionPinCoordinator,
       projectAgents: this.projectAgentCoordinator,
@@ -630,8 +624,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         emitAgentsSnapshot: () => this.eventCoordinator.emitAgentsSnapshot(),
         emitProfilesSnapshot: () => this.eventCoordinator.emitProfilesSnapshot(),
         emitSessionLifecycle: (event) => this.eventCoordinator.emitSessionLifecycle(event),
-        emitSessionActiveToolsSnapshot: (snapshot) =>
-          this.eventCoordinator.emitSessionActiveToolsSnapshot(snapshot),
+        emitSessionGoalSnapshot: (event) => this.emit("session_goal_snapshot", event),
+        emitSessionActiveToolsSnapshot: (snapshot) => this.eventCoordinator.emitSessionActiveToolsSnapshot(snapshot),
         clearSessionActiveTools: (agentId) => this.sessionActiveTools.clearSession(agentId),
         saveStore: () => this.descriptorStoreAdapter.saveStore(),
         queueVersionedToolMutation: (agentId, event) =>
@@ -932,7 +926,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     });
   }
 
-  private createSessionComposition(): ReturnType<typeof createSwarmManagerSessionComposition> {
+  private createSessionComposition(runtimeComposition: ReturnType<typeof createSwarmManagerRuntimeComposition>): ReturnType<typeof createSwarmManagerSessionComposition> {
     return createSwarmManagerSessionComposition({
       state: {
         config: this.config,
@@ -1012,6 +1006,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         clearSessionPlan: async (descriptor) => {
           await this.sessionPlanCoordinator.clear(descriptor);
         },
+        clearSessionGoal: async (descriptor) => { await runtimeComposition.goals.clear(descriptor); },
         writeForkedSessionMemoryHeader: (sourceDescriptor, forkedAgentId, fromMessageId) =>
           this.knowledgeMemoryCoordinator.writeForkedSessionMemoryHeader(
             sourceDescriptor,
@@ -1115,7 +1110,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
     });
   }
-  private createAgentMessageDispatcher(): AgentMessageDispatcher<CodexMcpToolGateEvaluation> {
+  private createAgentMessageDispatcher(goals: ReturnType<typeof createSwarmManagerRuntimeComposition>["goals"]): AgentMessageDispatcher<CodexMcpToolGateEvaluation> {
     const ledger = {
       hasSessionTarget: (agentId) =>
         Boolean(this.runtimeLifecycleCoordinator.getTurnLedgerSessionTarget(agentId)),
@@ -1161,6 +1156,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         recordWorkerAssignment: (owner, assignment, input) =>
           this.sessionPlanCoordinator.recordWorkerAssignment(owner, assignment, input),
       },
+      goals: { appendToManagerInput: (owner, text) => goals.appendToManagerInput(owner, text) },
       projectAgents: {
         authorizeExternalDelivery: (input) =>
           this.projectAgentSharingService.authorizeExternalDelivery(input),
@@ -1207,7 +1203,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     });
   }
 
-  private createUserMessageCoordinator(): UserMessageCoordinator {
+  private createUserMessageCoordinator(goals: ReturnType<typeof createSwarmManagerRuntimeComposition>["goals"]): UserMessageCoordinator {
     return new UserMessageCoordinator({
       targeting: {
         descriptors: this.descriptors,
@@ -1235,6 +1231,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       knowledge: this.knowledgeMemoryCoordinator,
       projectAgents: this.projectAgentCoordinator,
+      goals,
       turns: this.turnContextCoordinator,
       observability: this.observabilityCoordinator,
       events: this.eventCoordinator,

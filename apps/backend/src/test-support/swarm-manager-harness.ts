@@ -12,9 +12,14 @@ import type { ProjectExecutableTrustPlan } from '../swarm/project-executable-tru
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type { SwarmRuntimeLifecycleCoordinator } from '../swarm/swarm-runtime-lifecycle-coordinator.js'
 import type {
+  InboundTurnContextInput,
+  TurnContextCoordinator,
+} from '../swarm/turn-context-coordinator.js'
+import type { SessionGoalCoordinator } from '../swarm/goals/session-goal-coordinator.js'
+import type { RestartRecoveryCoordinator } from '../swarm/restart-recovery-coordinator.js'
+import type {
   AgentContextUsage,
   AgentDescriptor,
-  MessageSourceContext,
   MessageTargetContext,
   RequestedDeliveryMode,
   SendMessageReceipt,
@@ -193,6 +198,23 @@ export class TestSwarmManager extends SwarmManager {
     }).runtimeLifecycleCoordinator
   }
 
+  private get turnContextForTest(): TurnContextCoordinator {
+    return (this as unknown as { turnContextCoordinator: TurnContextCoordinator })
+      .turnContextCoordinator
+  }
+
+  private get goalsForTest(): SessionGoalCoordinator {
+    return (this as unknown as {
+      facadeServices: { goals: SessionGoalCoordinator }
+    }).facadeServices.goals
+  }
+
+  private get restartRecoveryForTest(): RestartRecoveryCoordinator {
+    return (this as unknown as {
+      facadeServices: { recovery: RestartRecoveryCoordinator }
+    }).facadeServices.recovery
+  }
+
   handleRuntimeStatus(
     runtimeToken: number,
     agentId: string,
@@ -241,12 +263,27 @@ export class TestSwarmManager extends SwarmManager {
     this.runtimeLifecycleForTest.emitImmediateManualManagerStopNotice(agentId)
   }
 
+  enqueueInboundTurnContextForTest(
+    agentId: string,
+    context: InboundTurnContextInput,
+  ): Promise<{ turnId: string; rollback(): void }> {
+    return this.turnContextForTest.enqueue(agentId, context)
+  }
+
+  runGoalContinuationForTest(agentId: string): Promise<void> {
+    return this.goalsForTest.runContinuation(agentId)
+  }
+
+  isRestartRecoveryDecisionPendingForTest(): boolean {
+    return this.restartRecoveryForTest.isDecisionPending()
+  }
+
   override async publishToUser(
     agentId: string,
     text: string,
     source: 'speak_to_user' | 'system' = 'speak_to_user',
     targetContext?: MessageTargetContext,
-  ): Promise<{ targetContext: MessageSourceContext }> {
+  ): ReturnType<SwarmManager['publishToUser']> {
     this.publishedToUserCalls.push({ agentId, text, source, targetContext })
     return super.publishToUser(agentId, text, source, targetContext)
   }

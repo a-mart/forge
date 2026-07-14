@@ -1,23 +1,23 @@
-import type { SessionActiveToolsSnapshotEvent, SpecialistTargetSpace } from "@forge/protocol";
+import type {
+  SessionActiveToolsSnapshotEvent,
+  SessionGoalSnapshotEvent,
+  SpecialistTargetSpace,
+} from "@forge/protocol";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
 import { ProfileBootReconciler } from "./agents/descriptor-store/profile-boot-reconciler.js";
 import { WorkerBootRecovery } from "./agents/descriptor-store/worker-boot-recovery.js";
 import { ProjectAgentMirrorReconciler } from "./agents/descriptor-store/project-agent-mirror-reconciler.js";
-import type { AgentDirectory } from "./agent-directory.js";
 import { AssistantOutputRouter } from "./assistant-output-router.js";
 import { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
-import type { CodexDirectSidecarCoordinator } from "./codex-app-server/codex-direct-sidecar-coordinator.js";
 import type {
-  CodexPluginDelegationCoordinator,
   CodexPluginDelegationTurnContext,
   CodexPluginRetryAuthorizationContext,
 } from "./codex-app-server/codex-plugin-delegation-coordinator.js";
 import type { CodexMcpToolGateEvaluation } from "./codex-app-server/codex-mcp-tool-gate.js";
-import type { ConversationProjector } from "./conversation-projector.js";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
-import type { KnowledgeMemoryCoordinator } from "./knowledge-memory-coordinator.js";
+import { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import { loadOnboardingState } from "./onboarding-state.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import type { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
@@ -31,7 +31,6 @@ import type { SecretsEnvService } from "./secrets-env-service.js";
 import type { SessionLifecycleCoordinator } from "./session-lifecycle-coordinator.js";
 import { SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
-import type { SessionProvisioner } from "./session-provisioner.js";
 import type { SkillMetadata } from "./skill-metadata-service.js";
 import {
   cleanupOldSharedConfigPaths,
@@ -41,9 +40,12 @@ import {
 import { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import { SwarmBootCoordinator } from "./swarm-boot-coordinator.js";
 import { SwarmCompactionCoordinator } from "./swarm-compaction-coordinator.js";
-import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
-import type { SwarmCortexService } from "./swarm-cortex-service.js";
-import type { SwarmEventCoordinator } from "./swarm-event-coordinator.js";
+import { createSwarmManagerCoordinationComposition } from "./swarm-manager-coordination-composition.js";
+import type {
+  SwarmManagerCompletedRuntimeComposition,
+  SwarmManagerRuntimeBoundServices,
+  SwarmManagerRuntimeCompositionOverrides,
+} from "./swarm-manager-runtime-boundary.js";
 import {
   createSwarmRuntimeControllerHost,
   type SwarmRuntimeControllerHostAdapterOptions,
@@ -56,13 +58,6 @@ import {
 import { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
-import type { SwarmChoiceService } from "./swarm-choice-service.js";
-import type { SwarmSessionMetaService } from "./swarm-session-meta-service.js";
-import type { SwarmSessionService } from "./swarm-session-service.js";
-import type { ArchiveLastUsedHydrator } from "./archive/archive-last-used-hydrator.js";
-import type { ArchiveService } from "./archive/archive-service.js";
-import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
-import type { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
 import { getManagedModelProviderCredentialAvailability } from "./secrets-env-service.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
@@ -80,7 +75,6 @@ import type {
   SpawnAgentInput,
   SwarmConfig,
 } from "./types.js";
-import type { PromptRegistry } from "./prompt-registry.js";
 import type { ResolvedSpecialistDefinitionLike } from "./prompt-resource-coordinator.js";
 
 type RuntimeHost = SwarmRuntimeControllerHostAdapterOptions;
@@ -116,6 +110,7 @@ export interface RuntimeCompositionEvents {
   emitAgentsSnapshot(): void;
   emitProfilesSnapshot(): void;
   emitSessionLifecycle(event: SessionLifecycleEvent): void;
+  emitSessionGoalSnapshot(event: SessionGoalSnapshotEvent): void;
   emitSessionActiveToolsSnapshot(snapshot: SessionActiveToolsSnapshotEvent | null): void;
   clearSessionActiveTools(agentId: string): SessionActiveToolsSnapshotEvent | null;
   saveStore(): Promise<void>;
@@ -258,43 +253,11 @@ export interface SwarmManagerRuntimeCompositionOptions {
   sessions: RuntimeCompositionSessionOperations;
 }
 
-export interface SwarmManagerRuntimeBoundServices {
-  conversation: ConversationProjector;
-  configuration: SwarmConfigurationCoordinator;
-  knowledge: KnowledgeMemoryCoordinator;
-  cortex: SwarmCortexService;
-  directory: AgentDirectory;
-  eventCoordinator: SwarmEventCoordinator;
-  sessionMeta: SwarmSessionMetaService;
-  choices: SwarmChoiceService;
-  provisioner: SessionProvisioner;
-  sessionService: SwarmSessionService;
-  archiveHydrator: ArchiveLastUsedHydrator;
-  archive: ArchiveService;
-  projectAgentService: SwarmProjectAgentService;
-  projectAgents: ProjectAgentCoordinator;
-  codexDirect: CodexDirectSidecarCoordinator;
-  codexPlugin: CodexPluginDelegationCoordinator;
-  promptRegistry: PromptRegistry;
-}
-
-export interface SwarmManagerRuntimeCompositionOverrides {
-  interruptExternalThreadSidecarTurn?: (agentId: string) => Promise<void>;
-  terminateExternalThreadSidecarTurn?: (agentId: string) => Promise<void>;
-}
-
-export interface SwarmManagerCompletedRuntimeComposition {
-  turnContext: TurnContextCoordinator<
-    CodexMcpToolGateEvaluation,
-    CodexPluginDelegationTurnContext,
-    CodexPluginRetryAuthorizationContext
-  >;
-  runtimeLifecycle: SwarmRuntimeLifecycleCoordinator;
-  lifecycle: SwarmAgentLifecycleService;
-  projectExecutableTrust: ProjectExecutableTrustCoordinator;
-  sessionLifecycle: SessionLifecycleCoordinator;
-  boot: SwarmBootCoordinator;
-}
+export type {
+  SwarmManagerCompletedRuntimeComposition,
+  SwarmManagerRuntimeBoundServices,
+  SwarmManagerRuntimeCompositionOverrides,
+} from "./swarm-manager-runtime-boundary.js";
 
 /**
  * Typed, phased owner for the runtime/lifecycle/boot graph.
@@ -313,6 +276,7 @@ export class SwarmManagerRuntimeComposition {
   readonly specialistFallback: SwarmSpecialistFallbackManager;
 
   private plans: SessionPlanCoordinator | undefined;
+  private goalCoordinator: SessionGoalCoordinator | undefined;
   private compactionCoordinator: SwarmCompactionCoordinator | undefined;
   private services: SwarmManagerRuntimeBoundServices | undefined;
   private completed: SwarmManagerCompletedRuntimeComposition | undefined;
@@ -326,6 +290,7 @@ export class SwarmManagerRuntimeComposition {
       sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
         options.messaging.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
       now: state.now,
+      onDecisionResolved: () => this.requireGoals().scheduleContinuationsAfterBoot(),
       logDebug: options.events.logDebug,
     });
 
@@ -375,22 +340,17 @@ export class SwarmManagerRuntimeComposition {
       throw new Error("Runtime composition planning is already attached");
     }
     this.plans = plans;
-    this.compactionCoordinator = new SwarmCompactionCoordinator({
-      descriptors: this.options.state.descriptors,
-      getOrCreateRuntime: this.options.runtimeResources.getOrCreateRuntimeForDescriptor,
-      syncPinnedContent: (descriptor) => this.options.foundation.sessionPins.syncPinnedContent(descriptor),
-      sessionPlans: plans,
+    const coordination = createSwarmManagerCoordinationComposition({
+      options: this.options,
+      plans,
       captureCascade: this.captureCascade,
-      incrementCompactionCount: (profileId, agentId, failureLogMessage) =>
-        this.requireServices().knowledge.incrementSessionCompactionCount(
-          profileId,
-          agentId,
-          failureLogMessage,
-        ),
-      emitConversationMessage: (event) => this.options.events.emitConversationMessage(event),
-      now: this.options.state.now,
-      logDebug: this.options.events.logDebug,
+      restartRecovery: this.restartRecovery,
+      getServices: () => this.requireServices(),
+      getTurnContext: () => this.requireTurnContext(),
+      getRuntimeLifecycle: () => this.requireRuntimeLifecycle(),
     });
+    this.goalCoordinator = coordination.goals;
+    this.compactionCoordinator = coordination.compaction;
     return this.compactionCoordinator;
   }
 
@@ -416,6 +376,7 @@ export class SwarmManagerRuntimeComposition {
       turnContext,
       codexScopes: services.codexPlugin,
       plans: this.plans,
+      goals: this.requireGoals(),
       events: services.eventCoordinator,
       now: this.options.state.now,
       logDebug: this.options.events.logDebug,
@@ -441,6 +402,7 @@ export class SwarmManagerRuntimeComposition {
     this.completed = {
       turnContext,
       runtimeLifecycle,
+      goals: this.requireGoals(),
       lifecycle,
       projectExecutableTrust,
       sessionLifecycle,
@@ -454,6 +416,10 @@ export class SwarmManagerRuntimeComposition {
       throw new Error("Runtime composition planning has not been attached");
     }
     return this.compactionCoordinator;
+  }
+
+  get goals(): SessionGoalCoordinator {
+    return this.requireGoals();
   }
 
   private createRuntimeControllerHost() {
@@ -871,6 +837,7 @@ export class SwarmManagerRuntimeComposition {
       projectAgents: services.projectAgentService,
       capture: this.captureCascade,
       plans: this.requirePlans(),
+      goals: this.requireGoals(),
       extensions: this.options.foundation.forgeExtensionHost,
       codex: {
         closeManagerScopesAndRetry: (agentId) => services.codexPlugin.closeManagerScopesAndRetry(agentId),
@@ -924,7 +891,12 @@ export class SwarmManagerRuntimeComposition {
       saveStore: events.saveStore,
       profileReconciler,
       preloadPinnedMessageIndexes: () => this.options.foundation.sessionPins.preload(),
-      preloadSessionPlanStates: runtimeResources.preloadSessionPlanStates,
+      preloadSessionPlanStates: async () => {
+        await Promise.all([
+          runtimeResources.preloadSessionPlanStates(),
+          this.requireGoals().preload(),
+        ]);
+      },
       logDebug: events.logDebug,
     });
     const workerRecovery = new WorkerBootRecovery({
@@ -989,6 +961,7 @@ export class SwarmManagerRuntimeComposition {
         emitProfilesSnapshot: events.emitProfilesSnapshot,
         scheduleProjectExecutableTrustPrompts: () => trust.schedulePromptsForAllManagers(),
         startWorkerHealth: () => runtimeLifecycle.startWorkerHealth(),
+        scheduleGoalContinuations: () => this.requireGoals().scheduleContinuationsAfterBoot(),
       },
       store: {
         save: events.saveStore,
@@ -1002,6 +975,11 @@ export class SwarmManagerRuntimeComposition {
   private requirePlans(): SessionPlanCoordinator {
     if (!this.plans) throw new Error("Runtime composition planning has not been attached");
     return this.plans;
+  }
+
+  private requireGoals(): SessionGoalCoordinator {
+    if (!this.goalCoordinator) throw new Error("Runtime composition planning has not been attached");
+    return this.goalCoordinator;
   }
 
   private requireServices(): SwarmManagerRuntimeBoundServices {

@@ -182,6 +182,7 @@ describe("SessionInteractionCoordinator", () => {
       ),
     ).resolves.toEqual({
       targetContext: { channel: "telegram", channelId: "chat-1" },
+      published: true,
     });
 
     expect(harness.events).toEqual([
@@ -200,6 +201,23 @@ describe("SessionInteractionCoordinator", () => {
       "manager",
       NOW,
     );
+  });
+
+  it("suppresses stale publication and choices after a newer user turn is queued", async () => {
+    const harness = createHarness();
+    vi.mocked(harness.options.turns.hasPendingSupersedingUserInput).mockReturnValue(true);
+
+    await expect(
+      harness.coordinator.publishToUser("manager", "Stale", "speak_to_user"),
+    ).resolves.toMatchObject({ published: false, reason: "superseded_by_user_input" });
+    await expect(
+      harness.coordinator.requestUserChoice("manager", [{ id: "q1", question: "Stale?" }]),
+    ).rejects.toThrow(/newer user message superseded/i);
+
+    expect(harness.events).toEqual([]);
+    expect(harness.options.events.markSessionActivity).not.toHaveBeenCalled();
+    expect(harness.options.runtimeOutput.markExplicitManagerAssistantOutput).not.toHaveBeenCalled();
+    expect(harness.options.choices.requestUserChoiceWithId).not.toHaveBeenCalled();
   });
 
   it("requires a Telegram channel id and keeps system publication free of manager-only effects", async () => {
@@ -361,6 +379,8 @@ function createHarness(): Harness {
       })),
     },
     turns: {
+      getActiveTurnId: vi.fn(() => "turn-1"),
+      hasPendingSupersedingUserInput: vi.fn(() => false),
       getActiveExternalProjectAgentTurn: vi.fn(() => undefined),
     },
     sessions: {

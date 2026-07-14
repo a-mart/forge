@@ -50,6 +50,8 @@ The ring icon next to the channel toggle shows how full the context window is. W
 
 For substantial multi-step work, managers can publish a concise working plan. The card at the top of chat highlights the current work, and the header control opens the complete checklist. Plans use only Pending, In progress, and Completed states and can show multiple active steps during parallel work.
 
+If you explicitly ask for sustained pursuit, the manager can instead keep one durable session goal across turns and multiple plans. Its compact bar remains below the header with pause, resume, edit, and cancel controls plus optional elapsed-time and token-budget details.
+
 ## Header controls
 
 The chat header still shows the pin count badge, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted. Desktop workspace buttons now live behind the activity rail instead of the header; mobile keeps the header workspace actions. Use the Chat rail item to jump back to the current manager/session chat, including from worker-route views back to the parent manager thread.

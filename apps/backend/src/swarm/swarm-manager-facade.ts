@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { EventEmitter } from "node:events";
 import type { AuthCredential } from "@earendil-works/pi-coding-agent";
 import type {
   ActivateRepoProjectAgentRequest,
@@ -89,6 +88,7 @@ import type {
 } from "./session-lifecycle-coordinator.js";
 import type {
   PublishToUserSource,
+  PublishToUserResult,
   ResetManagerSessionReason,
   SessionInteractionCoordinator,
 } from "./session-interaction-coordinator.js";
@@ -98,6 +98,7 @@ import type { CompactAgentContextOptions } from "./swarm-compaction-coordinator.
 import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import type { SwarmRuntimeLifecycleCoordinator } from "./swarm-runtime-lifecycle-coordinator.js";
 import type { SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
+import { SwarmManagerGoalFacade } from "./swarm-manager-goal-facade.js";
 import type {
   AppendConversationUserMessageOptions,
   AppendConversationUserMessageResult,
@@ -112,7 +113,6 @@ import type {
   ChoiceRequestStatus,
   ConversationEntryEvent,
   ManagerProfile,
-  MessageSourceContext,
   MessageTargetContext,
   RequestedDeliveryMode,
   SendMessageReceipt,
@@ -214,7 +214,7 @@ import type {
  * coordinators above, while this class keeps the manager's compatibility
  * surface explicit without forcing every delegate into the composition root.
  */
-export abstract class SwarmManagerFacade extends EventEmitter {
+export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
   protected abstract getFacadeServices(): SwarmManagerFacadeServices;
   flushPendingPersistence(): Promise<void> { return this.services.persistence.flushPendingTurnSeqPersists(); }
   getSessionPlanSnapshot(
@@ -487,7 +487,7 @@ export abstract class SwarmManagerFacade extends EventEmitter {
     text: string,
     source: PublishToUserSource = "speak_to_user",
     targetContext?: MessageTargetContext,
-  ): Promise<{ targetContext: MessageSourceContext }> {
+  ): Promise<PublishToUserResult> {
     return this.services.interactions.publishToUser(agentId, text, source, targetContext);
   }
 

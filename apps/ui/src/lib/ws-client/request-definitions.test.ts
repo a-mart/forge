@@ -4,6 +4,7 @@ import {
   buildHydrateArchiveLastUsedCommand,
   buildProfileArchiveActionCommand,
   buildSessionActionCommand,
+  buildSessionGoalControlCommand,
 } from './request-definitions'
 
 describe('buildCreateManagerCommand', () => {
@@ -80,6 +81,22 @@ describe('archive request command builders', () => {
       type: 'restore_profile',
       profileId: 'profile-a',
       requestId: 'req-restore-profile',
+    })
+  })
+})
+
+describe('buildSessionGoalControlCommand', () => {
+  it('preserves the narrow discriminated goal action', () => {
+    expect(buildSessionGoalControlCommand('session-a', {
+      action: 'edit',
+      objective: 'Refined outcome',
+      tokenBudget: null,
+    })).toEqual({
+      type: 'session_goal_control',
+      agentId: 'session-a',
+      action: 'edit',
+      objective: 'Refined outcome',
+      tokenBudget: null,
     })
   })
 })

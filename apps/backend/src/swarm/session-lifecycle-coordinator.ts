@@ -18,6 +18,7 @@ import type {
 } from "./archive/archive-service.js";
 import type { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
+import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import {
   normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
@@ -104,6 +105,10 @@ export interface SessionLifecycleCoordinatorOptions {
   projectAgents: Pick<SwarmProjectAgentService, "createAndPromoteProjectAgent">;
   capture: Pick<CaptureCascadeCoordinator, "run">;
   plans: Pick<SessionPlanCoordinator, "forget">;
+  goals: Pick<
+    SessionGoalCoordinator,
+    "cancelScheduledContinuation" | "forget" | "scheduleContinuation"
+  >;
   extensions: Pick<ForgeExtensionHost, "dispatchSessionLifecycle">;
   codex: {
     closeManagerScopesAndRetry(agentId: string): void;
@@ -274,6 +279,7 @@ export class SessionLifecycleCoordinator {
   }
 
   async archiveSession(agentId: string): Promise<ArchiveSessionResult> {
+    this.options.goals.cancelScheduledContinuation(agentId);
     await this.options.capture.run(agentId, "archive");
     this.cleanupCodex(agentId);
     const result = await this.options.archive.archiveSession(agentId);
@@ -299,6 +305,7 @@ export class SessionLifecycleCoordinator {
   async archiveProfile(profileId: string): Promise<ArchiveProfileResult> {
     for (const session of this.getSessionsForProfile(profileId)) {
       this.cleanupCodex(session.agentId);
+      this.options.goals.cancelScheduledContinuation(session.agentId);
     }
     const result = await this.options.archive.archiveProfile(profileId);
     for (const session of this.getSessionsForProfile(profileId)) {
@@ -347,6 +354,9 @@ export class SessionLifecycleCoordinator {
     this.assertDescriptorNotEffectivelyArchived(descriptor);
     await this.options.runtime.beforeResumeSession(descriptor);
     await this.options.lifecycle.resumeSession(agentId);
+    this.options.goals.scheduleContinuation(
+      this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions"),
+    );
   }
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
@@ -356,6 +366,7 @@ export class SessionLifecycleCoordinator {
     );
     const result = await this.options.sessions.deleteSession(agentId);
     this.options.plans.forget(agentId);
+    this.options.goals.forget(agentId);
     this.options.activeTools.clearSession(agentId);
     await this.emitExtensionLifecycle("deleted", descriptor);
     return result;
@@ -467,6 +478,7 @@ export class SessionLifecycleCoordinator {
     const deleted = sessions.map((session) => cloneDescriptor(session));
     const result = await this.options.lifecycle.deleteManager(callerAgentId, targetManagerId);
     for (const descriptor of deleted) {
+      this.options.goals.forget(descriptor.agentId);
       await this.emitExtensionLifecycle("deleted", descriptor);
     }
     return result;
@@ -476,6 +488,7 @@ export class SessionLifecycleCoordinator {
     agentId: string,
   ): Promise<{ terminatedWorkerIds: string[] }> {
     this.cleanupCodex(agentId);
+    this.options.goals.cancelScheduledContinuation(agentId);
     const result = await this.options.lifecycle.stopSession(agentId);
     this.options.activeTools.clearSession(agentId);
     return result;

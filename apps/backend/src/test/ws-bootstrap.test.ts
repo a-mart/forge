@@ -33,6 +33,17 @@ function createPlanSnapshotEvent(agentId: string): Extract<ServerEvent, { type: 
   }
 }
 
+function createGoalSnapshotEvent(agentId: string): Extract<ServerEvent, { type: 'session_goal_snapshot' }> {
+  return {
+    type: 'session_goal_snapshot',
+    sessionAgentId: agentId,
+    profileId: 'profile-1',
+    revision: 0,
+    measuredAt: '2026-07-12T00:00:00.000Z',
+    goal: null,
+  }
+}
+
 function createModelCacheObservationEvent(agentId: string): Extract<ServerEvent, { type: 'model_cache_observation' }> {
   return {
     type: 'model_cache_observation',
@@ -127,6 +138,7 @@ describe('sendSubscriptionBootstrap', () => {
         },
       ]),
       getSessionPlanSnapshot: vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId)),
+      getSessionGoalSnapshot: vi.fn(async (agentId: string) => createGoalSnapshotEvent(agentId)),
     } as any
 
     const result = await sendSubscriptionBootstrap({
@@ -181,7 +193,7 @@ describe('sendSubscriptionBootstrap', () => {
       ],
     })
     expect(bootstrapOptions?.fields).not.toHaveProperty('agentId')
-    expect(send).toHaveBeenCalledTimes(8)
+    expect(send).toHaveBeenCalledTimes(9)
     expect(result).toEqual({
       agentsSnapshotSent: true,
       profilesSnapshotSent: true,
@@ -229,6 +241,7 @@ describe('sendSubscriptionBootstrap', () => {
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
         getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
         isModelCacheVisualizationEnabled: () => false,
       } as any,
       integrationRegistry: null,
@@ -293,6 +306,7 @@ describe('sendSubscriptionBootstrap', () => {
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
         getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
         isModelCacheVisualizationEnabled: () => true,
       } as any,
       integrationRegistry: null,
@@ -376,6 +390,7 @@ describe('sendSubscriptionBootstrap', () => {
       getPendingChoiceIdsForSession: vi.fn(() => []),
       getPendingChoiceRequestsForSession: vi.fn(() => []),
       getSessionPlanSnapshot: vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId)),
+      getSessionGoalSnapshot: vi.fn(async (agentId: string) => createGoalSnapshotEvent(agentId)),
     } as any
 
     await sendSubscriptionBootstrap({
@@ -441,6 +456,7 @@ describe('sendSubscriptionBootstrap', () => {
       getPendingChoiceIdsForSession: vi.fn(() => []),
       getPendingChoiceRequestsForSession: vi.fn(() => []),
       getSessionPlanSnapshot: vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId)),
+      getSessionGoalSnapshot: vi.fn(async (agentId: string) => createGoalSnapshotEvent(agentId)),
     } as any
 
     const result = await sendSubscriptionBootstrap({
@@ -472,14 +488,14 @@ describe('sendSubscriptionBootstrap', () => {
       profilesSnapshotBuildMs: 0,
       profilesSnapshotPayloadBytes: 0,
     })
-    expect(send).toHaveBeenCalledTimes(6)
+    expect(send).toHaveBeenCalledTimes(7)
     expect(result).toEqual({
       agentsSnapshotSent: false,
       profilesSnapshotSent: false,
     })
   })
 
-  it('sends session_plan_snapshot after pending choices and before terminals', async () => {
+  it('sends plan and goal snapshots after pending choices and before terminals', async () => {
     const sentEvents: ServerEvent[] = []
     await sendSubscriptionBootstrap({
       socket: {} as any,
@@ -521,6 +537,7 @@ describe('sendSubscriptionBootstrap', () => {
           ...createPlanSnapshotEvent(agentId),
           revision: 7,
         }),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
       } as any,
       integrationRegistry: null,
       terminalService: null,
@@ -543,6 +560,7 @@ describe('sendSubscriptionBootstrap', () => {
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
       'session_plan_snapshot',
+      'session_goal_snapshot',
       'terminals_snapshot',
     ])
     expect(sentEvents[4]).toMatchObject({
@@ -563,11 +581,17 @@ describe('sendSubscriptionBootstrap', () => {
       revision: 7,
       plan: [],
     })
+    expect(sentEvents[7]).toMatchObject({
+      type: 'session_goal_snapshot',
+      sessionAgentId: 'manager-1',
+      goal: null,
+    })
   })
 
   it('skips session_plan_snapshot for non-session bootstrap targets', async () => {
     const sentEvents: ServerEvent[] = []
     const getSessionPlanSnapshot = vi.fn(async (agentId: string) => createPlanSnapshotEvent(agentId))
+    const getSessionGoalSnapshot = vi.fn(async (agentId: string) => createGoalSnapshotEvent(agentId))
 
     await sendSubscriptionBootstrap({
       socket: {} as any,
@@ -596,6 +620,7 @@ describe('sendSubscriptionBootstrap', () => {
         getPendingChoiceIdsForSession: () => [],
         getPendingChoiceRequestsForSession: () => [],
         getSessionPlanSnapshot,
+        getSessionGoalSnapshot,
       } as any,
       integrationRegistry: null,
       terminalService: null,
@@ -611,6 +636,7 @@ describe('sendSubscriptionBootstrap', () => {
     })
 
     expect(getSessionPlanSnapshot).not.toHaveBeenCalled()
+    expect(getSessionGoalSnapshot).not.toHaveBeenCalled()
     expect(sentEvents.map((event) => event.type)).toEqual([
       'ready',
       'agents_snapshot',
@@ -652,6 +678,7 @@ describe('sendSubscriptionBootstrap', () => {
         getPendingChoiceRequestsForSession: () => [],
         getPendingChoiceIdsForSession: () => ['legacy-choice-1'],
         getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
       } as any,
       integrationRegistry: null,
       terminalService: null,
@@ -726,6 +753,7 @@ describe('sendSubscriptionBootstrap', () => {
           getPendingChoiceIdsForSession: () => [],
           getPendingChoiceRequestsForSession: () => [],
           getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+          getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
         } as any,
         integrationRegistry: null,
         terminalService: null,

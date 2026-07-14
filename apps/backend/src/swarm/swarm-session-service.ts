@@ -81,6 +81,7 @@ export interface SwarmSessionServiceOptions {
     entry: { from: string; to: string; renamedAt: string }
   ) => Promise<void>;
   clearSessionPlan: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
+  clearSessionGoal: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
   copySessionHistoryForFork: (
     sourceSessionFile: string,
     targetSessionFile: string,
@@ -268,6 +269,9 @@ export class SwarmSessionService {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     assertBuilderSession(descriptor, "clear Builder conversations");
     this.options.cancelAllPendingChoicesForAgent(agentId);
+    // Capture and archive the live goal before truncating the manager transcript,
+    // which is the source of its token-usage estimate.
+    await this.options.clearSessionGoal(descriptor);
 
     if (descriptor.sessionFile) {
       try {

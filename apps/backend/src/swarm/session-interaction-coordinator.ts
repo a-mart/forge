@@ -35,10 +35,17 @@ const CORTEX_ARCHETYPE_ID = "cortex";
 
 export type ResetManagerSessionReason = "user_new_command" | "api_reset";
 export type PublishToUserSource = "speak_to_user" | "system";
+export interface PublishToUserResult {
+  targetContext: MessageSourceContext;
+  published: boolean;
+  reason?: "superseded_by_user_input";
+}
 
 type SessionOwner = AgentDescriptor & { role: "manager"; profileId: string };
 
 export interface SessionInteractionTurnPort {
+  getActiveTurnId(agentId: string): string | undefined;
+  hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean;
   getActiveExternalProjectAgentTurn(agentId: string):
     | {
         fromAgentId: string;
@@ -184,6 +191,14 @@ export class SessionInteractionCoordinator {
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
     this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "present_choices");
+    const activeTurnId = this.options.turns.getActiveTurnId(agentId);
+    if (this.options.turns.hasPendingSupersedingUserInput(agentId, activeTurnId)) {
+      this.options.logDebug("manager:present_choices:suppressed_superseded_turn", {
+        agentId,
+        activeTurnId,
+      });
+      throw new Error("Choice request skipped because a newer user message superseded this turn.");
+    }
     const pending = this.options.choices.requestUserChoiceWithId(agentId, questions);
     this.options.assistantOutput.rememberChoiceContinuation(pending.choiceId, agentId);
     this.options.runtimeOutput.flushPreservedManagerAssistantOutputForTool(
@@ -274,7 +289,7 @@ export class SessionInteractionCoordinator {
     text: string,
     source: PublishToUserSource = "speak_to_user",
     targetContext?: MessageTargetContext,
-  ): Promise<{ targetContext: MessageSourceContext }> {
+  ): Promise<PublishToUserResult> {
     if (source === "speak_to_user") {
       this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "speak_to_user");
     }
@@ -285,6 +300,20 @@ export class SessionInteractionCoordinator {
     if (source === "speak_to_user") {
       const descriptor = this.options.directory.assertManager(agentId, "speak to user");
       resolvedTargetContext = this.resolveReplyTargetContext(targetContext);
+      const activeTurnId = this.options.turns.getActiveTurnId(agentId);
+      if (this.options.turns.hasPendingSupersedingUserInput(agentId, activeTurnId)) {
+        this.options.logDebug("manager:publish_to_user:suppressed_superseded_turn", {
+          agentId,
+          activeTurnId,
+          targetContext: resolvedTargetContext,
+          textPreview: previewForLog(text),
+        });
+        return {
+          targetContext: resolvedTargetContext,
+          published: false,
+          reason: "superseded_by_user_input",
+        };
+      }
       if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
         normalizedText = normalizeCortexUserVisiblePaths(text);
       }
@@ -314,7 +343,7 @@ export class SessionInteractionCoordinator {
       targetContext: resolvedTargetContext,
       textPreview: previewForLog(normalizedText),
     });
-    return { targetContext: resolvedTargetContext };
+    return { targetContext: resolvedTargetContext, published: true };
   }
 
   async resetManagerSession(

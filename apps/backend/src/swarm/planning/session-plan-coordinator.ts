@@ -164,6 +164,10 @@ export class SessionPlanCoordinator {
     return appendSessionPlanCompactionInstructions(instructions, await this.getState(owner))
   }
 
+  async hasIncompleteSteps(owner: SessionPlanOwner): Promise<boolean> {
+    return (await this.getState(owner)).plan.some((step) => step.status !== 'completed')
+  }
+
   private async getState(owner: SessionPlanOwner): Promise<SessionPlanState> {
     const cached = this.statesByAgentId.get(owner.agentId)
     if (cached) return cached

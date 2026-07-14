@@ -58,6 +58,7 @@ export interface BootPublicationPort {
   emitProfilesSnapshot(): void;
   scheduleProjectExecutableTrustPrompts(): void;
   startWorkerHealth(): void;
+  scheduleGoalContinuations(): void;
 }
 
 export interface BootDescriptorStorePort {
@@ -147,6 +148,7 @@ export class SwarmBootCoordinator {
     publication.emitProfilesSnapshot();
     publication.scheduleProjectExecutableTrustPrompts();
     publication.startWorkerHealth();
+    publication.scheduleGoalContinuations();
     this.options.logDebug("boot:ready", {
       managerId: manager?.agentId,
       managerStatus: manager?.status,

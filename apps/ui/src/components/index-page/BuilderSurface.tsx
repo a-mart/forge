@@ -308,6 +308,9 @@ export function BuilderSurface({
   const planSnapshot = isActiveManager && activeAgentId && state.planSnapshotLoadingSessionId !== activeAgentId
     ? state.planSnapshots[activeAgentId] ?? null
     : null
+  const goalSnapshot = isActiveManager && activeAgentId && state.goalSnapshotLoadingSessionId !== activeAgentId
+    ? state.goalSnapshots[activeAgentId] ?? null
+    : null
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager
@@ -1077,6 +1080,10 @@ export function BuilderSurface({
                       : undefined,
                 }}
                 planSnapshot={planSnapshot}
+                goalSnapshot={goalSnapshot}
+                onGoalAction={(action) => {
+                  if (activeAgentId) clientRef.current?.controlSessionGoal(activeAgentId, action)
+                }}
                 workerPillBarProps={
                   isActiveManager
                     ? {

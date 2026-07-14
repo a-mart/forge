@@ -268,6 +268,13 @@ export async function sendSubscriptionBootstrap(options: {
     metricFields.planSnapshotMs = 0;
   }
 
+  if (planSnapshotSessionAgentId) {
+    await sendMeasured(
+      "goalSnapshot",
+      await swarmManager.getSessionGoalSnapshot(planSnapshotSessionAgentId),
+    );
+  }
+
   const terminalsSnapshotStartedAtMs = performance.now();
   const effectiveTerminalSessionId = resolveTerminalScopeAgentId(targetAgentId) ?? targetAgentId;
   const terminals =

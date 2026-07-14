@@ -49,6 +49,8 @@ import {
   getSessionFeedbackPath,
   getSessionMemoryPath,
   getSessionMetaPath,
+  getSessionGoalHistoryPath,
+  getSessionGoalPath,
   getSessionPlanHistoryPath,
   getSessionPlanPath,
   getSessionsDir,
@@ -145,6 +147,12 @@ describe("data-paths", () => {
     );
     expect(getSessionPlanHistoryPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "plan-history.ndjson")
+    );
+    expect(getSessionGoalPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "goal.json")
+    );
+    expect(getSessionGoalHistoryPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "goal-history.ndjson")
     );
 
     expect(getWorkersDir(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(

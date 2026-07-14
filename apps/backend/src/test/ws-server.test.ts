@@ -70,6 +70,21 @@ function createPlanSnapshotEvent(
   }
 }
 
+function createGoalSnapshotEvent(
+  sessionAgentId: string,
+  profileId: string,
+  revision: number,
+): Extract<ServerEvent, { type: 'session_goal_snapshot' }> {
+  return {
+    type: 'session_goal_snapshot',
+    sessionAgentId,
+    profileId,
+    revision,
+    measuredAt: '2026-07-12T00:00:00.000Z',
+    goal: null,
+  }
+}
+
 function createModelCacheObservationEvent(
   agentId: string,
   id: string,
@@ -415,6 +430,28 @@ describe('SwarmWebSocketServer', () => {
       (event) => event.type === 'session_plan_snapshot' && event.sessionAgentId === 'manager',
     )
     expect(workerEvents.some((event) => event.type === 'session_plan_snapshot')).toBe(false)
+
+    manager.emit('session_goal_snapshot', {
+      ...createGoalSnapshotEvent('manager', 'manager', 2),
+      goal: {
+        id: 'goal-1',
+        objective: 'Verify live goal delivery',
+        status: 'active',
+        createdAt: '2026-07-12T00:00:00.000Z',
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        activeElapsedMs: 1_000,
+        turnCount: 2,
+        usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12 },
+        usageCoverage: 'complete',
+      },
+    } satisfies ServerEvent)
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'session_goal_snapshot'
+        && event.sessionAgentId === 'manager'
+        && event.revision === 2,
+    )
+    expect(workerEvents.some((event) => event.type === 'session_goal_snapshot')).toBe(false)
 
     const unreadBeforeCache = workerEvents.filter((event) => event.type === 'unread_notification').length
 
