@@ -350,6 +350,37 @@ describe("RuntimeConversationEventMapper", () => {
     ]);
   });
 
+  it("gives manager many-image dimension errors an image-history recovery hint", () => {
+    const descriptor = makeDescriptor({ agentId: "manager", role: "manager", managerId: "manager" });
+    const errorMessage =
+      "messages.12.content.1.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels";
+
+    const projections = mapRuntimeEvent({
+      descriptor,
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage
+        } as never
+      }
+    });
+
+    expect(projections).toEqual([
+      {
+        type: "conversation_message",
+        agentId: "manager",
+        role: "system",
+        text: `⚠️ Manager reply failed because images exceeded the provider's many-image dimension limit (${errorMessage}). Try compacting the conversation or start a new session to remove older images from the model request.`,
+        timestamp: FIXED_NOW,
+        source: "system"
+      }
+    ]);
+    expect(projections[0]?.text).not.toContain("provider auth and rate limits");
+  });
+
   it("strips full Codex Plugin content from worker and manager audit projections while preserving runtime result and preview", () => {
     const descriptor = makeDescriptor({ internalWorkerKind: "codex_plugin" } as Partial<AgentDescriptor>);
     const preview = "synthetic transcript preview";

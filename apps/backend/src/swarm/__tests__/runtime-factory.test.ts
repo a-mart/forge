@@ -362,6 +362,9 @@ function createFactory(
 
 function createMockPiSession() {
   return {
+    agent: {
+      transformContext: vi.fn(async (messages: unknown, _signal?: AbortSignal) => messages),
+    },
     bindExtensions: vi.fn(async () => undefined),
     getActiveToolNames: vi.fn(() => []),
     getAllTools: vi.fn(() => []),
@@ -630,6 +633,26 @@ describe("RuntimeFactory", () => {
     expect(loaderOptions.additionalSkillPaths).toEqual([profileSkillPath]);
     expect(loaderOptions.additionalSkillPaths).not.toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
     expect(loaderOptions.skillsOverride).toBeUndefined();
+  });
+
+  it("installs provider-context image normalization on every created Pi session", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const piSession = createMockPiSession();
+    const existingTransform = piSession.agent.transformContext;
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: piSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir);
+
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+
+    expect(piSession.agent.transformContext).not.toBe(existingTransform);
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    const signal = new AbortController().signal;
+    await piSession.agent.transformContext(messages, signal);
+    expect(existingTransform).toHaveBeenCalledWith(messages, signal);
   });
 
   it("records Pi runtime prompt and creation observability metadata", async () => {
