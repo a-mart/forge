@@ -54,9 +54,9 @@ Remote Projects lets this Builder open projects that remain on another Forge col
 2. Enter the server URL, select **Test**, and confirm the connection succeeds.
 3. Select **Add**, then sign in to that connection with your collaboration email and password.
 4. Turn on **Remote projects** for the connection. A newly added connection is opted in automatically only when its successful Test response advertised Remote Projects support; an existing connection's preference is not silently changed.
-5. Return to Builder and select a blue, globe-marked remote project header or a nested session row beneath it. Nested session rows use status dots rather than the globe marker.
+5. Return to Builder. Select a nested remote session row to make that server active. The blue, globe-marked project header only expands or collapses its session list; nested session rows use status dots.
 
-The **Remote projects** switch is a browser-local display/connection preference, not an access control. The collaboration server must separately enable its Remote Projects policy. Remote paths, Files operations, Git and `gh` commands, terminals, agents, and session data run or remain on that server—there is no local clone or sync. When remote terminal access is disabled, existing terminal descriptors or read visibility may remain, but subsequent member terminal lifecycle mutations and new ticket issuance are denied; an already attached terminal socket is not terminated. Members should be trusted instance operators: Remote Projects provides broad Builder read/write access to exposed projects and has no per-project ACL.
+The **Remote projects** switch is a browser-local display/connection preference, not an access control. The collaboration server must separately enable its Remote Projects policy. Remote paths, Files operations, Git and `gh` commands, terminals, agents, and session data run or remain on that server—there is no local clone or sync. **New Project** uses the remote server directory browser (or a manually entered server path) under `FORGE_CWD_ALLOWLIST_ROOTS`, never the viewing machine's native folder picker. When remote terminal access is disabled, existing terminal descriptors or read visibility may remain, but subsequent member terminal lifecycle mutations and new ticket issuance are denied; an already attached terminal socket is not terminated. Members should be trusted instance operators: Remote Projects provides broad Builder read/write access to exposed projects and has no per-project ACL.
 
 In remote chat, author chips identify messages from other users. The viewer indicator is a snapshot of authenticated people subscribed to that session; it is not typing presence, an edit lock, or proof that someone is actively reading.
 
@@ -79,8 +79,8 @@ Once provider credentials are configured, you'll see the main interface: a chat 
 Click the **+** button to create a new project. You'll be prompted for:
 
 - **Name** — Something meaningful. If it's for your web app, call it "webapp" or "analytics-api," not "test." You'll thank yourself later when you have five managers running.
-- **Project directory** — The root of the project you want to work on. This is where the manager and its workers will operate.
-- **Model** — Pick the manager model. If the model supports it, you can also choose a reasoning level; unsupported reasoning options are hidden and the default is used when you leave it out.
+- **Working directory** — The root of the project you want to work on. Use a local folder, or choose **Clone repository** when that source option is available. This is where the manager and its workers will operate.
+- **Default Model** — Pick the exact manager model for the project. The Reasoning Level selector shows the levels supported by that model and starts at its model-aware default.
 
 By default, the Create Project dialog also seeds repo-root `.forge` project resources. Leave that checkbox on if you want the starter `.forge/` tree; turn it off to skip the scaffold.
 
@@ -157,7 +157,7 @@ The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository doe
 
 ### Session Sidebar
 
-The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Enabled remote project headers are mixed into this list with blue styling and a globe marker; their nested session rows use status dots. Remote actions are limited: **Change Working Directory** is available on a project header through the server directory browser, while local rename, archive, delete, fork, and model actions are absent. Their connection section can show connecting, sign-in required, unreachable, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. Selecting a remote project or session targets supported chat/workspace surfaces at that server; selecting a local row switches them back. Dragging local and remote project headers only changes the order saved by the local Builder instance—it does not grant remote access. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived local projects and directly archived sessions; Archive itself remains local when a remote project is selected. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
+The left sidebar shows all your sessions across all projects. Click a project header to expand or collapse its nested sessions; the header itself does not select a conversation. Select a session row to switch conversations, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Enabled remote project headers are mixed into this list with blue styling and a globe marker; their nested session rows use status dots. Remote actions are limited: **Change Working Directory** is available on a project header through the server directory browser, while local rename, archive, delete, fork, and model actions are absent. Their connection section can show connecting, sign-in required, unreachable, **Update Forge to connect**, Remote Projects disabled on the server, or connected with no projects. Selecting a remote session targets supported chat/workspace surfaces at that server; selecting a local session switches them back. Dragging local and remote project headers only changes the order saved by the local Builder instance—it does not grant remote access. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived local projects and directly archived sessions; Archive itself remains local when a remote session is selected. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
 
 **Pinning sessions:** Right-click any session and select "Pin" to keep it at the top of the sidebar. Pinned sessions appear below project agents but above regular sessions and are never hidden by the "Show N more" pagination. Click "Unpin" to return a session to regular sorting. Sessions are pinned per profile — forked sessions don't inherit pin state.
 
@@ -261,9 +261,9 @@ Click any session in the sidebar to switch to it. Your manager tracks state inde
 
 ### Working plans
 
-For substantial multi-step work, a manager can publish a working plan with `update_plan`. The card at the top of chat highlights the current work, while the header popover shows the complete checklist and completion count. Plans use only Pending, In progress, and Completed states, and multiple steps can be In progress during parallel work; small requests usually skip the plan entirely.
+For substantial multi-step work, a manager can publish a working plan with `update_plan`. The first revision creates one card at that point in the conversation. Progress revisions update the same card in place instead of adding timeline clutter. When every step is complete, that card stays where it was and becomes a collapsed **Plan complete** card with a frozen final checklist; a later plan creates a new card at its new conversation position. Compact controls in the chat header and above the composer keep current progress available after the inline card scrolls away. Plans use only Pending, In progress, and Completed states, and multiple steps can be In progress during parallel work; small requests usually skip the plan entirely.
 
-When a manager delegates work that clearly belongs to one plan step, Forge can associate that worker assignment with the exact step text. The visible checklist stays unchanged. After steps and the plan complete, Forge writes append-only token-usage estimates to the session's `plan-usage.ndjson` for future offline analysis, including manager totals, per-step worker totals, unassigned usage, and attribution coverage.
+When a manager delegates work that clearly belongs to one plan step, Forge can associate that worker assignment with the exact step text. The visible checklist stays unchanged. Forge saves the current snapshot in `plan.json`, outgoing revisions in `plan-history.ndjson`, and append-only assignment and token-usage estimates in `plan-usage.ndjson`, including manager totals, per-step worker totals, unassigned usage, and attribution coverage. Clearing the conversation clears its current plan; stopping or archiving preserves it. Forks do not copy the live plan or its history/accounting files.
 
 ### Archive and Restore
 
@@ -643,20 +643,27 @@ There's a growing ecosystem of community Pi packages you can install from npm or
 
 ### The Data Directory
 
-All of Forge's state lives in a single directory:
+Forge application state uses a single data directory (repository and workspace files remain separate):
 
 - **macOS/Linux:** `~/.forge`
 - **Windows:** `%LOCALAPPDATA%\forge`
 
-No database. Everything is files (JSON, JSONL, and Markdown):
+Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journals/snapshots). A collaboration-server data directory also contains SQLite at `shared/config/collaboration/auth.db` for authentication and structured collaboration domain state; user-authored prompts, references, specialists, and skills remain file-backed. Key paths are:
 
 ```
 ~/.forge/
 ├── swarm/agents.json              # Global agent registry
 ├── shared/
 │   ├── config/
-│   │   ├── auth/                  # Your authentication credentials
-│   │   └── knowledge-v2.json      # Default-off Knowledge v2 mode settings
+│   │   ├── auth/                  # Provider auth, pools, broker source, CLI keys
+│   │   ├── collaboration/
+│   │   │   ├── auth.db            # Collaboration auth + structured state
+│   │   │   └── auth-secret.key    # Generated collaboration auth secret
+│   │   ├── secrets.json           # Shared secret values
+│   │   ├── knowledge-v2.json      # Default-off Knowledge v2 mode settings
+│   │   └── terminal-settings.json # Saved terminal default shell
+│   ├── cache/                     # Regenerable stats/model/provider caches
+│   ├── state/                     # Devices, project-agent shares, migration markers
 │   └── knowledge/
 │       ├── common.md              # Legacy common knowledge (prompt source only with v2 OFF)
 │       ├── entries/               # Global Knowledge v2 entries
@@ -677,21 +684,25 @@ No database. Everything is files (JSON, JSONL, and Markdown):
     │   └── reference/             # Per-agent reference documents
     └── sessions/<sessionId>/
         ├── session.jsonl          # Conversation history (the source of truth)
+        ├── turns.jsonl            # Rotating fail-open turn ledger
+        ├── receipts.jsonl[.1]     # Current/rotated routing receipts
         ├── plan.json              # Current Builder working plan snapshot
         ├── plan-history.ndjson    # Outgoing working-plan revisions
-        ├── plan-usage.ndjson      # Append-only worker assignment and token-usage receipts
+        ├── plan-usage.ndjson      # Append-only assignment/usage receipts
         ├── meta.json              # Session metadata
         ├── memory.md              # Session working memory
-        └── workers/               # Individual worker logs
+        ├── terminals/             # PTY metadata, snapshots, output journals
+        ├── cursor-sdk-state/      # Manager Cursor SDK runtime state
+        └── workers/               # Worker JSONL logs and worker Cursor SDK state
 ```
 
 Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh.
 
 Cortex is architecturally just another manager agent. It lives in the same profile structure with its own sessions and workers.
 
-**Backing up:** Copy the `~/.forge` directory. That's it. No database dumps, no export tools. Just files.
+See [Configuration](CONFIGURATION.md#data-directory) for the fuller canonical layout and which files are secrets, state, or regenerable caches.
 
-Your repo directory is disposable from Forge's perspective. You can delete and re-clone it. All durable state (history, memory, knowledge, settings) lives in the data directory.
+**Backing up:** Copy the authoritative `FORGE_DATA_DIR` while Forge is stopped or through a storage-level consistent snapshot; this includes the collaboration SQLite file when present. Back up repository/workspace mounts separately—Forge does not copy working trees into its data directory. For Remote Projects, both the data directory and workspace live on the selected server, not the viewing client.
 
 ---
 
@@ -731,7 +742,7 @@ Also be aware of prompt injection risks when agents browse the web. Malicious we
 
 ### Back Up Your Data Directory
 
-`~/.forge` is everything. Your conversation history, your Cortex knowledge, your preferences, your session memory. Copy it periodically. If your machine dies, this directory is all you need to pick back up.
+`~/.forge` (or your configured `FORGE_DATA_DIR`) contains Forge application state such as conversation history, Cortex knowledge, preferences, and session memory. Copy it periodically while Forge is stopped or with a storage-level consistent snapshot. Repository and workspace directories are not copied into the Forge data directory, so back them up separately; Remote Projects state and workspaces must be backed up on the server that hosts them.
 
 ### Watch GitHub Releases for Updates
 

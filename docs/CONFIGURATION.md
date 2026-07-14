@@ -30,7 +30,6 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 |----------|---------|-------------|
 | `BRAVE_API_KEY` | — | API key for the [Brave Search](https://brave.com/search/api/) web search skill. |
 | `GEMINI_API_KEY` | — | API key for the Google Gemini image generation skill. |
-| `OPENAI_API_KEY` | — | API key for OpenAI Codex models when using external API-key auth. |
 
 Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
 
@@ -47,13 +46,18 @@ Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` ali
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `XAI_API_KEY` | — | API key for xAI/Grok models (when using external API key mode). |
+| `ANTHROPIC_API_KEY` | — | Environment fallback for Anthropic API-key authentication. |
+| `OPENAI_API_KEY` | — | Environment fallback for OpenAI/Codex API-key authentication. |
+| `XAI_API_KEY` | — | Environment fallback for xAI/Grok API-key authentication. |
+| `OPENROUTER_API_KEY` | — | Environment fallback for OpenRouter API-key authentication. |
+| `CURSOR_API_KEY` | — | Environment fallback for Cursor SDK API-key authentication. |
 | `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse` (stable reliability default and rollback path), `websocket`, `websocket-cached` (explicit experimental/canary opt-in; retries a fresh full-context WebSocket before falling back to SSE on pre-output close-before-completion failures), and `auto` (safe pre-start SSE fallback). Invalid values fail safe to `sse`. |
 | `FORGE_OPENAI_CODEX_AUTH_MODE` | `local` | OpenAI/Codex auth source. Use `central_broker` to make Forge use the Forge Auth broker for OpenAI/Codex in v1. |
 | `FORGE_OPENAI_AUTH_BROKER_URL` | — | Forge Auth broker base URL used when `FORGE_OPENAI_CODEX_AUTH_MODE=central_broker`. |
 | `FORGE_OPENAI_AUTH_BROKER_TOKEN` | — | Bearer token for the Forge Auth broker. |
 | `FORGE_OPENAI_AUTH_BROKER_INSTANCE_ID` | — | Optional stable install identifier sent to the Forge Auth broker. |
 | `FORGE_OPENAI_AUTH_BROKER_INSTANCE_LABEL` | — | Optional human-readable install label sent to the Forge Auth broker. |
+| `FORGE_OPENAI_AUTH_BROKER_TIMEOUT_MS` | `10000` | Forge Auth broker request timeout in milliseconds, clamped to `1000`–`60000`. |
 | `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the sanitized Codex transport diagnostics endpoint at `/api/debug/codex-transport` for transport selection and counter inspection; otherwise it stays disabled/404. |
 
 The OpenAI/Codex auth-mode settings are intentionally scoped to OpenAI/Codex in v1. The primary Settings setup path is invite redemption: a broker administrator creates a one-time setup link for a user name/email, and Forge redeems that link server-to-server for a broker runtime token. The setup link contains only an invite id and secret, not runtime, OpenAI, admin, or provisioning tokens. Forge stores the returned broker runtime token in secrets and masks status in the UI. Manual broker URL/token entry and the env vars above remain available for advanced or older deployments.
@@ -64,13 +68,45 @@ The OpenAI Codex Responses transport settings above apply to normal Codex model 
 
 ### Working plans
 
-Builder managers always have access to `update_plan` for substantial multi-step work. The tool publishes the complete current checklist with optional explanation and Pending, In progress, or Completed steps; multiple steps may be In progress when work runs concurrently. There is no settings toggle or shared configuration file. Plans are session-scoped and saved in `plan.json`.
+Builder managers always have access to `update_plan` for substantial multi-step work. The tool publishes the complete current checklist with optional explanation and Pending, In progress, or Completed steps; multiple steps may be In progress when work runs concurrently. There is no settings toggle or shared configuration file. Plans are session-scoped and saved in `plan.json`; outgoing revisions append to `plan-history.ndjson`. The first revision creates one conversation-timeline card, later revisions update that anchor in place, completion freezes it as a collapsed **Plan complete** card, and a later plan creates a new card.
 
-When a worker assignment clearly belongs to one current step, `spawn_agent` and `send_message_to_agent` accept that step's exact text through optional `planStep`. Forge keeps the association internal and appends step-completion and whole-plan token estimates to `plan-usage.ndjson` beside the plan. Receipts separate manager, assigned worker, and unassigned worker usage and include coverage plus concrete reasons such as recovered runs or completion boundaries, missing timestamps, unassigned usage, or busy-worker assignment boundaries. This accounting is file-backed, has no UI, and does not change the visible plan schema.
+When a worker assignment clearly belongs to one current step, `spawn_agent` and `send_message_to_agent` accept that step's exact text through optional `planStep`. Forge keeps the association internal and appends assignment, step-completion, and whole-plan token estimates to `plan-usage.ndjson` beside the plan. Receipts separate manager, assigned worker, and unassigned worker usage and include coverage plus concrete reasons such as recovered runs or completion boundaries, missing timestamps, unassigned usage, or busy-worker assignment boundaries. This accounting is file-backed, has no separate UI, and does not change the visible plan schema. Clearing a conversation clears its current plan; stop and archive preserve it; forks omit the live plan, plan history, and accounting files.
+
+### Integrated terminals
+
+Terminal runtime settings use `FORGE_*` names below; the matching legacy `MIDDLEMAN_*` aliases are also accepted.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FORGE_TERMINAL_ENABLED` | `true` | Enable the integrated terminal subsystem. |
+| `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Maximum terminals in a manager/profile terminal scope. |
+| `FORGE_TERMINAL_DEFAULT_COLS` | `120` | Initial terminal column count; minimum `20`. |
+| `FORGE_TERMINAL_DEFAULT_ROWS` | `30` | Initial terminal row count; minimum `5`. |
+| `FORGE_TERMINAL_SCROLLBACK_LINES` | `5000` | Headless terminal scrollback lines; minimum `100`. |
+| `FORGE_TERMINAL_OUTPUT_BATCH_MS` | `16` | Output batching interval in milliseconds; minimum `1`. |
+| `FORGE_TERMINAL_SNAPSHOT_INTERVAL_MS` | `30000` | VT snapshot interval in milliseconds; minimum `1000`. |
+| `FORGE_TERMINAL_JOURNAL_MAX_BYTES` | `1048576` | Maximum output-journal segment size; minimum `1024`. |
+| `FORGE_TERMINAL_SHUTDOWN_SNAPSHOT_TIMEOUT_MS` | `8000` | Shutdown snapshot timeout in milliseconds; minimum `100`. |
+| `FORGE_TERMINAL_RESTORE_STARTUP_CONCURRENCY` | `4` | Maximum concurrent terminal restores at startup; minimum `1`. |
+| `FORGE_TERMINAL_WS_TICKET_TTL_MS` | `60000` | Terminal WebSocket ticket lifetime in milliseconds; minimum `1000`. |
+| `FORGE_TERMINAL_WS_MAX_BUFFERED_AMOUNT_BYTES` | `1048576` | Maximum buffered terminal WebSocket output; minimum `1024`. |
+| `FORGE_TERMINAL_DEFAULT_SHELL` | platform default | Fallback shell path when Settings has no saved default shell. |
+
+Invalid boolean or below-minimum integer values are ignored in favor of the defaults. **Settings → General → Terminal → Default shell** persists `defaultShell` in `shared/config/terminal-settings.json`; a non-empty saved value takes precedence over `FORGE_TERMINAL_DEFAULT_SHELL`.
 
 ### Repositories
 
 Settings → General → **Repositories** (Builder/local only) stores clone defaults in `shared/config/repository-settings.json`. Precedence for Clone repository is configured home → last successfully used clone base → user home. Collaboration admin surfaces do not load this route.
+
+### Embedded data versioning
+
+The embedded Git service versions Forge's allowlisted knowledge, profile-memory, reference, and prompt files inside the data directory. The matching legacy `MIDDLEMAN_VERSIONING_*` aliases are also accepted.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FORGE_VERSIONING_ENABLED` | `true` | Enable embedded Git versioning for its allowlisted Forge data paths. |
+| `FORGE_VERSIONING_TRACK_SESSION_MEMORY` | `false` | Include per-session `profiles/<profileId>/sessions/<sessionId>/memory.md` files in the versioned path set. Profile memory remains part of the normal allowlist. |
+| `FORGE_VERSIONING_RECONCILE_INTERVAL_MS` | `300000` | Interval for reconciling tracked files with embedded Git. Set to `0` to disable periodic reconciliation; startup reconciliation still runs. Invalid or negative values use the default. |
 
 ### Compaction
 
@@ -128,6 +164,7 @@ Collaboration runtime is unsupported in V1. It uses the no-op/fail-closed observ
 |----------|---------|-------------|
 | `FORGE_ADMIN_EMAIL` | — | Bootstrap email for the first collaboration admin account. Required on first boot if no admin exists yet. |
 | `FORGE_ADMIN_PASSWORD` | — | Bootstrap password for the first collaboration admin account. Required on first boot if no admin exists yet. |
+| `FORGE_PUBLIC_PORT` | `47387` | Host port that `docker-compose.yml` maps to the primary collaboration server's container port `47287`. Keep `FORGE_COLLABORATION_BASE_URL` aligned when overriding it. |
 | `FORGE_COLLABORATION_BASE_URL` | — | Canonical collaboration browser URL used for login redirects and invite links. For local `docker compose`, use `http://127.0.0.1:47387` by default and keep it aligned with `FORGE_PUBLIC_PORT` if you override the host mapping. |
 | `FORGE_SECONDARY_PUBLIC_PORT` / `FORGE_SECONDARY_COLLABORATION_BASE_URL` | `47388` / `http://127.0.0.1:47388` | Optional secondary local Docker Compose collaboration server settings for multi-backend UI testing. |
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | — | Comma-separated Builder/UI origins allowed to talk to the collaboration server in split deployments. Local `docker-compose.yml` defaults this to `http://127.0.0.1:47188,http://127.0.0.1:47189`. Use `127.0.0.1` consistently for local HTTP split deployments; mixing `localhost` and `127.0.0.1` becomes cross-site and requires HTTPS. |
@@ -184,7 +221,7 @@ FORGE_PORT=47187
 
 Provider auth for **OpenAI**, **Anthropic**, **xAI**, **OpenRouter**, and **Cursor SDK** is managed under **Settings → Authentication**. The current pane uses OAuth account-pool cards for OpenAI and Anthropic, and masked key/token rows for xAI, OpenRouter, and Cursor SDK. Status and auth-type badges appear where applicable; they are not a uniform control on every provider row.
 
-OpenAI and Anthropic currently add accounts through their OAuth pool cards. Existing local credentials can still be reflected in provider status. OpenAI/Codex can also use Forge Auth broker mode, which requests short-lived leases from a separate broker instead of using local OpenAI credentials. In Settings, the normal v1 broker setup path is to paste a one-time setup link from the broker admin UI and let Forge redeem it server-to-server. One-time links cannot be replayed after redemption. Manual broker URL/token entry is still available under advanced setup for older deployments. While broker mode is active, local OpenAI OAuth/API-key and pool credentials remain visible for reference but are read-only and cannot be changed from Settings. Forge Auth broker mode is v1-scoped to OpenAI/Codex only.
+OpenAI and Anthropic currently add accounts through their OAuth pool cards. Existing local credentials can still be reflected in provider status. Environment fallbacks are `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, and `CURSOR_API_KEY`; Settings/shared secrets take precedence where the provider resolver supports both. OpenAI/Codex can also use Forge Auth broker mode, which requests short-lived leases from a separate broker instead of using local OpenAI credentials. In Settings, the normal v1 broker setup path is to paste a one-time setup link from the broker admin UI and let Forge redeem it server-to-server. One-time links cannot be replayed after redemption. Manual broker URL/token entry is still available under advanced setup for older deployments. While broker mode is active, local OpenAI OAuth/API-key and pool credentials remain visible for reference but are read-only and cannot be changed from Settings. Forge Auth broker mode is v1-scoped to OpenAI/Codex only.
 
 Claude SDK authentication is separate from these Settings rows: run `claude login` so it can use the Claude Code CLI OAuth credentials stored in macOS Keychain on macOS or `~/.claude/.credentials.json` on Linux and Windows. Cursor SDK auth is configured through its Settings key row, shared secrets, or the environment (including `CURSOR_API_KEY` for env-based setups). Cursor SDK Composer 2.5 and Cursor Grok 4.5 can appear in manager and specialist model selectors when credentials and model visibility allow them. Cursor SDK uses a provider-local, fail-closed Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage from Cursor SDK sessions is recorded into session custom entries and contributes to dashboard stats, token analytics, and telemetry provider inference.
 
@@ -197,91 +234,115 @@ Appearance preferences are separate from server/shared configuration. They are s
 
 ## Data Directory
 
-All persistent state lives in a single data directory:
+Key persistent and regenerable paths use this canonical layout (most files are created only when their feature is used):
 
 ```
 <data-dir>/
-├── shared/                    # Shared config
-│   ├── config/                # User settings & credentials
+├── shared/
+│   ├── config/                            # Shared settings and credentials
 │   │   ├── auth/
-│   │   │   └── auth.json      # API keys and auth tokens
-│   │   ├── secrets.json       # Additional secrets
-│   │   ├── model-overrides.json   # User model visibility/context caps (Settings → Models)
-│   │   ├── cortex-auto-review.json        # Cortex consolidation cadence settings
-│   │   ├── knowledge-v2.json              # Default-off Knowledge v2 mode and index-cap settings
-│   │   ├── mobile-notification-prefs.json # Mobile push preferences
-│   │   ├── slash-commands.json            # Global slash commands
-│   │   ├── terminal-settings.json         # Terminal runtime settings
-│   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
-│   │   ├── repository-settings.json       # Builder-only clone repository base path defaults
-│   │   ├── remote-build-settings.json     # Collaboration-server Remote Projects policy
-│   │   ├── builder-sidebar-order.json     # Local unified local/remote project order
+│   │   │   ├── auth.json                  # Provider auth credentials
+│   │   │   ├── credential-pool.json       # OAuth pool metadata
+│   │   │   ├── openai-codex-auth-source.json # Saved OpenAI/Codex auth-source settings
+│   │   │   └── cli-access.json            # Forge CLI access keys
 │   │   ├── collaboration/
-│   │   │   ├── auth.db                    # Collaboration users, sessions, channels, and structured state
-│   │   │   └── auth-secret.key            # Generated collaboration auth secret when env secret is unset
-│   │   └── integrations/      # Shared integration configs
-│   ├── cache/                 # Regenerable/ephemeral
-│   │   ├── generated/
-│   │   │   └── pi-models.json # Generated Pi-compatible model projection
-│   │   ├── stats-cache.json   # Cached dashboard statistics
-│   │   ├── provider-usage-cache.json      # Cached provider subscription usage snapshots
-│   │   └── provider-usage-history.jsonl   # Historical provider usage samples
-│   ├── state/                 # Runtime state & markers
-│   │   ├── mobile-devices.json            # Registered mobile devices
-│   │   ├── .compaction-count-backfill-v2-done  # Legacy compaction-count backfill sentinel
-│   │   ├── .compaction-count-reconcile-v3-done  # Monotonic compaction-count reconciliation sentinel
-│   │   ├── .shared-config-migration-done  # Shared-config layout migration sentinel
-│   │   └── .shared-config-cleanup-done    # Shared-config old-path cleanup sentinel
-│   ├── knowledge/             # Legacy knowledge plus global Knowledge v2 storage
-│   │   ├── common.md          # Legacy common knowledge; injected only with v2 OFF
-│   │   ├── onboarding-state.json  # First-launch user preferences
-│   │   ├── profiles/<profileId>.md  # Preserved legacy per-profile knowledge
-│   │   ├── entries/*.md       # Knowledge v2 global entries
-│   │   ├── archive/           # Archived Knowledge v2 global entries
-│   │   ├── .archive/          # Migration backups and explicit legacy-cleanup archives
-│   │   ├── INDEX.md           # Generated global Knowledge v2 index
-│   │   ├── .knowledge-v2-migration-manifest.json # Completed migration record/activation authorization
-│   │   └── .knowledge-v2-migration.lock.json/    # Cross-process ownership lock while migration/activation is busy
-│   └── specialists/           # Global specialist definitions (.md files)
-├── profiles/<profileId>/      # Per-manager-profile data
-│   ├── memory.md              # Canonical profile memory; injected only with v2 OFF
-│   ├── knowledge/
-│   │   ├── entries/*.md       # Profile-scoped Knowledge v2 entries
-│   │   ├── archive/           # Archived profile-scoped Knowledge v2 entries
-│   │   └── INDEX.md           # Generated profile Knowledge v2 index
-│   ├── project-agents/<handle>/  # Per-project-agent data
-│   │   ├── config.json        # Agent config
-│   │   ├── prompt.md          # Editable Project Agent role instructions
-│   │   └── reference/         # Per-agent reference docs
-│   └── sessions/<sessionId>/  # Per-session data
-│       ├── session.jsonl      # Conversation history
-│       ├── memory.md          # Session-level memory
-│       ├── meta.json          # Session metadata
-│       ├── feedback.jsonl     # User feedback
-│       ├── pinned-messages.json  # Pin state (up to 10 message IDs)
-│       ├── plan.json          # Current Builder working plan snapshot
-│       ├── plan-history.ndjson # Outgoing working-plan revisions
-│       ├── plan-usage.ndjson   # Append-only worker assignment and token-usage receipts
-│       ├── context/
-│       │   └── prompt.md      # Collaboration channel additional instructions
-│       ├── reference/         # Collaboration channel reference docs
-│       ├── specialists/       # Collaboration channel-local specialist markdown (no channel-local skill authoring in V1)
-│       └── workers/           # Worker session logs
-├── profiles/_collaboration/   # System collaboration profile; channel sessions use the same session layout
-├── swarm/
-│   └── agents.json            # Agent registry
-├── extensions/                # Forge extensions (global, auto-created)
-├── agent/                     # Pi agent runtime config (extensions, skills, packages)
-│   ├── extensions/            #   Global worker extensions (auto-created at startup)
-│   ├── manager/extensions/    #   Global manager extensions (auto-created at startup)
-│   ├── skills/                #   Global worker skills (Pi-discovered, auto-created)
-│   ├── manager/skills/        #   Global manager skills (Pi-discovered, auto-created)
-│   ├── settings.json          #   Global worker package config (optional)
-│   └── manager/settings.json  #   Global manager package config (optional)
-├── skills/                    # Machine-local skills (optional, station-specific)
-│   └── <skillName>/SKILL.md
-└── uploads/                   # File uploads
+│   │   │   ├── auth.db                    # Collaboration auth + structured domain state
+│   │   │   └── auth-secret.key            # Generated collaboration auth secret
+│   │   ├── integrations/                  # Shared integration configs
+│   │   ├── secrets.json                   # Sensitive local JSON; plaintext at rest
+│   │   ├── builder-sidebar-order.json     # Local unified project order
+│   │   ├── compaction-settings.json       # Manager compaction settings
+│   │   ├── cortex-auto-review.json        # Cortex consolidation cadence
+│   │   ├── knowledge-v2.json              # Knowledge v2 mode and index caps
+│   │   ├── mobile-notification-prefs.json # Mobile push preferences
+│   │   ├── model-cache-visualization.json # Model-cache visualization preference
+│   │   ├── model-overrides.json           # Model visibility, context caps, instructions
+│   │   ├── notification-settings.json     # Notification sound preferences
+│   │   ├── openrouter-models.json         # User-added OpenRouter models
+│   │   ├── phoenix-observability.json     # Builder Phoenix tracing settings
+│   │   ├── project-resources.json         # Repo-resource trust/override settings
+│   │   ├── remote-build-settings.json     # Collaboration Remote Projects policy
+│   │   ├── repository-settings.json       # Builder clone-base defaults
+│   │   ├── slash-commands.json            # Global slash commands
+│   │   ├── telemetry.json                 # Telemetry install/config state
+│   │   └── terminal-settings.json         # Saved terminal default shell
+│   ├── cache/                             # Regenerable caches and usage history
+│   │   ├── generated/pi-models.json       # Generated Pi model projection
+│   │   ├── provider-usage-cache.json
+│   │   ├── provider-usage-history.jsonl
+│   │   ├── stats-cache.json
+│   │   └── token-analytics-cache.json
+│   ├── state/
+│   │   ├── mobile-devices.json
+│   │   ├── project-agent-shares.json
+│   │   └── .*-done                        # One-time migration/reconciliation sentinels
+│   ├── knowledge/                         # Legacy + global Knowledge v2 storage
+│   │   ├── common.md                      # Legacy global knowledge (v2 OFF only)
+│   │   ├── onboarding-state.json
+│   │   ├── profiles/<profileId>.md        # Preserved legacy profile knowledge
+│   │   ├── entries/*.md                   # Global v2 entries
+│   │   ├── archive/                       # Archived global v2 entries
+│   │   ├── reference/                     # Knowledge reference inputs
+│   │   ├── .archive/                      # Migration/cleanup archives
+│   │   ├── .cortex-*.json*                # Cortex review/consolidation records
+│   │   ├── .knowledge-v2-migration-*      # Manifest and ownership lock
+│   │   └── INDEX.md                       # Generated global v2 index
+│   └── specialists/                       # Global specialist definitions
+├── profiles/<profileId>/
+│   ├── memory.md                          # Canonical profile memory (v2 OFF injection)
+│   ├── merge-audit.log
+│   ├── unread-state.json
+│   ├── extensions/                        # Profile Forge extensions
+│   ├── integrations/                      # Profile integration configs
+│   ├── knowledge/{entries,archive}/       # Profile Knowledge v2 entries/archive
+│   ├── knowledge/INDEX.md                 # Generated profile v2 index
+│   ├── pi/{extensions,skills,prompts,themes}/ # Profile Pi resources
+│   ├── project-agents/<handle>/
+│   │   ├── config.json
+│   │   ├── prompt.md
+│   │   └── reference/
+│   ├── project-agent-backups/             # Non-destructive reconciliation backups
+│   ├── reference/                         # Profile reference documents
+│   ├── schedules/schedules.json
+│   ├── slash-commands.json
+│   ├── specialists/                       # Profile specialist overrides
+│   └── sessions/<sessionId>/
+│       ├── session.jsonl                  # Canonical conversation history
+│       ├── turns.jsonl                    # Rotating fail-open turn ledger
+│       ├── receipts.jsonl[.1]             # Current/rotated routing receipts
+│       ├── memory.md
+│       ├── meta.json
+│       ├── feedback.jsonl
+│       ├── pinned-messages.json
+│       ├── plan.json
+│       ├── plan-history.ndjson
+│       ├── plan-usage.ndjson
+│       ├── artifacts/                     # Session non-repo artifacts/exports
+│       ├── context/prompt.md               # Collaboration additional instructions
+│       ├── cursor-sdk-state/<sessionId>/   # Manager Cursor SDK state root
+│       ├── reference/                     # Collaboration reference docs
+│       ├── specialists/                    # Collaboration channel-local specialists
+│       ├── terminals/<terminalId>/
+│       │   ├── meta.json
+│       │   ├── snapshot.vt
+│       │   └── delta.ndjson
+│       └── workers/
+│           ├── <workerId>.jsonl
+│           └── cursor-sdk-state/<workerId>/ # Worker Cursor SDK state roots
+├── swarm/agents.json                      # Global profile/agent registry
+├── extensions/                            # Global Forge extensions
+├── agent/
+│   ├── extensions/                        # Global worker Pi extensions
+│   ├── manager/extensions/                # Global manager Pi extensions
+│   ├── skills/                            # Global worker Pi skills
+│   ├── manager/skills/                    # Global manager Pi skills
+│   ├── settings.json                      # Worker Pi package config
+│   └── manager/settings.json              # Manager Pi package config
+├── skills/<skillName>/SKILL.md             # User-created global Forge skills
+└── uploads/                                # Uploaded attachments
 ```
+
+`shared/config/secrets.json` stores sensitive values as ordinary JSON; Forge does not application-encrypt that file at rest. Protect the data directory and every backup with appropriate operating-system or storage access controls, and handle copied `secrets.json` files as secrets.
 
 ### Default Locations
 
