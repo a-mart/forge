@@ -102,6 +102,7 @@ function createHarness(debug = false): {
     logDebug: vi.fn(),
     getRuntime: vi.fn(() => undefined),
     getActiveTurnId: vi.fn(() => undefined),
+    hasPendingSupersedingUserInput: vi.fn(() => false),
     isModelCacheVisualizationEnabled: vi.fn(() => false),
     emitModelCacheObservation: vi.fn(),
     resolveManagerAssistantFinalOutputTarget: vi.fn((_agentId, _descriptor, activeTarget) => {
@@ -282,6 +283,61 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
           sourceWorkerId: "worker-1",
         }),
       }),
+    );
+  });
+
+  it("does not project recovery-only worker finals as terminal worker reports", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager-1",
+    });
+    descriptors.set(worker.agentId, worker);
+    vi.mocked(deps.isRuntimeRecoveryActive).mockReturnValue(true);
+
+    await projector.projectEvent({
+      agentId: worker.agentId,
+      event: assistantEnd("Handoff file written as instructed.", { stopReason: "stop" }),
+    });
+
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalled();
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ source: "worker_report" }),
+      expect.anything(),
+    );
+  });
+
+  it("suppresses output and silent warnings from a manager turn superseded by queued user input", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({
+      agentId: "manager-1",
+      role: "manager",
+      managerId: "manager-1",
+    });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    vi.mocked(deps.hasPendingSupersedingUserInput).mockReturnValue(true);
+    projector.activateManagerAssistantOutputTurn(
+      manager.agentId,
+      { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      { turnId: "manager-1:1", beginUserVisibleObligation: true },
+    );
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: assistantEnd("Stale answer from the older turn.", { stopReason: "stop" }),
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "agent_end" },
+    });
+
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalled();
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+    expect(deps.logDebug).toHaveBeenCalledWith(
+      "manager_output:suppressed_superseded_turn",
+      expect.objectContaining({ agentId: manager.agentId, activeTurnId: "manager-1:1" }),
     );
   });
 

@@ -68,6 +68,45 @@ async function createWorkerHarness(agentId: string, runtimeToken: number): Promi
 }
 
 describe("server-owned turn ids", () => {
+  it("refuses user-visible actions from a turn with newer queued user input", async () => {
+    const config = await makeConfig();
+    const manager = new TestSwarmManager(config);
+    const session = await bootWithDefaultManager(manager, config);
+    const messages = collectEvents<ConversationMessageEvent>(manager, "conversation_message");
+    const target: AssistantOutputTarget = {
+      kind: "session_transcript",
+      channel: "web",
+      sourceContext: { channel: "web" },
+    };
+
+    await (manager as any).enqueueInboundTurnContext(session.agentId, {
+      source: "user_input",
+      runtimeMessageText: "first request",
+      assistantOutputTarget: target,
+      routeOrigin: "user",
+    });
+    manager.beforeRuntimeEventProjection(session.agentId, undefined, {
+      type: "message_start",
+      message: { role: "user", content: "first request" },
+    });
+    const firstTurnId = manager.getActiveTurnId(session.agentId);
+
+    await (manager as any).enqueueInboundTurnContext(session.agentId, {
+      source: "user_input",
+      runtimeMessageText: "newer request",
+      assistantOutputTarget: target,
+      routeOrigin: "user",
+    });
+
+    const result = await manager.publishToUser(session.agentId, "Stale response", "speak_to_user");
+
+    expect(firstTurnId).toBeDefined();
+    expect(result).toMatchObject({ published: false, reason: "superseded_by_user_input" });
+    expect(messages).not.toContainEqual(expect.objectContaining({ text: "Stale response" }));
+    await expect(manager.requestUserChoice(session.agentId, [{ id: "q1", question: "Stale choice?" }]))
+      .rejects.toThrow(/newer user message superseded/i);
+  });
+
   it("preserves pre-turn-id assistant-output activation semantics for guarded agent_message flows", async () => {
     const sessionTranscriptTarget: AssistantOutputTarget = {
       kind: "session_transcript",

@@ -81,6 +81,7 @@ export interface RuntimeEventProjectorDeps {
   logDebug(message: string, details?: unknown): void;
   getRuntime(agentId: string): SwarmAgentRuntime | undefined;
   getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined;
+  hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean;
   isModelCacheVisualizationEnabled(): boolean;
   emitModelCacheObservation(event: ModelCacheObservationEvent): void;
   resolveManagerAssistantFinalOutputTarget(
@@ -385,8 +386,24 @@ export class RuntimeEventProjector {
     }
     this.maybeEmitWorkerReportConversationMessage(agentId, descriptor, effectiveEvent, activeTurnId);
     const activeAssistantTarget = this.managerAssistantOutputTracker.getActiveTarget(agentId);
+    const managerOutputSuperseded =
+      descriptor?.role === "manager" &&
+      this.deps.hasPendingSupersedingUserInput(agentId, activeTurnId);
     if (shouldSurfaceManualStopNotice || isContextRecoveryAbort) {
       this.managerAssistantOutputTracker.clearTurn(agentId);
+    } else if (managerOutputSuperseded) {
+      // The runtime has not consumed the newer user steer yet. Do not let the
+      // older turn publish a final, progress update, or silent-turn warning in
+      // the narrow gap before that steer becomes active.
+      this.managerAssistantOutputTracker.clearTurn(agentId);
+      this.intentionalSilenceManagerAgentIds.delete(agentId);
+      this.pendingSilentManagerNotices.delete(agentId);
+      this.visibleManagerOutputAgentIds.delete(agentId);
+      this.deps.logDebug("manager_output:suppressed_superseded_turn", {
+        agentId,
+        activeTurnId,
+        eventType: effectiveEvent.type,
+      });
     } else {
       this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
       this.maybeAcceptIntentionalManagerSilence(agentId, descriptor, effectiveEvent);
@@ -667,7 +684,11 @@ export class RuntimeEventProjector {
     effectiveEvent: RuntimeSessionEvent,
     turnId?: string,
   ): void {
-    if (descriptor?.role !== "worker" || effectiveEvent.type !== "message_end") {
+    if (
+      descriptor?.role !== "worker" ||
+      effectiveEvent.type !== "message_end" ||
+      this.deps.isRuntimeRecoveryActive(agentId)
+    ) {
       return;
     }
 
