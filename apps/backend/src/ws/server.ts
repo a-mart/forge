@@ -472,7 +472,10 @@ export class SwarmWebSocketServer {
       new NotificationSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
     this.remoteBuildSettingsService =
       options.remoteBuildSettingsService ??
-      new RemoteBuildSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
+      new RemoteBuildSettingsService({
+        dataDir: this.swarmManager.getConfig().paths.dataDir,
+        envOverrides: this.swarmManager.getConfig().remoteProjectsEnv,
+      });
     this.terminalService = options.terminalService ?? null;
     this.terminalRuntimeConfig = options.terminalRuntimeConfig ?? null;
     this.terminalSettingsService =

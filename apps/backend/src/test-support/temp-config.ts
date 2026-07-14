@@ -27,6 +27,7 @@ export interface TempConfigOptions {
   collaborationAuthCookieName?: string
   collaborationBaseUrl?: string
   collaborationTrustedOrigins?: string[]
+  remoteProjectsEnv?: SwarmConfig['remoteProjectsEnv']
   allowNonManagerSubscriptions?: boolean
   managerId?: string
   managerDisplayName?: string
@@ -163,6 +164,7 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
             loadDatabaseModule: async () => (await import('better-sqlite3')).default,
           }
         : undefined,
+    remoteProjectsEnv: options.remoteProjectsEnv,
     allowNonManagerSubscriptions: options.allowNonManagerSubscriptions ?? false,
     managerId,
     managerDisplayName: options.managerDisplayName ?? 'Manager',

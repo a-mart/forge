@@ -1,12 +1,20 @@
-import type { RemoteBuildSettings, UpdateRemoteBuildSettingsRequest } from "@forge/protocol";
+import type {
+  RemoteBuildSettings,
+  RemoteBuildSettingsControlledField,
+  RemoteBuildSettingsResponse,
+  RemoteBuildSettingsSources,
+  UpdateRemoteBuildSettingsRequest,
+} from "@forge/protocol";
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { getRemoteBuildSettingsPath } from "../swarm/data-paths.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
+import type { RemoteProjectsEnvOverrides } from "./remote-projects-env.js";
+import { REMOTE_PROJECTS_INSTANCE_NAME_MAX_LENGTH } from "./remote-projects-env.js";
 
 const SETTINGS_FILE_VERSION = 1;
-const INSTANCE_NAME_MAX_LENGTH = 120;
+const INSTANCE_NAME_MAX_LENGTH = REMOTE_PROJECTS_INSTANCE_NAME_MAX_LENGTH;
 
 interface RemoteBuildSettingsFile {
   version: 1;
@@ -23,51 +31,96 @@ export class RemoteBuildSettingsValidationError extends Error {
   }
 }
 
+export class RemoteBuildSettingsEnvOverrideError extends Error {
+  readonly code = "REMOTE_BUILD_SETTINGS_ENV_OVERRIDE" as const;
+  readonly controlledFields: RemoteBuildSettingsControlledField[];
+
+  constructor(controlledFields: RemoteBuildSettingsControlledField[]) {
+    const fields = controlledFields.join(", ");
+    super(
+      `Remote Projects settings field(s) controlled by environment variables and cannot be updated via API: ${fields}`,
+    );
+    this.name = "RemoteBuildSettingsEnvOverrideError";
+    this.controlledFields = controlledFields;
+  }
+}
+
 /**
  * Instance settings for remote projects (Wave R). `enabled` defaults to
  * false — it is the product kill switch; member-facing builder access (WS
  * commands and member-class HTTP routes) only activates when it is on.
+ *
+ * Collaboration-server deployments may overlay per-field environment
+ * overrides at startup. Env values are never written into the JSON file.
  */
 export class RemoteBuildSettingsService {
   private readonly settingsPath: string;
   private readonly now: () => Date;
-  private settings: RemoteBuildSettings = createDefaultRemoteBuildSettings();
+  private readonly envOverrides: RemoteProjectsEnvOverrides;
+  private persisted: RemoteBuildSettings = createDefaultRemoteBuildSettings();
   private updateMutex: Promise<void> = Promise.resolve();
 
-  constructor(options: { dataDir: string; now?: () => Date }) {
+  constructor(options: {
+    dataDir: string;
+    now?: () => Date;
+    envOverrides?: RemoteProjectsEnvOverrides;
+  }) {
     this.settingsPath = getRemoteBuildSettingsPath(options.dataDir);
     this.now = options.now ?? (() => new Date());
+    this.envOverrides = options.envOverrides ?? {};
   }
 
   async load(): Promise<void> {
     try {
       const raw = await readFile(this.settingsPath, "utf8");
-      this.settings = normalizeLoadedSettings(JSON.parse(raw) as unknown);
+      this.persisted = normalizeLoadedSettings(JSON.parse(raw) as unknown);
     } catch (error) {
       if (!isEnoentError(error)) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[remote-build-settings] Failed to load settings from ${this.settingsPath}: ${message}`);
       }
-      this.settings = createDefaultRemoteBuildSettings();
+      this.persisted = createDefaultRemoteBuildSettings();
     }
   }
 
+  /** Effective runtime policy (env > persisted > defaults). */
   getSettings(): RemoteBuildSettings {
-    return { ...this.settings };
+    return this.computeEffective(this.persisted);
+  }
+
+  getPersistedSettings(): RemoteBuildSettings {
+    return { ...this.persisted };
+  }
+
+  getSources(): RemoteBuildSettingsSources {
+    return {
+      enabled: this.envOverrides.enabled !== undefined ? "environment" : "settings",
+      terminalsEnabled: this.envOverrides.terminalsEnabled !== undefined ? "environment" : "settings",
+      instanceName: this.envOverrides.instanceName !== undefined ? "environment" : "settings",
+    };
+  }
+
+  getResponse(): RemoteBuildSettingsResponse {
+    return {
+      settings: this.getSettings(),
+      persistedSettings: this.getPersistedSettings(),
+      sources: this.getSources(),
+    };
   }
 
   isRemoteBuildEnabled(): boolean {
-    return this.settings.enabled;
+    return this.getSettings().enabled;
   }
 
   areTerminalsEnabled(): boolean {
-    return this.settings.terminalsEnabled;
+    return this.getSettings().terminalsEnabled;
   }
 
-  /** Display name for the handshake: admin-set name or the host name. */
+  /** Display name for the handshake: effective name or the host name. */
   getInstanceDisplayName(): string {
-    if (this.settings.instanceName) {
-      return this.settings.instanceName;
+    const effectiveName = this.getSettings().instanceName;
+    if (effectiveName) {
+      return effectiveName;
     }
 
     try {
@@ -82,22 +135,37 @@ export class RemoteBuildSettingsService {
     return "Forge";
   }
 
-  async update(payload: UpdateRemoteBuildSettingsRequest | unknown): Promise<RemoteBuildSettings> {
+  async update(payload: UpdateRemoteBuildSettingsRequest | unknown): Promise<RemoteBuildSettingsResponse> {
     const patch = normalizeUpdatePayload(payload);
+    const controlledFields = collectControlledFieldsInRequest(patch, this.envOverrides);
+    if (controlledFields.length > 0) {
+      throw new RemoteBuildSettingsEnvOverrideError(controlledFields);
+    }
 
     return this.withUpdateLock(async () => {
       const next: RemoteBuildSettings = {
-        enabled: patch.enabled === undefined ? this.settings.enabled : patch.enabled,
+        enabled: patch.enabled === undefined ? this.persisted.enabled : patch.enabled,
         terminalsEnabled:
-          patch.terminalsEnabled === undefined ? this.settings.terminalsEnabled : patch.terminalsEnabled,
-        instanceName: patch.instanceName === undefined ? this.settings.instanceName : patch.instanceName,
+          patch.terminalsEnabled === undefined ? this.persisted.terminalsEnabled : patch.terminalsEnabled,
+        instanceName: patch.instanceName === undefined ? this.persisted.instanceName : patch.instanceName,
         updatedAt: this.now().toISOString(),
       };
 
       await writeSettingsFile(this.settingsPath, next);
-      this.settings = next;
-      return this.getSettings();
+      this.persisted = next;
+      return this.getResponse();
     });
+  }
+
+  private computeEffective(persisted: RemoteBuildSettings): RemoteBuildSettings {
+    return {
+      enabled: this.envOverrides.enabled ?? persisted.enabled,
+      terminalsEnabled: this.envOverrides.terminalsEnabled ?? persisted.terminalsEnabled,
+      instanceName:
+        this.envOverrides.instanceName !== undefined ? this.envOverrides.instanceName : persisted.instanceName,
+      // Preserve the last persisted write timestamp even when env overlays values.
+      updatedAt: persisted.updatedAt,
+    };
   }
 
   private async withUpdateLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -124,6 +192,23 @@ export function createDefaultRemoteBuildSettings(): RemoteBuildSettings {
     instanceName: null,
     updatedAt: null,
   };
+}
+
+function collectControlledFieldsInRequest(
+  patch: UpdateRemoteBuildSettingsRequest,
+  envOverrides: RemoteProjectsEnvOverrides,
+): RemoteBuildSettingsControlledField[] {
+  const controlled: RemoteBuildSettingsControlledField[] = [];
+  if (patch.enabled !== undefined && envOverrides.enabled !== undefined) {
+    controlled.push("enabled");
+  }
+  if (patch.terminalsEnabled !== undefined && envOverrides.terminalsEnabled !== undefined) {
+    controlled.push("terminalsEnabled");
+  }
+  if (patch.instanceName !== undefined && envOverrides.instanceName !== undefined) {
+    controlled.push("instanceName");
+  }
+  return controlled;
 }
 
 function normalizeLoadedSettings(value: unknown): RemoteBuildSettings {

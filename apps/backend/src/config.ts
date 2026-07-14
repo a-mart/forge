@@ -26,6 +26,7 @@ import {
 } from "./swarm/data-paths.js";
 import type { SwarmConfig } from "./swarm/types.js";
 import { isCollaborationServerRuntimeTarget, resolveRuntimeTargetFromEnv } from "./runtime-target.js";
+import { parseRemoteProjectsEnv } from "./collaboration/remote-projects-env.js";
 
 export function readTelemetryEnvOverride(): boolean | undefined {
   return parseOptionalBooleanEnv(
@@ -99,6 +100,11 @@ export function createConfig(): SwarmConfig {
         loadDatabaseModule: async () => (await import("better-sqlite3")).default,
       }
     : undefined;
+  // Collaboration-server only: Builder ignores these variables entirely.
+  // Invalid values fail startup (thrown from parseRemoteProjectsEnv).
+  const remoteProjectsEnv = isCollaborationServerRuntimeTarget(runtimeTarget)
+    ? parseRemoteProjectsEnv(process.env)
+    : undefined;
 
   return {
     host: process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
@@ -118,6 +124,7 @@ export function createConfig(): SwarmConfig {
     collaborationBaseUrl,
     collaborationTrustedOrigins,
     collaborationModules,
+    remoteProjectsEnv,
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",

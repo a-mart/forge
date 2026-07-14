@@ -7,6 +7,10 @@ import type { CollaborationAuthor, CollaborationStatus } from '../collaboration.
 import type { ClientCommand } from '../client-commands.js'
 import type { ConversationMessageEvent } from '../conversation-events.js'
 import type { ProjectPresenceEvent } from '../presence.js'
+import type {
+  RemoteBuildSettingsEnvOverrideErrorBody,
+  RemoteBuildSettingsResponse,
+} from '../settings.js'
 
 /**
  * Wave R contract fixtures (SPEC §6): every wire change is additive-optional,
@@ -128,5 +132,39 @@ describe('project_presence contract (R3)', () => {
 
     expect(populated.viewers).toHaveLength(2)
     expect(empty.profileId).toBeUndefined()
+  })
+})
+
+describe('remote build settings response contract', () => {
+  it('exposes additive effective/persisted/source fields without bumping protocol version', () => {
+    const response = {
+      settings: {
+        enabled: true,
+        terminalsEnabled: false,
+        instanceName: 'Env Name',
+        updatedAt: '2026-07-14T12:00:00.000Z',
+      },
+      persistedSettings: {
+        enabled: false,
+        terminalsEnabled: false,
+        instanceName: null,
+        updatedAt: '2026-07-14T12:00:00.000Z',
+      },
+      sources: {
+        enabled: 'environment',
+        terminalsEnabled: 'settings',
+        instanceName: 'environment',
+      },
+    } satisfies RemoteBuildSettingsResponse
+
+    const conflict = {
+      error: 'Remote Projects settings field(s) controlled by environment variables and cannot be updated via API: enabled',
+      code: 'REMOTE_BUILD_SETTINGS_ENV_OVERRIDE',
+      controlledFields: ['enabled'],
+    } satisfies RemoteBuildSettingsEnvOverrideErrorBody
+
+    expect(response.sources.enabled).toBe('environment')
+    expect(conflict.code).toBe('REMOTE_BUILD_SETTINGS_ENV_OVERRIDE')
+    expect(BUILDER_PROTOCOL_VERSION).toBe(2)
   })
 })

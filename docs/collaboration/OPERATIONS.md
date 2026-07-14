@@ -60,7 +60,7 @@ Remote Projects is disabled by default and requires two independent controls:
 1. An admin enables server policy through authenticated `GET`/partial `PUT /api/settings/remote-build`.
 2. Each browser enables the per-connection **Remote projects** preference.
 
-The server policy persists at `${FORGE_DATA_DIR}/shared/config/remote-build-settings.json` and defaults to `enabled: false`, `terminalsEnabled: true`, and `instanceName: null`. There is currently no server admin UI or environment variable for it. Explicitly decide `terminalsEnabled`—prefer `false` initially—before or when setting `enabled: true`. See [Operator enablement](REMOTE_PROJECTS.md#3-operator-enablement-with-the-admin-api) for an authenticated example.
+The server policy persists at `${FORGE_DATA_DIR}/shared/config/remote-build-settings.json` and defaults to `enabled: false`, `terminalsEnabled: true`, and `instanceName: null`. There is currently no server admin UI. Optional collaboration-server env overrides (`FORGE_REMOTE_PROJECTS_ENABLED`, `FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED`, `FORGE_REMOTE_PROJECTS_INSTANCE_NAME`) win per field over the JSON file, are never baked into it, and require a restart. Explicitly decide `terminalsEnabled`—prefer `false` initially—before or when setting `enabled: true`. Disabling terminals via settings or env does not kill already attached terminal sockets. See [Operator enablement](REMOTE_PROJECTS.md#3-operator-enablement-with-the-admin-api) for an authenticated example.
 
 The public `/api/collaboration/status` handshake advertises instance name, Forge version, Builder protocol version, and capabilities to every reachable client. Use a non-sensitive `instanceName`; `null` falls back to a host name that may itself reveal operational metadata.
 

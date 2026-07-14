@@ -114,7 +114,13 @@ afterEach(async () => {
   }
 });
 
-async function startCollaborationServer(): Promise<{ baseUrl: string; defaultCwd: string }> {
+async function startCollaborationServer(options?: {
+  remoteProjectsEnv?: {
+    enabled?: boolean;
+    terminalsEnabled?: boolean;
+    instanceName?: string;
+  };
+}): Promise<{ baseUrl: string; defaultCwd: string }> {
   const tempRootDir = await mkdtemp(join(tmpdir(), "forge-remote-ws-access-"));
   const tempConfigHandle = await createTempConfig({
     runtimeTarget: "collaboration-server",
@@ -122,6 +128,7 @@ async function startCollaborationServer(): Promise<{ baseUrl: string; defaultCwd
     adminEmail: ADMIN_EMAIL,
     adminPassword: ADMIN_PASSWORD,
     allowNonManagerSubscriptions: true,
+    remoteProjectsEnv: options?.remoteProjectsEnv,
   });
   tempConfigHandle.config.collaborationBaseUrl = `http://${tempConfigHandle.config.host}:${tempConfigHandle.config.port}`;
   tempConfigHandles.push(tempConfigHandle);
@@ -317,8 +324,116 @@ describe("collaboration status handshake (SPEC §4.4)", () => {
       headers: { cookie: adminCookie },
     });
     expect(asAdmin.status).toBe(200);
-    const body = await asAdmin.json() as { settings: { enabled: boolean; terminalsEnabled: boolean } };
+    const body = await asAdmin.json() as {
+      settings: { enabled: boolean; terminalsEnabled: boolean };
+      persistedSettings: { enabled: boolean; terminalsEnabled: boolean };
+      sources: { enabled: string; terminalsEnabled: string; instanceName: string };
+    };
     expect(body.settings).toMatchObject({ enabled: false, terminalsEnabled: true });
+    expect(body.persistedSettings).toMatchObject({ enabled: false, terminalsEnabled: true });
+    expect(body.sources).toEqual({
+      enabled: "settings",
+      terminalsEnabled: "settings",
+      instanceName: "settings",
+    });
+  }, 30_000);
+
+  it("honors env overlays in handshake/GET and rejects controlled PUTs with 409", async () => {
+    const { baseUrl } = await startCollaborationServer({
+      remoteProjectsEnv: {
+        enabled: true,
+        terminalsEnabled: false,
+        instanceName: "Env Handshake",
+      },
+    });
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+
+    const status = await fetch(`${baseUrl}/api/collaboration/status`).then(
+      (response) => response.json() as Promise<Record<string, unknown>>,
+    );
+    expect(status.instanceName).toBe("Env Handshake");
+    expect(status.capabilities).toEqual({ collab: true, remoteBuild: true, createDirectory: true });
+
+    const getResponse = await fetch(`${baseUrl}/api/settings/remote-build`, {
+      headers: { cookie: adminCookie },
+    });
+    expect(getResponse.status).toBe(200);
+    const getBody = await getResponse.json() as {
+      settings: { enabled: boolean; terminalsEnabled: boolean; instanceName: string | null };
+      persistedSettings: { enabled: boolean; terminalsEnabled: boolean; instanceName: string | null };
+      sources: Record<string, string>;
+    };
+    expect(getBody.settings).toMatchObject({
+      enabled: true,
+      terminalsEnabled: false,
+      instanceName: "Env Handshake",
+    });
+    expect(getBody.persistedSettings).toMatchObject({
+      enabled: false,
+      terminalsEnabled: true,
+      instanceName: null,
+    });
+    expect(getBody.sources).toEqual({
+      enabled: "environment",
+      terminalsEnabled: "environment",
+      instanceName: "environment",
+    });
+
+    const controlledPut = await fetch(`${baseUrl}/api/settings/remote-build`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ enabled: false, terminalsEnabled: true }),
+    });
+    expect(controlledPut.status).toBe(409);
+    const conflict = await controlledPut.json() as {
+      code: string;
+      controlledFields: string[];
+    };
+    expect(conflict.code).toBe("REMOTE_BUILD_SETTINGS_ENV_OVERRIDE");
+    expect(conflict.controlledFields).toEqual(["enabled", "terminalsEnabled"]);
+
+    // After rejected write, persisted layer is unchanged.
+    const afterConflict = await fetch(`${baseUrl}/api/settings/remote-build`, {
+      headers: { cookie: adminCookie },
+    }).then((response) => response.json() as Promise<typeof getBody>);
+    expect(afterConflict.persistedSettings).toMatchObject({
+      enabled: false,
+      terminalsEnabled: true,
+      instanceName: null,
+    });
+  }, 30_000);
+
+  it("allows uncontrolled PUT while env overlays remain effective", async () => {
+    const { baseUrl } = await startCollaborationServer({
+      remoteProjectsEnv: { enabled: true },
+    });
+    const adminCookie = await login(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+
+    const putResponse = await fetch(`${baseUrl}/api/settings/remote-build`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ terminalsEnabled: false, instanceName: "Persisted Label" }),
+    });
+    expect(putResponse.status).toBe(200);
+    const body = await putResponse.json() as {
+      ok: true;
+      settings: { enabled: boolean; terminalsEnabled: boolean; instanceName: string | null };
+      persistedSettings: { enabled: boolean; terminalsEnabled: boolean; instanceName: string | null };
+      sources: Record<string, string>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.settings).toMatchObject({
+      enabled: true,
+      terminalsEnabled: false,
+      instanceName: "Persisted Label",
+    });
+    expect(body.persistedSettings).toMatchObject({
+      enabled: false,
+      terminalsEnabled: false,
+      instanceName: "Persisted Label",
+    });
+    expect(body.sources.enabled).toBe("environment");
+    expect(body.sources.terminalsEnabled).toBe("settings");
   }, 30_000);
 });
 

@@ -47,7 +47,15 @@ The admin-only `GET` and partial `PUT` endpoint is:
 /api/settings/remote-build
 ```
 
-A partial `PUT` leaves omitted fields unchanged. There is currently no server admin UI and no environment variable for this policy. Use the authenticated admin API rather than editing the file while the server is running.
+A partial `PUT` leaves omitted fields unchanged. There is currently no server admin UI. Collaboration-server deployments may optionally set Forge-only environment overrides:
+
+- `FORGE_REMOTE_PROJECTS_ENABLED`
+- `FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED`
+- `FORGE_REMOTE_PROJECTS_INSTANCE_NAME`
+
+Unset or whitespace-only values are absent. Boolean forms are `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (trim, case-insensitive). Invalid nonblank booleans and trimmed instance names longer than 120 characters fail collaboration startup. There are no `MIDDLEMAN_*` aliases. Per field, a valid env value wins over the persisted JSON and defaults, and env values are never written into `remote-build-settings.json`. Removing an env override and restarting reveals latent persisted values. `GET /api/settings/remote-build` returns effective `settings`, `persistedSettings`, and per-field `sources` (`environment` or `settings`). A `PUT` that includes any env-controlled field is rejected with HTTP 409 and code `REMOTE_BUILD_SETTINGS_ENV_OVERRIDE` (no file change). Env changes require a restart. Prefer the authenticated admin API for day-to-day changes when env overrides are absent; do not edit the JSON file while the server is running.
+
+Treat `instanceName` (including the env override) as public handshake metadata. `terminalsEnabled: false` denies subsequent member terminal lifecycle mutations and ticket issuance but does not close an already attached terminal WebSocket.
 
 ### Client preference
 

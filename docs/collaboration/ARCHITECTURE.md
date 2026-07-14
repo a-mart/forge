@@ -114,7 +114,7 @@ Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend
 | Selected global specialists | SQLite | Category defaults and channel active selections. |
 | Selected global skills | SQLite | Category defaults and channel active selections. |
 | Channel backing history | Files | Normal session JSONL under `_collaboration`. |
-| Remote Projects policy | `shared/config/remote-build-settings.json` | Server-owned `enabled`, `terminalsEnabled`, and `instanceName` policy. |
+| Remote Projects policy | `shared/config/remote-build-settings.json` | Server-owned `enabled`, `terminalsEnabled`, and `instanceName` policy. Optional collaboration-server `FORGE_REMOTE_PROJECTS_*` env overlays win per field at startup and are not written into this file. |
 | Remote Builder profiles/sessions | `swarm/agents.json`, `profiles/<profileId>/sessions/` | Normal server-owned Builder data; never copied into the client data dir. |
 | Additional instructions | Files | `profiles/_collaboration/sessions/<sessionId>/context/prompt.md`. |
 | Channel reference docs | Files | `profiles/_collaboration/sessions/<sessionId>/reference/`. |

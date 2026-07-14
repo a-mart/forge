@@ -1,10 +1,12 @@
 import type {
+  RemoteBuildSettingsEnvOverrideErrorBody,
   RemoteBuildSettingsMutationResponse,
   RemoteBuildSettingsResponse,
 } from "@forge/protocol";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isCollaborationServerRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
 import {
+  RemoteBuildSettingsEnvOverrideError,
   RemoteBuildSettingsService,
   RemoteBuildSettingsValidationError,
 } from "../../../collaboration/remote-build-settings-service.js";
@@ -57,7 +59,7 @@ async function handleRemoteBuildSettingsRequest(
   }
 
   if (request.method === "GET") {
-    const payload: RemoteBuildSettingsResponse = { settings: settingsService.getSettings() };
+    const payload: RemoteBuildSettingsResponse = settingsService.getResponse();
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
@@ -69,12 +71,22 @@ async function handleRemoteBuildSettingsRequest(
   }
 
   try {
-    const settings = await settingsService.update(await readJsonBody(request));
-    const payload: RemoteBuildSettingsMutationResponse = { ok: true, settings };
+    const result = await settingsService.update(await readJsonBody(request));
+    const payload: RemoteBuildSettingsMutationResponse = { ok: true, ...result };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
   } catch (error) {
     if (error instanceof RemoteBuildSettingsValidationError) {
       sendJson(response, 400, { error: error.message });
+      return;
+    }
+
+    if (error instanceof RemoteBuildSettingsEnvOverrideError) {
+      const payload: RemoteBuildSettingsEnvOverrideErrorBody = {
+        error: error.message,
+        code: error.code,
+        controlledFields: error.controlledFields,
+      };
+      sendJson(response, 409, payload as unknown as Record<string, unknown>);
       return;
     }
 

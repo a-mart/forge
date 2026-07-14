@@ -70,7 +70,7 @@ Never duplicate shared DTOs in app-local files when they belong in protocol.
 ## Remote Projects access and state invariants
 
 - The user-facing name is Remote Projects even though compatibility identifiers use `remote-build`/`remoteBuild`.
-- The server policy defaults to off and is admin-only at `/api/settings/remote-build`; do not add an undocumented UI or environment override.
+- The server policy defaults to off and is admin-only at `/api/settings/remote-build`. Optional collaboration-server env overrides (`FORGE_REMOTE_PROJECTS_*`) may overlay the same fields at startup; do not add an undocumented UI. Env changes require restart and are never written into `remote-build-settings.json`.
 - Member HTTP and WS access remains allowlist-only. New commands/routes must be deliberately classified and tested with policy on and off; default is admin-only.
 - Admins pass the member policy gate. Active members receive both read and write tiers only while `enabled` is on.
 - `terminalsEnabled` gates member terminal lifecycle mutations/tickets. It must not be described as killing already attached terminal sockets.

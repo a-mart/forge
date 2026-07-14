@@ -58,12 +58,37 @@ export interface UpdateRemoteBuildSettingsRequest {
   instanceName?: string | null
 }
 
+/** Per-field origin for effective Remote Projects policy values. */
+export type RemoteBuildSettingsFieldSource = 'environment' | 'settings'
+
+export type RemoteBuildSettingsControlledField = 'enabled' | 'terminalsEnabled' | 'instanceName'
+
+export interface RemoteBuildSettingsSources {
+  enabled: RemoteBuildSettingsFieldSource
+  terminalsEnabled: RemoteBuildSettingsFieldSource
+  instanceName: RemoteBuildSettingsFieldSource
+}
+
+/**
+ * Admin GET/PUT payload. `settings` is the effective runtime policy
+ * (environment overrides win per field). `persistedSettings` is the v1 JSON
+ * file contents; `updatedAt` remains the last persisted write.
+ */
 export interface RemoteBuildSettingsResponse {
   settings: RemoteBuildSettings
+  persistedSettings: RemoteBuildSettings
+  sources: RemoteBuildSettingsSources
 }
 
 export interface RemoteBuildSettingsMutationResponse extends RemoteBuildSettingsResponse {
   ok: true
+}
+
+/** Stable HTTP 409 body when a PUT touches an env-controlled field. */
+export interface RemoteBuildSettingsEnvOverrideErrorBody {
+  error: string
+  code: 'REMOTE_BUILD_SETTINGS_ENV_OVERRIDE'
+  controlledFields: RemoteBuildSettingsControlledField[]
 }
 
 export interface SettingsAuthProvider {

@@ -230,6 +230,15 @@ export interface SwarmConfig {
   collaborationBaseUrl?: string;
   collaborationTrustedOrigins?: string[];
   collaborationModules?: CollaborationModuleLoaders;
+  /**
+   * Collaboration-server startup overlay for Remote Projects policy.
+   * Absent on Builder. Parsed once from FORGE_REMOTE_PROJECTS_* env vars.
+   */
+  remoteProjectsEnv?: {
+    enabled?: boolean;
+    terminalsEnabled?: boolean;
+    instanceName?: string;
+  };
   allowNonManagerSubscriptions: boolean;
   managerId?: string;
   managerDisplayName: string;

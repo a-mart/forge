@@ -26,6 +26,11 @@ services:
       # Keep localhost out of the default list: localhost <-> 127.0.0.1 becomes cross-site for cookies
       # and would require HTTPS.
       FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-http://127.0.0.1:47188,http://127.0.0.1:47189}
+      # Optional Remote Projects deployment overrides (collaboration-server only).
+      # Blank defaults preserve existing API/file behavior. Changes require restart.
+      FORGE_REMOTE_PROJECTS_ENABLED: ${FORGE_REMOTE_PROJECTS_ENABLED:-}
+      FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: ${FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED:-}
+      FORGE_REMOTE_PROJECTS_INSTANCE_NAME: ${FORGE_REMOTE_PROJECTS_INSTANCE_NAME:-}
     ports:
       - '${FORGE_PUBLIC_PORT:-47387}:47287'
     volumes:
@@ -61,6 +66,11 @@ services:
       FORGE_COLLABORATION_AUTH_COOKIE_NAME: ${FORGE_SECONDARY_COLLABORATION_AUTH_COOKIE_NAME:-forge_collab_secondary_session}
       # Secondary local test backend for multi-backend UI validation.
       FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-http://127.0.0.1:47188,http://127.0.0.1:47189}
+      # Optional Remote Projects deployment overrides (collaboration-server only).
+      # Blank defaults preserve existing API/file behavior. Changes require restart.
+      FORGE_REMOTE_PROJECTS_ENABLED: ${FORGE_REMOTE_PROJECTS_ENABLED:-}
+      FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: ${FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED:-}
+      FORGE_REMOTE_PROJECTS_INSTANCE_NAME: ${FORGE_REMOTE_PROJECTS_INSTANCE_NAME:-}
     ports:
       - '${FORGE_SECONDARY_PUBLIC_PORT:-47388}:47287'
     volumes:

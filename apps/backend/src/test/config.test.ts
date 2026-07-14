@@ -24,6 +24,9 @@ const MANAGED_ENV_KEYS = [
   'FORGE_COLLABORATION_AUTH_COOKIE_NAME',
   'FORGE_COLLABORATION_BASE_URL',
   'FORGE_COLLABORATION_TRUSTED_ORIGINS',
+  'FORGE_REMOTE_PROJECTS_ENABLED',
+  'FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED',
+  'FORGE_REMOTE_PROJECTS_INSTANCE_NAME',
 
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
@@ -455,5 +458,63 @@ describe('createConfig', () => {
       const config = createConfig()
       expect(config.isDesktop).toBe(false)
     })
+  })
+
+  it('parses Remote Projects env overrides only for collaboration-server', async () => {
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'collaboration-server',
+        FORGE_REMOTE_PROJECTS_ENABLED: 'true',
+        FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: '0',
+        FORGE_REMOTE_PROJECTS_INSTANCE_NAME: ' Compose Instance ',
+      },
+      () => {
+        expect(createConfig().remoteProjectsEnv).toEqual({
+          enabled: true,
+          terminalsEnabled: false,
+          instanceName: 'Compose Instance',
+        })
+      },
+    )
+  })
+
+  it('ignores Remote Projects env overrides on Builder runtime', async () => {
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'builder',
+        FORGE_REMOTE_PROJECTS_ENABLED: 'true',
+        FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: 'false',
+        FORGE_REMOTE_PROJECTS_INSTANCE_NAME: 'Should Ignore',
+      },
+      () => {
+        expect(createConfig().remoteProjectsEnv).toBeUndefined()
+      },
+    )
+  })
+
+  it('treats blank Remote Projects env overrides as absent on collaboration-server', async () => {
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'collaboration-server',
+        FORGE_REMOTE_PROJECTS_ENABLED: '  ',
+        FORGE_REMOTE_PROJECTS_TERMINALS_ENABLED: '',
+        FORGE_REMOTE_PROJECTS_INSTANCE_NAME: '\t',
+      },
+      () => {
+        expect(createConfig().remoteProjectsEnv).toEqual({})
+      },
+    )
+  })
+
+  it('fails collaboration startup on invalid Remote Projects boolean env', async () => {
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'collaboration-server',
+        FORGE_REMOTE_PROJECTS_ENABLED: 'definitely',
+      },
+      () => {
+        expect(() => createConfig()).toThrow(/FORGE_REMOTE_PROJECTS_ENABLED/)
+      },
+    )
   })
 })
