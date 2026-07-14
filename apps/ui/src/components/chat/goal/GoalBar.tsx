@@ -77,8 +77,9 @@ export function GoalBar({
   }
 
   return (
-    <div className="shrink-0 border-b border-border/60 bg-background/95 px-3 py-1.5 backdrop-blur">
-      <div className="mx-auto max-w-5xl rounded-lg border border-border/70 bg-card/70 shadow-sm">
+    <div className="relative z-20 h-0 shrink-0">
+      <div className="absolute inset-x-0 top-1.5 px-3">
+        <div className="mx-auto max-w-5xl rounded-lg border border-border/70 bg-card/90 shadow-sm backdrop-blur-sm">
         <div className="flex min-h-9 items-center gap-2 px-2.5 py-1.5">
           <Target className={cn(
             'size-3.5 shrink-0',
@@ -153,43 +154,44 @@ export function GoalBar({
           </Button>
         </div>
 
-        {expanded ? (
-          <div className="border-t border-border/60 px-3 py-2.5">
-            {editing ? (
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  value={objective}
-                  onChange={(event) => setObjective(event.target.value)}
-                  maxLength={1_000}
-                  aria-label="Goal objective"
-                  className="h-8 flex-1 text-xs"
-                />
-                <Input
-                  value={tokenBudget}
-                  onChange={(event) => setTokenBudget(event.target.value)}
-                  inputMode="numeric"
-                  placeholder="No token budget"
-                  aria-label="Goal token budget"
-                  className="h-8 sm:w-40 text-xs"
-                />
-                <div className="flex gap-1">
-                  <Button size="sm" className="h-8" onClick={saveEdit} disabled={!objective.trim()}>
-                    <Check className="mr-1 size-3.5" /> Save
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>
-                    <X className="mr-1 size-3.5" /> Cancel
-                  </Button>
+          {expanded ? (
+            <div className="border-t border-border/60 px-3 py-2.5">
+              {editing ? (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    value={objective}
+                    onChange={(event) => setObjective(event.target.value)}
+                    maxLength={1_000}
+                    aria-label="Goal objective"
+                    className="h-8 flex-1 text-xs"
+                  />
+                  <Input
+                    value={tokenBudget}
+                    onChange={(event) => setTokenBudget(event.target.value)}
+                    inputMode="numeric"
+                    placeholder="No token budget"
+                    aria-label="Goal token budget"
+                    className="h-8 sm:w-40 text-xs"
+                  />
+                  <div className="flex gap-1">
+                    <Button size="sm" className="h-8" onClick={saveEdit} disabled={!objective.trim()}>
+                      <Check className="mr-1 size-3.5" /> Save
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>
+                      <X className="mr-1 size-3.5" /> Cancel
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
-                <span>{goal.turnCount} goal {goal.turnCount === 1 ? 'turn' : 'turns'}</span>
-                <span>{formatTokenCount(goal.usage.total)} tokens{goal.usageCoverage === 'partial' ? ' estimated' : ''}</span>
-                <span>Started {new Date(goal.createdAt).toLocaleString()}</span>
-              </div>
-            )}
-          </div>
-        ) : null}
+              ) : (
+                <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+                  <span>{goal.turnCount} goal {goal.turnCount === 1 ? 'turn' : 'turns'}</span>
+                  <span>{formatTokenCount(goal.usage.total)} tokens{goal.usageCoverage === 'partial' ? ' estimated' : ''}</span>
+                  <span>Started {new Date(goal.createdAt).toLocaleString()}</span>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )

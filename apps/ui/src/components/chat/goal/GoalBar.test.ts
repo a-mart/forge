@@ -49,6 +49,11 @@ describe('GoalBar', () => {
     act(() => root.render(createElement(GoalBar, { snapshot, onAction })))
 
     expect(container.textContent).toContain('Pursuing goal')
+    expect(container.firstElementChild?.className).toBe('relative z-20 h-0 shrink-0')
+    expect(container.firstElementChild?.firstElementChild?.className)
+      .toBe('absolute inset-x-0 top-1.5 px-3')
+    expect(container.firstElementChild?.firstElementChild?.firstElementChild?.className)
+      .toContain('bg-card/90')
     expect(container.textContent).toContain('Ship the simple durable goal system')
     expect(container.textContent).toContain('1:05')
     expect(container.textContent).toContain('1.5k / 10k')

@@ -42,7 +42,9 @@ describe('PlanDockIndicator', () => {
     expect(container.textContent).toContain('Step 2/3')
     expect(container.querySelector('button')?.getAttribute('aria-label'))
       .toBe('Open working plan, Step 2/3')
-    expect(container.firstElementChild?.className).toContain('pb-1')
+    expect(container.firstElementChild?.className).toBe('relative z-20 h-0 shrink-0')
+    expect(container.firstElementChild?.firstElementChild?.className)
+      .toBe('absolute inset-x-0 bottom-1 flex justify-center px-3')
   })
 
   it('shows a completed state and hides when no plan exists', () => {
