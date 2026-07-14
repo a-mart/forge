@@ -3586,6 +3586,57 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('pushes an updated session workers snapshot after worker compaction', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Compacting Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+    const baseline = events.length
+
+    await manager.handleRuntimeError(worker.agentId, {
+      phase: 'compaction',
+      message: 'Worker context compacted by the context guard',
+      details: { recoveryStage: 'context_guard_compaction_succeeded' },
+    })
+
+    const snapshot = await waitForEventAfter(
+      events,
+      baseline,
+      (event) =>
+        event.type === 'session_workers_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.requestId === undefined &&
+        event.workers.some(
+          (candidate) => candidate.agentId === worker.agentId && candidate.compactionCount === 1,
+        ),
+    )
+    expect(snapshot.type).toBe('session_workers_snapshot')
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('returns an UNKNOWN_SESSION error for unknown get_session_workers requests', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

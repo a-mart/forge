@@ -24,6 +24,10 @@ export interface RuntimeErrorProjectorDeps {
     sessionId: string,
     failureLogKey: string
   ): Promise<number | undefined>;
+  incrementWorkerCompactionCount(
+    agentId: string,
+    failureLogKey: string
+  ): Promise<number | undefined>;
   patchDescriptorFromRuntimeStatus(
     agentId: string,
     patch: Partial<AgentDescriptor>
@@ -99,14 +103,21 @@ export class RuntimeErrorProjector {
 
     const isSuccessfulCompactionStage = isCompactionSuccessRecoveryStage(recoveryStage);
 
-    if (error.phase === "compaction" && isSuccessfulCompactionStage && descriptor.profileId) {
-      const count = await this.deps.incrementSessionCompactionCount(
-        descriptor.profileId,
-        agentId,
-        "runtime:compact:count-increment-failed"
-      );
-      if (count !== undefined) {
-        await this.deps.patchDescriptorFromRuntimeStatus(agentId, { compactionCount: count });
+    if (error.phase === "compaction" && isSuccessfulCompactionStage) {
+      if (descriptor.role === "worker") {
+        await this.deps.incrementWorkerCompactionCount(
+          agentId,
+          "runtime:compact:worker-count-increment-failed"
+        );
+      } else if (descriptor.profileId) {
+        const count = await this.deps.incrementSessionCompactionCount(
+          descriptor.profileId,
+          agentId,
+          "runtime:compact:count-increment-failed"
+        );
+        if (count !== undefined) {
+          await this.deps.patchDescriptorFromRuntimeStatus(agentId, { compactionCount: count });
+        }
       }
     }
 
