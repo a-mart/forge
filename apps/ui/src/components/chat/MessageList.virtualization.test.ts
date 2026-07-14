@@ -169,6 +169,137 @@ describe('MessageList virtualization — windowing', () => {
     await flushFrames()
   })
 
+  it('keeps mounted row positions non-overlapping when a row reflows during smooth scroll', async () => {
+    virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })
+
+    const baseOffsetHeight = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'offsetHeight',
+    )
+    if (!baseOffsetHeight?.get) {
+      throw new Error('virtualization harness did not install offsetHeight')
+    }
+
+    const rowHeights = new Map<number, number>()
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        const index = Number.parseInt(this.dataset.index ?? '', 10)
+        return rowHeights.get(index) ?? (baseOffsetHeight.get?.call(this) as number)
+      },
+    })
+
+    const observers = new Set<{
+      instance: ResizeObserver
+      callback: ResizeObserverCallback
+      targets: Set<Element>
+    }>()
+    class ManualResizeObserver {
+      readonly registration: {
+        instance: ResizeObserver
+        callback: ResizeObserverCallback
+        targets: Set<Element>
+      }
+
+      constructor(callback: ResizeObserverCallback) {
+        this.registration = {
+          instance: this as unknown as ResizeObserver,
+          callback,
+          targets: new Set(),
+        }
+        observers.add(this.registration)
+      }
+
+      observe(target: Element) {
+        this.registration.targets.add(target)
+      }
+
+      unobserve(target: Element) {
+        this.registration.targets.delete(target)
+      }
+
+      disconnect() {
+        this.registration.targets.clear()
+        observers.delete(this.registration)
+      }
+    }
+    globalThis.ResizeObserver = ManualResizeObserver as unknown as typeof ResizeObserver
+
+    const notifyRowResize = (target: Element) => {
+      for (const observer of observers) {
+        if (observer.targets.has(target)) {
+          observer.callback(
+            [{ target } as ResizeObserverEntry],
+            observer.instance,
+          )
+        }
+      }
+    }
+    const rowPosition = (index: number) => {
+      const node = container.querySelector<HTMLElement>(`[data-index="${index}"]`)
+      if (!node) throw new Error(`virtual row ${index} is not mounted`)
+      const match = /translateY\((-?[\d.]+)px\)/.exec(node.style.transform)
+      if (!match) throw new Error(`virtual row ${index} has no translateY position`)
+      return {
+        node,
+        start: Number.parseFloat(match[1]),
+        end: Number.parseFloat(match[1]) + node.offsetHeight,
+      }
+    }
+
+    const ref = { current: null as MessageListHandle | null }
+    render(makeMessages(30), {}, ref)
+    await flushFrames()
+
+    const scroller = scrollContainer()
+    await act(async () => {
+      virt!.scrollTo(scroller, scroller.scrollHeight - scroller.clientHeight - 240)
+    })
+
+    // Keep the virtualizer's smooth-scroll state active. Real browsers advance
+    // toward the target over multiple frames; the harness normally applies the
+    // final scroll offset immediately, which would hide this race.
+    const immediateScrollTo = scroller.scrollTo.bind(scroller)
+    scroller.scrollTo = ((options?: ScrollToOptions | number, y?: number) => {
+      if (typeof options === 'object' && options?.behavior === 'smooth') return
+      if (typeof options === 'number') {
+        immediateScrollTo(options, y ?? 0)
+      } else {
+        immediateScrollTo(options)
+      }
+    }) as typeof scroller.scrollTo
+
+    await act(async () => {
+      ref.current?.scrollToBottom('smooth')
+    })
+
+    const mountedIndexes = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-index]'),
+      (node) => Number.parseInt(node.dataset.index ?? '', 10),
+    ).filter(Number.isFinite).sort((a, b) => a - b)
+    // Nine rows before the last/target row is still mounted by overscan, but it
+    // sits just outside the virtualizer's eight-row smooth-scroll buffer.
+    const resizedIndex = mountedIndexes.at(-10)
+    if (resizedIndex === undefined) throw new Error('too few virtual rows mounted')
+    const nextIndex = resizedIndex + 1
+    expect(mountedIndexes).toContain(nextIndex)
+
+    const before = rowPosition(resizedIndex)
+    const nextBefore = rowPosition(nextIndex)
+    expect(nextBefore.start).toBeGreaterThanOrEqual(before.end)
+
+    // This mounted overscan row is outside TanStack Virtual's buffer around the
+    // smooth-scroll target. Its ResizeObserver notification must still update
+    // downstream transforms when its real DOM height changes.
+    rowHeights.set(resizedIndex, ROW_HEIGHT + 240)
+    notifyRowResize(before.node)
+    await flushFrames()
+
+    const after = rowPosition(resizedIndex)
+    const nextAfter = rowPosition(nextIndex)
+    expect(nextAfter.start).toBeGreaterThanOrEqual(after.end)
+  })
+
   it('mounts only the viewport subset, not every message', async () => {
     // 500px viewport, 96px rows → ~5-6 visible + overscan; far fewer than 300.
     virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })

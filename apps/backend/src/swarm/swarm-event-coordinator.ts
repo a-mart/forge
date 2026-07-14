@@ -2,6 +2,7 @@ import type {
   ModelCacheObservationEvent,
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
+  SessionWorkersSnapshotEvent,
 } from "@forge/protocol";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { ConversationProjector } from "./conversation-projector.js";
@@ -129,6 +130,15 @@ export class SwarmEventCoordinator {
     if (snapshot) {
       this.options.host.emit("session_active_tools_snapshot", snapshot);
     }
+  }
+
+  emitSessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[]): void {
+    const payload: SessionWorkersSnapshotEvent = {
+      type: "session_workers_snapshot",
+      sessionAgentId,
+      workers,
+    };
+    this.options.host.emit("session_workers_snapshot", payload);
   }
 
   emitStatus(

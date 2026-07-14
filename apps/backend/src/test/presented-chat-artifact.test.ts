@@ -80,21 +80,58 @@ describe("presented chat artifact authorization", () => {
     await writeFile(f.sessionFile, line(message("m", `[x](<swarm-file://${target.replace("?", "%3F")}> "t") and \`${target}\` and ![x](${target})`)));
     expect((await readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: target }) as any).content).toBe("a");
     expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "m", path: `${target}x` }))).toBe("path_not_presented");
+    await writeFile(f.sessionFile, line(message("escaped", `\\[artifact:${target}]`)));
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "escaped", path: target }))).toBe("path_not_presented");
     expect(extractPresentedArtifactPaths(`[x](file://${target})`)).toEqual([]);
-    expect(canonicalizePresentedLinkHref("swarm-file:///tmp/a%252Fz")).toBe("/tmp/a%2Fz");
+    expect(canonicalizePresentedLinkHref("swarm-file:///tmp/a%252Fz")).toBe(canonicalizeChatArtifactPath("/tmp/a%2Fz"));
     expect(canonicalizePresentedLinkHref("swarm-file:///tmp/%")).toBeUndefined();
     expect(() => canonicalizeChatArtifactPath("//host/share")).toThrow(ChatArtifactError);
   });
 
-  it("matches Markdown-It link tokens without authorizing code, images, or malformed destinations", () => {
-    expect(extractPresentedArtifactPaths("[x](/tmp/a(b).txt) [r][ref]\n\n[ref]: /tmp/reference.txt")).toEqual(["/tmp/a(b).txt", "/tmp/reference.txt"]);
-    expect(extractPresentedArtifactPaths("```\n[x](/tmp/fenced)\n```\n~~~\n[x](/tmp/tilde)\n~~~\n    [x](/tmp/indented)\n``code [x](/tmp/inline)``\n![x](/tmp/image)")).toEqual([]);
-    expect(extractPresentedArtifactPaths("<swarm-file:///tmp/autolink> [x](file:///tmp/rejected)")).toEqual(["/tmp/autolink"]);
+  it("matches links and artifact shortcodes without authorizing code, images, or malformed destinations", () => {
+    const canonical = (value: string) => canonicalizeChatArtifactPath(value);
+    expect(extractPresentedArtifactPaths("[x](/tmp/a(b).txt) [r][ref]\n\n[ref]: /tmp/reference.txt")).toEqual([canonical("/tmp/a(b).txt"), canonical("/tmp/reference.txt")]);
+    expect(extractPresentedArtifactPaths("[artifact:/tmp/shortcode.png]")).toEqual([canonical("/tmp/shortcode.png")]);
+    expect(extractPresentedArtifactPaths("\\[artifact:/tmp/escaped.png] plain /tmp/raw.png")).toEqual([]);
+    expect(extractPresentedArtifactPaths("```\n[artifact:/tmp/fenced]\n[x](/tmp/fenced-link)\n```\n~~~\n[artifact:/tmp/tilde]\n~~~\n    [artifact:/tmp/indented]\n`[artifact:/tmp/inline]`\n![x](/tmp/image)")).toEqual([]);
+    expect(extractPresentedArtifactPaths("<swarm-file:///tmp/autolink> [x](file:///tmp/rejected)")).toEqual([canonical("/tmp/autolink")]);
   });
 
   it("fails closed when stable file identity is unavailable", () => {
     expect(() => stableFileIdentity({ dev: 0, ino: 1, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })).toThrow(ChatArtifactError);
     expect(() => stableFileIdentity({ dev: 1, ino: 0, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })).toThrow(ChatArtifactError);
+  });
+
+  it("normalizes only Darwin's trusted /tmp alias before authorization", () => {
+    expect(canonicalizeChatArtifactPathForPlatform("/tmp/result.png", "darwin")).toBe("/private/tmp/result.png");
+    expect(canonicalizeChatArtifactPathForPlatform("/private/tmp/result.png", "darwin")).toBe("/private/tmp/result.png");
+    expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///tmp/result.png", "darwin")).toBe("/private/tmp/result.png");
+    expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///private/tmp/result.png", "darwin")).toBe("/private/tmp/result.png");
+    expect(canonicalizeChatArtifactPathForPlatform("/tmp-result/result.png", "darwin")).toBe("/tmp-result/result.png");
+    expect(canonicalizeChatArtifactPathForPlatform("/tmp/result.png", "linux")).toBe("/tmp/result.png");
+  });
+
+  it("reads a literal Darwin /tmp claim through its canonical /private/tmp target", async () => {
+    if (process.platform !== "darwin") return;
+    const f = await fixture();
+    const targetRoot = await mkdtemp("/private/tmp/forge-chat-artifact-alias-");
+    roots.push(targetRoot);
+    const canonicalTarget = join(targetRoot, "literal-tmp.png");
+    const presentedTarget = canonicalTarget.replace(/^\/private\/tmp\//, "/tmp/");
+    await writeFile(canonicalTarget, Buffer.from([137, 80, 78, 71]));
+    await writeFile(f.sessionFile, line(message("tmp-image", `[artifact:${presentedTarget}]`)));
+
+    const result: any = await readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "tmp-image",
+      path: presentedTarget,
+    });
+    expect(result).toMatchObject({ path: canonicalTarget, binary: true, contentType: "image/png" });
+    expect(await readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "tmp-image",
+      path: canonicalTarget,
+    })).toMatchObject({ path: canonicalTarget, binary: true, contentType: "image/png" });
   });
 
   it("has platform-independent Windows URI and path canonicalization", () => {

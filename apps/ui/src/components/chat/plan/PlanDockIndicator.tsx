@@ -8,23 +8,15 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
   if (!snapshot || snapshot.plan.length === 0) return null
 
   const completed = snapshot.plan.filter((step) => step.status === 'completed').length
-  const active = snapshot.plan.filter((step) => step.status === 'in_progress').length
   const isComplete = completed === snapshot.plan.length
   const label = isComplete
-    ? `${completed}/${snapshot.plan.length} complete`
-    : active > 1
-      ? `${active} active · ${completed}/${snapshot.plan.length} complete`
-      : (() => {
-          const activeIndex = snapshot.plan.findIndex((step) => step.status === 'in_progress')
-          const nextIndex = activeIndex >= 0
-            ? activeIndex
-            : snapshot.plan.findIndex((step) => step.status === 'pending')
-          return `Step ${Math.max(0, nextIndex) + 1}/${snapshot.plan.length}`
-        })()
+    ? 'Plan complete'
+    : `${completed}/${snapshot.plan.length} done`
 
   return (
-    <div className="relative z-20 flex shrink-0 justify-center bg-background px-3 pb-1 pt-1">
-      <Popover>
+    <div className="relative z-20 h-0 shrink-0">
+      <div className="absolute inset-x-0 bottom-1 flex justify-center px-3">
+        <Popover>
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -53,8 +45,9 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
           <div className="p-4">
             <PlanView snapshot={snapshot} compact />
           </div>
-        </PopoverContent>
-      </Popover>
+          </PopoverContent>
+        </Popover>
+      </div>
     </div>
   )
 }

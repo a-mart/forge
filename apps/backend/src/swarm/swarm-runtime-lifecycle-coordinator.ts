@@ -89,8 +89,20 @@ export interface RuntimeLifecycleGoals {
   scheduleContinuation(owner: AgentDescriptor & { role: "manager"; profileId: string }): void;
 }
 
+export interface RuntimeLifecycleDescriptorMutations {
+  patchDescriptor(
+    agentId: string,
+    patch: (descriptor: AgentDescriptor) => AgentDescriptor,
+  ): Promise<AgentDescriptor>;
+}
+
+export interface RuntimeLifecycleDirectory {
+  listWorkersForSession(sessionAgentId: string): AgentDescriptor[];
+}
+
 export interface RuntimeLifecycleEvents {
   emitConversationMessage(event: ConversationMessageEvent): void;
+  emitSessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[]): void;
 }
 
 export interface SwarmRuntimeLifecycleCoordinatorOptions {
@@ -103,6 +115,8 @@ export interface SwarmRuntimeLifecycleCoordinatorOptions {
   codexScopes: RuntimeLifecycleCodexScopes;
   plans: RuntimeLifecyclePlans;
   goals: RuntimeLifecycleGoals;
+  descriptorMutations: RuntimeLifecycleDescriptorMutations;
+  directory: RuntimeLifecycleDirectory;
   events: RuntimeLifecycleEvents;
   now: () => string;
   logDebug(message: string, details?: unknown): void;
@@ -290,6 +304,38 @@ export class SwarmRuntimeLifecycleCoordinator {
       : runtimeTokenOrAgentId;
     this.options.turnContext.handleRuntimeError(agentId);
     await this.options.controller.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
+  }
+
+  async incrementWorkerCompactionCount(
+    agentId: string,
+    failureLogKey: string,
+  ): Promise<number | undefined> {
+    try {
+      const updated = await this.options.descriptorMutations.patchDescriptor(
+        agentId,
+        (descriptor) => {
+          if (descriptor.role !== "worker") {
+            throw new Error(`Agent is not a worker: ${agentId}`);
+          }
+
+          const currentCount =
+            typeof descriptor.compactionCount === "number"
+            && Number.isFinite(descriptor.compactionCount)
+            && descriptor.compactionCount >= 0
+              ? Math.floor(descriptor.compactionCount)
+              : 0;
+          return { ...descriptor, compactionCount: currentCount + 1 };
+        },
+      );
+      this.options.events.emitSessionWorkersSnapshot(
+        updated.managerId,
+        this.options.directory.listWorkersForSession(updated.managerId),
+      );
+      return updated.compactionCount;
+    } catch (error) {
+      this.options.logDebug(failureLogKey, { agentId, error: String(error) });
+      return undefined;
+    }
   }
 
   async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {

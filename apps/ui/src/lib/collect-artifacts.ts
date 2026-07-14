@@ -1,5 +1,6 @@
 import { parseArtifactReference, toSwarmFileHref, type ArtifactReference } from './artifacts'
-import type { ConversationEntry } from '@forge/protocol'
+import { isUserVisibleAssistantConversationMessage, type ConversationEntry } from '@forge/protocol'
+import { fromMarkdown } from 'mdast-util-from-markdown'
 
 const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
 const SWARM_FILE_PATTERN = /swarm-file:\/\/[^\s)>\]"']+/gi
@@ -14,7 +15,10 @@ const EXPLICIT_EXPORT_ARTIFACT_LINK_FIELDS = ['artifactMarkdown', 'manifestMarkd
  * Collect all unique artifact references from a list of conversation entries.
  * Deduplicates by normalized file path and returns last-seen items first.
  */
-export function collectArtifactsFromMessages(messages: ConversationEntry[]): ArtifactReference[] {
+export function collectArtifactsFromMessages(
+  messages: ConversationEntry[],
+  transcriptAgentId?: string | null,
+): ArtifactReference[] {
   const seen = new Map<string, ArtifactReference>()
 
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
@@ -22,10 +26,10 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
     const artifactTexts = getArtifactCandidateTexts(message)
     if (artifactTexts.length === 0) continue
 
-    const sourceAgentId = getArtifactSourceAgentId(message)
+    const provenance = getArtifactProvenance(message, transcriptAgentId)
 
     for (const artifactText of artifactTexts) {
-      collectArtifactReferencesFromText(artifactText, sourceAgentId, seen)
+      collectArtifactReferencesFromText(artifactText, provenance, seen)
     }
   }
 
@@ -56,20 +60,26 @@ export function categorizeArtifact(fileName: string): ArtifactCategory {
   return 'other'
 }
 
+interface ArtifactProvenance {
+  sourceAgentId?: string
+  transcriptAgentId?: string
+  messageId?: string
+}
+
 function collectArtifactReferencesFromText(
   artifactText: string,
-  sourceAgentId: string | undefined,
+  provenance: ArtifactProvenance,
   seen: Map<string, ArtifactReference>,
 ): void {
   const codeRanges = findMarkdownCodeRanges(artifactText)
 
   // Extract from [artifact:path] shortcodes
   for (const match of artifactText.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
-    if (isMatchInCodeRange(match, codeRanges)) continue
+    if (isMatchInCodeRange(match, codeRanges) || isEscapedMarkdownSyntax(artifactText, match.index ?? 0)) continue
 
     const rawPath = match[1]?.trim()
     if (!isValidArtifactCandidate(rawPath)) continue
-    const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId })
+    const ref = parseArtifactReference(toSwarmFileHref(rawPath), provenance)
     addArtifactReference(ref, seen)
   }
 
@@ -77,7 +87,7 @@ function collectArtifactReferencesFromText(
   for (const match of artifactText.matchAll(SWARM_FILE_PATTERN)) {
     if (isMatchInCodeRange(match, codeRanges)) continue
 
-    const ref = parseArtifactReference(match[0], { sourceAgentId })
+    const ref = parseArtifactReference(match[0], provenance)
     addArtifactReference(ref, seen)
   }
 
@@ -85,13 +95,13 @@ function collectArtifactReferencesFromText(
   for (const match of artifactText.matchAll(VSCODE_FILE_PATTERN)) {
     if (isMatchInCodeRange(match, codeRanges)) continue
 
-    const ref = parseArtifactReference(match[0], { sourceAgentId })
+    const ref = parseArtifactReference(match[0], provenance)
     addArtifactReference(ref, seen)
   }
 
   // Extract from markdown links [text](href)
   for (const match of artifactText.matchAll(MARKDOWN_LINK_PATTERN)) {
-    if (isMatchInCodeRange(match, codeRanges)) continue
+    if (isMatchInCodeRange(match, codeRanges) || isEscapedMarkdownSyntax(artifactText, match.index ?? 0)) continue
 
     const matchIndex = match.index ?? 0
     if (matchIndex > 0 && artifactText[matchIndex - 1] === '!') {
@@ -101,7 +111,7 @@ function collectArtifactReferencesFromText(
     const linkText = match[1]?.trim()
     const href = parseMarkdownLinkHref(match[2] ?? '')
     if (!isValidArtifactCandidate(href)) continue
-    const ref = parseArtifactReference(href, { title: linkText, sourceAgentId })
+    const ref = parseArtifactReference(href, { title: linkText, ...provenance })
     addArtifactReference(ref, seen)
   }
 }
@@ -110,11 +120,25 @@ function addArtifactReference(
   ref: ArtifactReference | null,
   seen: Map<string, ArtifactReference>,
 ): void {
-  if (!ref || !isValidArtifactCandidate(ref.path) || seen.has(ref.path)) {
+  if (!ref || !isValidArtifactCandidate(ref.path)) {
     return
   }
 
-  seen.set(ref.path, ref)
+  const existing = seen.get(ref.path)
+  if (!existing) {
+    seen.set(ref.path, ref)
+    return
+  }
+
+  const existingHasTranscriptProvenance = Boolean(existing.transcriptAgentId && existing.messageId)
+  const nextHasTranscriptProvenance = Boolean(ref.transcriptAgentId && ref.messageId)
+  if (!existingHasTranscriptProvenance && nextHasTranscriptProvenance) {
+    seen.set(ref.path, {
+      ...existing,
+      transcriptAgentId: ref.transcriptAgentId,
+      messageId: ref.messageId,
+    })
+  }
 }
 
 function isValidArtifactCandidate(value: string | undefined): value is string {
@@ -149,74 +173,42 @@ interface TextRange {
   end: number
 }
 
+interface MarkdownAstNode {
+  type: string
+  children?: MarkdownAstNode[]
+  position?: {
+    start: { offset?: number }
+    end: { offset?: number }
+  }
+}
+
 function findMarkdownCodeRanges(text: string): TextRange[] {
-  const ranges = findFencedCodeRanges(text)
-
-  const inlineCodePattern = /`[^`\n]+`/g
-  for (const match of text.matchAll(inlineCodePattern)) {
-    const start = match.index ?? 0
-    const end = start + match[0].length
-    if (!ranges.some((range) => start >= range.start && end <= range.end)) {
-      ranges.push({ start, end })
-    }
-  }
-
-  return ranges
-}
-
-interface OpenFence {
-  char: '`' | '~'
-  length: number
-  start: number
-}
-
-function findFencedCodeRanges(text: string): TextRange[] {
   const ranges: TextRange[] = []
-  let openFence: OpenFence | undefined
-  let lineStart = 0
+  const root = fromMarkdown(text) as MarkdownAstNode
 
-  while (lineStart < text.length) {
-    const newlineIndex = text.indexOf('\n', lineStart)
-    const lineEnd = newlineIndex >= 0 ? newlineIndex + 1 : text.length
-    const line = text.slice(lineStart, newlineIndex >= 0 ? newlineIndex : lineEnd)
-    const lineForFenceDetection = line.endsWith('\r') ? line.slice(0, -1) : line
-
-    if (openFence) {
-      if (isClosingFenceLine(lineForFenceDetection, openFence)) {
-        ranges.push({ start: openFence.start, end: lineEnd })
-        openFence = undefined
+  const visit = (node: MarkdownAstNode) => {
+    if (node.type === 'code' || node.type === 'inlineCode') {
+      const start = node.position?.start.offset
+      const end = node.position?.end.offset
+      if (typeof start === 'number' && typeof end === 'number') {
+        ranges.push({ start, end })
       }
-    } else {
-      const openingFence = getOpeningFence(lineForFenceDetection)
-      if (openingFence) {
-        openFence = { ...openingFence, start: lineStart }
-      }
+      return
     }
 
-    lineStart = lineEnd
+    node.children?.forEach(visit)
   }
 
-  if (openFence) {
-    ranges.push({ start: openFence.start, end: text.length })
-  }
-
+  visit(root)
   return ranges
 }
 
-function getOpeningFence(line: string): Pick<OpenFence, 'char' | 'length'> | undefined {
-  const match = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line)
-  if (!match) {
-    return undefined
+function isEscapedMarkdownSyntax(text: string, start: number): boolean {
+  let backslashCount = 0
+  for (let index = start - 1; index >= 0 && text[index] === '\\'; index -= 1) {
+    backslashCount += 1
   }
-
-  const fence = match[1]
-  return { char: fence[0] as '`' | '~', length: fence.length }
-}
-
-function isClosingFenceLine(line: string, openFence: OpenFence): boolean {
-  const escapedChar = openFence.char === '`' ? '`' : '~'
-  const pattern = new RegExp(`^[ \\t]{0,3}${escapedChar}{${openFence.length},}[ \\t]*$`)
-  return pattern.test(line)
+  return backslashCount % 2 === 1
 }
 
 function isMatchInCodeRange(match: RegExpMatchArray, ranges: TextRange[]): boolean {
@@ -296,16 +288,28 @@ function extractExplicitArtifactTextsFromArray(values: unknown[]): string[] {
   return artifactTexts
 }
 
-function getArtifactSourceAgentId(message: ConversationEntry): string | undefined {
+function getArtifactProvenance(
+  message: ConversationEntry,
+  transcriptAgentId: string | null | undefined,
+): ArtifactProvenance {
+  const normalizedTranscriptAgentId = transcriptAgentId?.trim() || undefined
+
   switch (message.type) {
-    case 'conversation_message':
-      return message.agentId
+    case 'conversation_message': {
+      const messageId = message.id?.trim()
+      return {
+        sourceAgentId: message.agentId,
+        ...(normalizedTranscriptAgentId && messageId && isUserVisibleAssistantConversationMessage(message)
+          ? { transcriptAgentId: normalizedTranscriptAgentId, messageId }
+          : {}),
+      }
+    }
     case 'agent_message':
-      return message.fromAgentId ?? message.agentId
+      return { sourceAgentId: message.fromAgentId ?? message.agentId }
     case 'agent_tool_call':
-      return message.actorAgentId
+      return { sourceAgentId: message.actorAgentId }
     default:
-      return undefined
+      return {}
   }
 }
 

@@ -977,7 +977,6 @@ export function BuilderSurface({
                   onDetailedAllViewChange: undefined,
                   contextWindowUsage: transcript.contextWindowUsage,
                   modelCacheHeaderSummary,
-                  planSnapshot,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,

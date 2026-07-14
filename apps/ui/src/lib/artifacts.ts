@@ -4,6 +4,10 @@ export interface ArtifactReference {
   href: string
   title?: string
   sourceAgentId?: string
+  /** Owner of the transcript that presented this reference. */
+  transcriptAgentId?: string
+  /** Stable conversation-message id within the presenting transcript. */
+  messageId?: string
 }
 
 const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
@@ -18,6 +22,8 @@ const LIKELY_DOMAIN_PATH_PATTERN = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i
 interface ParseArtifactReferenceOptions {
   title?: string | null
   sourceAgentId?: string | null
+  transcriptAgentId?: string | null
+  messageId?: string | null
 }
 
 export function normalizeArtifactShortcodes(content: string): string {
@@ -45,7 +51,9 @@ export function parseArtifactReference(
   }
 
   const title = normalizeArtifactTitle(options?.title)
-  const sourceAgentId = normalizeSourceAgentId(options?.sourceAgentId)
+  const sourceAgentId = normalizeOptionalId(options?.sourceAgentId)
+  const transcriptAgentId = normalizeOptionalId(options?.transcriptAgentId)
+  const messageId = normalizeOptionalId(options?.messageId)
   const lowered = trimmed.toLowerCase()
 
   if (lowered.startsWith(SWARM_FILE_PREFIX)) {
@@ -55,7 +63,14 @@ export function parseArtifactReference(
       return null
     }
 
-    return createArtifactReference(decodedPath, trimmed, title, sourceAgentId)
+    return createArtifactReference(
+      decodedPath,
+      trimmed,
+      title,
+      sourceAgentId,
+      transcriptAgentId,
+      messageId,
+    )
   }
 
   if (VSCODE_FILE_LINK_PATTERN.test(trimmed)) {
@@ -72,7 +87,14 @@ export function parseArtifactReference(
           ? decodedPath
           : `/${decodedPath}`
 
-    return createArtifactReference(normalizedPath, trimmed, title, sourceAgentId)
+    return createArtifactReference(
+      normalizedPath,
+      trimmed,
+      title,
+      sourceAgentId,
+      transcriptAgentId,
+      messageId,
+    )
   }
 
   if (!isLocalFilePath(trimmed)) {
@@ -85,7 +107,14 @@ export function parseArtifactReference(
     return null
   }
 
-  return createArtifactReference(decodedPath, trimmed, title, sourceAgentId)
+  return createArtifactReference(
+    decodedPath,
+    trimmed,
+    title,
+    sourceAgentId,
+    transcriptAgentId,
+    messageId,
+  )
 }
 
 export function toSwarmFileHref(path: string): string {
@@ -120,6 +149,8 @@ function createArtifactReference(
   href: string,
   title?: string,
   sourceAgentId?: string,
+  transcriptAgentId?: string,
+  messageId?: string,
 ): ArtifactReference {
   const normalizedPath = normalizeArtifactPath(path)
 
@@ -129,6 +160,8 @@ function createArtifactReference(
     href,
     ...(title ? { title } : {}),
     ...(sourceAgentId ? { sourceAgentId } : {}),
+    ...(transcriptAgentId ? { transcriptAgentId } : {}),
+    ...(messageId ? { messageId } : {}),
   }
 }
 
@@ -145,8 +178,8 @@ function normalizeArtifactPath(path: string): string {
   return trimmedPath
 }
 
-function normalizeSourceAgentId(sourceAgentId: string | null | undefined): string | undefined {
-  const trimmed = sourceAgentId?.trim()
+function normalizeOptionalId(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
 }
 

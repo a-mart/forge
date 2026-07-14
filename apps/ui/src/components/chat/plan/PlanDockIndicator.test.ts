@@ -36,40 +36,58 @@ afterEach(() => {
 })
 
 describe('PlanDockIndicator', () => {
-  it('shows the current step position in a persistent compact trigger', () => {
-    act(() => root.render(createElement(PlanDockIndicator, { snapshot })))
+  it('shows completed progress rather than the active item ordinal', () => {
+    act(() => root.render(createElement(PlanDockIndicator, {
+      snapshot: {
+        ...snapshot,
+        plan: Array.from({ length: 13 }, (_, index) => ({
+          step: `Step ${index + 1}`,
+          status: index < 11
+            ? 'completed' as const
+            : index === 12
+              ? 'in_progress' as const
+              : 'pending' as const,
+        })),
+      },
+    })))
 
-    expect(container.textContent).toContain('Step 2/3')
+    expect(container.textContent).toContain('11/13 done')
+    expect(container.textContent).not.toContain('Step 13/13')
     expect(container.querySelector('button')?.getAttribute('aria-label'))
-      .toBe('Open working plan, Step 2/3')
-    expect(container.firstElementChild?.className).toContain('pb-1')
+      .toBe('Open working plan, 11/13 done')
+    expect(container.firstElementChild?.className).toBe('relative z-20 h-0 shrink-0')
+    expect(container.firstElementChild?.firstElementChild?.className)
+      .toBe('absolute inset-x-0 bottom-1 flex justify-center px-3')
   })
 
-  it('shows a completed state and hides when no plan exists', () => {
+  it('shows zero completed progress when no items are done', () => {
+    act(() => root.render(createElement(PlanDockIndicator, {
+      snapshot: {
+        ...snapshot,
+        plan: snapshot.plan.map((step, index) => ({
+          ...step,
+          status: index === 0 ? 'in_progress' as const : 'pending' as const,
+        })),
+      },
+    })))
+
+    expect(container.textContent).toContain('0/3 done')
+    expect(container.querySelector('button')?.getAttribute('aria-label'))
+      .toBe('Open working plan, 0/3 done')
+  })
+
+  it('preserves completed plan labeling and hides when no plan exists', () => {
     act(() => root.render(createElement(PlanDockIndicator, {
       snapshot: {
         ...snapshot,
         plan: snapshot.plan.map((step) => ({ ...step, status: 'completed' as const })),
       },
     })))
-    expect(container.textContent).toContain('3/3 complete')
+    expect(container.textContent).toContain('Plan complete')
+    expect(container.querySelector('button')?.getAttribute('aria-label'))
+      .toBe('Open working plan, Plan complete')
 
     act(() => root.render(createElement(PlanDockIndicator, { snapshot: null })))
     expect(container.textContent).toBe('')
-  })
-
-  it('summarizes multiple active steps and completed progress', () => {
-    act(() => root.render(createElement(PlanDockIndicator, {
-      snapshot: {
-        ...snapshot,
-        plan: snapshot.plan.map((step, index) => index === 2
-          ? { ...step, status: 'in_progress' as const }
-          : step),
-      },
-    })))
-
-    expect(container.textContent).toContain('2 active · 1/3 complete')
-    expect(container.querySelector('button')?.getAttribute('aria-label'))
-      .toBe('Open working plan, 2 active · 1/3 complete')
   })
 })

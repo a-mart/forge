@@ -38,6 +38,7 @@ function createHarness(): {
     dispatchRuntimeError: vi.fn(async () => undefined),
     maybeRecoverWorkerWithSpecialistFallback: vi.fn(async () => false),
     incrementSessionCompactionCount: vi.fn(async () => undefined),
+    incrementWorkerCompactionCount: vi.fn(async () => undefined),
     patchDescriptorFromRuntimeStatus: vi.fn(async (agentId: string, patch: Partial<AgentDescriptor>) => {
       const descriptor = descriptors.get(agentId);
       if (!descriptor) return undefined;
@@ -246,6 +247,38 @@ describe("RuntimeErrorProjector", () => {
       error: defaultError({ phase: "compaction", message: "retrying", details: { attempt: 2, maxAttempts: 3 } })
     });
     expect(emittedText(deps)).toBe("⚠️ Compaction error (attempt 2/3): retrying. Attempting fallback recovery.");
+  });
+
+  it.each([
+    "auto_compaction_succeeded",
+    "context_guard_compaction_succeeded"
+  ] as const)("counts worker compaction success from %s on the worker descriptor", async (recoveryStage) => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager-1",
+      profileId: "profile-1",
+      compactionCount: 2
+    });
+    descriptors.set(worker.agentId, worker);
+    vi.mocked(deps.incrementWorkerCompactionCount).mockResolvedValue(3);
+
+    await projector.projectError({
+      agentId: worker.agentId,
+      error: defaultError({
+        phase: "compaction",
+        message: "Worker compaction complete",
+        details: { recoveryStage }
+      })
+    });
+
+    expect(deps.incrementWorkerCompactionCount).toHaveBeenCalledWith(
+      worker.agentId,
+      "runtime:compact:worker-count-increment-failed"
+    );
+    expect(deps.incrementSessionCompactionCount).not.toHaveBeenCalled();
+    expect(deps.patchDescriptorFromRuntimeStatus).not.toHaveBeenCalled();
   });
 
   it("preserves context guard text matrix", async () => {

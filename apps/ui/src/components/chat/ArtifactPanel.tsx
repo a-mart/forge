@@ -30,6 +30,9 @@ interface ArtifactPanelProps {
 interface ReadFileResult {
   path: string
   content: string
+  binary?: boolean
+  encoding?: string
+  contentType?: string
 }
 
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown|mdx)$/i
@@ -41,6 +44,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const [resolvedPath, setResolvedPath] = useState<string | null>(null)
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -51,6 +55,10 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const editorLabel = EDITOR_LABELS[editorPreference]
 
   const artifactPath = artifact?.path ?? null
+  const artifactFileName = artifact?.fileName ?? null
+  const artifactSourceAgentId = artifact?.sourceAgentId ?? null
+  const transcriptAgentId = artifact?.transcriptAgentId ?? null
+  const transcriptMessageId = artifact?.messageId ?? null
   const [pathCopied, setPathCopied] = useState(false)
 
   useEffect(() => {
@@ -74,6 +82,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   useEffect(() => {
     if (!artifactPath) {
       setContent('')
+      setImagePreviewUrl(null)
       setResolvedPath(null)
       setError(null)
       setIsLoading(false)
@@ -81,9 +90,11 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     }
 
     const isImageArtifact =
-      IMAGE_FILE_PATTERN.test(artifact?.fileName ?? '') || IMAGE_FILE_PATTERN.test(artifactPath)
-    if (isImageArtifact) {
+      IMAGE_FILE_PATTERN.test(artifactFileName ?? '') || IMAGE_FILE_PATTERN.test(artifactPath)
+    const hasTranscriptProvenance = Boolean(transcriptAgentId && transcriptMessageId)
+    if (isImageArtifact && !hasTranscriptProvenance) {
       setContent('')
+      setImagePreviewUrl(resolveReadFileUrl(wsUrl, artifactPath, artifactSourceAgentId ?? activeAgentId))
       setResolvedPath(artifactPath)
       setError(null)
       setIsLoading(false)
@@ -95,22 +106,39 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     setIsLoading(true)
     setError(null)
     setContent('')
+    setImagePreviewUrl(null)
     setResolvedPath(null)
 
     void (async () => {
       try {
-        const file = await readArtifactFile({
-          wsUrl,
-          path: artifactPath,
-          agentId: artifact?.sourceAgentId ?? activeAgentId,
-          signal: abortController.signal,
-        })
+        const file = hasTranscriptProvenance
+          ? await readTranscriptArtifactFile({
+              wsUrl,
+              transcriptAgentId: transcriptAgentId!,
+              messageId: transcriptMessageId!,
+              path: artifactPath,
+              signal: abortController.signal,
+            })
+          : await readLegacyArtifactFile({
+              wsUrl,
+              path: artifactPath,
+              agentId: artifactSourceAgentId ?? activeAgentId,
+              signal: abortController.signal,
+            })
 
         if (abortController.signal.aborted) {
           return
         }
 
-        setContent(file.content)
+        if (isImageArtifact) {
+          setImagePreviewUrl(toSafeImageDataUrl(file))
+          setContent('')
+        } else {
+          if (file.binary) {
+            throw new Error('Binary files cannot be displayed as text.')
+          }
+          setContent(file.content)
+        }
         setResolvedPath(file.path)
         setError(null)
       } catch (readError) {
@@ -129,7 +157,15 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     return () => {
       abortController.abort()
     }
-  }, [activeAgentId, artifact?.fileName, artifact?.sourceAgentId, artifactPath, wsUrl])
+  }, [
+    activeAgentId,
+    artifactFileName,
+    artifactPath,
+    artifactSourceAgentId,
+    transcriptAgentId,
+    transcriptMessageId,
+    wsUrl,
+  ])
 
   useEffect(() => {
     return () => {
@@ -171,13 +207,6 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     [isMarkdown, content],
   )
   const markdownBody = frontMatter ? frontMatter.body : content
-  const imageFileUrl = useMemo(() => {
-    if (!isImage || !displayPath) {
-      return null
-    }
-
-    return resolveReadFileUrl(wsUrl, displayPath, artifact?.sourceAgentId ?? activeAgentId)
-  }, [activeAgentId, artifact?.sourceAgentId, displayPath, isImage, wsUrl])
 
   const handleNestedArtifactClick = useCallback(
     (nextArtifact: ArtifactReference) => {
@@ -349,11 +378,12 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                   {error}
                 </div>
               ) : isImage ? (
-                imageFileUrl ? (
+                imagePreviewUrl ? (
                   <div className="mx-auto flex max-w-[820px] justify-center">
                     <img
-                      src={imageFileUrl}
+                      src={imagePreviewUrl}
                       alt={artifact?.fileName || 'Artifact image'}
+                      onError={() => setError('Unable to load image preview.')}
                       className="max-h-[calc(100vh-180px)] max-w-full rounded-lg border border-border/60 bg-muted/20 object-contain"
                     />
                   </div>
@@ -390,7 +420,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   )
 }
 
-async function readArtifactFile({
+async function readLegacyArtifactFile({
   wsUrl,
   path,
   agentId,
@@ -401,25 +431,59 @@ async function readArtifactFile({
   agentId?: string | null
   signal: AbortSignal
 }): Promise<ReadFileResult> {
-  const endpoint = resolveReadFileEndpoint(wsUrl)
+  return readArtifactFileResponse(
+    resolveReadFileEndpoint(wsUrl),
+    { path, agentId: agentId?.trim() || undefined },
+    path,
+    signal,
+  )
+}
 
+async function readTranscriptArtifactFile({
+  wsUrl,
+  transcriptAgentId,
+  messageId,
+  path,
+  signal,
+}: {
+  wsUrl: string
+  transcriptAgentId: string
+  messageId: string
+  path: string
+  signal: AbortSignal
+}): Promise<ReadFileResult> {
+  return readArtifactFileResponse(
+    resolveApiEndpoint(wsUrl, '/api/chat-artifacts/read'),
+    { transcriptAgentId, messageId, path },
+    path,
+    signal,
+    true,
+  )
+}
+
+async function readArtifactFileResponse(
+  endpoint: string,
+  body: Record<string, string | undefined>,
+  requestedPath: string,
+  signal: AbortSignal,
+  includeCredentials = false,
+): Promise<ReadFileResult> {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ path, agentId: agentId?.trim() || undefined }),
+    ...(includeCredentials ? { credentials: 'include' as const } : {}),
+    body: JSON.stringify(body),
     signal,
   })
-
-  const payload = await response.json().catch(() => null)
+  const payload: unknown = await response.json().catch(() => null)
 
   if (!response.ok) {
     const message =
-      payload && typeof payload === 'object' && typeof payload.error === 'string'
-        ? payload.error
+      payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+        ? (payload as { error: string }).error
         : `File read failed (${response.status})`
-
     throw new Error(message)
   }
 
@@ -427,25 +491,47 @@ async function readArtifactFile({
     throw new Error('Invalid file read response.')
   }
 
-  const resolvedPath = typeof payload.path === 'string' ? payload.path : path
-  const content = typeof payload.content === 'string' ? payload.content : ''
-
+  const value = payload as Record<string, unknown>
   return {
-    path: resolvedPath,
-    content,
+    path: typeof value.path === 'string' ? value.path : requestedPath,
+    content: typeof value.content === 'string' ? value.content : '',
+    ...(typeof value.binary === 'boolean' ? { binary: value.binary } : {}),
+    ...(typeof value.encoding === 'string' ? { encoding: value.encoding } : {}),
+    ...(typeof value.contentType === 'string' ? { contentType: value.contentType } : {}),
   }
 }
 
+function toSafeImageDataUrl(file: ReadFileResult): string {
+  const contentType = file.contentType?.trim().toLowerCase()
+  const base64 = file.content.trim()
+  if (
+    file.binary !== true ||
+    file.encoding !== 'base64' ||
+    !contentType ||
+    !/^image\/(?:png|jpeg|gif|webp|svg\+xml)$/.test(contentType) ||
+    !base64 ||
+    base64.length % 4 !== 0 ||
+    !/^[a-z\d+/]*={0,2}$/i.test(base64)
+  ) {
+    throw new Error('Invalid image response.')
+  }
+  return `data:${contentType};base64,${base64}`
+}
+
 function resolveReadFileEndpoint(wsUrl: string): string {
+  return resolveApiEndpoint(wsUrl, '/api/read-file')
+}
+
+function resolveApiEndpoint(wsUrl: string, pathname: string): string {
   try {
     const parsed = new URL(wsUrl)
     parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    parsed.pathname = '/api/read-file'
+    parsed.pathname = pathname
     parsed.search = ''
     parsed.hash = ''
     return parsed.toString()
   } catch {
-    return '/api/read-file'
+    return pathname
   }
 }
 

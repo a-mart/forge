@@ -96,8 +96,24 @@ function createHarness() {
   const goals = {
     scheduleContinuation: vi.fn(() => { calls.push("goals:schedule"); }),
   };
+  const descriptorMutations = {
+    patchDescriptor: vi.fn(async (agentId: string, patch: (value: AgentDescriptor) => AgentDescriptor) => {
+      const current = descriptors.get(agentId);
+      if (!current) throw new Error(`Unknown agent: ${agentId}`);
+      const updated = patch(current);
+      descriptors.set(agentId, updated);
+      return updated;
+    }),
+  };
+  const directory = {
+    listWorkersForSession: vi.fn((managerId: string) =>
+      [...descriptors.values()].filter(
+        (value) => value.role === "worker" && value.managerId === managerId,
+      )),
+  };
   const events = {
     emitConversationMessage: vi.fn(),
+    emitSessionWorkersSnapshot: vi.fn(),
   };
   const recoveryState = {
     setPendingManagerRuntimeRecycle: vi.fn(),
@@ -112,6 +128,8 @@ function createHarness() {
     codexScopes,
     plans,
     goals,
+    descriptorMutations,
+    directory,
     events,
     now: () => "2026-07-13T10:01:00.000Z",
     logDebug: vi.fn(),
@@ -127,6 +145,8 @@ function createHarness() {
     codexScopes,
     plans,
     goals,
+    descriptorMutations,
+    directory,
     events,
     recoveryState,
     coordinator,
@@ -200,6 +220,27 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
     await coordinator.handleRuntimeError(8, "manager", error);
 
     expect(calls).toEqual(["turn:error", "controller:error"]);
+  });
+
+  it("persists worker compaction counts and publishes the owning session snapshot", async () => {
+    const { coordinator, descriptors, descriptorMutations, directory, events } = createHarness();
+    descriptors.set("worker", descriptor({
+      agentId: "worker",
+      role: "worker",
+      managerId: "manager",
+      compactionCount: 2,
+    }));
+
+    await expect(
+      coordinator.incrementWorkerCompactionCount("worker", "compaction-count-failed"),
+    ).resolves.toBe(3);
+
+    expect(descriptorMutations.patchDescriptor).toHaveBeenCalledOnce();
+    expect(directory.listWorkersForSession).toHaveBeenCalledWith("manager");
+    expect(events.emitSessionWorkersSnapshot).toHaveBeenCalledWith(
+      "manager",
+      [expect.objectContaining({ agentId: "worker", compactionCount: 3 })],
+    );
   });
 
   it("records manager Codex completion before controller end and finalizes plans after", async () => {

@@ -377,6 +377,8 @@ export class SwarmManagerRuntimeComposition {
       codexScopes: services.codexPlugin,
       plans: this.plans,
       goals: this.requireGoals(),
+      descriptorMutations: this.options.descriptors,
+      directory: services.directory,
       events: services.eventCoordinator,
       now: this.options.state.now,
       logDebug: this.options.events.logDebug,
@@ -483,6 +485,8 @@ export class SwarmManagerRuntimeComposition {
           sessionId,
           failureLogKey,
         ),
+      incrementWorkerCompactionCount: (agentId, failureLogKey) =>
+        this.requireRuntimeLifecycle().incrementWorkerCompactionCount(agentId, failureLogKey),
       patchDescriptorFromRuntimeStatus: this.options.descriptors.patchDescriptorFromRuntimeStatus,
       emitConversationMessage: events.emitConversationMessage,
       markSessionActivity: events.markSessionActivity,

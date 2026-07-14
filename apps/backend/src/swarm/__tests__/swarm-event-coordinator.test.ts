@@ -94,4 +94,21 @@ describe("SwarmEventCoordinator", () => {
     expect(conversationProjector.emitConversationMessage).toHaveBeenCalledWith(event, undefined);
     expect(observability.recordUserVisibleMessage).toHaveBeenCalledWith(event);
   });
+
+  it("publishes the owning session worker snapshot", () => {
+    const owner = manager();
+    const workerDescriptor = worker("worker-1", owner.agentId);
+    const { coordinator, emitted } = setup([owner, workerDescriptor]);
+
+    coordinator.emitSessionWorkersSnapshot(owner.agentId, [workerDescriptor]);
+
+    expect(emitted).toContainEqual({
+      name: "session_workers_snapshot",
+      event: {
+        type: "session_workers_snapshot",
+        sessionAgentId: owner.agentId,
+        workers: [workerDescriptor],
+      },
+    });
+  });
 });

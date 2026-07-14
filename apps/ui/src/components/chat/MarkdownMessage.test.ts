@@ -110,6 +110,25 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('/Users/example/worktrees/swarm/README.md')
   })
 
+  it('renders artifact shortcodes in prose but not inside inline or fenced code', () => {
+    const content = [
+      '[artifact:/tmp/allowed.png]',
+      '',
+      '`[artifact:/tmp/inline.png]`',
+      '',
+      '```md',
+      '[artifact:/tmp/fenced.png]',
+      '```',
+    ].join('\n')
+
+    const html = renderMarkdownMessage({ content, onArtifactClick: () => {} })
+
+    expect((html.match(/data-artifact-card="true"/g) ?? [])).toHaveLength(1)
+    expect(html).toContain('/tmp/allowed.png')
+    expect(html).toContain('[artifact:/tmp/inline.png]')
+    expect(html).toContain('[artifact:/tmp/fenced.png]')
+  })
+
   it('renders local markdown file links as artifact cards using link text as title', () => {
     const content = '[Terminal Support Plan](docs/plans/terminal-support.md)'
 

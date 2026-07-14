@@ -504,11 +504,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
     getItemKey: (index) => rows[index]?.id ?? index,
     overscan: OVERSCAN,
-    // Row measurements can synchronously reposition other absolutely-positioned
-    // rows. In Chromium that feedback can exhaust ResizeObserver's delivery loop,
-    // leaving later rows at the 96px estimate (and visibly overlapping) until the
-    // next window resize. Batch observer measurements onto the next frame so each
-    // layout settles before react-virtual applies the next position update.
+    // Keep the library observer out of Chromium's synchronous ResizeObserver
+    // delivery loop. The mounted-row observer below separately handles resize
+    // notifications that react-virtual filters during programmatic smooth scroll.
     useAnimationFrameWithResizeObserver: true,
     // Reset the `isScrolling` flag from the native `scrollend` event instead of
     // a 150ms debounce timer. Avoids a stray timer that can fire after unmount
@@ -516,6 +514,92 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     // and jsdom, with the library falling back safely if unavailable.
     useScrollendEvent: true,
   })
+
+  // TanStack Virtual 3.13 filters measurements for mounted rows outside a small
+  // buffer around a programmatic smooth-scroll target. A row can still reflow
+  // while it is in that mounted overscan window (width/font changes, lazy images,
+  // expanding cards, Mermaid, or streaming content). ResizeObserver does not
+  // replay the discarded notification when scrolling settles, so later rows keep
+  // transforms based on the stale size and can overlap until a window resize.
+  //
+  // Keep the library observer for its normal measurement/scroll correction, but
+  // also batch every mounted row's latest DOM height through the public resizeItem
+  // API. Reading data-index and offsetHeight at flush time makes the update safe
+  // across a React re-render or row reindex between delivery and the next frame.
+  const virtualizerRef = useRef(virtualizer)
+  virtualizerRef.current = virtualizer
+  const mountedRowObserverRef = useRef<ResizeObserver | null>(null)
+  const mountedRowObserverWindowRef = useRef<Window | null>(null)
+  const pendingMountedRowMeasurementsRef = useRef(new Set<HTMLElement>())
+  const mountedRowMeasurementFrameRef = useRef<number | null>(null)
+
+  const measureMountedRow = useCallback((node: HTMLDivElement | null) => {
+    virtualizerRef.current.measureElement(node)
+    if (!node) return
+
+    const ownerWindow = node.ownerDocument.defaultView
+    if (!ownerWindow?.ResizeObserver) {
+      return () => virtualizerRef.current.measureElement(null)
+    }
+
+    let observer = mountedRowObserverRef.current
+    if (!observer) {
+      mountedRowObserverWindowRef.current = ownerWindow
+      observer = new ownerWindow.ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const resizedNode = entry.target as HTMLElement
+          if (resizedNode.isConnected) {
+            pendingMountedRowMeasurementsRef.current.add(resizedNode)
+          }
+        }
+
+        if (
+          pendingMountedRowMeasurementsRef.current.size === 0 ||
+          mountedRowMeasurementFrameRef.current !== null
+        ) {
+          return
+        }
+
+        mountedRowMeasurementFrameRef.current = ownerWindow.requestAnimationFrame(() => {
+          mountedRowMeasurementFrameRef.current = null
+          const pendingNodes = Array.from(pendingMountedRowMeasurementsRef.current)
+          pendingMountedRowMeasurementsRef.current.clear()
+
+          for (const resizedNode of pendingNodes) {
+            if (!resizedNode.isConnected) continue
+            const index = Number.parseInt(resizedNode.dataset.index ?? '', 10)
+            if (!Number.isInteger(index) || index < 0) continue
+            virtualizerRef.current.resizeItem(index, resizedNode.offsetHeight)
+          }
+        })
+      })
+      mountedRowObserverRef.current = observer
+    }
+
+    observer.observe(node, { box: 'border-box' })
+    return () => {
+      observer.unobserve(node)
+      pendingMountedRowMeasurementsRef.current.delete(node)
+      virtualizerRef.current.measureElement(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    const pendingMeasurements = pendingMountedRowMeasurementsRef.current
+    return () => {
+      mountedRowObserverRef.current?.disconnect()
+      mountedRowObserverRef.current = null
+      pendingMeasurements.clear()
+
+      const frame = mountedRowMeasurementFrameRef.current
+      const ownerWindow = mountedRowObserverWindowRef.current
+      if (frame !== null && ownerWindow) {
+        ownerWindow.cancelAnimationFrame(frame)
+      }
+      mountedRowMeasurementFrameRef.current = null
+      mountedRowObserverWindowRef.current = null
+    }
+  }, [])
 
   // Sidebar perf: attempt to complete `session_switch.click_to_first_transcript_paint_ms`
   // after every commit. The registry refuses completion unless:
@@ -860,6 +944,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             activeAgentDisplayName={
               activeAgentId ? agentDisplayMap.get(activeAgentId)?.primaryLabel : undefined
             }
+            transcriptAgentId={activeAgentId}
             feedbackTargetId={feedbackTargetId}
             feedbackLegacyTargetId={feedbackLegacyTargetId}
             onArtifactClick={onArtifactClick}
@@ -1001,7 +1086,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               <div
                 key={row.id}
                 data-index={index}
-                ref={virtualizer.measureElement}
+                ref={measureMountedRow}
                 className="pb-2"
                 style={{
                   position: 'absolute',
