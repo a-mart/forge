@@ -2,6 +2,7 @@ import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import type { WsRequestContractType } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
+import { MAX_API_PROXY_REQUEST_ID_LENGTH } from '../ws/commands/parse-utility-command.js'
 
 function parseJsonCommand(payload: unknown) {
   return parseClientCommand(Buffer.from(JSON.stringify(payload), 'utf8'))
@@ -586,6 +587,26 @@ describe('ws command parser session commands', () => {
         path: '/api/mobile/push/test',
         body: JSON.stringify({ token: 'ExpoPushToken[abc]' }),
       },
+    })
+  })
+
+  it('bounds api_proxy request IDs so response envelopes remain sendable', () => {
+    const longestValid = 'r'.repeat(MAX_API_PROXY_REQUEST_ID_LENGTH)
+    expect(parseJsonCommand({
+      type: 'api_proxy',
+      requestId: longestValid,
+      method: 'GET',
+      path: '/api/slash-commands',
+    })).toMatchObject({ ok: true, command: { requestId: longestValid } })
+
+    expect(parseJsonCommand({
+      type: 'api_proxy',
+      requestId: `${longestValid}r`,
+      method: 'GET',
+      path: '/api/slash-commands',
+    })).toEqual({
+      ok: false,
+      error: `api_proxy.requestId must be at most ${MAX_API_PROXY_REQUEST_ID_LENGTH} characters`,
     })
   })
 

@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { createChatArtifactRoutes } from "../chat-artifact-routes.js";
 import { getSessionFilePath } from "../../../../swarm/storage/data-paths.js";
 import { CONVERSATION_ENTRY_TYPE } from "../../../../swarm/session/conversation-timeline.js";
+import { MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES } from "../../../../swarm/session/presented-chat-artifact.js";
+import { MAX_READ_FILE_CONTENT_BYTES } from "../../../ws-file-access.js";
 
 const cleanup: string[] = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -14,7 +16,7 @@ describe("chat artifact HTTP route", () => {
   it("reads an authorized image-shaped file and returns no-store typed denials", async () => {
     const tempRoot = process.platform === "darwin" ? `/private${tmpdir()}` : tmpdir(); const root = await mkdtemp(join(tempRoot, "artifact-route-")); cleanup.push(root);
     const dataDir = join(root, "data"); const profileId = "profile"; const agentId = "manager"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId); await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true });
-    const image = join(root, "outside.png"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
+    const image = join(root, "outside.png"); const imageBytes = Buffer.alloc(MAX_READ_FILE_CONTENT_BYTES + 1); Buffer.from([137, 80, 78, 71]).copy(imageBytes); await writeFile(image, imageBytes);
     const presentedImage = process.platform === "darwin" ? image.replace(/^\/private\/tmp\//, "/tmp/") : image;
     await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[image](swarm-file://${presentedImage})`, timestamp: new Date().toISOString() } }) + "\n");
     const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile };
@@ -23,7 +25,10 @@ describe("chat artifact HTTP route", () => {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address() as any; const url = `http://127.0.0.1:${address.port}/api/chat-artifacts/read`;
     try {
       const ok = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcriptAgentId: agentId, messageId: "m", path: presentedImage }) });
-      expect(ok.status).toBe(200); expect(ok.headers.get("cache-control")).toBe("no-store"); expect(await ok.json()).toMatchObject({ binary: true, encoding: "base64", contentType: "image/png" });
+      expect(ok.status).toBe(200); expect(ok.headers.get("cache-control")).toBe("no-store"); const payload: any = await ok.json(); expect(payload).toMatchObject({ binary: true, encoding: "base64", contentType: "image/png" }); expect(Buffer.from(payload.content, "base64")).toHaveLength(imageBytes.length);
+      await writeFile(image, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES + 1));
+      const oversized = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcriptAgentId: agentId, messageId: "m", path: presentedImage }) });
+      expect(oversized.status).toBe(413); expect(await oversized.json()).toMatchObject({ code: "file_too_large" });
       const denied = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcriptAgentId: agentId, messageId: "m", path: `${presentedImage}x` }) });
       expect(denied.status).toBe(403); expect(denied.headers.get("cache-control")).toBe("no-store"); expect(await denied.json()).toMatchObject({ code: "path_not_presented" });
       expect((await fetch(url, { method: "GET" })).status).toBe(405);

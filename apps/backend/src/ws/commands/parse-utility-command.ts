@@ -8,6 +8,10 @@ import {
   type ParsedClientCommand
 } from "./command-parse-helpers.js";
 
+// Request IDs are reflected into api_proxy_response events. Bounding their character count keeps
+// even maximally JSON-escaped IDs small enough for an explicit response under MAX_WS_EVENT_BYTES.
+export const MAX_API_PROXY_REQUEST_ID_LENGTH = 1024;
+
 export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
   if (maybe.type === "ping") {
     return ok({ type: "ping" });
@@ -46,6 +50,9 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
 
     if (typeof requestId !== "string" || requestId.trim().length === 0) {
       return fail("api_proxy.requestId must be a non-empty string");
+    }
+    if (requestId.trim().length > MAX_API_PROXY_REQUEST_ID_LENGTH) {
+      return fail(`api_proxy.requestId must be at most ${MAX_API_PROXY_REQUEST_ID_LENGTH} characters`);
     }
     if (!isApiProxyMethod(method)) {
       return fail("api_proxy.method must be one of GET|POST|PUT|PATCH|DELETE");

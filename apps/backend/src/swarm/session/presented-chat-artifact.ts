@@ -13,6 +13,11 @@ import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from "./session-file-guard.js";
 import { MAX_READ_FILE_CONTENT_BYTES } from "../../ws/ws-file-access.js";
 import { resolveReadFileContentType } from "../../ws/http-utils.js";
 
+// Keep document reads aligned with the existing 2 MiB text/file-reader budget. Image previews get
+// a separate 4 MiB raw-byte budget; their base64 JSON representation is therefore bounded to ~5.34 MiB.
+export const MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES = MAX_READ_FILE_CONTENT_BYTES;
+
 export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported";
 export class ChatArtifactError extends Error { constructor(public readonly code: ChatArtifactErrorCode) { super(code); } }
 const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactError(code); };
@@ -136,6 +141,10 @@ async function walkFile(target: string, stage: "initial" | "post"): Promise<{ id
 }
 
 export async function securelyReadPresentedArtifact(target: string, hooks?: { afterInitialWalk?: () => Promise<void> | void; afterOpen?: () => Promise<void> | void; platform?: NodeJS.Platform }) {
+  const contentType = resolveReadFileContentType(target);
+  const maxBytes = contentType.startsWith("image/")
+    ? MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES
+    : MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES;
   const initial = await walkFile(target, "initial");
   await hooks?.afterInitialWalk?.();
   // Node does not expose a no-follow open guarantee on Windows. Keep Windows explicitly unavailable rather than authorizing a race.
@@ -152,7 +161,7 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
     const verifyHandle = async () => {
       const checked = await openedHandle.stat({ bigint: true }).catch(() => fail("transcript_read_failed"));
       if (!checked.isFile() || stableFileIdentity(checked) !== initial.finalId) fail("file_identity_changed");
-      if (checked.size > BigInt(MAX_READ_FILE_CONTENT_BYTES)) fail("file_too_large");
+      if (checked.size > BigInt(maxBytes)) fail("file_too_large");
       if (checked.size !== initial.finalSize) fail("file_identity_changed");
       return checked;
     };
@@ -162,21 +171,21 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
     const verifyPath = async () => {
       const post = await walkFile(target, "post");
       if (post.real !== initial.real || post.ids.length !== initial.ids.length || post.ids.some((id, i) => id !== initial.ids[i]) || post.finalId !== stableFileIdentity(opened)) fail("file_identity_changed");
-      if (post.finalSize > BigInt(MAX_READ_FILE_CONTENT_BYTES)) fail("file_too_large");
+      if (post.finalSize > BigInt(maxBytes)) fail("file_too_large");
       if (post.finalSize !== initial.finalSize) fail("file_identity_changed");
     };
     await verifyPath();
-    const buffer = Buffer.alloc(MAX_READ_FILE_CONTENT_BYTES + 1); let offset = 0;
+    const buffer = Buffer.alloc(maxBytes + 1); let offset = 0;
     while (offset < buffer.length) {
       let bytesRead = 0;
       try { ({ bytesRead } = await openedHandle.read(buffer, offset, buffer.length - offset, offset)); } catch { fail("transcript_read_failed"); }
       if (!bytesRead) break;
       offset += bytesRead;
     }
-    if (offset > MAX_READ_FILE_CONTENT_BYTES) fail("file_too_large");
+    if (offset > maxBytes) fail("file_too_large");
     await verifyHandle();
     await verifyPath();
-    const content = buffer.subarray(0, offset); const contentType = resolveReadFileContentType(target);
+    const content = buffer.subarray(0, offset);
     const binary = contentType.startsWith("image/") || content.subarray(0, 4000).some((b) => b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13));
     return binary ? { path: target, binary: true, encoding: "base64", contentType, content: content.toString("base64") } : { path: target, content: content.toString("utf8"), contentType };
   } finally { await openedHandle.close(); }

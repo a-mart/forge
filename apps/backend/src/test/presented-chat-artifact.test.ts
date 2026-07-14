@@ -6,6 +6,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   ChatArtifactError,
+  MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES,
+  MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES,
   chatArtifactStatus,
   canonicalizeChatArtifactPath,
   canonicalizeChatArtifactPathForPlatform,
@@ -109,6 +111,31 @@ describe("presented chat artifact authorization", () => {
     expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///private/tmp/result.png", "darwin")).toBe("/private/tmp/result.png");
     expect(canonicalizeChatArtifactPathForPlatform("/tmp-result/result.png", "darwin")).toBe("/tmp-result/result.png");
     expect(canonicalizeChatArtifactPathForPlatform("/tmp/result.png", "linux")).toBe("/tmp/result.png");
+  });
+
+  it("uses a larger bounded preview budget only for image MIME types", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture();
+    const png = join(f.dataDir, "preview.png");
+    await writeFile(png, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES - 1, 0x89));
+
+    const result: any = await securelyReadPresentedArtifact(png);
+    expect(result).toMatchObject({
+      path: png,
+      binary: true,
+      encoding: "base64",
+      contentType: "image/png",
+    });
+    expect(Buffer.from(result.content, "base64")).toHaveLength(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES - 1);
+
+    await writeFile(png, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES + 1));
+    expect(await errorCode(() => securelyReadPresentedArtifact(png))).toBe("file_too_large");
+
+    const text = join(f.dataDir, "preview.txt");
+    await writeFile(text, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES - 1, 0x61));
+    expect((await securelyReadPresentedArtifact(text)).content).toHaveLength(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES - 1);
+    await writeFile(text, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x61));
+    expect(await errorCode(() => securelyReadPresentedArtifact(text))).toBe("file_too_large");
   });
 
   it("reads a literal Darwin /tmp claim through its canonical /private/tmp target", async () => {

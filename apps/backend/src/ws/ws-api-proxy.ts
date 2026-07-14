@@ -28,6 +28,7 @@ import {
 } from "./ws-api-proxy-parse.js";
 import { readApiProxyFile } from "./ws-file-access.js";
 import { ChatArtifactError, chatArtifactStatus, readPresentedChatArtifact } from "../swarm/session/presented-chat-artifact.js";
+import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 
 const API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/smart-compact$/;
 const API_PROXY_READ_FILE_PATH = "/api/read-file";
@@ -45,6 +46,14 @@ const API_PROXY_TERMINAL_ITEM_PATH_PATTERN = /^\/api\/terminals\/([^/]+)$/;
 const API_PROXY_TERMINAL_TICKET_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/ticket$/;
 const API_PROXY_TERMINAL_RESIZE_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/resize$/;
 const API_PROXY_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+const API_PROXY_CHAT_ARTIFACT_RESPONSE_TOO_LARGE = {
+  error: "artifact_response_too_large",
+  code: "artifact_response_too_large",
+};
+
+export function apiProxyResponseEventByteLength(event: ApiProxyResponseEvent): number {
+  return Buffer.byteLength(JSON.stringify(event), "utf8");
+}
 
 export class WsApiProxy {
   private readonly swarmManager: SwarmManager;
@@ -278,8 +287,21 @@ export class WsApiProxy {
       return this.createApiProxyJsonResponse(command.requestId, 400, { error: "invalid_request", code: "invalid_request" });
     }
     try {
-      const result = await readPresentedChatArtifact(this.swarmManager, { transcriptAgentId: subscribedAgentId, messageId: payload.messageId, path: payload.path });
-      return this.createApiProxyJsonResponse(command.requestId, 200, result);
+      const result = await readPresentedChatArtifact(
+        this.swarmManager,
+        { transcriptAgentId: subscribedAgentId, messageId: payload.messageId, path: payload.path },
+      );
+      const response = this.createApiProxyJsonResponse(command.requestId, 200, result);
+      if (apiProxyResponseEventByteLength(response) <= MAX_WS_EVENT_BYTES) return response;
+      const oversizedResponse = this.createApiProxyJsonResponse(
+        command.requestId,
+        413,
+        API_PROXY_CHAT_ARTIFACT_RESPONSE_TOO_LARGE,
+      );
+      if (apiProxyResponseEventByteLength(oversizedResponse) > MAX_WS_EVENT_BYTES) {
+        throw new Error("api_proxy artifact overflow response exceeded the WebSocket event limit");
+      }
+      return oversizedResponse;
     } catch (error) {
       if (error instanceof ChatArtifactError) return this.createApiProxyJsonResponse(command.requestId, chatArtifactStatus(error.code), { error: error.code, code: error.code });
       return this.createApiProxyJsonResponse(command.requestId, 500, { error: "transcript_read_failed", code: "transcript_read_failed" });
