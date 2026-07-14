@@ -12,6 +12,7 @@ import {
   type ManagerReasoningLevel,
   type ProjectAgentCapability,
   type SessionModelUpdateMode,
+  type SessionGoalControlAction,
 } from '@forge/protocol'
 
 export const RECONNECTING_SOCKET_ERROR = 'WebSocket is disconnected. Reconnecting...'
@@ -53,6 +54,13 @@ export function buildRestartRecoveryActionCommand(
   type: 'resume_restart_recovery' | 'dismiss_restart_recovery',
 ): ClientCommand {
   return { type }
+}
+
+export function buildSessionGoalControlCommand(
+  agentId: string,
+  action: SessionGoalControlAction,
+): ClientCommand {
+  return { type: 'session_goal_control', agentId, ...action }
 }
 
 export function buildMarkUnreadCommand(agentId: string): ClientCommand {

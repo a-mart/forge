@@ -1,21 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { PlanStep, TokenUsageTotals } from '@forge/protocol'
-import { parseCursorSdkUsageCustomEntry } from '../../utils/cursor-sdk-usage-records.js'
 import { appendJsonl } from '../../utils/atomic-files.js'
+import { isRecord } from '../../stats/stats-shared.js'
+import { getSessionPlanUsagePath } from '../storage/data-paths.js'
 import {
-  extractUsage,
-  isRecord,
-  listFileNames,
-  scanJsonlFile,
-  toTimestampMs,
-} from '../../stats/stats-shared.js'
-import {
-  getSessionFilePath,
-  getSessionPlanUsagePath,
-  getWorkersDir,
-} from '../storage/data-paths.js'
+  scanManagerTokenUsage,
+  scanWorkerTokenUsage,
+  type TokenUsageEvent as UsageEvent,
+  type TokenUsageScanResult as UsageScanResult,
+  type WorkerTokenUsageEvent as WorkerUsageEvent,
+} from '../session/session-token-usage.js'
 import type { AcceptedDeliveryMode } from '../types.js'
 import type { SessionPlanState } from './session-plan-state.js'
 
@@ -125,20 +120,6 @@ interface StepUsageBreakdown {
   step: string
   usage: TokenUsageTotals
   workers: WorkerUsageBreakdown[]
-}
-
-interface UsageEvent {
-  timestampMs: number
-  usage: TokenUsageTotals
-}
-
-interface WorkerUsageEvent extends UsageEvent {
-  workerId: string
-}
-
-interface UsageScanResult<T extends UsageEvent> {
-  events: T[]
-  missingTimestampCount: number
 }
 
 export class SessionPlanUsageTracker {
@@ -453,30 +434,23 @@ export class SessionPlanUsageTracker {
   }
 
   private async scanManagerUsage(startAt: string, endAt: string): Promise<UsageScanResult<UsageEvent>> {
-    return scanUsageFile(
-      getSessionFilePath(this.options.dataDir, this.options.profileId, this.options.sessionAgentId),
+    return scanManagerTokenUsage({
+      dataDir: this.options.dataDir,
+      profileId: this.options.profileId,
+      sessionAgentId: this.options.sessionAgentId,
       startAt,
       endAt,
-    )
+    })
   }
 
   private async scanWorkerUsage(startAt: string, endAt: string): Promise<UsageScanResult<WorkerUsageEvent>> {
-    const workersDir = getWorkersDir(
-      this.options.dataDir,
-      this.options.profileId,
-      this.options.sessionAgentId,
-    )
-    const fileNames = (await listFileNames(workersDir)).filter(
-      (name) => name.endsWith('.jsonl') && !name.endsWith('.conversation.jsonl'),
-    )
-    const result: UsageScanResult<WorkerUsageEvent> = { events: [], missingTimestampCount: 0 }
-    for (const fileName of fileNames) {
-      const workerId = fileName.slice(0, -'.jsonl'.length)
-      const scan = await scanUsageFile(join(workersDir, fileName), startAt, endAt)
-      result.missingTimestampCount += scan.missingTimestampCount
-      result.events.push(...scan.events.map((event) => ({ ...event, workerId })))
-    }
-    return result
+    return scanWorkerTokenUsage({
+      dataDir: this.options.dataDir,
+      profileId: this.options.profileId,
+      sessionAgentId: this.options.sessionAgentId,
+      startAt,
+      endAt,
+    })
   }
 
   private async readRecords(): Promise<PlanUsageRecord[]> {
@@ -509,45 +483,6 @@ export class SessionPlanUsageTracker {
     return (this.options.now ?? (() => new Date().toISOString()))()
   }
 
-}
-
-async function scanUsageFile(
-  filePath: string,
-  startAt: string,
-  endAt: string,
-): Promise<UsageScanResult<UsageEvent>> {
-  const startMs = Date.parse(startAt)
-  const endMs = Date.parse(endAt)
-  const result: UsageScanResult<UsageEvent> = { events: [], missingTimestampCount: 0 }
-
-  await scanJsonlFile(filePath, (entry) => {
-    if (isRecord(entry) && entry.type === 'message' && isRecord(entry.message)) {
-      const usage = extractUsage(entry.message.usage)
-      if (!usage) return
-      const timestampMs = toTimestampMs(entry.timestamp) ?? toTimestampMs(entry.message.timestamp)
-      if (timestampMs === null) {
-        result.missingTimestampCount += 1
-        return
-      }
-      if (timestampMs >= startMs && timestampMs <= endMs) {
-        result.events.push({ timestampMs, usage: { ...usage } })
-      }
-      return
-    }
-
-    const cursor = parseCursorSdkUsageCustomEntry(entry)
-    if (!cursor) return
-    const timestampMs = toTimestampMs(cursor.timestamp) ?? toTimestampMs(cursor.capturedAt)
-    if (timestampMs === null) {
-      result.missingTimestampCount += 1
-      return
-    }
-    if (timestampMs >= startMs && timestampMs <= endMs) {
-      result.events.push({ timestampMs, usage: { ...cursor.usage } })
-    }
-  })
-
-  return result
 }
 
 function attributeWorkerUsage(

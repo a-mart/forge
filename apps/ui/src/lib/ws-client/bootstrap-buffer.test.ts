@@ -103,6 +103,24 @@ describe('BootstrapBuffer', () => {
         updatedAt: new Date().toISOString(),
         plan: [{ step: 'Implement feature', status: 'in_progress' }],
       },
+      {
+        type: 'session_goal_snapshot',
+        sessionAgentId: 'session-b',
+        profileId: 'profile-1',
+        revision: 2,
+        measuredAt: new Date().toISOString(),
+        goal: {
+          id: 'goal-1',
+          objective: 'Finish the feature',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          activeElapsedMs: 1_000,
+          turnCount: 2,
+          usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12 },
+          usageCoverage: 'complete',
+        },
+      },
       { type: 'unread_counts_snapshot', counts: { 'session-c': 3 } },
     ]
 
@@ -116,6 +134,7 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].messages).toHaveLength(1)
     expect(patches[0].pendingChoiceIds?.has('choice-1')).toBe(true)
     expect(patches[0].planSnapshots?.['session-b']?.plan).toHaveLength(1)
+    expect(patches[0].goalSnapshots?.['session-b']?.goal?.objective).toBe('Finish the feature')
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 
@@ -204,6 +223,24 @@ describe('BootstrapBuffer', () => {
 
     expect(patches).toHaveLength(1)
     expect(patches[0].planSnapshots).toBeUndefined()
+  })
+
+  it('ignores goal snapshots for the wrong session during bootstrap', () => {
+    const { buffer, patches } = setup()
+    buffer.begin('session-b')
+
+    buffer.handleEvent({
+      type: 'session_goal_snapshot',
+      sessionAgentId: 'wrong-session',
+      profileId: 'profile-1',
+      revision: 1,
+      measuredAt: new Date().toISOString(),
+      goal: null,
+    } as ServerEvent)
+    buffer.handleEvent({ type: 'unread_counts_snapshot', counts: {} } as ServerEvent)
+
+    expect(patches).toHaveLength(1)
+    expect(patches[0].goalSnapshots).toBeUndefined()
   })
 
   // ---------------------------------------------------------------------------

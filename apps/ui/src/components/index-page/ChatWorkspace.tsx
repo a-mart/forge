@@ -5,12 +5,18 @@ import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { PlanDockIndicator } from '@/components/chat/plan'
+import { GoalBar } from '@/components/chat/goal'
 import { SessionAuditDrawer } from '@/components/chat/SessionAuditDrawer'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { cn } from '@/lib/utils'
-import type { RestartRecoverySnapshot, SessionPlanSnapshotEvent } from '@forge/protocol'
+import type {
+  RestartRecoverySnapshot,
+  SessionGoalControlAction,
+  SessionGoalSnapshotEvent,
+  SessionPlanSnapshotEvent,
+} from '@forge/protocol'
 
 interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
@@ -28,6 +34,8 @@ interface ChatWorkspaceProps {
   messageListRef: RefObject<MessageListHandle | null>
   messageListProps: ComponentPropsWithoutRef<typeof MessageList>
   planSnapshot?: SessionPlanSnapshotEvent | null
+  goalSnapshot?: SessionGoalSnapshotEvent | null
+  onGoalAction: (action: SessionGoalControlAction) => void
   workerPillBarProps?: ComponentPropsWithoutRef<typeof WorkerPillBar>
   workerBackBarProps?: ComponentPropsWithoutRef<typeof WorkerBackBar>
   terminalPanelProps: ComponentPropsWithoutRef<typeof TerminalPanel>
@@ -51,6 +59,8 @@ export function ChatWorkspace({
   messageListRef,
   messageListProps,
   planSnapshot,
+  goalSnapshot,
+  onGoalAction,
   workerPillBarProps,
   workerBackBarProps,
   terminalPanelProps,
@@ -80,6 +90,8 @@ export function ChatWorkspace({
         sessionLabel={headerProps.activeAgentLabel}
         wsUrl={headerProps.wsUrl}
       />
+
+      <GoalBar snapshot={goalSnapshot} onAction={onGoalAction} />
 
       <RestartRecoveryBanner
         snapshot={restartRecovery}

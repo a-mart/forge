@@ -15,6 +15,8 @@ import type {
   CodexPluginScopeRuntimeView,
 } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
+import type { CreateGoalInput, UpdateGoalInput } from "./goals/goal-tools.js";
+import type { SessionGoalSnapshot } from "@forge/protocol";
 import type {
   KnowledgeEntry,
   KnowledgeEntryScope,
@@ -95,6 +97,17 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: UpdatePlanInput,
   ): Promise<UpdatePlanResult>;
+  createGoal(
+    callerAgentId: string,
+    toolCallId: string,
+    input: CreateGoalInput,
+  ): Promise<SessionGoalSnapshot>;
+  getGoal(callerAgentId: string): Promise<SessionGoalSnapshot>;
+  updateGoal(
+    callerAgentId: string,
+    toolCallId: string,
+    input: UpdateGoalInput,
+  ): Promise<SessionGoalSnapshot>;
   searchKnowledge?(
     callerAgentId: string,
     input: { query?: string; scope?: "global" | "profile" | "all"; limit?: number },

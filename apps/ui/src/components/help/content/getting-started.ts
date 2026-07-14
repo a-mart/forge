@@ -47,6 +47,7 @@ export const gettingStartedArticles: HelpArticle[] = [
       'chat-overview',
       'concepts-multi-agent',
       'concepts-working-plans',
+      'concepts-goals',
       'concepts-project-agents',
     ],
     contextKeys: ['chat.main', 'chat.sidebar'],

@@ -1,4 +1,4 @@
-import type { ProjectAgentCapability } from '@forge/protocol'
+import type { ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
 import {
   assertConnectedSocket,
@@ -36,6 +36,7 @@ import {
   buildRestartRecoveryActionCommand,
   buildRequestProjectAgentRecommendationsCommand,
   buildSessionActionCommand,
+  buildSessionGoalControlCommand,
   buildSetProjectAgentReferenceCommand,
   buildSetProjectAgentSharingCommand,
   buildSetSessionProjectAgentCommand,
@@ -337,6 +338,7 @@ export class ManagerWsClient {
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
       planSnapshotLoadingSessionId: trimmed,
+      goalSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
       lastError: null,
       unreadCounts: nextUnread,
@@ -722,6 +724,14 @@ export class ManagerWsClient {
     return this.requestDispatcher.enqueueRequest('clear_session', (requestId) =>
       buildSessionActionCommand('clear_session', agentId, requestId),
     )
+  }
+
+  controlSessionGoal(agentId: string, action: SessionGoalControlAction): void {
+    if (!isSocketOpen(this.socket)) {
+      this.updateState({ lastError: RECONNECTING_SOCKET_ERROR })
+      return
+    }
+    this.send(buildSessionGoalControlCommand(agentId, action))
   }
 
   async renameSession(agentId: string, label: string): Promise<SessionActionResult> {

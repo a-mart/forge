@@ -66,7 +66,7 @@ export function buildBaseRuntimeTools(host: SwarmToolHost, descriptor: AgentDesc
   const swarmTools = buildSwarmTools(host, descriptor);
 
   if (descriptor.sessionSurface === "collab") {
-    return swarmTools.filter((tool) => tool.name !== "update_plan");
+    return swarmTools.filter((tool) => !BUILDER_COORDINATION_TOOL_NAMES.has(tool.name));
   }
 
   if (descriptor.role !== "manager") {
@@ -179,5 +179,19 @@ function previewForLog(text: string, maxLength = 160): string {
 }
 
 const CORTEX_ARCHETYPE_ID = "cortex";
-const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent", "update_plan", "save_learning"]);
+const BUILDER_COORDINATION_TOOL_NAMES = new Set([
+  "update_plan",
+  "create_goal",
+  "get_goal",
+  "update_goal",
+]);
+const CORTEX_DISABLED_TOOL_NAMES = new Set([
+  "list_agents",
+  "kill_agent",
+  "update_plan",
+  "create_goal",
+  "get_goal",
+  "update_goal",
+  "save_learning",
+]);
 const CAPTURE_CHECK_TOOL_NAMES = new Set(["knowledge", "save_learning"]);

@@ -102,6 +102,7 @@ import type {
   SessionStoppedEvent,
 } from './session-events.js'
 import type { SessionPlanSnapshotEvent } from './plans.js'
+import type { SessionGoalSnapshotEvent } from './goals.js'
 import type {
   TerminalClosedEvent,
   TerminalCreatedEvent,
@@ -134,6 +135,7 @@ export * from './notification-events.js'
 export * from './integration-events.js'
 export * from './config-events.js'
 export * from './plans.js'
+export * from './goals.js'
 export * from './transport-events.js'
 export * from './restart-recovery.js'
 
@@ -168,6 +170,7 @@ export type ServerEvent =
   | RestartRecoverySnapshotEvent
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
+  | SessionGoalSnapshotEvent
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent

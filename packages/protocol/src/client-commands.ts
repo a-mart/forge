@@ -1,6 +1,7 @@
 import type { ConversationAttachment } from './attachments.js'
 import type { ConversationReplyTargetInput } from './conversation-events.js'
 import type { ProjectAgentCapability } from './agents.js'
+import type { SessionGoalControlAction } from './goals.js'
 import type {
   CollaborationBootstrapCommand,
   CollaborationChoiceCancelCommand,
@@ -164,6 +165,7 @@ export type ClientCommand =
       requestId?: string
     }
   | { type: 'clear_session'; agentId: string; requestId?: string }
+  | ({ type: 'session_goal_control'; agentId: string } & SessionGoalControlAction)
   | { type: 'pin_message'; agentId: string; messageId: string; pinned: boolean }
   | { type: 'clear_all_pins'; agentId: string }
   | { type: 'merge_session_memory'; agentId: string; requestId?: string }

@@ -192,6 +192,9 @@ describe("claude-mcp-tool-bridge", () => {
       "send_message_to_agent",
       "knowledge",
       "update_plan",
+      "create_goal",
+      "get_goal",
+      "update_goal",
       "spawn_agent",
       "retry_codex_plugin_worker",
       "kill_agent",
@@ -204,6 +207,9 @@ describe("claude-mcp-tool-bridge", () => {
       "mcp__forge-swarm__send_message_to_agent",
       "mcp__forge-swarm__knowledge",
       "mcp__forge-swarm__update_plan",
+      "mcp__forge-swarm__create_goal",
+      "mcp__forge-swarm__get_goal",
+      "mcp__forge-swarm__update_goal",
       "mcp__forge-swarm__spawn_agent",
       "mcp__forge-swarm__retry_codex_plugin_worker",
       "mcp__forge-swarm__kill_agent",
@@ -383,13 +389,18 @@ describe("claude-mcp-tool-bridge", () => {
     ).toBe(true);
   });
 
-  it("registers update_plan for manager runtimes", async () => {
+  it("registers working-plan and goal tools for manager runtimes", async () => {
     const manager = createMockDescriptor();
     const tools = buildSwarmTools(createMockHost(), manager);
     const { bridge, registeredTools } = await buildBridge(tools);
 
     expect(registeredTools.map((tool) => tool.name)).toContain("update_plan");
     expect(bridge.allowedTools).toContain("mcp__forge-swarm__update_plan");
+    expect(registeredTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "create_goal",
+      "get_goal",
+      "update_goal",
+    ]));
   });
 
   it("dispatches list_agents and returns JSON content", async () => {

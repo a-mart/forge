@@ -67,6 +67,17 @@ function createPlanSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, {
   }
 }
 
+function createGoalSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_goal_snapshot' }> {
+  return {
+    type: 'session_goal_snapshot',
+    sessionAgentId,
+    profileId: 'profile-1',
+    revision: 0,
+    measuredAt: '2026-07-12T00:00:00.000Z',
+    goal: null,
+  }
+}
+
 function createManagerStub() {
   let agentsSnapshotVersion = 0
   let profilesSnapshotVersion = 0
@@ -138,6 +149,7 @@ function createManagerStub() {
     getPendingChoiceIdsForSession: () => [],
     getPendingChoiceRequestsForSession: () => [],
     getSessionPlanSnapshot: async (sessionAgentId: string) => createPlanSnapshotEvent(sessionAgentId),
+    getSessionGoalSnapshot: async (sessionAgentId: string) => createGoalSnapshotEvent(sessionAgentId),
     getAgentsSnapshotVersion: () => agentsSnapshotVersion,
     getProfilesSnapshotVersion: () => profilesSnapshotVersion,
     bumpAgentsSnapshotVersion: () => {
@@ -188,6 +200,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
       'session_plan_snapshot',
+      'session_goal_snapshot',
       'terminals_snapshot',
     ])
 
@@ -200,6 +213,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
       'session_plan_snapshot',
+      'session_goal_snapshot',
       'terminals_snapshot',
     ])
   })
@@ -275,6 +289,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'pending_choices_snapshot',
       'restart_recovery_snapshot',
       'session_plan_snapshot',
+      'session_goal_snapshot',
       'terminals_snapshot',
     ])
   })
@@ -581,6 +596,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       expect(warnSpy).toHaveBeenCalledTimes(1)
       expect(unhandledRejections).toEqual([])
       expect(getEventTypes(sentEvents)).not.toContain('session_plan_snapshot')
+      expect(getEventTypes(sentEvents)).not.toContain('session_goal_snapshot')
       expect(getEventTypes(sentEvents)).not.toContain('terminals_snapshot')
       expect((subscriptions as any).bootstrapControllers.size).toBe(0)
 
@@ -590,6 +606,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       await subscriptions.handleSubscribe(socket, 'manager')
 
       expect(getEventTypes(sentEvents)).toContain('session_plan_snapshot')
+      expect(getEventTypes(sentEvents)).toContain('session_goal_snapshot')
       expect(getEventTypes(sentEvents)).toContain('terminals_snapshot')
       expect(warnSpy).toHaveBeenCalledTimes(1)
     } finally {

@@ -6,6 +6,7 @@ import type {
   ManagerProfile,
   ProjectPresenceViewer,
   SessionPlanSnapshotEvent,
+  SessionGoalSnapshotEvent,
   RestartRecoverySnapshot,
   TelegramStatusEvent,
   TerminalDescriptor,
@@ -55,9 +56,11 @@ export interface ManagerWsState {
   terminals: TerminalDescriptor[]
   terminalSessionScopeId: string | null
   planSnapshots: Record<string, SessionPlanSnapshotEvent>
+  goalSnapshots: Record<string, SessionGoalSnapshotEvent>
   restartRecovery: RestartRecoverySnapshot | null
   /** Session whose cached plan snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
   planSnapshotLoadingSessionId: string | null
+  goalSnapshotLoadingSessionId: string | null
   hasReceivedAgentsSnapshot: boolean
   /** True only after the current connection bootstrap has delivered the full profile inventory. */
   hasReceivedProfilesSnapshot: boolean
@@ -96,8 +99,10 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     terminals: [],
     terminalSessionScopeId: null,
     planSnapshots: {},
+    goalSnapshots: {},
     restartRecovery: null,
     planSnapshotLoadingSessionId: null,
+    goalSnapshotLoadingSessionId: null,
     hasReceivedAgentsSnapshot: false,
     hasReceivedProfilesSnapshot: false,
     promptChangeKey: 0,

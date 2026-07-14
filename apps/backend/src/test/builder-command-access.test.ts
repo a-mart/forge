@@ -39,6 +39,7 @@ describe("builder command access policy", () => {
     expect(BUILDER_COMMAND_ACCESS.subscribe).toBe("read");
     expect(BUILDER_COMMAND_ACCESS.get_session_workers).toBe("read");
     expect(BUILDER_COMMAND_ACCESS.user_message).toBe("write");
+    expect(BUILDER_COMMAND_ACCESS.session_goal_control).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.create_manager).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.delete_session).toBe("write");
     expect(BUILDER_COMMAND_ACCESS.api_proxy).toBe("write");

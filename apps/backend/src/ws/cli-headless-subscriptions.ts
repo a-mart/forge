@@ -62,6 +62,7 @@ export class CliHeadlessSubscriptions {
     this.subscriptions.set(socket, targetAgent.agentId);
     this.send(socket, this.buildHeadlessReady(command, targetAgent));
     this.send(socket, await this.swarmManager.getSessionPlanSnapshot(targetAgent.agentId));
+    this.send(socket, await this.swarmManager.getSessionGoalSnapshot(targetAgent.agentId));
   }
 
   broadcast(event: ServerEvent): void {
@@ -182,6 +183,7 @@ export class CliHeadlessSubscriptions {
       case "session_workers_snapshot":
       case "session_active_tools_snapshot":
       case "session_plan_snapshot":
+      case "session_goal_snapshot":
       case "cli_pending_choices_snapshot":
         return event.sessionAgentId === sessionAgentId;
 

@@ -265,6 +265,12 @@ For substantial multi-step work, a manager can publish a working plan with `upda
 
 When a manager delegates work that clearly belongs to one plan step, Forge can associate that worker assignment with the exact step text. The visible checklist stays unchanged. Forge saves the current snapshot in `plan.json`, outgoing revisions in `plan-history.ndjson`, and append-only assignment and token-usage estimates in `plan-usage.ndjson`, including manager totals, per-step worker totals, unassigned usage, and attribution coverage. Clearing the conversation clears its current plan; stopping or archiving preserves it. Forks do not copy the live plan or its history/accounting files.
 
+### Session goals
+
+When you explicitly ask Forge to keep pursuing an outcome across turns, the manager can create one durable session goal above its working plans. The goal bar stays below the chat header and shows its objective, status, active elapsed time, and optional token budget; you can edit, pause, resume, or cancel it. The manager continues from safe idle boundaries, but waits for active workers, pending choices, recovery, stopped sessions, and archives. A goal never grants extra authority.
+
+The current goal survives compaction and restart in `goal.json`. Completed and cancelled goals append to `goal-history.ndjson`, and another goal can then begin in the same session. Token totals estimate recorded manager and parallel-worker usage. A user-requested budget pauses pursuit when reached; it does not pretend the goal is complete or blocked. Clearing the conversation cancels and archives an unfinished goal, while forks omit goal state and history.
+
 ### Archive and Restore
 
 You can archive a session or an entire project from the sidebar, but archived items are read-only and unavailable for chat, model, CWD, project-agent reference edits, or terminal use until restored. The default Main session in a project cannot be archived directly. Archiving a project only marks the project as archived; it does not recursively stamp every session, but the whole project becomes operationally unavailable until restored. Archiving a project stops live sessions under that profile, clears active tool snapshots, and suspends running profile terminals so they can resume on restore. Session archives do not delete terminal data. Archive entries are sorted by last user-message activity and show the last-used date.
@@ -689,6 +695,8 @@ Normal Builder state is file-backed (JSON, JSONL, Markdown, and terminal journal
         ├── plan.json              # Current Builder working plan snapshot
         ├── plan-history.ndjson    # Outgoing working-plan revisions
         ├── plan-usage.ndjson      # Append-only assignment/usage receipts
+        ├── goal.json              # Current durable session goal
+        ├── goal-history.ndjson    # Completed/cancelled goal records
         ├── meta.json              # Session metadata
         ├── memory.md              # Session working memory
         ├── terminals/             # PTY metadata, snapshots, output journals

@@ -26,6 +26,9 @@ import type {
   ManagerExactModelSelection,
   ServerEvent,
   PlanSummaryEvent,
+  SessionGoalControlAction,
+  SessionGoalSnapshot,
+  SessionGoalSnapshotEvent,
   SessionActiveToolsSnapshotEvent,
   SessionPlanSnapshotEvent,
   ModelCacheObservationEvent,
@@ -249,6 +252,14 @@ import {
   appendSessionPlanCompactionInstructions,
   formatSessionPlanModelContext,
 } from "./planning/session-plan-context.js";
+import type { CreateGoalInput, UpdateGoalInput } from "./goals/goal-tools.js";
+import { SessionGoalStore } from "./goals/session-goal-store.js";
+import type { SessionGoalState } from "./goals/session-goal-state.js";
+import {
+  appendSessionGoalCompactionInstructions,
+  formatSessionGoalModelContext,
+} from "./goals/session-goal-context.js";
+import { emptyTokenUsage, scanSessionTokenUsage } from "./session/session-token-usage.js";
 import { getModelCacheVisualizationEnabled } from "./model-cache-visualization-settings.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
@@ -288,6 +299,15 @@ import {
   resolveModelDescriptorFromPreset
 } from "./model-presets.js";
 import { loadOnboardingState } from "./onboarding-state.js";
+
+const GOAL_CONTINUATION_DELAY_MS = 100;
+const GOAL_CONTINUATION_MESSAGE = [
+  "[goalContinuation] Continue pursuing the active goal from the current persisted state.",
+  "Make the next meaningful safe progress without waiting for another user message.",
+  "Use working plans when a visible checklist helps, and keep coordinating existing workers rather than duplicating them.",
+  "When the objective is genuinely achieved, publish the accepted outcome to the user if this is a background turn, then call update_goal with complete.",
+  "Call update_goal with blocked only after the same blocker has persisted for at least three goal turns and no meaningful safe progress remains.",
+].join(" ");
 import {
   generateRosterBlock as specialistGenerateRosterBlock,
   getSpecialistsEnabled as specialistGetSpecialistsEnabled,
@@ -889,6 +909,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
   private readonly sessionPlanStatesByAgentId = new Map<string, SessionPlanState>();
+  private readonly sessionGoalStatesByAgentId = new Map<string, SessionGoalState>();
+  private readonly goalContinuationTimersByAgentId = new Map<string, NodeJS.Timeout>();
+  private readonly goalContinuationsInFlight = new Set<string>();
   private pendingAgentsSnapshotEmit = false;
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
@@ -1574,6 +1597,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           plan: snapshot.plan,
         } satisfies SessionPlanSnapshotEvent);
       },
+      clearSessionGoal: async (descriptor) => {
+        const current = await this.getSessionGoalState(descriptor);
+        const measured = await this.buildSessionGoalSnapshot(descriptor, current);
+        const final = measured.goal
+          ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
+          : undefined;
+        const state = await this.createSessionGoalStore(descriptor).clear(final);
+        this.sessionGoalStatesByAgentId.set(descriptor.agentId, state);
+        this.cancelScheduledGoalContinuation(descriptor.agentId);
+        this.emitSessionGoalSnapshot(descriptor, await this.buildSessionGoalSnapshot(descriptor, state));
+      },
       copySessionHistoryForFork: (sourceSessionFile, targetSessionFile, fromMessageId) =>
         copySessionHistoryForFork({
           sourceSessionFile,
@@ -1746,6 +1780,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.scheduleProjectExecutableTrustPromptsForAllManagers();
 
     this.workerHealthService.ensureStarted();
+    this.scheduleGoalContinuationsAfterBoot();
 
     this.logDebug("boot:ready", {
       managerId: managerDescriptor?.agentId,
@@ -1894,6 +1929,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ...this.restartRecoverySnapshot,
       dismissedAt: this.now(),
     };
+    this.scheduleGoalContinuationsAfterBoot();
     return this.getRestartRecoverySnapshot();
   }
 
@@ -1948,6 +1984,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ...snapshot,
       resumedAt: this.now(),
     };
+    this.scheduleGoalContinuationsAfterBoot();
     return this.getRestartRecoverySnapshot();
   }
 
@@ -2198,6 +2235,228 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       metadata: { revision: result.revision, stepCount: result.plan.length },
     });
     return result;
+  }
+
+  async createGoal(
+    callerAgentId: string,
+    toolCallId: string,
+    input: CreateGoalInput,
+  ): Promise<SessionGoalSnapshot> {
+    const descriptor = this.requireGoalSessionDescriptor(callerAgentId, "create_goal");
+    const state = await this.createSessionGoalStore(descriptor).create(input);
+    this.sessionGoalStatesByAgentId.set(descriptor.agentId, state);
+    const snapshot = await this.buildSessionGoalSnapshot(descriptor, state);
+    this.emitSessionGoalSnapshot(descriptor, snapshot);
+    this.recordToolSideEffect(callerAgentId, {
+      toolName: "create_goal",
+      toolCallId,
+      phase: "side_effect",
+      input,
+      output: snapshot,
+      metadata: { revision: snapshot.revision, goalId: snapshot.goal?.id },
+    });
+    return snapshot;
+  }
+
+  async getGoal(callerAgentId: string): Promise<SessionGoalSnapshot> {
+    const descriptor = this.requireGoalSessionDescriptor(callerAgentId, "get_goal");
+    return this.buildSessionGoalSnapshot(descriptor, await this.getSessionGoalState(descriptor));
+  }
+
+  async updateGoal(
+    callerAgentId: string,
+    toolCallId: string,
+    input: UpdateGoalInput,
+  ): Promise<SessionGoalSnapshot> {
+    const descriptor = this.requireGoalSessionDescriptor(callerAgentId, "update_goal");
+    if (input.status === "complete") {
+      const plan = await this.getSessionPlanState(descriptor);
+      if (plan.plan.some((step) => step.status !== "completed")) {
+        throw new Error("Complete the current working-plan steps before marking the goal complete.");
+      }
+    }
+    const current = await this.getSessionGoalState(descriptor);
+    const measured = await this.buildSessionGoalSnapshot(descriptor, current);
+    const final = measured.goal
+      ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
+      : undefined;
+    const state = await this.createSessionGoalStore(descriptor).updateFromAgent(input.status, final);
+    this.sessionGoalStatesByAgentId.set(descriptor.agentId, state);
+    this.cancelScheduledGoalContinuation(descriptor.agentId);
+    const snapshot = await this.buildSessionGoalSnapshot(descriptor, state);
+    this.emitSessionGoalSnapshot(descriptor, snapshot);
+    this.recordToolSideEffect(callerAgentId, {
+      toolName: "update_goal",
+      toolCallId,
+      phase: "side_effect",
+      input,
+      output: snapshot,
+      metadata: { revision: snapshot.revision, status: snapshot.goal?.status },
+    });
+    return snapshot;
+  }
+
+  async getSessionGoalSnapshot(sessionAgentId: string): Promise<SessionGoalSnapshotEvent> {
+    const descriptor = this.descriptors.get(sessionAgentId);
+    if (!descriptor || descriptor.role !== "manager" || !this.isSessionAgent(descriptor)) {
+      throw new Error("read session goals requires a manager session with profile context.");
+    }
+    if (
+      descriptor.sessionSurface === "collab"
+      || normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
+    ) {
+      return {
+        type: "session_goal_snapshot",
+        sessionAgentId: descriptor.agentId,
+        profileId: descriptor.profileId,
+        revision: 0,
+        measuredAt: this.now(),
+        goal: null,
+      };
+    }
+    const snapshot = await this.buildSessionGoalSnapshot(
+      descriptor,
+      await this.getSessionGoalState(descriptor),
+    );
+    return {
+      type: "session_goal_snapshot",
+      sessionAgentId: descriptor.agentId,
+      profileId: descriptor.profileId,
+      ...snapshot,
+    };
+  }
+
+  async controlSessionGoal(
+    sessionAgentId: string,
+    action: SessionGoalControlAction,
+  ): Promise<SessionGoalSnapshot> {
+    const descriptor = this.requireGoalSessionDescriptor(
+      sessionAgentId,
+      "control session goals",
+      { requireRunning: false },
+    );
+    const current = await this.getSessionGoalState(descriptor);
+    const measured = await this.buildSessionGoalSnapshot(descriptor, current);
+    const final = action.action === "cancel" && measured.goal
+      ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
+      : undefined;
+    const state = await this.createSessionGoalStore(descriptor).control(action, final);
+    this.sessionGoalStatesByAgentId.set(descriptor.agentId, state);
+    if (action.action === "resume") this.scheduleGoalContinuation(descriptor);
+    else if (action.action === "pause" || action.action === "cancel") {
+      this.cancelScheduledGoalContinuation(descriptor.agentId);
+    }
+    const snapshot = await this.buildSessionGoalSnapshot(descriptor, state);
+    this.emitSessionGoalSnapshot(descriptor, snapshot);
+    return snapshot;
+  }
+
+  private requireGoalSessionDescriptor(
+    agentId: string,
+    action:
+      | "create_goal"
+      | "get_goal"
+      | "update_goal"
+      | "read session goals"
+      | "control session goals",
+    options: { requireRunning?: boolean } = {},
+  ): AgentDescriptor & { role: "manager"; profileId: string } {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, action);
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager" || !this.isSessionAgent(descriptor)) {
+      throw new Error(`${action} requires a manager session with profile context.`);
+    }
+    if (descriptor.sessionSurface === "collab") {
+      throw new Error(`${action} is not available for Collaboration sessions.`);
+    }
+    if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+      throw new Error(`${action} is not available for Cortex sessions.`);
+    }
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (options.requireRunning !== false && isNonRunningAgentStatus(descriptor.status)) {
+      throw new Error(`Manager is not running: ${agentId}`);
+    }
+    return descriptor;
+  }
+
+  private createSessionGoalStore(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+  ): SessionGoalStore {
+    return new SessionGoalStore({
+      dataDir: this.config.paths.dataDir,
+      profileId: descriptor.profileId,
+      sessionAgentId: descriptor.agentId,
+      now: this.now,
+    });
+  }
+
+  private async getSessionGoalState(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+  ): Promise<SessionGoalState> {
+    const cached = this.sessionGoalStatesByAgentId.get(descriptor.agentId);
+    if (cached) return cached;
+    const state = await this.createSessionGoalStore(descriptor).load();
+    this.sessionGoalStatesByAgentId.set(descriptor.agentId, state);
+    return state;
+  }
+
+  private async buildSessionGoalSnapshot(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    state: SessionGoalState,
+  ): Promise<SessionGoalSnapshot> {
+    const measuredAt = this.now();
+    const goal = state.goal;
+    if (!goal) return { revision: state.revision, measuredAt, goal: null };
+
+    const usageResult = goal.finalUsage
+      ? {
+          totalUsage: goal.finalUsage,
+          missingTimestampCount: goal.finalUsageCoverage === "partial" ? 1 : 0,
+        }
+      : await scanSessionTokenUsage({
+          dataDir: this.config.paths.dataDir,
+          profileId: descriptor.profileId,
+          sessionAgentId: descriptor.agentId,
+          startAt: goal.createdAt,
+          endAt: goal.endedAt ?? measuredAt,
+        });
+    const activeElapsedMs = goal.activeSince
+      ? goal.activeElapsedMs + Math.max(0, Date.parse(measuredAt) - Date.parse(goal.activeSince))
+      : goal.activeElapsedMs;
+    const usage = usageResult.totalUsage ?? emptyTokenUsage();
+    return {
+      revision: state.revision,
+      measuredAt,
+      goal: {
+        id: goal.id,
+        objective: goal.objective,
+        status: goal.status,
+        createdAt: goal.createdAt,
+        updatedAt: goal.updatedAt,
+        ...(goal.endedAt ? { endedAt: goal.endedAt } : {}),
+        ...(goal.tokenBudget === undefined ? {} : { tokenBudget: goal.tokenBudget }),
+        ...(goal.pauseReason ? { pauseReason: goal.pauseReason } : {}),
+        activeElapsedMs,
+        turnCount: goal.turnCount,
+        usage,
+        usageCoverage: usageResult.missingTimestampCount > 0 ? "partial" : "complete",
+        ...(goal.tokenBudget === undefined
+          ? {}
+          : { remainingTokens: Math.max(0, goal.tokenBudget - usage.total) }),
+      },
+    };
+  }
+
+  private emitSessionGoalSnapshot(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    snapshot: SessionGoalSnapshot,
+  ): void {
+    this.emit("session_goal_snapshot", {
+      type: "session_goal_snapshot",
+      sessionAgentId: descriptor.agentId,
+      profileId: descriptor.profileId,
+      ...snapshot,
+    } satisfies SessionGoalSnapshotEvent);
   }
 
   private recordPlanCardTransition(
@@ -2530,8 +2789,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
 
     await Promise.all(sessionDescriptors.map(async (descriptor) => {
-      const state = await this.createSessionPlanStore(descriptor).load();
-      this.sessionPlanStatesByAgentId.set(descriptor.agentId, state);
+      const [planState, goalState] = await Promise.all([
+        this.createSessionPlanStore(descriptor).load(),
+        this.createSessionGoalStore(descriptor).load(),
+      ]);
+      this.sessionPlanStatesByAgentId.set(descriptor.agentId, planState);
+      this.sessionGoalStatesByAgentId.set(descriptor.agentId, goalState);
       await this.createSessionPlanUsageTracker(descriptor)
         .finalizePendingPlan({ recovered: true })
         .catch((error) => {
@@ -2541,6 +2804,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           });
         });
     }));
+  }
+
+  private scheduleGoalContinuationsAfterBoot(): void {
+    if (this.isRestartRecoveryDecisionPending()) return;
+    for (const descriptor of this.descriptors.values()) {
+      if (
+        descriptor.role === "manager"
+        && this.isSessionAgent(descriptor)
+        && descriptor.status === "idle"
+        && descriptor.sessionSurface !== "collab"
+        && normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID
+        && this.sessionGoalStatesByAgentId.get(descriptor.agentId)?.goal?.status === "active"
+      ) {
+        this.scheduleGoalContinuation(descriptor);
+      }
+    }
+  }
+
+  private isRestartRecoveryDecisionPending(): boolean {
+    return Boolean(
+      this.restartRecoverySnapshot
+      && !this.restartRecoverySnapshot.resumedAt
+      && !this.restartRecoverySnapshot.dismissedAt
+    );
   }
 
   private setPinnedRegistryForAgent(agentId: string, registry: PinRegistry): void {
@@ -3354,6 +3641,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.assertDescriptorNotEffectivelyArchived(descriptor);
     await this.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor as AgentDescriptor & { role: "manager" });
     await this.lifecycleService.resumeSession(agentId);
+    const resumed = this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
+    this.scheduleGoalContinuation(resumed);
   }
 
   async deleteCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
@@ -3379,6 +3668,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
     const result = await this.sessionService.deleteSession(agentId);
     this.sessionPlanStatesByAgentId.delete(agentId);
+    this.sessionGoalStatesByAgentId.delete(agentId);
+    this.cancelScheduledGoalContinuation(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "deleted",
@@ -4570,6 +4861,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string,
     options: AgentLifecycleStopSessionOptions
   ): Promise<{ terminatedWorkerIds: string[] }> {
+    this.cancelScheduledGoalContinuation(agentId);
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
 
@@ -4740,7 +5032,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         formatProjectAgentRuntimeMessage(projectAgentContext, message),
         assistantOutputTarget,
       );
-      const runtimeMessageText = await this.appendCurrentPlanToManagerInput(target, baseRuntimeMessageText);
+      const runtimeMessageText = await this.appendCurrentCoordinationContextToManagerInput(
+        target,
+        baseRuntimeMessageText,
+      );
       const parentRootTurnId = this.getActiveObservabilityRootTurnId(sender.agentId);
       const observabilityInput = this.beginObservabilityRuntimeInput({
         target,
@@ -5113,7 +5408,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const target = this.descriptors.get(targetAgentId);
     if (target) {
-      text = await this.appendCurrentPlanToManagerInput(target, text);
+      text = await this.appendCurrentCoordinationContextToManagerInput(target, text);
     }
 
     if (runtimeAttachments.images.length === 0) {
@@ -5126,7 +5421,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  private async appendCurrentPlanToManagerInput(
+  private async appendCurrentCoordinationContextToManagerInput(
     descriptor: AgentDescriptor,
     text: string,
   ): Promise<string> {
@@ -5139,12 +5434,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return text;
     }
 
-    const snapshot = await this.getSessionPlanState(descriptor);
-    if (snapshot.revision === 0 && snapshot.plan.length === 0 && !snapshot.explanation) {
-      return text;
-    }
-    const planContext = formatSessionPlanModelContext(snapshot);
-    return text.trim().length > 0 ? `${text}\n\n${planContext}` : planContext;
+    const goalSnapshot = await this.buildSessionGoalSnapshot(
+      descriptor,
+      await this.getSessionGoalState(descriptor),
+    );
+    const goalContext = formatSessionGoalModelContext(goalSnapshot);
+    const planSnapshot = await this.getSessionPlanState(descriptor);
+    const planContext = planSnapshot.revision === 0
+      && planSnapshot.plan.length === 0
+      && !planSnapshot.explanation
+      ? undefined
+      : formatSessionPlanModelContext(planSnapshot);
+    return [text.trim(), goalContext, planContext].filter(Boolean).join("\n\n");
   }
 
   private async prepareRuntimeAttachments(
@@ -5308,7 +5609,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const registry = await this.syncPinnedContentForManagerRuntime(descriptor);
     const instructionsWithPins = combineCompactionCustomInstructions(customInstructions, registry);
     const plan = await this.getSessionPlanState(descriptor);
-    return appendSessionPlanCompactionInstructions(instructionsWithPins, plan);
+    const instructionsWithPlan = appendSessionPlanCompactionInstructions(instructionsWithPins, plan);
+    const goal = await this.buildSessionGoalSnapshot(
+      descriptor,
+      await this.getSessionGoalState(descriptor),
+    );
+    return appendSessionGoalCompactionInstructions(instructionsWithPlan, goal);
   }
 
   async compactAgentContext(
@@ -5633,6 +5939,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         trigger: "slash_command"
       });
       return;
+    }
+
+    if (target.role === "manager" && this.isSessionAgent(target)) {
+      this.cancelScheduledGoalContinuation(target.agentId);
+      const goalState = await this.getSessionGoalState(target);
+      if (goalState.goal?.status === "active") {
+        const incremented = await this.createSessionGoalStore(target).incrementTurn();
+        this.sessionGoalStatesByAgentId.set(target.agentId, incremented);
+        this.emitSessionGoalSnapshot(
+          target,
+          await this.buildSessionGoalSnapshot(target, incremented),
+        );
+      }
     }
 
     const codexClassification = target.role === "manager"
@@ -8078,7 +8397,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       | "create_project_agent"
       | "speak_to_user"
       | "present_choices"
-      | "update_plan",
+      | "update_plan"
+      | "create_goal"
+      | "get_goal"
+      | "update_goal"
+      | "read session goals"
+      | "control session goals",
   ): void {
     const context = this.getActiveExternalProjectAgentTurn(callerAgentId);
     if (!context) {
@@ -10148,6 +10472,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       && this.isSessionAgent(descriptor)
     ) {
       await this.finalizePendingSessionPlanUsage(descriptor);
+      this.scheduleGoalContinuation(descriptor);
     }
   }
 
@@ -10217,6 +10542,78 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           message: error instanceof Error ? error.message : String(error),
         });
       });
+  }
+
+  private scheduleGoalContinuation(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+  ): void {
+    if (
+      descriptor.status !== "idle"
+      || this.goalContinuationTimersByAgentId.has(descriptor.agentId)
+      || this.goalContinuationsInFlight.has(descriptor.agentId)
+    ) return;
+
+    const timer = setTimeout(() => {
+      this.goalContinuationTimersByAgentId.delete(descriptor.agentId);
+      void this.runGoalContinuation(descriptor.agentId);
+    }, GOAL_CONTINUATION_DELAY_MS);
+    timer.unref?.();
+    this.goalContinuationTimersByAgentId.set(descriptor.agentId, timer);
+  }
+
+  private cancelScheduledGoalContinuation(agentId: string): void {
+    const timer = this.goalContinuationTimersByAgentId.get(agentId);
+    if (timer) clearTimeout(timer);
+    this.goalContinuationTimersByAgentId.delete(agentId);
+  }
+
+  private async runGoalContinuation(agentId: string): Promise<void> {
+    if (this.goalContinuationsInFlight.has(agentId)) return;
+    this.goalContinuationsInFlight.add(agentId);
+    try {
+      const descriptor = this.descriptors.get(agentId);
+      if (
+        !descriptor
+        || descriptor.role !== "manager"
+        || !this.isSessionAgent(descriptor)
+        || descriptor.status !== "idle"
+        || descriptor.sessionSurface === "collab"
+        || normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
+        || this.isDescriptorEffectivelyArchived(descriptor)
+        || this.isRestartRecoveryDecisionPending()
+        || this.isRuntimeRecoveryActive(agentId)
+        || this.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(agentId)
+        || this.choiceService.hasPendingChoicesForSession(agentId)
+        || this.getWorkersForManager(agentId).some((worker) => worker.status === "streaming")
+      ) return;
+
+      const state = await this.getSessionGoalState(descriptor);
+      if (state.goal?.status !== "active") return;
+      const snapshot = await this.buildSessionGoalSnapshot(descriptor, state);
+      if (
+        snapshot.goal?.tokenBudget !== undefined
+        && snapshot.goal.usage.total >= snapshot.goal.tokenBudget
+      ) {
+        const paused = await this.createSessionGoalStore(descriptor).pauseForBudget();
+        this.sessionGoalStatesByAgentId.set(agentId, paused);
+        this.emitSessionGoalSnapshot(descriptor, await this.buildSessionGoalSnapshot(descriptor, paused));
+        return;
+      }
+
+      const incremented = await this.createSessionGoalStore(descriptor).incrementTurn();
+      this.sessionGoalStatesByAgentId.set(agentId, incremented);
+      this.emitSessionGoalSnapshot(descriptor, await this.buildSessionGoalSnapshot(descriptor, incremented));
+      await this.sendMessage(agentId, agentId, GOAL_CONTINUATION_MESSAGE, "auto", {
+        origin: "internal",
+      });
+    } catch (error) {
+      this.logDebug("goal:continuation:error", {
+        agentId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.goalContinuationsInFlight.delete(agentId);
+    }
   }
 
   async queueVersionedToolMutation(

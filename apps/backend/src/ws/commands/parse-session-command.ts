@@ -14,6 +14,39 @@ import {
 } from "./command-parse-helpers.js";
 
 export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
+  if (maybe.type === "session_goal_control") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const action = (maybe as { action?: unknown }).action;
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return fail("session_goal_control.agentId must be a non-empty string");
+    }
+    if (action !== "pause" && action !== "resume" && action !== "cancel" && action !== "edit") {
+      return fail('session_goal_control.action must be "pause", "resume", "cancel", or "edit"');
+    }
+    if (action === "edit") {
+      const objective = (maybe as { objective?: unknown }).objective;
+      const tokenBudget = (maybe as { tokenBudget?: unknown }).tokenBudget;
+      if (typeof objective !== "string" || objective.trim().length === 0) {
+        return fail("session_goal_control.objective must be a non-empty string for edit");
+      }
+      if (
+        tokenBudget !== undefined
+        && tokenBudget !== null
+        && (!Number.isInteger(tokenBudget) || (tokenBudget as number) <= 0)
+      ) {
+        return fail("session_goal_control.tokenBudget must be a positive integer or null when provided");
+      }
+      return ok({
+        type: "session_goal_control",
+        agentId: agentId.trim(),
+        action,
+        objective: objective.trim(),
+        ...(tokenBudget === undefined ? {} : { tokenBudget: tokenBudget as number | null }),
+      });
+    }
+    return ok({ type: "session_goal_control", agentId: agentId.trim(), action });
+  }
+
   if (maybe.type === "create_session") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const label = (maybe as { label?: unknown }).label;

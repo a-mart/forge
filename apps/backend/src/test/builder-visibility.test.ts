@@ -29,6 +29,17 @@ function createPlanSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, {
   }
 }
 
+function createGoalSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_goal_snapshot' }> {
+  return {
+    type: 'session_goal_snapshot',
+    sessionAgentId,
+    profileId: 'manager',
+    revision: 0,
+    measuredAt: TEST_TIMESTAMP,
+    goal: null,
+  }
+}
+
 class FakeBootstrapSwarmManager {
   constructor(
     private readonly agents: AgentDescriptor[],
@@ -81,6 +92,10 @@ class FakeBootstrapSwarmManager {
 
   async getSessionPlanSnapshot(sessionAgentId: string): Promise<Extract<ServerEvent, { type: 'session_plan_snapshot' }>> {
     return createPlanSnapshotEvent(sessionAgentId)
+  }
+
+  async getSessionGoalSnapshot(sessionAgentId: string): Promise<Extract<ServerEvent, { type: 'session_goal_snapshot' }>> {
+    return createGoalSnapshotEvent(sessionAgentId)
   }
 }
 

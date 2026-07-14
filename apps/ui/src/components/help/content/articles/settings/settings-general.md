@@ -14,7 +14,7 @@ Toggle "Show provider usage" to control whether the provider subscription usage 
 
 ## Working plans
 
-Working plans are always available to Builder managers and do not require a General Settings toggle.
+Working plans and explicit session goals are always available to Builder managers and do not require a General Settings toggle.
 
 ## Compaction
 

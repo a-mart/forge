@@ -91,6 +91,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
       return command.requestId;
 
     case "pin_message":
+    case "session_goal_control":
     case "clear_all_pins":
     case "subscribe":
     case "user_message":

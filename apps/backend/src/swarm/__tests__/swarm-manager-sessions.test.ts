@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
-import { getSessionDir, getSessionPlanHistoryPath, getSessionPlanPath, getSessionPlanUsagePath } from '../data-paths.js'
+import {
+  getSessionDir,
+  getSessionGoalHistoryPath,
+  getSessionPlanHistoryPath,
+  getSessionPlanPath,
+  getSessionPlanUsagePath,
+} from '../data-paths.js'
 import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
@@ -2423,6 +2429,139 @@ Never use plain assistant text for user communication.`
       revision: 1,
       plan: [{ step: 'Resume after restart', status: 'in_progress' }],
     })
+  })
+
+  it('keeps one durable goal above replaceable plans and retains terminal history', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createGoal('manager', 'goal-create-1', {
+      objective: 'Ship the goal system',
+      tokenBudget: 50_000,
+    })
+    expect(created).toMatchObject({
+      revision: 1,
+      goal: {
+        objective: 'Ship the goal system',
+        status: 'active',
+        tokenBudget: 50_000,
+        turnCount: 1,
+      },
+    })
+    await expect(manager.createGoal('manager', 'goal-create-duplicate', {
+      objective: 'Competing goal',
+    })).rejects.toThrow('Finish or cancel the current goal')
+
+    await manager.handleUserMessage('Continue the goal.', { targetAgentId: 'manager' })
+    const runtimeText = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
+    const goalContext = runtimeText.split('\n').find((line) => line.startsWith('[activeGoal] '))
+    expect(JSON.parse(goalContext!.slice('[activeGoal] '.length))).toMatchObject({
+      revision: 2,
+      objective: 'Ship the goal system',
+      status: 'active',
+      turnCount: 2,
+    })
+    await manager.compactAgentContext('manager')
+    expect(manager.runtimeByAgentId.get('manager')?.compactCalls.at(-1)).toContain('[activeGoal] {"revision":2')
+
+    await manager.updatePlan('manager', 'goal-plan-active', {
+      plan: [{ step: 'Verify the result', status: 'in_progress' }],
+    })
+    await expect(manager.updateGoal('manager', 'goal-complete-too-soon', { status: 'complete' }))
+      .rejects.toThrow('Complete the current working-plan steps')
+    await manager.updatePlan('manager', 'goal-plan-complete', {
+      plan: [{ step: 'Verify the result', status: 'completed' }],
+    })
+    const completed = await manager.updateGoal('manager', 'goal-complete', { status: 'complete' })
+    expect(completed.goal).toMatchObject({ status: 'completed', objective: 'Ship the goal system' })
+    expect(await readJsonlFile(getSessionGoalHistoryPath(
+      config.paths.dataDir,
+      'manager',
+      'manager',
+    ))).toEqual([expect.objectContaining({
+      revision: completed.revision,
+      goal: expect.objectContaining({ status: 'completed', objective: 'Ship the goal system' }),
+    })])
+
+    const next = await manager.createGoal('manager', 'goal-create-2', { objective: 'Second outcome' })
+    expect(next.goal).toMatchObject({ status: 'active', objective: 'Second outcome' })
+    const forked = await manager.forkSession('manager', { label: 'Goal-free fork' })
+    await expect(manager.getSessionGoalSnapshot(forked.sessionAgent.agentId)).resolves.toMatchObject({
+      revision: 0,
+      goal: null,
+    })
+
+    await manager.clearSessionConversation('manager')
+    await expect(manager.getSessionGoalSnapshot('manager')).resolves.toMatchObject({ goal: null })
+    const historyAfterClear = await readJsonlFile<Record<string, any>>(getSessionGoalHistoryPath(
+      config.paths.dataDir,
+      'manager',
+      'manager',
+    ))
+    expect(historyAfterClear.map((entry) => entry.goal.status)).toEqual(['completed', 'cancelled'])
+  })
+
+  it('recovers an unfinished goal after restart and supports explicit user controls', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createGoal('manager', 'goal-before-restart', { objective: 'Resume after restart' })
+
+    const rebooted = new TestSwarmManager(config)
+    await bootWithDefaultManager(rebooted, config)
+    const recovered = await rebooted.getSessionGoalSnapshot('manager')
+    expect(recovered.goal).toMatchObject({ objective: 'Resume after restart', status: 'active' })
+
+    await rebooted.stopSession('manager')
+    await expect(rebooted.getSessionGoalSnapshot('manager')).resolves.toMatchObject({
+      goal: { objective: 'Resume after restart', status: 'active' },
+    })
+    const paused = await rebooted.controlSessionGoal('manager', { action: 'pause' })
+    expect(paused.goal).toMatchObject({ status: 'paused', pauseReason: 'user' })
+    const edited = await rebooted.controlSessionGoal('manager', {
+      action: 'edit',
+      objective: 'Refined restart outcome',
+      tokenBudget: 10_000,
+    })
+    expect(edited.goal).toMatchObject({
+      status: 'paused',
+      objective: 'Refined restart outcome',
+      tokenBudget: 10_000,
+    })
+    await rebooted.resumeSession('manager')
+    const resumed = await rebooted.controlSessionGoal('manager', { action: 'resume' })
+    expect(resumed.goal).toMatchObject({ status: 'active' })
+    const cancelled = await rebooted.controlSessionGoal('manager', { action: 'cancel' })
+    expect(cancelled.goal).toMatchObject({ status: 'cancelled' })
+  })
+
+  it('starts a guarded internal continuation only while an active goal is idle', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createGoal('manager', 'goal-continuation', { objective: 'Reach the outcome' })
+
+    const internals = manager as unknown as {
+      runGoalContinuation: (agentId: string) => Promise<void>
+    }
+    await internals.runGoalContinuation('manager')
+
+    await expect(manager.getSessionGoalSnapshot('manager')).resolves.toMatchObject({
+      revision: 2,
+      goal: { status: 'active', turnCount: 2 },
+    })
+    const continuationText = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message as string
+    expect(continuationText).toContain('Continue pursuing the active goal')
+    expect(continuationText).toContain('[activeGoal] {"revision":2')
+
+    await manager.controlSessionGoal('manager', { action: 'pause' })
+    const callsBefore = manager.runtimeByAgentId.get('manager')?.sendCalls.length
+    const descriptor = (manager as unknown as { descriptors: Map<string, AgentDescriptor> })
+      .descriptors.get('manager')
+    if (descriptor) descriptor.status = 'idle'
+    await internals.runGoalContinuation('manager')
+    expect(manager.runtimeByAgentId.get('manager')?.sendCalls).toHaveLength(callsBefore ?? 0)
   })
 
   it('finalizes a pending completed-plan usage receipt during backend restart recovery', async () => {
