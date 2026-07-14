@@ -98,6 +98,16 @@ Invalid boolean or below-minimum integer values are ignored in favor of the defa
 
 Settings → General → **Repositories** (Builder/local only) stores clone defaults in `shared/config/repository-settings.json`. Precedence for Clone repository is configured home → last successfully used clone base → user home. Collaboration admin surfaces do not load this route.
 
+### Embedded data versioning
+
+The embedded Git service versions Forge's allowlisted knowledge, profile-memory, reference, and prompt files inside the data directory. The matching legacy `MIDDLEMAN_VERSIONING_*` aliases are also accepted.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FORGE_VERSIONING_ENABLED` | `true` | Enable embedded Git versioning for its allowlisted Forge data paths. |
+| `FORGE_VERSIONING_TRACK_SESSION_MEMORY` | `false` | Include per-session `profiles/<profileId>/sessions/<sessionId>/memory.md` files in the versioned path set. Profile memory remains part of the normal allowlist. |
+| `FORGE_VERSIONING_RECONCILE_INTERVAL_MS` | `300000` | Interval for reconciling tracked files with embedded Git. Set to `0` to disable periodic reconciliation; startup reconciliation still runs. Invalid or negative values use the default. |
+
 ### Compaction
 
 Settings → General → Compaction controls the model, reasoning level, and timeout used for automatic compaction and manual Smart compact on supported Pi-backed manager compaction runtimes. Eligible providers are OpenAI/Codex and Anthropic. SDK/native runtimes, including Claude SDK, and xAI/Grok are not controlled by these settings.
@@ -154,6 +164,7 @@ Collaboration runtime is unsupported in V1. It uses the no-op/fail-closed observ
 |----------|---------|-------------|
 | `FORGE_ADMIN_EMAIL` | — | Bootstrap email for the first collaboration admin account. Required on first boot if no admin exists yet. |
 | `FORGE_ADMIN_PASSWORD` | — | Bootstrap password for the first collaboration admin account. Required on first boot if no admin exists yet. |
+| `FORGE_PUBLIC_PORT` | `47387` | Host port that `docker-compose.yml` maps to the primary collaboration server's container port `47287`. Keep `FORGE_COLLABORATION_BASE_URL` aligned when overriding it. |
 | `FORGE_COLLABORATION_BASE_URL` | — | Canonical collaboration browser URL used for login redirects and invite links. For local `docker compose`, use `http://127.0.0.1:47387` by default and keep it aligned with `FORGE_PUBLIC_PORT` if you override the host mapping. |
 | `FORGE_SECONDARY_PUBLIC_PORT` / `FORGE_SECONDARY_COLLABORATION_BASE_URL` | `47388` / `http://127.0.0.1:47388` | Optional secondary local Docker Compose collaboration server settings for multi-backend UI testing. |
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | — | Comma-separated Builder/UI origins allowed to talk to the collaboration server in split deployments. Local `docker-compose.yml` defaults this to `http://127.0.0.1:47188,http://127.0.0.1:47189`. Use `127.0.0.1` consistently for local HTTP split deployments; mixing `localhost` and `127.0.0.1` becomes cross-site and requires HTTPS. |
@@ -238,7 +249,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   │   ├── auth.db                    # Collaboration auth + structured domain state
 │   │   │   └── auth-secret.key            # Generated collaboration auth secret
 │   │   ├── integrations/                  # Shared integration configs
-│   │   ├── secrets.json                   # Encrypted/shared secret values
+│   │   ├── secrets.json                   # Sensitive local JSON; plaintext at rest
 │   │   ├── builder-sidebar-order.json     # Local unified project order
 │   │   ├── compaction-settings.json       # Manager compaction settings
 │   │   ├── cortex-auto-review.json        # Cortex consolidation cadence
@@ -330,6 +341,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 ├── skills/<skillName>/SKILL.md             # User-created global Forge skills
 └── uploads/                                # Uploaded attachments
 ```
+
+`shared/config/secrets.json` stores sensitive values as ordinary JSON; Forge does not application-encrypt that file at rest. Protect the data directory and every backup with appropriate operating-system or storage access controls, and handle copied `secrets.json` files as secrets.
 
 ### Default Locations
 

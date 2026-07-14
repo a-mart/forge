@@ -643,7 +643,7 @@ There's a growing ecosystem of community Pi packages you can install from npm or
 
 ### The Data Directory
 
-All of Forge's state lives in a single directory:
+Forge application state uses a single data directory (repository and workspace files remain separate):
 
 - **macOS/Linux:** `~/.forge`
 - **Windows:** `%LOCALAPPDATA%\forge`
@@ -742,7 +742,7 @@ Also be aware of prompt injection risks when agents browse the web. Malicious we
 
 ### Back Up Your Data Directory
 
-`~/.forge` is everything. Your conversation history, your Cortex knowledge, your preferences, your session memory. Copy it periodically. If your machine dies, this directory is all you need to pick back up.
+`~/.forge` (or your configured `FORGE_DATA_DIR`) contains Forge application state such as conversation history, Cortex knowledge, preferences, and session memory. Copy it periodically while Forge is stopped or with a storage-level consistent snapshot. Repository and workspace directories are not copied into the Forge data directory, so back them up separately; Remote Projects state and workspaces must be backed up on the server that hosts them.
 
 ### Watch GitHub Releases for Updates
 
