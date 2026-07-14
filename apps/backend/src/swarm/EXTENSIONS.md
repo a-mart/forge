@@ -5,21 +5,16 @@
 
 ## Tool Collision Precedence
 
-Forge passes its swarm tools as `customTools` to Pi's `createAgentSession()`. Pi's `_buildRuntime()` builds the tool registry by processing extension-registered tools first, then SDK custom tools. Because entries are set by name (last write wins), **Forge's `customTools` silently override any same-name extension tool**.
+Forge passes its planned runtime tools as SDK `customTools` to Pi's `createAgentSession()`. In the pinned Pi `0.80.6` runtime, `_buildRuntime()` registers extension tools first and SDK custom tools afterward. Registry entries are keyed by name with last-write-wins behavior, so **a Forge tool present in that agent's runtime plan silently replaces a same-name Pi extension tool**. Pi emits no collision warning.
 
-There is no warning or diagnostic when this happens. If a user installs an extension that registers a tool named `list_agents`, Forge's built-in swarm tool wins silently.
+The Forge tool set is contextual rather than one universal reserved list:
 
-### Reserved Tool Names
+- Ordinary workers normally receive `list_agents`, `send_message_to_agent`, and `knowledge`.
+- Managers can additionally receive `update_plan`, `spawn_agent`, `retry_codex_plugin_worker`, `kill_agent`, `speak_to_user`, `present_choices`, and `save_learning`.
+- Capabilities and session purpose can add `create_session` or `create_project_agent`, while Collaboration, Cortex, and capture-check contexts filter the normal set.
+- A scoped Codex Plugin worker receives delegation-specific exact plugin tool names and may receive `export_scoped_codex_plugin_result`.
 
-These names are used by Forge's swarm orchestration tools and must not be overridden by extensions:
-
-- `list_agents`
-- `send_message_to_agent`
-- `spawn_agent`
-- `kill_agent`
-- `speak_to_user`
-
-Any extension tool registered with one of these names will be silently replaced by Forge's implementation.
+Treat every Forge or delegation tool name available in the target context as reserved. Do not rely on an extension implementation winning a collision, and re-check `buildSwarmTools()` plus `buildBaseRuntimeTools()` when Forge adds or filters tools. This precedence description is version-specific; audit the installed Pi source again when upgrading Pi.
 
 ## Extension Tools and the System Prompt
 
