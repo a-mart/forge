@@ -60,6 +60,8 @@ export class SessionGoalCoordinator {
   private readonly statesByAgentId = new Map<string, SessionGoalState>();
   private readonly continuationTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly continuationsInFlight = new Set<string>();
+  private readonly continuationGenerationsByAgentId = new Map<string, number>();
+  private readonly continuationRescheduleRequested = new Set<string>();
 
   constructor(private readonly options: SessionGoalCoordinatorOptions) {}
 
@@ -91,23 +93,28 @@ export class SessionGoalCoordinator {
     input: UpdateGoalInput,
   ): Promise<SessionGoalSnapshot> {
     const owner = this.requireOwner(callerAgentId, "update_goal");
-    if (input.status === "complete" && await this.options.hasIncompletePlanSteps(owner)) {
-      throw new Error("Complete the current working-plan steps before marking the goal complete.");
-    }
-    const measured = await this.buildSnapshot(owner, await this.getState(owner));
-    const final = measured.goal
-      ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
-      : undefined;
-    const state = await this.store(owner).updateFromAgent(input.status, final);
-    this.statesByAgentId.set(owner.agentId, state);
     this.cancelScheduledContinuation(owner.agentId);
-    const snapshot = await this.buildSnapshot(owner, state);
-    this.emitSnapshot(owner, snapshot);
-    this.recordToolSideEffect(callerAgentId, "update_goal", toolCallId, input, snapshot, {
-      revision: snapshot.revision,
-      status: snapshot.goal?.status,
-    });
-    return snapshot;
+    try {
+      if (input.status === "complete" && await this.options.hasIncompletePlanSteps(owner)) {
+        throw new Error("Complete the current working-plan steps before marking the goal complete.");
+      }
+      const measured = await this.buildSnapshot(owner, await this.getState(owner));
+      const final = measured.goal
+        ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
+        : undefined;
+      const state = await this.store(owner).updateFromAgent(input.status, final);
+      this.statesByAgentId.set(owner.agentId, state);
+      const snapshot = await this.buildSnapshot(owner, state);
+      this.emitSnapshot(owner, snapshot);
+      this.recordToolSideEffect(callerAgentId, "update_goal", toolCallId, input, snapshot, {
+        revision: snapshot.revision,
+        status: snapshot.goal?.status,
+      });
+      return snapshot;
+    } catch (error) {
+      this.scheduleContinuation(owner);
+      throw error;
+    }
   }
 
   async getSnapshotEvent(sessionAgentId: string): Promise<SessionGoalSnapshotEvent> {
@@ -133,32 +140,43 @@ export class SessionGoalCoordinator {
     action: SessionGoalControlAction,
   ): Promise<SessionGoalSnapshot> {
     const owner = this.requireOwner(sessionAgentId, "control session goals", false);
-    const measured = await this.buildSnapshot(owner, await this.getState(owner));
-    const final = action.action === "cancel" && measured.goal
-      ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
-      : undefined;
-    const state = await this.store(owner).control(action, final);
-    this.statesByAgentId.set(owner.agentId, state);
-    if (action.action === "resume") this.scheduleContinuation(owner);
-    else if (action.action === "pause" || action.action === "cancel") {
+    const invalidatesContinuation = action.action === "pause" || action.action === "cancel";
+    if (invalidatesContinuation) {
       this.cancelScheduledContinuation(owner.agentId);
     }
-    const snapshot = await this.buildSnapshot(owner, state);
-    this.emitSnapshot(owner, snapshot);
-    return snapshot;
+    try {
+      const measured = await this.buildSnapshot(owner, await this.getState(owner));
+      const final = action.action === "cancel" && measured.goal
+        ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
+        : undefined;
+      const state = await this.store(owner).control(action, final);
+      this.statesByAgentId.set(owner.agentId, state);
+      if (action.action === "resume") this.scheduleContinuation(owner);
+      const snapshot = await this.buildSnapshot(owner, state);
+      this.emitSnapshot(owner, snapshot);
+      return snapshot;
+    } catch (error) {
+      if (invalidatesContinuation) this.scheduleContinuation(owner);
+      throw error;
+    }
   }
 
   async clear(owner: SessionGoalOwner): Promise<SessionGoalSnapshotEvent> {
-    const measured = await this.buildSnapshot(owner, await this.getState(owner));
-    const final = measured.goal
-      ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
-      : undefined;
-    const state = await this.store(owner).clear(final);
-    this.statesByAgentId.set(owner.agentId, state);
     this.cancelScheduledContinuation(owner.agentId);
-    const event = this.toEvent(owner, await this.buildSnapshot(owner, state));
-    this.options.emitSnapshot(event);
-    return event;
+    try {
+      const measured = await this.buildSnapshot(owner, await this.getState(owner));
+      const final = measured.goal
+        ? { usage: measured.goal.usage, coverage: measured.goal.usageCoverage }
+        : undefined;
+      const state = await this.store(owner).clear(final);
+      this.statesByAgentId.set(owner.agentId, state);
+      const event = this.toEvent(owner, await this.buildSnapshot(owner, state));
+      this.options.emitSnapshot(event);
+      return event;
+    } catch (error) {
+      this.scheduleContinuation(owner);
+      throw error;
+    }
   }
 
   async preload(): Promise<void> {
@@ -205,21 +223,27 @@ export class SessionGoalCoordinator {
   }
 
   scheduleContinuation(owner: SessionGoalOwner): void {
-    if (
-      owner.status !== "idle" ||
-      this.continuationTimersByAgentId.has(owner.agentId) ||
-      this.continuationsInFlight.has(owner.agentId)
-    ) return;
+    if (owner.status !== "idle" || this.continuationTimersByAgentId.has(owner.agentId)) return;
+    if (this.continuationsInFlight.has(owner.agentId)) {
+      this.continuationRescheduleRequested.add(owner.agentId);
+      return;
+    }
 
+    const generation = this.getContinuationGeneration(owner.agentId);
     const timer = setTimeout(() => {
       this.continuationTimersByAgentId.delete(owner.agentId);
-      void this.runContinuation(owner.agentId);
+      void this.runContinuation(owner.agentId, generation);
     }, GOAL_CONTINUATION_DELAY_MS);
     timer.unref?.();
     this.continuationTimersByAgentId.set(owner.agentId, timer);
   }
 
   cancelScheduledContinuation(agentId: string): void {
+    this.continuationGenerationsByAgentId.set(
+      agentId,
+      this.getContinuationGeneration(agentId) + 1,
+    );
+    this.continuationRescheduleRequested.delete(agentId);
     const timer = this.continuationTimersByAgentId.get(agentId);
     if (timer) clearTimeout(timer);
     this.continuationTimersByAgentId.delete(agentId);
@@ -368,12 +392,19 @@ export class SessionGoalCoordinator {
     });
   }
 
-  async runContinuation(agentId: string): Promise<void> {
-    if (this.continuationsInFlight.has(agentId)) return;
+  async runContinuation(
+    agentId: string,
+    generation = this.getContinuationGeneration(agentId),
+  ): Promise<void> {
+    if (
+      generation !== this.getContinuationGeneration(agentId) ||
+      this.continuationsInFlight.has(agentId)
+    ) return;
     this.continuationsInFlight.add(agentId);
     try {
       const descriptor = this.options.descriptors.get(agentId);
       if (
+        generation !== this.getContinuationGeneration(agentId) ||
         !this.options.isSessionAgent(descriptor) ||
         descriptor.status !== "idle" ||
         !this.supportsGoals(descriptor) ||
@@ -386,21 +417,47 @@ export class SessionGoalCoordinator {
       ) return;
 
       const state = await this.getState(descriptor);
-      if (state.goal?.status !== "active") return;
+      if (
+        generation !== this.getContinuationGeneration(agentId) ||
+        state.goal?.status !== "active"
+      ) return;
       const snapshot = await this.buildSnapshot(descriptor, state);
+      if (generation !== this.getContinuationGeneration(agentId)) return;
       if (
         snapshot.goal?.tokenBudget !== undefined &&
         snapshot.goal.usage.total >= snapshot.goal.tokenBudget
       ) {
         const paused = await this.store(descriptor).pauseForBudget();
+        if (generation !== this.getContinuationGeneration(agentId)) {
+          this.statesByAgentId.delete(agentId);
+          return;
+        }
         this.statesByAgentId.set(agentId, paused);
-        this.emitSnapshot(descriptor, await this.buildSnapshot(descriptor, paused));
+        const pausedSnapshot = await this.buildSnapshot(descriptor, paused);
+        if (generation !== this.getContinuationGeneration(agentId)) {
+          this.statesByAgentId.delete(agentId);
+          return;
+        }
+        this.emitSnapshot(descriptor, pausedSnapshot);
         return;
       }
 
       const incremented = await this.store(descriptor).incrementTurn();
+      if (
+        generation !== this.getContinuationGeneration(agentId) ||
+        incremented.goal?.status !== "active"
+      ) {
+        this.statesByAgentId.delete(agentId);
+        return;
+      }
       this.statesByAgentId.set(agentId, incremented);
-      this.emitSnapshot(descriptor, await this.buildSnapshot(descriptor, incremented));
+      const incrementedSnapshot = await this.buildSnapshot(descriptor, incremented);
+      if (generation !== this.getContinuationGeneration(agentId)) {
+        this.statesByAgentId.delete(agentId);
+        return;
+      }
+      this.emitSnapshot(descriptor, incrementedSnapshot);
+      if (generation !== this.getContinuationGeneration(agentId)) return;
       await this.options.sendMessage(agentId, agentId, GOAL_CONTINUATION_MESSAGE, {
         origin: "internal",
       });
@@ -411,6 +468,14 @@ export class SessionGoalCoordinator {
       });
     } finally {
       this.continuationsInFlight.delete(agentId);
+      if (this.continuationRescheduleRequested.delete(agentId)) {
+        const descriptor = this.options.descriptors.get(agentId);
+        if (this.options.isSessionAgent(descriptor)) this.scheduleContinuation(descriptor);
+      }
     }
+  }
+
+  private getContinuationGeneration(agentId: string): number {
+    return this.continuationGenerationsByAgentId.get(agentId) ?? 0;
   }
 }

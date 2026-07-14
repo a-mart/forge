@@ -221,6 +221,15 @@ describe('SwarmManager restart recovery characterization', () => {
       const firstResume = recovered.resumeRestartRecovery()
       await creationStarted
       expect(recovered.isRestartRecoveryDecisionPendingForTest()).toBe(true)
+      await recovered.createGoal('manager', 'recovery-gated-goal', {
+        objective: 'Wait for restart recovery to finish',
+      })
+      const managerCallsBeforeContinuation =
+        recovered.runtimeByAgentId.get('manager')?.sendCalls.length ?? 0
+      await recovered.runGoalContinuationForTest('manager')
+      expect(recovered.runtimeByAgentId.get('manager')?.sendCalls.length ?? 0)
+        .toBe(managerCallsBeforeContinuation)
+      await recovered.controlSessionGoal('manager', { action: 'pause' })
       const secondResume = recovered.resumeRestartRecovery()
       releaseCreation()
       await Promise.all([firstResume, secondResume])

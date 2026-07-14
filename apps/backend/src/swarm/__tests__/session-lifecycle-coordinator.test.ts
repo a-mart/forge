@@ -111,6 +111,7 @@ describe("SessionLifecycleCoordinator", () => {
     await harness.coordinator.deleteSession("forge--s2");
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
       "sessions.delete",
       "plans:forge--s2",
       "goals.forget:forge--s2",
@@ -128,7 +129,51 @@ describe("SessionLifecycleCoordinator", () => {
     );
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
       "sessions.delete",
+    ]);
+  });
+
+  it("cancels continuations before stop-all and manager deletion teardown", async () => {
+    const harness = createHarness();
+    harness.deps.lifecycle.stopAllAgents = vi.fn(async () => {
+      harness.calls.push("lifecycle.stopAll");
+      return {
+        managerId: "forge--s2",
+        stoppedWorkerIds: [],
+        managerStopped: true,
+        terminatedWorkerIds: [],
+        managerTerminated: true,
+      };
+    });
+
+    await harness.coordinator.stopAllAgents("forge", "forge--s2");
+    expect(harness.calls).toEqual([
+      "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
+      "lifecycle.stopAll",
+    ]);
+
+    harness.calls.length = 0;
+    harness.deps.lifecycle.deleteManager = vi.fn(async () => {
+      harness.calls.push("lifecycle.deleteManager");
+      return { managerId: "forge", terminatedWorkerIds: [] };
+    });
+    harness.deps.extensions.dispatchSessionLifecycle = vi.fn(async (event) => {
+      harness.calls.push(`extensions.${event.action}:${event.sessionDescriptor.agentId}`);
+    });
+
+    await harness.coordinator.deleteManager("forge", "forge");
+    expect(harness.calls).toEqual([
+      "codex.close:forge",
+      "goals.cancel:forge",
+      "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
+      "lifecycle.deleteManager",
+      "goals.forget:forge",
+      "extensions.deleted:forge",
+      "goals.forget:forge--s2",
+      "extensions.deleted:forge--s2",
     ]);
   });
 

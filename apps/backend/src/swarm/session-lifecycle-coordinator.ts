@@ -364,6 +364,7 @@ export class SessionLifecycleCoordinator {
     const descriptor = cloneDescriptor(
       this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions"),
     );
+    this.options.goals.cancelScheduledContinuation(agentId);
     const result = await this.options.sessions.deleteSession(agentId);
     this.options.plans.forget(agentId);
     this.options.goals.forget(agentId);
@@ -441,6 +442,7 @@ export class SessionLifecycleCoordinator {
     targetManagerId: string,
   ): ReturnType<SwarmAgentLifecycleService["stopAllAgents"]> {
     this.cleanupCodex(targetManagerId);
+    this.options.goals.cancelScheduledContinuation(targetManagerId);
     return this.options.lifecycle.stopAllAgents(callerAgentId, targetManagerId);
   }
 
@@ -474,6 +476,7 @@ export class SessionLifecycleCoordinator {
 
     for (const session of sessions) {
       this.cleanupCodex(session.agentId);
+      this.options.goals.cancelScheduledContinuation(session.agentId);
     }
     const deleted = sessions.map((session) => cloneDescriptor(session));
     const result = await this.options.lifecycle.deleteManager(callerAgentId, targetManagerId);
