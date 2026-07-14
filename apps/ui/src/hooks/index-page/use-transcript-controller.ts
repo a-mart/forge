@@ -144,8 +144,8 @@ export function useTranscriptController({
   }, [messageListRef])
 
   const collectedArtifacts = useMemo(
-    () => collectArtifactsFromMessages(allMessages),
-    [allMessages],
+    () => collectArtifactsFromMessages(allMessages, activeAgentId),
+    [activeAgentId, allMessages],
   )
 
   const feedbackSessionId = useMemo(() => {

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { collectArtifactsFromMessages } from './collect-artifacts'
 import type { ConversationEntry } from '@forge/protocol'
 
-function assistantMessage(text: string): ConversationEntry {
+function assistantMessage(text: string, id?: string, agentId = 'manager'): ConversationEntry {
   return {
     type: 'conversation_message',
-    agentId: 'manager',
+    ...(id ? { id } : {}),
+    agentId,
     role: 'assistant',
     text,
     timestamp: '2026-02-25T00:00:00.000Z',
@@ -86,10 +87,27 @@ describe('collectArtifactsFromMessages', () => {
     ])
   })
 
-  it('collects artifact links from worker messages', () => {
+  it('uses the viewed transcript owner rather than the actor agent for secure provenance', () => {
+    const artifacts = collectArtifactsFromMessages([
+      assistantMessage('[artifact:/tmp/result.png]', 'message-7', 'actor-worker'),
+    ], 'viewed-manager')
+
+    expect(artifacts).toEqual([
+      {
+        path: '/tmp/result.png',
+        fileName: 'result.png',
+        href: 'swarm-file:///tmp/result.png',
+        sourceAgentId: 'actor-worker',
+        transcriptAgentId: 'viewed-manager',
+        messageId: 'message-7',
+      },
+    ])
+  })
+
+  it('collects artifact links from worker messages without inventing transcript provenance', () => {
     const artifacts = collectArtifactsFromMessages([
       agentMessage('Exported [artifact:/tmp/session/artifacts/report.json]'),
-    ])
+    ], 'viewed-manager')
 
     expect(artifacts).toEqual([
       {
@@ -128,6 +146,33 @@ describe('collectArtifactsFromMessages', () => {
     ])
 
     expect(artifacts).toEqual([])
+  })
+
+  it('ignores escaped shortcodes and indented CommonMark code blocks', () => {
+    const artifacts = collectArtifactsFromMessages([
+      assistantMessage([
+        '\\[artifact:/tmp/escaped.json]',
+        '',
+        '    [artifact:/tmp/indented.json]',
+      ].join('\n'), 'assistant-code-1'),
+    ], 'viewed-manager')
+
+    expect(artifacts).toEqual([])
+  })
+
+  it('preserves eligible transcript provenance across duplicate worker references in both orders', () => {
+    const assistant = assistantMessage('[artifact:/tmp/shared.png]', 'assistant-shared', 'actor-worker')
+    const worker = agentMessage('[artifact:/tmp/shared.png]')
+
+    for (const messages of [[assistant, worker], [worker, assistant]]) {
+      const artifacts = collectArtifactsFromMessages(messages, 'viewed-manager')
+      expect(artifacts).toHaveLength(1)
+      expect(artifacts[0]).toMatchObject({
+        path: '/tmp/shared.png',
+        transcriptAgentId: 'viewed-manager',
+        messageId: 'assistant-shared',
+      })
+    }
   })
 
   it('ignores artifact examples inside unclosed fenced code through EOF', () => {
@@ -181,7 +226,7 @@ describe('collectArtifactsFromMessages', () => {
         manifestMarkdown: '[artifact:/tmp/session/artifacts/codex-plugin/delegation/transcript.json.manifest.json]',
         preview: 'Ignored preview with [artifact:/fake/from-preview.md]',
       })),
-    ])
+    ], 'viewed-manager')
 
     expect(artifacts).toEqual([
       {

@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationMessageEvent } from '@forge/protocol'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { ConversationMessageRow } from './ConversationMessageRow'
 
 let root: Root
@@ -111,6 +112,39 @@ describe('ConversationMessageRow', () => {
     expect(replyButton).toBeTruthy()
     replyButton?.click()
     expect(onReplyToMessage).toHaveBeenCalledWith(message)
+  })
+
+  it('keeps actor resolution separate from active transcript provenance on artifact clicks', () => {
+    const onArtifactClick = vi.fn()
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message',
+      agentId: 'actor-worker',
+      id: 'assistant-artifact-1',
+      role: 'assistant',
+      text: '[artifact:/tmp/result.png]',
+      timestamp: '2026-05-30T10:31:00.000Z',
+      source: 'speak_to_user',
+    }
+
+    flushSync(() => {
+      root.render(createElement(
+        TooltipProvider,
+        null,
+        createElement(ConversationMessageRow, {
+          message,
+          transcriptAgentId: 'viewed-manager',
+          onArtifactClick,
+        }),
+      ))
+    })
+
+    ;(container.querySelector('[data-artifact-card="true"]') as HTMLButtonElement | null)?.click()
+    expect(onArtifactClick).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/tmp/result.png',
+      sourceAgentId: 'actor-worker',
+      transcriptAgentId: 'viewed-manager',
+      messageId: 'assistant-artifact-1',
+    }))
   })
 
   it('renders sent reply previews as disabled when the original is not loaded', () => {

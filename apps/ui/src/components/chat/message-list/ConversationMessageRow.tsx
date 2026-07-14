@@ -1,4 +1,5 @@
 import { memo, useState, useCallback } from 'react'
+import { isUserVisibleAssistantConversationMessage } from '@forge/protocol'
 import { Copy, Check, GitFork, Pin, Reply } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
@@ -98,6 +99,7 @@ interface ConversationMessageRowProps {
   surface?: MessageListSurface
   currentCollabUserId?: string
   activeAgentDisplayName?: string
+  transcriptAgentId?: string | null
   feedbackTargetId?: string
   feedbackLegacyTargetId?: string
   onArtifactClick?: (artifact: ArtifactReference) => void
@@ -138,6 +140,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   surface = 'builder',
   currentCollabUserId,
   activeAgentDisplayName,
+  transcriptAgentId,
   feedbackTargetId,
   feedbackLegacyTargetId,
   onArtifactClick,
@@ -388,6 +391,11 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   const resolvedFeedbackLegacyTargetId = feedbackLegacyTargetId?.trim()
   const assistantForkMessageId = message.id?.trim() || message.timestamp
   const canPinAssistant = onPinMessage && message.id?.trim()
+  const artifactMessageId = message.id?.trim()
+  const artifactTranscriptAgentId =
+    artifactMessageId && transcriptAgentId?.trim() && isUserVisibleAssistantConversationMessage(message)
+      ? transcriptAgentId.trim()
+      : undefined
 
   return (
     <div
@@ -421,6 +429,8 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
           content={normalizedText}
           onArtifactClick={onArtifactClick}
           artifactSourceAgentId={message.agentId}
+          artifactTranscriptAgentId={artifactTranscriptAgentId}
+          artifactMessageId={artifactTranscriptAgentId ? artifactMessageId : undefined}
           enableMermaid
         />
       ) : null}

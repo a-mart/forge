@@ -18,6 +18,30 @@ export class ChatArtifactError extends Error { constructor(public readonly code:
 const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactError(code); };
 const hasControl = (value: string) => /[\0-\x1f\x7f]/.test(value);
 const markdown = new MarkdownIt({ typographer: true, linkify: true });
+markdown.inline.ruler.before("link", "artifact_shortcode", (state, silent) => {
+  if (((state as typeof state & { linkLevel?: number }).linkLevel ?? 0) > 0) return false;
+  const match = /^\[artifact:([^\]\n]+)\]/i.exec(state.src.slice(state.pos));
+  const rawPath = match?.[1]?.trim();
+  if (!match || !rawPath) return false;
+  let href: string;
+  try {
+    const encodedPath = encodeURI(rawPath);
+    href = /^[A-Za-z]:[\\/]/.test(rawPath)
+      ? `swarm-file:///${encodedPath}`
+      : `swarm-file://${encodedPath}`;
+  } catch {
+    return false;
+  }
+  if (!silent) {
+    const openToken = state.push("link_open", "a", 1);
+    openToken.attrSet("href", href);
+    const textToken = state.push("text", "", 0);
+    textToken.content = match[0];
+    state.push("link_close", "a", -1);
+  }
+  state.pos += match[0].length;
+  return true;
+});
 
 /** Canonical native absolute path. Body values are application data: never decode them here. */
 export function canonicalizeChatArtifactPathForPlatform(value: string, platform: NodeJS.Platform = process.platform): string {
@@ -31,7 +55,13 @@ export function canonicalizeChatArtifactPathForPlatform(value: string, platform:
     return normalized[0]!.toUpperCase() + normalized.slice(1);
   }
   if (!input.startsWith("/") || input.startsWith("//") || input.includes("\\")) fail("invalid_path");
-  return path.posix.normalize(input);
+  const normalized = path.posix.normalize(input);
+  // Darwin exposes /tmp as a system-owned alias of /private/tmp. Normalize only this
+  // trusted alias before authorization and the no-symlink walk; never generic-realpath claims.
+  if (platform === "darwin" && (normalized === "/tmp" || normalized.startsWith("/tmp/"))) {
+    return `/private${normalized}`;
+  }
+  return normalized;
 }
 export function canonicalizeChatArtifactPath(value: string): string { return canonicalizeChatArtifactPathForPlatform(value); }
 
@@ -54,7 +84,7 @@ export function canonicalizePresentedLinkHrefForPlatform(href: string, platform:
 }
 export function canonicalizePresentedLinkHref(href: string): string | undefined { return canonicalizePresentedLinkHrefForPlatform(href); }
 
-/** Authority is derived only from actual Markdown-It link_open tokens, never text or image tokens. */
+/** Authority is derived from rendered links and supported prose shortcodes, never code or images. */
 export function extractPresentedArtifactPaths(markdownSource: string): string[] {
   const values: string[] = [];
   for (const block of markdown.parse(markdownSource, {})) {

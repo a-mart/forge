@@ -944,6 +944,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             activeAgentDisplayName={
               activeAgentId ? agentDisplayMap.get(activeAgentId)?.primaryLabel : undefined
             }
+            transcriptAgentId={activeAgentId}
             feedbackTargetId={feedbackTargetId}
             feedbackLegacyTargetId={feedbackLegacyTargetId}
             onArtifactClick={onArtifactClick}

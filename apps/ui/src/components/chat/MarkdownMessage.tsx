@@ -27,6 +27,8 @@ interface MarkdownMessageProps {
   variant?: 'message' | 'document'
   onArtifactClick?: (artifact: ArtifactReference) => void
   artifactSourceAgentId?: string | null
+  artifactTranscriptAgentId?: string | null
+  artifactMessageId?: string | null
   enableMermaid?: boolean
   renderHeadingAdornment?: (args: { level: 1 | 2 | 3 | 4 | 5 | 6; text: string; index: number }) => ReactNode
 }
@@ -42,6 +44,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   variant = 'message',
   onArtifactClick,
   artifactSourceAgentId,
+  artifactTranscriptAgentId,
+  artifactMessageId,
   enableMermaid = false,
   renderHeadingAdornment,
 }: MarkdownMessageProps) {
@@ -260,6 +264,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               const artifact = parseArtifactReference(href, {
                 title: extractLinkText(children),
                 sourceAgentId: artifactSourceAgentId,
+                transcriptAgentId: artifactTranscriptAgentId,
+                messageId: artifactMessageId,
               })
               if (artifact && onArtifactClick) {
                 return <ArtifactReferenceCard artifact={artifact} onClick={onArtifactClick} />
