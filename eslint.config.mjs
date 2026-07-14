@@ -117,6 +117,34 @@ export default tseslint.config(
     },
   },
   {
+    // SwarmManager is a stable facade and composition root, not the default
+    // owner for new feature workflows or mutable state. These error-level
+    // limits ratchet the current extraction forward: when the file or its
+    // constructor shrinks, lower the matching maximum to the new raw line
+    // count. Do not raise either limit to land a feature; move that feature to
+    // a cohesive owner behind the facade instead.
+    files: ['apps/backend/src/swarm/swarm-manager.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 11259,
+          skipBlankLines: false,
+          skipComments: false,
+        },
+      ],
+      'max-lines-per-function': [
+        'error',
+        {
+          max: 686,
+          skipBlankLines: false,
+          skipComments: false,
+          IIFEs: true,
+        },
+      ],
+    },
+  },
+  {
     // Guard against new hand-rolled atomic-file and timeout helpers in the
     // backend. Shared helpers live in apps/backend/src/utils/: atomic-files.ts
     // (writeFileAtomic, writeJsonFileAtomic, updateJsonFileAtomic) covers

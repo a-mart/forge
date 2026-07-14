@@ -25,7 +25,6 @@ import type {
   PromptPreviewResponse,
   ManagerExactModelSelection,
   ServerEvent,
-  PlanSummaryEvent,
   SessionActiveToolsSnapshotEvent,
   SessionPlanSnapshotEvent,
   ModelCacheObservationEvent,
@@ -116,15 +115,7 @@ import {
   type KnowledgeEntryType,
   type KnowledgeSearchResult,
 } from "./knowledge-service.js";
-import {
-  countUserTurnsSinceWatermark,
-  evaluateCaptureCadence,
-  invokeCaptureJudge,
-  readCaptureDeltaFromSessionFile,
-  runCaptureCheckFork,
-  type CaptureCadenceInput,
-} from "./capture-check.js";
-import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
+import { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import { ArchiveService } from "./archive/archive-service.js";
 import { ArchiveLastUsedHydrator, type ArchiveLastUsedHydrationResult } from "./archive/archive-last-used-hydrator.js";
@@ -171,10 +162,8 @@ import {
   isRuntimeRecoveryActiveForRuntime,
   RuntimeRecoveryState
 } from "./runtime/runtime-recovery-state.js";
-import {
-  SwarmRuntimeController,
-  type SwarmRuntimeControllerHost
-} from "./swarm-runtime-controller.js";
+import { SwarmRuntimeController } from "./swarm-runtime-controller.js";
+import { createSwarmRuntimeControllerHost } from "./swarm-runtime-controller-host-adapter.js";
 import { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import {
   SwarmWorkerHealthService,
@@ -238,17 +227,8 @@ import {
   type UpdatePlanInput,
   type UpdatePlanResult,
 } from "./planning/update-plan-tool.js";
-import { normalizeSessionPlanInput, type SessionPlanState } from "./planning/session-plan-state.js";
-import { SessionPlanStore } from "./planning/session-plan-store.js";
-import {
-  SessionPlanUsageTracker,
-  type PlanStepAssignment,
-} from "./planning/plan-usage-tracker.js";
-import { shouldCreateCompletedPlanSummary } from "./planning/plan-summary.js";
-import {
-  appendSessionPlanCompactionInstructions,
-  formatSessionPlanModelContext,
-} from "./planning/session-plan-context.js";
+import { type PlanStepAssignment } from "./planning/plan-usage-tracker.js";
+import { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import { getModelCacheVisualizationEnabled } from "./model-cache-visualization-settings.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
@@ -888,7 +868,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly activeObservabilityRootByAgentId = new Map<string, ActiveObservabilityRootContext>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
-  private readonly sessionPlanStatesByAgentId = new Map<string, SessionPlanState>();
   private pendingAgentsSnapshotEmit = false;
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
@@ -900,6 +879,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
   private readonly sessionActiveTools = new SessionActiveToolsState();
   private readonly conversationProjector: ConversationProjector;
+  private readonly sessionPlanCoordinator: SessionPlanCoordinator;
   private readonly descriptorStore: AgentDescriptorStore;
   private readonly descriptorStoreAdapter: DescriptorStoreAdapter;
   private readonly persistenceService: PersistenceService;
@@ -939,6 +919,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private compactionSettingsService: CompactionSettingsService | null = null;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService;
   private readonly knowledgeService: KnowledgeService;
+  private readonly captureCascadeCoordinator: CaptureCascadeCoordinator;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -966,6 +947,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         versioning: this.versioningService,
         now: () => new Date(this.now()),
       });
+    this.captureCascadeCoordinator = this.createCaptureCascadeCoordinator();
     const resourcesDir = this.config.paths.resourcesDir ?? this.config.paths.rootDir;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
@@ -981,7 +963,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.sidebarPerfRecorder = createSidebarPerfRegistry({
       manifest: backendSidebarPerfMetricManifest
     });
-    this.runtimeController = new SwarmRuntimeController(this as unknown as SwarmRuntimeControllerHost);
+    this.runtimeController = new SwarmRuntimeController(this.createRuntimeControllerHost());
     this.modelChangeStartupRecoveryCoordinator = new ModelChangeStartupRecoveryCoordinator({
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
@@ -1107,6 +1089,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       perf: this.sidebarPerfRecorder,
       getPinnedMessageIds: (agentId) => this.pinnedMessageIdsBySessionAgentId.get(agentId)
     });
+    this.sessionPlanCoordinator = new SessionPlanCoordinator({
+      dataDir: this.config.paths.dataDir,
+      now: this.now,
+      getPlanSummaries: (sessionAgentId) => this.conversationProjector
+        .getConversationHistory(sessionAgentId)
+        .filter((entry) => entry.type === "plan_summary"),
+      emitPlanSummary: (event) => this.conversationProjector.emitPlanSummary(event),
+      emitSnapshot: (event) => this.emit("session_plan_snapshot", event),
+      logDebug: (message, details) => this.logDebug(message, details),
+    });
     this.codexAppServerService =
       options?.codexAppServerService ??
       new CodexAppServerService(this.createCodexSidecarHost(), {
@@ -1157,7 +1149,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptors: this.descriptors,
       knowledgeService: this.knowledgeService,
       knowledgeV2SettingsService: this.knowledgeV2SettingsService,
-      handleCaptureCascade: (descriptor, trigger) => this.maybeRunCaptureCascade(descriptor.agentId, trigger),
+      handleCaptureCascade: (descriptor, trigger) => this.captureCascadeCoordinator.run(descriptor.agentId, trigger),
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.memoryMergeService = new SwarmMemoryMergeService({
@@ -1555,24 +1547,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       appendSessionRenameHistoryEntry: (descriptor, entry) => this.appendSessionRenameHistoryEntry(descriptor, entry),
       clearSessionPlan: async (descriptor) => {
-        const tracker = this.createSessionPlanUsageTracker(descriptor);
-        const { snapshot } = await this.createSessionPlanStore(descriptor).clearWithOutgoingState(
-          ({ outgoing, snapshot: next }) => tracker.recordPlanTransition(outgoing, next).catch((error) => {
-            this.logDebug("plan_usage:clear:error", {
-              agentId: descriptor.agentId,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          }),
-        );
-        this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
-        this.emit("session_plan_snapshot", {
-          type: "session_plan_snapshot",
-          sessionAgentId: descriptor.agentId,
-          profileId: descriptor.profileId,
-          revision: snapshot.revision,
-          updatedAt: snapshot.updatedAt,
-          plan: snapshot.plan,
-        } satisfies SessionPlanSnapshotEvent);
+        await this.sessionPlanCoordinator.clear(descriptor);
       },
       copySessionHistoryForFork: (sourceSessionFile, targetSessionFile, fromMessageId) =>
         copySessionHistoryForFork({
@@ -1631,6 +1606,132 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.setMaxListeners(SWARM_MANAGER_MAX_EVENT_LISTENERS);
+  }
+
+  private createRuntimeControllerHost() {
+    return createSwarmRuntimeControllerHost({
+      toolHost: this,
+      config: this.config,
+      forgeExtensionHost: this.forgeExtensionHost,
+      now: this.now,
+      descriptors: this.descriptors,
+      runtimeRecoveryState: this.runtimeRecoveryState,
+      getWorkerHealthState: () => ({
+        workerWatchdogState: this.workerWatchdogState,
+        workerStallState: this.workerStallState,
+        workerActivityState: this.workerActivityState,
+        watchdogTimerTokens: this.watchdogTimerTokens,
+      }),
+      getLateBoundServices: () => ({
+        conversationProjector: this.conversationProjector,
+        promptService: this.promptService,
+        secretsEnvService: this.secretsEnvService,
+        cortexService: this.cortexService,
+      }),
+      getObservabilityService: () => this.getObservabilityService(),
+      getPiModelsJsonPathOrThrow: () => this.getPiModelsJsonPathOrThrow(),
+      getCompactionRuntimeSettingsProvider: () => this.getCompactionRuntimeSettingsProvider(),
+      getMemoryRuntimeResources: (descriptor) => this.getMemoryRuntimeResources(descriptor),
+      getSwarmContextFiles: (cwd) => this.getSwarmContextFiles(cwd),
+      resolveProjectExecutableTrustPlanForRuntime: (options) =>
+        this.resolveProjectExecutableTrustPlanForRuntime(options),
+      maybeRecoverWorkerWithSpecialistFallback: (agentId, error, phase, token) =>
+        this.maybeRecoverWorkerWithSpecialistFallback(agentId, error, phase, token),
+      updateSessionMetaForWorkerDescriptor: (descriptor, prompt) =>
+        this.updateSessionMetaForWorkerDescriptor(descriptor, prompt),
+      refreshSessionMetaStatsBySessionId: (sessionId, sessionFile) =>
+        this.refreshSessionMetaStatsBySessionId(sessionId, sessionFile),
+      refreshSessionMetaStats: (descriptor, sessionFile) =>
+        this.refreshSessionMetaStats(descriptor, sessionFile),
+      maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
+        this.maybeRecordModelCapacityBlock(agentId, descriptor, error),
+      consumePendingManualManagerStopNoticeIfApplicable: (agentId, event) =>
+        this.consumePendingManualManagerStopNoticeIfApplicable(agentId, event),
+      stripManagerAbortErrorFromEvent: (event) => this.stripManagerAbortErrorFromEvent(event),
+      getOrCreateWorkerWatchdogState: (agentId) => this.getOrCreateWorkerWatchdogState(agentId),
+      clearWatchdogTimer: (agentId) => this.clearWatchdogTimer(agentId),
+      removeWorkerFromWatchdogBatchQueues: (agentId) => this.removeWorkerFromWatchdogBatchQueues(agentId),
+      beginPendingTransientWorkerTerminatedError: (agentId, event, expire) =>
+        this.beginPendingTransientWorkerTerminatedError(agentId, event, expire),
+      cancelPendingTransientWorkerTerminatedError: (agentId, reason) =>
+        this.cancelPendingTransientWorkerTerminatedError(agentId, reason),
+      hasPendingTransientWorkerTerminatedError: (agentId) =>
+        this.hasPendingTransientWorkerTerminatedError(agentId),
+      finalizeWorkerIdleTurn: (agentId, descriptor, source) =>
+        this.finalizeWorkerIdleTurn(agentId, descriptor, source),
+      isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
+      beforeRuntimeEventProjection: (agentId, token, event) =>
+        this.beforeRuntimeEventProjection(agentId, token, event),
+      getActiveTurnId: (agentId, token) => this.getActiveTurnId(agentId, token),
+      recordManagerTurnWatchdogStatus: (agentId, token, status, pendingCount) =>
+        this.recordManagerTurnWatchdogStatus(agentId, token, status, pendingCount),
+      recordManagerTurnWatchdogEvent: (agentId, token, event) =>
+        this.recordManagerTurnWatchdogEvent(agentId, token, event),
+      recordManagerTurnWatchdogRuntimeError: (agentId, token, error) =>
+        this.recordManagerTurnWatchdogRuntimeError(agentId, token, error),
+      recordManagerTurnWatchdogTerminal: (agentId, outcome) =>
+        this.recordManagerTurnWatchdogTerminal(agentId, outcome),
+      afterRuntimeEventProjection: (agentId, token, event) =>
+        this.afterRuntimeEventProjection(agentId, token, event),
+      onAcceptedRuntimeSessionEvent: (agentId, token, event) =>
+        this.onAcceptedRuntimeSessionEvent(agentId, token, event),
+      incrementSessionCompactionCount: (profileId, sessionId, failureLogKey) =>
+        this.incrementSessionCompactionCount(profileId, sessionId, failureLogKey),
+      patchDescriptorFromRuntimeStatus: (agentId, patch) =>
+        this.patchDescriptorFromRuntimeStatus(agentId, patch),
+      emitConversationMessage: (event, options) => this.emitConversationMessage(event, options),
+      markSessionActivity: (agentId, timestamp) => this.markSessionActivity(agentId, timestamp),
+      emitStatus: (agentId, status, pendingCount, contextUsage) =>
+        this.emitStatus(agentId, status, pendingCount, contextUsage),
+      emitAgentsSnapshot: () => this.emitAgentsSnapshot(),
+      saveStore: () => this.saveStore(),
+      applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
+        this.applyManagerRuntimeRecyclePolicy(agentId, reason),
+      queueVersionedToolMutation: (descriptor, mutation) =>
+        this.queueVersionedToolMutation(descriptor, mutation),
+      logDebug: (message, details) => this.logDebug(message, details),
+      isModelCacheVisualizationEnabled: () => this.isModelCacheVisualizationEnabled(),
+      emitModelCacheObservation: (event) => this.emitModelCacheObservation(event),
+      resolveManagerAssistantFinalOutputTarget: (agentId, target) =>
+        this.resolveManagerAssistantFinalOutputTarget(agentId, target),
+      resolveManagerAssistantFinalOutputRoute: (agentId, target) =>
+        this.resolveManagerAssistantFinalOutputRoute(agentId, target),
+      deliverTerminalObligationBackstop: (agentId, text) =>
+        this.deliverTerminalObligationBackstop(agentId, text),
+    });
+  }
+
+  private createCaptureCascadeCoordinator(): CaptureCascadeCoordinator {
+    return new CaptureCascadeCoordinator({
+      dataDir: this.config.paths.dataDir,
+      isEnabled: () => Boolean(
+        this.config.cortexEnabled && this.knowledgeV2SettingsService.getSettings().enabled
+      ),
+      host: {
+        getDescriptor: (agentId) => this.descriptors.get(agentId),
+        executeJudgePrompt: (prompt) => this.executeCaptureJudgePrompt(prompt),
+        forkSession: async (sourceAgentId, options) => {
+          const fork = await this.forkSession(sourceAgentId, {
+            label: options.label,
+            fromMessageId: options.fromMessageId,
+            sessionPurpose: "capture_check",
+          });
+          return { sessionAgentId: fork.sessionAgent.agentId };
+        },
+        sendRestrictedTurn: async (forkedAgentId, message) => {
+          await this.sendMessage(forkedAgentId, forkedAgentId, message, "auto", {
+            origin: "internal",
+            internalDeliveryKind: "bootstrap",
+            skipTurnLedger: true,
+          });
+        },
+        discardFork: async (forkedAgentId) => {
+          await this.deleteSession(forkedAgentId);
+        },
+      },
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details),
+    });
   }
 
   async boot(): Promise<void> {
@@ -2099,17 +2200,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     requestId?: string,
   ): Promise<SessionPlanSnapshotEvent> {
     const descriptor = this.getRequiredSessionDescriptor(sessionAgentId);
-    const snapshot = await this.getSessionPlanState(descriptor);
-    return {
-      type: "session_plan_snapshot",
-      sessionAgentId: descriptor.agentId,
+    return this.sessionPlanCoordinator.getSnapshot({
+      agentId: descriptor.agentId,
       profileId: descriptor.profileId ?? descriptor.agentId,
-      revision: snapshot.revision,
-      updatedAt: snapshot.updatedAt,
-      ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
-      plan: snapshot.plan,
-      ...(requestId !== undefined ? { requestId } : {}),
-    };
+    }, requestId);
   }
 
   recordToolSideEffect(callerAgentId: string, event: SwarmToolSideEffectEvent): void {
@@ -2164,31 +2258,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Manager is not running: ${callerAgentId}`);
     }
 
-    const normalized = normalizeSessionPlanInput(input);
-    const tracker = this.createSessionPlanUsageTracker(descriptor);
-    const { snapshot } = await this.createSessionPlanStore(descriptor)
-      .updateWithOutgoingState(normalized, async ({ outgoing: current, snapshot: next }) => {
-        await tracker.recordPlanTransition(current, next).catch((error) => {
-          this.logDebug("plan_usage:transition:error", {
-            agentId: descriptor.agentId,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
-        this.recordPlanCardTransition(descriptor, current, next);
-      });
-    this.sessionPlanStatesByAgentId.set(descriptor.agentId, snapshot);
-    const result: UpdatePlanResult = {
-      sessionAgentId: descriptor.agentId,
-      revision: snapshot.revision,
-      updatedAt: snapshot.updatedAt,
-      ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
-      plan: snapshot.plan,
-    };
-    this.emit("session_plan_snapshot", {
-      type: "session_plan_snapshot",
-      profileId: descriptor.profileId,
-      ...result,
-    } satisfies SessionPlanSnapshotEvent);
+    const { input: normalized, result } = await this.sessionPlanCoordinator.update(descriptor, input);
     this.recordToolSideEffect(callerAgentId, {
       toolName: "update_plan",
       toolCallId,
@@ -2198,72 +2268,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       metadata: { revision: result.revision, stepCount: result.plan.length },
     });
     return result;
-  }
-
-  private recordPlanCardTransition(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    outgoing: SessionPlanState,
-    snapshot: SessionPlanState,
-  ): void {
-    const history = this.conversationProjector.getConversationHistory(descriptor.agentId);
-    const latestById = new Map<string, PlanSummaryEvent>();
-    for (const entry of history) {
-      if (entry.type === "plan_summary") latestById.set(entry.id, entry);
-    }
-    let active = Array.from(latestById.values()).reverse().find((entry) => entry.state === "active");
-    const replacingCompletedPlan = shouldCreateCompletedPlanSummary(outgoing, snapshot.plan);
-
-    const needsAnchor = snapshot.plan.length > 0 && (
-      outgoing.plan.length === 0
-      || replacingCompletedPlan
-      || (!active && outgoing.plan.some((step) => step.status !== "completed"))
-    );
-    if (needsAnchor) {
-      active = {
-        type: "plan_summary",
-        id: randomUUID(),
-        agentId: descriptor.agentId,
-        timestamp: this.now(),
-        state: "active",
-        revision: snapshot.revision,
-        updatedAt: snapshot.updatedAt!,
-        ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
-        plan: snapshot.plan.map((step) => ({ ...step })),
-      };
-      this.conversationProjector.emitPlanSummary(active);
-    }
-
-    if (active && snapshot.plan.length > 0 && snapshot.plan.every((step) => step.status === "completed")) {
-      this.conversationProjector.emitPlanSummary({
-        ...active,
-        state: "completed",
-        revision: snapshot.revision,
-        updatedAt: snapshot.updatedAt!,
-        ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
-        plan: snapshot.plan.map((step) => ({ ...step })),
-      });
-    }
-  }
-
-  private createSessionPlanStore(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-  ): SessionPlanStore {
-    return new SessionPlanStore({
-      dataDir: this.config.paths.dataDir,
-      profileId: descriptor.profileId,
-      sessionAgentId: descriptor.agentId,
-    });
-  }
-
-  private createSessionPlanUsageTracker(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-  ): SessionPlanUsageTracker {
-    return new SessionPlanUsageTracker({
-      dataDir: this.config.paths.dataDir,
-      profileId: descriptor.profileId,
-      sessionAgentId: descriptor.agentId,
-      now: this.now,
-    });
   }
 
   private async resolvePlanStepAssignment(
@@ -2280,9 +2284,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.sessionSurface === "collab") {
       throw new Error("planStep is not available for Collaboration sessions.");
     }
-    const state = await this.getSessionPlanState(descriptor);
-    const assignment = await this.createSessionPlanUsageTracker(descriptor)
-      .resolveAssignment(state, requestedStep);
+    const assignment = await this.sessionPlanCoordinator.resolveAssignment(descriptor, requestedStep);
     return { descriptor, assignment };
   }
 
@@ -2296,27 +2298,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       acceptedMode?: SendMessageReceipt["acceptedMode"];
     },
   ): Promise<void> {
-    await this.createSessionPlanUsageTracker(descriptor)
-      .recordWorkerAssignment({ ...assignment, ...input })
-      .catch((error) => {
-        this.logDebug("plan_usage:assignment:error", {
-          agentId: descriptor.agentId,
-          workerId: input.workerId,
-          planStep: assignment.step,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  private async getSessionPlanState(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-  ): Promise<SessionPlanState> {
-    const cached = this.sessionPlanStatesByAgentId.get(descriptor.agentId);
-    if (cached) return cached;
-
-    const state = await this.createSessionPlanStore(descriptor).load();
-    this.sessionPlanStatesByAgentId.set(descriptor.agentId, state);
-    return state;
+    await this.sessionPlanCoordinator.recordWorkerAssignment(descriptor, assignment, input);
   }
 
   listProfiles(): ManagerProfile[] {
@@ -2528,19 +2510,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         && normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID
         && this.isSessionAgent(descriptor),
     );
-
-    await Promise.all(sessionDescriptors.map(async (descriptor) => {
-      const state = await this.createSessionPlanStore(descriptor).load();
-      this.sessionPlanStatesByAgentId.set(descriptor.agentId, state);
-      await this.createSessionPlanUsageTracker(descriptor)
-        .finalizePendingPlan({ recovered: true })
-        .catch((error) => {
-          this.logDebug("plan_usage:boot_finalize:error", {
-            agentId: descriptor.agentId,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
-    }));
+    await this.sessionPlanCoordinator.preload(sessionDescriptors);
   }
 
   private setPinnedRegistryForAgent(agentId: string, registry: PinRegistry): void {
@@ -3262,7 +3232,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async archiveSession(agentId: string): Promise<{ agentId: string; profileId: string; archivedAt: string; terminatedWorkerIds: string[] }> {
-    await this.maybeRunCaptureCascade(agentId, "archive");
+    await this.captureCascadeCoordinator.run(agentId, "archive");
     this.codexPluginScopeService.closeScopesForManager(agentId);
     this.clearCodexPluginRetryContextForManager(agentId);
     const result = await this.archiveService.archiveSession(agentId);
@@ -3378,7 +3348,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions")
     );
     const result = await this.sessionService.deleteSession(agentId);
-    this.sessionPlanStatesByAgentId.delete(agentId);
+    this.sessionPlanCoordinator.forget(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "deleted",
@@ -5139,12 +5109,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return text;
     }
 
-    const snapshot = await this.getSessionPlanState(descriptor);
-    if (snapshot.revision === 0 && snapshot.plan.length === 0 && !snapshot.explanation) {
-      return text;
-    }
-    const planContext = formatSessionPlanModelContext(snapshot);
-    return text.trim().length > 0 ? `${text}\n\n${planContext}` : planContext;
+    return this.sessionPlanCoordinator.appendToManagerInput(descriptor, text);
   }
 
   private async prepareRuntimeAttachments(
@@ -5307,8 +5272,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<string | undefined> {
     const registry = await this.syncPinnedContentForManagerRuntime(descriptor);
     const instructionsWithPins = combineCompactionCustomInstructions(customInstructions, registry);
-    const plan = await this.getSessionPlanState(descriptor);
-    return appendSessionPlanCompactionInstructions(instructionsWithPins, plan);
+    return this.sessionPlanCoordinator.appendCompactionInstructions(descriptor, instructionsWithPins);
   }
 
   async compactAgentContext(
@@ -5388,7 +5352,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         trigger: options?.trigger ?? "api"
       });
 
-      await this.maybeRunCaptureCascade(agentId, "compaction");
+      await this.captureCascadeCoordinator.run(agentId, "compaction");
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -5511,7 +5475,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       });
 
       if (result.compacted) {
-        await this.maybeRunCaptureCascade(agentId, "compaction");
+        await this.captureCascadeCoordinator.run(agentId, "compaction");
       }
       return result;
     } catch (error) {
@@ -10020,6 +9984,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   protected async getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
+    skillMetadata: SkillMetadata[];
   }> {
     return this.promptService.getMemoryRuntimeResources(descriptor);
   }
@@ -10147,7 +10112,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       && descriptor.role === "manager"
       && this.isSessionAgent(descriptor)
     ) {
-      await this.finalizePendingSessionPlanUsage(descriptor);
+      await this.sessionPlanCoordinator.finalizeUsage(descriptor);
     }
   }
 
@@ -10202,21 +10167,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.runtimeController.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
     if (descriptor?.role === "manager" && this.isSessionAgent(descriptor)) {
-      await this.finalizePendingSessionPlanUsage(descriptor);
+      await this.sessionPlanCoordinator.finalizeUsage(descriptor);
     }
-  }
-
-  private async finalizePendingSessionPlanUsage(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-  ): Promise<void> {
-    await this.createSessionPlanUsageTracker(descriptor)
-      .finalizePendingPlan()
-      .catch((error) => {
-        this.logDebug("plan_usage:finalize:error", {
-          agentId: descriptor.agentId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
   }
 
   async queueVersionedToolMutation(
@@ -10688,131 +10640,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       scope,
       sessionId: caller.agentId,
     });
-    await this.advanceCaptureWatermark(caller.agentId, this.now());
+    await this.captureCascadeCoordinator.noteLearningSaved(caller.agentId);
     return entry;
   }
 
   async handleCaptureFeedbackSignal(profileId: string, sessionId: string): Promise<void> {
-    const descriptor = this.descriptors.get(sessionId);
-    if (!descriptor || descriptor.profileId !== profileId || descriptor.role !== "manager") {
-      return;
-    }
-    await this.maybeRunCaptureCascade(sessionId, "feedback");
-  }
-
-  private async maybeRunCaptureCascade(
-    agentId: string,
-    trigger: NonNullable<CaptureCadenceInput["trigger"]>,
-  ): Promise<void> {
-    if (!this.config.cortexEnabled || !this.knowledgeV2SettingsService.getSettings().enabled) {
-      return;
-    }
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "manager" || !descriptor.profileId || descriptor.sessionPurpose === "capture_check") {
-      return;
-    }
-
-    const meta = await readSessionMeta(this.config.paths.dataDir, descriptor.profileId, descriptor.agentId);
-    if (!meta) {
-      return;
-    }
-
-    const messages = await readCaptureDeltaFromSessionFile(descriptor.sessionFile, {
-      lastCaptureCheckAt: meta.cortexCaptureLastCheckedAt,
-    }).catch((error) => {
-      this.logDebug("cortex:capture:read_delta_error", {
-        agentId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    });
-    const today = this.now().slice(0, 10);
-    const dailyForksUsed = meta.cortexCaptureForksDay === today ? (meta.cortexCaptureForksToday ?? 0) : 0;
-    const decision = evaluateCaptureCadence({
-      enabled: true,
-      userTurnsSinceWatermark: countUserTurnsSinceWatermark(messages),
-      lastCaptureCheckAt: meta.cortexCaptureLastCheckedAt,
-      trigger,
-      idleGapMs: trigger === "idle" ? this.resolveIdleGapMs(descriptor) : undefined,
-      dailyForksUsed,
-      saveLearningAdvancedWatermark: false,
-    });
-
-    if (!decision.shouldJudge && !decision.shouldForkDirectly) {
-      this.logDebug("cortex:capture:skipped", { agentId, trigger, skippedReason: decision.skippedReason });
-      return;
-    }
-
-    let judgePointer: string | undefined;
-    if (decision.shouldJudge) {
-      if (messages.length === 0) {
-        await this.advanceCaptureWatermark(agentId, this.now());
-        return;
-      }
-      try {
-        const judge = await invokeCaptureJudge(
-          { complete: (prompt) => this.executeCaptureJudgePrompt(prompt) },
-          messages,
-        );
-        if (!judge.shouldFork) {
-          await this.advanceCaptureWatermark(agentId, this.now());
-          this.logDebug("cortex:capture:judge_no", { agentId, trigger, raw: previewForLog(judge.raw) });
-          return;
-        }
-        judgePointer = judge.pointer;
-      } catch (error) {
-        this.logDebug("cortex:capture:judge_error", {
-          agentId,
-          trigger,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        await this.advanceCaptureWatermark(agentId, this.now());
-        return;
-      }
-    }
-
-    const fromMessageId = [...messages].reverse().find((message) => message.id)?.id;
-    try {
-      await runCaptureCheckFork({
-        enabled: true,
-        sourceAgentId: agentId,
-        fromMessageId,
-        judgePointer: decision.reason === "feedback" ? "user feedback signal" : judgePointer,
-        adapter: {
-          forkSession: async (sourceAgentId, options) => {
-            const fork = await this.forkSession(sourceAgentId, {
-              label: options.label,
-              fromMessageId: options.fromMessageId,
-              sessionPurpose: "capture_check",
-            });
-            return { sessionAgentId: fork.sessionAgent.agentId };
-          },
-          sendRestrictedTurn: async (forkedAgentId, message) => {
-            await this.sendMessage(forkedAgentId, forkedAgentId, message, "auto", {
-              origin: "internal",
-              internalDeliveryKind: "bootstrap",
-              skipTurnLedger: true,
-            });
-          },
-          discardFork: async (forkedAgentId) => {
-            await this.deleteSession(forkedAgentId);
-          },
-        },
-      });
-      await this.recordCaptureFork(agentId, today, dailyForksUsed + 1);
-      this.logDebug("cortex:capture:forked", {
-        agentId,
-        trigger,
-        reason: decision.reason,
-        fromMessageId,
-      });
-    } catch (error) {
-      this.logDebug("cortex:capture:fork_error", {
-        agentId,
-        trigger,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
+    await this.captureCascadeCoordinator.handleFeedbackSignal(profileId, sessionId);
   }
 
   protected async executeCaptureJudgePrompt(prompt: string): Promise<string> {
@@ -10848,35 +10681,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     throw new Error("No configured cheap model is available for Cortex capture judge.");
-  }
-
-  private resolveIdleGapMs(descriptor: AgentDescriptor): number | undefined {
-    if (!descriptor.updatedAt) {
-      return undefined;
-    }
-    return Math.max(0, Date.parse(this.now()) - Date.parse(descriptor.updatedAt));
-  }
-
-  private async advanceCaptureWatermark(agentId: string, at: string): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor?.profileId) return;
-    const meta = await readSessionMeta(this.config.paths.dataDir, descriptor.profileId, agentId);
-    if (!meta) return;
-    meta.cortexCaptureLastCheckedAt = at;
-    meta.updatedAt = this.now();
-    await writeSessionMeta(this.config.paths.dataDir, meta);
-  }
-
-  private async recordCaptureFork(agentId: string, day: string, forksToday: number): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor?.profileId) return;
-    const meta = await readSessionMeta(this.config.paths.dataDir, descriptor.profileId, agentId);
-    if (!meta) return;
-    meta.cortexCaptureLastCheckedAt = this.now();
-    meta.cortexCaptureForksDay = day;
-    meta.cortexCaptureForksToday = forksToday;
-    meta.updatedAt = this.now();
-    await writeSessionMeta(this.config.paths.dataDir, meta);
   }
 
   private async ensureCompactionSettingsLoadedForRuntime(): Promise<void> {

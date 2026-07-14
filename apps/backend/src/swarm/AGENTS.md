@@ -17,15 +17,20 @@
 - `swarm-project-agent-service.ts` - project-agent promotion, persistence, and project-agent lifecycle updates.
 - `swarm-agent-lifecycle-service.ts` - manager/worker stop, resume, spawn, rename, pin, and runtime lifecycle coordination.
 - `swarm-runtime-controller.ts` - runtime event handling, message/tool/status routing, and shutdown/recovery coordination.
+- `swarm-runtime-controller-host-adapter.ts` - compiler-checked, lazy-safe adapter between the manager facade and runtime controller.
 - `swarm-specialist-fallback-manager.ts` - specialist fallback selection, replay, and handoff recovery.
 - `swarm-worker-health-service.ts` - worker watchdog, stall detection, idle-turn finalization, and completion reporting.
+- `planning/session-plan-coordinator.ts` - live plan state, persistence, usage accounting, summary projection, and runtime context.
+- `capture-cascade-coordinator.ts` - Cortex capture cadence, watermarks, judge decisions, and temporary capture-fork lifecycle.
 - `swarm-manager-utils.ts` - shared helpers, normalizers, formatters, and invariant-preserving utility code.
 
 ## Import directions
 
-- Services may import from `types.ts`, `runtime-contracts.ts`, and `swarm-manager-utils.ts`, plus other non-service helpers in this directory.
-- `SwarmManager` may import and compose the services.
-- Services must not import from each other directly. If a service needs another service's behavior, route the call through `SwarmManager` or a shared helper instead.
+- Leaf policies, repositories, and state owners may import shared types and lower-level helpers.
+- Application coordinators may depend on leaf capabilities through explicit, narrow interfaces.
+- Sibling state owners must not reach into one another's mutable state, and service imports must not create cycles.
+- `SwarmManager` composes the graph and preserves the public facade; it should not broker ordinary internal calls that belong in a cohesive coordinator.
+- Do not add feature-specific mutable collections or multi-step workflows directly to `SwarmManager`. Add them to one explicit owner behind the facade.
 
 ## Subdirectory layout
 
@@ -46,12 +51,17 @@ Treat the `SwarmManager` public API as stable. Any signature or behavior change 
 - The runtime callback quartet must stay together: `onStatusChange`, `onSessionEvent`, `onAgentEnd`, and `onRuntimeError`.
 - Boot ordering matters. Session/meta hydration, prompt/runtime setup, and lifecycle recovery are intentionally sequenced; do not reorder casually.
 - Specialist fallback replay must preserve buffered callbacks and prepared replay snapshots so the replacement runtime sees the same work stream.
+- The `SwarmManager` file and constructor ESLint budgets are ratchets. Lower them after extractions; do not raise them to land a feature.
 
 ## Tests to update
 
 When changing this area, check the related coverage in:
 
 - `apps/backend/src/swarm/__tests__/runtime-factory.test.ts`
+- `apps/backend/src/swarm/__tests__/session-plan-coordinator.test.ts`
+- `apps/backend/src/swarm/__tests__/capture-cascade-coordinator.test.ts`
+- `apps/backend/src/swarm/__tests__/swarm-manager-restart-recovery.characterization.test.ts`
+- `apps/backend/src/swarm/__tests__/swarm-runtime-controller-host-adapter.test.ts`
 - `apps/backend/src/swarm/__tests__/swarm-manager-model-registry.test.ts`
 - `apps/backend/src/swarm/__tests__/swarm-manager-project-agent-regressions.test.ts`
 - `apps/backend/src/swarm/__tests__/claude-session-lifecycle.test.ts`

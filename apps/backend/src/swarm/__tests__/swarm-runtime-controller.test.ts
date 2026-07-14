@@ -192,13 +192,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
       trustedPiExtensionDirs: [],
       trustedPiSettingsPaths: [],
     })),
-    resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
-    injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
-    resolveSpecialistRosterForProfile: vi.fn(async () => []),
-    resolveSpecialistFallbackModelForDescriptor: vi.fn(async () => undefined),
     maybeRecoverWorkerWithSpecialistFallback,
-    resolveSpawnModelWithCapacityFallback: (m) => m,
-    createRuntimeForDescriptor: vi.fn(),
     updateSessionMetaForWorkerDescriptor: vi.fn(),
     refreshSessionMetaStatsBySessionId: vi.fn(),
     refreshSessionMetaStats: vi.fn(),
@@ -240,7 +234,6 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     applyManagerRuntimeRecyclePolicy,
     queueVersionedToolMutation: vi.fn(),
     logDebug: vi.fn(),
-    getRuntime: vi.fn(() => undefined),
     markSessionActivity: vi.fn(),
     isModelCacheVisualizationEnabled: vi.fn(() => false),
     emitModelCacheObservation: vi.fn(),
@@ -268,8 +261,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     finalizeWorkerIdleTurn,
     cortexHandleManagerStatus,
     applyManagerRuntimeRecyclePolicy,
-    maybeRecoverWorkerWithSpecialistFallback,
-    deliverTerminalObligationBackstop
+    maybeRecoverWorkerWithSpecialistFallback
   };
 }
 
