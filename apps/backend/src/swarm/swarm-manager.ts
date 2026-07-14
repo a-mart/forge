@@ -31,6 +31,7 @@ import type {
   SessionGoalSnapshotEvent,
   SessionActiveToolsSnapshotEvent,
   SessionPlanSnapshotEvent,
+  SessionWorkersSnapshotEvent,
   ModelCacheObservationEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -10809,6 +10810,40 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     failureLogKey: string
   ): Promise<number | undefined> {
     return this.sessionMetaService.incrementSessionCompactionCount(profileId, sessionId, failureLogKey);
+  }
+
+  async incrementWorkerCompactionCount(
+    agentId: string,
+    failureLogKey: string
+  ): Promise<number | undefined> {
+    try {
+      const updated = await this.descriptorStoreAdapter.transactionDescriptors((store) =>
+        store.patchDescriptor(agentId, (descriptor) => {
+          if (descriptor.role !== "worker") {
+            throw new Error(`Agent is not a worker: ${agentId}`);
+          }
+
+          const currentCount =
+            typeof descriptor.compactionCount === "number" &&
+            Number.isFinite(descriptor.compactionCount) &&
+            descriptor.compactionCount >= 0
+              ? Math.floor(descriptor.compactionCount)
+              : 0;
+          return { ...descriptor, compactionCount: currentCount + 1 };
+        })
+      );
+
+      const payload: SessionWorkersSnapshotEvent = {
+        type: "session_workers_snapshot",
+        sessionAgentId: updated.managerId,
+        workers: this.listWorkersForSession(updated.managerId)
+      };
+      this.emit("session_workers_snapshot", payload satisfies ServerEvent);
+      return updated.compactionCount;
+    } catch (error) {
+      this.logDebug(failureLogKey, { agentId, error: String(error) });
+      return undefined;
+    }
   }
 
   private async readSessionMetaForDescriptor(descriptor: AgentDescriptor): Promise<SessionMeta | undefined> {

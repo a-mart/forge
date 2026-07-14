@@ -224,6 +224,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     finalizeWorkerIdleTurn,
     isRuntimeRecoveryActive: vi.fn(() => false),
     incrementSessionCompactionCount: vi.fn(),
+    incrementWorkerCompactionCount: vi.fn(),
     patchDescriptorFromRuntimeStatus: vi.fn(async (agentId: string, patch: Partial<AgentDescriptor>) => {
       const descriptor = descriptors.get(agentId);
       if (!descriptor) {

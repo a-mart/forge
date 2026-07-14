@@ -173,6 +173,10 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     sessionId: string,
     failureLogKey: string
   ): Promise<number | undefined>;
+  incrementWorkerCompactionCount(
+    agentId: string,
+    failureLogKey: string
+  ): Promise<number | undefined>;
   patchDescriptorFromRuntimeStatus(
     agentId: string,
     patch: Partial<AgentDescriptor>
@@ -552,6 +556,8 @@ export class SwarmRuntimeController {
           this.maybeRecoverWorkerWithSpecialistFallback(agentId, errorMessage, sourcePhase, runtimeToken),
         incrementSessionCompactionCount: (profileId, sessionId, failureLogKey) =>
           this.host.incrementSessionCompactionCount(profileId, sessionId, failureLogKey),
+        incrementWorkerCompactionCount: (agentId, failureLogKey) =>
+          this.host.incrementWorkerCompactionCount(agentId, failureLogKey),
         patchDescriptorFromRuntimeStatus: (agentId, patch) =>
           this.host.patchDescriptorFromRuntimeStatus(agentId, patch),
         emitConversationMessage: (event) => this.host.emitConversationMessage(event),
