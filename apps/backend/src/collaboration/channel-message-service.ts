@@ -1,7 +1,6 @@
 import type { CollaborationAuthor, CollaborationChannel } from "@forge/protocol";
 import type {
   AppendConversationUserMessageResult,
-  DispatchRuntimeUserMessageOptions,
 } from "../swarm/swarm-manager.js";
 import type { ConversationAttachment } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
@@ -20,9 +19,9 @@ export interface CollaborationChannelMessageServiceSwarmManager {
         userId: string;
       };
       collaborationAuthor: CollaborationAuthor;
+      dispatchRuntime?: boolean;
     },
   ): Promise<AppendConversationUserMessageResult>;
-  dispatchRuntimeUserMessage(options: DispatchRuntimeUserMessageOptions): Promise<void>;
 }
 
 export interface DispatchCollaborationChannelMessageParams {
@@ -106,6 +105,7 @@ export class CollaborationChannelMessageService {
         userId: user.userId,
       },
       collaborationAuthor,
+      dispatchRuntime: channel.aiEnabled,
     });
 
     const activity = this.updateChannelActivityAndReadState(
@@ -120,17 +120,6 @@ export class CollaborationChannelMessageService {
       ...(activity.lastMessageAt ? { lastMessageAt: activity.lastMessageAt } : {}),
       updatedAt: activity.updatedAt,
     };
-
-    if (channel.aiEnabled) {
-      await this.swarmManager.dispatchRuntimeUserMessage({
-        targetAgentId: channel.sessionAgentId,
-        text: appendedMessage.text,
-        sourceContext: appendedMessage.sourceContext,
-        collaborationAuthor: appendedMessage.event.collaborationAuthor,
-        runtimeAttachments: appendedMessage.runtimeAttachments,
-        persistedAttachmentCount: appendedMessage.persistedAttachments.length,
-      });
-    }
 
     return {
       channel: nextChannel,

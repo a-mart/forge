@@ -53,6 +53,7 @@ export interface AppendConversationUserMessageOptions {
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
   replyTo?: ConversationReplyTarget;
+  dispatchRuntime?: boolean;
 }
 
 export interface AppendConversationUserMessageResult {
@@ -182,6 +183,7 @@ export interface UserMessageRuntimePort {
     ProjectExecutableTrustCoordinator,
     "applyManagerRuntimeRecyclePolicy" | "schedulePrompt"
   >;
+  withRuntimeAdmission<T>(agentId: string, operation: () => Promise<T>): Promise<T>;
   getOrCreateRuntime(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime>;
   persistRecycledRuntimeState(): Promise<void>;
 }
@@ -267,7 +269,7 @@ export class UserMessageCoordinator {
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveTarget(options?.targetAgentId);
-    return this.appendUserMessage(
+    const append = () => this.appendUserMessage(
       target,
       trimmed,
       attachments,
@@ -275,6 +277,23 @@ export class UserMessageCoordinator {
       options?.collaborationAuthor,
       options?.replyTo,
     );
+    if (!options?.dispatchRuntime) {
+      return append();
+    }
+
+    return this.options.runtime.withRuntimeAdmission(target.agentId, async () => {
+      const appended = await append();
+      await this.dispatchRuntime({
+        target,
+        text: appended.text,
+        sourceContext: appended.sourceContext,
+        runtimeAttachments: appended.runtimeAttachments,
+        persistedAttachmentCount: appended.persistedAttachments.length,
+        visibleMessageId: appended.event.id,
+        collaborationAuthor: appended.event.collaborationAuthor,
+      });
+      return appended;
+    });
   }
 
   async dispatchRuntimeUserMessage(options: DispatchRuntimeUserMessageOptions): Promise<void> {
@@ -350,51 +369,56 @@ export class UserMessageCoordinator {
       return;
     }
 
-    await this.options.goals.noteUserTurn(target);
+    // Admission and shutdown are serialized by the runtime controller. A stop
+    // that wins this race rejects before append; a message that wins keeps the
+    // stop operation waiting until its runtime dispatch is durably accepted.
+    await this.options.runtime.withRuntimeAdmission(target.agentId, async () => {
+      await this.options.goals.noteUserTurn(target);
 
-    const codexClassification = target.role === "manager"
-      ? this.options.codex.plugin.classifyAndPreflightUserTurn(
-          target as ManagerDescriptor,
-          trimmed,
-          sourceContext,
-        )
-      : ({ kind: "none" } as const);
-    const appended = await this.appendUserMessage(
-      target,
-      trimmed,
-      attachments,
-      sourceContext,
-      options?.collaborationAuthor,
-      resolvedReplyTo,
-      options?.clientRequestId,
-    );
+      const codexClassification = target.role === "manager"
+        ? this.options.codex.plugin.classifyAndPreflightUserTurn(
+            target as ManagerDescriptor,
+            trimmed,
+            sourceContext,
+          )
+        : ({ kind: "none" } as const);
+      const appended = await this.appendUserMessage(
+        target,
+        trimmed,
+        attachments,
+        sourceContext,
+        options?.collaborationAuthor,
+        resolvedReplyTo,
+        options?.clientRequestId,
+      );
 
-    if (target.role === "manager") {
-      this.options.runtime.executableTrust.schedulePrompt(target as ManagerDescriptor);
-    }
-    const preparedCodexTurn = target.role === "manager"
-      ? this.options.codex.plugin.prepareUserTurn({
-          manager: target as ManagerDescriptor,
-          text: trimmed,
-          sourceContext,
-          classification: codexClassification,
-          userMessageId: appended.event.id,
-        })
-      : {};
+      if (target.role === "manager") {
+        this.options.runtime.executableTrust.schedulePrompt(target as ManagerDescriptor);
+      }
+      const preparedCodexTurn = target.role === "manager"
+        ? this.options.codex.plugin.prepareUserTurn({
+            manager: target as ManagerDescriptor,
+            text: trimmed,
+            sourceContext,
+            classification: codexClassification,
+            userMessageId: appended.event.id,
+          })
+        : {};
 
-    await this.dispatchRuntime({
-      target,
-      text: trimmed,
-      sourceContext,
-      runtimeAttachments: appended.runtimeAttachments,
-      persistedAttachmentCount: appended.persistedAttachments.length,
-      visibleMessageId: appended.event.id,
-      delivery: options?.delivery,
-      collaborationAuthor: options?.collaborationAuthor,
-      codexClassification,
-      codexPluginDelegationContext: preparedCodexTurn.delegationContext,
-      codexPluginRetryAuthorizationContext: preparedCodexTurn.retryAuthorizationContext,
-      replyTo: resolvedReplyTo,
+      await this.dispatchRuntime({
+        target,
+        text: trimmed,
+        sourceContext,
+        runtimeAttachments: appended.runtimeAttachments,
+        persistedAttachmentCount: appended.persistedAttachments.length,
+        visibleMessageId: appended.event.id,
+        delivery: options?.delivery,
+        collaborationAuthor: options?.collaborationAuthor,
+        codexClassification,
+        codexPluginDelegationContext: preparedCodexTurn.delegationContext,
+        codexPluginRetryAuthorizationContext: preparedCodexTurn.retryAuthorizationContext,
+        replyTo: resolvedReplyTo,
+      });
     });
   }
 

@@ -733,14 +733,14 @@ export class SwarmManagerRuntimeComposition {
         this.runtimeController.allowInvalidatedManualStopMessageEnd(agentId, token),
       markPendingManualManagerStopNotice: (agentId) =>
         runtimeLifecycle.markPendingManualManagerStopNotice(agentId),
-      emitImmediateManualManagerStopNotice: (agentId) =>
-        runtimeLifecycle.emitImmediateManualManagerStopNotice(agentId),
+      emitImmediateManualManagerStopNotice: (agentId, text) => runtimeLifecycle.emitImmediateManualManagerStopNotice(agentId, text),
       cancelAllPendingChoicesForAgent: (agentId) => {
         this.assistantOutput.clearChoiceContinuationsForAgent(agentId);
         services.choices.cancelAllPendingChoicesForAgent(agentId);
       },
-      runRuntimeShutdown: (descriptor, action, shutdownOptions) =>
-        runtimeLifecycle.runRuntimeShutdown(descriptor, action, shutdownOptions),
+      runRuntimeShutdown: (descriptor, action, shutdownOptions) => runtimeLifecycle.runRuntimeShutdown(descriptor, action, shutdownOptions),
+      prepareRuntimeShutdown: (agentId) => this.runtimeController.prepareRuntimeShutdown(agentId),
+      assertRuntimeCreationAllowed: (agentId) => this.runtimeController.assertRuntimeCreationAllowed(agentId),
       detachRuntime: (agentId, token) => runtimeLifecycle.detachRuntime(agentId, token),
       clearAgentTurnState: (agentId) => runtimeLifecycle.clearAgentState(agentId),
       detachRuntimeIfMatches: (agentId, runtime, token) =>

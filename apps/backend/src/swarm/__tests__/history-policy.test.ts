@@ -36,6 +36,23 @@ function log(id: string): ConversationEntryEvent {
   };
 }
 
+function toolLog(
+  id: string,
+  kind: "tool_execution_start" | "tool_execution_update" | "tool_execution_end",
+  toolName = "bash",
+): ConversationEntryEvent {
+  return {
+    type: "conversation_log",
+    agentId: "worker-1",
+    timestamp: FIXED_NOW,
+    source: "runtime_log",
+    kind,
+    toolName,
+    toolCallId: "call-1",
+    text: id,
+  };
+}
+
 function tool(id: string, kind: "tool_execution_start" | "tool_execution_update" | "tool_execution_end"): ConversationEntryEvent {
   return {
     type: "agent_tool_call",
@@ -146,6 +163,9 @@ function ids(entries: ConversationEntryEvent[]): string[] {
 describe("history policy", () => {
   it("applies current persisted-entry rules", () => {
     expect(shouldPersistConversationEntry(log("runtime"))).toBe(false);
+    expect(shouldPersistConversationEntry(toolLog("update", "tool_execution_update"))).toBe(false);
+    expect(shouldPersistConversationEntry(toolLog("start", "tool_execution_start"))).toBe(true);
+    expect(shouldPersistConversationEntry(toolLog("end", "tool_execution_end"))).toBe(false);
     expect(shouldPersistConversationEntry(tool("update", "tool_execution_update"))).toBe(false);
     expect(shouldPersistConversationEntry(tool("start", "tool_execution_start"))).toBe(true);
     expect(shouldPersistConversationEntry(tool("end", "tool_execution_end"))).toBe(true);
@@ -173,6 +193,7 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(codexTool("tool_execution_start", "codex_command"))).toBe(false);
     expect(shouldPersistConversationEntry(codexTool("tool_execution_end", "codex_command"))).toBe(false);
     expect(shouldPersistConversationEntry(codexTool("tool_execution_start", "codex_mcp_tool"))).toBe(false);
+    expect(shouldPersistConversationEntry(toolLog("start", "tool_execution_start", "codex_command"))).toBe(false);
   });
 
   it("does not write Codex stream detail agent_tool_call rows to disk cache", () => {

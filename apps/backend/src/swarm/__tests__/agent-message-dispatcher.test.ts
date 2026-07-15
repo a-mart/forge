@@ -524,6 +524,44 @@ describe("AgentMessageDispatcher", () => {
     expect(harness.output.getInheritedTarget("worker-1")).toBeUndefined();
   });
 
+  it("keeps delegated web provenance when an owned worker closeout uses ordinary prose", async () => {
+    const harness = createHarness();
+    harness.output.activateManagerTurn(harness.manager.agentId, {
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    harness.output.recordSuccessfulAgentMessageDispatch({
+      sender: harness.manager,
+      target: harness.worker,
+      modelMessage: "move the edits and open a PR",
+    });
+
+    await harness.dispatcher.sendMessage(
+      harness.worker.agentId,
+      harness.manager.agentId,
+      "Completed the Git workflow correction.\n\nSummary: PR opened.",
+    );
+
+    expect(harness.runtimeInputs[0]?.input).toContain(
+      "SYSTEM: Completed the Git workflow correction.",
+    );
+    expect(harness.turnContexts[0]?.context).toMatchObject({
+      routeOrigin: "terminal_worker_report",
+      workerReportSourceAgentId: "worker-1",
+      normalBuilderWorkerCallback: true,
+      requiresVisibleResponse: false,
+      assistantOutputTarget: {
+        kind: "internal_only",
+        reason: "worker_report_callback",
+      },
+      assistantOutputProjectionTarget: {
+        kind: "internal_only",
+        reason: "worker_report_callback",
+      },
+    });
+  });
+
   it("prepares runtime attachment text, images, and manager plan context before output routing", async () => {
     const harness = createHarness();
     harness.setRuntimeAttachments(

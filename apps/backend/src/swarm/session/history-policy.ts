@@ -11,7 +11,11 @@ export const MAX_CONVERSATION_HISTORY = 2000;
 
 export function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
   if (entry.type === "conversation_log") {
-    return false;
+    if (entry.kind !== "tool_execution_start") {
+      return false;
+    }
+
+    return !isCodexStreamDetailToolName(entry.toolName);
   }
 
   if (entry.type === "agent_tool_call") {

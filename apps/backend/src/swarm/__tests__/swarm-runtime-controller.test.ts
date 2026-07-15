@@ -831,14 +831,22 @@ describe("SwarmRuntimeController", () => {
     } as unknown as SwarmAgentRuntime);
     controller.allowInvalidatedManualStopMessageEnd(manager.agentId, token);
 
-    await expect(
-      controller.runRuntimeShutdown(manager, "stopInFlight", {
-        abort: true,
-        shutdownTimeoutMs: 1,
-        drainTimeoutMs: 1
-      })
-    ).resolves.toEqual({ timedOut: true, runtimeToken: token });
+    const shutdownResult = controller.runRuntimeShutdown(manager, "stopInFlight", {
+      abort: true,
+      shutdownTimeoutMs: 1,
+      drainTimeoutMs: 1
+    });
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).toThrow(
+      /runtime is stopping.*wait for it to finish/i,
+    );
+
+    await expect(shutdownResult).resolves.toEqual({ timedOut: true, runtimeToken: token });
     expect(controller.runtimes.has(manager.agentId)).toBe(false);
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).toThrow(
+      /did not stop cleanly.*restart Forge/i,
+    );
 
     const event: RuntimeSessionEvent = {
       type: "message_end",
@@ -862,6 +870,109 @@ describe("SwarmRuntimeController", () => {
         agentId: manager.agentId
       })
     );
+
+    resolveShutdown?.();
+    await vi.waitFor(() => {
+      expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(false);
+    });
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).not.toThrow();
+  });
+
+  it("blocks concurrent runtime reuse while a clean shutdown is still in progress", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({
+      agentId: "mgr-clean-shutdown-in-progress",
+      role: "manager",
+      managerId: "mgr-clean-shutdown-in-progress",
+      status: "streaming",
+    });
+    descriptors.set(manager.agentId, manager);
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    let resolveShutdown: (() => void) | undefined;
+    const shutdown = new Promise<void>((resolve) => {
+      resolveShutdown = resolve;
+    });
+    const runtime = {
+      getStatus: vi.fn(() => "streaming"),
+      stopInFlight: vi.fn(() => shutdown),
+    } as unknown as SwarmAgentRuntime;
+    controller.attachRuntime(manager.agentId, runtime);
+
+    let continueAdmittedDispatch: (() => void) | undefined;
+    const admittedDispatch = controller.withRuntimeAdmission(manager.agentId, async () => {
+      await new Promise<void>((resolve) => {
+        continueAdmittedDispatch = resolve;
+      });
+      expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).not.toThrow();
+    });
+    controller.prepareRuntimeShutdown(manager.agentId);
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    const shutdownResult = controller.runRuntimeShutdown(manager, "stopInFlight", {
+      abort: true,
+      shutdownTimeoutMs: 1_000,
+      drainTimeoutMs: 1,
+    });
+
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    await expect(controller.withRuntimeAdmission(manager.agentId, async () => {})).rejects.toThrow(
+      /runtime is stopping.*wait for it to finish/i,
+    );
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).toThrow(
+      /runtime is stopping.*wait for it to finish/i,
+    );
+    expect(runtime.stopInFlight).not.toHaveBeenCalled();
+
+    continueAdmittedDispatch?.();
+    await admittedDispatch;
+    await vi.waitFor(() => expect(runtime.stopInFlight).toHaveBeenCalledTimes(1));
+
+    resolveShutdown?.();
+    await expect(shutdownResult).resolves.toEqual({ timedOut: false, runtimeToken: token });
+    expect(controller.runtimes.has(manager.agentId)).toBe(false);
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(false);
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).not.toThrow();
+  });
+
+  it("keeps a failed late shutdown quarantined so a replacement cannot share the session file", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({
+      agentId: "mgr-stop-timeout-failed-late-shutdown",
+      role: "manager",
+      managerId: "mgr-stop-timeout-failed-late-shutdown",
+      status: "streaming",
+    });
+    descriptors.set(manager.agentId, manager);
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    let rejectShutdown: ((error: Error) => void) | undefined;
+    const shutdown = new Promise<void>((_resolve, reject) => {
+      rejectShutdown = reject;
+    });
+    controller.attachRuntime(manager.agentId, {
+      getStatus: vi.fn(() => "streaming"),
+      terminate: vi.fn(() => shutdown),
+    } as unknown as SwarmAgentRuntime);
+
+    await expect(controller.runRuntimeShutdown(manager, "terminate", {
+      abort: true,
+      shutdownTimeoutMs: 1,
+      drainTimeoutMs: 1,
+    })).resolves.toEqual({ timedOut: true, runtimeToken: token });
+
+    rejectShutdown?.(new Error("terminate_abort timed out after 1500ms"));
+    await Promise.resolve();
+    expect(controller.isRuntimeShutdownQuarantined(manager.agentId)).toBe(true);
+    expect(() => controller.assertRuntimeCreationAllowed(manager.agentId)).toThrow(
+      /did not stop cleanly.*restart Forge/i,
+    );
+    expect(controller.runtimes.has(manager.agentId)).toBe(false);
   });
 
   it("suppresses abort errors during context recovery without emitting a system notice", async () => {

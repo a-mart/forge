@@ -12,7 +12,7 @@ const TRUNCATED_WIRE_TEXT_SUFFIX =
 /**
  * The single backend boundary for canonical/live Builder wire records. It
  * preserves event identity and semantics while removing inline binary bodies,
- * raw tool payloads, and other unbounded display fields.
+ * and bounding raw tool payloads and other unbounded display fields.
  */
 export function projectConversationEntryForBuilderWire(
   entry: ConversationEntryEvent,
@@ -54,6 +54,15 @@ export function projectConversationEntryForBuilderWire(
           }
         : {}),
     };
+  } else if (
+    (entry.type === "conversation_log" || entry.type === "agent_tool_call") &&
+    entry.kind === "tool_execution_start"
+  ) {
+    // Worker tool-start records contain the bounded input the detail row needs
+    // after reload (command, path, target agent, and similar arguments).
+    // Updates remain cache/noise and terminal records converge to the compact
+    // activity summary above, so this does not restore an unbounded event firehose.
+    projected = { ...entry, text: truncateUtf8(entry.text, MAX_WIRE_ACTIVITY_TEXT_BYTES) };
   } else if (entry.type === "conversation_log" || entry.type === "agent_tool_call") {
     projected = { ...entry, text: OMITTED_RAW_ACTIVITY_TEXT };
   } else if (entry.type === "agent_message") {

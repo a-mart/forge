@@ -58,7 +58,7 @@ export interface SwarmSessionServiceOptions {
   stopSessionInternal: (
     agentId: string,
     options: StopSessionInternalOptions
-  ) => Promise<{ terminatedWorkerIds: string[] }>;
+  ) => Promise<{ terminatedWorkerIds: string[]; unsafeShutdownAgentIds: string[] }>;
   assertSessionIsDeletable: (descriptor: AgentDescriptor) => void;
   saveStore: () => Promise<void>;
   writeInitialSessionMeta: (descriptor: AgentDescriptor) => Promise<void>;
@@ -236,12 +236,18 @@ export class SwarmSessionService {
     const wasProjectAgent = Boolean(descriptor.projectAgent);
     const projectAgentHandle = descriptor.projectAgent?.handle;
 
-    const { terminatedWorkerIds } = await this.options.stopSessionInternal(descriptor.agentId, {
+    const { terminatedWorkerIds, unsafeShutdownAgentIds } = await this.options.stopSessionInternal(descriptor.agentId, {
       saveStore: false,
       emitSnapshots: false,
       emitStatus: false,
       deleteWorkers: true
     });
+
+    if (unsafeShutdownAgentIds.length > 0) {
+      throw new Error(
+        `Forge could not safely delete this session because shutdown is incomplete for: ${unsafeShutdownAgentIds.join(", ")}. Restart Forge, then retry the delete. No session files were removed.`,
+      );
+    }
 
     await this.options.provisioner.disposeSession(descriptor, { terminateRuntime: false });
 

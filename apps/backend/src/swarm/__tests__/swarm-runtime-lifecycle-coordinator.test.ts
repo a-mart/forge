@@ -288,6 +288,13 @@ describe("SwarmRuntimeLifecycleCoordinator", () => {
       role: "system",
       text: "Session stopped.",
     }));
+
+    coordinator.emitImmediateManualManagerStopNotice("manager", "Restart required.");
+    expect(events.emitConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      agentId: "manager",
+      role: "system",
+      text: "Restart required.",
+    }));
   });
 
   it("normalizes a swallowed manager abort event without mutating the source", () => {

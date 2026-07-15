@@ -38,6 +38,8 @@ const COLLABORATION_PROFILE_ID = "_collaboration";
 const WORKER_REPORT_MESSAGE_PREFIX = "WORKER REPORT: ";
 const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked|completed)\b/i;
 const WORKER_COMPLETION_REPORT_BODY_PATTERN = /^SYSTEM:\s*##\s*Completion Report:\s*\S/i;
+const WORKER_COMPLETION_SUMMARY_PATTERN =
+  /^(?:completed|corrected|finished)\b[^\n]*\n(?:\s*\n)?summary:\s*\S/iu;
 
 interface PendingChoiceContinuation {
   managerId: string;
@@ -175,7 +177,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   }
 
   recordSuccessfulAgentMessageDispatch(input: AgentMessageOutputInput): void {
-    if (this.isEligibleWorkerReport(input)) {
+    if (this.isEligibleWorkerReport(input) && isExplicitTerminalWorkerReport(input)) {
       const sourceWorkerId = this.resolveWorkerReportSourceId(input);
       if (sourceWorkerId) {
         this.clearConsumedWorkerTarget(sourceWorkerId);
@@ -885,7 +887,26 @@ function isWorkerStatusCloseoutMessage(message: string | undefined): boolean {
 }
 
 function isWorkerCompletionReportMessage(message: string | undefined): boolean {
-  return typeof message === "string" && WORKER_COMPLETION_REPORT_BODY_PATTERN.test(message.trimStart());
+  if (typeof message !== "string") {
+    return false;
+  }
+  const normalized = message.trimStart();
+  return (
+    WORKER_COMPLETION_REPORT_BODY_PATTERN.test(normalized) ||
+    WORKER_COMPLETION_SUMMARY_PATTERN.test(normalized)
+  );
+}
+
+function isExplicitTerminalWorkerReport(input: AgentMessageOutputInput): boolean {
+  return (
+    input.workerReportSourceAgentId !== undefined ||
+    isWorkerReportRuntimeMessage(input.modelMessage) ||
+    isWorkerStatusCloseoutMessage(input.rawMessage) ||
+    (
+      typeof input.rawMessage === "string" &&
+      WORKER_COMPLETION_REPORT_BODY_PATTERN.test(input.rawMessage.trimStart())
+    )
+  );
 }
 
 function appendAssistantOutputTargetMetadata(

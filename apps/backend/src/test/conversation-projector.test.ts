@@ -541,7 +541,7 @@ describe('ConversationProjector session tree continuity', () => {
     expect(fallbackEntry?.parentId).toBe(runtimeEntry?.id)
   })
 
-  it('keeps runtime logs in cache history while only persisting durable entries to session JSONL', async () => {
+  it('persists worker tool inputs while keeping other runtime logs cache-only', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-persistence-'))
     const sessionFile = join(root, 'manager.jsonl')
     const descriptor = makeDescriptor(sessionFile, root)
@@ -609,7 +609,11 @@ describe('ConversationProjector session tree continuity', () => {
       .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
       .map((entry: any) => entry.data)
 
-    expect(persistedConversationEntries.some((entry: any) => entry?.type === 'conversation_log')).toBe(false)
+    expect(
+      persistedConversationEntries.some(
+        (entry: any) => entry?.type === 'conversation_log' && entry.kind === 'tool_execution_start',
+      ),
+    ).toBe(true)
     expect(
       persistedConversationEntries.some(
         (entry: any) => entry?.type === 'conversation_message' && entry.text === 'durable transcript entry',
@@ -2782,6 +2786,12 @@ describe('ConversationProjector runtime event mapper facade', () => {
       .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
       .map((entry: any) => entry.data)
     expect(persistedWorkerEntries).toMatchObject([
+      {
+        type: 'conversation_log',
+        kind: 'tool_execution_start',
+        toolCallId: 'tool-1',
+        text: '{"path":"README.md"}',
+      },
       {
         type: 'activity_summary',
         itemId: 'tool:worker:tool-1',

@@ -9,6 +9,10 @@ import type { SessionProvisioner } from "../session-provisioner.js";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, ManagerProfile, SpawnAgentInput } from "../types.js";
 import { buildModelCapacityBlockKey } from "../swarm-manager-utils.js";
+import {
+  formatWorkerStopTimeoutNotice,
+  MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
+} from "../manual-stop-notice.js";
 
 const NOW = "2026-04-20T12:00:00.000Z";
 
@@ -152,6 +156,8 @@ function baseLifecycleOptions(
     runRuntimeShutdown:
       overrides.runRuntimeShutdown ??
       vi.fn(async () => ({ timedOut: false, runtimeToken: 1 })),
+    prepareRuntimeShutdown: overrides.prepareRuntimeShutdown ?? vi.fn(),
+    assertRuntimeCreationAllowed: overrides.assertRuntimeCreationAllowed ?? vi.fn(),
     detachRuntime:
       overrides.detachRuntime ??
       vi.fn((agentId: string) => {
@@ -404,6 +410,31 @@ describe("SwarmAgentLifecycleService", () => {
     expect(position("attach")).toBeLessThan(position("status"));
     expect(position("attach")).toBeLessThan(position("prompt-meta"));
     expect(position("attach")).toBeLessThan(position("stats"));
+  });
+
+  it("blocks runtime creation before touching the session while shutdown is quarantined", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-quarantined",
+      role: "manager",
+      managerId: "m-quarantined",
+      profileId: "m-quarantined",
+      status: "idle",
+    });
+    const createRuntimeForDescriptor = vi.fn();
+    const assertRuntimeCreationAllowed = vi.fn(() => {
+      throw new Error("This session runtime did not stop cleanly. Restart Forge.");
+    });
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors: new Map([[manager.agentId, manager]]),
+      assertRuntimeCreationAllowed,
+      createRuntimeForDescriptor,
+    }));
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).rejects.toThrow(
+      /did not stop cleanly.*restart Forge/i,
+    );
+    expect(assertRuntimeCreationAllowed).toHaveBeenCalledWith(manager.agentId);
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
   });
 
   it("defers model-change continuity applied marker for Cursor startup recovery until first send consumption", async () => {
@@ -1159,6 +1190,65 @@ describe("SwarmAgentLifecycleService", () => {
     expect(manager.status).toBe("idle");
   });
 
+  it("guards the manager runtime before worker teardown begins", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-guard-before-workers",
+      role: "manager",
+      managerId: "m-guard-before-workers",
+      profileId: "m-guard-before-workers",
+      status: "streaming",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-after-manager-guard",
+      status: "streaming",
+    });
+    const order: string[] = [];
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors: new Map([
+        [manager.agentId, manager],
+        [worker.agentId, worker],
+      ]),
+      runtimes: new Map([
+        [manager.agentId, makeRuntimeStub({ descriptor: manager })],
+        [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+      ]),
+      getWorkersForManager: vi.fn(() => [worker]),
+      prepareRuntimeShutdown: vi.fn(() => order.push("manager:guard")),
+      runRuntimeShutdown: vi.fn(async (descriptor: AgentDescriptor) => {
+        order.push(`${descriptor.role}:shutdown`);
+        return { timedOut: false, runtimeToken: 1 };
+      }),
+    }));
+
+    await svc.stopSession(manager.agentId);
+
+    expect(order.indexOf("manager:guard")).toBeLessThan(order.indexOf("worker:shutdown"));
+    expect(order.indexOf("worker:shutdown")).toBeLessThan(order.indexOf("manager:shutdown"));
+  });
+
+  it("completes the prepared manager shutdown guard when no runtime is attached", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-without-runtime",
+      role: "manager",
+      managerId: "m-stop-without-runtime",
+      profileId: "m-stop-without-runtime",
+      status: "idle",
+    });
+    const prepareRuntimeShutdown = vi.fn();
+    const runRuntimeShutdown = vi.fn(async () => ({ timedOut: false, runtimeToken: undefined }));
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors: new Map([[manager.agentId, manager]]),
+      runtimes: new Map(),
+      prepareRuntimeShutdown,
+      runRuntimeShutdown,
+    }));
+
+    await svc.stopSession(manager.agentId);
+
+    expect(prepareRuntimeShutdown).toHaveBeenCalledWith(manager.agentId);
+    expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "terminate", { abort: true });
+  });
+
   it("stopSession deactivates an invalidated attached manager binding after slow worker teardown", async () => {
     const manager = createAgentDescriptor({
       agentId: "m-stop-attached-slow-worker",
@@ -1275,6 +1365,201 @@ describe("SwarmAgentLifecycleService", () => {
     expect(allowInvalidatedManualStopMessageEnd).not.toHaveBeenCalled();
     expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledTimes(1);
     expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(manager.agentId);
+  });
+
+  it("stopSession surfaces restart guidance when manager shutdown times out", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-timeout",
+      role: "manager",
+      managerId: "m-stop-timeout",
+      profileId: "m-stop-timeout",
+      status: "streaming",
+    });
+    const managerRuntime = makeRuntimeStub({
+      descriptor: manager,
+      getStatus: () => "streaming",
+    });
+    const emitImmediateManualManagerStopNotice = vi.fn();
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors: new Map([[manager.agentId, manager]]),
+      runtimes: new Map([[manager.agentId, managerRuntime]]),
+      runRuntimeShutdown: vi.fn(async () => ({ timedOut: true, runtimeToken: 17 })),
+      emitImmediateManualManagerStopNotice,
+    }));
+
+    await svc.stopSession(manager.agentId);
+
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(
+      manager.agentId,
+      MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
+    );
+  });
+
+  it("stopAllAgents marks a timed-out worker unusable and surfaces restart guidance", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-worker-stop-timeout",
+      role: "manager",
+      managerId: "m-worker-stop-timeout",
+      profileId: "m-worker-stop-timeout",
+      status: "idle",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-stop-timeout",
+      status: "streaming",
+    });
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const emitImmediateManualManagerStopNotice = vi.fn();
+    const emitStatus = vi.fn();
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors: new Map([
+        [manager.agentId, manager],
+        [worker.agentId, worker],
+      ]),
+      runtimes: new Map([[worker.agentId, workerRuntime]]),
+      runRuntimeShutdown: vi.fn(async (descriptor: AgentDescriptor) => ({
+        timedOut: descriptor.agentId === worker.agentId,
+        runtimeToken: descriptor.agentId === worker.agentId ? 21 : undefined,
+      })),
+      emitImmediateManualManagerStopNotice,
+      emitStatus,
+    }));
+
+    await svc.stopAllAgents(manager.agentId, manager.agentId);
+
+    expect(worker.status).toBe("stopped");
+    expect(emitStatus).toHaveBeenCalledWith(worker.agentId, "stopped", 0, undefined);
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(
+      manager.agentId,
+      formatWorkerStopTimeoutNotice([worker.agentId]),
+    );
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a timed-out worker to resume after restart clears the runtime quarantine", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-worker-timeout-restart",
+      role: "manager",
+      managerId: "m-worker-timeout-restart",
+      profileId: "m-worker-timeout-restart",
+      status: "idle",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-timeout-restart",
+      status: "streaming",
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker],
+    ]);
+    const firstRuntimes = new Map<string, SwarmAgentRuntime>([
+      [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+    ]);
+    const firstService = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors,
+      runtimes: firstRuntimes,
+      runRuntimeShutdown: vi.fn(async () => ({ timedOut: true, runtimeToken: 31 })),
+    }));
+
+    await firstService.stopWorker(worker.agentId);
+    expect(worker.status).toBe("stopped");
+
+    const restartedRuntimes = new Map<string, SwarmAgentRuntime>();
+    const replacementRuntime = makeRuntimeStub({ descriptor: worker });
+    const restartedService = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors,
+      runtimes: restartedRuntimes,
+      createRuntimeForDescriptor: vi.fn(async () => replacementRuntime),
+    }));
+
+    await restartedService.resumeWorker(worker.agentId);
+
+    expect(worker.status).toBe("idle");
+    expect(restartedRuntimes.get(worker.agentId)).toBe(replacementRuntime);
+  });
+
+  it("stopSession preserves a timed-out worker and its history for restart recovery", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-preserve-timed-out-worker",
+      role: "manager",
+      managerId: "m-preserve-timed-out-worker",
+      profileId: "m-preserve-timed-out-worker",
+      status: "idle",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-preserve-timeout",
+      status: "streaming",
+    });
+    const deleteConversationHistory = vi.fn();
+    const emitImmediateManualManagerStopNotice = vi.fn();
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors: new Map([
+        [manager.agentId, manager],
+        [worker.agentId, worker],
+      ]),
+      runtimes: new Map([[worker.agentId, makeRuntimeStub({ descriptor: worker })]]),
+      getWorkersForManager: vi.fn(() => [worker]),
+      runRuntimeShutdown: vi.fn(async () => ({ timedOut: true, runtimeToken: 22 })),
+      deleteConversationHistory,
+      emitImmediateManualManagerStopNotice,
+    }));
+
+    await expect(svc.stopSession(manager.agentId)).resolves.toEqual({
+      terminatedWorkerIds: [],
+    });
+
+    expect(worker.status).toBe("stopped");
+    expect(deleteConversationHistory).not.toHaveBeenCalled();
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(
+      manager.agentId,
+      formatWorkerStopTimeoutNotice([worker.agentId]),
+    );
+  });
+
+  it("defers worker deletion until the manager shutdown is also confirmed", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-delete-manager-timeout",
+      role: "manager",
+      managerId: "m-delete-manager-timeout",
+      profileId: "m-delete-manager-timeout",
+      status: "streaming",
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-preserved-after-manager-timeout",
+      status: "streaming",
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker],
+    ]);
+    const deleteConversationHistory = vi.fn();
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      descriptors,
+      runtimes: new Map([
+        [manager.agentId, makeRuntimeStub({ descriptor: manager })],
+        [worker.agentId, makeRuntimeStub({ descriptor: worker })],
+      ]),
+      getWorkersForManager: vi.fn(() => [worker]),
+      runRuntimeShutdown: vi.fn(async (target: AgentDescriptor) => ({
+        timedOut: target.agentId === manager.agentId,
+        runtimeToken: target.agentId === manager.agentId ? 42 : 41,
+      })),
+      deleteConversationHistory,
+    }));
+
+    const result = await svc.stopSessionInternal(manager.agentId, {
+      saveStore: false,
+      emitSnapshots: false,
+      emitStatus: false,
+      deleteWorkers: true,
+    });
+
+    expect(result).toEqual({
+      terminatedWorkerIds: [worker.agentId],
+      unsafeShutdownAgentIds: [manager.agentId],
+    });
+    expect(descriptors.has(worker.agentId)).toBe(true);
+    expect(deleteConversationHistory).not.toHaveBeenCalled();
+    expect(manager.status).toBe("stopped");
   });
 
   it("stopAllAgents emits an immediate manual stop notice when an idle manager stops active workers", async () => {
@@ -2253,7 +2538,7 @@ describe("SwarmAgentLifecycleService", () => {
     expect(terminatedWorkerIds).toEqual([]);
     expect(descriptors.has(codex.agentId)).toBe(true);
     expect(codex.status).toBe("idle");
-    expect(runRuntimeShutdown).not.toHaveBeenCalled();
+    expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "terminate", { abort: true });
     expect(deleteConversationHistory).not.toHaveBeenCalled();
     expect(updateSessionMetaForWorkerDescriptor).toHaveBeenCalledWith(codex);
     expect(refreshSessionMetaStatsBySessionId).toHaveBeenCalledWith("m1");

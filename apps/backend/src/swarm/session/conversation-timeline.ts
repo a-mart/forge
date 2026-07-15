@@ -289,6 +289,13 @@ function buildForkSessionHistoryLine(
     return line;
   }
 
+  if (isRecordLike(parsedEntry) && parsedEntry.type === "session") {
+    // A fork inherits conversation history, not the source runtime identity.
+    // Pi forwards this ID as provider session-id and x-client-request-id, so
+    // copying it lets concurrently running branches share request identity.
+    return JSON.stringify({ ...parsedEntry, id: randomUUID() });
+  }
+
   if (shouldDropSessionHistoryLineForFork(parsedEntry, omittedCustomTypes)) {
     const entryLink = parseSessionEntryLink(parsedEntry);
     if (entryLink?.id) {

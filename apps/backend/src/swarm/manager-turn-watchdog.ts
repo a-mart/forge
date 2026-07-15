@@ -1,6 +1,7 @@
 import type { AgentStatus } from "./agent-state-machine.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent } from "./runtime-contracts.js";
 import type { AgentDescriptor, ConversationMessageEvent } from "./types.js";
+import { extractMessageText } from "./message-utils.js";
 import {
   appendTurnLedgerRecord,
   type TurnLedgerSessionTarget,
@@ -92,10 +93,21 @@ export class ManagerTurnWatchdog {
         break;
       case "message_update":
       case "message_end":
+        // Thinking-only and empty provider deltas are not visible progress.
+        // They can arrive for minutes before the manager produces anything the
+        // user can see, so they must not keep resetting the stall ladder.
+        if (extractMessageText(event.message)?.trim()) {
+          this.recordProgress(agentId);
+        }
+        break;
       case "turn_end":
+        this.recordProgress(agentId);
+        break;
       case "auto_retry_start":
       case "auto_retry_end":
-        this.recordProgress(agentId);
+        // Provider retries are hidden transport activity, not user-visible
+        // manager progress. Counting them can restart the ladder forever and
+        // prevent a genuinely stuck turn from offering runtime recycle.
         break;
       case "agent_end":
         this.recordTerminal(agentId, "agent_end");
@@ -225,7 +237,7 @@ export class ManagerTurnWatchdog {
         ? "Still working, but the manager has not produced a runtime update for this turn yet."
         : tier === 2
           ? "The manager still has not produced a runtime update for this turn. It may be stuck; you can wait or recycle the runtime if needed."
-          : "The manager appears stuck. Recycle runtime is available for this turn.";
+          : "The manager appears stuck. Use ⋮ → Stop All, then retry the request.";
 
     this.options.emitConversationMessage({
       type: "conversation_message",

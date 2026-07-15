@@ -126,6 +126,14 @@ function createHarness() {
         }),
         schedulePrompt: vi.fn(() => order.push("trust:schedule")),
       },
+      withRuntimeAdmission: vi.fn(async (_agentId, operation) => {
+        order.push("runtime:admission-acquire");
+        try {
+          return await operation();
+        } finally {
+          order.push("runtime:admission-release");
+        }
+      }),
       getOrCreateRuntime: vi.fn(async () => {
         order.push("runtime:get");
         return runtime;
@@ -298,6 +306,34 @@ describe("UserMessageCoordinator", () => {
     })).rejects.toThrow(`Target agent is not running: ${harness.worker.agentId}`);
   });
 
+  it("atomically admits collaboration append plus runtime dispatch", async () => {
+    const harness = createHarness();
+
+    const appended = await harness.coordinator.appendConversationUserMessage("channel message", {
+      targetAgentId: harness.manager.agentId,
+      sourceContext: { channel: "web", channelId: "channel-1", userId: "user-1" },
+      collaborationAuthor: {
+        userId: "user-1",
+        displayName: "Ada",
+        role: "member",
+        workspaceId: "workspace-1",
+        channelId: "channel-1",
+      },
+      dispatchRuntime: true,
+    });
+
+    expect(appended.event.id).toBe("message-1");
+    expect(harness.order.indexOf("runtime:admission-acquire")).toBeLessThan(
+      harness.order.indexOf("event:conversation"),
+    );
+    expect(harness.order.indexOf("event:conversation")).toBeLessThan(
+      harness.order.indexOf("runtime:send"),
+    );
+    expect(harness.order.indexOf("runtime:send")).toBeLessThan(
+      harness.order.indexOf("runtime:admission-release"),
+    );
+  });
+
   it("short-circuits direct Codex, Cortex consolidation, and slash compaction before append", async () => {
     const harness = createHarness();
     vi.mocked(harness.options.codex.direct.maybeRouteUserMessage).mockResolvedValueOnce(true);
@@ -356,6 +392,43 @@ describe("UserMessageCoordinator", () => {
       harness.manager,
     );
     expect(harness.options.codex.plugin.recordDispatchAccepted).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects quarantined input before appending it to conversation history", async () => {
+    const harness = createHarness();
+    const quarantineError = new Error(
+      "This session runtime did not stop cleanly. Restart Forge before sending another message.",
+    );
+    vi.mocked(harness.options.runtime.withRuntimeAdmission).mockImplementationOnce(async () => {
+      throw quarantineError;
+    });
+
+    await expect(harness.coordinator.handleUserMessage("do not orphan this turn")).rejects.toThrow(
+      quarantineError,
+    );
+
+    expect(harness.options.runtime.withRuntimeAdmission).toHaveBeenCalledWith(
+      harness.manager.agentId,
+      expect.any(Function),
+    );
+    expect(harness.options.goals.noteUserTurn).not.toHaveBeenCalled();
+    expect(harness.attachmentService.prepareConversation).not.toHaveBeenCalled();
+    expect(harness.eventPort.emitConversationMessage).not.toHaveBeenCalled();
+    expect(harness.options.turns.enqueue).not.toHaveBeenCalled();
+    expect(harness.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("holds runtime admission through append and accepted dispatch, then releases it", async () => {
+    const harness = createHarness();
+
+    await harness.coordinator.handleUserMessage("serialize this turn with shutdown");
+
+    expect(harness.order.indexOf("runtime:admission-acquire")).toBeLessThan(
+      harness.order.indexOf("event:conversation"),
+    );
+    expect(harness.order.indexOf("runtime:send")).toBeLessThan(
+      harness.order.indexOf("runtime:admission-release"),
+    );
   });
 
   it("rolls back turn context and cancels observability when manager dispatch fails", async () => {

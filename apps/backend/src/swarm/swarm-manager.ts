@@ -809,12 +809,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           this.agentDirectory.assertManagerSettingsTargetNotArchived(managerId, action),
         assertProfileNotArchived: (profileId) =>
           this.agentDirectory.assertProfileNotArchived(profileId),
-        getRequiredBuilderSessionDescriptor: (agentId, action) =>
-          this.agentDirectory.getRequiredBuilderSessionDescriptor(agentId, action),
+        getRequiredBuilderSessionDescriptor: (agentId, action) => this.agentDirectory.getRequiredBuilderSessionDescriptor(agentId, action),
         getRequiredCollaborationSessionDescriptor: (agentId, action) =>
           this.agentDirectory.getRequiredCollaborationSessionDescriptor(agentId, action),
-        assertDescriptorNotEffectivelyArchived: (descriptor) =>
-          this.agentDirectory.assertDescriptorNotEffectivelyArchived(descriptor),
+        assertDescriptorNotEffectivelyArchived: (descriptor) => this.agentDirectory.assertDescriptorNotEffectivelyArchived(descriptor),
       },
       persistence: {
         transactionDescriptors: (callback) =>
@@ -1215,6 +1213,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       runtime: {
         recovery: this.runtimeRecoveryState,
         executableTrust: this.projectExecutableTrustCoordinator,
+        withRuntimeAdmission: (agentId, operation) =>
+          this.runtimeController.withRuntimeAdmission(agentId, operation),
         getOrCreateRuntime: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
         persistRecycledRuntimeState: async () => {
           await this.descriptorStoreAdapter.saveStore();
@@ -1271,7 +1271,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private async stopSessionInternal(
     agentId: string,
     options: AgentLifecycleStopSessionOptions
-  ): Promise<{ terminatedWorkerIds: string[] }> {
+  ): Promise<{ terminatedWorkerIds: string[]; unsafeShutdownAgentIds: string[] }> {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
 

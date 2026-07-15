@@ -4137,7 +4137,7 @@ describe('SwarmWebSocketServer', () => {
 
     const statusEvent = await waitForEvent(
       events,
-      (event) => event.type === 'agent_status' && event.agentId === worker.agentId && event.status === 'idle',
+      (event) => event.type === 'agent_status' && event.agentId === worker.agentId && event.status === 'stopped',
       8_000,
     )
     expect(statusEvent.type).toBe('agent_status')

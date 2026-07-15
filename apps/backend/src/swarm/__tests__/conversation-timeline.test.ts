@@ -266,7 +266,41 @@ describe("ConversationTimeline", () => {
 
     await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
 
-    expect(readFileSync(targetSessionFile, "utf8")).toBe(readFileSync(sourceSessionFile, "utf8"));
+    const sourceLines = readFileSync(sourceSessionFile, "utf8").split("\n");
+    const targetLines = readFileSync(targetSessionFile, "utf8").split("\n");
+    const sourceHeader = JSON.parse(sourceLines[0] ?? "{}") as { id?: string };
+    const targetHeader = JSON.parse(targetLines[0] ?? "{}") as { id?: string };
+    expect(targetHeader.id).toBeTruthy();
+    expect(targetHeader.id).not.toBe(sourceHeader.id);
+    expect(targetLines.slice(1)).toEqual(sourceLines.slice(1));
+  });
+
+  it("assigns a new Pi/provider session identity to copied fork history", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    const partialTargetSessionFile = join(root, "partial-target.jsonl");
+    writeFileSync(
+      sourceSessionFile,
+      [buildSessionHeader(root, "source-session-id"), buildConversationEntry("message-1")].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
+    await copySessionHistoryForFork({
+      sourceSessionFile,
+      targetSessionFile: partialTargetSessionFile,
+      fromMessageId: "message-1",
+    });
+
+    const sourceSession = SessionManager.open(sourceSessionFile);
+    const forkedSession = SessionManager.open(targetSessionFile);
+    const partialForkedSession = SessionManager.open(partialTargetSessionFile);
+    expect(sourceSession.getSessionId()).toBe("source-session-id");
+    expect(forkedSession.getSessionId()).not.toBe(sourceSession.getSessionId());
+    expect(partialForkedSession.getSessionId()).not.toBe(sourceSession.getSessionId());
+    expect(partialForkedSession.getSessionId()).not.toBe(forkedSession.getSessionId());
+    expect(readFileSync(targetSessionFile, "utf8")).toContain("message-1");
   });
 
   it("omits only configured custom entry types when copying fork history", async () => {

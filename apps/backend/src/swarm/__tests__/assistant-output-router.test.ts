@@ -304,6 +304,67 @@ describe("AssistantOutputRouter", () => {
     expect(router.getInheritedTarget("worker-1")).toBeUndefined();
   });
 
+  it("preserves a delegated web closeout when an owned worker reports in ordinary prose", () => {
+    const { router, manager, worker } = createHarness();
+    activateWeb(router);
+    router.recordSuccessfulAgentMessageDispatch({
+      sender: manager,
+      target: worker,
+      modelMessage: "move the edits, commit them, and open a PR",
+      rawMessage: "move the edits, commit them, and open a PR",
+    });
+
+    const prepared = router.prepareAgentMessage({
+      sender: worker,
+      target: manager,
+      modelMessage: "SYSTEM: Completed the Git workflow correction.\n\nSummary: PR opened.",
+      rawMessage: "Completed the Git workflow correction.\n\nSummary: PR opened.",
+    });
+
+    expect(prepared.eligibleWorkerReport).toBe(true);
+    expect(prepared.workerReportSourceAgentId).toBe("worker-1");
+    expect(prepared.inputTarget).toEqual({
+      kind: "internal_only",
+      reason: "worker_report_callback",
+    });
+    expect(prepared.projectionTarget).toEqual(prepared.inputTarget);
+    expect(prepared.normalBuilderWorkerCallback).toBe(true);
+    expect(prepared.requiresVisibleResponse).toBe(false);
+
+    router.recordSuccessfulAgentMessageDispatch({
+      sender: worker,
+      target: manager,
+      modelMessage: "SYSTEM: Completed the Git workflow correction.\n\nSummary: PR opened.",
+      rawMessage: "Completed the Git workflow correction.\n\nSummary: PR opened.",
+    });
+    expect(router.getInheritedTarget("worker-1")).toEqual(webTarget);
+
+    router.activateManagerTurn("manager-1", {
+      target: prepared.projectionTarget,
+      routeContext: {
+        origin: "terminal_worker_report",
+        workerReportSourceAgentId: prepared.workerReportSourceAgentId,
+        normalBuilderWorkerCallback: prepared.normalBuilderWorkerCallback,
+        requiresVisibleResponse: prepared.requiresVisibleResponse,
+      },
+      beginUserVisibleObligation: false,
+    });
+
+    expect(router.resolveManagerFinalRoute("manager-1", undefined)).toMatchObject({
+      target: webTarget,
+      sourceWorkerId: "worker-1",
+      requiresVisibleResponse: false,
+      decision: {
+        visible: true,
+        channel: "web",
+        reasonCode: "render:terminal_worker_report_closeout",
+      },
+    });
+
+    router.recordSuccessfulAgentMessageDispatch(workerReportInput(manager, worker));
+    expect(router.getInheritedTarget("worker-1")).toBeUndefined();
+  });
+
   it("retains protected handoffs as server-owned projection targets", () => {
     const { router, manager, worker } = createHarness();
     const telegramTarget: AssistantOutputTarget = {

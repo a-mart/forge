@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
@@ -51,6 +52,16 @@ import type { MessageRoutingReceiptRecord } from "./session/message-routing-rece
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
+const RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE =
+  "This session runtime did not stop cleanly. Restart Forge before sending another message to protect the session history.";
+const RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE =
+  "This session runtime is stopping. Wait for it to finish before sending another message.";
+
+interface RuntimeShutdownQuarantine {
+  runtime?: SwarmAgentRuntime;
+  runtimeToken?: number;
+  phase: "stopping" | "unclean";
+}
 
 export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   config: SwarmConfig;
@@ -205,6 +216,16 @@ export class SwarmRuntimeController {
   private runtimeStatusProjector: RuntimeStatusProjector | null = null;
   private runtimeErrorProjector: RuntimeErrorProjector | null = null;
   private runtimeEventProjector: RuntimeEventProjector | null = null;
+  private readonly runtimeShutdownQuarantinesByAgentId = new Map<
+    string,
+    RuntimeShutdownQuarantine
+  >();
+  private readonly runtimeAdmissionCountsByAgentId = new Map<string, number>();
+  private readonly runtimeAdmissionDrainResolversByAgentId = new Map<
+    string,
+    Set<() => void>
+  >();
+  private readonly runtimeAdmissionContext = new AsyncLocalStorage<ReadonlySet<string>>();
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeBinding = new RuntimeBinding({
@@ -432,19 +453,111 @@ export class SwarmRuntimeController {
     return this.runtimeBinding.clearRuntimeCreationPromiseIfCurrent(agentId, promise);
   }
 
+  isRuntimeShutdownQuarantined(agentId: string): boolean {
+    return this.runtimeShutdownQuarantinesByAgentId.has(agentId);
+  }
+
+  assertRuntimeCreationAllowed(agentId: string): void {
+    const quarantine = this.runtimeShutdownQuarantinesByAgentId.get(agentId);
+    if (quarantine && !this.runtimeAdmissionContext.getStore()?.has(agentId)) {
+      throw new Error(
+        quarantine.phase === "stopping"
+          ? RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE
+          : RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE,
+      );
+    }
+  }
+
+  async withRuntimeAdmission<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
+    const quarantine = this.runtimeShutdownQuarantinesByAgentId.get(agentId);
+    if (quarantine) {
+      throw new Error(
+        quarantine.phase === "stopping"
+          ? RUNTIME_SHUTDOWN_IN_PROGRESS_MESSAGE
+          : RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE,
+      );
+    }
+
+    this.runtimeAdmissionCountsByAgentId.set(
+      agentId,
+      (this.runtimeAdmissionCountsByAgentId.get(agentId) ?? 0) + 1,
+    );
+    const inheritedAdmissions = this.runtimeAdmissionContext.getStore();
+    const activeAdmissions = new Set(inheritedAdmissions ?? []);
+    activeAdmissions.add(agentId);
+
+    try {
+      return await this.runtimeAdmissionContext.run(activeAdmissions, operation);
+    } finally {
+      const nextCount = Math.max(
+        0,
+        (this.runtimeAdmissionCountsByAgentId.get(agentId) ?? 1) - 1,
+      );
+      if (nextCount > 0) {
+        this.runtimeAdmissionCountsByAgentId.set(agentId, nextCount);
+      } else {
+        this.runtimeAdmissionCountsByAgentId.delete(agentId);
+        const resolvers = this.runtimeAdmissionDrainResolversByAgentId.get(agentId);
+        this.runtimeAdmissionDrainResolversByAgentId.delete(agentId);
+        for (const resolve of resolvers ?? []) {
+          resolve();
+        }
+      }
+    }
+  }
+
+  prepareRuntimeShutdown(agentId: string): void {
+    if (this.runtimeShutdownQuarantinesByAgentId.has(agentId)) {
+      return;
+    }
+    this.runtimeShutdownQuarantinesByAgentId.set(agentId, {
+      runtime: this.runtimes.get(agentId),
+      runtimeToken: this.runtimeTokensByAgentId.get(agentId),
+      phase: "stopping",
+    });
+  }
+
   async runRuntimeShutdown(
     descriptor: AgentDescriptor,
     action: "terminate" | "stopInFlight",
     options?: RuntimeShutdownOptions
   ): Promise<{ timedOut: boolean; runtimeToken?: number }> {
+    const timeoutMs = options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS;
+    this.prepareRuntimeShutdown(descriptor.agentId);
+    const preparedQuarantine = this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId);
+    if (preparedQuarantine?.phase === "unclean") {
+      throw new Error(RUNTIME_SHUTDOWN_QUARANTINE_MESSAGE);
+    }
+
+    // Message admission covers only the bounded append/enqueue/send-acceptance
+    // transaction, not the provider turn. Do not detach or start shutdown until
+    // that transaction releases its lease; otherwise it could continue through
+    // a detached runtime and create a second writer for the same session file.
+    await this.waitForRuntimeAdmissions(descriptor.agentId);
+
     const runtime = this.runtimes.get(descriptor.agentId);
     if (!runtime) {
+      if (preparedQuarantine) {
+        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      }
       return { timedOut: false, runtimeToken: undefined };
     }
 
     const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
-    const operation =
-      action === "terminate"
+    const quarantine: RuntimeShutdownQuarantine = preparedQuarantine ?? {
+      runtime,
+      runtimeToken,
+      phase: "stopping",
+    };
+    quarantine.runtime = runtime;
+    quarantine.runtimeToken = runtimeToken;
+    if (!preparedQuarantine) {
+      this.runtimeShutdownQuarantinesByAgentId.set(descriptor.agentId, quarantine);
+    }
+
+    let operation: Promise<void>;
+    try {
+      operation = action === "terminate"
         ? runtime.terminate({
             abort: options?.abort,
             shutdownTimeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
@@ -455,13 +568,23 @@ export class SwarmRuntimeController {
             shutdownTimeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
             drainTimeoutMs: options?.drainTimeoutMs ?? RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
           });
+    } catch (error) {
+      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
+        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      }
+      throw error;
+    }
 
     try {
       await withManagerTimeout(
         operation,
-        options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
+        timeoutMs,
         `${action}:${descriptor.agentId}`
       );
+      this.detachRuntime(descriptor.agentId, runtimeToken);
+      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
+        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      }
       return { timedOut: false, runtimeToken };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -470,22 +593,49 @@ export class SwarmRuntimeController {
         this.logDebug("runtime:shutdown:timeout", {
           agentId: descriptor.agentId,
           action,
-          timeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
+          timeoutMs,
           message,
         });
-        void operation.catch((lateError) => {
-          this.logDebug("runtime:shutdown:late_completion", {
-            agentId: descriptor.agentId,
-            action,
-            message: lateError instanceof Error ? lateError.message : String(lateError),
-          });
-        });
+        quarantine.phase = "unclean";
         this.detachRuntime(descriptor.agentId, runtimeToken);
+        void operation.then(
+          () => {
+            if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) !== quarantine) {
+              return;
+            }
+            this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+            this.logDebug("runtime:shutdown:quarantine_cleared", {
+              agentId: descriptor.agentId,
+              action,
+            });
+          },
+          (lateError) => {
+            this.logDebug("runtime:shutdown:late_completion", {
+              agentId: descriptor.agentId,
+              action,
+              message: lateError instanceof Error ? lateError.message : String(lateError),
+            });
+          },
+        );
         return { timedOut: true, runtimeToken };
       }
 
+      if (this.runtimeShutdownQuarantinesByAgentId.get(descriptor.agentId) === quarantine) {
+        this.runtimeShutdownQuarantinesByAgentId.delete(descriptor.agentId);
+      }
       throw error;
     }
+  }
+
+  private waitForRuntimeAdmissions(agentId: string): Promise<void> {
+    if ((this.runtimeAdmissionCountsByAgentId.get(agentId) ?? 0) === 0) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      const resolvers = this.runtimeAdmissionDrainResolversByAgentId.get(agentId) ?? new Set();
+      resolvers.add(resolve);
+      this.runtimeAdmissionDrainResolversByAgentId.set(agentId, resolvers);
+    });
   }
 
   private getRuntimeStatusProjector(): RuntimeStatusProjector {

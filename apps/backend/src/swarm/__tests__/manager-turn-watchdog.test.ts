@@ -104,6 +104,43 @@ describe("ManagerTurnWatchdog", () => {
     expect(ledger).toContain('"tier":2');
   });
 
+  it("does not let hidden provider retries restart the stall ladder", async () => {
+    const { watchdog, emitted } = await setup();
+    watchdog.recordStatus("m1", 1, "streaming", 0);
+
+    vi.advanceTimersByTime(MANAGER_TURN_NOTICE_MS + 1);
+    watchdog.check();
+    watchdog.recordEvent("m1", 1, {
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2_000,
+      errorMessage: "temporary upstream failure",
+    });
+    watchdog.recordEvent("m1", 1, {
+      type: "auto_retry_end",
+      success: false,
+      attempt: 1,
+      finalError: "temporary upstream failure",
+    });
+    watchdog.recordEvent("m1", 1, {
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "thinking", thinking: "hidden reasoning" }] },
+    });
+    watchdog.recordEvent("m1", 1, {
+      type: "message_end",
+      message: { role: "assistant", content: [] },
+    });
+
+    vi.advanceTimersByTime(MANAGER_TURN_ESCALATE_MS - MANAGER_TURN_NOTICE_MS);
+    watchdog.check();
+
+    expect(emitted.map((event) => event.text)).toEqual([
+      expect.stringContaining("Still working"),
+      expect.stringContaining("may be stuck"),
+    ]);
+  });
+
   it("pauses tier escalation while a manager tool call is executing", async () => {
     const { watchdog, emitted } = await setup();
     watchdog.recordStatus("m1", 1, "streaming", 0);
