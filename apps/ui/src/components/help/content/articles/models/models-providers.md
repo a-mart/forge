@@ -14,7 +14,8 @@ OpenAI offers the GPT-5 model family through the Codex runtime. OpenAI/Codex can
 
 Anthropic offers the Claude model family through the Pi-proxied path.
 
-- **Claude Opus 4.8** — Anthropic's top-tier model. Particularly strong at frontend work, UI polish, writing, and nuanced code review. Reasoning levels are limited to low, medium, and high (no "none" or "max").
+- **Claude Fable 5** — Anthropic's premium option for demanding reasoning and long-horizon agentic work. The visible `pi-fable` preset selects `claude-fable-5` at high reasoning by default for managers and specialist workers. It has a 1M-token context window by default, supports up to 128k output tokens per request, and is priced at $10 per million input tokens and $50 per million output tokens. Adaptive thinking cannot be disabled, so Forge offers low, medium, high, xhigh, and max but not none; at lower effort, the model can still skip thinking for simpler requests. Anthropic's safety classifiers can decline some requests, including benign false positives; in Forge's Pi runtime, a refusal surfaces as a runtime error rather than an automatic model reroute. Anthropic designates Fable 5 a Covered Model requiring 30-day provider retention, so it is not eligible for zero data retention (ZDR).
+- **Claude Opus 4.8** — A premium Claude model that is particularly strong at frontend work, UI polish, writing, and nuanced code review. Reasoning levels are limited to low, medium, and high (no none or max).
 - **Claude Sonnet 5** — The default Sonnet model, with a 1M-token context window. Faster than Opus, still capable, and good for documentation, lighter code tasks, and cases where Opus is overkill. The `pi-sonnet` preset defaults to Sonnet 5; Sonnet 4.5 remains available as a variant.
 - **Claude Haiku 4.5** — The fast, affordable option. Use it for bulk tasks, formatting, and anything that does not need deep analysis.
 

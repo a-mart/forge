@@ -81,6 +81,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
+  'pi-fable': {
+    provider: 'anthropic',
+    defaultModelId: 'claude-fable-5',
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
+    visibleInSpecialists: true,
+  },
   'sdk-opus': {
     provider: 'claude-sdk',
     defaultModelId: 'claude-opus-4-8',
@@ -220,6 +228,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'claude-fable-5': {
+    provider: 'anthropic',
+    familyId: 'pi-fable',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'claude-haiku-4-5-20251001': {
     provider: 'anthropic',
     familyId: 'pi-opus',
@@ -346,7 +362,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(26)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(27)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
@@ -363,6 +379,17 @@ describe('model-catalog', () => {
     }
 
     expect(getCatalogModel('gpt-5.3-codex-spark')?.inputModes).toEqual(['text'])
+    expect(getCatalogModel('claude-fable-5')).toMatchObject({
+      isFamilyDefault: true,
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+      thinkingLevelMap: { off: null, xhigh: 'xhigh', max: 'max' },
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: 'claude-fable-5',
+      intentionalDivergenceNotes: null,
+    })
+    expect(getCatalogModel('claude-fable-5')?.supportedReasoningLevels).not.toContain('none')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
     expect(getCatalogProvider('claude-sdk')).toMatchObject({
       availabilityMode: 'managed-auth',
@@ -525,6 +552,7 @@ describe('model-catalog', () => {
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
     expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')
+    expect(getCatalogFamilyForModel('claude-fable-5', 'anthropic')?.familyId).toBe('pi-fable')
     expect(getCatalogFamilyForModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
     expect(getCatalogFamilyForModel('claude-sonnet-5', 'claude-sdk')?.familyId).toBe('sdk-sonnet')
     expect(getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.displayName).toBe('Claude Sonnet 4.5 (SDK)')
@@ -556,6 +584,7 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-5')).toBe('sdk-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-5')).toBe('pi-sonnet')
     expect(inferCatalogFamily('anthropic', 'claude-sonnet-4-5-20250929')).toBe('pi-sonnet')
+    expect(inferCatalogFamily('anthropic', 'claude-fable-5')).toBe('pi-fable')
     expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-8')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
@@ -620,6 +649,7 @@ describe('model-catalog', () => {
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
+      'pi-fable',
       'sdk-opus',
       'sdk-sonnet',
       'cursor-composer',
@@ -633,6 +663,7 @@ describe('model-catalog', () => {
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
+      'pi-fable',
       'sdk-opus',
       'sdk-sonnet',
       'cursor-composer',
@@ -646,6 +677,7 @@ describe('model-catalog', () => {
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
+      'pi-fable',
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',
@@ -660,6 +692,7 @@ describe('model-catalog', () => {
       'pi-5.4',
       'pi-opus',
       'pi-sonnet',
+      'pi-fable',
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',

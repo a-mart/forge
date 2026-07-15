@@ -100,6 +100,58 @@ describe("model-catalog-projection", () => {
     expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 
+  it("projects Fable overrides through the real ModelRegistry without losing upstream runtime metadata", async () => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+      "@earendil-works/pi-coding-agent",
+    );
+    const upstreamFable = getModels("anthropic").find((model) => model.id === "claude-fable-5");
+    expect(upstreamFable).toBeDefined();
+
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-fable-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, {
+        modelOverrides?: Record<string, {
+          contextWindow?: number;
+          maxTokens?: number;
+          thinkingLevelMap?: Record<string, string | null>;
+        }>;
+        models?: Array<{ id: string }>;
+      }>;
+    };
+
+    expect(projection.providers.anthropic?.modelOverrides?.["claude-fable-5"]).toEqual({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+    });
+    expect(projection.providers.anthropic?.models?.map((model) => model.id) ?? []).not.toContain("claude-fable-5");
+
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => {
+        contextWindow?: number;
+        maxTokens?: number;
+        cost?: unknown;
+        compat?: Record<string, unknown>;
+        thinkingLevelMap?: Record<string, string | null>;
+      } | undefined;
+    };
+    const projectedFable = registry.find("anthropic", "claude-fable-5");
+
+    expect(registry.getError()).toBeUndefined();
+    expect(projectedFable).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+      compat: { forceAdaptiveThinking: true },
+    });
+    expect(projectedFable?.cost).toEqual(upstreamFable?.cost);
+  });
+
   it("adds user-selected OpenRouter models as a custom provider merge block", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-"));
     const dataDir = join(rootDir, "data");

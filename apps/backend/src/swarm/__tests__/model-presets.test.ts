@@ -107,7 +107,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-5.6", "pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
+    for (const presetId of ["pi-5.6", "pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "pi-sonnet", "pi-fable", "sdk-opus", "sdk-sonnet", "cursor-composer", "cursor-grok-45"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -141,6 +141,80 @@ describe("model-presets", () => {
     })).toBe("high");
     expect(inferSwarmModelPresetFromDescriptor({ provider: "openai-codex", modelId: "gpt-5.6-luna" })).toBe("pi-5.6");
     expect(modelCatalogService.isKnownModelId("gpt-5.6-sol", "openai-codex")).toBe(true);
+  });
+
+  it("exposes Claude Fable 5 and preserves its catalog-supported reasoning levels", () => {
+    const preset = getModelPresetInfoList().find((entry) => entry.presetId === "pi-fable");
+
+    expect(preset).toMatchObject({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+      displayName: "Claude Fable 5",
+      defaultReasoningLevel: "high",
+      supportedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+    });
+    expect(resolveModelDescriptorFromPreset("pi-fable")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+      thinkingLevel: "high",
+    });
+    expect(inferSwarmModelPresetFromDescriptor({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+    })).toBe("pi-fable");
+
+    for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "anthropic",
+        modelId: "claude-fable-5",
+        thinkingLevel: level,
+      })).toBe(level);
+    }
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+      thinkingLevel: "none",
+    })).toBe("low");
+  });
+
+  it("keeps catalog Opus and Sonnet reasoning constrained to low, medium, and high", () => {
+    for (const modelId of ["claude-opus-4-8", "claude-sonnet-5"] as const) {
+      for (const level of ["low", "medium", "high"] as const) {
+        expect(normalizeThinkingLevelForModelDescriptor({
+          provider: "anthropic",
+          modelId,
+          thinkingLevel: level,
+        })).toBe(level);
+      }
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "anthropic",
+        modelId,
+        thinkingLevel: "xhigh",
+      })).toBe("high");
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "anthropic",
+        modelId,
+        thinkingLevel: "max",
+      })).toBe("high");
+      expect(normalizeThinkingLevelForModelDescriptor({
+        provider: "anthropic",
+        modelId,
+        thinkingLevel: "none",
+      })).toBe("low");
+    }
+  });
+
+  it("retains the legacy Anthropic clamp for unknown descriptors", () => {
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "anthropic",
+      modelId: "claude-future-unknown",
+      thinkingLevel: "xhigh",
+    })).toBe("high");
+    expect(normalizeThinkingLevelForModelDescriptor({
+      provider: "anthropic",
+      modelId: "claude-future-unknown",
+      thinkingLevel: "none",
+    })).toBe("low");
   });
 
   it("maps removed full GPT-5.3 Codex descriptors to GPT-5.5 without exposing the legacy pi-codex alias", () => {

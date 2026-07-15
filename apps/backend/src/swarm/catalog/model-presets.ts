@@ -185,22 +185,21 @@ export function normalizeThinkingLevelForModelDescriptor(
   const provider = descriptor.provider.trim().toLowerCase();
   const modelId = descriptor.modelId.trim().toLowerCase();
   const requestedLevel = overrideLevel ?? descriptor.thinkingLevel;
-  if (provider === "cursor-sdk") {
-    return normalizeCursorSdkThinkingLevel(requestedLevel, modelId);
+  const catalogModel = modelCatalogService.getModel(modelId, provider);
+  if (!catalogModel) {
+    if (provider === "cursor-sdk") {
+      return normalizeCursorSdkThinkingLevel(requestedLevel, modelId);
+    }
+    return provider === "anthropic"
+      ? normalizeAnthropicThinkingLevel(requestedLevel)
+      : normalizeDescriptorThinkingLevel(requestedLevel);
   }
 
-  const catalogModel = modelCatalogService.getModel(modelId, provider);
-  if (catalogModel && !catalogModel.supportsReasoning) {
+  if (!catalogModel.supportsReasoning) {
     return catalogModel.defaultReasoningLevel;
   }
 
-  const normalized = provider === "anthropic"
-    ? normalizeAnthropicThinkingLevel(requestedLevel)
-    : normalizeDescriptorThinkingLevel(requestedLevel);
-
-  if (!catalogModel) {
-    return normalized;
-  }
+  const normalized = normalizeDescriptorThinkingLevel(requestedLevel);
   const supportedReasoningLevels: readonly string[] = catalogModel.supportedReasoningLevels;
   if (supportedReasoningLevels.includes(normalized)) {
     return normalized;

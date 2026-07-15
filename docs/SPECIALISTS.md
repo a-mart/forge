@@ -81,6 +81,7 @@ Older builtin handles are rewritten for compatibility: `backend`, `frontend`, an
 | `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4` | GPT-5.4 | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4-mini` | GPT-5.4 Mini | OpenAI Codex | none, low, medium, high, xhigh |
+| `claude-fable-5` | Claude Fable 5 | Anthropic | low, medium, high, xhigh, max |
 | `claude-opus-4-8` | Claude Opus 4.8 | Anthropic | low, medium, high |
 | `claude-opus-4-6` | Claude Opus 4.6 | Anthropic | low, medium, high |
 | `claude-sonnet-5` | Claude Sonnet 5 | Anthropic | low, medium, high |
@@ -100,6 +101,7 @@ Older builtin handles are rewritten for compatibility: `backend`, `frontend`, an
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
 - For the authoritative, up-to-date model list with availability status, see **Settings → Models** in the UI.
 - Anthropic Pi managers/workers use the `anthropic` provider. Claude Agent SDK variants reuse the same `modelId` strings but require `provider: claude-sdk` in specialist frontmatter or exact manager selection so Forge routes to the native SDK runtime instead of Pi.
+- The visible `pi-fable` preset selects `anthropic/claude-fable-5` at `high` by default for manager and specialist selection. This is the Fable family default, not a builtin effort-tier default. Fable uses always-on adaptive thinking, so Forge exposes low, medium, high, xhigh, and max but not none.
 - Manager and specialist selectors expose dedicated presets: `pi-sonnet` for Anthropic Sonnet and `sdk-sonnet` for Claude SDK Sonnet. Choosing the preset selects Sonnet 5 by default; Sonnet 4.5 remains available as a variant.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
 - Cursor SDK models can appear in manager and specialist selectors when credentials and model visibility allow them. The default `fast` tier targets Composer 2.5 with a Codex fallback; Composer exposes only Cursor's `fast` toggle and stores reasoning as `none`. Cursor Grok 4.5 uses the SDK model id `grok-4.5` plus curated-from-live-discovery `effort` and `fast` params; Forge keeps `grok-4.5-fast` as a separate catalog id for attribution. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
