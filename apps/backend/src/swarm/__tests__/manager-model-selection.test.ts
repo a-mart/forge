@@ -144,6 +144,27 @@ describe("manager model selection", () => {
     });
   });
 
+  it("selects Claude Fable 5 exactly with its extended reasoning levels", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(resolveModelDescriptorFromPreset("pi-fable")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+      thinkingLevel: "high",
+    });
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "anthropic", modelId: "claude-fable-5" },
+        { surface: "create", providerAvailability: new Map([["anthropic", true]]), reasoningLevel: "max" },
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-fable-5",
+      thinkingLevel: "max",
+    });
+  });
+
   it("keeps pi-sonnet preset resolution on Sonnet 5 instead of Opus", async () => {
     expect(resolveModelDescriptorFromPreset("pi-sonnet")).toEqual({
       provider: "anthropic",

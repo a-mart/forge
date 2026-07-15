@@ -74,6 +74,21 @@ describe('buildManagerModelRows provider availability gating', () => {
     }
   })
 
+  it('includes Claude Fable 5 with its catalog reasoning levels', () => {
+    const rows = buildManagerModelRows('create', {}, { anthropic: true })
+    const fable = rows.find((row) => row.key === 'anthropic::claude-fable-5')
+
+    expect(fable).toMatchObject({
+      provider: 'anthropic',
+      familyId: 'pi-fable',
+      modelId: 'claude-fable-5',
+      displayName: 'Claude Fable 5',
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultReasoningLevel: 'high',
+    })
+    expect(fable?.unavailableReason).toBeUndefined()
+  })
+
   it('does not gate external-availability providers on providerAvailability', () => {
     // External providers (e.g. OpenRouter) should always be available regardless of providerAvailability
     const rows = buildManagerModelRows('change', {}, {})

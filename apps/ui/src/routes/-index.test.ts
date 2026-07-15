@@ -275,6 +275,7 @@ describe('IndexPage create project model selection', () => {
     expect(optionValues).toContain('GPT-5.4')
     expect(optionValues).toContain('Claude Opus 4.7')
     expect(optionValues).toContain('Claude Opus 4.6')
+    expect(optionValues).toContain('Claude Fable 5')
     expect(optionValues).not.toContain('Codex App Runtime')
     expect(optionValues).toEqual(expectedRows)
   })
