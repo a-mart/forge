@@ -1,3 +1,5 @@
 export { useSidebarPrefs } from './useSidebarPrefs'
 export { useSidebarTreeState } from './useSidebarTreeState'
+export { useProjectViews } from './useProjectViews'
+export type { SidebarProjectView } from './useProjectViews'
 export type { SidebarSortPreference } from './useSidebarPrefs'

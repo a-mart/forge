@@ -1352,4 +1352,146 @@ describe('AgentSidebar', () => {
       })
     }
   })
+
+  it('restores an active project view, hides every outside project and Cortex, and leaves an outside conversation', async () => {
+    const customerSession = sessionManager('customer-main', 'customer-project')
+    const privateSession = sessionManager('private-main', 'private-project')
+    const cortexSession = {
+      ...sessionManager('cortex-main', 'cortex'),
+      archetypeId: 'cortex',
+    }
+    const onSelectAgent = vi.fn()
+    localStorageMock.setItem('forge-sidebar-project-views', JSON.stringify({
+      version: 1,
+      activeViewId: 'customer-view',
+      views: [{
+        id: 'customer-view',
+        name: 'Acme screen share',
+        projectKeys: [JSON.stringify(['local', 'customer-project'])],
+      }],
+    }))
+
+    renderSidebar({
+      agents: [customerSession, privateSession, cortexSession],
+      profiles: [
+        { ...profileFor(customerSession), profileId: 'customer-project', displayName: 'Acme Project', defaultSessionAgentId: customerSession.agentId },
+        { ...profileFor(privateSession), profileId: 'private-project', displayName: 'Private Project', defaultSessionAgentId: privateSession.agentId },
+        { ...profileFor(cortexSession), profileId: 'cortex', displayName: 'Cortex', defaultSessionAgentId: cortexSession.agentId },
+      ],
+      selectedAgentId: privateSession.agentId,
+      onSelectAgent,
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(getByRole(sidebar, 'button', { name: 'Project view: Acme screen share' })).toBeTruthy()
+    expect(queryByText(sidebar, 'Acme Project')).toBeTruthy()
+    expect(queryByText(sidebar, 'Private Project')).toBeNull()
+    expect(queryByText(sidebar, 'Cortex')).toBeNull()
+    await waitFor(() => expect(onSelectAgent).toHaveBeenCalledWith(customerSession.agentId))
+  })
+
+  it('creates a named project view and can switch cleanly back to all projects', async () => {
+    const customerSession = sessionManager('customer-main', 'customer-project')
+    const privateSession = sessionManager('private-main', 'private-project')
+    renderSidebar({
+      agents: [customerSession, privateSession],
+      profiles: [
+        { ...profileFor(customerSession), profileId: 'customer-project', displayName: 'Acme Project', defaultSessionAgentId: customerSession.agentId },
+        { ...profileFor(privateSession), profileId: 'private-project', displayName: 'Private Project', defaultSessionAgentId: privateSession.agentId },
+      ],
+    })
+
+    const sidebar = getDesktopSidebar()
+    fireEvent.pointerDown(getByRole(sidebar, 'button', { name: 'Project view: All projects' }), {
+      button: 0,
+      ctrlKey: false,
+    })
+    await waitFor(() => click(getByRole(document.body, 'menuitem', { name: 'New project view' })))
+
+    const nameInput = getByRole(document.body, 'textbox', { name: 'View name' }) as HTMLInputElement
+    fireEvent.change(nameInput, { target: { value: 'Acme screen share' } })
+    click(getByRole(document.body, 'checkbox', { name: 'Include Acme Project' }))
+    click(getByRole(document.body, 'button', { name: 'Create view' }))
+
+    await waitFor(() => {
+      expect(getByRole(sidebar, 'button', { name: 'Project view: Acme screen share' })).toBeTruthy()
+      expect(queryByText(sidebar, 'Acme Project')).toBeTruthy()
+      expect(queryByText(sidebar, 'Private Project')).toBeNull()
+    })
+    const stored = JSON.parse(localStorageMock.getItem('forge-sidebar-project-views') ?? '{}') as {
+      activeViewId?: string | null
+      views?: Array<{ name: string; projectKeys: string[] }>
+    }
+    expect(stored.activeViewId).toBeTruthy()
+    expect(stored.views).toEqual([{
+      name: 'Acme screen share',
+      projectKeys: [JSON.stringify(['local', 'customer-project'])],
+      id: stored.activeViewId,
+    }])
+
+    fireEvent.pointerDown(getByRole(sidebar, 'button', { name: 'Project view: Acme screen share' }), {
+      button: 0,
+      ctrlKey: false,
+    })
+    await waitFor(() => click(getByRole(document.body, 'menuitem', { name: /All projects/ })))
+    await waitFor(() => {
+      expect(queryByText(sidebar, 'Private Project')).toBeTruthy()
+      expect(getByRole(sidebar, 'button', { name: 'Project view: All projects' })).toBeTruthy()
+    })
+    const restored = JSON.parse(localStorageMock.getItem('forge-sidebar-project-views') ?? '{}') as {
+      activeViewId?: string | null
+    }
+    expect(restored.activeViewId).toBeNull()
+  })
+
+  it('edits and deletes the active project view without losing the all-projects fallback', async () => {
+    const customerSession = sessionManager('customer-main', 'customer-project')
+    const privateSession = sessionManager('private-main', 'private-project')
+    localStorageMock.setItem('forge-sidebar-project-views', JSON.stringify({
+      version: 1,
+      activeViewId: 'customer-view',
+      views: [{
+        id: 'customer-view',
+        name: 'Acme screen share',
+        projectKeys: [JSON.stringify(['local', 'customer-project'])],
+      }],
+    }))
+    renderSidebar({
+      agents: [customerSession, privateSession],
+      profiles: [
+        { ...profileFor(customerSession), profileId: 'customer-project', displayName: 'Acme Project', defaultSessionAgentId: customerSession.agentId },
+        { ...profileFor(privateSession), profileId: 'private-project', displayName: 'Private Project', defaultSessionAgentId: privateSession.agentId },
+      ],
+      selectedAgentId: customerSession.agentId,
+    })
+
+    const sidebar = getDesktopSidebar()
+    fireEvent.pointerDown(getByRole(sidebar, 'button', { name: 'Project view: Acme screen share' }), {
+      button: 0,
+      ctrlKey: false,
+    })
+    await waitFor(() => click(getByRole(document.body, 'menuitem', { name: 'Edit current view' })))
+    click(getByRole(document.body, 'checkbox', { name: 'Include Private Project' }))
+    click(getByRole(document.body, 'button', { name: 'Save view' }))
+    await waitFor(() => expect(queryByText(sidebar, 'Private Project')).toBeTruthy())
+
+    fireEvent.pointerDown(getByRole(sidebar, 'button', { name: 'Project view: Acme screen share' }), {
+      button: 0,
+      ctrlKey: false,
+    })
+    await waitFor(() => click(getByRole(document.body, 'menuitem', { name: 'Edit current view' })))
+    click(getByRole(document.body, 'button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(getByRole(sidebar, 'button', { name: 'Project view: All projects' })).toBeTruthy()
+      expect(queryByText(sidebar, 'Acme Project')).toBeTruthy()
+      expect(queryByText(sidebar, 'Private Project')).toBeTruthy()
+    })
+    const stored = JSON.parse(localStorageMock.getItem('forge-sidebar-project-views') ?? '{}') as {
+      activeViewId?: string | null
+      views?: unknown[]
+    }
+    expect(stored.activeViewId).toBeNull()
+    expect(stored.views).toEqual([])
+  })
 })

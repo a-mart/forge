@@ -42,6 +42,7 @@ import type {
 
 // Extracted sub-components
 import { SidebarSearch } from './agent-sidebar/SidebarSearch'
+import { ProjectViewSwitcher, type SidebarProjectViewOption } from './agent-sidebar/ProjectViewSwitcher'
 import { SidebarFooter } from './agent-sidebar/SidebarFooter'
 import { ModeSwitch } from './collab-sidebar/ModeSwitch'
 import { ProfileGroup } from './agent-sidebar/ProfileGroup'
@@ -60,7 +61,7 @@ import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsS
 import { ActivateRepoProjectAgentSheet } from './project-agent/ActivateRepoProjectAgentSheet'
 import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDialog'
 import { filterTreeRows, findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
-import { useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
+import { useProjectViews, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { AgentSidebarProps, RemoteSidebarOrigin } from './agent-sidebar/types'
@@ -170,6 +171,48 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     hideCliSessions,
     toggleHideCliSessions,
   } = useSidebarPrefs()
+  const projectViewOptions = useMemo<SidebarProjectViewOption[]>(() => {
+    const localOptions = treeRows
+      .filter((row) => !isCortexProfile(row))
+      .map((row) => ({
+        key: builderSidebarOrderKey({
+          originId: LOCAL_ORIGIN_ID,
+          profileId: row.profile.profileId,
+        }),
+        label: row.profile.displayName,
+      }))
+    const remoteOptions = (remoteOrigins ?? []).flatMap((origin) => (
+      origin.connected
+        ? origin.treeRows.map((row) => ({
+            key: builderSidebarOrderKey({
+              originId: origin.originId,
+              profileId: row.profile.profileId,
+            }),
+            label: row.profile.displayName,
+            originLabel: origin.instanceName ?? origin.originId,
+          }))
+        : []
+    ))
+    return [...localOptions, ...remoteOptions]
+  }, [remoteOrigins, treeRows])
+  const {
+    views: projectViews,
+    activeView,
+    activeProjectKeys,
+    setActiveView,
+    saveView,
+    deleteView,
+  } = useProjectViews()
+  const viewFilteredTreeRows = useMemo(() => {
+    if (!activeProjectKeys) return treeRows
+    return treeRows.filter((row) => (
+      !isCortexProfile(row)
+      && activeProjectKeys.has(builderSidebarOrderKey({
+        originId: LOCAL_ORIGIN_ID,
+        profileId: row.profile.profileId,
+      }))
+    ))
+  }, [activeProjectKeys, treeRows])
   const {
     activeDragId,
     setActiveDragId,
@@ -187,7 +230,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     toggleWorkerListExpanded,
     getVisibleSessionLimit,
   } = useSidebarTreeState({
-    treeRows,
+    treeRows: viewFilteredTreeRows,
     searchQuery,
     onRequestSessionWorkers,
   })
@@ -274,7 +317,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     const inactiveOnlyRows: ProfileTreeRow[] = []
     let inactiveMatchCount = 0
 
-    for (const row of treeRows) {
+    for (const row of viewFilteredTreeRows) {
       if (isCortexProfile(row) || existingProfileIds.has(row.profile.profileId)) continue
       const matchingInactiveEntries = getEntriesForProfile(row.profile.profileId).filter((entry) =>
         matchesRepoProjectAgentSearch(entry.item, parsedSearch.term),
@@ -288,7 +331,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       rows: inactiveOnlyRows.length > 0 ? [...regularRows, ...inactiveOnlyRows] : regularRows,
       matchCount: matchCount + inactiveMatchCount,
     }
-  }, [getEntriesForProfile, isSearchActive, matchCount, parsedSearch.term, regularRows, treeRows])
+  }, [getEntriesForProfile, isSearchActive, matchCount, parsedSearch.term, regularRows, viewFilteredTreeRows])
 
   const {
     rows: remoteProjectRows,
@@ -305,7 +348,12 @@ export const AgentSidebar = React.memo(function AgentSidebar({
 
     for (const origin of remoteOrigins ?? []) {
       if (!origin.connected) continue
-      const structuralRows = origin.treeRows
+      const structuralRows = activeProjectKeys
+        ? origin.treeRows.filter((row) => activeProjectKeys.has(builderSidebarOrderKey({
+            originId: origin.originId,
+            profileId: row.profile.profileId,
+          })))
+        : origin.treeRows
       if (structuralRows.length > 0) originIdsWithProjects.add(origin.originId)
       const filtered = isSearchActive
         ? filterTreeRows(structuralRows, deferredSearchQuery)
@@ -322,7 +370,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     }
 
     return { rows, matchCount: remoteMatchCount, originIdsWithProjects }
-  }, [deferredSearchQuery, isSearchActive, remoteOrigins])
+  }, [activeProjectKeys, deferredSearchQuery, isSearchActive, remoteOrigins])
 
   const mixedProjectRows = useMemo<MixedProjectRow[]>(() => {
     const visibleRows: MixedProjectRow[] = [
@@ -345,11 +393,30 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   }, [builderSidebarOrder, displayedRegularRows, remoteProjectRows])
 
   const remoteOriginsWithoutProjects = useMemo(() => (
+    activeView ? [] :
     (remoteOrigins ?? [])
       .filter((origin) => !remoteOriginIdsWithProjects.has(origin.originId))
       .map((origin) => origin.originId)
-  ), [remoteOriginIdsWithProjects, remoteOrigins])
+  ), [activeView, remoteOriginIdsWithProjects, remoteOrigins])
   const combinedMatchCount = displayedMatchCount + remoteMatchCount
+  const viewNavigationRows = useMemo(() => {
+    if (!activeView) return []
+    const localRows = viewFilteredTreeRows.map((treeRow) => ({
+      originId: LOCAL_ORIGIN_ID,
+      treeRow,
+    }))
+    const remoteRows = (remoteOrigins ?? []).flatMap((origin) => (
+      origin.connected
+        ? origin.treeRows
+            .filter((treeRow) => activeProjectKeys?.has(builderSidebarOrderKey({
+              originId: origin.originId,
+              profileId: treeRow.profile.profileId,
+            })))
+            .map((treeRow) => ({ originId: origin.originId, treeRow }))
+        : []
+    ))
+    return [...localRows, ...remoteRows]
+  }, [activeProjectKeys, activeView, remoteOrigins, viewFilteredTreeRows])
 
   const handleForkSetTarget = useCallback((sourceAgentId: string) => setForkTarget({ sourceAgentId }), [])
 
@@ -389,6 +456,52 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onOpenSettings()
     onMobileClose?.()
   }, [onOpenSettings, onMobileClose])
+
+  // A project view is a screen-share boundary, not just a cosmetic list filter.
+  // If the current surface is outside that boundary, move to an allowed session
+  // before the user continues. With no available session, Settings is the safest
+  // existing neutral surface exposed by the stable sidebar contract.
+  useEffect(() => {
+    if (!activeView) return
+    const currentOriginId = activeOriginId ?? LOCAL_ORIGIN_ID
+    const currentSelectionIsVisible = Boolean(selectedAgentId) && viewNavigationRows.some((row) => (
+      row.originId === currentOriginId
+      && row.treeRow.sessions.some((session) => (
+        session.sessionAgent.agentId === selectedAgentId
+        || session.workers.some((worker) => worker.agentId === selectedAgentId)
+      ))
+    ))
+    const isConversationSurface = !isSettingsActive && !isStatsActive && !isArchiveActive
+    if (currentSelectionIsVisible && isConversationSurface) return
+
+    const target = viewNavigationRows.flatMap((row) => {
+      const session = row.treeRow.sessions.find((entry) => entry.isDefault)
+        ?? row.treeRow.sessions[0]
+      return session ? [{ originId: row.originId, agentId: session.sessionAgent.agentId }] : []
+    }).find((entry) => entry.originId === LOCAL_ORIGIN_ID || Boolean(onSelectRemoteAgent))
+
+    if (target) {
+      if (target.originId === LOCAL_ORIGIN_ID) {
+        handleSelectAgent(target.agentId)
+      } else {
+        handleSelectRemoteAgent(target.originId, target.agentId)
+      }
+    } else if (!isSettingsActive) {
+      handleOpenSettings()
+    }
+  }, [
+    activeOriginId,
+    activeView,
+    handleOpenSettings,
+    handleSelectAgent,
+    handleSelectRemoteAgent,
+    isArchiveActive,
+    isSettingsActive,
+    isStatsActive,
+    onSelectRemoteAgent,
+    selectedAgentId,
+    viewNavigationRows,
+  ])
 
   const handleOpenStats = useCallback(() => {
     onOpenStats?.()
@@ -877,6 +990,15 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           ) : undefined}
         />
 
+        <ProjectViewSwitcher
+          options={projectViewOptions}
+          views={projectViews}
+          activeView={activeView}
+          onSelectView={setActiveView}
+          onSaveView={saveView}
+          onDeleteView={deleteView}
+        />
+
         {isSearchActive ? (
           <div className="px-1 pb-1">
             <h2 className="text-xs font-semibold text-muted-foreground">
@@ -891,10 +1013,12 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           </p>
         ) : mixedProjectRows.length === 0 && !isSearchActive ? (
           <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
-            No active agents.
+            {activeView
+              ? `No projects are currently available in “${activeView.name}”.`
+              : 'No active agents.'}
           </p>
         ) : (() => {
-          const dndEnabled = !isSearchActive && Boolean(onMoveBuilderProject) && mixedProjectRows.length > 1
+          const dndEnabled = !activeView && !isSearchActive && Boolean(onMoveBuilderProject) && mixedProjectRows.length > 1
           const sortableIds = mixedProjectRows.map((row) => builderSidebarOrderKey(row.ref))
           const activeDragRow = activeDragId
             ? mixedProjectRows.find((row) => builderSidebarOrderKey(row.ref) === activeDragId)
@@ -977,7 +1101,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         />
 
         {/* Archive button pinned to the bottom; outer pad creates gap above the divider */}
-        {onOpenArchive && hasArchivedItems ? (
+        {onOpenArchive && hasArchivedItems && !activeView ? (
           <div className="mt-auto pt-2.5">
             <div className="border-t border-sidebar-border pt-1.5">
               <button
