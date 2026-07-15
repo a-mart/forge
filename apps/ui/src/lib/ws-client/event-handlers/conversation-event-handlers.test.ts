@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCacheObservationEntry } from '@/lib/ws-state'
 import { createInitialManagerWsState } from '@/lib/ws-state'
-import type { ChoiceRequestEvent, ConversationMessageEvent, PlanSummaryEvent } from '@forge/protocol'
+import type { ActivitySummaryEvent, ChoiceRequestEvent, ConversationMessageEvent, PlanSummaryEvent } from '@forge/protocol'
 import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state'
 import { handleConversationEvent } from './conversation-event-handlers'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -70,6 +70,23 @@ function makePlanSummary(id = 'summary-1'): PlanSummaryEvent {
   }
 }
 
+function makeActivitySummary(overrides: Partial<ActivitySummaryEvent> = {}): ActivitySummaryEvent {
+  return {
+    type: 'activity_summary',
+    schemaVersion: 1,
+    itemId: 'tool:manager:tool-1',
+    agentId: 'manager',
+    actorAgentId: 'manager',
+    timestamp: '2026-07-13T01:00:00.000Z',
+    kind: 'tool_activity',
+    status: 'completed',
+    toolName: 'bash',
+    correlationId: 'tool-1',
+    displaySummary: 'Ran command',
+    ...overrides,
+  }
+}
+
 function runHandler(
   state: ManagerWsState,
   event: Parameters<typeof handleConversationEvent>[0],
@@ -120,6 +137,141 @@ describe('handleConversationEvent conversation history merge', () => {
     })
 
     expect(next.messages.filter((entry) => entry.type === 'plan_summary')).toEqual([liveSummary])
+  })
+
+  it('converges live and replayed activity by stable item id', () => {
+    const liveSummary = makeActivitySummary({ status: 'failed', isError: true })
+    const liveState = runHandler(createInitialManagerWsState('manager'), liveSummary)
+
+    const next = runHandler(liveState, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      mode: 'replace',
+      messages: [makeActivitySummary()],
+      page: {
+        hasOlder: false,
+        completeness: 'complete',
+        source: 'canonical',
+      },
+    })
+
+    expect(next.activityMessages).toEqual([liveSummary])
+    expect(next.conversationPage?.hasOlder).toBe(false)
+  })
+
+  it('prepends an older page without duplicating the overlap row', () => {
+    const newer = makeActivitySummary({ itemId: 'tool:manager:newer', correlationId: 'newer' })
+    const state = {
+      ...createInitialManagerWsState('manager'),
+      activityMessages: [newer],
+      conversationPageLoading: true,
+      conversationPageRequestId: 'page-1',
+    }
+    const older = makeActivitySummary({ itemId: 'tool:manager:older', correlationId: 'older' })
+    const next = runHandler(state, {
+      type: 'conversation_page',
+      agentId: 'manager',
+      requestId: 'page-1',
+      messages: [older, newer],
+      page: {
+        hasOlder: true,
+        nextCursor: 'next-page',
+        completeness: 'complete',
+        source: 'canonical',
+      },
+    })
+
+    expect(next.activityMessages.map((entry) => entry.type === 'activity_summary' ? entry.itemId : 'unexpected'))
+      .toEqual(['tool:manager:older', 'tool:manager:newer'])
+    expect(next.conversationPage?.nextCursor).toBe('next-page')
+    expect(next.conversationPageLoading).toBe(false)
+  })
+
+  it('retains returned older activity after the live tail reaches the client retention limit', () => {
+    const current = Array.from({ length: 2_000 }, (_, index) =>
+      makeActivitySummary({ itemId: `tool:manager:current-${index}`, correlationId: `current-${index}` }))
+    const older = makeActivitySummary({ itemId: 'tool:manager:older', correlationId: 'older' })
+    const next = runHandler({
+      ...createInitialManagerWsState('manager'),
+      activityMessages: current,
+      conversationPageLoading: true,
+      conversationPageRequestId: 'page-activity-limit',
+    }, {
+      type: 'conversation_page',
+      agentId: 'manager',
+      requestId: 'page-activity-limit',
+      messages: [older],
+      page: {
+        hasOlder: false,
+        completeness: 'complete',
+        source: 'canonical',
+      },
+    })
+
+    expect(next.activityMessages).toHaveLength(2_001)
+    expect(next.activityMessages[0]).toMatchObject({ itemId: 'tool:manager:older' })
+  })
+
+  it('keeps model cache observations chronological when prepending an older page', () => {
+    const state = {
+      ...createInitialManagerWsState('manager'),
+      modelCacheVisualizationEnabled: true,
+      modelCacheVisualizationSettingLoaded: true,
+      modelCacheObservations: [makeCacheObservation('newer-cache')],
+      conversationPageRequestId: 'page-cache',
+    }
+    const next = runHandler(state, {
+      type: 'conversation_page',
+      agentId: 'manager',
+      requestId: 'page-cache',
+      messages: [makeCacheObservation('older-cache')],
+      page: {
+        hasOlder: false,
+        completeness: 'complete',
+        source: 'canonical',
+      },
+    })
+
+    expect(next.modelCacheObservations.map((entry) => entry.id)).toEqual(['older-cache', 'newer-cache'])
+  })
+
+  it('invalidates an in-flight older page when the conversation resets', () => {
+    const beforeReset = {
+      ...createInitialManagerWsState('manager'),
+      activityMessages: [makeActivitySummary()],
+      conversationPageLoading: true,
+      conversationPageRequestId: 'stale-page',
+      conversationPage: {
+        hasOlder: true,
+        nextCursor: 'old-cursor',
+        completeness: 'complete' as const,
+        source: 'canonical' as const,
+      },
+    }
+    const reset = runHandler(beforeReset, {
+      type: 'conversation_reset',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      reason: 'api_reset',
+    })
+
+    expect(reset.conversationPage).toBeNull()
+    expect(reset.conversationPageLoading).toBe(false)
+    expect(reset.conversationPageRequestId).toBeNull()
+
+    const afterDelayedPage = runHandler(reset, {
+      type: 'conversation_page',
+      agentId: 'manager',
+      requestId: 'stale-page',
+      messages: [makeActivitySummary({ itemId: 'tool:manager:stale' })],
+      page: {
+        hasOlder: false,
+        completeness: 'complete',
+        source: 'canonical',
+      },
+    })
+
+    expect(afterDelayedPage.activityMessages).toEqual([])
   })
 })
 

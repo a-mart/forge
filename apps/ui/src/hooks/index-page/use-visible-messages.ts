@@ -1,16 +1,27 @@
 import { useMemo } from 'react'
 import type { MessageSourceView } from '@/components/chat/ChatHeader'
-import { isProjectAgentExchange } from '@/lib/project-agent-exchange'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 import {
-  collectKnownWorkerIds,
-  inferManagerAliasIds,
-  isVisibleInManagerAllView,
+  filterVisibleBuilderTimeline,
 } from '@forge/protocol'
 
 function toEpochMillis(timestamp: string): number {
   const parsed = Date.parse(timestamp)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function compareTimelineOrder(left: ConversationEntry, right: ConversationEntry): number {
+  if (
+    Number.isSafeInteger(left.timelineSequence) &&
+    Number.isSafeInteger(right.timelineSequence) &&
+    left.timelineSequence !== right.timelineSequence
+  ) {
+    return left.timelineSequence! - right.timelineSequence!
+  }
+
+  const timestampDelta = toEpochMillis(left.timestamp) - toEpochMillis(right.timestamp)
+  if (timestampDelta !== 0) return timestampDelta
+  return (left.timelineEntryId ?? '').localeCompare(right.timelineEntryId ?? '')
 }
 
 function mergeConversationAndActivityMessages(
@@ -33,7 +44,7 @@ function mergeConversationAndActivityMessages(
     const conversationMessage = messages[conversationIndex]
     const activityMessage = activityMessages[activityIndex]
 
-    if (toEpochMillis(conversationMessage.timestamp) <= toEpochMillis(activityMessage.timestamp)) {
+    if (compareTimelineOrder(conversationMessage, activityMessage) <= 0) {
       merged.push(conversationMessage)
       conversationIndex += 1
       continue
@@ -52,19 +63,6 @@ function mergeConversationAndActivityMessages(
   }
 
   return merged
-}
-
-function isWebVisibleConversationMessage(entry: ConversationEntry): boolean {
-  if (entry.type !== 'conversation_message') {
-    return true
-  }
-
-  if (entry.source === 'worker_report') {
-    return false
-  }
-
-  const channel = entry.sourceContext?.channel ?? 'web'
-  return channel === 'web' || channel === 'cli'
 }
 
 export interface VisibleMessagesOptions {
@@ -87,57 +85,14 @@ export function deriveVisibleMessages({
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
-  const isManager = activeAgent?.role === 'manager'
   const allMessages = mergeConversationAndActivityMessages(messages, activityMessages)
-  const agentsById = new Map(agents.map((agent) => [agent.agentId, agent]))
-
-  const visibleMessages =
-    channelView === 'all'
-      ? !isManager || !activeAgent
-        ? allMessages
-        : (() => {
-            const activeManagerId = activeAgent.agentId
-            const knownWorkerIds = collectKnownWorkerIds(agents, activeManagerId)
-            const managerAliasIds = inferManagerAliasIds(allMessages, activeManagerId, knownWorkerIds)
-
-            return allMessages.filter((entry) =>
-              isVisibleInManagerAllView(entry, {
-                activeManagerId,
-                managerAliasIds,
-                knownWorkerIds,
-              }),
-            )
-          })()
-      : mergeConversationAndActivityMessages(
-          messages,
-          isManager && activeAgent
-            ? activityMessages.filter(
-                (entry) =>
-                  entry.type === 'agent_message' &&
-                  entry.agentId === activeAgent.agentId &&
-                  isProjectAgentExchange(entry, agentsById),
-              )
-            : [],
-        ).filter((entry) => {
-          if (entry.type === 'conversation_log') {
-            return false
-          }
-
-          if (entry.type === 'agent_message') {
-            return Boolean(
-              isManager &&
-              activeAgent &&
-              entry.agentId === activeAgent.agentId &&
-              isProjectAgentExchange(entry, agentsById),
-            )
-          }
-
-          if (entry.type === 'agent_tool_call') {
-            return false
-          }
-
-          return isWebVisibleConversationMessage(entry)
-        })
+  const visibleMessages = filterVisibleBuilderTimeline(allMessages, {
+    activeAgentId: activeAgent?.agentId ?? null,
+    activeAgentRole: activeAgent?.role ?? null,
+    channelView,
+    agents,
+    history: allMessages,
+  })
 
   return {
     allMessages,

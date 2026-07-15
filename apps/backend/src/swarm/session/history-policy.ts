@@ -481,7 +481,7 @@ function isBootstrapDiagnosticEntry<Entry extends ConversationEntryEvent>(entry:
 }
 
 function isBootstrapActivityEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
-  return entry.type === "agent_message" || entry.type === "agent_tool_call";
+  return entry.type === "agent_message" || entry.type === "agent_tool_call" || entry.type === "activity_summary";
 }
 
 function appendBootstrapDiagnosticEntriesIfBudgetAllows<Entry extends ConversationEntryEvent>(

@@ -1,6 +1,7 @@
 import type { ClientCommand, ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { projectConversationPageMetadataForWire } from "../conversation-page-wire.js";
 
 export interface AgentCommandRouteContext {
   command: ClientCommand;
@@ -102,6 +103,42 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
       requestId: command.requestId
     });
 
+    return true;
+  }
+
+  if (command.type === "get_conversation_page") {
+    const target = swarmManager.getAgent(command.agentId);
+    if (!target) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${command.agentId} does not exist.`,
+        requestId: command.requestId,
+      });
+      return true;
+    }
+
+    try {
+      const result = swarmManager.getConversationHistoryPage(command.agentId, {
+        cursor: command.cursor,
+        limit: command.limit,
+        view: command.view,
+      });
+      send(socket, {
+        type: "conversation_page",
+        agentId: command.agentId,
+        messages: result.messages,
+        page: projectConversationPageMetadataForWire(result.page),
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "GET_CONVERSATION_PAGE_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId,
+      });
+    }
     return true;
   }
 

@@ -46,6 +46,20 @@ function createConversationHistory(agentId: string, count: number) {
   }))
 }
 
+function createConversationPage(messages = createConversationHistory('manager', 0)) {
+  return {
+    messages,
+    page: {
+      hasOlder: false,
+      completeness: 'complete' as const,
+      source: 'memory' as const,
+      sourceRevision: 'fixture',
+      pageBytes: Buffer.byteLength(JSON.stringify(messages), 'utf8'),
+      scanBytes: 0,
+    },
+  }
+}
+
 function createPerfStub(): SidebarPerfRecorder {
   return {
     recordDuration: vi.fn(),
@@ -118,6 +132,22 @@ function createManagerStub() {
       sessionFile: '/tmp/session-1.jsonl',
       sessionLabel: 'Session 1',
     }],
+    ['worker-1', {
+      agentId: 'worker-1',
+      displayName: 'Worker 1',
+      role: 'worker',
+      managerId: 'manager',
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: '/tmp',
+      model: {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        thinkingLevel: 'medium',
+      },
+      sessionFile: '/tmp/worker-1.jsonl',
+    }],
   ])
 
   const profiles = [{ profileId: 'profile-1', label: 'Profile 1', createdAt: '2026-01-01T00:00:00.000Z' }]
@@ -146,6 +176,8 @@ function createManagerStub() {
         detail: undefined,
       },
     }),
+    getConversationHistory: () => [],
+    getConversationHistoryPage: () => createConversationPage(),
     getPendingChoiceIdsForSession: () => [],
     getPendingChoiceRequestsForSession: () => [],
     getSessionPlanSnapshot: async (sessionAgentId: string) => createPlanSnapshotEvent(sessionAgentId),
@@ -173,6 +205,59 @@ function getEventTypes(events: ServerEvent[]): string[] {
 }
 
 describe('WsSubscriptions snapshot delivery tracking', () => {
+  it('applies the negotiated Builder view to live conversation events', async () => {
+    const manager = createManagerStub()
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+    const activity: Extract<ServerEvent, { type: 'activity_summary' }> = {
+      type: 'activity_summary',
+      schemaVersion: 1,
+      itemId: 'tool:manager:1',
+      agentId: 'manager',
+      actorAgentId: 'manager',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      kind: 'tool_activity',
+      status: 'completed',
+      displaySummary: 'Ran command',
+    }
+
+    await subscriptions.handleSubscribe(socket, 'manager', undefined, true, 'web')
+    sentEvents.length = 0
+    subscriptions.broadcastToSubscribed(activity)
+    expect(sentEvents).toEqual([])
+
+    await subscriptions.handleSubscribe(socket, 'manager', undefined, true, 'all')
+    sentEvents.length = 0
+    subscriptions.broadcastToSubscribed(activity)
+    expect(sentEvents).toEqual([activity])
+
+    sentEvents.length = 0
+    subscriptions.broadcastToSubscribed({
+      type: 'agent_tool_call',
+      agentId: 'manager',
+      actorAgentId: 'worker-1',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      kind: 'tool_execution_end',
+      toolName: 'read',
+      toolCallId: 'worker-tool',
+      text: 'private worker detail',
+    })
+    expect(sentEvents).toEqual([])
+  })
+
   it('sends full snapshots on first subscribe and skips them on same-socket resubscribe when versions match', async () => {
     const manager = createManagerStub()
     const socket = createSocket()
@@ -216,6 +301,40 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'session_goal_snapshot',
       'terminals_snapshot',
     ])
+  })
+
+  it('resends the agents snapshot when selecting an idle worker omitted from the global list', async () => {
+    const manager = createManagerStub()
+    const socket = createSocket()
+    const sentEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([socket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(socket, 'manager')
+    sentEvents.length = 0
+
+    await subscriptions.handleSubscribe(socket, 'worker-1')
+
+    const firstWorkerSnapshot = sentEvents.find(
+      (event): event is Extract<ServerEvent, { type: 'agents_snapshot' }> =>
+        event.type === 'agents_snapshot',
+    )
+    expect(firstWorkerSnapshot?.agents.map((agent) => agent.agentId)).toContain('worker-1')
+
+    sentEvents.length = 0
+    await subscriptions.handleSubscribe(socket, 'worker-1')
+    expect(getEventTypes(sentEvents)).not.toContain('agents_snapshot')
   })
 
   it('resends snapshots on resubscribe after versions change', async () => {
@@ -412,11 +531,10 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
   it('starts a new bootstrap when the same target subscribe changes messageCount', async () => {
     const manager = createManagerStub()
-    const baseHistoryResult = manager.getConversationHistoryWithDiagnostics('manager')
-    manager.getConversationHistoryWithDiagnostics = vi.fn((agentId: string) => ({
-      ...baseHistoryResult,
-      history: createConversationHistory(agentId, 120),
-    }))
+    manager.getConversationHistoryPage = vi.fn((agentId: string, options?: { limit?: number }) => {
+      const history = createConversationHistory(agentId, 120)
+      return createConversationPage(history.slice(-(options?.limit ?? history.length)))
+    })
 
     const socket = createSocket()
     let currentBootstrapTarget: string | null = null
@@ -838,6 +956,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
           detail: undefined,
         },
       }),
+      getConversationHistoryPage: () => createConversationPage(),
       getPendingChoiceIdsForSession: () => [],
       getPendingChoiceRequestsForSession: () => [],
       getSessionPlanSnapshot,

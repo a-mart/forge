@@ -1,9 +1,11 @@
-import type { AgentDescriptor } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
+import { isAgentEffectivelyArchived } from '@/lib/agent-hierarchy'
 
 export function chooseMostRecentSessionFallbackForDeletedTarget(
   agents: AgentDescriptor[],
   deletedAgentId: string,
   previousAgentsById: Map<string, AgentDescriptor>,
+  profiles: ManagerProfile[] = [],
 ): string | null {
   const deletedAgent = previousAgentsById.get(deletedAgentId)
   const profileId = deletedAgent
@@ -16,6 +18,10 @@ export function chooseMostRecentSessionFallbackForDeletedTarget(
   const profileSessions = agents
     .filter((agent) => {
       if (agent.role !== 'manager') {
+        return false
+      }
+
+      if (isAgentEffectivelyArchived(agent, profiles)) {
         return false
       }
 

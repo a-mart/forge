@@ -87,6 +87,29 @@ describe('conversation echo/dedup reducer', () => {
     expect(confirmedCopies).toHaveLength(1)
     expect((confirmedCopies[0] as ConversationMessageEvent).id).toBe('srv-1')
   })
+
+  it('deduplicates entries without type-specific ids by canonical timeline identity', () => {
+    const live: ServerEvent = {
+      type: 'agent_message',
+      timelineEntryId: 'canonical-row-1',
+      timelineSequence: 100,
+      agentId: 'agent-1',
+      timestamp: '2026-07-07T12:00:00.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'worker-1',
+      toAgentId: 'agent-1',
+      text: 'worker update',
+    }
+    const context = makeContext({ activityMessages: [live] })
+
+    handleConversationEvent({
+      type: 'conversation_history',
+      agentId: 'agent-1',
+      messages: [{ ...live }],
+    }, context)
+
+    expect(context.state.activityMessages).toHaveLength(1)
+  })
 })
 
 describe('project_presence reducer', () => {

@@ -230,6 +230,44 @@ export interface AgentToolCallEvent {
   isError?: boolean
 }
 
+export const ACTIVITY_SUMMARY_SCHEMA_VERSION = 1 as const
+
+export type ActivitySummaryStatus = 'completed' | 'failed' | 'interrupted'
+
+/**
+ * Compact, provider-neutral activity that is safe to keep in canonical session
+ * history. Streaming updates and raw tool output deliberately stay out of this
+ * record; the stable itemId lets live and replayed rows converge.
+ */
+export interface ActivitySummaryEvent {
+  type: 'activity_summary'
+  schemaVersion: typeof ACTIVITY_SUMMARY_SCHEMA_VERSION
+  itemId: string
+  /** Timeline/session that owns the activity. */
+  agentId: string
+  /** Agent that performed the activity (normally the same as agentId). */
+  actorAgentId: string
+  turnId?: string
+  timestamp: string
+  kind: 'tool_activity'
+  status: ActivitySummaryStatus
+  toolName?: string
+  correlationId?: string
+  /** Bounded collapsed-row copy; never contains raw tool output. */
+  displaySummary: string
+  isError?: boolean
+}
+
+/**
+ * Canonical identity and ordering coordinates shared by live and replayed
+ * Builder entries. New writes persist these fields; readers backfill them from
+ * the outer JSONL record and byte position for legacy rows.
+ */
+export interface ConversationTimelineEntryMetadata {
+  timelineEntryId?: string
+  timelineSequence?: number
+}
+
 export interface ChoiceRequestEvent {
   type: 'choice_request'
   agentId: string
@@ -241,14 +279,16 @@ export interface ChoiceRequestEvent {
   timestamp: string
 }
 
-export type ConversationEntry =
+export type ConversationEntry = (
   | ConversationMessageEvent
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent
+  | ActivitySummaryEvent
   | ChoiceRequestEvent
   | PlanSummaryEvent
   | ModelCacheObservationEvent
+) & ConversationTimelineEntryMetadata
 
 export function isUserVisibleAssistantConversationMessage(
   entry: ConversationEntry,

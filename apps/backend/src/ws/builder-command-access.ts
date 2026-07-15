@@ -41,6 +41,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   get_project_agent_sharing: "read",
   get_project_agent_external_directory: "read",
   get_session_workers: "read",
+  get_conversation_page: "read",
   // Idempotent metadata backfill required to browse the session archive.
   hydrate_archive_last_used: "read",
 

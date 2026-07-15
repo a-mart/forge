@@ -63,6 +63,26 @@ function makeProfile(profileId: string, overrides: Partial<ManagerProfile> = {})
 // ---------------------------------------------------------------------------
 
 describe('reduceAgentsSnapshot', () => {
+  it('preserves a pending explicit deep-link target until its targeted snapshot arrives', () => {
+    const state = {
+      ...createInitialManagerWsState('idle-worker'),
+      connected: true,
+    }
+    const fallback = makeManager({ agentId: 'fallback', managerId: 'fallback' })
+
+    const result = reduceAgentsSnapshot({
+      state,
+      desiredAgentId: 'idle-worker',
+      explicitAgentSelectionAgentId: 'idle-worker',
+      agents: [fallback],
+    })
+
+    expect(result.patch.targetAgentId).toBeUndefined()
+    expect(result.nextDesiredAgentId).toBe('idle-worker')
+    expect(result.shouldClearExplicitSelection).toBe(false)
+    expect(result.subscribeToAgentId).toBeNull()
+  })
+
   it('does not preserve a selected worker when the parent manager becomes archived', () => {
     const activeManager = makeManager({ agentId: 'active-manager', profileId: 'active-manager' })
     const archivedManager = makeManager({

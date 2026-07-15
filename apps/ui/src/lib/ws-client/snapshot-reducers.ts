@@ -128,9 +128,16 @@ export function reduceAgentsSnapshot(input: {
       !currentTargetArchived &&
       !visibleAgents.some((agent) => agent.agentId === currentTarget && isManagerAgent(agent)),
   )
+  const currentTargetIsPendingExplicitSelection = Boolean(
+    currentTarget &&
+      !state.hasReceivedAgentsSnapshot &&
+      currentTarget === desiredAgentId &&
+      currentTarget === explicitAgentSelectionAgentId &&
+      !currentTargetArchived,
+  )
   const fallbackTarget = currentTargetStillExists
     ? currentTarget
-    : currentTargetIsIntentionalWorkerSubscription
+    : currentTargetIsIntentionalWorkerSubscription || currentTargetIsPendingExplicitSelection
       ? currentTarget
       : chooseFallbackAgentId(mergedAgents, currentTarget, state.profiles)
   const targetChanged = fallbackTarget !== state.targetAgentId
@@ -139,6 +146,8 @@ export function reduceAgentsSnapshot(input: {
       ? state.subscribedAgentId
       : currentTargetIsIntentionalWorkerSubscription
         ? state.subscribedAgentId
+        : currentTargetIsPendingExplicitSelection
+          ? state.subscribedAgentId
         : fallbackTarget ?? null
 
   const patch: Partial<ManagerWsState> = {
@@ -379,6 +388,10 @@ export function reduceManagerDeleted(input: {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          conversationPage: null,
+          conversationPageLoading: false,
+          conversationPageRequestId: null,
+          conversationHistoryMutation: null,
           modelCacheObservations: [],
           pendingModelCacheObservations: [],
           pendingChoiceIds: new Set(),
@@ -401,6 +414,10 @@ export function reduceManagerDeleted(input: {
         subscribedAgentId: null,
         messages: [],
         activityMessages: [],
+        conversationPage: null,
+        conversationPageLoading: false,
+        conversationPageRequestId: null,
+        conversationHistoryMutation: null,
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),
@@ -469,6 +486,10 @@ export function reduceSessionDeleted(input: {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          conversationPage: null,
+          conversationPageLoading: false,
+          conversationPageRequestId: null,
+          conversationHistoryMutation: null,
           modelCacheObservations: [],
           pendingModelCacheObservations: [],
           pendingChoiceIds: new Set(),

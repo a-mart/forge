@@ -18,6 +18,7 @@ import {
   buildGetProjectAgentExternalDirectoryCommand,
   buildGetProjectAgentReferenceCommand,
   buildGetProjectAgentSharingCommand,
+  buildGetConversationPageCommand,
   buildGetSessionWorkersCommand,
   buildHydrateArchiveLastUsedCommand,
   buildKillAgentCommand,
@@ -60,6 +61,7 @@ import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
   SESSION_WORKERS_REQUEST_TIMEOUT_MS,
+  CONVERSATION_PAGE_REQUEST_TIMEOUT_MS,
 } from './ws-client/runtime-types'
 
 /** Server close code for a permanently invalidated collaboration session. */
@@ -107,6 +109,7 @@ import type {
   SessionProjectAgentResult,
   SessionRestoreResult,
   SessionWorkersResult,
+  ConversationPageResult,
 } from './ws-client/types'
 import { createSystemConversationMessage, normalizeAgentId, normalizeConversationAttachments, resolveTerminalScopeAgentId } from './ws-client/utils'
 import { RequestDispatcher } from './ws-client/request-dispatcher'
@@ -125,6 +128,7 @@ import { handleSystemEvent } from './ws-client/event-handlers/system-event-handl
 import type {
   AgentDescriptor,
   AgentSessionPurpose,
+  BuilderTimelineChannelView,
   ChoiceAnswer,
   ClientCommand,
   ConversationAttachment,
@@ -152,6 +156,7 @@ export type {
 export class ManagerWsClient {
   private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
+  private conversationView: BuilderTimelineChannelView = 'web'
 
   /** Convenience accessor — delegates to transport so existing guards work unchanged. */
   private get socket(): WebSocket | null {
@@ -160,6 +165,8 @@ export class ManagerWsClient {
 
   private hasExplicitAgentSelection = false
   private explicitAgentSelectionAgentId: string | null = null
+  private explicitAgentSelectionPending = false
+  private rejectedExplicitAgentSelectionId: string | null = null
   private sessionInvalidatedObserver: (() => void) | null = null
   private readonly optimisticSendExpiryTimers = new Set<ReturnType<typeof setTimeout>>()
 
@@ -281,6 +288,14 @@ export class ManagerWsClient {
     return this.explicitAgentSelectionAgentId
   }
 
+  getRejectedExplicitSelectionAgentId(): string | null {
+    return this.rejectedExplicitAgentSelectionId
+  }
+
+  isExplicitSelectionPending(): boolean {
+    return this.explicitAgentSelectionPending
+  }
+
   private resolveTerminalScopeAgentId(
     agentId: string | null | undefined,
     agents: AgentDescriptor[] = this.state.agents,
@@ -322,6 +337,8 @@ export class ManagerWsClient {
     const isExplicitSelection = options?.explicit ?? true
     this.hasExplicitAgentSelection = isExplicitSelection
     this.explicitAgentSelectionAgentId = isExplicitSelection ? trimmed : null
+    this.explicitAgentSelectionPending = isExplicitSelection
+    this.rejectedExplicitAgentSelectionId = null
 
     const previousTerminalScopeId = this.resolveTerminalScopeAgentId(this.state.targetAgentId)
     const nextTerminalScopeId = this.resolveTerminalScopeAgentId(trimmed)
@@ -334,6 +351,10 @@ export class ManagerWsClient {
       targetAgentId: trimmed,
       messages: [],
       activityMessages: [],
+      conversationPage: null,
+      conversationPageLoading: false,
+      conversationPageRequestId: null,
+      conversationHistoryMutation: null,
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
@@ -349,7 +370,13 @@ export class ManagerWsClient {
     }
 
     this.bootstrapBuffer.begin(trimmed)
-    this.send(buildSubscribeCommand(trimmed))
+    this.send(buildSubscribeCommand(trimmed, this.conversationView))
+  }
+
+  setConversationView(view: BuilderTimelineChannelView): boolean {
+    if (this.conversationView === view) return false
+    this.conversationView = view
+    return this.refreshConversationHistory()
   }
 
   sendUserMessage(
@@ -884,6 +911,60 @@ export class ManagerWsClient {
     return this.sessionWorkerCache.getSessionWorkers(sessionAgentId)
   }
 
+  async loadOlderConversation(limit?: number): Promise<ConversationPageResult | null> {
+    const agentId = this.state.targetAgentId
+    const cursor = this.state.conversationPage?.nextCursor
+    if (!agentId || !cursor || !this.state.conversationPage?.hasOlder || this.state.conversationPageLoading) {
+      return null
+    }
+
+    assertReconnectableSocket(this.socket)
+    this.updateState({ conversationPageLoading: true, lastError: null })
+    try {
+      return await this.requestDispatcher.enqueueRequest(
+        'get_conversation_page',
+        (requestId) => {
+          this.updateState({ conversationPageRequestId: requestId })
+          return buildGetConversationPageCommand(
+            agentId,
+            cursor,
+            requestId,
+            limit,
+            this.conversationView,
+          )
+        },
+        { timeoutMs: CONVERSATION_PAGE_REQUEST_TIMEOUT_MS },
+      )
+    } catch (error) {
+      this.updateState({
+        conversationPageLoading: false,
+        conversationPageRequestId: null,
+        lastError: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  }
+
+  refreshConversationHistory(): boolean {
+    const agentId = this.state.targetAgentId
+    if (!agentId || !isSocketOpen(this.socket)) return false
+
+    this.updateState({
+      messages: [],
+      activityMessages: [],
+      conversationPage: null,
+      conversationPageLoading: false,
+      conversationPageRequestId: null,
+      conversationHistoryMutation: null,
+      modelCacheObservations: [],
+      pendingModelCacheObservations: [],
+      lastError: null,
+    })
+    this.bootstrapBuffer.begin(agentId)
+    this.send(buildSubscribeCommand(agentId, this.conversationView))
+    return true
+  }
+
   // -----------------------------------------------------------------------
   // Transport callbacks
   // -----------------------------------------------------------------------
@@ -891,6 +972,8 @@ export class ManagerWsClient {
   private handleTransportOpen(): void {
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
+    this.explicitAgentSelectionPending = false
+    this.rejectedExplicitAgentSelectionId = null
 
     // A reconnect (including after a backend restart) re-hydrates state IN
     // PLACE — never a full page reload. Resetting the bootstrap-tracking flags
@@ -924,12 +1007,14 @@ export class ManagerWsClient {
     // worker fetch was lost to the disconnect.
     this.sessionWorkerCache.retryFailedFetchesAfterReconnect()
 
-    this.send(buildSubscribeCommand(this.desiredAgentId))
+    this.send(buildSubscribeCommand(this.desiredAgentId, this.conversationView))
   }
 
   private handleTransportClose(event?: CloseEvent): void {
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
+    this.explicitAgentSelectionPending = false
+    this.rejectedExplicitAgentSelectionId = null
     this.bootstrapBuffer.clear()
 
     // Keep `loadedSessionIds` — see handleTransportOpen.
@@ -964,6 +1049,30 @@ export class ManagerWsClient {
 
   private handleServerEvent(parsed: unknown): void {
     const event = parsed as ServerEvent
+
+    if (
+      event.type === 'error' &&
+      event.code === 'UNKNOWN_AGENT' &&
+      this.explicitAgentSelectionAgentId === this.desiredAgentId
+    ) {
+      this.rejectedExplicitAgentSelectionId = this.explicitAgentSelectionAgentId
+      this.explicitAgentSelectionPending = false
+      this.bootstrapBuffer.clear()
+    } else if (
+      event.type === 'ready' &&
+      event.subscribedAgentId === this.explicitAgentSelectionAgentId
+    ) {
+      this.rejectedExplicitAgentSelectionId = null
+      this.explicitAgentSelectionPending = false
+    }
+
+    if (event.type === 'conversation_page') {
+      this.requestDispatcher.tracker.resolve('get_conversation_page', event.requestId, {
+        agentId: event.agentId,
+        messages: event.messages,
+        page: event.page,
+      })
+    }
 
     if (this.bootstrapBuffer.active) {
       const consumed = this.bootstrapBuffer.handleEvent(event)
@@ -1086,13 +1195,14 @@ export class ManagerWsClient {
     if (result.shouldClearExplicitSelection) {
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
+      this.explicitAgentSelectionPending = false
     }
 
     this.desiredAgentId = result.nextDesiredAgentId
     this.updateState(result.patch)
 
     if (result.subscribeToAgentId && isSocketOpen(this.socket)) {
-      this.send(buildSubscribeCommand(result.subscribeToAgentId))
+      this.send(buildSubscribeCommand(result.subscribeToAgentId, this.conversationView))
     }
   }
 
@@ -1132,11 +1242,12 @@ export class ManagerWsClient {
     if (result.nextDesiredAgentId !== undefined) {
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
+      this.explicitAgentSelectionPending = false
       this.desiredAgentId = result.nextDesiredAgentId
     }
 
     if (result.subscribeToAgentId) {
-      this.send(buildSubscribeCommand(result.subscribeToAgentId))
+      this.send(buildSubscribeCommand(result.subscribeToAgentId, this.conversationView))
     }
 
     this.updateState(result.patch)
@@ -1156,11 +1267,12 @@ export class ManagerWsClient {
     if (result.nextDesiredAgentId !== undefined) {
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
+      this.explicitAgentSelectionPending = false
       this.desiredAgentId = result.nextDesiredAgentId
     }
 
     if (result.subscribeToAgentId) {
-      this.send(buildSubscribeCommand(result.subscribeToAgentId))
+      this.send(buildSubscribeCommand(result.subscribeToAgentId, this.conversationView))
     }
 
     this.updateState(result.patch)

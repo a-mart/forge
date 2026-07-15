@@ -16,6 +16,7 @@ export const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
  * fast instead and let SessionWorkerCache's failure retry re-dispatch.
  */
 export const SESSION_WORKERS_REQUEST_TIMEOUT_MS = 15_000
+export const CONVERSATION_PAGE_REQUEST_TIMEOUT_MS = 30_000
 /** Base delay for SessionWorkerCache's bounded retry after a failed fetch (grows linearly). */
 export const SESSION_WORKERS_RETRY_BASE_MS = 2_000
 /** Max consecutive failed fetches per session before the cache stops retrying automatically. */
@@ -280,5 +281,5 @@ export function isWorkerAgent(agent: AgentDescriptor): boolean {
 }
 
 export function isAgentActivityEntry(entry: ConversationEntry): entry is AgentActivityEntry {
-  return entry.type === 'agent_message' || entry.type === 'agent_tool_call'
+  return entry.type === 'agent_message' || entry.type === 'agent_tool_call' || entry.type === 'activity_summary'
 }

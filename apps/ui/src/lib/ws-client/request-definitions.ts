@@ -2,6 +2,7 @@ import {
   MANAGER_MODEL_PRESETS,
   MANAGER_REASONING_LEVELS,
   type AgentSessionPurpose,
+  type BuilderTimelineChannelView,
   type ChoiceAnswer,
   type ClientCommand,
   type ConversationAttachment,
@@ -43,10 +44,15 @@ export function assertConnectedSocket(socket: WebSocket | null): asserts socket 
   }
 }
 
-export function buildSubscribeCommand(agentId?: string | null): ClientCommand {
+export function buildSubscribeCommand(
+  agentId?: string | null,
+  conversationView?: BuilderTimelineChannelView,
+): ClientCommand {
   return {
     type: 'subscribe',
     agentId: agentId ?? undefined,
+    conversationPaging: true,
+    ...(conversationView ? { conversationView } : {}),
   }
 }
 
@@ -663,6 +669,23 @@ export function buildGetSessionWorkersCommand(
   return {
     type: 'get_session_workers',
     sessionAgentId: requireTrimmedValue(sessionAgentId, 'Session agent id is required.'),
+    requestId,
+  }
+}
+
+export function buildGetConversationPageCommand(
+  agentId: string,
+  cursor: string,
+  requestId: string,
+  limit?: number,
+  view?: BuilderTimelineChannelView,
+): ClientCommand {
+  return {
+    type: 'get_conversation_page',
+    agentId: requireTrimmedValue(agentId, 'Agent id is required.'),
+    cursor: requireTrimmedValue(cursor, 'Conversation cursor is required.'),
+    ...(limit === undefined ? {} : { limit }),
+    ...(view ? { view } : {}),
     requestId,
   }
 }

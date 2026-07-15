@@ -10,6 +10,7 @@ import {
   type TerminalUpdatedEvent,
 } from "@forge/protocol";
 import { WebSocketServer } from "ws";
+
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { BUILDER_PROTOCOL_VERSION } from "@forge/protocol";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
@@ -113,6 +114,8 @@ import type { PromptRegistryForRoutes } from "../swarm/prompt-contracts.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
 import type { TelemetryService } from "../telemetry/telemetry-service.js";
+
+export const MAX_WS_INCOMING_PAYLOAD_BYTES = 8 * 1024 * 1024;
 import type { TerminalRuntimeConfig } from "../terminal/terminal-config.js";
 import { TerminalSettingsService } from "../terminal/terminal-settings-service.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
@@ -183,6 +186,12 @@ export class SwarmWebSocketServer {
 
   private readonly onConversationLog = (event: ServerEvent): void => {
     if (event.type !== "conversation_log") return;
+    this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
+  };
+
+  private readonly onActivitySummary = (event: ServerEvent): void => {
+    if (event.type !== "activity_summary") return;
     this.wsHandler.broadcastToSubscribed(event);
     this.cliWsHandler.broadcast(event);
   };
@@ -761,8 +770,8 @@ export class SwarmWebSocketServer {
     const httpServer = createServer((request, response) => {
       void this.handleHttpRequest(request, response);
     });
-    const wss = new WebSocketServer({ noServer: true });
-    const cliWss = new WebSocketServer({ noServer: true });
+    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_INCOMING_PAYLOAD_BYTES });
+    const cliWss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_INCOMING_PAYLOAD_BYTES });
 
     this.httpServer = httpServer;
     this.wss = wss;
@@ -802,6 +811,7 @@ export class SwarmWebSocketServer {
 
     this.swarmManager.on("conversation_message", this.onConversationMessage);
     this.swarmManager.on("conversation_log", this.onConversationLog);
+    this.swarmManager.on("activity_summary", this.onActivitySummary);
     this.swarmManager.on("agent_message", this.onAgentMessage);
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.on("choice_request", this.onChoiceRequest);
@@ -862,6 +872,7 @@ export class SwarmWebSocketServer {
 
     this.swarmManager.off("conversation_message", this.onConversationMessage);
     this.swarmManager.off("conversation_log", this.onConversationLog);
+    this.swarmManager.off("activity_summary", this.onActivitySummary);
     this.swarmManager.off("agent_message", this.onAgentMessage);
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.off("choice_request", this.onChoiceRequest);

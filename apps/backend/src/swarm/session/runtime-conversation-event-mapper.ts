@@ -25,7 +25,10 @@ const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provid
 const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
 const WORKER_ERROR_GENERIC_HINT = "The manager may need to retry after checking provider auth, quotas, or rate limits.";
 
-type RuntimeConversationProjection = ConversationMessageEvent | ConversationLogEvent | AgentToolCallEvent;
+type RuntimeConversationProjection =
+  | ConversationMessageEvent
+  | ConversationLogEvent
+  | AgentToolCallEvent;
 
 export class RuntimeConversationEventMapper {
   mapRuntimeEvent(options: {
@@ -44,6 +47,7 @@ export class RuntimeConversationEventMapper {
       if (toolProjection) {
         projections.push(toolProjection);
       }
+
     }
 
     if (descriptor?.role === "manager") {
@@ -58,6 +62,7 @@ export class RuntimeConversationEventMapper {
     projections.push(...runtimeLogProjections);
     return projections;
   }
+
 }
 
 function mapNonManagerRuntimeEvent(

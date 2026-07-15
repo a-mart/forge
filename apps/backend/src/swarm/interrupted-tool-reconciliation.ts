@@ -3,6 +3,7 @@ import type { AgentDescriptor, AgentToolCallEvent, ConversationEntryEvent, Conve
 import { CONVERSATION_ENTRY_TYPE, ConversationTimeline } from "./session/conversation-timeline.js";
 import { isConversationEntryEvent } from "./session/conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session/session-file-guard.js";
+import { buildActivitySummary } from "./session/activity-summary.js";
 
 const SEND_MESSAGE_TOOL_NAME = "send_message_to_agent";
 const INTERRUPTED_TOOL_TEXT = "Tool call interrupted by backend restart before completion.";
@@ -37,7 +38,13 @@ export function reconcileInterruptedToolCallsForBoot(options: {
 
     for (const start of unmatchedStarts) {
       const timestamp = now();
-      timeline.appendConversationEntry(managerDescriptor, buildInterruptedToolEnd(start, timestamp));
+      const end = buildInterruptedToolEnd(start, timestamp);
+      const appended = timeline.appendConversationEntry(managerDescriptor, end);
+      // Keep summary repair and raw-row wire projection on the same durable
+      // identity when a legacy tool event has no toolCallId.
+      end.timelineEntryId ??= appended.entryId;
+      const summary = buildActivitySummary(end, { status: "interrupted" });
+      if (summary) timeline.appendConversationEntry(managerDescriptor, summary);
       reconciledToolCalls += 1;
 
       if (start.toolName === SEND_MESSAGE_TOOL_NAME) {

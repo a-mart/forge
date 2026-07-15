@@ -24,6 +24,7 @@ type ContractCommandType = Extract<
   | 'create_directory'
   | 'pick_directory'
   | 'get_session_workers'
+  | 'get_conversation_page'
   | 'rename_profile'
   | 'archive_profile'
   | 'restore_profile'
@@ -66,6 +67,8 @@ type ContractSuccessEventType = Extract<
   | 'directory_created'
   | 'directory_picked'
   | 'session_workers_snapshot'
+  | 'conversation_history'
+  | 'conversation_page'
   | 'profile_renamed'
   | 'profile_archived'
   | 'profile_restored'
@@ -137,6 +140,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_workers_snapshot'],
     errorCodeFragments: ['get_session_workers'],
+  },
+  {
+    commandType: 'get_conversation_page',
+    resultFamily: 'conversation_page',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['conversation_page'],
+    errorCodeFragments: ['get_conversation_page'],
   },
   {
     commandType: 'rename_profile',

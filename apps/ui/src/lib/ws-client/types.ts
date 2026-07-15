@@ -8,6 +8,8 @@ import type {
   ProjectAgentShareEligibleTarget,
   ProjectAgentShareGrantInfo,
   SessionMemoryMergeResult,
+  ConversationEntry,
+  ConversationHistoryPageMetadata,
 } from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 
@@ -47,6 +49,11 @@ export type ProfileRestoreResult = { profileId: string; openAgentId: string }
 export type ArchiveLastUsedHydrationResult = { scannedSessionCount: number; hydratedSessionCount: number }
 export type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
 export type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[] }
+export type ConversationPageResult = {
+  agentId: string
+  messages: ConversationEntry[]
+  page: ConversationHistoryPageMetadata
+}
 
 export type SessionProjectAgentResult = {
   agentId: string
@@ -129,6 +136,7 @@ export type WsRequestResultMap = {
   set_project_agent_sharing: ProjectAgentSharingUpdatedResult
   get_project_agent_external_directory: ProjectAgentExternalDirectoryResult
   get_session_workers: SessionWorkersResult
+  get_conversation_page: ConversationPageResult
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult
   create_directory: DirectoryCreatedResult

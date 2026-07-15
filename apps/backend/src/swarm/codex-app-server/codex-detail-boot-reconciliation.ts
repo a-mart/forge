@@ -6,6 +6,7 @@ import { openSessionManagerWithSizeGuard } from "../session/session-file-guard.j
 import { isConversationEntryEvent } from "../session/conversation-validators.js";
 import type { AgentDescriptor, AgentToolCallEvent, ConversationEntryEvent } from "../types.js";
 import { safeJson } from "./codex-app-server-event-normalizer.js";
+import { buildActivitySummary } from "../session/activity-summary.js";
 
 const INTERRUPTED_CODEX_DETAIL_TEXT = safeJson({
   status: "cancelled",
@@ -78,8 +79,17 @@ export function reconcilePersistedCodexDetailStateForBoot(options: {
       const timestamp = options.now();
       const end = buildInterruptedCodexDetailEnd(start, timestamp);
       const appended = timeline.appendConversationEntry(manager, end);
+      // Keep summary repair and raw-row wire projection on the same durable
+      // identity when a legacy tool event has no toolCallId.
+      end.timelineEntryId ??= appended.entryId;
       managerEntries.push(end);
       managerLastEntryIdById.set(manager.agentId, appended.entryId);
+      const summary = buildActivitySummary(end);
+      if (summary) {
+        const summaryAppend = timeline.appendConversationEntry(manager, summary);
+        managerEntries.push(summary);
+        managerLastEntryIdById.set(manager.agentId, summaryAppend.entryId);
+      }
       reconciledToolCalls += 1;
     }
 

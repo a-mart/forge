@@ -10,7 +10,6 @@ import { isConversationEntryEvent } from "./conversation-validators.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 import { writeFileAtomic } from "../../utils/atomic-files.js";
 import {
-  MAX_CONVERSATION_HISTORY,
   shouldPersistConversationEntry,
   shouldWriteConversationHistoryCacheEntry
 } from "./history-policy.js";
@@ -36,6 +35,8 @@ export interface ConversationHistoryCacheMetadata {
   version: typeof CONVERSATION_CACHE_VERSION;
   persistedEntryCount: number;
   cachedPersistedEntryCount: number;
+  /** The sidecar is a bounded tail and canonical JSONL may contain additional rows. */
+  canonicalPrefixMayExist: boolean;
   firstPersistedEntryKey: string | null;
   lastPersistedEntryKey: string | null;
   canonicalStat: ConversationHistoryCacheCanonicalStat;
@@ -87,6 +88,7 @@ export interface ValidatedConversationHistoryCacheResult {
   detail?: string | null;
   fastPathUsed: boolean;
   rewriteCache: boolean;
+  canonicalPrefixMayExist?: boolean;
   validatedCanonicalProof?: ValidatedConversationHistoryCanonicalProof;
 }
 
@@ -495,6 +497,8 @@ export class HistoryCacheStore {
       detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
       fastPathUsed,
       rewriteCache,
+      canonicalPrefixMayExist:
+        cachedHistory.metadata?.canonicalPrefixMayExist ?? persistedEntryCount > cacheSummary.count,
       validatedCanonicalProof: {
         persistedEntryCount,
         lastPersistedEntryKey,
@@ -520,15 +524,15 @@ export class HistoryCacheStore {
     const maxCanonicalValidationAttempts = 2;
     for (let attempt = 0; attempt < maxCanonicalValidationAttempts; attempt += 1) {
       if (!(cacheSummary.count === 0 && persistedEntryCount === 0 && hasValidSessionHeader(sessionFile))) {
-        if (
-          cachedHistory.entries.length < MAX_CONVERSATION_HISTORY &&
-          cachedHistory.metadata.cachedPersistedEntryCount < persistedEntryCount
-        ) {
+        if (cachedHistory.metadata.cachedPersistedEntryCount > persistedEntryCount) {
           this.options.logDebug("history:load:cache:validate:reject", {
             sessionFile,
-            reason: "cache_missing_persisted_prefix"
+            reason: "cache_contains_noncanonical_entries"
           });
-          return buildMismatchResult("cache_missing_persisted_prefix");
+          return buildMismatchResult(
+            "metadata_entries_mismatch",
+            `cached=${cachedHistory.metadata.cachedPersistedEntryCount},canonical=${persistedEntryCount}`
+          );
         }
 
         if (cachedHistory.metadata.persistedEntryCount !== persistedEntryCount) {
@@ -603,9 +607,15 @@ export class HistoryCacheStore {
   buildMetadata(
     history: ConversationEntryEvent[],
     persistedEntryCount: number,
-    canonicalStat: ConversationHistoryCacheCanonicalStat | null
+    canonicalStat: ConversationHistoryCacheCanonicalStat | null,
+    canonicalPrefixMayExist = false
   ): ConversationHistoryCacheMetadata {
-    return buildConversationHistoryCacheMetadata(history, persistedEntryCount, canonicalStat);
+    return buildConversationHistoryCacheMetadata(
+      history,
+      persistedEntryCount,
+      canonicalStat,
+      canonicalPrefixMayExist
+    );
   }
 
   queueCacheSnapshotWrite(
@@ -874,7 +884,8 @@ function summarizePersistedConversationEntries(
 function buildConversationHistoryCacheMetadata(
   history: ConversationEntryEvent[],
   persistedEntryCount: number,
-  canonicalStat: ConversationHistoryCacheCanonicalStat | null
+  canonicalStat: ConversationHistoryCacheCanonicalStat | null,
+  canonicalPrefixMayExist = false
 ): ConversationHistoryCacheMetadata {
   const summary = summarizePersistedConversationEntries(history);
 
@@ -883,6 +894,7 @@ function buildConversationHistoryCacheMetadata(
     version: CONVERSATION_CACHE_VERSION,
     persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
     cachedPersistedEntryCount: summary.count,
+    canonicalPrefixMayExist: canonicalPrefixMayExist || persistedEntryCount > summary.count,
     firstPersistedEntryKey: summary.first?.key ?? null,
     lastPersistedEntryKey: summary.last?.key ?? null,
     canonicalStat: normalizeConversationHistoryCacheCanonicalStat(canonicalStat)
@@ -943,6 +955,7 @@ function parseConversationHistoryCacheMetadata(value: unknown): ConversationHist
 
   const persistedEntryCount = (value as { persistedEntryCount?: unknown }).persistedEntryCount;
   const cachedPersistedEntryCount = (value as { cachedPersistedEntryCount?: unknown }).cachedPersistedEntryCount;
+  const canonicalPrefixMayExist = (value as { canonicalPrefixMayExist?: unknown }).canonicalPrefixMayExist;
   const firstPersistedEntryKey = (value as { firstPersistedEntryKey?: unknown }).firstPersistedEntryKey;
   const lastPersistedEntryKey = (value as { lastPersistedEntryKey?: unknown }).lastPersistedEntryKey;
   const canonicalStat = (value as { canonicalStat?: unknown }).canonicalStat;
@@ -956,6 +969,10 @@ function parseConversationHistoryCacheMetadata(value: unknown): ConversationHist
     !Number.isFinite(cachedPersistedEntryCount) ||
     cachedPersistedEntryCount < 0
   ) {
+    return null;
+  }
+
+  if (canonicalPrefixMayExist !== undefined && typeof canonicalPrefixMayExist !== "boolean") {
     return null;
   }
 
@@ -986,6 +1003,8 @@ function parseConversationHistoryCacheMetadata(value: unknown): ConversationHist
     version: CONVERSATION_CACHE_VERSION,
     persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
     cachedPersistedEntryCount: Math.max(0, Math.trunc(cachedPersistedEntryCount)),
+    canonicalPrefixMayExist:
+      canonicalPrefixMayExist ?? persistedEntryCount > cachedPersistedEntryCount,
     firstPersistedEntryKey,
     lastPersistedEntryKey,
     canonicalStat: normalizeConversationHistoryCacheCanonicalStat({

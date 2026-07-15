@@ -78,6 +78,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "fork_session":
     case "merge_session_memory":
     case "get_session_workers":
+    case "get_conversation_page":
     case "stop_all_agents":
     case "reorder_profiles":
     case "list_directories":

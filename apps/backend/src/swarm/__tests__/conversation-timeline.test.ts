@@ -607,4 +607,31 @@ describe("ConversationTimeline", () => {
     await expect(collectConversationMessageIdsFromSessionFile(join(root, "missing.jsonl"))).resolves.toEqual(new Set());
     await expect(collectConversationMessageIdsFromSessionFile(sessionFile)).resolves.toEqual(new Set(["message-1", "message-2", "wrapper-only"]));
   });
+
+  it("hydrates the append parent from a final row larger than the initial tail window", async () => {
+    const root = await createTempDir("conversation-timeline-oversized-leaf-");
+    const sessionFile = join(root, "session.jsonl");
+    const oversizedTail = JSON.stringify({
+      type: "custom",
+      customType: "provider_state",
+      id: "oversized-tail",
+      parentId: null,
+      timestamp: FIXED_NOW,
+      data: { payload: "x".repeat(32 * 1024) }
+    });
+    writeFileSync(
+      sessionFile,
+      `${buildSessionHeader(root)}\n${oversizedTail}\n`,
+      "utf8"
+    );
+
+    const appended = makeTimeline().appendConversationEntry(
+      { sessionFile, cwd: root },
+      makeMessage("stopped-manager", "fallback append")
+    );
+
+    expect(appended.parentId).toBe("oversized-tail");
+    const lastLine = readFileSync(sessionFile, "utf8").trim().split("\n").at(-1);
+    expect(lastLine ? JSON.parse(lastLine).parentId : undefined).toBe("oversized-tail");
+  });
 });

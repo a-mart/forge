@@ -192,6 +192,7 @@ export class CliHeadlessSubscriptions {
 
       case "conversation_message":
       case "conversation_log":
+      case "activity_summary":
       case "agent_message":
       case "agent_tool_call":
       case "choice_request":

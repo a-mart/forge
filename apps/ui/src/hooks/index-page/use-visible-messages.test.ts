@@ -89,6 +89,46 @@ function makeToolCall(
 }
 
 describe('deriveVisibleMessages', () => {
+  it('uses canonical sequence to preserve interleaving when timestamps tie', () => {
+    const timestamp = '2026-01-01T00:00:01.000Z'
+    const message: ConversationEntry = {
+      type: 'conversation_message',
+      timelineEntryId: 'message-row',
+      timelineSequence: 200,
+      agentId: worker.agentId,
+      role: 'assistant',
+      text: 'after activity',
+      timestamp,
+      source: 'speak_to_user',
+    }
+    const activity: ConversationEntry = {
+      type: 'activity_summary',
+      schemaVersion: 1,
+      itemId: 'tool:worker-1:tool-1',
+      timelineEntryId: 'activity-row',
+      timelineSequence: 100,
+      agentId: worker.agentId,
+      actorAgentId: worker.agentId,
+      timestamp,
+      kind: 'tool_activity',
+      status: 'completed',
+      displaySummary: 'Ran command',
+    }
+
+    const result = deriveVisibleMessages({
+      messages: [message],
+      activityMessages: [activity],
+      agents: [manager, worker],
+      activeAgent: worker,
+      channelView: 'all',
+    })
+
+    expect(result.allMessages.map((entry) => entry.timelineEntryId)).toEqual([
+      'activity-row',
+      'message-row',
+    ])
+  })
+
   it('keeps worker-origin session choices visible in web and manager all views', () => {
     const choice: ConversationEntry = {
       type: 'choice_request',

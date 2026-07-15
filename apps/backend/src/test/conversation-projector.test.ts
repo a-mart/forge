@@ -8,6 +8,7 @@ import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import { reconcileInterruptedToolCallsForBoot } from '../swarm/interrupted-tool-reconciliation.js'
 import { getMessageRoutingReceiptsPath } from '../swarm/session/message-routing-receipts.js'
+import { MAX_CONVERSATION_HISTORY } from '../swarm/session/history-policy.js'
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session-file-guard.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
@@ -89,6 +90,33 @@ function makeRuntimeForSession(descriptor: AgentDescriptor): SwarmAgentRuntime {
   }
 }
 
+function makeDeferredPersistenceRuntime(descriptor: AgentDescriptor): SwarmAgentRuntime {
+  const customEntries = new Map<string, unknown[]>()
+  return {
+    descriptor,
+    getStatus: () => descriptor.status,
+    getPendingCount: () => 0,
+    getContextUsage: () => undefined,
+    sendMessage: async () => ({
+      targetAgentId: descriptor.agentId,
+      deliveryId: 'runtime-delivery',
+      acceptedMode: 'prompt',
+    }),
+    compact: async () => ({ status: 'ok' }),
+    smartCompact: async () => ({ compacted: true }),
+    stopInFlight: async () => {},
+    terminate: async () => {},
+    recycle: async () => {},
+    getCustomEntries: (customType: string) => customEntries.get(customType) ?? [],
+    appendCustomEntry: (customType: string, data?: unknown) => {
+      const entries = customEntries.get(customType) ?? []
+      entries.push(data)
+      customEntries.set(customType, entries)
+      return `deferred-${entries.length}`
+    },
+  }
+}
+
 function findConversationCustomEntry(entries: SessionEntryWithId[], text: string): SessionEntryWithId | undefined {
   return entries.find(
     (entry) =>
@@ -144,16 +172,21 @@ async function buildCacheMetadata(
   overrides: Partial<{
     persistedEntryCount: number
     cachedPersistedEntryCount: number
+    canonicalPrefixMayExist: boolean
     firstPersistedEntryKey: string | null
     lastPersistedEntryKey: string | null
     canonicalStat: { size: number; mtimeMs: number }
   }> = {},
 ): Promise<Record<string, unknown>> {
+  const persistedEntryCount = overrides.persistedEntryCount ?? 0
+  const cachedPersistedEntryCount = overrides.cachedPersistedEntryCount ?? 0
   return {
     type: 'swarm_conversation_cache_meta',
     version: CURRENT_CONVERSATION_CACHE_VERSION,
-    persistedEntryCount: overrides.persistedEntryCount ?? 0,
-    cachedPersistedEntryCount: overrides.cachedPersistedEntryCount ?? 0,
+    persistedEntryCount,
+    cachedPersistedEntryCount,
+    canonicalPrefixMayExist:
+      overrides.canonicalPrefixMayExist ?? persistedEntryCount > cachedPersistedEntryCount,
     firstPersistedEntryKey: overrides.firstPersistedEntryKey ?? null,
     lastPersistedEntryKey: overrides.lastPersistedEntryKey ?? null,
     canonicalStat: overrides.canonicalStat ?? (await readCanonicalStat(sessionFile)),
@@ -161,6 +194,222 @@ async function buildCacheMetadata(
 }
 
 describe('ConversationProjector session tree continuity', () => {
+  it('pages the canonical source without gaps when newer entries append between pages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-memory-page-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const projector = makeProjector({ descriptor })
+
+    for (let index = 0; index < 5; index += 1) {
+      projector.emitConversationMessage({
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'system',
+        text: `message ${index}`,
+        timestamp: new Date(index * 1000).toISOString(),
+        source: 'system',
+      })
+    }
+
+    const first = projector.getConversationHistoryPage(descriptor.agentId, { limit: 2 })
+    expect(first.page.source).toBe('canonical')
+    expect(first.messages.map((entry) => entry.type === 'conversation_message' ? entry.text : 'unexpected'))
+      .toEqual(['message 3', 'message 4'])
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'system',
+      text: 'new live message',
+      timestamp: '2026-01-01T00:00:06.000Z',
+      source: 'system',
+    })
+    const second = projector.getConversationHistoryPage(descriptor.agentId, {
+      cursor: first.page.nextCursor,
+      limit: 2,
+    })
+    expect(second.page.source).toBe('canonical')
+    expect(second.messages.map((entry) => entry.type === 'conversation_message' ? entry.text : 'unexpected'))
+      .toEqual(['message 1', 'message 2'])
+
+    const third = projector.getConversationHistoryPage(descriptor.agentId, {
+      cursor: second.page.nextCursor,
+      limit: 2,
+    })
+    expect(third.messages.map((entry) => entry.type === 'conversation_message' ? entry.text : 'unexpected'))
+      .toEqual(['message 0'])
+    expect(third.page.hasOlder).toBe(false)
+  })
+
+  it('uses active memory as a head overlay and crosses into canonical rows beyond the memory bound', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-active-seam-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const canonicalRows = Array.from({ length: 2005 }, (_, index) => JSON.stringify({
+      type: 'custom',
+      customType: 'swarm_conversation_entry',
+      id: `row-${index}`,
+      parentId: index > 0 ? `row-${index - 1}` : null,
+      timestamp: new Date(index).toISOString(),
+      data: {
+        type: 'conversation_message',
+        id: `message-${index}`,
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: `message ${index}`,
+        timestamp: new Date(index).toISOString(),
+        source: 'system',
+      },
+    }))
+    await writeFile(sessionFile, `${canonicalRows.join('\n')}\n`, 'utf8')
+
+    const runtime = makeDeferredPersistenceRuntime(descriptor)
+    const projector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, runtime]]),
+    })
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      id: 'live-deferred',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'live but not flushed yet',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'system',
+    })
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      id: 'live-deferred-2',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'second live event at the same persisted size',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'system',
+    })
+
+    const liveHistory = projector.getConversationHistory(descriptor.agentId)
+      .filter((entry) => entry.type === 'conversation_message' && entry.id?.startsWith('live-deferred'))
+    expect(liveHistory.map((entry) => entry.timelineSequence)).toEqual([
+      expect.any(Number),
+      expect.any(Number),
+    ])
+    expect(liveHistory[1].timelineSequence).toBe((liveHistory[0].timelineSequence ?? -1) + 1)
+
+    const seen: string[] = []
+    let cursor: string | undefined
+    let pageCount = 0
+    do {
+      const page = projector.getConversationHistoryPage(descriptor.agentId, { cursor, limit: 500 })
+      seen.push(...page.messages.flatMap((entry) =>
+        entry.type === 'conversation_message' ? [entry.id ?? entry.text] : [],
+      ))
+      cursor = page.page.nextCursor
+      pageCount += 1
+      expect(pageCount).toBeLessThan(10)
+    } while (cursor)
+
+    expect(seen).toContain('live-deferred')
+    expect(seen).toContain('live-deferred-2')
+    expect(seen).toContain('message-0')
+    expect(seen).toContain('message-2004')
+    expect(new Set(seen).size).toBe(2007)
+    expect(seen).toHaveLength(2007)
+    expect(await readFile(sessionFile, 'utf8')).not.toContain('live but not flushed yet')
+  })
+
+  it('recovers canonical rows removed from the middle of the bounded memory view', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-memory-gap-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const canonicalRows = Array.from({ length: MAX_CONVERSATION_HISTORY + 1 }, (_, index) => JSON.stringify({
+      type: 'custom',
+      customType: 'swarm_conversation_entry',
+      id: `row-${index}`,
+      parentId: index > 0 ? `row-${index - 1}` : null,
+      timestamp: new Date(index).toISOString(),
+      data: index === 1
+        ? {
+            type: 'agent_message',
+            agentId: descriptor.agentId,
+            timestamp: new Date(index).toISOString(),
+            source: 'agent_to_agent',
+            fromAgentId: 'worker',
+            toAgentId: descriptor.agentId,
+            text: 'retention removes this unprotected middle row first',
+          }
+        : {
+            type: 'conversation_message',
+            id: `message-${index}`,
+            agentId: descriptor.agentId,
+            role: 'user',
+            text: `protected message ${index}`,
+            timestamp: new Date(index).toISOString(),
+            source: 'user_input',
+          },
+    }))
+    await writeFile(sessionFile, `${canonicalRows.join('\n')}\n`, 'utf8')
+
+    const projector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+    })
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    let pageCount = 0
+    do {
+      const page = projector.getConversationHistoryPage(descriptor.agentId, { cursor, limit: 500 })
+      expect(page.page.completeness).not.toBe('source_changed')
+      for (const entry of page.messages) {
+        if (entry.timelineEntryId) seen.add(entry.timelineEntryId)
+      }
+      cursor = page.page.nextCursor
+      pageCount += 1
+      expect(pageCount).toBeLessThan(10)
+    } while (cursor)
+
+    expect(seen.size).toBe(MAX_CONVERSATION_HISTORY + 1)
+    expect(seen).toContain('row-1')
+  })
+
+  it('applies the central Manager All policy to an active memory page', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-manager-all-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const projector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+    })
+
+    projector.emitAgentToolCall({
+      type: 'agent_tool_call',
+      agentId: descriptor.agentId,
+      actorAgentId: 'worker-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      kind: 'tool_execution_end',
+      toolName: 'read',
+      toolCallId: 'worker-tool',
+      text: 'worker detail',
+    })
+    projector.emitAgentToolCall({
+      type: 'agent_tool_call',
+      agentId: descriptor.agentId,
+      actorAgentId: descriptor.agentId,
+      timestamp: '2026-01-01T00:00:01.000Z',
+      kind: 'tool_execution_end',
+      toolName: 'exec',
+      toolCallId: 'manager-tool',
+      text: 'manager detail',
+    })
+
+    const page = projector.getConversationHistoryPage(descriptor.agentId, { view: 'all' })
+    expect(page.messages).toHaveLength(1)
+    expect(page.messages[0]).toMatchObject({
+      type: 'activity_summary',
+      itemId: `tool:${descriptor.agentId}:manager-tool`,
+      actorAgentId: descriptor.agentId,
+    })
+  })
+
   it('writes routing receipts to the session sidecar at the conversation entry choke point', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-'))
     const sessionFile = join(root, 'manager.jsonl')
@@ -886,7 +1135,7 @@ describe('ConversationProjector session tree continuity', () => {
     expect(malformedIdEntry).toBeUndefined()
   })
 
-  it('rejects and rewrites a tail-only cache snapshot even when the cached tail matches canonical history', async () => {
+  it('accepts a proven tail-only cache and recovers omitted rows through canonical paging', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-tail-cache-'))
     const sessionFile = join(root, 'manager.jsonl')
     const descriptor = makeDescriptor(sessionFile, root)
@@ -897,7 +1146,7 @@ describe('ConversationProjector session tree continuity', () => {
       content: [{ type: 'text', text: 'seed message' }],
     } as any)
 
-    const firstEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
       type: 'conversation_message',
       agentId: descriptor.agentId,
       role: 'assistant',
@@ -938,6 +1187,8 @@ describe('ConversationProjector session tree continuity', () => {
         timestamp: '2025-12-31T23:58:00.000Z',
         source: 'system',
         id: middleEntryId,
+        timelineEntryId: middleEntryId,
+        timelineSequence: 1,
       },
       {
         type: 'conversation_message',
@@ -947,29 +1198,43 @@ describe('ConversationProjector session tree continuity', () => {
         timestamp: FIXED_NOW,
         source: 'system',
         id: lastEntryId,
+        timelineEntryId: lastEntryId,
+        timelineSequence: 2,
       },
     ])
 
-    const projector = makeProjector({ descriptor })
+    const projector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+    })
     const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
     const history = result.history
 
     expect(
       history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted prefix message'),
-    ).toBe(true)
+    ).toBe(false)
     expect(result.diagnostics).toMatchObject({
-      cacheState: 'cache_missing_persisted_prefix',
-      historySource: 'cache_rebuild',
+      cacheState: 'hit',
+      historySource: 'cache_hit',
       coldLoad: true,
     })
 
-    const rewrittenCacheText = await waitForFileText(cacheFile, {
-      matches: (text) => text.includes('persisted prefix message'),
-    })
-    expect(rewrittenCacheText).toContain('"persistedEntryCount":3')
-    expect(rewrittenCacheText).toContain('"cachedPersistedEntryCount":3')
-    expect(rewrittenCacheText).toContain(`"firstPersistedEntryKey":"conversation_message:${firstEntryId}"`)
-    expect(rewrittenCacheText).toContain(`"lastPersistedEntryKey":"conversation_message:${lastEntryId}"`)
+    const seenTexts = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const page = projector.getConversationHistoryPage(descriptor.agentId, { cursor, limit: 2 })
+      page.messages.forEach((entry) => {
+        if (entry.type === 'conversation_message') seenTexts.add(entry.text)
+      })
+      cursor = page.page.nextCursor
+    } while (cursor)
+
+    expect(seenTexts).toEqual(new Set([
+      'persisted prefix message',
+      'persisted middle message',
+      'persisted tail message',
+    ]))
+    expect(await readFile(cacheFile, 'utf8')).not.toContain('persisted prefix message')
   })
 
   it('fast-paths a clean cache hit without rescanning the canonical session file or rewriting the sidecar', async () => {
@@ -1018,6 +1283,181 @@ describe('ConversationProjector session tree continuity', () => {
     expect(cacheStatAfterHit.mtimeMs).toBe(cacheStatBeforeHit.mtimeMs)
   })
 
+  it('rebuilds a pre-timeline cache before serving active memory pages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-pre-timeline-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const seededSession = SessionManager.open(sessionFile)
+    const cachedEntries: ConversationEntryEvent[] = []
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+
+    for (let index = 0; index < 300; index += 1) {
+      const entry: ConversationEntryEvent = {
+        type: 'conversation_message',
+        id: `message-${index}`,
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: `persisted-${index}`,
+        timestamp: new Date(index).toISOString(),
+        source: 'system',
+      }
+      seededSession.appendCustomEntry('swarm_conversation_entry', entry)
+      cachedEntries.push(entry)
+    }
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      await buildCacheMetadata(sessionFile, {
+        persistedEntryCount: cachedEntries.length,
+        cachedPersistedEntryCount: cachedEntries.length,
+        firstPersistedEntryKey: 'conversation_message:message-0',
+        lastPersistedEntryKey: 'conversation_message:message-299',
+      }),
+      ...cachedEntries,
+    ])
+
+    const projector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+    })
+    const loaded = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    expect(loaded.diagnostics).toMatchObject({
+      cacheState: 'timeline_metadata_missing',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
+    expect(loaded.history.every((entry) =>
+      typeof entry.timelineEntryId === 'string' && Number.isSafeInteger(entry.timelineSequence)
+    )).toBe(true)
+
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const page = projector.getConversationHistoryPage(descriptor.agentId, { cursor, limit: 200 })
+      page.messages.forEach((entry) => {
+        if (entry.timelineEntryId) seen.add(entry.timelineEntryId)
+      })
+      cursor = page.page.nextCursor
+    } while (cursor)
+
+    expect(seen.size).toBe(300)
+    const rewrittenCache = await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"timelineEntryId"') && text.includes('"timelineSequence"'),
+    })
+    expect(rewrittenCache).toContain('"timelineEntryId"')
+  })
+
+  it('migrates a sparse pre-timeline cache once even when the bounded tail cannot reach every row', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-sparse-cache-migration-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    SessionManager.open(sessionFile).appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'session seed' }],
+    } as any)
+    const header = (await readFile(sessionFile, 'utf8')).trimEnd()
+
+    const makeEntry = (index: number): ConversationEntryEvent => ({
+      type: 'conversation_message',
+      id: `message-${index}`,
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: `persisted-${index}`,
+      timestamp: new Date(index).toISOString(),
+      source: 'system',
+    })
+    const makeCanonicalLine = (index: number, entry: ConversationEntryEvent): string => JSON.stringify({
+      type: 'custom',
+      id: `canonical-${index}`,
+      parentId: null,
+      timestamp: entry.timestamp,
+      customType: 'swarm_conversation_entry',
+      data: entry,
+    })
+    const cachedEntries = [makeEntry(0), makeEntry(1), makeEntry(2)]
+    const fillerLine = `${JSON.stringify({
+      type: 'message',
+      id: 'non-conversation-filler',
+      parentId: null,
+      timestamp: FIXED_NOW,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'x'.repeat(900) }],
+      },
+    })}\n`
+    const fillerCopies = Math.ceil((17 * 1024 * 1024) / Buffer.byteLength(fillerLine, 'utf8'))
+
+    await writeFile(
+      sessionFile,
+      `${header}\n${makeCanonicalLine(0, cachedEntries[0])}\n${fillerLine.repeat(fillerCopies)}` +
+        `${makeCanonicalLine(1, cachedEntries[1])}\n${makeCanonicalLine(2, cachedEntries[2])}\n`,
+      'utf8',
+    )
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      await buildCacheMetadata(sessionFile, {
+        persistedEntryCount: cachedEntries.length,
+        cachedPersistedEntryCount: cachedEntries.length,
+        firstPersistedEntryKey: 'conversation_message:message-0',
+        lastPersistedEntryKey: 'conversation_message:message-2',
+      }),
+      ...cachedEntries,
+    ])
+
+    const firstProjector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+    })
+    const migrated = firstProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    expect(migrated.diagnostics).toMatchObject({
+      cacheState: 'timeline_metadata_missing',
+      historySource: 'cache_rebuild',
+      persistedEntryCount: 3,
+    })
+    expect(migrated.history.map((entry) => entry.type === 'conversation_message' ? entry.text : entry.type))
+      .toEqual(['persisted-1', 'persisted-2'])
+
+    const rewrittenCache = await waitForFileText(cacheFile, {
+      timeoutMs: 2_000,
+      matches: (text) =>
+        text.includes('"persistedEntryCount":3') &&
+        text.includes('"cachedPersistedEntryCount":2') &&
+        text.includes('"canonicalPrefixMayExist":true') &&
+        text.includes('"timelineEntryId"'),
+    })
+    expect(rewrittenCache).not.toContain('persisted-0')
+
+    const secondProjector = makeProjector({
+      descriptor,
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+    })
+    const cacheHit = secondProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    expect(cacheHit.diagnostics).toMatchObject({
+      cacheState: 'hit',
+      historySource: 'cache_hit',
+      persistedEntryCount: 3,
+    })
+
+    const seenTexts = new Set<string>()
+    let cursor: string | undefined
+    let pageCount = 0
+    do {
+      const page = secondProjector.getConversationHistoryPage(descriptor.agentId, { cursor, limit: 10 })
+      page.messages.forEach((entry) => {
+        if (entry.type === 'conversation_message') seenTexts.add(entry.text)
+      })
+      cursor = page.page.nextCursor
+      pageCount += 1
+    } while (cursor && pageCount < 10)
+
+    expect(cursor).toBeUndefined()
+    expect(seenTexts).toEqual(new Set(['persisted-0', 'persisted-1', 'persisted-2']))
+  })
+
   it('falls back to a canonical summary scan when the session stat fingerprint changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-fast-miss-'))
     const sessionFile = join(root, 'manager.jsonl')
@@ -1061,7 +1501,7 @@ describe('ConversationProjector session tree continuity', () => {
       result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted after stat change'),
     ).toBe(true)
     expect(result.diagnostics).toMatchObject({
-      cacheState: 'cache_missing_persisted_prefix',
+      cacheState: 'persisted_entry_count_mismatch',
       historySource: 'cache_rebuild',
       coldLoad: true,
       fastPathUsed: false,
@@ -1182,7 +1622,7 @@ describe('ConversationProjector session tree continuity', () => {
       result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted during validation'),
     ).toBe(true)
     expect(result.diagnostics).toMatchObject({
-      cacheState: 'cache_missing_persisted_prefix',
+      cacheState: 'persisted_entry_count_mismatch',
       historySource: 'cache_rebuild',
       coldLoad: true,
       fastPathUsed: false,
@@ -1252,7 +1692,7 @@ describe('ConversationProjector session tree continuity', () => {
     ).toBe(true)
     expect(result.diagnostics.cacheState).not.toBe('hit')
     expect(result.diagnostics).toMatchObject({
-      cacheState: 'cache_missing_persisted_prefix',
+      cacheState: 'persisted_entry_count_mismatch',
       historySource: 'cache_rebuild',
       coldLoad: true,
       fastPathUsed: false,
@@ -1665,7 +2105,7 @@ describe('ConversationProjector session tree continuity', () => {
     })
   })
 
-  it('reports size_guard_skip when the session JSONL exceeds the size guard', async () => {
+  it('returns a bounded partial result when the session JSONL exceeds the old full-open size guard', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-size-guard-skip-'))
     const sessionFile = join(root, 'manager.jsonl')
     const descriptor = makeDescriptor(sessionFile, root)
@@ -1682,11 +2122,12 @@ describe('ConversationProjector session tree continuity', () => {
 
     expect(result.history).toEqual([])
     expect(result.diagnostics).toMatchObject({
-      cacheState: 'size_guard_skip',
-      historySource: 'size_guard_skip',
+      cacheState: 'absent',
+      historySource: 'full_parse',
       coldLoad: true,
     })
-    expect(result.diagnostics.detail).toContain('session_size_guard_skip')
+    expect(result.diagnostics.detail).toContain('canonical_tail_scan_limited')
+    expect(result.diagnostics.fsReadBytes).toBeLessThanOrEqual(16 * 1024 * 1024)
   })
 
   it('accepts a complete trimmed cache window for long persisted transcripts', async () => {
@@ -1874,6 +2315,11 @@ describe('ConversationProjector session tree continuity', () => {
       getPinnedMessageIds: () => new Set(['pinned-msg']),
     })
 
+    const page = projector.getConversationHistoryPage(descriptor.agentId, { limit: 10 })
+    expect(page.messages.find(
+      (entry) => entry.type === 'conversation_message' && entry.id === 'pinned-msg',
+    )).toMatchObject({ type: 'conversation_message', id: 'pinned-msg', pinned: true })
+
     const history = projector.getConversationHistory(descriptor.agentId)
     const pinnedEntry = history.find((entry) => entry.type === 'conversation_message' && entry.id === 'pinned-msg')
     const regularEntry = history.find((entry) => entry.type === 'conversation_message' && entry.id === 'regular-msg')
@@ -1944,7 +2390,7 @@ describe('ConversationProjector session tree continuity', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'seed message' }],
     } as any)
-    seededSession.appendCustomEntry('swarm_conversation_entry', {
+    const stalePinnedOuterId = seededSession.appendCustomEntry('swarm_conversation_entry', {
       type: 'conversation_message',
       agentId: descriptor.agentId,
       id: 'stale-cache-pinned',
@@ -1953,7 +2399,7 @@ describe('ConversationProjector session tree continuity', () => {
       timestamp: '2025-12-31T23:58:00.000Z',
       source: 'system',
     })
-    seededSession.appendCustomEntry('swarm_conversation_entry', {
+    const sidecarPinnedOuterId = seededSession.appendCustomEntry('swarm_conversation_entry', {
       type: 'conversation_message',
       agentId: descriptor.agentId,
       id: 'sidecar-pinned',
@@ -1980,6 +2426,8 @@ describe('ConversationProjector session tree continuity', () => {
         timestamp: '2025-12-31T23:58:00.000Z',
         source: 'system',
         pinned: true,
+        timelineEntryId: stalePinnedOuterId,
+        timelineSequence: 1,
       },
       {
         type: 'conversation_message',
@@ -1990,6 +2438,8 @@ describe('ConversationProjector session tree continuity', () => {
         timestamp: FIXED_NOW,
         source: 'system',
         pinned: false,
+        timelineEntryId: sidecarPinnedOuterId,
+        timelineSequence: 2,
       },
     ])
 
@@ -2104,7 +2554,7 @@ describe('ConversationProjector session tree continuity', () => {
     )
 
     const managerHistory = projector.getConversationHistory(managerDescriptor.agentId)
-    expect(managerHistory).toEqual([
+    expect(managerHistory).toMatchObject([
       {
         type: 'choice_request',
         agentId: workerDescriptor.agentId,
@@ -2122,7 +2572,7 @@ describe('ConversationProjector session tree continuity', () => {
       .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
       .map((entry: any) => entry.data)
 
-    expect(persistedConversationEntries).toEqual([
+    expect(persistedConversationEntries).toMatchObject([
       {
         type: 'choice_request',
         agentId: workerDescriptor.agentId,
@@ -2153,7 +2603,7 @@ describe('ConversationProjector session tree continuity', () => {
     })
     const reloadedHistory = reloadedProjector.getConversationHistory(managerDescriptor.agentId)
 
-    expect(reloadedHistory).toEqual([
+    expect(reloadedHistory).toMatchObject([
       {
         type: 'choice_request',
         agentId: workerDescriptor.agentId,
@@ -2253,7 +2703,7 @@ describe('ConversationProjector runtime event mapper facade', () => {
       args: { path: 'README.md' },
     })
 
-    expect(emitted).toEqual([
+    expect(emitted).toMatchObject([
       {
         eventName: 'agent_tool_call',
         payload: {
@@ -2281,7 +2731,62 @@ describe('ConversationProjector runtime event mapper facade', () => {
         },
       },
     ])
+    expect(emitted.every(({ payload }) =>
+      typeof payload.timelineEntryId === 'string' && Number.isSafeInteger(payload.timelineSequence)
+    )).toBe(true)
     expect(projector.getConversationHistory(managerDescriptor.agentId)).toEqual([emitted[0]?.payload])
     expect(projector.getConversationHistory(workerDescriptor.agentId)).toEqual([emitted[1]?.payload])
+
+    projector.captureConversationEventFromRuntime(workerDescriptor.agentId, {
+      type: 'tool_execution_end',
+      toolName: 'read',
+      toolCallId: 'tool-1',
+      result: { privateOutput: 'must not enter compact summary' },
+      isError: false,
+    })
+
+    expect(emitted.slice(-3)).toMatchObject([
+      {
+        eventName: 'agent_tool_call',
+        payload: { type: 'agent_tool_call', agentId: managerDescriptor.agentId, actorAgentId: workerDescriptor.agentId },
+      },
+      {
+        eventName: 'conversation_log',
+        payload: { type: 'conversation_log', agentId: workerDescriptor.agentId },
+      },
+      {
+        eventName: 'activity_summary',
+        payload: {
+          type: 'activity_summary',
+          itemId: 'tool:worker:tool-1',
+          agentId: workerDescriptor.agentId,
+          actorAgentId: workerDescriptor.agentId,
+          status: 'completed',
+          displaySummary: 'Read file',
+        },
+      },
+    ])
+    expect(JSON.stringify(emitted.at(-1)?.payload)).not.toContain('privateOutput')
+    expect(projector.getConversationHistory(managerDescriptor.agentId).map((entry) => entry.type)).toEqual([
+      'agent_tool_call',
+      'agent_tool_call',
+    ])
+    expect(projector.getConversationHistory(workerDescriptor.agentId).map((entry) => entry.type)).toEqual([
+      'conversation_log',
+      'conversation_log',
+      'activity_summary',
+    ])
+
+    const persistedWorkerEntries = SessionManager.open(workerSessionFile)
+      .getEntries()
+      .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
+      .map((entry: any) => entry.data)
+    expect(persistedWorkerEntries).toMatchObject([
+      {
+        type: 'activity_summary',
+        itemId: 'tool:worker:tool-1',
+        displaySummary: 'Read file',
+      },
+    ])
   })
 })

@@ -3,6 +3,7 @@ import type {
   AgentDescriptor,
   AgentStatus,
   ConversationEntry,
+  ConversationHistoryPageMetadata,
   ManagerProfile,
   ProjectPresenceViewer,
   SessionPlanSnapshotEvent,
@@ -22,8 +23,13 @@ export type ModelCacheObservationEntry = Extract<
 >
 export type AgentActivityEntry = Extract<
   ConversationEntry,
-  { type: 'agent_message' | 'agent_tool_call' }
+  { type: 'agent_message' | 'agent_tool_call' | 'activity_summary' }
 >
+
+export interface ConversationHistoryMutation {
+  revision: number
+  kind: 'replace' | 'prepend'
+}
 
 export interface ManagerWsState {
   connected: boolean
@@ -33,6 +39,12 @@ export interface ManagerWsState {
   subscribedAgentId: string | null
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
+  conversationPage: ConversationHistoryPageMetadata | null
+  conversationPageLoading: boolean
+  /** Request id for the one older-page response allowed to mutate the active timeline. */
+  conversationPageRequestId: string | null
+  /** Explicit transport mutation so the viewport never has to infer replace vs prepend. */
+  conversationHistoryMutation: ConversationHistoryMutation | null
   /** Persisted cache observations for header UI; not rendered as chat rows. */
   modelCacheObservations: ModelCacheObservationEntry[]
   /** Bootstrap/live observations held until persisted setting is loaded. */
@@ -82,6 +94,10 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     subscribedAgentId: null,
     messages: [],
     activityMessages: [],
+    conversationPage: null,
+    conversationPageLoading: false,
+    conversationPageRequestId: null,
+    conversationHistoryMutation: null,
     modelCacheObservations: [],
     pendingModelCacheObservations: [],
     modelCacheVisualizationSettingLoaded: false,

@@ -1,16 +1,23 @@
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
 import {
   CONVERSATION_ENTRY_TYPE,
   ConversationTimeline,
-  extractSessionEntryId
 } from "./conversation-timeline.js";
-import type { ModelCacheObservationEvent, PlanSummaryEvent, ServerEvent } from "@forge/protocol";
+import {
+  createBuilderTimelineVisibilityPredicate,
+  type BuilderTimelineChannelView,
+  type ModelCacheObservationEvent,
+  type PlanSummaryEvent,
+  type ServerEvent,
+} from "@forge/protocol";
 import type { SidebarConversationHistoryDiagnostics, SidebarPerfRecorder } from "../../stats/sidebar-perf-types.js";
 import {
   HistoryCacheStore,
   type ValidatedConversationHistoryCanonicalProof
 } from "./history-cache-store.js";
 import {
+  MAX_CONVERSATION_HISTORY,
   shouldPersistConversationEntry,
   trimConversationHistory
 } from "./history-policy.js";
@@ -19,9 +26,6 @@ import {
   type MessageRoutingReceiptRecord
 } from "./message-routing-receipts.js";
 import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
-import { isConversationEntryEvent } from "./conversation-validators.js";
-import { backfillConversationMessageEntryId } from "./conversation-entry-id.js";
-import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
   createConversationHistoryDiagnostics,
   mergeDiagnosticDetails,
@@ -29,8 +33,19 @@ import {
   sumOptionalNumbers
 } from "./conversation-diagnostics.js";
 import { RuntimeConversationEventMapper, safeJson } from "./runtime-conversation-event-mapper.js";
+import { buildActivitySummary } from "./activity-summary.js";
+import {
+  createConversationHistorySeamCursor,
+  DEFAULT_CONVERSATION_PAGE_ITEMS,
+  MAX_CONVERSATION_PAGE_BYTES,
+  MAX_CONVERSATION_PAGE_ITEMS,
+  readConversationHistoryPage,
+  type ConversationHistoryPageResult,
+} from "./conversation-page-reader.js";
+import { projectConversationEntryForBuilderWire } from "./conversation-wire-projection.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
+  ActivitySummaryEvent,
   AgentDescriptor,
   AgentMessageEvent,
   AgentToolCallEvent,
@@ -43,6 +58,7 @@ import type {
 type ConversationEventName =
   | "conversation_message"
   | "conversation_log"
+  | "activity_summary"
   | "agent_message"
   | "agent_tool_call"
   | "conversation_reset"
@@ -53,6 +69,16 @@ type ConversationEventName =
 interface ConversationHistoryWithDiagnostics {
   history: ConversationEntryEvent[];
   diagnostics: SidebarConversationHistoryDiagnostics;
+}
+
+const MEMORY_PAGE_CURSOR_VERSION = 1;
+
+interface MemoryPageCursor {
+  version: typeof MEMORY_PAGE_CURSOR_VERSION;
+  source: "memory";
+  agentId: string;
+  beforeTimelineEntryId: string;
+  view: BuilderTimelineChannelView;
 }
 
 interface ConversationProjectorDependencies {
@@ -91,6 +117,8 @@ export class ConversationProjector {
   private readonly historyCacheStore: HistoryCacheStore;
   private readonly runtimeConversationEventMapper = new RuntimeConversationEventMapper();
   private readonly loadedFromDisk = new Set<string>();
+  private readonly nextTimelineSequenceBySource = new Map<string, number>();
+  private readonly canonicalPrefixMayExistByAgentId = new Set<string>();
 
   constructor(private readonly deps: ConversationProjectorDependencies) {
     this.timeline = new ConversationTimeline({
@@ -106,6 +134,119 @@ export class ConversationProjector {
 
   getConversationHistory(agentId: string): ConversationEntryEvent[] {
     return this.getConversationHistoryWithDiagnostics(agentId).history;
+  }
+
+  getConversationHistoryPage(
+    agentId: string,
+    options?: { cursor?: string; limit?: number; view?: BuilderTimelineChannelView },
+  ): ConversationHistoryPageResult {
+    const finishPage = (result: ConversationHistoryPageResult): ConversationHistoryPageResult => {
+      this.applyPinnedState(agentId, result.messages);
+      return result;
+    };
+    const descriptor = this.deps.descriptors.get(agentId);
+    if (!descriptor) {
+      return {
+        messages: [],
+        page: {
+          hasOlder: false,
+          completeness: "complete",
+          source: "memory",
+          sourceRevision: "missing_agent",
+          pageBytes: 0,
+          scanBytes: 0,
+        },
+      };
+    }
+
+    const view = options?.view ?? "all";
+    const memoryCursor = decodeMemoryPageCursor(options?.cursor);
+    if (memoryCursor) {
+      if (memoryCursor.agentId !== agentId || memoryCursor.view !== view) {
+        return sourceChangedMemoryPage("wrong_agent");
+      }
+
+      const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
+      const isVisible = buildBuilderPageVisibilityPredicate(
+        descriptor,
+        view,
+        [...this.deps.descriptors.values()],
+        history,
+      );
+      const boundaryIndex = history.findIndex(
+        (entry) => entry.timelineEntryId === memoryCursor.beforeTimelineEntryId,
+      );
+      if (boundaryIndex >= 0) {
+        return finishPage(buildMemoryHistoryPage({
+          agentId,
+          sessionFile: descriptor.sessionFile,
+          history,
+          endExclusive: boundaryIndex,
+          limit: options?.limit,
+          view,
+          isVisible,
+          canonicalPrefixMayExist: this.canonicalPrefixMayExistByAgentId.has(agentId),
+        }));
+      }
+
+      const seamCursor = createConversationHistorySeamCursor(
+        descriptor.sessionFile,
+        undefined,
+        view,
+      );
+      if (!seamCursor) return sourceChangedMemoryPage("missing_canonical_source");
+      return finishPage(readConversationHistoryPage({
+        sessionFile: descriptor.sessionFile,
+        agentId,
+        cursor: seamCursor,
+        limit: options?.limit,
+        projectionKey: view,
+        isVisible: buildCanonicalMemorySeamVisibility(history, isVisible),
+      }));
+    }
+
+    if (!options?.cursor && this.deps.runtimes.has(agentId)) {
+      const history = this.getConversationHistory(agentId);
+      if (history.length > 0) {
+        const isVisible = buildBuilderPageVisibilityPredicate(
+          descriptor,
+          view,
+          [...this.deps.descriptors.values()],
+          history,
+        );
+        return finishPage(buildMemoryHistoryPage({
+          agentId,
+          sessionFile: descriptor.sessionFile,
+          history,
+          endExclusive: history.length,
+          limit: options?.limit,
+          view,
+          isVisible,
+          canonicalPrefixMayExist: this.canonicalPrefixMayExistByAgentId.has(agentId),
+        }));
+      }
+    }
+
+    const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
+    const isVisible = buildBuilderPageVisibilityPredicate(
+      descriptor,
+      view,
+      [...this.deps.descriptors.values()],
+      history,
+    );
+    return finishPage(readConversationHistoryPage({
+      sessionFile: descriptor.sessionFile,
+      agentId,
+      cursor: options?.cursor,
+      limit: options?.limit,
+      projectionKey: view,
+      isVisible: this.deps.runtimes.has(agentId)
+        ? buildCanonicalMemorySeamVisibility(
+            history,
+            isVisible,
+          )
+        : isVisible,
+    }));
   }
 
   getConversationHistoryWithDiagnostics(agentId: string): ConversationHistoryWithDiagnostics {
@@ -150,6 +291,7 @@ export class ConversationProjector {
   resetConversationHistory(agentId: string, sessionFile?: string): void {
     this.deps.conversationEntriesByAgentId.set(agentId, []);
     this.loadedFromDisk.add(agentId);
+    this.canonicalPrefixMayExistByAgentId.delete(agentId);
 
     const resolvedSessionFile = sessionFile ?? this.deps.descriptors.get(agentId)?.sessionFile;
     if (!resolvedSessionFile) {
@@ -157,6 +299,7 @@ export class ConversationProjector {
     }
 
     this.timeline.resetSession(resolvedSessionFile);
+    this.nextTimelineSequenceBySource.delete(resolvedSessionFile);
     this.historyCacheStore.resetSession(resolvedSessionFile);
     this.historyCacheStore.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
@@ -164,6 +307,7 @@ export class ConversationProjector {
   deleteConversationHistory(agentId: string, sessionFile?: string): void {
     this.deps.conversationEntriesByAgentId.delete(agentId);
     this.loadedFromDisk.delete(agentId);
+    this.canonicalPrefixMayExistByAgentId.delete(agentId);
 
     const resolvedSessionFile = sessionFile ?? this.deps.descriptors.get(agentId)?.sessionFile;
     if (!resolvedSessionFile) {
@@ -171,6 +315,7 @@ export class ConversationProjector {
     }
 
     this.timeline.resetSession(resolvedSessionFile);
+    this.nextTimelineSequenceBySource.delete(resolvedSessionFile);
     this.historyCacheStore.resetSession(resolvedSessionFile);
     this.historyCacheStore.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
@@ -182,7 +327,22 @@ export class ConversationProjector {
 
   emitConversationLog(event: ConversationLogEvent): void {
     this.emitConversationEntry(event);
+    const activitySummary = buildActivitySummary(event);
+    if (activitySummary) {
+      // Persist the safe terminal representation before any corresponding raw
+      // live event is observable. A crash can then leave extra raw detail, but
+      // never a completed activity with no replayable Builder row.
+      this.emitConversationEntry(activitySummary);
+    }
     this.deps.emitServerEvent("conversation_log", event satisfies ServerEvent);
+    if (activitySummary) {
+      this.deps.emitServerEvent("activity_summary", activitySummary satisfies ServerEvent);
+    }
+  }
+
+  emitActivitySummary(event: ActivitySummaryEvent): void {
+    this.emitConversationEntry(event);
+    this.deps.emitServerEvent("activity_summary", event satisfies ServerEvent);
   }
 
   emitAgentMessage(event: AgentMessageEvent): void {
@@ -208,6 +368,18 @@ export class ConversationProjector {
 
   emitAgentToolCall(event: AgentToolCallEvent): void {
     this.emitConversationEntry(event);
+    // A worker's agent_tool_call is projected into its manager's timeline in
+    // addition to the worker-local conversation_log. Only summarize the
+    // self-owned event here so each timeline gets one terminal summary.
+    if (event.agentId === event.actorAgentId) {
+      const activitySummary = buildActivitySummary(event);
+      if (activitySummary) {
+        this.emitConversationEntry(activitySummary);
+        this.deps.emitServerEvent("agent_tool_call", event satisfies ServerEvent);
+        this.deps.emitServerEvent("activity_summary", activitySummary satisfies ServerEvent);
+        return;
+      }
+    }
     this.deps.emitServerEvent("agent_tool_call", event satisfies ServerEvent);
   }
 
@@ -229,6 +401,7 @@ export class ConversationProjector {
     this.timeline.clear();
     this.historyCacheStore.clear();
     this.loadedFromDisk.clear();
+    this.canonicalPrefixMayExistByAgentId.clear();
 
     // Seed leaf ids so fallback appends preserve parentId chains even before
     // the first full history load.
@@ -271,6 +444,7 @@ export class ConversationProjector {
   ): void {
     const historyAgentId = resolveHistoryAgentId(event, options?.historyAgentId);
     const descriptor = this.deps.descriptors.get(historyAgentId);
+    this.assignConversationTimelineMetadata(event, descriptor?.sessionFile);
     const history =
       descriptor && !this.loadedFromDisk.has(historyAgentId)
         ? this.loadConversationHistoryForDescriptor(descriptor)
@@ -352,6 +526,28 @@ export class ConversationProjector {
 
       if (validation.ok) {
         const validatedCachedEntries = validation.entries ?? [];
+        if (!hasCompleteTimelineMetadata(validatedCachedEntries)) {
+          this.deps.logDebug("history:load:cache:stale", {
+            agentId: descriptor.agentId,
+            sessionFile: descriptor.sessionFile,
+            reason: "timeline_metadata_missing",
+          });
+          return this.loadConversationHistoryFromSessionFile(descriptor, existingInMemoryEntries, {
+            cacheState: "timeline_metadata_missing",
+            historySource: "cache_rebuild",
+            cacheFileBytes: cacheHeaderLoad.cacheFileBytes,
+            persistedEntryCount: validation.persistedEntryCount,
+            cachedEntryCount: validation.cachedEntryCount,
+            sessionFileBytes: validation.sessionFileBytes,
+            sessionSummaryBytesScanned: validation.sessionSummaryBytesScanned,
+            cacheReadMs: totalCacheReadMs,
+            sessionSummaryReadMs: validation.sessionSummaryReadMs,
+            fsReadOps: cacheHeaderLoad.fsReadOps + validation.fsReadOps,
+            fsReadBytes: cacheHeaderLoad.fsReadBytes + validation.fsReadBytes,
+            detail: mergeDiagnosticDetails(validation.detail, "timeline_metadata_missing"),
+            fastPathUsed: validation.fastPathUsed,
+          });
+        }
         collapsePlanSummaryUpdates(validatedCachedEntries);
         trimConversationHistory(
           validatedCachedEntries,
@@ -366,6 +562,11 @@ export class ConversationProjector {
         this.historyCacheStore.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
         this.loadedFromDisk.add(descriptor.agentId);
         this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
+        if (validation.canonicalPrefixMayExist || validation.persistedEntryCount > validation.cachedEntryCount) {
+          this.canonicalPrefixMayExistByAgentId.add(descriptor.agentId);
+        } else {
+          this.canonicalPrefixMayExistByAgentId.delete(descriptor.agentId);
+        }
         if (validation.rewriteCache) {
           this.queueConversationHistoryCacheWrite(
             descriptor.agentId,
@@ -445,61 +646,60 @@ export class ConversationProjector {
     diagnosticsSeed: Omit<SidebarConversationHistoryDiagnostics, "coldLoad">
   ): ConversationHistoryWithDiagnostics {
     const entriesForAgent: ConversationEntryEvent[] = [];
-    let persistedEntryCount = 0;
-    let lastSessionEntryId: string | undefined = this.timeline.getLastSessionEntryId(descriptor.sessionFile);
+    let scannedPersistedEntryCount = 0;
+    this.timeline.hydrateLeafEntryId(descriptor);
     const diagnostics = createConversationHistoryDiagnostics({
       ...diagnosticsSeed,
       coldLoad: true
     });
+    let canonicalPrefixMayExist = false;
 
     try {
-      const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
-        context: `history:load:${descriptor.agentId}`
-      });
+      let cursor: string | undefined;
+      let scannedBytes = 0;
+      let readOps = 0;
+      const maxColdScanBytes = 16 * 1024 * 1024;
 
-      if (!sessionManager) {
-        diagnostics.cacheState = "size_guard_skip";
-        diagnostics.historySource = "size_guard_skip";
-        diagnostics.detail = mergeDiagnosticDetails(diagnostics.detail, "session_size_guard_skip");
-        this.deps.logDebug("history:load:skipped", {
-          agentId: descriptor.agentId,
-          sessionFile: descriptor.sessionFile
+      do {
+        const page = readConversationHistoryPage({
+          sessionFile: descriptor.sessionFile,
+          cursor,
+          limit: 500,
+          preferCanonical: true,
+          projectForWire: false,
         });
-      } else {
-        const entries = sessionManager.getEntries();
-        lastSessionEntryId = extractSessionEntryId(entries.at(-1));
-
-        for (const entry of entries) {
-          if (entry.type !== "custom") {
-            continue;
-          }
-
-          if (entry.customType !== CONVERSATION_ENTRY_TYPE) {
-            continue;
-          }
-          if (!isConversationEntryEvent(entry.data)) {
-            continue;
-          }
-
-          const hydratedEntry = backfillConversationMessageEntryId(entry.data, extractSessionEntryId(entry));
-          entriesForAgent.push(hydratedEntry);
-          if (shouldPersistConversationEntry(hydratedEntry)) {
-            persistedEntryCount += 1;
-          }
+        readOps += 1;
+        scannedBytes += page.page.scanBytes;
+        scannedPersistedEntryCount += page.messages.filter(shouldPersistConversationEntry).length;
+        entriesForAgent.unshift(...page.messages);
+        trimConversationHistory(entriesForAgent, resolveManagerContextId(descriptor, descriptor.agentId));
+        cursor = page.page.nextCursor;
+        if (page.page.completeness === "source_changed") {
+          canonicalPrefixMayExist = true;
+          diagnostics.detail = mergeDiagnosticDetails(diagnostics.detail, "canonical_changed_during_tail_read");
+          break;
         }
+      } while (
+        cursor &&
+        scannedBytes < maxColdScanBytes
+      );
 
-        collapsePlanSummaryUpdates(entriesForAgent);
-        trimConversationHistory(
-          entriesForAgent,
-          resolveManagerContextId(descriptor, descriptor.agentId)
-        );
-
-        this.deps.logDebug("history:load:ready", {
-          agentId: descriptor.agentId,
-          messageCount: entriesForAgent.length
-        });
+      if (cursor) {
+        canonicalPrefixMayExist = true;
+        diagnostics.detail = mergeDiagnosticDetails(diagnostics.detail, "canonical_tail_scan_limited");
       }
+      diagnostics.fsReadOps += readOps;
+      diagnostics.fsReadBytes += scannedBytes;
+      collapsePlanSummaryUpdates(entriesForAgent);
+      trimConversationHistory(entriesForAgent, resolveManagerContextId(descriptor, descriptor.agentId));
+
+      this.deps.logDebug("history:load:ready", {
+        agentId: descriptor.agentId,
+        messageCount: entriesForAgent.length,
+        scannedBytes,
+      });
     } catch (error) {
+      canonicalPrefixMayExist = true;
       diagnostics.cacheState = "replay_error";
       diagnostics.historySource = "replay_error";
       diagnostics.detail = mergeDiagnosticDetails(
@@ -518,10 +718,15 @@ export class ConversationProjector {
       resolveManagerContextId(descriptor, descriptor.agentId)
     );
     this.applyPinnedState(descriptor.agentId, mergedEntries);
-    this.timeline.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
+    const persistedEntryCount = diagnosticsSeed.persistedEntryCount ?? scannedPersistedEntryCount;
     this.historyCacheStore.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
     this.loadedFromDisk.add(descriptor.agentId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
+    if (canonicalPrefixMayExist) {
+      this.canonicalPrefixMayExistByAgentId.add(descriptor.agentId);
+    } else {
+      this.canonicalPrefixMayExistByAgentId.delete(descriptor.agentId);
+    }
     this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
     diagnostics.persistedEntryCount = persistedEntryCount;
     return { history: mergedEntries, diagnostics };
@@ -560,7 +765,8 @@ export class ConversationProjector {
     const metadata = this.historyCacheStore.buildMetadata(
       history,
       persistedEntryCount,
-      validatedCanonicalProof?.canonicalStat ?? this.historyCacheStore.readSessionFileCanonicalStat(descriptor.sessionFile)
+      validatedCanonicalProof?.canonicalStat ?? this.historyCacheStore.readSessionFileCanonicalStat(descriptor.sessionFile),
+      this.canonicalPrefixMayExistByAgentId.has(agentId)
     );
     if (validatedCanonicalProof) {
       metadata.lastPersistedEntryKey = validatedCanonicalProof.lastPersistedEntryKey;
@@ -630,6 +836,180 @@ export class ConversationProjector {
     event.id = preferredId && preferredId.trim().length > 0 ? preferredId : randomUUID().slice(0, 8);
   }
 
+  private assignConversationTimelineMetadata(
+    event: ConversationEntryEvent,
+    sessionFile: string | undefined,
+  ): void {
+    event.timelineEntryId ??= randomUUID();
+    if (event.timelineSequence !== undefined) return;
+
+    const sourceKey = sessionFile ?? `memory:${event.agentId}`;
+    let persistedSize = 0;
+    if (sessionFile) {
+      try {
+        persistedSize = statSync(sessionFile).size;
+      } catch {
+        // A new Pi session can legitimately defer creating its file.
+      }
+    }
+
+    const sequence = Math.max(persistedSize, this.nextTimelineSequenceBySource.get(sourceKey) ?? 0);
+    event.timelineSequence = sequence;
+    this.nextTimelineSequenceBySource.set(sourceKey, sequence + 1);
+  }
+
+}
+
+function buildMemoryHistoryPage(options: {
+  agentId: string;
+  sessionFile: string;
+  history: readonly ConversationEntryEvent[];
+  endExclusive: number;
+  limit?: number;
+  view: BuilderTimelineChannelView;
+  isVisible?: (entry: ConversationEntryEvent) => boolean;
+  canonicalPrefixMayExist: boolean;
+}): ConversationHistoryPageResult {
+  const limit = normalizeMemoryPageLimit(options.limit);
+  const messages: ConversationEntryEvent[] = [];
+  const activitySummaryIds = new Set<string>();
+  let pageBytes = 0;
+  let startIndex = options.endExclusive;
+
+  for (let index = options.endExclusive - 1; index >= 0 && messages.length < limit; index -= 1) {
+    const projected = projectConversationEntryForBuilderWire(options.history[index]);
+    if (options.isVisible && !options.isVisible(projected)) {
+      startIndex = index;
+      continue;
+    }
+    if (projected.type === "activity_summary" && activitySummaryIds.has(projected.itemId)) {
+      startIndex = index;
+      continue;
+    }
+    const entryBytes = Buffer.byteLength(JSON.stringify(projected), "utf8");
+    if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) break;
+    if (projected.type === "activity_summary") activitySummaryIds.add(projected.itemId);
+    messages.push(projected);
+    pageBytes += entryBytes;
+    startIndex = index;
+  }
+
+  messages.reverse();
+  const earliest = options.history[startIndex];
+  const earliestTimelineEntryId = earliest?.timelineEntryId;
+  const memoryCursor = startIndex > 0 && earliestTimelineEntryId
+    ? encodeMemoryPageCursor({
+        version: MEMORY_PAGE_CURSOR_VERSION,
+        source: "memory",
+        agentId: options.agentId,
+        beforeTimelineEntryId: earliestTimelineEntryId,
+        view: options.view,
+      })
+    : undefined;
+  const canonicalSeamCursor =
+    !memoryCursor &&
+    (options.history.length >= MAX_CONVERSATION_HISTORY || options.canonicalPrefixMayExist) &&
+    earliestTimelineEntryId
+    ? createConversationHistorySeamCursor(options.sessionFile, undefined, options.view)
+    : undefined;
+  const nextCursor = memoryCursor ?? canonicalSeamCursor;
+
+  return {
+    messages,
+    page: {
+      ...(nextCursor ? { nextCursor } : {}),
+      hasOlder: Boolean(nextCursor),
+      completeness: "complete",
+      source: "memory",
+      sourceRevision: earliestTimelineEntryId ? `memory:${earliestTimelineEntryId}` : "memory:empty",
+      pageBytes,
+      scanBytes: 0,
+    },
+  };
+}
+
+function buildCanonicalMemorySeamVisibility(
+  history: readonly ConversationEntryEvent[],
+  isVisible: ((entry: ConversationEntryEvent) => boolean) | undefined,
+): (entry: ConversationEntryEvent) => boolean {
+  const projectedMemoryIds = new Set(
+    history
+      .map((entry) => projectConversationEntryForBuilderWire(entry).timelineEntryId)
+      .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0),
+  );
+
+  return (entry) =>
+    (!entry.timelineEntryId || !projectedMemoryIds.has(entry.timelineEntryId)) &&
+    (!isVisible || isVisible(entry));
+}
+
+function buildBuilderPageVisibilityPredicate(
+  descriptor: AgentDescriptor,
+  view: BuilderTimelineChannelView,
+  agents: readonly AgentDescriptor[],
+  history: readonly ConversationEntryEvent[],
+): ((entry: ConversationEntryEvent) => boolean) | undefined {
+  // Web rules do not depend on legacy manager-alias inference. Worker All is
+  // intentionally unfiltered. Manager All is safe to filter when the bounded
+  // active history supplies its alias context; cold canonical paging leaves
+  // that final product-policy pass to the same shared predicate in the UI.
+  if (view === "all" && (descriptor.role !== "manager" || history.length === 0)) return undefined;
+  return createBuilderTimelineVisibilityPredicate({
+    activeAgentId: descriptor.agentId,
+    activeAgentRole: descriptor.role,
+    channelView: view,
+    agents,
+    history,
+  });
+}
+
+function hasCompleteTimelineMetadata(history: readonly ConversationEntryEvent[]): boolean {
+  return history.every((entry) =>
+    typeof entry.timelineEntryId === "string" &&
+    entry.timelineEntryId.trim().length > 0 &&
+    Number.isSafeInteger(entry.timelineSequence) &&
+    entry.timelineSequence! >= 0);
+}
+
+function normalizeMemoryPageLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit)) return DEFAULT_CONVERSATION_PAGE_ITEMS;
+  return Math.max(1, Math.min(MAX_CONVERSATION_PAGE_ITEMS, Math.floor(limit!)));
+}
+
+function encodeMemoryPageCursor(cursor: MemoryPageCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeMemoryPageCursor(value: string | undefined): MemoryPageCursor | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<MemoryPageCursor>;
+    if (parsed.version !== MEMORY_PAGE_CURSOR_VERSION || parsed.source !== "memory") return undefined;
+    if (typeof parsed.agentId !== "string" || parsed.agentId.trim().length === 0) return undefined;
+    if (parsed.view !== "web" && parsed.view !== "all") return undefined;
+    if (
+      typeof parsed.beforeTimelineEntryId !== "string" ||
+      parsed.beforeTimelineEntryId.trim().length === 0 ||
+      parsed.beforeTimelineEntryId.length > 256
+    ) return undefined;
+    return parsed as MemoryPageCursor;
+  } catch {
+    return undefined;
+  }
+}
+
+function sourceChangedMemoryPage(detail: string): ConversationHistoryPageResult {
+  return {
+    messages: [],
+    page: {
+      hasOlder: true,
+      completeness: "source_changed",
+      source: "memory",
+      sourceRevision: `memory:${detail}`,
+      pageBytes: 0,
+      scanBytes: 0,
+    },
+  };
 }
 
 function extractConversationEntryStableDedupeKey(entry: ConversationEntryEvent): string | undefined {

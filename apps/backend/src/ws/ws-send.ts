@@ -15,6 +15,7 @@ export const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
 export const BOOTSTRAP_CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   "ready",
   "conversation_history",
+  "pending_choices_snapshot",
   "agents_snapshot",
   "profiles_snapshot",
   "unread_counts_snapshot",

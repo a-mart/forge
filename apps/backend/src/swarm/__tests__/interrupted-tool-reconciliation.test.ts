@@ -188,7 +188,7 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
     const entries = rawEntries.map((entry) => entry.data!);
     expect(result).toEqual({ reconciledToolCalls: 1, deliveryWarnings: 0 });
     expect(rawEntries.at(-1)?.parentId).toBe(rawEntries.at(-2)?.id);
-    expect(entries.at(-1)).toMatchObject({
+    expect(entries.at(-2)).toMatchObject({
       type: "agent_tool_call",
       agentId: "manager",
       actorAgentId: "worker",
@@ -197,6 +197,36 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
       toolCallId: "open-tool",
       isError: true,
       text: "Tool call interrupted by backend restart before completion.",
+    });
+    expect(entries.at(-1)).toMatchObject({
+      type: "activity_summary",
+      itemId: "tool:manager:open-tool",
+      status: "interrupted",
+    });
+  });
+
+  it("uses the canonical end identity for a repaired summary without a tool-call id", async () => {
+    const { manager, worker, append } = await createFixture();
+    append(tool({ toolName: "shell", toolCallId: undefined, text: "legacy open tool" }));
+
+    reconcileInterruptedToolCallsForBoot({
+      descriptors: new Map([[manager.agentId, manager], [worker.agentId, worker]]),
+      interruptedActorAgentIds: new Set([worker.agentId]),
+      now: () => NOW,
+    });
+
+    const rawEntries = await readRawCustomEntries(manager.sessionFile);
+    const repairedEnd = rawEntries.at(-2);
+    const summary = rawEntries.at(-1)?.data;
+    expect(repairedEnd?.data).toMatchObject({
+      type: "agent_tool_call",
+      kind: "tool_execution_end",
+    });
+    expect(repairedEnd?.data).not.toHaveProperty("toolCallId");
+    expect(summary).toMatchObject({
+      type: "activity_summary",
+      itemId: `tool:manager:${repairedEnd?.id}`,
+      status: "interrupted",
     });
   });
 
@@ -245,16 +275,21 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
     });
 
     const rawEntries = await readRawCustomEntries(manager.sessionFile);
-    expect(rawEntries.at(-2)?.data).toMatchObject({
+    expect(rawEntries.at(-3)?.data).toMatchObject({
       type: "agent_tool_call",
       kind: "tool_execution_start",
       toolCallId: "large-tool",
     });
-    expect(rawEntries.at(-1)?.data).toMatchObject({
+    expect(rawEntries.at(-2)?.data).toMatchObject({
       type: "agent_tool_call",
       kind: "tool_execution_end",
       toolCallId: "large-tool",
     });
+    expect(rawEntries.at(-1)?.data).toMatchObject({
+      type: "activity_summary",
+      itemId: "tool:manager:large-tool",
+    });
+    expect(rawEntries.at(-2)?.parentId).toBe(rawEntries.at(-3)?.id);
     expect(rawEntries.at(-1)?.parentId).toBe(rawEntries.at(-2)?.id);
   });
 
@@ -288,11 +323,16 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
 
     const entries = await readConversationEntries(manager.sessionFile);
     expect(result).toEqual({ reconciledToolCalls: 1, deliveryWarnings: 1 });
-    expect(entries.at(-2)).toMatchObject({
+    expect(entries.at(-3)).toMatchObject({
       type: "agent_tool_call",
       kind: "tool_execution_end",
       toolName: "send_message_to_agent",
       isError: true,
+    });
+    expect(entries.at(-2)).toMatchObject({
+      type: "activity_summary",
+      itemId: "tool:manager:send-1",
+      status: "interrupted",
     });
     expect(entries.at(-1)).toMatchObject({
       type: "conversation_message",

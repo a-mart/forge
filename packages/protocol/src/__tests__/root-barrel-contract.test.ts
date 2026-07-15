@@ -527,6 +527,7 @@ describe('protocol root barrel contract', () => {
       'create_directory',
       'pick_directory',
       'get_session_workers',
+      'get_conversation_page',
       'rename_profile',
       'archive_profile',
       'restore_profile',
@@ -566,7 +567,7 @@ describe('protocol root barrel contract', () => {
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
     expect(
       WS_REQUEST_CONTRACTS.every((contract) =>
-        contract.commandType === 'create_repository_project'
+        contract.commandType === 'create_repository_project' || contract.commandType === 'get_conversation_page'
           ? contract.requestId.wire === 'required'
           : contract.requestId.wire === 'optional',
       ),
@@ -585,6 +586,13 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_workers',
       successEvents: ['session_workers_snapshot'],
       errorCodeFragments: ['get_session_workers'],
+    })
+    expect(getWsRequestContract('get_conversation_page')).toMatchObject({
+      commandType: 'get_conversation_page',
+      resultFamily: 'conversation_page',
+      requestId: { ui: 'required', wire: 'required' },
+      successEvents: ['conversation_page'],
+      errorCodeFragments: ['get_conversation_page'],
     })
     expect(getWsRequestContract('rename_profile')).toMatchObject({
       commandType: 'rename_profile',

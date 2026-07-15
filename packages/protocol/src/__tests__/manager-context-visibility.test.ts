@@ -5,6 +5,7 @@ import {
   inferManagerAliasIds,
   isVisibleInManagerAllView,
 } from '../manager-context-visibility.js'
+import { isVisibleInBuilderTimeline } from '../builder-timeline-visibility.js'
 import type { PendingChoicesSnapshotEvent } from '../transport-events.js'
 
 const activeManagerId = 'manager-1'
@@ -116,5 +117,75 @@ describe('PendingChoicesSnapshotEvent protocol shape', () => {
 
     expect(snapshot.choiceIds).toEqual(['choice-1'])
     expect(snapshot.choices?.[0]?.sessionAgentId).toBe(activeManagerId)
+  })
+})
+
+describe('central Builder timeline visibility', () => {
+  const managerSummary: ConversationEntry = {
+    type: 'activity_summary',
+    schemaVersion: 1,
+    itemId: 'tool:manager-1:tool-1',
+    agentId: activeManagerId,
+    actorAgentId: activeManagerId,
+    timestamp: '2026-06-21T00:00:00.000Z',
+    kind: 'tool_activity',
+    status: 'completed',
+    displaySummary: 'Ran command',
+  }
+  const workerSummary: ConversationEntry = {
+    ...managerSummary,
+    itemId: 'tool:worker-1:tool-2',
+    agentId: workerId,
+    actorAgentId: workerId,
+  }
+
+  it('shows compact activity in worker All while keeping it out of Web', () => {
+    expect(isVisibleInBuilderTimeline(workerSummary, {
+      activeAgentId: workerId,
+      activeAgentRole: 'worker',
+      channelView: 'all',
+      agents,
+      history: [workerSummary],
+    })).toBe(true)
+    expect(isVisibleInBuilderTimeline(workerSummary, {
+      activeAgentId: workerId,
+      activeAgentRole: 'worker',
+      channelView: 'web',
+      agents,
+      history: [workerSummary],
+    })).toBe(false)
+  })
+
+  it('shows only manager-owned compact activity in manager All', () => {
+    const context = {
+      activeAgentId: activeManagerId,
+      activeAgentRole: 'manager' as const,
+      channelView: 'all' as const,
+      agents,
+      history: [managerSummary, workerSummary],
+    }
+    expect(isVisibleInBuilderTimeline(managerSummary, context)).toBe(true)
+    expect(isVisibleInBuilderTimeline(workerSummary, context)).toBe(false)
+  })
+
+  it('keeps protected rows hidden in Web while the active descriptor is unavailable', () => {
+    const workerReport: ConversationEntry = {
+      type: 'conversation_message',
+      agentId: activeManagerId,
+      role: 'system',
+      text: 'raw worker result',
+      timestamp: '2026-06-21T00:00:00.000Z',
+      source: 'worker_report',
+    }
+    const context = {
+      activeAgentId: null,
+      activeAgentRole: null,
+      channelView: 'web' as const,
+      agents,
+      history: [workerReport, workerSummary],
+    }
+
+    expect(isVisibleInBuilderTimeline(workerReport, context)).toBe(false)
+    expect(isVisibleInBuilderTimeline(workerSummary, context)).toBe(false)
   })
 })

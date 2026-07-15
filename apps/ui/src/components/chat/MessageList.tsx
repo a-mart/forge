@@ -14,9 +14,9 @@ import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
-import { isProjectAgentExchange } from '@/lib/project-agent-exchange'
+import type { ConversationHistoryMutation } from '@/lib/ws-state'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ConversationReplyTargetInput, ProjectAgentInfo, SessionPlanSnapshotEvent } from '@forge/protocol'
+import { isProjectAgentExchange, type AgentDescriptor, type AgentStatus, type ChoiceAnswer, type ConversationEntry, type ConversationReplyTargetInput, type ProjectAgentInfo, type SessionPlanSnapshotEvent } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
@@ -93,6 +93,11 @@ interface MessageListProps {
   planExpanded?: boolean
   onPlanExpandedChange?: (expanded: boolean) => void
   statuses?: Record<string, { status: AgentStatus }>
+  hasOlder?: boolean
+  isLoadingOlder?: boolean
+  historyCompleteness?: 'complete' | 'partial_scan' | 'source_changed'
+  historyMutation?: ConversationHistoryMutation | null
+  onLoadOlder?: () => void
 }
 
 export interface MessageListHandle {
@@ -204,7 +209,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
       const targetId = resolveConversationMessageTargetId(message)
       displayEntries.push({
         type: 'conversation_message',
-        id: `message-${targetId}-${message.id ?? index}`,
+        id: `message-${message.timelineEntryId ?? `${targetId}-${message.id ?? index}`}`,
         message,
       })
       continue
@@ -213,7 +218,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
     if (message.type === 'agent_message') {
       displayEntries.push({
         type: 'agent_message',
-        id: `agent-message-${message.timestamp}-${index}`,
+        id: `agent-message-${message.timelineEntryId ?? `${message.timestamp}-${index}`}`,
         message,
       })
       continue
@@ -264,6 +269,36 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
       continue
     }
 
+    if (message.type === 'activity_summary') {
+      const callId = message.correlationId ?? message.itemId
+      const toolGroupKey = `${message.actorAgentId}:${callId}`
+      let displayEntry = toolEntriesByCallId.get(toolGroupKey)
+
+      if (!displayEntry) {
+        displayEntry = {
+          id: `tool-${toolGroupKey}`,
+          actorAgentId: message.actorAgentId,
+          toolName: message.toolName,
+          toolCallId: callId,
+          displaySummary: message.displaySummary,
+          timestamp: message.timestamp,
+          latestKind: 'tool_execution_end',
+          isError: message.isError,
+        }
+        displayEntries.push({ type: 'tool_execution', id: displayEntry.id, entry: displayEntry })
+        toolEntriesByCallId.set(toolGroupKey, displayEntry)
+      } else {
+        displayEntry.timestamp = message.timestamp
+        displayEntry.latestKind = 'tool_execution_end'
+        displayEntry.isError = message.isError
+        displayEntry.toolName = message.toolName ?? displayEntry.toolName
+        if (!displayEntry.inputPayload && !displayEntry.latestPayload && !displayEntry.outputPayload) {
+          displayEntry.displaySummary = message.displaySummary
+        }
+      }
+      continue
+    }
+
     if (isToolExecutionEvent(message)) {
       const actorAgentId = resolveToolExecutionEventActorAgentId(message)
       const callId = message.toolCallId?.trim()
@@ -296,7 +331,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
       }
 
       const displayEntry: ToolExecutionDisplayEntry = {
-        id: `tool-${message.timestamp}-${index}`,
+        id: `tool-${message.timelineEntryId ?? `${message.timestamp}-${index}`}`,
         actorAgentId,
         toolName: message.toolName,
         toolCallId: message.toolCallId,
@@ -317,7 +352,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
     if (message.type === 'conversation_log' && message.isError) {
       displayEntries.push({
         type: 'runtime_error_log',
-        id: `runtime-log-${message.timestamp}-${index}`,
+        id: `runtime-log-${message.timelineEntryId ?? `${message.timestamp}-${index}`}`,
         entry: message,
       })
     }
@@ -333,6 +368,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
  * vertically-stacked item uniformly, preserving order/grouping exactly.
  */
 type VirtualRow =
+  | { kind: 'older'; id: string }
   | { kind: 'plan'; id: string }
   | { kind: 'missing_choice'; id: string; choiceId: string }
   | { kind: 'entry'; id: string; entry: DisplayEntry }
@@ -403,6 +439,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   planExpanded = false,
   onPlanExpandedChange,
   statuses = {},
+  hasOlder = false,
+  isLoadingOlder = false,
+  historyCompleteness = 'complete',
+  historyMutation = null,
+  onLoadOlder,
 }, ref) {
   // useState (not useRef) for the scroll element so that the callback ref's
   // re-render lets the virtualizer pick up the real element via getScrollElement.
@@ -411,6 +452,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const previousAgentIdRef = useRef<string | null>(null)
   const previousFirstEntryIdRef = useRef<string | null>(null)
   const previousEntryCountRef = useRef(0)
+  const previousHistoryMutationKeyRef = useRef<string | null>(null)
+  const viewportAnchorRef = useRef<{ rowId: string; offsetFromViewportTop: number } | null>(null)
+  const prependAnchorFrameRefs = useRef<number[]>([])
   const hasScrolledRef = useRef(false)
   const isAtBottomRef = useRef(true)
   const [showScrollButton, setShowScrollButton] = useState(false)
@@ -442,6 +486,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const rows = useMemo<VirtualRow[]>(() => {
     const next: VirtualRow[] = []
+    if (hasOlder || historyCompleteness !== 'complete') {
+      next.push({ kind: 'older', id: 'load-older-history' })
+    }
     if (showPlanCard) {
       next.push({ kind: 'plan', id: 'plan-card' })
     }
@@ -455,8 +502,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       next.push({ kind: 'loading', id: 'loading-indicator' })
     }
     return next
-  }, [showPlanCard, missingPendingChoiceIds, displayEntries, isLoading])
+  }, [showPlanCard, missingPendingChoiceIds, displayEntries, hasOlder, historyCompleteness, isLoading])
   rowCountRef.current = rows.length
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
 
   const loadedConversationMessageIds = useMemo(() => {
     const ids = new Set<string>()
@@ -799,6 +848,13 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       if (pinnedIndexTimerRef.current) {
         clearTimeout(pinnedIndexTimerRef.current)
       }
+      const ownerWindow = scrollElRef.current?.ownerDocument.defaultView
+      if (ownerWindow) {
+        for (const frame of prependAnchorFrameRefs.current) {
+          ownerWindow.cancelAnimationFrame(frame)
+        }
+      }
+      prependAnchorFrameRefs.current = []
     }
   }, [])
 
@@ -815,9 +871,32 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     setShowScrollButtonGuarded(!atBottom)
   }, [setShowScrollButtonGuarded])
 
+  const captureViewportAnchor = useCallback(() => {
+    const container = scrollElRef.current
+    if (!container) return
+    const viewportTop = container.getBoundingClientRect().top
+    const firstVisible = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-index]'),
+    )
+      .map((element) => {
+        const index = Number.parseInt(element.dataset.index ?? '', 10)
+        const row = rowsRef.current[index]
+        return { element, row, bounds: element.getBoundingClientRect() }
+      })
+      .filter(({ row, bounds }) => row?.kind !== 'older' && bounds.bottom > viewportTop)
+      .sort((left, right) => left.bounds.top - right.bounds.top)[0]
+    viewportAnchorRef.current = firstVisible?.row
+      ? {
+          rowId: firstVisible.row.id,
+          offsetFromViewportTop: firstVisible.bounds.top - viewportTop,
+        }
+      : null
+  }, [])
+
   const handleScroll = useCallback(() => {
     updateIsAtBottom()
-  }, [updateIsAtBottom])
+    captureViewportAnchor()
+  }, [captureViewportAnchor, updateIsAtBottom])
 
   // Re-scroll to bottom when the scroll container resizes (e.g. WorkerPillBar
   // appearing/disappearing changes flex layout) and the user was already at the bottom.
@@ -851,16 +930,64 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const nextAgentId = activeAgentId ?? null
     const nextFirstEntryId = displayEntries[0]?.id ?? null
     const nextEntryCount = displayEntries.length
+    const historyMutationKey = historyMutation
+      ? `${nextAgentId ?? ''}:${historyMutation.revision}`
+      : null
+    const didExplicitHistoryMutation =
+      historyMutationKey !== null &&
+      historyMutationKey !== previousHistoryMutationKeyRef.current
+    const didReplaceHistory = didExplicitHistoryMutation && historyMutation?.kind === 'replace'
 
     const isInitialScroll = !hasScrolledRef.current
     const didAgentChange = previousAgentIdRef.current !== nextAgentId
     const didConversationReset =
-      previousEntryCountRef.current > 0 &&
-      (nextEntryCount === 0 ||
-        previousFirstEntryIdRef.current !== nextFirstEntryId ||
-        nextEntryCount < previousEntryCountRef.current)
+      didReplaceHistory ||
+      (previousEntryCountRef.current > 0 &&
+        (nextEntryCount === 0 ||
+          (previousFirstEntryIdRef.current !== nextFirstEntryId && nextEntryCount <= previousEntryCountRef.current) ||
+          nextEntryCount < previousEntryCountRef.current))
     const didInitialConversationLoad =
       previousEntryCountRef.current === 0 && nextEntryCount > 0
+    const didPrependHistory = didExplicitHistoryMutation
+      ? historyMutation?.kind === 'prepend'
+      : previousEntryCountRef.current > 0 &&
+        nextEntryCount > previousEntryCountRef.current &&
+        previousFirstEntryIdRef.current !== nextFirstEntryId
+
+    if (didPrependHistory && !isAtBottomRef.current) {
+      const anchor = viewportAnchorRef.current
+      const ownerWindow = scrollEl.ownerDocument.defaultView
+      if (anchor && ownerWindow) {
+        for (const frame of prependAnchorFrameRefs.current) {
+          ownerWindow.cancelAnimationFrame(frame)
+        }
+        prependAnchorFrameRefs.current = []
+
+        const restoreAnchor = () => {
+          const anchorElement = Array.from(
+            scrollEl.querySelectorAll<HTMLElement>('[data-row-id]'),
+          ).find((element) => element.dataset.rowId === anchor.rowId)
+          if (!anchorElement) return
+          const currentOffset =
+            anchorElement.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top
+          const delta = currentOffset - anchor.offsetFromViewportTop
+          if (Math.abs(delta) > 0.5) {
+            scrollEl.scrollTop = Math.max(0, scrollEl.scrollTop + delta)
+          }
+        }
+
+        restoreAnchor()
+        const firstFrame = ownerWindow.requestAnimationFrame(() => {
+          restoreAnchor()
+          const secondFrame = ownerWindow.requestAnimationFrame(() => {
+            restoreAnchor()
+            prependAnchorFrameRefs.current = []
+          })
+          prependAnchorFrameRefs.current.push(secondFrame)
+        })
+        prependAnchorFrameRefs.current.push(firstFrame)
+      }
+    }
 
     const shouldForceScroll =
       isInitialScroll ||
@@ -877,15 +1004,17 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     previousAgentIdRef.current = nextAgentId
     previousFirstEntryIdRef.current = nextFirstEntryId
     previousEntryCountRef.current = nextEntryCount
+    previousHistoryMutationKeyRef.current = historyMutationKey
 
     if (shouldAutoScroll) {
       // Read from the ref so this effect does not depend on scrollToBottom's
       // (intentionally unstable) identity and thus does not re-run every render.
       scrollToBottomRef.current(shouldForceScroll ? 'auto' : 'smooth')
     }
-  }, [activeAgentId, displayEntries, isLoading, scrollEl])
+    captureViewportAnchor()
+  }, [activeAgentId, captureViewportAnchor, displayEntries, historyMutation, isLoading, scrollEl])
 
-  if (displayEntries.length === 0 && !isLoading && !showPlanCard && !hasMissingPendingChoices) {
+  if (displayEntries.length === 0 && !isLoading && !showPlanCard && !hasMissingPendingChoices && !hasOlder) {
     return (
       <EmptyState
         activeAgentId={activeAgentId}
@@ -899,7 +1028,38 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     scrollToBottom('smooth')
   }
 
+  const handleLoadOlder = () => {
+    // Row measurements can settle after the last scroll event. Capture the
+    // current content row at action time so a prepend never restores an older,
+    // stale viewport anchor. The load control itself is deliberately excluded
+    // above because it remains at index zero across pages.
+    captureViewportAnchor()
+    onLoadOlder?.()
+  }
+
   const renderRow = (row: VirtualRow) => {
+    if (row.kind === 'older') {
+      const sourceChanged = historyCompleteness === 'source_changed'
+      return (
+        <div className="flex justify-center py-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isLoadingOlder || (!sourceChanged && !hasOlder)}
+            onClick={handleLoadOlder}
+            aria-label="Load older conversation items"
+          >
+            {isLoadingOlder
+              ? 'Loading older items…'
+              : sourceChanged
+                ? 'Timeline changed — refresh'
+                : 'Load older items'}
+          </Button>
+        </div>
+      )
+    }
+
     if (row.kind === 'plan') {
       return (
         <PlanCard
@@ -1059,6 +1219,23 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   ) {
     startByIndex.set(pinnedIndex, virtualizer.measurementsCache[pinnedIndex]?.start ?? 0)
   }
+  const renderHistoryMutationKey = historyMutation
+    ? `${activeAgentId ?? ''}:${historyMutation.revision}`
+    : null
+  const prependAnchorId =
+    historyMutation?.kind === 'prepend' &&
+    renderHistoryMutationKey !== previousHistoryMutationKeyRef.current
+      ? viewportAnchorRef.current?.rowId
+      : undefined
+  const prependAnchorIndex = prependAnchorId
+    ? rows.findIndex((row) => row.id === prependAnchorId)
+    : -1
+  if (prependAnchorIndex >= 0 && !startByIndex.has(prependAnchorIndex)) {
+    startByIndex.set(
+      prependAnchorIndex,
+      virtualizer.measurementsCache[prependAnchorIndex]?.start ?? 0,
+    )
+  }
   const renderIndexes = Array.from(startByIndex.keys()).sort((a, b) => a - b)
 
   return (
@@ -1086,6 +1263,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               <div
                 key={row.id}
                 data-index={index}
+                data-row-id={row.id}
                 ref={measureMountedRow}
                 className="pb-2"
                 style={{

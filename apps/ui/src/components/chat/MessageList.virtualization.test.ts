@@ -445,6 +445,72 @@ describe('MessageList virtualization — stick-to-bottom', () => {
     expect(scrollContainer().scrollTop).toBe(scrollBefore)
     expect(mountedMessageIds()).not.toContain('msg-50')
   })
+
+  it('preserves the visible anchor when an older page is prepended', async () => {
+    virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })
+    const messages = makeMessages(50)
+    const onLoadOlder = vi.fn()
+    render(messages, { hasOlder: true, onLoadOlder })
+    await flushFrames()
+
+    await act(async () => {
+      virt!.scrollTo(scrollContainer(), 0)
+    })
+    const before = scrollContainer().scrollTop
+    const beforeIds = mountedMessageIds()
+
+    const loadOlder = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Load older conversation items"]',
+    )
+    if (!loadOlder) throw new Error('load older button not mounted')
+    await act(async () => loadOlder.click())
+    expect(onLoadOlder).toHaveBeenCalledOnce()
+
+    const older: ConversationEntry[] = Array.from({ length: 10 }, (_, index) => ({
+      type: 'conversation_message',
+      agentId: 'session-1',
+      id: `older-${index}`,
+      role: 'assistant',
+      text: `older message ${index}`,
+      timestamp: now,
+      source: 'speak_to_user',
+    }))
+    render([...older, ...messages], {
+      hasOlder: true,
+      onLoadOlder,
+      historyMutation: { revision: 1, kind: 'prepend' },
+    })
+    await flushFrames()
+
+    expect(scrollContainer().scrollTop).toBe(before + older.length * ROW_HEIGHT)
+    expect(mountedMessageIds().some((id) => beforeIds.includes(id))).toBe(true)
+  })
+
+  it('resets to the newest content when a larger history replacement changes identity', async () => {
+    virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })
+    render(makeMessages(20), {
+      historyMutation: { revision: 1, kind: 'replace' },
+    })
+    await flushFrames()
+
+    await act(async () => {
+      virt!.scrollTo(scrollContainer(), 5 * ROW_HEIGHT)
+    })
+
+    const replacement = makeMessages(30).map((message, index) => ({
+      ...message,
+      id: `replacement-${index}`,
+      text: `replacement ${index}`,
+    }))
+    render(replacement, {
+      historyMutation: { revision: 2, kind: 'replace' },
+    })
+    await flushFrames()
+
+    expect(mountedMessageIds()).toContain('replacement-29')
+    const scroll = scrollContainer()
+    expect(scroll.scrollTop + scroll.clientHeight).toBeGreaterThanOrEqual(scroll.scrollHeight - 100)
+  })
 })
 
 describe('MessageList virtualization — search jump', () => {

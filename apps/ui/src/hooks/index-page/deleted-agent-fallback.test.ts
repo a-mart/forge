@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { chooseMostRecentSessionFallbackForDeletedTarget } from './deleted-agent-fallback'
-import type { AgentDescriptor } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
 function makeManager(
   agentId: string,
@@ -55,6 +55,32 @@ function toMap(agents: AgentDescriptor[]): Map<string, AgentDescriptor> {
 
 describe('chooseMostRecentSessionFallbackForDeletedTarget', () => {
   describe('same-profile most-recent fallback', () => {
+    it('never falls back into an archived profile', () => {
+      const archivedSession = makeManager('alpha--s2', {
+        profileId: 'alpha',
+        updatedAt: '2026-01-01T00:05:00.000Z',
+      })
+      const deleted = makeManager('alpha--s3', { profileId: 'alpha' })
+      const profiles: ManagerProfile[] = [{
+        profileId: 'alpha',
+        displayName: 'Alpha',
+        defaultSessionAgentId: 'alpha',
+        defaultModel: archivedSession.model,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        archivedAt: '2026-01-02T00:00:00.000Z',
+      }]
+
+      const result = chooseMostRecentSessionFallbackForDeletedTarget(
+        [archivedSession],
+        deleted.agentId,
+        toMap([archivedSession, deleted]),
+        profiles,
+      )
+
+      expect(result).toBeNull()
+    })
+
     it('picks the most recently updated session in the same profile', () => {
       const old = makeManager('alpha', {
         profileId: 'alpha',

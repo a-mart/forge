@@ -176,6 +176,28 @@ describe("HistoryCacheStore", () => {
     expect(validation.entries?.map((entry) => entry.type)).toEqual(["conversation_message", "conversation_log"]);
   });
 
+  it("rejects a cache that contains more persisted rows than canonical history", async () => {
+    const root = await createTempDir("history-cache-store-");
+    const sessionFile = join(root, "session.jsonl");
+    const store = makeStore();
+    const canonical = makeMessage("canonical");
+    const cachedHistory = [makeMessage("phantom"), canonical];
+    writeSession(sessionFile, [canonical], root);
+
+    store.queueCacheSnapshotWrite(
+      sessionFile,
+      cachedHistory,
+      store.buildMetadata(cachedHistory, 1, store.readSessionFileCanonicalStat(sessionFile))
+    );
+    await store.flushPendingWrites();
+
+    const header = store.loadConversationHistoryCacheHeader(sessionFile);
+    const validation = store.validateCachedConversationHistory(sessionFile, header.metadata!);
+    expect(validation.ok).toBe(false);
+    expect(validation.cacheState).toBe("metadata_entries_mismatch");
+    expect(validation.detail).toContain("cached=2,canonical=1");
+  });
+
   it("uses compact stable cache identity for choice_request entries", async () => {
     const root = await createTempDir("history-cache-store-");
     const sessionFile = join(root, "session.jsonl");
@@ -240,7 +262,7 @@ describe("HistoryCacheStore", () => {
     expect(validation.fastPathUsed).toBe(false);
     expect(validation.persistedEntryCount).toBe(2);
     expect(validation.sessionSummaryBytesScanned).toBeGreaterThan(0);
-    expect(validation.cacheState).toBe("cache_missing_persisted_prefix");
+    expect(validation.cacheState).toBe("persisted_entry_count_mismatch");
   });
 
   it("rejects cache metadata that does not match cached entries", async () => {

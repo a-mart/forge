@@ -30,6 +30,7 @@ export const BOOTSTRAP_COALESCIBLE_EVENT_TYPES: ReadonlySet<string> = new Set([
 export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'conversation_message',
   'conversation_log',
+  'activity_summary',
   'agent_message',
   'agent_tool_call',
   'choice_request',
@@ -74,18 +75,27 @@ function upsertChoiceRequestMessages(
 function conversationEntryMergeKey(entry: ServerEvent): string | undefined {
   switch (entry.type) {
     case 'conversation_message':
-      return entry.id ? `conversation_message:${entry.id}` : undefined
+      if (entry.id) return `conversation_message:${entry.id}`
+      break
     case 'choice_request':
       return `choice_request:${entry.choiceId}`
     case 'model_cache_observation':
-      return entry.id ? `model_cache_observation:${entry.id}` : undefined
+      if (entry.id) return `model_cache_observation:${entry.id}`
+      break
     case 'plan_summary':
       return `plan_summary:${entry.id}`
-    case 'agent_tool_call':
-      return entry.toolCallId ? `agent_tool_call:${entry.agentId}:${entry.toolCallId}:${entry.kind}` : undefined
-    default:
-      return undefined
+    case 'activity_summary':
+      return `activity_summary:${entry.itemId}`
   }
+
+  if ('timelineEntryId' in entry && typeof entry.timelineEntryId === 'string' && entry.timelineEntryId) {
+    return `timeline:${entry.timelineEntryId}`
+  }
+
+  if (entry.type === 'agent_tool_call' && entry.toolCallId) {
+    return `agent_tool_call:${entry.agentId}:${entry.toolCallId}:${entry.kind}`
+  }
+  return undefined
 }
 
 /**
@@ -304,9 +314,22 @@ export function handleConversationEvent(
     }
 
     case 'agent_message':
-    case 'agent_tool_call': {
+    case 'agent_tool_call':
+    case 'activity_summary': {
       if (event.agentId !== context.state.targetAgentId) {
         return true
+      }
+
+      if (event.type === 'activity_summary') {
+        const existingIndex = context.state.activityMessages.findIndex(
+          (entry) => entry.type === 'activity_summary' && entry.itemId === event.itemId,
+        )
+        if (existingIndex >= 0) {
+          const activityMessages = [...context.state.activityMessages]
+          activityMessages[existingIndex] = event
+          context.updateState({ activityMessages })
+          return true
+        }
       }
 
       const activityMessages = clampConversationHistory([
@@ -317,8 +340,16 @@ export function handleConversationEvent(
       return true
     }
 
-    case 'conversation_history': {
+    case 'conversation_history':
+    case 'conversation_page': {
       if (event.agentId !== context.state.targetAgentId) {
+        return true
+      }
+      const isPage = event.type === 'conversation_page' || event.mode === 'prepend'
+      if (
+        isPage &&
+        (!event.requestId || event.requestId !== context.state.conversationPageRequestId)
+      ) {
         return true
       }
 
@@ -329,25 +360,39 @@ export function handleConversationEvent(
         settingLoaded: context.state.modelCacheVisualizationSettingLoaded,
         currentObservations: context.state.modelCacheObservations,
         pendingObservations: context.state.pendingModelCacheObservations,
-        mode: 'replace',
+        mode: isPage ? 'prepend' : 'replace',
       })
       // Sidebar perf: stop `session_switch.click_to_history_loaded_ms` and mark
       // the active session-switch token eligible for first-paint completion.
       // The interaction nonce ensures stale bootstraps from A→B→A rapid
       // switching cannot complete a newer interaction's metric.
       // Plan section 4 — frontend `conversation_history` capture point.
-      const perfRegistry = getSidebarPerfRegistry()
-      const interactionNonce = perfRegistry.getActiveSessionSwitch()?.token ?? 0
-      perfRegistry.markHistoryLoaded(event.agentId, interactionNonce, {
-        conversationMessageCount: messages.length,
-        activityMessageCount: activityMessages.length,
-        allMessageCount: event.messages.length,
-      })
+      if (!isPage) {
+        const perfRegistry = getSidebarPerfRegistry()
+        const interactionNonce = perfRegistry.getActiveSessionSwitch()?.token ?? 0
+        perfRegistry.markHistoryLoaded(event.agentId, interactionNonce, {
+          conversationMessageCount: messages.length,
+          activityMessageCount: activityMessages.length,
+          allMessageCount: event.messages.length,
+        })
+      }
       context.updateState({
         messages: mergeBootstrapEntries(messages, context.state.messages),
-        activityMessages: clampConversationHistory(mergeBootstrapEntries(activityMessages, context.state.activityMessages)),
+        activityMessages: isPage
+          ? mergeBootstrapEntries(activityMessages, context.state.activityMessages)
+          : clampConversationHistory(mergeBootstrapEntries(activityMessages, context.state.activityMessages)),
         modelCacheObservations: routedObservations.modelCacheObservations,
         pendingModelCacheObservations: routedObservations.pendingModelCacheObservations,
+        conversationPage: event.page ?? null,
+        conversationPageLoading: false,
+        conversationPageRequestId: null,
+        conversationHistoryMutation: {
+          revision: (context.state.conversationHistoryMutation?.revision ?? 0) + 1,
+          kind: isPage ? 'prepend' : 'replace',
+        },
+        ...(event.page?.completeness === 'source_changed'
+          ? { lastError: 'Conversation changed while loading older items. Refreshing the timeline is required.' }
+          : {}),
       })
       return true
     }
@@ -418,6 +463,10 @@ export function handleConversationEvent(
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),
+        conversationPage: null,
+        conversationPageLoading: false,
+        conversationPageRequestId: null,
+        conversationHistoryMutation: null,
         lastError: null,
       })
       return true

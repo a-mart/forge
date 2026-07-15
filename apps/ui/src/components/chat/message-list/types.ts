@@ -39,6 +39,8 @@ export interface ToolExecutionDisplayEntry {
   actorAgentId?: string
   toolName?: string
   toolCallId?: string
+  /** Provider-neutral collapsed copy from a canonical activity summary. */
+  displaySummary?: string
   inputPayload?: string
   latestPayload?: string
   outputPayload?: string

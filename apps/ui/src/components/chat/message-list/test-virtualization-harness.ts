@@ -73,7 +73,13 @@ export function installVirtualizationHarness(
     configurable: true,
     value(this: HTMLElement): DOMRect {
       const height = isScrollContainer(this) ? viewportHeight : rowHeight
-      const top = isScrollContainer(this) ? 0 : -(scrollTops.get(this) ?? 0)
+      const scrollContainer = isScrollContainer(this)
+        ? this
+        : this.closest<HTMLElement>('.overflow-y-auto')
+      const translateY = /translateY\((-?[\d.]+)px\)/.exec(this.style.transform)?.[1]
+      const top = isScrollContainer(this)
+        ? 0
+        : Number.parseFloat(translateY ?? '0') - (scrollContainer ? (scrollTops.get(scrollContainer) ?? 0) : 0)
       return {
         x: 0,
         y: top,

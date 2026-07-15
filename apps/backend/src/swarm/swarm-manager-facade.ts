@@ -3,6 +3,7 @@ import type { AuthCredential } from "@earendil-works/pi-coding-agent";
 import type {
   ActivateRepoProjectAgentRequest,
   AgentRuntimeExtensionSnapshot,
+  BuilderTimelineChannelView,
   CortexConsolidationRunRecord,
   CortexConsolidationTrigger,
   CredentialPoolState,
@@ -588,7 +589,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
     if (!resolvedAgentId) return [];
     return this.services.conversation.projector.getConversationHistory(resolvedAgentId);
   }
-
   getConversationHistoryWithDiagnostics(agentId?: string): {
     history: ConversationEntryEvent[];
     diagnostics: SidebarConversationHistoryDiagnostics;
@@ -609,15 +609,15 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
         },
       };
     }
-    return this.services.conversation.projector.getConversationHistoryWithDiagnostics(
-      resolvedAgentId,
-    );
+    return this.services.conversation.projector.getConversationHistoryWithDiagnostics(resolvedAgentId);
   }
 
+  getConversationHistoryPage(agentId: string, options?: { cursor?: string; limit?: number; view?: BuilderTimelineChannelView }) {
+    return this.services.conversation.projector.getConversationHistoryPage(agentId, options);
+  }
   getSidebarPerfRecorder(): SidebarPerfRecorder {
     return this.services.conversation.sidebarPerf;
   }
-
   readSidebarPerfSummary(): SidebarPerfSummary {
     return this.services.conversation.sidebarPerf.readSummary();
   }

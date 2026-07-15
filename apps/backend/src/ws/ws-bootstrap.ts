@@ -1,5 +1,10 @@
 import { performance } from "node:perf_hooks";
-import { isSystemProfile, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
+import {
+  isSystemProfile,
+  type BuilderTimelineChannelView,
+  type ServerEvent,
+  type TerminalDescriptor,
+} from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import {
   SIDEBAR_BOOTSTRAP_METRIC,
@@ -17,6 +22,9 @@ import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./buil
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 import { warnWsThrottled } from "./ws-log-throttle.js";
 import { WebSocket } from "ws";
+import { projectConversationEntryForBuilderWire } from "../swarm/session/conversation-wire-projection.js";
+import type { ConversationEntryEvent } from "../swarm/types.js";
+import { projectConversationPageMetadataForWire } from "./conversation-page-wire.js";
 
 export const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
 const MAX_SUBSCRIBE_MESSAGE_COUNT = 2000;
@@ -53,6 +61,8 @@ export async function sendSubscriptionBootstrap(options: {
   socket: WebSocket;
   targetAgentId: string;
   requestedMessageCount?: number;
+  supportsConversationPaging?: boolean;
+  conversationView?: BuilderTimelineChannelView;
   swarmManager: SwarmManager;
   integrationRegistry: IntegrationRegistryService | null;
   terminalService: TerminalService | null;
@@ -71,6 +81,8 @@ export async function sendSubscriptionBootstrap(options: {
     socket,
     targetAgentId,
     requestedMessageCount,
+    supportsConversationPaging = true,
+    conversationView = "all",
     swarmManager,
     integrationRegistry,
     terminalService,
@@ -137,7 +149,12 @@ export async function sendSubscriptionBootstrap(options: {
   if (includeAgentsSnapshot) {
     const agentsSnapshotBuildStartedAtMs = performance.now();
     const allAgents = swarmManager.listBootstrapAgents();
-    const agents = filterBuilderVisibleAgents(allAgents, systemProfileIds);
+    const selectedAgent = swarmManager.getAgent?.(targetAgentId);
+    const snapshotCandidates =
+      selectedAgent && !allAgents.some((agent) => agent.agentId === selectedAgent.agentId)
+        ? [...allAgents, selectedAgent]
+        : allAgents;
+    const agents = filterBuilderVisibleAgents(snapshotCandidates, systemProfileIds);
     const agentsSnapshotBuildMs = performance.now() - agentsSnapshotBuildStartedAtMs;
     metricFields.agentsSnapshotBuildMs = agentsSnapshotBuildMs;
     metricFields.agentsCount = allAgents.length;
@@ -190,7 +207,8 @@ export async function sendSubscriptionBootstrap(options: {
   metricFields.requestedMessageCount = historyMessageCount ?? null;
 
   const pendingChoicesStartedAtMs = performance.now();
-  const pendingChoices = swarmManager.getPendingChoiceRequestsForSession?.(targetAgentId) ?? [];
+  const pendingChoices = (swarmManager.getPendingChoiceRequestsForSession?.(targetAgentId) ?? [])
+    .map((choice) => projectConversationEntryForBuilderWire(choice) as typeof choice);
   const pendingChoiceIds =
     pendingChoices.length > 0
       ? pendingChoices.map((choice) => choice.choiceId)
@@ -199,15 +217,45 @@ export async function sendSubscriptionBootstrap(options: {
   metricFields.pendingChoicesLookupMs = performance.now() - pendingChoicesStartedAtMs;
 
   const historyLoadStartedAtMs = performance.now();
-  const historyResult = swarmManager.getConversationHistoryWithDiagnostics(targetAgentId);
-  const conversationHistorySelection = selectBootstrapConversationHistoryByPolicy({
-    fullHistory: historyResult.history,
-    managerId: targetAgentId,
-    requestedMessageCount: historyMessageCount,
-    pendingChoiceRequests: pendingChoices,
-    includeDiagnosticEntries: swarmManager.isModelCacheVisualizationEnabled?.() ?? false,
-    isWithinBudget: (messages) => isBootstrapConversationHistoryWithinBudget(targetAgentId, messages)
-  });
+  const legacyHistoryResult = supportsConversationPaging
+    ? undefined
+    : swarmManager.getConversationHistoryWithDiagnostics(targetAgentId);
+  const historyPageResult = supportsConversationPaging
+    ? swarmManager.getConversationHistoryPage(targetAgentId, {
+        limit: historyMessageCount,
+        view: conversationView,
+      })
+    : {
+        messages: legacyHistoryResult?.history ?? [],
+        page: {
+          hasOlder: false,
+          completeness: "complete" as const,
+          source: "memory" as const,
+          sourceRevision: "legacy_bootstrap",
+          pageBytes: 0,
+          scanBytes: legacyHistoryResult?.diagnostics.fsReadBytes ?? 0,
+        },
+      };
+  const projectedHistory = historyPageResult.messages.map((entry) =>
+    projectConversationEntryForBuilderWire(entry as ConversationEntryEvent));
+  // A canonical page and its cursor are one atomic result. Applying the
+  // legacy bootstrap selector afterward could discard a returned row while
+  // leaving the cursor advanced past it. Paging clients receive the page
+  // unchanged; pending choices arrive in their dedicated snapshot below.
+  const conversationHistorySelection = supportsConversationPaging
+    ? {
+        history: projectedHistory,
+        requestedHistoryLength: projectedHistory.length,
+        trimmed: false,
+      }
+    : selectBootstrapConversationHistoryByPolicy({
+        fullHistory: projectedHistory,
+        managerId: targetAgentId,
+        requestedMessageCount: historyMessageCount,
+        pendingChoiceRequests: pendingChoices,
+        includeDiagnosticEntries: swarmManager.isModelCacheVisualizationEnabled?.() ?? false,
+        isWithinBudget: (messages) => isBootstrapConversationHistoryWithinBudget(targetAgentId, messages)
+      });
   const conversationHistory = conversationHistorySelection.history;
   if (conversationHistorySelection.trimmed) {
     logBootstrapHistoryTrim(
@@ -219,28 +267,38 @@ export async function sendSubscriptionBootstrap(options: {
   const historyLoadMs = performance.now() - historyLoadStartedAtMs;
   metricFields.historyLoadMs = historyLoadMs;
   metricFields.historyEntriesReturned = conversationHistory.length;
-  metricFields.fsReadOps = historyResult.diagnostics.fsReadOps;
-  metricFields.fsReadBytes = historyResult.diagnostics.fsReadBytes;
-  metricFields.sessionFileBytes = historyResult.diagnostics.sessionFileBytes;
-  metricFields.cacheFileBytes = historyResult.diagnostics.cacheFileBytes;
-  metricFields.persistedEntryCount = historyResult.diagnostics.persistedEntryCount;
-  metricFields.cachedEntryCount = historyResult.diagnostics.cachedEntryCount;
-  metricFields.sessionSummaryBytesScanned = historyResult.diagnostics.sessionSummaryBytesScanned;
-  metricFields.cacheReadMs = historyResult.diagnostics.cacheReadMs;
-  metricFields.sessionSummaryReadMs = historyResult.diagnostics.sessionSummaryReadMs;
-  metricFields.historyDetail = historyResult.diagnostics.detail ?? undefined;
+  metricFields.fsReadBytes = historyPageResult.page.scanBytes;
+  if (legacyHistoryResult) {
+    metricFields.fsReadOps = legacyHistoryResult.diagnostics.fsReadOps;
+    metricFields.sessionFileBytes = legacyHistoryResult.diagnostics.sessionFileBytes;
+    metricFields.cacheFileBytes = legacyHistoryResult.diagnostics.cacheFileBytes;
+    metricFields.persistedEntryCount = legacyHistoryResult.diagnostics.persistedEntryCount;
+    metricFields.cachedEntryCount = legacyHistoryResult.diagnostics.cachedEntryCount;
+    metricFields.sessionSummaryBytesScanned = legacyHistoryResult.diagnostics.sessionSummaryBytesScanned;
+    metricFields.cacheReadMs = legacyHistoryResult.diagnostics.cacheReadMs;
+    metricFields.sessionSummaryReadMs = legacyHistoryResult.diagnostics.sessionSummaryReadMs;
+    metricFields.historyDetail = legacyHistoryResult.diagnostics.detail ?? undefined;
+  }
+  metricFields.historyPageSource = historyPageResult.page.source;
+  metricFields.historyPageCompleteness = historyPageResult.page.completeness;
+  metricFields.historyPageHasOlder = historyPageResult.page.hasOlder;
   await sendMeasured("conversationHistory", {
     type: "conversation_history",
     agentId: targetAgentId,
-    messages: conversationHistory
+    messages: conversationHistory,
+    mode: "replace",
+    ...(supportsConversationPaging
+      ? { page: projectConversationPageMetadataForWire(historyPageResult.page) }
+      : {}),
   });
 
-  await sendMeasured("pendingChoicesSnapshot", {
-    type: "pending_choices_snapshot",
-    agentId: targetAgentId,
-    choiceIds: pendingChoiceIds,
-    ...(pendingChoices.length > 0 ? { choices: pendingChoices } : {}),
-  });
+  const pendingChoicesSnapshot = buildPendingChoicesSnapshot(
+    targetAgentId,
+    pendingChoiceIds,
+    pendingChoices,
+  );
+  metricFields.pendingChoiceDetailsReturned = pendingChoicesSnapshot.choices?.length ?? 0;
+  await sendMeasured("pendingChoicesSnapshot", pendingChoicesSnapshot);
   metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
 
   await sendMeasured("restartRecoverySnapshot", {
@@ -311,8 +369,12 @@ export async function sendSubscriptionBootstrap(options: {
 
   perf.recordDuration(SIDEBAR_BOOTSTRAP_METRIC, totalMs, {
     labels: {
-      historySource: historyResult.diagnostics.historySource,
-      cacheState: historyResult.diagnostics.cacheState,
+      historySource:
+        legacyHistoryResult?.diagnostics.historySource ??
+        (historyPageResult.page.source === "legacy_cache" ? "cache_hit" : "full_parse"),
+      cacheState:
+        legacyHistoryResult?.diagnostics.cacheState ??
+        (historyPageResult.page.source === "legacy_cache" ? "hit" : "absent"),
       buildMode
     },
     fields: metricFields
@@ -341,6 +403,37 @@ function isBootstrapConversationHistoryWithinBudget(
     messages,
   });
 
+  return eventBytes !== null && eventBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET;
+}
+
+function buildPendingChoicesSnapshot(
+  agentId: string,
+  choiceIds: string[],
+  choices: Extract<ServerEvent, { type: "choice_request" }>[],
+): Extract<ServerEvent, { type: "pending_choices_snapshot" }> {
+  const base = {
+    type: "pending_choices_snapshot" as const,
+    agentId,
+    choiceIds,
+  };
+  if (choices.length === 0) return base;
+
+  const full = { ...base, choices };
+  if (isEventWithinBootstrapBudget(full)) return full;
+
+  const selected: typeof choices = [];
+  for (let index = choices.length - 1; index >= 0; index -= 1) {
+    const candidate = [choices[index], ...selected];
+    if (isEventWithinBootstrapBudget({ ...base, choices: candidate })) {
+      selected.unshift(choices[index]);
+    }
+  }
+
+  return selected.length > 0 ? { ...base, choices: selected } : base;
+}
+
+function isEventWithinBootstrapBudget(event: ServerEvent): boolean {
+  const eventBytes = measureEventBytes(event);
   return eventBytes !== null && eventBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET;
 }
 

@@ -222,7 +222,11 @@ async function renderPage(): Promise<FakeWebSocket> {
   expect(socket).toBeDefined()
 
   socket.emit('open')
-  expect(JSON.parse(socket.sentPayloads.at(0) ?? '{}')).toEqual({ type: 'subscribe' })
+  expect(JSON.parse(socket.sentPayloads.at(0) ?? '{}')).toEqual({
+    type: 'subscribe',
+    conversationPaging: true,
+    conversationView: 'web',
+  })
   emitServerEvent(socket, {
     type: 'ready',
     serverTime: new Date().toISOString(),
@@ -339,6 +343,15 @@ describe('IndexPage create project model selection', () => {
         buildWorker('worker-foreign', 'other-manager', '/tmp/other-manager'),
       ],
     })
+    await vi.advanceTimersByTimeAsync(0)
+
+    click(getByRole(container, 'button', { name: 'All' }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toMatchObject({
+      type: 'subscribe',
+      conversationPaging: true,
+      conversationView: 'all',
+    })
 
     emitServerEvent(socket, {
       type: 'conversation_history',
@@ -402,10 +415,9 @@ describe('IndexPage create project model selection', () => {
         },
       ],
     })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
     await vi.advanceTimersByTimeAsync(0)
-
-    click(getByRole(container, 'button', { name: 'All' }))
 
     // Scoped agent messages from owned workers remain visible
     expect(queryByText(container, 'owned worker chatter')).not.toBeNull()
@@ -429,6 +441,15 @@ describe('IndexPage create project model selection', () => {
         buildManager('other-manager', '/tmp/other-manager'),
         buildWorker('worker-foreign', 'other-manager', '/tmp/other-manager'),
       ],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    click(getByRole(container, 'button', { name: 'All' }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toMatchObject({
+      type: 'subscribe',
+      conversationPaging: true,
+      conversationView: 'all',
     })
 
     emitServerEvent(socket, {
@@ -475,10 +496,9 @@ describe('IndexPage create project model selection', () => {
         },
       ],
     })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
     await vi.advanceTimersByTimeAsync(0)
-
-    click(getByRole(container, 'button', { name: 'All' }))
 
     expect(queryByText(container, /mgr-tool/)).not.toBeNull()
     expect(queryByText(container, /owned-tool/)).toBeNull()
@@ -528,7 +548,6 @@ describe('IndexPage create project model selection', () => {
         },
       ],
     })
-
     await vi.advanceTimersByTimeAsync(0)
 
     click(getByRole(container, 'button', { name: 'All' }))
@@ -629,6 +648,27 @@ describe('IndexPage create project model selection', () => {
           profileId: 'beta',
           sessionLabel: 'Beta default',
           updatedAt: '2026-01-01T00:04:00.000Z',
+        },
+      ],
+    })
+    emitServerEvent(socket, {
+      type: 'profiles_snapshot',
+      profiles: [
+        {
+          profileId: 'alpha',
+          displayName: 'Alpha',
+          defaultSessionAgentId: 'alpha',
+          defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          profileId: 'beta',
+          displayName: 'Beta',
+          defaultSessionAgentId: 'beta',
+          defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
         },
       ],
     })

@@ -98,6 +98,18 @@ export function isProtectedManagerContextEntry(
   managerAliasIds: ReadonlySet<string>,
   knownWorkerIds: ReadonlySet<string>,
 ): boolean {
+  if (entry.type === 'activity_summary') {
+    const agentId = entry.agentId.trim()
+    const actorAgentId = entry.actorAgentId.trim()
+    return (
+      agentId.length > 0 &&
+      actorAgentId.length > 0 &&
+      agentId === actorAgentId &&
+      managerAliasIds.has(agentId) &&
+      !knownWorkerIds.has(actorAgentId)
+    )
+  }
+
   if (entry.type === 'agent_tool_call') {
     if (entry.kind === 'tool_execution_update') {
       return false
@@ -176,6 +188,10 @@ export function isVisibleInManagerAllView(
   }
 
   if (entry.type === 'agent_tool_call') {
+    return isProtectedManagerContextEntry(entry, managerAliasIds, knownWorkerIds)
+  }
+
+  if (entry.type === 'activity_summary') {
     return isProtectedManagerContextEntry(entry, managerAliasIds, knownWorkerIds)
   }
 

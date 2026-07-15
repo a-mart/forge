@@ -62,6 +62,20 @@ class FakeBootstrapSwarmManager {
     return []
   }
 
+  getConversationHistoryPage() {
+    return {
+      messages: [],
+      page: {
+        hasOlder: false,
+        completeness: 'complete' as const,
+        source: 'memory' as const,
+        sourceRevision: 'test',
+        pageBytes: 0,
+        scanBytes: 0,
+      },
+    }
+  }
+
   getConversationHistoryWithDiagnostics(): {
     history: []
     diagnostics: {

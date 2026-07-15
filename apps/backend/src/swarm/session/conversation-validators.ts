@@ -15,6 +15,7 @@ import {
   isModelCacheClassificationConsistent,
 } from "../runtime/model-cache-observation.js";
 import type {
+  ActivitySummaryEvent,
   AgentMessageEvent,
   AgentToolCallEvent,
   ChoiceRequestEvent,
@@ -41,15 +42,44 @@ const EXTERNAL_THREAD_MESSAGE_STATUSES = [
 ] as const;
 
 export function isConversationEntryEvent(value: unknown): value is ConversationEntryEvent {
-  return (
+  return isConversationTimelineMetadata(value) && (
     isConversationMessageEvent(value) ||
     isConversationLogEvent(value) ||
     isAgentMessageEvent(value) ||
     isAgentToolCallEvent(value) ||
+    isActivitySummaryEvent(value) ||
     isChoiceRequestEvent(value) ||
     isPlanSummaryEvent(value) ||
     isModelCacheObservationEvent(value)
   );
+}
+
+function isConversationTimelineMetadata(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as { timelineEntryId?: unknown; timelineSequence?: unknown };
+  if (maybe.timelineEntryId !== undefined && !isNonEmptyString(maybe.timelineEntryId)) return false;
+  if (
+    maybe.timelineSequence !== undefined &&
+    (!Number.isSafeInteger(maybe.timelineSequence) || (maybe.timelineSequence as number) < 0)
+  ) return false;
+  return true;
+}
+
+function isActivitySummaryEvent(value: unknown): value is ActivitySummaryEvent {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<ActivitySummaryEvent>;
+  if (maybe.type !== "activity_summary" || maybe.schemaVersion !== 1) return false;
+  if (!isNonEmptyString(maybe.itemId) || !isNonEmptyString(maybe.agentId)) return false;
+  if (!isNonEmptyString(maybe.actorAgentId) || !isNonEmptyString(maybe.timestamp)) return false;
+  if (maybe.turnId !== undefined && !isNonEmptyString(maybe.turnId)) return false;
+  if (maybe.kind !== "tool_activity") return false;
+  if (maybe.status !== "completed" && maybe.status !== "failed" && maybe.status !== "interrupted") return false;
+  if (maybe.toolName !== undefined && !isNonEmptyString(maybe.toolName)) return false;
+  if (maybe.correlationId !== undefined && !isNonEmptyString(maybe.correlationId)) return false;
+  if (!isNonEmptyString(maybe.displaySummary) || maybe.displaySummary.length > 512) return false;
+  if (maybe.isError !== undefined && typeof maybe.isError !== "boolean") return false;
+  return true;
 }
 
 function isPlanSummaryEvent(value: unknown): value is PlanSummaryEvent {

@@ -34,11 +34,21 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     if (maybeMessageCount !== undefined && !isSafeMessageCount(maybeMessageCount)) {
       return fail("subscribe.messageCount must be a positive finite integer");
     }
+    const conversationPaging = (maybe as { conversationPaging?: unknown }).conversationPaging;
+    if (conversationPaging !== undefined && conversationPaging !== true) {
+      return fail("subscribe.conversationPaging must be true when provided");
+    }
+    const conversationView = (maybe as { conversationView?: unknown }).conversationView;
+    if (conversationView !== undefined && conversationView !== "web" && conversationView !== "all") {
+      return fail("subscribe.conversationView must be web or all when provided");
+    }
 
     return ok({
       type: "subscribe",
       agentId: maybe.agentId,
-      messageCount: normalizeMessageCount(maybeMessageCount)
+      messageCount: normalizeMessageCount(maybeMessageCount),
+      ...(conversationPaging === true ? { conversationPaging: true as const } : {}),
+      ...(conversationView ? { conversationView } : {}),
     });
   }
 

@@ -277,3 +277,132 @@ describe('MessageList plan summaries', () => {
     expect(container.textContent).toContain('Implementation is complete.')
   })
 })
+
+describe('MessageList paged activity', () => {
+  it('renders the bounded canonical summary without raw tool output', () => {
+    render([{
+      type: 'activity_summary',
+      schemaVersion: 1,
+      itemId: 'tool:session-1:tool-1',
+      agentId: 'session-1',
+      actorAgentId: 'session-1',
+      timestamp: now,
+      kind: 'tool_activity',
+      status: 'completed',
+      toolName: 'unmapped_provider_tool',
+      correlationId: 'tool-1',
+      displaySummary: 'Completed provider activity',
+    }])
+
+    expect(container.textContent).toContain('Completed provider activity')
+    expect(container.textContent).not.toContain('raw tool output')
+  })
+
+  it('keeps richer live tool detail and failure wording when a summary converges', () => {
+    render([
+      {
+        type: 'conversation_log',
+        agentId: 'session-1',
+        timestamp: now,
+        source: 'runtime_log',
+        kind: 'tool_execution_start',
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: JSON.stringify({ command: 'pnpm test' }),
+      },
+      {
+        type: 'conversation_log',
+        agentId: 'session-1',
+        timestamp: now,
+        source: 'runtime_log',
+        kind: 'tool_execution_end',
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: 'test failed',
+        isError: true,
+      },
+      {
+        type: 'activity_summary',
+        schemaVersion: 1,
+        itemId: 'tool:session-1:tool-1',
+        agentId: 'session-1',
+        actorAgentId: 'session-1',
+        timestamp: now,
+        kind: 'tool_activity',
+        status: 'failed',
+        toolName: 'bash',
+        correlationId: 'tool-1',
+        displaySummary: 'Ran command',
+        isError: true,
+      },
+    ])
+
+    expect(container.textContent).toContain('Command failed: pnpm test')
+  })
+
+  it('lets richer live tool detail replace a summary that arrived first', () => {
+    render([
+      {
+        type: 'activity_summary',
+        schemaVersion: 1,
+        itemId: 'tool:session-1:tool-1',
+        agentId: 'session-1',
+        actorAgentId: 'session-1',
+        timestamp: now,
+        kind: 'tool_activity',
+        status: 'completed',
+        toolName: 'bash',
+        correlationId: 'tool-1',
+        displaySummary: 'Completed provider activity',
+      },
+      {
+        type: 'conversation_log',
+        agentId: 'session-1',
+        timestamp: now,
+        source: 'runtime_log',
+        kind: 'tool_execution_start',
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: JSON.stringify({ command: 'pnpm test' }),
+      },
+      {
+        type: 'conversation_log',
+        agentId: 'session-1',
+        timestamp: now,
+        source: 'runtime_log',
+        kind: 'tool_execution_end',
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: 'tests passed',
+      },
+    ])
+
+    expect(container.textContent).toContain('Ran command: pnpm test')
+    expect(container.textContent).not.toContain('Completed provider activity')
+  })
+
+  it('offers older history through one explicit callback', () => {
+    const onLoadOlder = vi.fn()
+    render([], { hasOlder: true, onLoadOlder })
+
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Load older conversation items"]')
+    expect(button).toBeTruthy()
+    flushSync(() => button?.click())
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the timeline refresh action enabled after the source changes', () => {
+    const onLoadOlder = vi.fn()
+    render([], {
+      hasOlder: true,
+      historyCompleteness: 'source_changed',
+      onLoadOlder,
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Load older conversation items"]')
+    expect(button?.disabled).toBe(false)
+    expect(button?.textContent).toContain('refresh')
+    flushSync(() => button?.click())
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+  })
+})

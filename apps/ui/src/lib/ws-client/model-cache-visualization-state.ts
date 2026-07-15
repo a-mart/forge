@@ -18,6 +18,23 @@ export function upsertModelCacheObservation(
   return next
 }
 
+export function prependModelCacheObservations(
+  observations: ModelCacheObservationEntry[],
+  olderObservations: ModelCacheObservationEntry[],
+): ModelCacheObservationEntry[] {
+  const currentIds = new Set(
+    observations.flatMap((observation) => observation.id ? [observation.id] : []),
+  )
+  const uniqueOlder = olderObservations.reduce(
+    (list, observation) =>
+      observation.id && currentIds.has(observation.id)
+        ? list
+        : upsertModelCacheObservation(list, observation),
+    [] as ModelCacheObservationEntry[],
+  )
+  return [...uniqueOlder, ...observations]
+}
+
 /** Route bootstrap/live observations based on whether the persisted setting is known yet. */
 export function routeModelCacheObservationsForState(options: {
   incoming: ModelCacheObservationEntry[]
@@ -25,7 +42,7 @@ export function routeModelCacheObservationsForState(options: {
   settingLoaded: boolean
   currentObservations: ModelCacheObservationEntry[]
   pendingObservations: ModelCacheObservationEntry[]
-  mode: 'replace' | 'upsert'
+  mode: 'replace' | 'prepend' | 'upsert'
 }): {
   modelCacheObservations: ModelCacheObservationEntry[]
   pendingModelCacheObservations: ModelCacheObservationEntry[]
@@ -33,9 +50,10 @@ export function routeModelCacheObservationsForState(options: {
   const { incoming, enabled, settingLoaded, currentObservations, pendingObservations, mode } = options
 
   if (!settingLoaded) {
-    const nextPending =
-      mode === 'replace'
-        ? incoming
+    const nextPending = mode === 'replace'
+      ? incoming
+      : mode === 'prepend'
+        ? prependModelCacheObservations(pendingObservations, incoming)
         : incoming.reduce(
             (list, observation) => upsertModelCacheObservation(list, observation),
             pendingObservations,
@@ -54,9 +72,10 @@ export function routeModelCacheObservationsForState(options: {
     }
   }
 
-  const mergedPending =
-    mode === 'replace'
-      ? incoming
+  const mergedPending = mode === 'replace'
+    ? incoming
+    : mode === 'prepend'
+      ? prependModelCacheObservations(pendingObservations, incoming)
       : incoming.reduce(
           (list, observation) => upsertModelCacheObservation(list, observation),
           pendingObservations,
@@ -66,7 +85,9 @@ export function routeModelCacheObservationsForState(options: {
     modelCacheObservations:
       mode === 'replace'
         ? mergedPending
-        : mergedPending.reduce(
+        : mode === 'prepend'
+          ? prependModelCacheObservations(currentObservations, mergedPending)
+          : mergedPending.reduce(
             (list, observation) => upsertModelCacheObservation(list, observation),
             currentObservations,
           ),

@@ -186,8 +186,9 @@ export function useActiveAgent({
 
     const currentAgentId = state.targetAgentId ?? state.subscribedAgentId
     const hasExplicitRouteSelection = routeState.agentId !== DEFAULT_MANAGER_AGENT_ID
+    const clientExplicitSelectionAgentId = clientRef.current?.getExplicitSelectionAgentId() ?? null
     const explicitSelectionAgentId =
-      clientRef.current?.getExplicitSelectionAgentId() ??
+      clientExplicitSelectionAgentId ??
       (hasExplicitRouteSelection ? routeState.agentId : null)
     const hasExplicitSelection =
       hasExplicitRouteSelection || clientRef.current?.hasExplicitSelection() === true
@@ -214,7 +215,52 @@ export function useActiveAgent({
         return
       }
 
+      const rejectedExplicitSelectionAgentId =
+        clientRef.current?.getRejectedExplicitSelectionAgentId() ?? null
+      const explicitSelectionRejected =
+        rejectedExplicitSelectionAgentId === explicitSelectionAgentId
+
+      // The origin client is created before the route controller runs, so a
+      // fast managers-only bootstrap can clear the client's initial selection
+      // bookkeeping before a cold worker route is subscribed. The URL remains
+      // authoritative: re-issue that explicit subscription and wait for either
+      // its targeted descriptor snapshot or an UNKNOWN_AGENT rejection.
+      if (
+        !explicitSelectionRejected &&
+        clientExplicitSelectionAgentId !== explicitSelectionAgentId &&
+        !previousAgentsByIdRef.current.has(explicitSelectionAgentId)
+      ) {
+        if (state.connected) {
+          requestGuardedAgentTransition(
+            coordinator,
+            explicitSelectionAgentId,
+            () => clientRef.current?.subscribeToAgent(explicitSelectionAgentId),
+          )
+        }
+        return
+      }
+
       if (!state.hasReceivedAgentsSnapshot) {
+        return
+      }
+
+      const explicitSelectionPending =
+        clientExplicitSelectionAgentId === explicitSelectionAgentId &&
+        clientRef.current?.isExplicitSelectionPending() === true &&
+        !explicitSelectionRejected
+      // `ready` accepts the target before its agents_snapshot is applied and
+      // clears the transport-level pending bit. Keep waiting while a cold,
+      // never-observed explicit selection remains accepted; a rejection or
+      // removal of a previously observed target authorizes deletion fallback.
+      const explicitSelectionAccepted =
+        clientExplicitSelectionAgentId === explicitSelectionAgentId &&
+        !explicitSelectionRejected &&
+        !previousAgentsByIdRef.current.has(explicitSelectionAgentId)
+      if (
+        explicitSelectionPending ||
+        explicitSelectionAccepted ||
+        !state.hasReceivedProfilesSnapshot
+      ) {
         return
       }
 
@@ -223,6 +269,7 @@ export function useActiveAgent({
           state.agents,
           explicitSelectionAgentId,
           previousAgentsByIdRef.current,
+          state.profiles,
         ) ?? chooseFallbackAgentId(state.agents, undefined, state.profiles)
 
       if (!fallbackAgentId) {
@@ -281,7 +328,9 @@ export function useActiveAgent({
     previousAgentsByIdRef,
     routeState,
     state.agents,
+    state.connected,
     state.hasReceivedAgentsSnapshot,
+    state.hasReceivedProfilesSnapshot,
     state.profiles,
     state.subscribedAgentId,
     state.targetAgentId,

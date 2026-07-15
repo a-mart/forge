@@ -5,6 +5,7 @@ import {
   type AgentCreatorResult,
   type CliSessionMetadata,
   type ConversationMessageSource,
+  type ConversationTimelineEntryMetadata,
   type AgentModelOrigin,
   type AgentSessionSurface,
   type ChoiceRequestEvent,
@@ -288,7 +289,7 @@ export interface ConversationAttachmentMetadata {
 
 export type ConversationMessageAttachment = ConversationAttachment | ConversationAttachmentMetadata;
 
-export interface ConversationMessageEvent {
+export interface ConversationMessageEvent extends ConversationTimelineEntryMetadata {
   type: "conversation_message";
   agentId: string;
   turnId?: string;
@@ -320,7 +321,7 @@ export type ConversationLogKind =
   | "tool_execution_update"
   | "tool_execution_end";
 
-export interface ConversationLogEvent {
+export interface ConversationLogEvent extends ConversationTimelineEntryMetadata {
   type: "conversation_log";
   agentId: string;
   timestamp: string;
@@ -333,7 +334,7 @@ export interface ConversationLogEvent {
   isError?: boolean;
 }
 
-export interface AgentMessageEvent {
+export interface AgentMessageEvent extends ConversationTimelineEntryMetadata {
   type: "agent_message";
   agentId: string;
   timestamp: string;
@@ -354,7 +355,7 @@ export type AgentToolCallKind = Extract<
   "tool_execution_start" | "tool_execution_update" | "tool_execution_end"
 >;
 
-export interface AgentToolCallEvent {
+export interface AgentToolCallEvent extends ConversationTimelineEntryMetadata {
   type: "agent_tool_call";
   agentId: string;
   actorAgentId: string;
@@ -364,6 +365,22 @@ export interface AgentToolCallEvent {
   toolName?: string;
   toolCallId?: string;
   text: string;
+  isError?: boolean;
+}
+
+export interface ActivitySummaryEvent extends ConversationTimelineEntryMetadata {
+  type: "activity_summary";
+  schemaVersion: 1;
+  itemId: string;
+  agentId: string;
+  actorAgentId: string;
+  turnId?: string;
+  timestamp: string;
+  kind: "tool_activity";
+  status: "completed" | "failed" | "interrupted";
+  toolName?: string;
+  correlationId?: string;
+  displaySummary: string;
   isError?: boolean;
 }
 
@@ -395,14 +412,16 @@ export interface ModelCacheObservationEvent {
   };
 }
 
-export type ConversationEntryEvent =
+export type ConversationEntryEvent = (
   | ConversationMessageEvent
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent
+  | ActivitySummaryEvent
   | ChoiceRequestEvent
   | PlanSummaryEvent
-  | ModelCacheObservationEvent;
+  | ModelCacheObservationEvent
+) & ConversationTimelineEntryMetadata;
 
 export interface AgentStatusEvent {
   type: "agent_status";

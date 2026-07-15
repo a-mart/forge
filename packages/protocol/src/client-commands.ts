@@ -1,5 +1,6 @@
 import type { ConversationAttachment } from './attachments.js'
 import type { ConversationReplyTargetInput } from './conversation-events.js'
+import type { BuilderTimelineChannelView } from './builder-timeline-visibility.js'
 import type { ProjectAgentCapability } from './agents.js'
 import type { SessionGoalControlAction } from './goals.js'
 import type {
@@ -39,7 +40,15 @@ type ManagerModelSelectionInput = {
 }
 
 export type ClientCommand =
-  | { type: 'subscribe'; agentId?: string; messageCount?: number }
+  | {
+      type: 'subscribe'
+      agentId?: string
+      messageCount?: number
+      /** New clients advertise this so older clients retain the legacy bootstrap contract. */
+      conversationPaging?: true
+      /** Paging view is cursor-bound; switching views starts a fresh replace bootstrap. */
+      conversationView?: BuilderTimelineChannelView
+    }
   | { type: 'resume_restart_recovery'; requestId?: string }
   | { type: 'dismiss_restart_recovery'; requestId?: string }
   | {
@@ -170,6 +179,14 @@ export type ClientCommand =
   | { type: 'clear_all_pins'; agentId: string }
   | { type: 'merge_session_memory'; agentId: string; requestId?: string }
   | { type: 'get_session_workers'; sessionAgentId: string; requestId?: string }
+  | {
+      type: 'get_conversation_page'
+      agentId: string
+      cursor: string
+      limit?: number
+      view?: BuilderTimelineChannelView
+      requestId: string
+    }
   | { type: 'list_directories'; path?: string; requestId?: string }
   | { type: 'validate_directory'; path: string; requestId?: string }
   | { type: 'create_directory'; parentPath: string; name: string; requestId?: string }

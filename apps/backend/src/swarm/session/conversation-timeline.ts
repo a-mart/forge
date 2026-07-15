@@ -10,6 +10,7 @@ export const SESSION_HEADER_VERSION = 3;
 
 const FIRST_LINE_CHUNK_BYTES = 512;
 const TAIL_CHUNK_BYTES = 8192;
+const MAX_LEAF_HYDRATION_BYTES = 4 * 1024 * 1024;
 
 export interface ConversationTimelineDescriptor {
   sessionFile: string;
@@ -70,8 +71,13 @@ export class ConversationTimeline {
     // which is unsafe for very large transcripts. Appending a well-formed JSONL
     // entry keeps this path O(1) with no full-file reads.
     const headerCreated = this.ensureSessionFileHeader(descriptor);
+    if (!this.lastSessionEntryIdBySessionFile.has(descriptor.sessionFile)) {
+      this.hydrateLeafEntryId(descriptor);
+    }
     const parentId = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile) ?? null;
     const entryId = generateSessionEntryId();
+    event.timelineEntryId ??= entryId;
+    event.timelineSequence ??= statSync(descriptor.sessionFile).size;
     assignConversationMessageIdIfMissing(event, entryId);
 
     appendFileSync(
@@ -113,7 +119,6 @@ export class ConversationTimeline {
 
   hydrateLeafEntryId(descriptor: { agentId?: string; sessionFile: string }): void {
     const sessionFile = descriptor.sessionFile;
-    let fileDescriptor: number | undefined;
 
     try {
       const fileSize = statSync(sessionFile).size;
@@ -122,37 +127,10 @@ export class ConversationTimeline {
         return;
       }
 
-      const readLength = Math.min(fileSize, TAIL_CHUNK_BYTES);
-      const readOffset = Math.max(0, fileSize - readLength);
-
-      fileDescriptor = openSync(sessionFile, "r");
-      const buffer = Buffer.alloc(readLength);
-      const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, readOffset);
-      if (bytesRead <= 0) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      const tail = buffer.toString("utf8", 0, bytesRead);
-      const lines = tail.split("\n");
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const line = lines[index]?.trim();
-        if (!line) {
-          continue;
-        }
-
-        try {
-          const entryId = extractSessionEntryId(JSON.parse(line));
-          if (entryId) {
-            this.trackLastSessionEntryId(sessionFile, entryId);
-            return;
-          }
-        } catch {
-          // read window may start/end mid-line; skip parse failures
-        }
-      }
-
-      this.trackLastSessionEntryId(sessionFile, undefined);
+      const tailInfo = readLastLineInfo(sessionFile, fileSize, MAX_LEAF_HYDRATION_BYTES);
+      const lastLine = tailInfo.lastLine;
+      const parsedLastLine = lastLine ? parseJsonLine(lastLine, sessionFile) : undefined;
+      this.trackLastSessionEntryId(sessionFile, extractParentId(parsedLastLine) ?? undefined);
     } catch (error) {
       if (isEnoentError(error)) {
         this.lastSessionEntryIdBySessionFile.delete(sessionFile);
@@ -163,10 +141,6 @@ export class ConversationTimeline {
         agentId: descriptor.agentId,
         message: error instanceof Error ? error.message : String(error)
       });
-    } finally {
-      if (fileDescriptor !== undefined) {
-        closeSync(fileDescriptor);
-      }
     }
   }
 
@@ -657,7 +631,11 @@ function readFirstLine(sessionFile: string, fileSize: number): string | null {
   }
 }
 
-function readLastLineInfo(sessionFile: string, fileSize: number): { lastLine: string | null; endsWithNewline: boolean } {
+function readLastLineInfo(
+  sessionFile: string,
+  fileSize: number,
+  maxReadBytes = fileSize,
+): { lastLine: string | null; endsWithNewline: boolean } {
   let fileDescriptor: number | undefined;
 
   try {
@@ -696,11 +674,12 @@ function readLastLineInfo(sessionFile: string, fileSize: number): { lastLine: st
         };
       }
 
-      if (readLength >= fileSize) {
-        throw new Error(`Cannot determine last session line for ${sessionFile}`);
+      const readLimit = Math.min(fileSize, maxReadBytes);
+      if (readLength >= readLimit) {
+        return { lastLine: null, endsWithNewline };
       }
 
-      readLength = Math.min(fileSize, readLength * 2);
+      readLength = Math.min(readLimit, readLength * 2);
     }
 
     return { lastLine: null, endsWithNewline };
@@ -738,4 +717,3 @@ function extractParentId(parsedLastLine: Record<string, unknown> | undefined): s
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-

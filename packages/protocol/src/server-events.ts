@@ -112,6 +112,7 @@ import type {
 import type {
   ApiProxyResponseEvent,
   ConversationHistoryEvent,
+  ConversationPageEvent,
   ConversationResetEvent,
   ErrorEvent,
   PendingChoicesSnapshotEvent,
@@ -166,6 +167,7 @@ export type ServerEvent =
   | CollaborationCategoryReorderedEvent
   | ConversationResetEvent
   | ConversationHistoryEvent
+  | ConversationPageEvent
   | PendingChoicesSnapshotEvent
   | RestartRecoverySnapshotEvent
   | ProjectPresenceEvent

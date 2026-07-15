@@ -3,6 +3,7 @@ import type {
   AgentStatusEvent,
   AgentToolCallEvent,
   ApiProxyCommand,
+  BuilderTimelineChannelView,
   ChoiceRequestEvent,
   CollaborationServerEvent,
   ConversationMessageEvent,
@@ -53,6 +54,9 @@ import { hasRequestId, sendWsEvent, sendWsEventWithBackpressure } from "./ws-sen
 import { WsSubscriptions } from "./ws-subscriptions.js";
 import type { RepositoryProjectCreationService } from "../swarm/repository-project-creation-service.js";
 
+const CONVERSATION_PAGE_RATE_WINDOW_MS = 5_000;
+const MAX_CONVERSATION_PAGE_REQUESTS_PER_WINDOW = 8;
+
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
   private readonly allowNonManagerSubscriptions: boolean;
@@ -65,6 +69,7 @@ export class WsHandler {
   private readonly collabCommandHandler: CollabCommandHandler;
   private collaborationMessageServicePromise: Promise<CollaborationChannelMessageService> | null = null;
   private repositoryProjectCreationService: RepositoryProjectCreationService | null = null;
+  private readonly conversationPageRequestTimes = new WeakMap<WebSocket, number[]>();
 
   private wss: WebSocketServer | null = null;
 
@@ -318,7 +323,23 @@ export class WsHandler {
     }
 
     if (command.type === "subscribe") {
-      await this.handleSubscribe(socket, command.agentId, command.messageCount);
+      await this.handleSubscribe(
+        socket,
+        command.agentId,
+        command.messageCount,
+        command.conversationPaging === true,
+        command.conversationView,
+      );
+      return;
+    }
+
+    if (command.type === "get_conversation_page" && !this.allowConversationPageRequest(socket)) {
+      this.send(socket, {
+        type: "error",
+        code: "RATE_LIMITED",
+        message: "Too many conversation page requests. Please wait before loading more history.",
+        requestId: command.requestId,
+      });
       return;
     }
 
@@ -582,8 +603,32 @@ export class WsHandler {
     socket: WebSocket,
     requestedAgentId?: string,
     requestedMessageCount?: number,
+    supportsConversationPaging = true,
+    conversationView: BuilderTimelineChannelView = "all",
   ): Promise<void> {
-    await this.subscriptionManager.handleSubscribe(socket, requestedAgentId, requestedMessageCount);
+    await this.subscriptionManager.handleSubscribe(
+      socket,
+      requestedAgentId,
+      requestedMessageCount,
+      supportsConversationPaging,
+      conversationView,
+    );
+  }
+
+  private allowConversationPageRequest(socket: WebSocket): boolean {
+    const now = Date.now();
+    const cutoff = now - CONVERSATION_PAGE_RATE_WINDOW_MS;
+    const recent = (this.conversationPageRequestTimes.get(socket) ?? []).filter(
+      (timestamp) => timestamp > cutoff,
+    );
+    if (recent.length >= MAX_CONVERSATION_PAGE_REQUESTS_PER_WINDOW) {
+      this.conversationPageRequestTimes.set(socket, recent);
+      return false;
+    }
+
+    recent.push(now);
+    this.conversationPageRequestTimes.set(socket, recent);
+    return true;
   }
 
   private resolveSubscribedAgentId(socket: WebSocket): string | undefined {

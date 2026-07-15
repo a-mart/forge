@@ -302,6 +302,10 @@ export function BuilderSurface({
     setMessageSourceView(defaultMessageSourceViewForAgentRole(activeAgent?.role))
   }, [activeAgentId, activeAgent?.role])
 
+  useEffect(() => {
+    clientRef.current?.setConversationView(messageSourceView)
+  }, [clientRef, messageSourceView])
+
   // Derive effective detailed state for hook consumption
   const effectiveDetailedAllView = isActiveManager && messageSourceView === 'all' && detailedAllView
 
@@ -1073,6 +1077,17 @@ export function BuilderSurface({
                   planExpanded,
                   onPlanExpandedChange: setPlanExpanded,
                   statuses: state.statuses,
+                  hasOlder: state.conversationPage?.hasOlder ?? false,
+                  isLoadingOlder: state.conversationPageLoading,
+                  historyCompleteness: state.conversationPage?.completeness ?? 'complete',
+                  historyMutation: state.conversationHistoryMutation,
+                  onLoadOlder: () => {
+                    if (state.conversationPage?.completeness === 'source_changed') {
+                      clientRef.current?.refreshConversationHistory()
+                      return
+                    }
+                    void clientRef.current?.loadOlderConversation().catch(() => undefined)
+                  },
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt

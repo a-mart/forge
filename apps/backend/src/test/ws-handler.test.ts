@@ -15,6 +15,24 @@ function createPerfStub(): SidebarPerfRecorder {
 }
 
 describe('WsHandler send guards', () => {
+  it('rate-limits aggregate conversation paging per websocket', () => {
+    const handler = new WsHandler({
+      swarmManager: {
+        getConfig: () => ({ debug: false, paths: { dataDir: '/tmp' } }),
+      } as any,
+      integrationRegistry: null,
+      mobilePushService: {} as any,
+      allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
+    })
+    const socket = {} as WebSocket
+
+    for (let index = 0; index < 8; index += 1) {
+      expect((handler as any).allowConversationPageRequest(socket)).toBe(true)
+    }
+    expect((handler as any).allowConversationPageRequest(socket)).toBe(false)
+  })
+
   it('throttles repeated websocket backpressure warnings by event type', () => {
     resetWsLogThrottleForTest()
     const handler = new WsHandler({

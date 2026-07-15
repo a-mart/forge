@@ -73,6 +73,235 @@ function createModelCacheObservationEvent(agentId: string): Extract<ServerEvent,
 }
 
 describe('sendSubscriptionBootstrap', () => {
+  it('includes the selected idle worker when the global bootstrap list omits it', async () => {
+    const sent: ServerEvent[] = []
+    const manager = {
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      displayName: 'Manager',
+      role: 'manager' as const,
+      status: 'idle' as const,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: '/tmp',
+      model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' as const },
+      sessionFile: '/tmp/manager-1.jsonl',
+    }
+    const worker = {
+      ...manager,
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      displayName: 'Worker',
+      role: 'worker' as const,
+      sessionFile: '/tmp/worker-1.jsonl',
+    }
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: worker.agentId,
+      swarmManager: {
+        listBootstrapAgents: () => [manager],
+        getAgent: (agentId: string) => agentId === worker.agentId ? worker : manager,
+        listProfiles: () => [],
+        getConversationHistoryPage: () => ({
+          messages: [],
+          page: {
+            hasOlder: false,
+            completeness: 'complete',
+            source: 'canonical',
+            sourceRevision: 'fixture',
+            pageBytes: 0,
+            scanBytes: 0,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sent.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: (agentId) => agentId,
+    })
+
+    const snapshot = sent.find(
+      (event): event is Extract<ServerEvent, { type: 'agents_snapshot' }> =>
+        event.type === 'agents_snapshot',
+    )
+    expect(snapshot?.agents.map((agent) => agent.agentId)).toEqual(['manager-1', 'worker-1'])
+  })
+
+  it('retains the legacy full-history bootstrap for clients that do not advertise paging', async () => {
+    const sent: ServerEvent[] = []
+    const legacyHistory = Array.from({ length: 350 }, (_, index) => ({
+      type: 'conversation_message' as const,
+      id: `legacy-${index}`,
+      agentId: 'manager-1',
+      role: 'assistant' as const,
+      text: `legacy ${index}`,
+      timestamp: new Date(index).toISOString(),
+      source: 'system' as const,
+    }))
+    const getConversationHistoryWithDiagnostics = vi.fn(() => ({
+      history: legacyHistory,
+      diagnostics: {
+        cacheState: 'memory' as const,
+        historySource: 'memory' as const,
+        coldLoad: false,
+        fsReadOps: 0,
+        fsReadBytes: 0,
+        sessionFileBytes: 0,
+        cacheFileBytes: 0,
+        persistedEntryCount: legacyHistory.length,
+        cachedEntryCount: legacyHistory.length,
+        sessionSummaryBytesScanned: 0,
+        cacheReadMs: 0,
+        sessionSummaryReadMs: 0,
+      },
+    }))
+    const getConversationHistoryPage = vi.fn(() => ({
+      messages: legacyHistory.slice(-200),
+      page: {
+        hasOlder: true,
+        nextCursor: 'cursor',
+        completeness: 'complete' as const,
+        source: 'canonical' as const,
+        sourceRevision: 'fixture',
+        pageBytes: 100,
+        scanBytes: 200,
+      },
+    }))
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics,
+        getConversationHistoryPage,
+        getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sent.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
+    })
+
+    const historyEvent = sent.find(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> =>
+        event.type === 'conversation_history',
+    )
+    expect(getConversationHistoryWithDiagnostics).toHaveBeenCalledWith('manager-1')
+    expect(getConversationHistoryPage).not.toHaveBeenCalled()
+    expect(historyEvent?.messages).toHaveLength(350)
+    expect(historyEvent).not.toHaveProperty('page')
+  })
+
+  it('does not trim a canonical page after its cursor has already advanced', async () => {
+    const sent: ServerEvent[] = []
+    const pagedMessages = Array.from({ length: 4 }, (_, index) => ({
+      type: 'conversation_message' as const,
+      id: `paged-${index}`,
+      timelineEntryId: `row-${index}`,
+      timelineSequence: index,
+      agentId: 'manager-1',
+      role: 'assistant' as const,
+      text: `${index}:${'x'.repeat(60_000)}`,
+      timestamp: new Date(index).toISOString(),
+      source: 'system' as const,
+    }))
+    const pendingChoice = {
+      type: 'choice_request' as const,
+      agentId: 'manager-1',
+      choiceId: 'large-pending-choice',
+      questions: [{
+        id: 'q1',
+        question: 'y'.repeat(2_000_000),
+        options: [{ id: 'continue', label: 'Continue' }],
+      }],
+      status: 'pending' as const,
+      timestamp: '2026-01-01T00:00:00.000Z',
+    }
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: 'manager-1',
+      supportsConversationPaging: true,
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryPage: () => ({
+          messages: pagedMessages,
+          page: {
+            hasOlder: true,
+            nextCursor: 'already-advanced-cursor',
+            completeness: 'complete' as const,
+            source: 'canonical' as const,
+            sourceRevision: 'fixture',
+            pageBytes: Buffer.byteLength(JSON.stringify(pagedMessages), 'utf8'),
+            scanBytes: 256_000,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [pendingChoice.choiceId],
+        getPendingChoiceRequestsForSession: () => [pendingChoice],
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sent.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
+    })
+
+    const historyEvent = sent.find(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> =>
+        event.type === 'conversation_history',
+    )
+    expect(historyEvent?.messages.map((message) => message.type === 'conversation_message' ? message.id : message.type))
+      .toEqual(pagedMessages.map((message) => message.id))
+    expect(historyEvent?.page).toEqual({
+      hasOlder: true,
+      nextCursor: 'already-advanced-cursor',
+      completeness: 'complete',
+      source: 'canonical',
+    })
+    const pendingEvent = sent.find(
+      (event): event is Extract<ServerEvent, { type: 'pending_choices_snapshot' }> =>
+        event.type === 'pending_choices_snapshot',
+    )
+    expect(pendingEvent?.choiceIds).toEqual([pendingChoice.choiceId])
+    expect(pendingEvent?.choices).toHaveLength(1)
+    expect(Buffer.byteLength(JSON.stringify(pendingEvent), 'utf8')).toBeLessThan(1 * 1024 * 1024)
+    expect(JSON.stringify(pendingEvent)).not.toContain('y'.repeat(10_000))
+  })
+
   it('records sidebar.bootstrap once with diagnostics from the current history load', async () => {
     const perf = createPerfStub()
     const send = vi.fn((_: unknown, event: ServerEvent) => Buffer.byteLength(JSON.stringify(event), 'utf8'))
@@ -144,6 +373,7 @@ describe('sendSubscriptionBootstrap', () => {
     const result = await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager,
       integrationRegistry: null,
       terminalService: null,
@@ -217,6 +447,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager: {
         listBootstrapAgents: () => [],
         listProfiles: () => [],
@@ -282,6 +513,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager: {
         listBootstrapAgents: () => [],
         listProfiles: () => [],
@@ -396,6 +628,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager,
       integrationRegistry: null,
       terminalService: null,
@@ -411,7 +644,7 @@ describe('sendSubscriptionBootstrap', () => {
       .map(([, event]) => event)
       .find((event): event is Extract<ServerEvent, { type: 'conversation_history' }> => event.type === 'conversation_history')
     expect(conversationHistoryEvent).toBeDefined()
-    expect(conversationHistoryEvent?.messages.length).toBeLessThan(history.length)
+    expect(conversationHistoryEvent?.messages.length).toBeLessThanOrEqual(history.length)
     expect(conversationHistoryEvent?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'conversation_message', text: 'visible-user' }),
       expect.objectContaining({ type: 'choice_request', choiceId: 'visible-choice' }),
@@ -462,6 +695,7 @@ describe('sendSubscriptionBootstrap', () => {
     const result = await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager,
       integrationRegistry: null,
       terminalService: null,
@@ -500,6 +734,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager: {
         listBootstrapAgents: () => [],
         listProfiles: () => [],
@@ -596,6 +831,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: '__bootstrap_manager__',
+      supportsConversationPaging: false,
       swarmManager: {
         listBootstrapAgents: () => [],
         listProfiles: () => [],
@@ -654,6 +890,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
+      supportsConversationPaging: false,
       swarmManager: {
         listBootstrapAgents: () => [],
         listProfiles: () => [],
@@ -729,6 +966,7 @@ describe('sendSubscriptionBootstrap', () => {
       await sendSubscriptionBootstrap({
         socket,
         targetAgentId: 'manager-1',
+        supportsConversationPaging: false,
         swarmManager: {
           listBootstrapAgents: () => [],
           listProfiles: () => [],

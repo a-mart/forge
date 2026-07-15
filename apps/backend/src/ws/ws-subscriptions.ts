@@ -1,4 +1,11 @@
-import { isSystemProfile, type ProjectPresenceViewer, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
+import {
+  isSystemProfile,
+  isVisibleInBuilderTimeline,
+  type BuilderTimelineChannelView,
+  type ProjectPresenceViewer,
+  type ServerEvent,
+  type TerminalDescriptor,
+} from "@forge/protocol";
 import { getCollaborationSocketAuthContext } from "../collaboration/auth/collaboration-auth-middleware.js";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
@@ -8,6 +15,8 @@ import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
+import { projectConversationEntryForBuilderWire } from "../swarm/session/conversation-wire-projection.js";
+import type { ConversationEntryEvent } from "../swarm/types.js";
 import {
   DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
   normalizeSubscribeMessageCount,
@@ -20,12 +29,15 @@ const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 interface DeliveredSnapshotVersions {
   agentsSnapshotVersion?: number;
   profilesSnapshotVersion?: number;
+  selectedWorkerAgentId?: string;
 }
 
 interface SocketBootstrapRequest {
   generation: number;
   targetAgentId: string;
   messageCount?: number;
+  supportsConversationPaging: boolean;
+  conversationView: BuilderTimelineChannelView;
 }
 
 interface SocketBootstrapControllerState {
@@ -40,6 +52,7 @@ export class WsSubscriptions {
   readonly subscriptions = new Map<WebSocket, string>();
   private readonly deliveredSnapshotVersions = new Map<WebSocket, DeliveredSnapshotVersions>();
   private readonly bootstrapControllers = new Map<WebSocket, SocketBootstrapControllerState>();
+  private readonly conversationViews = new Map<WebSocket, BuilderTimelineChannelView>();
 
   private readonly swarmManager: SwarmManager;
   private readonly integrationRegistry: IntegrationRegistryService | null;
@@ -142,6 +155,7 @@ export class WsSubscriptions {
 
   private removeInternal(socket: WebSocket): void {
     this.subscriptions.delete(socket);
+    this.conversationViews.delete(socket);
     this.deliveredSnapshotVersions.delete(socket);
     this.cancelBootstrapController(socket);
   }
@@ -171,6 +185,7 @@ export class WsSubscriptions {
       if (
         outboundEvent.type === "conversation_message" ||
         outboundEvent.type === "conversation_log" ||
+        outboundEvent.type === "activity_summary" ||
         outboundEvent.type === "agent_message" ||
         outboundEvent.type === "agent_tool_call" ||
         outboundEvent.type === "conversation_reset" ||
@@ -179,6 +194,9 @@ export class WsSubscriptions {
         outboundEvent.type === "message_pinned"
       ) {
         if (!this.shouldDeliverConversationEventToSubscriber(outboundEvent, subscribedAgent)) {
+          continue;
+        }
+        if (!this.isConversationEntryVisibleForSocket(client, subscribedAgent, outboundEvent)) {
           continue;
         }
       }
@@ -301,6 +319,8 @@ export class WsSubscriptions {
     socket: WebSocket,
     requestedAgentId?: string,
     requestedMessageCount?: number,
+    supportsConversationPaging = true,
+    conversationView: BuilderTimelineChannelView = "all",
   ): Promise<void> {
     const managerId = this.resolveConfiguredManagerId();
     const targetAgentId =
@@ -335,6 +355,7 @@ export class WsSubscriptions {
 
     const previousAgentId = this.subscriptions.get(socket);
     this.subscriptions.set(socket, targetAgentId);
+    this.conversationViews.set(socket, conversationView);
     if (previousAgentId && previousAgentId !== targetAgentId) {
       this.emitProjectPresence(previousAgentId);
     }
@@ -348,7 +369,13 @@ export class WsSubscriptions {
       }
     }
 
-    await this.requestSubscriptionBootstrap(socket, targetAgentId, messageCount);
+    await this.requestSubscriptionBootstrap(
+      socket,
+      targetAgentId,
+      messageCount,
+      supportsConversationPaging,
+      conversationView,
+    );
     this.emitProjectPresence(targetAgentId);
   }
 
@@ -453,6 +480,8 @@ export class WsSubscriptions {
     socket: WebSocket,
     targetAgentId: string,
     requestedMessageCount?: number,
+    supportsConversationPaging = true,
+    conversationView: BuilderTimelineChannelView = "all",
   ): Promise<void> {
     const messageCount = normalizeSubscribeMessageCount(requestedMessageCount);
     let state = this.bootstrapControllers.get(socket);
@@ -467,7 +496,13 @@ export class WsSubscriptions {
       this.bootstrapControllers.set(socket, state);
     }
 
-    if (this.canJoinActiveBootstrap(state, targetAgentId, messageCount)) {
+    if (this.canJoinActiveBootstrap(
+      state,
+      targetAgentId,
+      messageCount,
+      supportsConversationPaging,
+      conversationView,
+    )) {
       return state.activePromise ?? Promise.resolve();
     }
 
@@ -477,6 +512,8 @@ export class WsSubscriptions {
       generation: state.nextGeneration,
       targetAgentId,
       messageCount,
+      supportsConversationPaging,
+      conversationView,
     };
 
     this.ensureBootstrapControllerDrain(socket, state);
@@ -536,7 +573,14 @@ export class WsSubscriptions {
       const shouldContinue = (): boolean => this.getBootstrapRequestDisposition(state, request) === "current";
 
       try {
-        await this.sendSubscriptionBootstrap(socket, request.targetAgentId, request.messageCount, shouldContinue);
+        await this.sendSubscriptionBootstrap(
+          socket,
+          request.targetAgentId,
+          request.messageCount,
+          request.supportsConversationPaging,
+          request.conversationView,
+          shouldContinue,
+        );
       } catch (error) {
         if (this.getBootstrapRequestDisposition(state, request) === "current") {
           throw error;
@@ -554,16 +598,25 @@ export class WsSubscriptions {
     socket: WebSocket,
     targetAgentId: string,
     requestedMessageCount?: number,
+    supportsConversationPaging = true,
+    conversationView: BuilderTimelineChannelView = "all",
     shouldContinue?: () => boolean,
   ): Promise<void> {
     const currentAgentsSnapshotVersion = this.swarmManager.getAgentsSnapshotVersion();
     const currentProfilesSnapshotVersion = this.swarmManager.getProfilesSnapshotVersion();
     const deliveredVersions = this.deliveredSnapshotVersions.get(socket);
+    const targetDescriptor = this.swarmManager.getAgent(targetAgentId);
+    const selectedWorkerAgentId = targetDescriptor?.role === "worker" ? targetAgentId : undefined;
+    const selectedWorkerSnapshotMissing =
+      selectedWorkerAgentId !== undefined &&
+      deliveredVersions?.selectedWorkerAgentId !== selectedWorkerAgentId;
 
     const result = await sendSubscriptionBootstrap({
       socket,
       targetAgentId,
       requestedMessageCount,
+      supportsConversationPaging,
+      conversationView,
       swarmManager: this.swarmManager,
       integrationRegistry: this.integrationRegistry,
       terminalService: this.terminalService,
@@ -575,7 +628,9 @@ export class WsSubscriptions {
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
-      includeAgentsSnapshot: deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion,
+      includeAgentsSnapshot:
+        deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion ||
+        selectedWorkerSnapshotMissing,
       includeProfilesSnapshot: deliveredVersions?.profilesSnapshotVersion !== currentProfilesSnapshotVersion,
       shouldContinue,
     });
@@ -585,7 +640,11 @@ export class WsSubscriptions {
     }
 
     if (result.agentsSnapshotSent) {
-      this.setDeliveredSnapshotVersion(socket, "agentsSnapshotVersion", currentAgentsSnapshotVersion);
+      this.deliveredSnapshotVersions.set(socket, {
+        ...(this.deliveredSnapshotVersions.get(socket) ?? {}),
+        agentsSnapshotVersion: currentAgentsSnapshotVersion,
+        selectedWorkerAgentId,
+      });
     }
     if (result.profilesSnapshotSent) {
       this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", currentProfilesSnapshotVersion);
@@ -609,6 +668,8 @@ export class WsSubscriptions {
     state: SocketBootstrapControllerState,
     targetAgentId: string,
     messageCount?: number,
+    supportsConversationPaging = true,
+    conversationView: BuilderTimelineChannelView = "all",
   ): boolean {
     const activeRequest = state.activeRequest;
     const latestRequest = state.latestRequest;
@@ -619,7 +680,9 @@ export class WsSubscriptions {
     return (
       activeRequest.generation === latestRequest.generation &&
       activeRequest.targetAgentId === targetAgentId &&
-      activeRequest.messageCount === messageCount
+      activeRequest.messageCount === messageCount &&
+      activeRequest.supportsConversationPaging === supportsConversationPaging
+      && activeRequest.conversationView === conversationView
     );
   }
 
@@ -672,6 +735,7 @@ export class WsSubscriptions {
       ServerEvent,
       | { type: "conversation_message" }
       | { type: "conversation_log" }
+      | { type: "activity_summary" }
       | { type: "agent_message" }
       | { type: "agent_tool_call" }
       | { type: "conversation_reset" }
@@ -693,7 +757,50 @@ export class WsSubscriptions {
     return false;
   }
 
+  private isConversationEntryVisibleForSocket(
+    socket: WebSocket,
+    subscribedAgentId: string,
+    event: ServerEvent,
+  ): boolean {
+    const view = this.conversationViews.get(socket) ?? "all";
+    if (
+      event.type !== "conversation_message" &&
+      event.type !== "conversation_log" &&
+      event.type !== "activity_summary" &&
+      event.type !== "agent_message" &&
+      event.type !== "agent_tool_call" &&
+      event.type !== "choice_request" &&
+      event.type !== "plan_summary" &&
+      event.type !== "model_cache_observation"
+    ) return true;
+
+    const descriptor = this.swarmManager.getAgent(subscribedAgentId);
+    if (view === "all" && descriptor?.role !== "manager") return true;
+    return isVisibleInBuilderTimeline(event, {
+      activeAgentId: subscribedAgentId,
+      activeAgentRole: descriptor?.role ?? null,
+      channelView: view,
+      agents: this.swarmManager.listAgents(),
+      history: descriptor?.role === "manager"
+        ? this.swarmManager.getConversationHistory(subscribedAgentId)
+        : [],
+    });
+  }
+
   private filterBuilderSnapshotEvent(event: ServerEvent): ServerEvent {
+    if (
+      event.type === "conversation_message" ||
+      event.type === "conversation_log" ||
+      event.type === "activity_summary" ||
+      event.type === "agent_message" ||
+      event.type === "agent_tool_call" ||
+      event.type === "choice_request" ||
+      event.type === "plan_summary" ||
+      event.type === "model_cache_observation"
+    ) {
+      return projectConversationEntryForBuilderWire(event as ConversationEntryEvent) as ServerEvent;
+    }
+
     if (event.type === "profiles_snapshot") {
       return {
         ...event,

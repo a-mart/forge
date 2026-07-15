@@ -14,6 +14,7 @@ export const HISTORY_CACHE_STATES = [
   "cache_read_error",
   "replay_error",
   "legacy_rebuild",
+  "timeline_metadata_missing",
   "metadata_entries_mismatch",
   "cache_missing_persisted_prefix",
   "persisted_entry_count_mismatch",

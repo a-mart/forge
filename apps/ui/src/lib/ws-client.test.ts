@@ -152,6 +152,7 @@ describe('ManagerWsClient', () => {
       'create_directory',
       'pick_directory',
       'get_session_workers',
+      'get_conversation_page',
       'rename_profile',
       'archive_profile',
       'restore_profile',
@@ -235,7 +236,12 @@ describe('ManagerWsClient', () => {
 
     socket.emit('open')
     expect(socket.sentPayloads).toHaveLength(1)
-    expect(JSON.parse(socket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
+    expect(JSON.parse(socket.sentPayloads[0])).toEqual({
+      type: 'subscribe',
+      agentId: 'manager',
+      conversationPaging: true,
+      conversationView: 'web',
+    })
 
     emitServerEvent(socket, {
       type: 'ready',
@@ -526,7 +532,11 @@ describe('ManagerWsClient', () => {
 
     socket.emit('open')
     expect(socket.sentPayloads).toHaveLength(1)
-    expect(JSON.parse(socket.sentPayloads[0])).toEqual({ type: 'subscribe' })
+    expect(JSON.parse(socket.sentPayloads[0])).toEqual({
+      type: 'subscribe',
+      conversationPaging: true,
+      conversationView: 'web',
+    })
 
     emitServerEvent(socket, {
       type: 'ready',
@@ -593,7 +603,12 @@ describe('ManagerWsClient', () => {
     expect(socket).toBeDefined()
 
     socket.emit('open')
-    expect(JSON.parse(socket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
+    expect(JSON.parse(socket.sentPayloads[0])).toEqual({
+      type: 'subscribe',
+      agentId: 'manager',
+      conversationPaging: true,
+      conversationView: 'web',
+    })
     expect(client.getState().connectionEpoch).toBe(1)
     emitServerEvent(socket, { type: 'profiles_snapshot', profiles: [] })
     expect(client.getState().hasReceivedProfilesSnapshot).toBe(true)
@@ -614,7 +629,12 @@ describe('ManagerWsClient', () => {
     // Re-hydration in place: reconnect re-subscribes (re-triggering the backend
     // bootstrap) and resets bootstrap-tracking state — without a page reload.
     expect(reload).not.toHaveBeenCalled()
-    expect(JSON.parse(reconnectedSocket.sentPayloads[0])).toEqual({ type: 'subscribe', agentId: 'manager' })
+    expect(JSON.parse(reconnectedSocket.sentPayloads[0])).toEqual({
+      type: 'subscribe',
+      agentId: 'manager',
+      conversationPaging: true,
+      conversationView: 'web',
+    })
     expect(client.getState().connected).toBe(true)
     expect(client.getState().connectionEpoch).toBe(2)
     expect(client.getState().builderSidebarOrderRevision).toBeNull()
@@ -943,6 +963,8 @@ describe('ManagerWsClient', () => {
     expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
       type: 'subscribe',
       agentId: 'worker-1',
+      conversationPaging: true,
+      conversationView: 'web',
     })
 
     emitServerEvent(socket, {
@@ -995,6 +1017,122 @@ describe('ManagerWsClient', () => {
     expect(snapshots.at(-1)?.targetAgentId).toBe('worker-1')
     expect(snapshots.at(-1)?.subscribedAgentId).toBe('worker-1')
 
+    client.destroy()
+  })
+
+  it('records an explicit subscription rejection and clears it on the next selection', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    client.subscribeToAgent('missing-worker')
+    expect(client.isExplicitSelectionPending()).toBe(true)
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'UNKNOWN_AGENT',
+      message: 'Agent missing-worker does not exist.',
+    })
+
+    expect(client.getRejectedExplicitSelectionAgentId()).toBe('missing-worker')
+    expect(client.isExplicitSelectionPending()).toBe(false)
+
+    client.subscribeToAgent('worker-1')
+    expect(client.getRejectedExplicitSelectionAgentId()).toBeNull()
+
+    client.destroy()
+  })
+
+  it('requests and prepends an older conversation page', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      mode: 'replace',
+      messages: [{
+        type: 'conversation_message',
+        id: 'newer',
+        agentId: 'manager',
+        role: 'assistant',
+        text: 'newer',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      }],
+      page: {
+        hasOlder: true,
+        nextCursor: 'cursor-1',
+        completeness: 'complete',
+        source: 'legacy_cache',
+      },
+    })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+    const pendingPage = client.loadOlderConversation(25)
+    const request = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(request).toMatchObject({
+      type: 'get_conversation_page',
+      agentId: 'manager',
+      cursor: 'cursor-1',
+      limit: 25,
+      view: 'web',
+      requestId: expect.any(String),
+    })
+    expect(client.getState().conversationPageLoading).toBe(true)
+
+    emitServerEvent(socket, {
+      type: 'conversation_page',
+      agentId: 'manager',
+      requestId: request.requestId,
+      messages: [{
+        type: 'conversation_message',
+        id: 'older',
+        agentId: 'manager',
+        role: 'assistant',
+        text: 'older',
+        timestamp: new Date(0).toISOString(),
+        source: 'speak_to_user',
+      }],
+      page: {
+        hasOlder: false,
+        completeness: 'complete',
+        source: 'legacy_cache',
+      },
+    })
+
+    await expect(pendingPage).resolves.toMatchObject({ agentId: 'manager' })
+    expect(client.getState().messages.map((entry) => entry.type === 'conversation_message' ? entry.id : 'unexpected'))
+      .toEqual(['older', 'newer'])
+    expect(client.getState().conversationPageLoading).toBe(false)
+    client.destroy()
+  })
+
+  it('starts a fresh cursor-bound bootstrap when the Builder conversation view changes', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    expect(client.setConversationView('all')).toBe(true)
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toEqual({
+      type: 'subscribe',
+      agentId: 'manager',
+      conversationPaging: true,
+      conversationView: 'all',
+    })
+    expect(client.getState().conversationPage).toBeNull()
     client.destroy()
   })
 

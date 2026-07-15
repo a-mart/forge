@@ -108,7 +108,7 @@ export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeSer
   conversation: {
     projector: Pick<
       ConversationProjector,
-      "getConversationHistory" | "getConversationHistoryWithDiagnostics"
+      "getConversationHistory" | "getConversationHistoryWithDiagnostics" | "getConversationHistoryPage"
     >;
     sidebarPerf: SidebarPerfRecorder;
   };

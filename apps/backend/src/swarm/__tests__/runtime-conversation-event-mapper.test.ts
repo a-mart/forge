@@ -151,9 +151,6 @@ describe("RuntimeConversationEventMapper", () => {
     expect(workerProjections).toHaveLength(2);
     for (const projection of workerProjections) {
       expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
-      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
-        continue;
-      }
       expect(JSON.parse(projection.text)).toEqual(result);
     }
 
@@ -168,7 +165,9 @@ describe("RuntimeConversationEventMapper", () => {
           isError: false
         }
       })
-    ).toMatchObject([{ type: "agent_tool_call", text: JSON.stringify(result) }]);
+    ).toMatchObject([
+      { type: "agent_tool_call", text: JSON.stringify(result) },
+    ]);
   });
 
   it("leaves non-Codex tool results untouched even when they contain model-only-looking keys", () => {
@@ -192,9 +191,6 @@ describe("RuntimeConversationEventMapper", () => {
     expect(projections).toHaveLength(2);
     for (const projection of projections) {
       expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
-      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
-        continue;
-      }
       expect(JSON.parse(projection.text)).toEqual(result);
     }
   });
@@ -432,9 +428,6 @@ describe("RuntimeConversationEventMapper", () => {
 
     for (const projection of projections) {
       expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
-      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
-        continue;
-      }
       expect(projection.text).toContain(preview);
       expect(projection.text).toContain("fireflies/fetch_transcript");
       expect(projection.text).not.toContain(transcriptTail);

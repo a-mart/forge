@@ -3,6 +3,7 @@ import type { WsRequestContractType } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
 import { MAX_API_PROXY_REQUEST_ID_LENGTH } from '../ws/commands/parse-utility-command.js'
+import { MAX_CONVERSATION_PAGE_CURSOR_LENGTH } from '../ws/commands/parse-session-command.js'
 
 function parseJsonCommand(payload: unknown) {
   return parseClientCommand(Buffer.from(JSON.stringify(payload), 'utf8'))
@@ -90,6 +91,7 @@ describe('ws command parser session commands', () => {
       create_directory: { type: 'create_directory', parentPath: '/tmp/project', name: 'new-folder' },
       pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
       get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
+      get_conversation_page: { type: 'get_conversation_page', agentId: 'session-a', cursor: 'cursor-1' },
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
       archive_profile: { type: 'archive_profile', profileId: 'profile-a' },
       restore_profile: { type: 'restore_profile', profileId: 'profile-a' },
@@ -344,6 +346,8 @@ describe('ws command parser session commands', () => {
       type: 'subscribe',
       agentId: 'manager',
       messageCount: 75,
+      conversationPaging: true,
+      conversationView: 'web',
     })
 
     expect(parsed).toEqual({
@@ -352,7 +356,37 @@ describe('ws command parser session commands', () => {
         type: 'subscribe',
         agentId: 'manager',
         messageCount: 75,
+        conversationPaging: true,
+        conversationView: 'web',
       },
+    })
+  })
+
+  it('bounds conversation page cursors and validates the paging capability', () => {
+    expect(parseJsonCommand({
+      type: 'get_conversation_page',
+      agentId: 'manager',
+      cursor: 'x'.repeat(MAX_CONVERSATION_PAGE_CURSOR_LENGTH + 1),
+    })).toEqual({
+      ok: false,
+      error: `get_conversation_page.cursor must be at most ${MAX_CONVERSATION_PAGE_CURSOR_LENGTH} characters`,
+    })
+    expect(parseJsonCommand({ type: 'subscribe', conversationPaging: false })).toEqual({
+      ok: false,
+      error: 'subscribe.conversationPaging must be true when provided',
+    })
+    expect(parseJsonCommand({ type: 'subscribe', conversationView: 'details' })).toEqual({
+      ok: false,
+      error: 'subscribe.conversationView must be web or all when provided',
+    })
+    expect(parseJsonCommand({
+      type: 'get_conversation_page',
+      agentId: 'manager',
+      cursor: 'cursor',
+      view: 'details',
+    })).toEqual({
+      ok: false,
+      error: 'get_conversation_page.view must be web or all when provided',
     })
   })
 
