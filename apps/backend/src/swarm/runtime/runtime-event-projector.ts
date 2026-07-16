@@ -51,7 +51,7 @@ const USER_VISIBLE_MANAGER_TOOL_EFFECTS = new Set([
 
 export type RuntimeEventProjectorRecoveryState = Pick<
   RuntimeRecoveryState,
-  "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
+  "markRecoveryAbortedWorkerTurn"
 >;
 
 export interface RuntimeEventProjectorDeps {
@@ -295,17 +295,6 @@ export class RuntimeEventProjector {
       default:
         break;
     }
-  }
-
-  shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
-    return (
-      this.deps.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(descriptor.agentId) ||
-      this.deps.isRuntimeRecoveryActive(descriptor.agentId)
-    );
-  }
-
-  clearRecoveryAbortedWorkerTurn(agentId: string): void {
-    this.deps.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
 
   async projectEvent({ agentId, runtimeToken, event, transientTerminatedExpired = false }: RuntimeEventProjectionInput): Promise<void> {

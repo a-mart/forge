@@ -71,7 +71,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   workerActivityState: Map<string, WorkerActivityStateLike>;
   runtimeRecoveryState: Pick<
     RuntimeRecoveryState,
-    "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
+    "markRecoveryAbortedWorkerTurn"
   >;
   conversationProjector: {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void;
@@ -857,11 +857,6 @@ export class SwarmRuntimeController {
       return;
     }
 
-    if (this.shouldSuppressWorkerIdleFinalization(descriptor)) {
-      this.getRuntimeEventProjector().clearRecoveryAbortedWorkerTurn(agentId);
-      return;
-    }
-
     await this.host.handleWorkerAgentEnd(agentId, descriptor);
   }
 
@@ -894,10 +889,6 @@ export class SwarmRuntimeController {
         status: descriptor.status,
       },
     });
-  }
-
-  private shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
-    return this.getRuntimeEventProjector().shouldSuppressWorkerIdleFinalization(descriptor);
   }
 
   private get descriptors(): Map<string, AgentDescriptor> {

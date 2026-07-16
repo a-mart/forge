@@ -150,7 +150,8 @@ function makeDescriptor(): AgentDescriptor {
 function createRuntime(options?: {
   session?: FakeSession;
   onRuntimeError?: (error: { phase: string; message: string; details?: Record<string, unknown> }) => void;
-  onSessionEvent?: (event: any) => void;
+  onSessionEvent?: (event: any) => void | Promise<void>;
+  onStatusChange?: (status: string, pendingCount: number) => void | Promise<void>;
 }): { runtime: AgentRuntime; session: FakeSession; runtimeErrors: Array<{ phase: string; message: string; details?: Record<string, unknown> }> } {
   const session = options?.session ?? new FakeSession();
   const runtimeErrors: Array<{ phase: string; message: string; details?: Record<string, unknown> }> = [];
@@ -160,10 +161,9 @@ function createRuntime(options?: {
     session: session as any,
     compactionRuntimeSettingsProvider: createCompactionGuardTestSettingsProvider(),
     callbacks: {
-      onStatusChange: () => {},
-      onSessionEvent: (_agentId, event) => {
-        options?.onSessionEvent?.(event);
-      },
+      onStatusChange: (_agentId, status, pendingCount) =>
+        options?.onStatusChange?.(status, pendingCount),
+      onSessionEvent: (_agentId, event) => options?.onSessionEvent?.(event),
       onRuntimeError: (_agentId, error) => {
         const payload = {
           phase: error.phase,
@@ -369,6 +369,74 @@ describe("mid-turn context guard", () => {
     });
 
     expect(forwardedEvents).toEqual([]);
+  });
+
+  it("keeps input dispatch visible until asynchronous message preparation finishes", async () => {
+    const resizeGate = createDeferred<void>();
+    resizeImageIfNeededMock.mockImplementation(async (data: string, mimeType: string) => {
+      await resizeGate.promise;
+      return { data, mimeType };
+    });
+    const { runtime } = createRuntime();
+
+    const send = runtime.sendMessage({
+      text: "follow-up",
+      images: [{ data: "raw-image", mimeType: "image/png" }],
+    });
+    expect(runtime.hasPendingInputDispatch()).toBe(true);
+
+    resizeGate.resolve(undefined);
+    await send;
+    expect(runtime.hasPendingInputDispatch()).toBe(false);
+  });
+
+  it("does not release context recovery until queued terminal events finish projecting", async () => {
+    const eventStarted = createDeferred<void>();
+    const releaseEvent = createDeferred<void>();
+    const { runtime, session } = createRuntime({
+      onSessionEvent: async () => {
+        eventStarted.resolve(undefined);
+        await releaseEvent.promise;
+      },
+    });
+    (runtime as any).beginContextRecovery();
+    session.emit({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+    });
+    await eventStarted.promise;
+
+    let cleanupFinished = false;
+    const cleanup = (runtime as any).cleanupGuard().then(() => {
+      cleanupFinished = true;
+    });
+    await Promise.resolve();
+    expect(cleanupFinished).toBe(false);
+    expect(runtime.isContextRecoveryInProgress()).toBe(true);
+
+    releaseEvent.resolve(undefined);
+    await cleanup;
+    expect(runtime.isContextRecoveryInProgress()).toBe(false);
+  });
+
+  it("emits a fresh status when the post-recovery grace period expires", async () => {
+    vi.useFakeTimers();
+    const statuses: Array<{ status: string; pendingCount: number }> = [];
+    const { runtime } = createRuntime({
+      onStatusChange: (status, pendingCount) => {
+        statuses.push({ status, pendingCount });
+      },
+    });
+
+    (runtime as any).beginContextRecovery();
+    (runtime as any).endContextRecovery(2_000);
+    await vi.advanceTimersByTimeAsync(0);
+    const beforeGraceExpiry = statuses.length;
+    expect(runtime.isContextRecoveryActive()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(runtime.isContextRecoveryActive()).toBe(false);
+    expect(statuses).toHaveLength(beforeGraceExpiry + 1);
   });
 
   it("prepareForSpecialistFallbackReplay includes queued follow-up turns", async () => {

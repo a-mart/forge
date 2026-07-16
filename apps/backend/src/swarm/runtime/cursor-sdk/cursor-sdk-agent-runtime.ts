@@ -241,6 +241,10 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     return this.queuedPrompts.length;
   }
 
+  hasPendingInputDispatch(): boolean {
+    return this.promptDispatchPending;
+  }
+
   getContextUsage(): AgentContextUsage | undefined {
     return undefined;
   }

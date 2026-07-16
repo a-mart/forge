@@ -229,6 +229,8 @@ export interface SwarmAgentRuntime {
   getContextUsage(): AgentContextUsage | undefined;
   getSystemPrompt?(): string;
   getCodexTransportDebugDiagnostics?(): RuntimeCodexTransportDebugDiagnostics;
+  /** True while accepted input is not yet represented by pending-count or status state. */
+  hasPendingInputDispatch?(): boolean;
   setPinnedContent?(content: string | undefined, options?: SetPinnedContentOptions): void | Promise<void>;
   isContextRecoveryInProgress?(): boolean;
   isContextRecoveryActive?(): boolean;

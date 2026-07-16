@@ -1285,7 +1285,7 @@ describe("SwarmRuntimeController", () => {
     expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
   });
 
-  it("suppresses abort-like worker message_end, status-idle, and agent_end during parent recovery", async () => {
+  it("marks abort-like worker output during parent recovery and routes agent_end to worker health", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
     const {
@@ -1342,10 +1342,13 @@ describe("SwarmRuntimeController", () => {
 
     expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
     expect(emitConversationMessage).not.toHaveBeenCalled();
-    expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
+    expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(
+      worker.agentId,
+      expect.objectContaining({ agentId: worker.agentId, status: "idle" }),
+    );
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
     expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
-    expect(host.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
+    expect(host.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(true);
   });
 
   it("stores extension snapshots for the current runtime token and lists defensive copies sorted", async () => {

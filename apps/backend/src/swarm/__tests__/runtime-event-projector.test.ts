@@ -1240,7 +1240,7 @@ describe("RuntimeEventProjector", () => {
     expect(deps.conversationProjector.captureConversationEventFromRuntime).not.toHaveBeenCalled();
   });
 
-  it("drops exact local shutdown-shaped worker message_end during own or parent recovery and suppresses idle finalization until agent_end cleanup", async () => {
+  it("drops exact local shutdown-shaped worker message_end during own or parent recovery and marks the aborted turn", async () => {
     const { projector, deps, descriptors, runtimeRecoveryState } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-abort", role: "worker", managerId: "manager-1" });
     descriptors.set(worker.agentId, worker);
@@ -1252,12 +1252,6 @@ describe("RuntimeEventProjector", () => {
     expect(deps.maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
     expect(deps.conversationProjector.captureConversationEventFromRuntime).not.toHaveBeenCalled();
     expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(true);
-    expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(true);
-
-    projector.clearRecoveryAbortedWorkerTurn(worker.agentId);
-    expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
-    vi.mocked(deps.isRuntimeRecoveryActive).mockReturnValue(false);
-    expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(false);
   });
 
   it("does not suppress provider-flavored worker errors during parent recovery", async () => {
@@ -1277,7 +1271,6 @@ describe("RuntimeEventProjector", () => {
       phase: "prompt_start",
       message: "Request was aborted by provider transport"
     });
-    expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(false);
   });
 
   it("drops exact local terminated worker message_end during intended shutdown", async () => {
@@ -1376,7 +1369,6 @@ describe("RuntimeEventProjector", () => {
     await projector.projectEvent({ agentId: worker.agentId, event });
 
     expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
-    expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(false);
   });
 
   it("manager manual stop consumes pending notice, strips abort-shaped error, captures stripped event, and emits exact stop message", async () => {

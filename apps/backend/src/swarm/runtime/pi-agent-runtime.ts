@@ -187,6 +187,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private unsubscribe: (() => void) | undefined;
   private readonly inFlightPrompts = new Set<Promise<void>>();
   private promptDispatchPending = false;
+  private inputDispatchesInProgress = 0;
   private ignoreNextAgentStart = false;
   private lastStreamingStatusEmitAtMs = 0;
   private lastContextUsage: AgentContextUsage | undefined;
@@ -194,6 +195,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private preparedSpecialistFallbackSessionMessages: EmergencyContextTrimMessage[] | undefined;
   private contextRecoveryInProgress = false;
   private contextRecoveryGraceUntilMs = 0;
+  private contextRecoveryGraceTimer: NodeJS.Timeout | undefined;
   private manualCompactionInProgress = false;
   private autoCompactionRecoveryInProgress = false;
   private guardAbortController: AbortController | undefined;
@@ -277,6 +279,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   getPendingCount(): number {
     return this.pendingDeliveries.length;
+  }
+
+  hasPendingInputDispatch(): boolean {
+    return this.inputDispatchesInProgress > 0 || this.promptDispatchPending;
   }
 
   getContextUsage(): AgentContextUsage | undefined {
@@ -368,46 +374,51 @@ export class AgentRuntime implements SwarmAgentRuntime {
     _requestedMode: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
     this.ensureNotTerminated();
-    this.suppressSessionEventsUntilIdle = null;
+    this.inputDispatchesInProgress += 1;
+    try {
+      this.suppressSessionEventsUntilIdle = null;
 
-    const deliveryId = randomUUID();
-    const message = await prepareRuntimeUserMessageForDispatch(input);
+      const deliveryId = randomUUID();
+      const message = await prepareRuntimeUserMessageForDispatch(input);
 
-    if (this.isContextRecoveryActive()) {
-      if (this.isContextRecoveryInProgress()) {
-        this.bufferMessageDuringRecovery(deliveryId, message);
-      } else {
-        await this.enqueueMessage(deliveryId, message);
+      if (this.isContextRecoveryActive()) {
+        if (this.isContextRecoveryInProgress()) {
+          this.bufferMessageDuringRecovery(deliveryId, message);
+        } else {
+          await this.enqueueMessage(deliveryId, message);
+        }
+
+        this.noteActivity();
+        await this.emitStatus();
+        return {
+          targetAgentId: this.descriptor.agentId,
+          deliveryId,
+          acceptedMode: "steer"
+        };
       }
 
-      this.noteActivity();
-      await this.emitStatus();
+      if (this.session.isStreaming || this.promptDispatchPending) {
+        await this.enqueueMessage(deliveryId, message);
+        this.noteActivity();
+        await this.emitStatus();
+        return {
+          targetAgentId: this.descriptor.agentId,
+          deliveryId,
+          acceptedMode: "steer"
+        };
+      }
+
+      this.currentTurnReplayMessages = [cloneRuntimeUserMessage(message) ?? message];
+      this.dispatchPrompt(message);
+
       return {
         targetAgentId: this.descriptor.agentId,
         deliveryId,
-        acceptedMode: "steer"
+        acceptedMode: "prompt"
       };
+    } finally {
+      this.inputDispatchesInProgress = Math.max(0, this.inputDispatchesInProgress - 1);
     }
-
-    if (this.session.isStreaming || this.promptDispatchPending) {
-      await this.enqueueMessage(deliveryId, message);
-      this.noteActivity();
-      await this.emitStatus();
-      return {
-        targetAgentId: this.descriptor.agentId,
-        deliveryId,
-        acceptedMode: "steer"
-      };
-    }
-
-    this.currentTurnReplayMessages = [cloneRuntimeUserMessage(message) ?? message];
-    this.dispatchPrompt(message);
-
-    return {
-      targetAgentId: this.descriptor.agentId,
-      deliveryId,
-      acceptedMode: "prompt"
-    };
   }
 
   async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
@@ -902,6 +913,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private beginContextRecovery(): void {
+    this.clearContextRecoveryGraceTimer();
     this.contextRecoveryInProgress = true;
     this.contextRecoveryGraceUntilMs = 0;
     void this.emitStatus();
@@ -944,9 +956,31 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private endContextRecovery(graceMs = 0): void {
+    this.clearContextRecoveryGraceTimer();
     this.contextRecoveryInProgress = false;
     this.contextRecoveryGraceUntilMs = graceMs > 0 ? Date.now() + graceMs : 0;
     void this.emitStatus();
+    if (graceMs <= 0) {
+      return;
+    }
+
+    this.contextRecoveryGraceTimer = setTimeout(() => {
+      this.contextRecoveryGraceTimer = undefined;
+      if (this.contextRecoveryInProgress || this.status === "terminated") {
+        return;
+      }
+      this.contextRecoveryGraceUntilMs = 0;
+      void this.emitCompactionStatusSafely("context_recovery_grace_expired");
+    }, graceMs);
+    this.contextRecoveryGraceTimer.unref?.();
+  }
+
+  private clearContextRecoveryGraceTimer(): void {
+    if (!this.contextRecoveryGraceTimer) {
+      return;
+    }
+    clearTimeout(this.contextRecoveryGraceTimer);
+    this.contextRecoveryGraceTimer = undefined;
   }
 
   getCustomEntries(customType: string): unknown[] {
@@ -1527,6 +1561,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     handoffFilePath?: string,
     options?: { retainHandoff?: boolean }
   ): Promise<void> {
+    await this.drainSessionEventQueue("context_recovery_cleanup_drain_session_events");
     this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
     this.guardAbortController = undefined;
 

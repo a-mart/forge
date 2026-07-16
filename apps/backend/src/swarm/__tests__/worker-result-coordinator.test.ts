@@ -125,7 +125,7 @@ describe("WorkerResultCoordinator", () => {
     ])).toContain("The actual worker conclusion.");
   });
 
-  it("does not classify a benign system summary as blocked for mentioning a handled error", () => {
+  it("ignores benign system summaries when no assistant final exists", () => {
     const result = buildWorkerResult("worker-1", [
       message("Completed successfully after handling an expected error case.", { role: "system" }),
     ]);
