@@ -49,7 +49,6 @@ import {
   SwarmRuntimeLifecycleCoordinator,
 } from "./swarm-runtime-lifecycle-coordinator.js";
 import { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
-import { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
 import {
   getManagedModelProviderCredentialAvailability,
@@ -173,7 +172,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly runtimeRecoveryState = new RuntimeRecoveryState();
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
-  private readonly workerHealthService: SwarmWorkerHealthService;
   private readonly runtimeLifecycleCoordinator: SwarmRuntimeLifecycleCoordinator;
   private readonly restartRecoveryCoordinator: RestartRecoveryCoordinator;
   private readonly bootCoordinator: SwarmBootCoordinator;
@@ -300,7 +298,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.restartRecoveryCoordinator = runtimeComposition.restartRecovery;
     this.runtimeController = runtimeComposition.runtimeController;
     this.assistantOutputRouter = runtimeComposition.assistantOutput;
-    this.workerHealthService = runtimeComposition.workerHealth;
     this.specialistFallbackManager = runtimeComposition.specialistFallback;
     this.runtimes = runtimeComposition.runtimes;
     this.runtimeCreationPromisesByAgentId = runtimeComposition.runtimeCreationPromisesByAgentId;
@@ -638,6 +635,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         getConversationHistory: (agentId) => this.getConversationHistory(agentId),
         sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
           this.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
+        sendWorkerResult: (workerAgentId, resultText, expectedAssignmentId) =>
+          this.sendWorkerResult(workerAgentId, resultText, expectedAssignmentId),
         publishToUser: (agentId, text, source) => this.publishToUser(agentId, text, source),
         terminateDescriptor: (descriptor, terminateOptions) =>
           this.terminateDescriptor(descriptor, terminateOptions),
@@ -1144,7 +1143,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       turns: this.turnContextCoordinator,
       output: this.assistantOutputRouter,
       ledger,
-      workerHealth: this.workerHealthService,
       observability: this.observabilityCoordinator,
       plans: {
         resolveAssignment: (owner, requestedStep) =>
@@ -1188,6 +1186,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       appendProjectAgentConversation: (target, payload) =>
         this.inboundConversationAppender.appendProjectAgentConversation(target, payload),
       emitAgentMessage: (event) => this.eventCoordinator.emitAgentMessage(event),
+      saveStore: () => this.descriptorStoreAdapter.saveStore(),
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
     });

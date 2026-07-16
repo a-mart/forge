@@ -480,7 +480,7 @@ describe('buildSwarmTools', () => {
     expect(details.agents.some((agent) => agent.agentId === 'worker-external')).toBe(false)
   })
 
-  it('list_agents ignores includeManagers for worker callers', async () => {
+  it('does not expose coordination tools to ordinary workers', async () => {
     const workerCaller = makeWorkerDescriptor('worker-owned')
     const host = makeHostWithAgents([
       makeManagerDescriptor(),
@@ -492,30 +492,7 @@ describe('buildSwarmTools', () => {
       makeWorkerDescriptor('worker-external', 'manager-two'),
     ])
     const tools = buildSwarmTools(host, workerCaller)
-    const listTool = tools.find((tool) => tool.name === 'list_agents')
-    expect(listTool).toBeDefined()
-
-    const result = await listTool!.execute(
-      'tool-call',
-      {
-        includeManagers: true,
-      },
-      undefined,
-      undefined,
-      undefined as any,
-    )
-    const details = result.details as {
-      summary: { totalVisible: number; managers: number; workers: number }
-      agents: Array<{ agentId: string; isExternal?: boolean }>
-    }
-
-    expect(details.summary).toMatchObject({
-      totalVisible: 2,
-      managers: 1,
-      workers: 1,
-    })
-    expect(details.agents.map((agent) => agent.agentId)).toEqual(['manager', 'worker-owned'])
-    expect(details.agents.some((agent) => agent.isExternal === true)).toBe(false)
+    expect(tools.map((tool) => tool.name)).toEqual(['knowledge'])
   })
 
   it('list_agents verbose output includes external manager metadata', async () => {

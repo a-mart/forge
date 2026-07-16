@@ -3,7 +3,7 @@ import type { SwarmToolHost } from "./swarm-tool-host.js";
 
 type WorkerHealthHostState = Pick<
   SwarmRuntimeControllerHost,
-  "workerWatchdogState" | "workerStallState" | "workerActivityState" | "watchdogTimerTokens"
+  "workerStallState" | "workerActivityState"
 >;
 
 type LateBoundHostServices = Pick<
@@ -65,19 +65,12 @@ export function createSwarmRuntimeControllerHost(
     descriptors,
     runtimeRecoveryState,
 
-    get workerWatchdogState() {
-      return getWorkerHealthState().workerWatchdogState;
-    },
     get workerStallState() {
       return getWorkerHealthState().workerStallState;
     },
     get workerActivityState() {
       return getWorkerHealthState().workerActivityState;
     },
-    get watchdogTimerTokens() {
-      return getWorkerHealthState().watchdogTimerTokens;
-    },
-
     get conversationProjector() {
       return getLateBoundServices().conversationProjector;
     },

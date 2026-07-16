@@ -216,6 +216,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     cancelPendingTransientWorkerTerminatedError: vi.fn(),
     hasPendingTransientWorkerTerminatedError: vi.fn(() => false),
     finalizeWorkerIdleTurn,
+    handleWorkerAgentEnd: finalizeWorkerIdleTurn,
     isRuntimeRecoveryActive: vi.fn(() => false),
     incrementSessionCompactionCount: vi.fn(),
     incrementWorkerCompactionCount: vi.fn(),
@@ -646,7 +647,7 @@ describe("SwarmRuntimeController", () => {
       expect.objectContaining({
         routingReceipt: expect.objectContaining({
           decision: "route",
-          reasonCode: "route:worker_report_all_view",
+          reasonCode: "route:worker_result_all_view",
           sourceWorkerId: worker.agentId,
         }),
       }),
@@ -663,8 +664,7 @@ describe("SwarmRuntimeController", () => {
     expect(finalizeWorkerIdleTurn).toHaveBeenCalledTimes(1);
     expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(
       endingWorker.agentId,
-      expect.objectContaining({ agentId: endingWorker.agentId }),
-      "agent_end"
+      expect.objectContaining({ agentId: endingWorker.agentId })
     );
     expect(host.maybeRecordModelCapacityBlock).toHaveBeenCalledTimes(1);
     expect(host.maybeRecordModelCapacityBlock).toHaveBeenCalledWith(
@@ -1189,12 +1189,12 @@ describe("SwarmRuntimeController", () => {
     const token = controller.allocateRuntimeToken(worker.agentId);
     await controller.handleRuntimeSessionEvent(token, worker.agentId, event);
     await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
+    await controller.handleRuntimeAgentEnd(token, worker.agentId);
 
     expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
     expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(
       worker.agentId,
-      expect.objectContaining({ agentId: worker.agentId }),
-      "status_idle"
+      expect.objectContaining({ agentId: worker.agentId })
     );
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
   });
@@ -1220,26 +1220,20 @@ describe("SwarmRuntimeController", () => {
     descriptors.set(manager.agentId, manager);
     descriptors.set(worker.agentId, worker);
 
-    const sendMessage = vi.fn(async () => ({}));
+    const deliverCompletedWorker = vi.fn(async () => "sent" as const);
     const health = new SwarmWorkerHealthService({
       descriptors,
       runtimes: new Map(),
-      getConversationHistory: () => [],
-      sendMessage,
+      workerResults: { deliverCompletedWorker } as any,
+      sendMessage: vi.fn(async () => ({})),
       publishToUser: vi.fn(async () => ({})),
       terminateDescriptor: vi.fn(async () => undefined),
       saveStore: vi.fn(async () => undefined),
       emitAgentsSnapshot: vi.fn(),
-      resolvePromptWithFallback: vi.fn(async (_category, _promptId, _profileId, fallback) => fallback),
       isRuntimeInContextRecovery: vi.fn(() => false),
       isRuntimeRecoveryActive: vi.fn(() => false),
       logDebug: vi.fn()
     });
-    host.workerWatchdogState = health.workerWatchdogState;
-    host.watchdogTimerTokens = health.watchdogTimerTokens;
-    host.getOrCreateWorkerWatchdogState = vi.fn((agentId: string) => health.getOrCreateWorkerWatchdogState(agentId));
-    host.clearWatchdogTimer = vi.fn((agentId: string) => health.clearWatchdogTimer(agentId));
-    host.removeWorkerFromWatchdogBatchQueues = vi.fn((agentId: string) => health.removeWorkerFromWatchdogBatchQueues(agentId));
     host.beginPendingTransientWorkerTerminatedError = vi.fn((agentId, event, expire) =>
       health.beginPendingTransientWorkerTerminatedError(agentId, event, expire)
     );
@@ -1247,12 +1241,10 @@ describe("SwarmRuntimeController", () => {
       health.cancelPendingTransientWorkerTerminatedError(agentId, reason)
     );
     host.hasPendingTransientWorkerTerminatedError = vi.fn((agentId) => health.hasPendingTransientWorkerTerminatedError(agentId));
-    host.finalizeWorkerIdleTurn = vi.fn((agentId, descriptor, source) =>
-      health.finalizeWorkerIdleTurn(agentId, descriptor, source)
+    host.handleWorkerAgentEnd = vi.fn((agentId, descriptor) =>
+      health.handleRuntimeAgentEnd(agentId, descriptor)
     );
 
-    const state = health.getOrCreateWorkerWatchdogState(worker.agentId);
-    state.hadStreamingThisTurn = true;
     const event: RuntimeSessionEvent = {
       type: "message_end",
       message: { role: "assistant", stopReason: "error", errorMessage: "terminated" }
@@ -1266,19 +1258,16 @@ describe("SwarmRuntimeController", () => {
     await controller.handleRuntimeAgentEnd(token, worker.agentId);
 
     expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
-    expect(host.finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, expect.objectContaining({ agentId: worker.agentId }), "status_idle");
-    expect(host.finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, expect.objectContaining({ agentId: worker.agentId }), "agent_end");
-    expect(health.workerWatchdogState.get(worker.agentId)).toEqual(
-      expect.objectContaining({ turnSeq: 0, deferredFinalizeTurnSeq: 0, pendingTransientTerminatedTurnSeq: 0 })
+    expect(host.handleWorkerAgentEnd).toHaveBeenCalledWith(
+      worker.agentId,
+      expect.objectContaining({ agentId: worker.agentId }),
     );
+    expect(deliverCompletedWorker).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
     expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
     expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
-
-    await vi.advanceTimersByTimeAsync(3_000 + 750);
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("worker-transient-controller");
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
   });
 
   it("suppresses abort-like worker message_end, status-idle, and agent_end during parent recovery", async () => {
@@ -1341,13 +1330,6 @@ describe("SwarmRuntimeController", () => {
     expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
     expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
-    expect(host.workerWatchdogState.get(worker.agentId)).toEqual(
-      expect.objectContaining({
-        turnSeq: 1,
-        hadStreamingThisTurn: false,
-        lastFinalizedTurnSeq: 1
-      })
-    );
     expect(host.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
   });
 
@@ -1486,7 +1468,7 @@ describe("SwarmRuntimeController", () => {
     await controller.handleRuntimeAgentEnd(replacementToken, worker.agentId);
 
     expect(controller.getFallbackHandoffSnapshot(worker.agentId, oldToken)?.receivedAgentEnd).toBe(true);
-    expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, worker, "agent_end");
+    expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, worker);
   });
 
   it("suppresses old-runtime session events, errors, and extension snapshots while fallback owns the token", async () => {
@@ -1593,36 +1575,29 @@ describe("SwarmRuntimeController", () => {
     controller.runtimes.set(manager.agentId, runtimeStub);
     controller.runtimes.set(worker.agentId, runtimeStub);
 
-    const sendMessage = vi.fn(async () => ({}));
+    const deliverCompletedWorker = vi.fn(async () => "sent" as const);
     const health = new SwarmWorkerHealthService({
       descriptors,
       runtimes: controller.runtimes,
-      now: () => new Date().toISOString(),
-      getConversationHistory: () => [],
-      sendMessage,
+      workerResults: { deliverCompletedWorker } as any,
+      sendMessage: vi.fn(async () => ({})),
       publishToUser: vi.fn(async () => ({})),
       terminateDescriptor: vi.fn(async () => {}),
       saveStore: vi.fn(async () => {}),
       emitAgentsSnapshot: vi.fn(),
-      resolvePromptWithFallback: vi.fn(async (_category, _id, _profile, fallback) => fallback),
       isRuntimeInContextRecovery: vi.fn(() => false),
       isRuntimeRecoveryActive: vi.fn(() => false),
       logDebug: vi.fn()
     });
-    host.workerWatchdogState = health.workerWatchdogState;
     host.workerStallState = health.workerStallState;
     host.workerActivityState = health.workerActivityState;
-    host.watchdogTimerTokens = health.watchdogTimerTokens;
-    host.getOrCreateWorkerWatchdogState = (agentId) => health.getOrCreateWorkerWatchdogState(agentId);
-    host.clearWatchdogTimer = (agentId) => health.clearWatchdogTimer(agentId);
-    host.removeWorkerFromWatchdogBatchQueues = (agentId) => health.removeWorkerFromWatchdogBatchQueues(agentId);
     host.beginPendingTransientWorkerTerminatedError = (agentId, event, expire) =>
       health.beginPendingTransientWorkerTerminatedError(agentId, event, expire);
     host.cancelPendingTransientWorkerTerminatedError = (agentId, reason) =>
       health.cancelPendingTransientWorkerTerminatedError(agentId, reason);
     host.hasPendingTransientWorkerTerminatedError = (agentId) => health.hasPendingTransientWorkerTerminatedError(agentId);
-    host.finalizeWorkerIdleTurn = (agentId, descriptor, source) =>
-      health.finalizeWorkerIdleTurn(agentId, descriptor, source);
+    host.handleWorkerAgentEnd = (agentId, descriptor) =>
+      health.handleRuntimeAgentEnd(agentId, descriptor);
 
     const token = controller.allocateRuntimeToken(worker.agentId);
     await controller.handleRuntimeSessionEvent(token, worker.agentId, {
@@ -1636,26 +1611,12 @@ describe("SwarmRuntimeController", () => {
     await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
     await controller.handleRuntimeAgentEnd(token, worker.agentId);
 
-    expect(health.workerWatchdogState.get(worker.agentId)).toEqual(
-      expect.objectContaining({
-        turnSeq: 0,
-        deferredFinalizeTurnSeq: 0,
-        pendingTransientTerminatedTurnSeq: 0
-      })
-    );
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(deliverCompletedWorker).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
 
     expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(health.workerWatchdogState.get(worker.agentId)).toEqual(
-      expect.objectContaining({
-        turnSeq: 1,
-        pendingTransientTerminatedTurnSeq: null,
-        deferredFinalizeTurnSeq: null
-      })
-    );
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
   });
 
   it("suppresses runtime callbacks while intentional stop tokens are registered", async () => {
@@ -1727,7 +1688,7 @@ describe("SwarmRuntimeController", () => {
     expect(manager.listRuntimeExtensionSnapshots()).toEqual([]);
   });
 
-  it("delivers the terminal-obligation backstop and suppresses the passive silent_turn notice when delivery succeeds", async () => {
+  it("ignores legacy worker-result silent_turn backstop payloads", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
     const { host, descriptors, emitConversationMessage, deliverTerminalObligationBackstop } =
@@ -1750,15 +1711,13 @@ describe("SwarmRuntimeController", () => {
       },
     });
 
-    expect(deliverTerminalObligationBackstop).toHaveBeenCalledWith(manager.agentId, reportText);
-    // The deterministic delivery is the host's job; the passive notice must NOT
-    // be projected on top of it (no double user-facing artifact).
+    expect(deliverTerminalObligationBackstop).not.toHaveBeenCalled();
     expect(emitConversationMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ role: "system", text: expect.stringContaining("did not produce a visible response") })
     );
   });
 
-  it("keeps the passive silent_turn notice when the backstop declines (e.g. non-web obligation)", async () => {
+  it("does not revive a legacy worker-result warning when a backstop would decline", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
     const { host, descriptors, emitConversationMessage, deliverTerminalObligationBackstop } =
@@ -1780,8 +1739,8 @@ describe("SwarmRuntimeController", () => {
       },
     });
 
-    expect(deliverTerminalObligationBackstop).toHaveBeenCalledTimes(1);
-    expect(emitConversationMessage).toHaveBeenCalledWith(
+    expect(deliverTerminalObligationBackstop).not.toHaveBeenCalled();
+    expect(emitConversationMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ role: "system", text: expect.stringContaining("did not produce a visible response") })
     );
   });

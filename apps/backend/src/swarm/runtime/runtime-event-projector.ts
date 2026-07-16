@@ -39,6 +39,16 @@ import {
 } from "../session/message-routing-receipts.js";
 import type { MessageRouteDecision } from "../message-router.js";
 
+const USER_VISIBLE_MANAGER_TOOL_EFFECTS = new Set([
+  "create_goal",
+  "kill_agent",
+  "retry_codex_plugin_worker",
+  "send_message_to_agent",
+  "spawn_agent",
+  "update_goal",
+  "update_plan",
+]);
+
 export type RuntimeEventProjectorRecoveryState = Pick<
   RuntimeRecoveryState,
   "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
@@ -75,7 +85,7 @@ export interface RuntimeEventProjectorDeps {
     event: RuntimeSessionEvent,
     expire: (event: RuntimeSessionEvent) => void | Promise<void>
   ): boolean;
-  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "worker_reported" | "clear_state"): void;
+  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "clear_state"): void;
   hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
@@ -384,7 +394,7 @@ export class RuntimeEventProjector {
     } else {
       this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
     }
-    this.maybeEmitWorkerReportConversationMessage(agentId, descriptor, effectiveEvent, activeTurnId);
+    this.maybeEmitWorkerResultConversationMessage(agentId, descriptor, effectiveEvent, activeTurnId);
     const activeAssistantTarget = this.managerAssistantOutputTracker.getActiveTarget(agentId);
     const managerOutputSuperseded =
       descriptor?.role === "manager" &&
@@ -415,6 +425,19 @@ export class RuntimeEventProjector {
         descriptor?.role === "manager" &&
         effectiveEvent.type === "tool_execution_start" &&
         effectiveEvent.toolName === "present_choices"
+      ) {
+        this.markUserFacingManagerActivity(agentId, activeTurnId);
+      }
+      // Successful state-changing tools whose result is already visible in
+      // the session (worker state, peer exchange, plan card, or goal bar) are
+      // visible completion. Do not add a contradictory silent-manager warning
+      // merely because the model omitted companion prose.
+      if (
+        descriptor?.role === "manager" &&
+        activeAssistantTarget?.kind === "session_transcript" &&
+        effectiveEvent.type === "tool_execution_end" &&
+        USER_VISIBLE_MANAGER_TOOL_EFFECTS.has(effectiveEvent.toolName) &&
+        !effectiveEvent.isError
       ) {
         this.markUserFacingManagerActivity(agentId, activeTurnId);
       }
@@ -595,11 +618,11 @@ export class RuntimeEventProjector {
         (
           reasonCode === "render:user_web" ||
           reasonCode === "render:scheduled_web" ||
-          reasonCode === "render:terminal_worker_report_closeout"
+          reasonCode === "render:worker_result_closeout"
         )
       ) {
         const text = route?.sourceWorkerId
-          ? `Worker \`${route.sourceWorkerId}\` completed and reported back; the manager did not summarize it. View worker report in All.`
+          ? `Worker \`${route.sourceWorkerId}\` completed; the manager did not summarize the result. View the worker result in All.`
           : "The manager completed this turn without a visible response.";
         this.pendingSilentManagerNotices.set(agentId, {
           type: "conversation_message",
@@ -642,10 +665,11 @@ export class RuntimeEventProjector {
 
   /**
    * Record that the manager put something in front of the user (assistant
-   * text on any channel, or an interactive `present_choices` prompt) and
-   * cancel any armed silent-turn notice.  Deliberately does NOT require a
-   * turnId: the final text of a multi-cycle run arrives after its ledger turn
-   * closed, and choice prompts are emitted outside turn context entirely.
+   * text on any channel, an interactive `present_choices` prompt, or an
+   * successful visible tool effect) and cancel any armed silent-turn notice.
+   * Deliberately does NOT require a turnId: the final text of a multi-cycle run
+   * arrives after its ledger turn closed, and some visible activity is emitted
+   * outside turn context entirely.
    */
   private markUserFacingManagerActivity(agentId: string, turnId?: string): void {
     if (turnId) {
@@ -669,8 +693,7 @@ export class RuntimeEventProjector {
   }
 
   /**
-   * Record an out-of-band user-facing delivery (e.g. the terminal-obligation
-   * backstop surfacing a worker outcome via SwarmManager).  Cancels any armed
+   * Record an out-of-band user-facing delivery. Cancels any armed
    * silent-turn notice and advances the visibility watermark so no other layer
    * piles a second artifact on top of the delivery.
    */
@@ -678,7 +701,7 @@ export class RuntimeEventProjector {
     this.markUserFacingManagerActivity(agentId);
   }
 
-  private maybeEmitWorkerReportConversationMessage(
+  private maybeEmitWorkerResultConversationMessage(
     agentId: string,
     descriptor: AgentDescriptor | undefined,
     effectiveEvent: RuntimeSessionEvent,
@@ -721,7 +744,7 @@ export class RuntimeEventProjector {
         ...(turnId ? { turnId } : {}),
         agentId: descriptor.managerId,
         decision: "route",
-        reasonCode: "route:worker_report_all_view",
+        reasonCode: "route:worker_result_all_view",
         targetKind: "session_transcript",
         sourceWorkerId: agentId,
       },

@@ -106,6 +106,7 @@ async function setupManagerWithStreamingWorker() {
   const manager = new TestSwarmManager(config);
   const managerDescriptor = await bootWithDefaultManager(manager, config, { clearBootstrapSendCalls: false });
   const worker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "stall-worker" });
+  await manager.sendMessage(managerDescriptor.agentId, worker.agentId, "Inspect the delegated task.");
 
   const state = manager as any;
   const runtimeToken = state.runtimeTokensByAgentId.get(worker.agentId);
@@ -474,7 +475,7 @@ describe("worker stall detector", () => {
     expect(readWorkerStallState(manager, workerForStopAll.agentId)).toBeUndefined();
   });
 
-  it("clears stall tracking and suppresses watchdog fallback when auto-report succeeds", async () => {
+  it("clears stall tracking and delivers one typed result when the worker run ends", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
 
@@ -493,82 +494,34 @@ describe("worker stall detector", () => {
     managerRuntime.sendCalls = [];
 
     await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
-    await state.handleRuntimeAgentEnd(runtimeToken, worker.agentId);
-    await vi.advanceTimersByTimeAsync(3_800);
-
+    expect(
+      manager.listAgentsForInternalUse().find((entry) => entry.agentId === worker.agentId)?.workerParentContext,
+    ).toBeDefined();
+    await manager.handleRuntimeAgentEnd(worker.agentId);
     const managerMessages = managerRuntime.sendCalls
-      .map((call) => call.message)
-      .filter((message): message is string => typeof message === "string");
+      .map((call) => typeof call.message === "string" ? call.message : call.message.text);
 
-    expect(managerMessages.some((message) => message.includes("WORKER REPORT: status: done") && message.includes(`worker ${worker.agentId} completed its turn without an explicit callback`))).toBe(true);
-    expect(managerMessages.some((message) => message.includes("[IDLE WORKER WATCHDOG"))).toBe(false);
+    expect(managerMessages).toEqual([
+      expect.stringContaining("[workerResult]"),
+    ]);
+    expect(managerMessages[0]).toContain("Finished cleanly.");
     expect(managerMessages.some((message) => message.includes("[WORKER STALL DETECTED]"))).toBe(false);
     expect(readWorkerStallState(manager, worker.agentId)).toBeUndefined();
   });
 
-  it("keeps stall detector and idle watchdog scoped to stuck versus completed-but-unreported turns", async () => {
+  it("does not treat an idle status update as worker completion", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
 
-    const config = await makeTempConfig();
-    const manager = new TestSwarmManager(config);
-    const managerDescriptor = await bootWithDefaultManager(manager, config, { clearBootstrapSendCalls: false });
-    const stalledWorker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "stalled-worker" });
-    const silentWorker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "silent-worker" });
+    const { manager, worker, managerRuntime } = await setupManagerWithStreamingWorker();
     const state = manager as any;
-
-    const stalledRuntimeToken = state.runtimeTokensByAgentId.get(stalledWorker.agentId);
-    const silentRuntimeToken = state.runtimeTokensByAgentId.get(silentWorker.agentId);
-    await state.handleRuntimeStatus(stalledRuntimeToken, stalledWorker.agentId, "streaming", 0);
-    await state.handleRuntimeStatus(silentRuntimeToken, silentWorker.agentId, "streaming", 0);
-
-    const stalledState = readWorkerStallState(manager, stalledWorker.agentId);
-    expect(stalledState).toBeDefined();
-    stalledState!.lastProgressAt = Date.now() - 5 * 60_000;
-
-    const managerRuntime = manager.runtimeByAgentId.get(managerDescriptor.agentId);
-    expect(managerRuntime).toBeDefined();
-    if (!managerRuntime) {
-      throw new Error("Expected manager runtime");
-    }
-
-    const originalSendMessage = managerRuntime.sendMessage.bind(managerRuntime);
-    managerRuntime.sendMessage = async (message, delivery = "auto") => {
-      if (
-        typeof message === "string" &&
-        message.startsWith("WORKER REPORT: status: done") &&
-        message.includes(`worker ${silentWorker.agentId} completed its turn without an explicit callback`) &&
-        !message.includes("[IDLE WORKER WATCHDOG — BATCHED]")
-      ) {
-        throw new Error("synthetic auto-report failure");
-      }
-
-      return originalSendMessage(message, delivery);
-    };
+    const runtimeToken = state.runtimeTokensByAgentId.get(worker.agentId);
     managerRuntime.sendCalls = [];
 
-    await state.handleRuntimeStatus(silentRuntimeToken, silentWorker.agentId, "idle", 0);
-    await state.handleRuntimeAgentEnd(silentRuntimeToken, silentWorker.agentId);
+    await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
 
-    expect(readWorkerStallState(manager, silentWorker.agentId)).toBeUndefined();
-    expect(readWorkerStallState(manager, stalledWorker.agentId)).toBeDefined();
-
-    await (manager as any).checkForStalledWorkers();
-    await vi.advanceTimersByTimeAsync(3_800);
-
-    const managerMessages = managerRuntime.sendCalls
-      .map((call) => call.message)
-      .filter((message): message is string => typeof message === "string");
-    const stallMessages = managerMessages.filter((message) => message.includes("[WORKER STALL DETECTED]"));
-    const watchdogMessages = managerMessages.filter((message) => message.includes("[IDLE WORKER WATCHDOG — BATCHED]"));
-
-    expect(stallMessages).toHaveLength(1);
-    expect(stallMessages[0]).toContain(stalledWorker.agentId);
-    expect(stallMessages[0]).not.toContain(silentWorker.agentId);
-
-    expect(watchdogMessages).toHaveLength(1);
-    expect(watchdogMessages[0]).toContain(`\`${silentWorker.agentId}\``);
-    expect(watchdogMessages[0]).not.toContain(`\`${stalledWorker.agentId}\``);
+    expect(managerRuntime.sendCalls).toHaveLength(0);
+    expect(readWorkerStallState(manager, worker.agentId)).toBeUndefined();
   });
 
   it("does not mark nudge as sent when sendMessage fails", async () => {

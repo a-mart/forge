@@ -82,18 +82,8 @@ interface PromptDispatchRestoreOptions {
 type PromptDispatchResult = "sent" | "retry_scheduled" | "failed";
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
-const MAX_TERMINAL_REPORT_RESAMPLES = 2;
+const MAX_HIDDEN_OUTPUT_RESAMPLES = 2;
 const DIRECT_USER_SOURCE_CONTEXT_PATTERN = /^\[sourceContext\]\s+(\{[^\n]*\})(?:\n|$)/u;
-const TERMINAL_WORKER_REPORT_PATTERNS = [
-  /^WORKER REPORT:\s*status:\s*(?:done|partial|blocked|completed)\b/i,
-  /^SYSTEM:\s*status:\s*(?:done|partial|blocked|completed)\b/i,
-  /^SYSTEM:\s*Worker\s+\S+\s+completed its turn\b/i,
-  /^SYSTEM:\s*Worker\s+\S+\s+ended its turn with an error\b/i,
-];
-// Appended when re-delivering terminal worker reports after a manager turn with
-// no visible side effect. Exported for tests.
-export const TERMINAL_REPORT_REDELIVERY_DIRECTIVE =
-  "Worker/internal reports require explicit same-turn handling. For direct web/session-transcript closeouts, answer normally with final assistant text. Use speak_to_user only for routed/protected/non-web user delivery; otherwise use present_choices, peer reply, delegation/follow-up, or an intentional non-user-visible coordination action now.";
 export const DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE =
   "Handle this user message with the appropriate output path now. For direct web/session-transcript replies, answer normally or continue with brief assistant progress followed by same-turn work. Use speak_to_user.target only for non-web/routed delivery; otherwise use present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
@@ -2231,17 +2221,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  /**
-   * gpt-5.x managers intermittently answer a worker's terminal report or a
-   * direct user-visible input with a side-effect-free assistant turn (no tool
-   * calls, stopReason "stop"). Whitespace-only output is always invisible;
-   * non-empty direct web session-transcript text is projected only when the
-   * backend dispatch marker says assistant_output is allowed. Explicit-routed
-   * sources such as Cortex, collaboration, Telegram, and non-inherited worker
-   * reports still need a tool/side effect. Drop the trigger and unhandled assistant from
-   * in-memory context, then re-dispatch the trigger with a bounded retry budget
-   * keyed to the directive-stripped trigger text.
-   */
+  /** Re-dispatch a direct user message when the provider produced no visible output. */
   private async maybeResampleUnhandledHiddenOutputTurn(): Promise<boolean> {
     if (this.descriptor.role !== "manager" || this.status === "terminated") {
       return false;
@@ -2295,7 +2275,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     const previousAttempts =
       this.hiddenOutputResampleState?.triggerKey === trigger.key ? this.hiddenOutputResampleState.attempts : 0;
-    if (previousAttempts >= MAX_TERMINAL_REPORT_RESAMPLES) {
+    if (previousAttempts >= MAX_HIDDEN_OUTPUT_RESAMPLES) {
       console.error(`[swarm][${this.now()}] ${trigger.unhandledEvent}`, {
         runtime: "pi",
         agentId: this.descriptor.agentId,
@@ -2313,29 +2293,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
           resampleAttempts: previousAttempts,
           triggerPreview: previewForLog(trigger.text),
           userFacingMessage: trigger.userFacingExhaustedMessage,
-          // Deterministic delivery backstop (docs/MANAGER_EMPTY_TURN_FIX.md):
-          // re-prompting gpt-5.x failed ~44% historically, so once every
-          // resample is exhausted we hand the full directive-stripped report
-          // text to SwarmManager, which surfaces the worker's outcome itself
-          // rather than waiting on the model. Only terminal reports carry a
-          // deliverable outcome; a silent turn after direct user input keeps
-          // the passive notice (there is nothing server-known to surface).
-          ...(trigger.kind === "terminal_report"
-            ? { deliverOutcome: true, terminalReportText: trigger.text }
-            : {})
         }
       });
       return false;
     }
 
     const attempt = previousAttempts + 1;
-    const directiveAdded =
-      trigger.kind === "terminal_report"
-        ? classifiedUnhandledKind === "hidden_text" || attempt >= MAX_TERMINAL_REPORT_RESAMPLES
-        : true;
-    const redeliveryDirective =
-      trigger.kind === "terminal_report" ? TERMINAL_REPORT_REDELIVERY_DIRECTIVE : DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE;
-    const redeliveryText = directiveAdded ? `${trigger.text}\n\n${redeliveryDirective}` : trigger.text;
+    const redeliveryText = `${trigger.text}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`;
     this.hiddenOutputResampleState = { triggerKey: trigger.key, attempts: attempt };
     const restoreMessagesOnFailure = messages.map((message) => structuredClone(message));
     this.replaceSessionAgentMessages(messages.slice(0, -2));
@@ -2346,8 +2310,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       triggerKind: trigger.kind,
       reason: unhandledKind,
       attempt,
-      maxAttempts: MAX_TERMINAL_REPORT_RESAMPLES,
-      directiveAdded,
+      maxAttempts: MAX_HIDDEN_OUTPUT_RESAMPLES,
       triggerPreview: previewForLog(trigger.text)
     });
     this.dispatchPrompt(
@@ -2738,10 +2701,8 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): Runti
 
 type UnhandledAssistantKind = "empty" | "hidden_text";
 
-type HiddenOutputTriggerKind = "terminal_report" | "direct_user_input";
-
 interface HiddenOutputTrigger {
-  kind: HiddenOutputTriggerKind;
+  kind: "direct_user_input";
   key: string;
   text: string;
   resampleEvent: string;
@@ -2793,22 +2754,6 @@ function isAssistantToolOrSideEffectBlockType(type: unknown): boolean {
 }
 
 function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefined {
-  const reportText = stripTerminalReportRedeliveryDirective(text);
-  if (isTerminalWorkerReport(reportText)) {
-    return {
-      kind: "terminal_report",
-      key: `terminal_report:${reportText}`,
-      text: reportText,
-      resampleEvent: "manager:terminal_report_resample",
-      unhandledEvent: "manager:terminal_report_unhandled",
-      resampleStage: "terminal_report_resample",
-      exhaustedMessage: "Manager produced no visible response to a worker's final report",
-      userFacingExhaustedMessage:
-        "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome.",
-      policyFacts: runtimeInputAssistantOutputPolicyFacts(reportText)
-    };
-  }
-
   const directUserText = stripDirectUserInputRedeliveryDirective(text);
   const sourceMetadata = parseDirectUserSourceMetadata(directUserText);
   if (!sourceMetadata) {
@@ -2827,16 +2772,6 @@ function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefi
       "⚠️ The manager received your message but did not produce a visible response after automatic retries. Send a follow-up message to continue.",
     policyFacts: runtimeInputAssistantOutputPolicyFacts(directUserText)
   };
-}
-
-function isTerminalWorkerReport(text: string): boolean {
-  const normalized = text.trimStart();
-  return TERMINAL_WORKER_REPORT_PATTERNS.some((pattern) => pattern.test(normalized));
-}
-
-function stripTerminalReportRedeliveryDirective(text: string): string {
-  const suffix = `\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`;
-  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
 }
 
 function stripDirectUserInputRedeliveryDirective(text: string): string {

@@ -31,8 +31,7 @@ import type {
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type {
   WorkerActivityStateLike,
-  WorkerStallStateLike,
-  WorkerWatchdogStateLike
+  WorkerStallStateLike
 } from "./runtime/worker-health-types.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type { ModelCacheObservationEvent } from "@forge/protocol";
@@ -44,7 +43,7 @@ import type {
   ConversationMessageEvent,
   SwarmConfig
 } from "./types.js";
-import { readStringDetail, withManagerTimeout } from "./swarm-manager-utils.js";
+import { withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
@@ -68,10 +67,8 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   forgeExtensionHost: ForgeExtensionHost;
   now: () => string;
   descriptors: Map<string, AgentDescriptor>;
-  workerWatchdogState: Map<string, WorkerWatchdogStateLike>;
   workerStallState: Map<string, WorkerStallStateLike>;
   workerActivityState: Map<string, WorkerActivityStateLike>;
-  watchdogTimerTokens: Map<string, number>;
   runtimeRecoveryState: Pick<
     RuntimeRecoveryState,
     "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
@@ -123,20 +120,16 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void;
   consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean;
   stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent;
-  getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogStateLike;
-  clearWatchdogTimer(agentId: string): void;
-  removeWorkerFromWatchdogBatchQueues(agentId: string): void;
   beginPendingTransientWorkerTerminatedError(
     agentId: string,
     event: RuntimeSessionEvent,
     expire: (event: RuntimeSessionEvent) => void | Promise<void>
   ): boolean;
-  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "worker_reported" | "clear_state"): void;
+  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "clear_state"): void;
   hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
-  finalizeWorkerIdleTurn(
+  handleWorkerAgentEnd(
     agentId: string,
-    descriptor: AgentDescriptor,
-    source: "agent_end" | "status_idle" | "deferred"
+    descriptor: AgentDescriptor
   ): Promise<void>;
   isRuntimeRecoveryActive(agentId: string): boolean;
   beforeRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
@@ -200,7 +193,6 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     activeTarget: AssistantOutputTarget | undefined
   ): ManagerAssistantOutputRouteResult;
   hasPendingSupersedingUserInput?(agentId: string, activeTurnId?: string): boolean;
-  deliverTerminalObligationBackstop?(agentId: string, reportText: string): boolean;
 }
 
 export class SwarmRuntimeController {
@@ -642,10 +634,8 @@ export class SwarmRuntimeController {
     if (!this.runtimeStatusProjector) {
       this.runtimeStatusProjector = new RuntimeStatusProjector({
         descriptors: this.host.descriptors,
-        workerWatchdogState: this.host.workerWatchdogState,
         workerStallState: this.host.workerStallState,
         workerActivityState: this.host.workerActivityState,
-        watchdogTimerTokens: this.host.watchdogTimerTokens,
         now: () => this.now(),
         patchDescriptorFromRuntimeStatus: (agentId, patch) => this.host.patchDescriptorFromRuntimeStatus(agentId, patch),
         updateSessionMetaForWorkerDescriptor: (descriptor) => this.host.updateSessionMetaForWorkerDescriptor(descriptor),
@@ -656,12 +646,6 @@ export class SwarmRuntimeController {
           this.host.emitStatus(agentId, status, pendingCount, contextUsage),
         emitAgentsSnapshot: () => this.host.emitAgentsSnapshot(),
         logDebug: (message, details) => this.logDebug(message, details),
-        getOrCreateWorkerWatchdogState: (agentId) => this.host.getOrCreateWorkerWatchdogState(agentId),
-        clearWatchdogTimer: (agentId) => this.host.clearWatchdogTimer(agentId),
-        removeWorkerFromWatchdogBatchQueues: (agentId) => this.host.removeWorkerFromWatchdogBatchQueues(agentId),
-        finalizeWorkerIdleTurn: (agentId, descriptor, source) =>
-          this.host.finalizeWorkerIdleTurn(agentId, descriptor, source),
-        shouldSuppressWorkerIdleFinalization: (descriptor) => this.shouldSuppressWorkerIdleFinalization(descriptor),
         handleManagerStatusTransition: (descriptor, status, pendingCount) =>
           this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount),
         applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
@@ -830,42 +814,7 @@ export class SwarmRuntimeController {
     this.clearManagerAssistantOutputTurn(agentId);
     this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
 
-    const projectedError = this.maybeApplyTerminalObligationBackstop(agentId, error);
-    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error: projectedError });
-  }
-
-  /**
-   * Deterministic terminal-obligation backstop (docs/MANAGER_EMPTY_TURN_FIX.md).
-   * When the pi runtime exhausts its resample ladder on an unacknowledged
-   * terminal worker report it emits a `silent_turn` error carrying
-   * `deliverOutcome` + the directive-stripped `terminalReportText`. Rather than
-   * leave the user the passive "type update?" notice, ask SwarmManager to surface
-   * the worker's outcome itself (web-only, single-voice, deduped — see
-   * `deliverTerminalObligationBackstop`). If it delivers, strip the passive
-   * `userFacingMessage` so the error still records telemetry without producing a
-   * second, redundant user-facing artifact.
-   */
-  private maybeApplyTerminalObligationBackstop(
-    agentId: string,
-    error: RuntimeErrorEvent
-  ): RuntimeErrorEvent {
-    if (error.phase !== "silent_turn" || error.details?.deliverOutcome !== true) {
-      return error;
-    }
-    const reportText = readStringDetail(error.details, "terminalReportText");
-    if (!reportText) {
-      return error;
-    }
-    const delivered = this.host.deliverTerminalObligationBackstop?.(agentId, reportText) ?? false;
-    if (!delivered) {
-      return error;
-    }
-    // The delivery IS the user-facing artifact for this obligation: advance
-    // the projector's visibility watermark (cancels any armed silent-turn
-    // notice) so no other layer stacks a second message on top of it.
-    this.getRuntimeEventProjector().noteUserFacingManagerDelivery(agentId);
-    const { userFacingMessage: _suppressed, ...remainingDetails } = error.details ?? {};
-    return { ...error, details: { ...remainingDetails, backstopDelivered: true } };
+    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
   }
 
   async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
@@ -894,22 +843,11 @@ export class SwarmRuntimeController {
     }
 
     if (this.shouldSuppressWorkerIdleFinalization(descriptor)) {
-      const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
-      watchdogState.turnSeq += 1;
-      watchdogState.reportedThisTurn = false;
-      watchdogState.pendingReportTurnSeq = null;
-      watchdogState.deferredFinalizeTurnSeq = null;
-      watchdogState.hadStreamingThisTurn = false;
-      watchdogState.lastFinalizedTurnSeq = watchdogState.turnSeq;
-      this.workerWatchdogState.set(agentId, watchdogState);
-
-      this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
-      this.clearWatchdogTimer(agentId);
       this.getRuntimeEventProjector().clearRecoveryAbortedWorkerTurn(agentId);
       return;
     }
 
-    await this.finalizeWorkerIdleTurn(agentId, descriptor, "agent_end");
+    await this.host.handleWorkerAgentEnd(agentId, descriptor);
   }
 
   private recordObservabilityRuntimeError(agentId: string, runtimeToken: number | undefined, error: RuntimeErrorEvent): void {
@@ -951,14 +889,6 @@ export class SwarmRuntimeController {
     return this.host.descriptors;
   }
 
-  private get workerWatchdogState(): Map<string, WorkerWatchdogStateLike> {
-    return this.host.workerWatchdogState;
-  }
-
-  private get watchdogTimerTokens(): Map<string, number> {
-    return this.host.watchdogTimerTokens;
-  }
-
   private now(): string {
     return this.host.now();
   }
@@ -979,22 +909,6 @@ export class SwarmRuntimeController {
     sessionFileOverride?: string
   ): Promise<void> {
     await this.host.refreshSessionMetaStats(descriptor, sessionFileOverride);
-  }
-
-  private getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogStateLike {
-    return this.host.getOrCreateWorkerWatchdogState(agentId);
-  }
-
-  private clearWatchdogTimer(agentId: string): void {
-    this.host.clearWatchdogTimer(agentId);
-  }
-
-  private async finalizeWorkerIdleTurn(
-    agentId: string,
-    descriptor: AgentDescriptor,
-    source: "agent_end" | "status_idle" | "deferred"
-  ): Promise<void> {
-    await this.host.finalizeWorkerIdleTurn(agentId, descriptor, source);
   }
 
   private mergeRuntimeContextFiles(

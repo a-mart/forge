@@ -115,11 +115,11 @@ The main panel is a chat window. You type messages to your manager, it responds.
 Two view modes, toggled at the top:
 
 - **Web** (default for managers) — Prioritizes the focused conversation transcript and pending choices you can answer.
-- **All** — Adds manager-session activity, manager tool rows, and terminal reports returned by workers. It does not inline the workers' internal tool history.
+- **All** — Adds manager-session activity, manager tool rows, and final results returned by workers. It does not inline the workers' internal tool history.
 
-Selecting a worker pill or worker row opens that worker's own transcript, which defaults to **All**. Return to the manager and switch to All manually when you want to inspect terminal worker reports that are hidden from the manager's Web view.
+Selecting a worker pill or worker row opens that worker's own transcript, which defaults to **All**. Return to the manager and switch to All manually when you want to inspect final worker results that are hidden from the manager's Web view.
 
-Raw terminal worker reports remain inspectable in **All**. The manager treats a report as evidence rather than an inherited conclusion, performs focused acceptance, and publishes the accepted result or a material blocker.
+Raw worker results remain inspectable in **All**. The manager treats a result as evidence rather than an inherited conclusion, performs focused acceptance, and publishes the accepted result or a material blocker.
 
 Use **Session Audit Log** from the chat header menu when you need the canonical persisted rows and runtime internals. It opens a list/detail inspector: the row list stays compact and paginated, and selecting a row loads the full JSON detail for inspection and copy. On desktop, the list and detail panes are separated by a draggable, keyboard-accessible divider that remembers its width locally. Supported native provider rows, including provider text, tool calls/results, system rows, and hidden thinking blocks, are classified as hidden runtime rows instead of appearing as `Unknown row: message`. Provider internals such as thinking, tool arguments/results, and system content stay out of normal Web/All summaries and list previews; inspect the JSON detail view when you need the underlying row and have access to it.
 
@@ -464,22 +464,22 @@ The small dial icon in the chat header shows current context utilization. When t
 
 You can also trigger compaction manually from the three-dot menu (**⋯ → Smart Compact**) if you want to proactively clear space. Pinned messages are preserved during manual compaction the same way they are during automatic compaction. If the manager is already idle, a manual Smart compact leaves it idle afterward on Pi-backed managers.
 
-### Idle Worker Detection
+### Worker Results
 
-Workers are supposed to report back to the manager when they finish. But LLMs are probabilistic. Sometimes a worker completes its task and just doesn't send the callback message.
+Delegation is asynchronous: the manager assigns work and returns immediately, so you can keep chatting with it while workers run. Each assignment records its parent manager turn and delivery surface.
 
-Forge detects this. When a worker finishes its turn, it can auto-report on `agent_end`/turn end even before the runtime flips to idle. The idle watchdog/status-idle path still acts as a fallback and noise-suppression layer for cases that never report cleanly. The session agent can then inspect the worker's output, nudge it, or spin up a replacement. Those idle/stall reports are suppressed while the worker or parent runtime is recovering, so recovery can finish without duplicate watchdog noise.
+When the worker runtime emits its canonical `agent_end`, Forge returns the worker's final assistant result to that parent manager exactly once. The worker does not need to call a messaging tool, and an idle status transition is not treated as a second completion signal. The manager can accept the result, assign focused follow-up work, or surface a material outcome to you. Results that arrive while the manager is handling another message enter the manager's normal queue rather than blocking either conversation.
 
-If a worker runtime reports a bare \`errorMessage: "terminated"\`, Forge holds it for a 60-second grace period before failure projection. If the worker resumes progress or self-reports during that window, the transient error is canceled. If it does not recover, it expires through the normal worker error/watchdog path once.
+If a worker runtime reports a bare `errorMessage: "terminated"`, Forge holds it for a 60-second grace period before failure projection. If the worker resumes progress during that window, the transient error is canceled. If it does not recover, Forge records the error and returns one blocked result to the manager.
 
 ### Stalled Worker Auto-Kill
 
 Sometimes workers get stuck on a command that hangs. An infinite loop, a misconfigured server, a command waiting for input that will never come.
 
-Forge's stall detector works in two stages:
+Forge's stall detector remains separate from normal completion:
 
 1. **5-minute warning** — If a worker has been streaming without making progress for 5 minutes, the system notifies the manager. The manager can inspect and decide what to do. This is skipped while the worker or parent runtime is recovering.
-2. **10-minute auto-kill** — If the worker is still stuck after another 5 minutes (10 total), the system kills it and notifies the manager, unless runtime recovery is already in progress.
+2. **Ongoing detail and eventual termination** — While the worker remains stuck, Forge provides bounded diagnostic updates. If there is still no progress 25 minutes after the nudge, Forge terminates the worker and notifies the manager, unless runtime recovery is already in progress.
 
 ### Manager Stalls and Restart Recovery
 

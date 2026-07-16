@@ -279,7 +279,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
       expect.objectContaining({
         routingReceipt: expect.objectContaining({
           decision: "route",
-          reasonCode: "route:worker_report_all_view",
+          reasonCode: "route:worker_result_all_view",
           sourceWorkerId: "worker-1",
         }),
       }),
@@ -342,7 +342,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
   });
 
   it.each(["openai-codex", "claude-sdk", "cursor-sdk"])(
-    "emits a silent-manager backstop for %s empty turns",
+    "does not emit a false silent-manager warning for %s worker-result turns",
     async (provider) => {
       const { projector, deps, descriptors } = createHarness();
       const manager = baseDescriptor({
@@ -386,15 +386,8 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
         event: { type: "agent_end" },
       });
 
-      expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "conversation_message",
-          agentId: "manager-1",
-          turnId: "manager-1:1",
-          role: "system",
-          source: "system",
-          text: expect.stringContaining("Worker `worker-1` completed and reported back"),
-        }),
+      expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ role: "system", source: "system" }),
       );
     },
   );
@@ -478,6 +471,99 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
 
     expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
+    );
+  });
+
+  it.each([
+    "create_goal",
+    "kill_agent",
+    "retry_codex_plugin_worker",
+    "send_message_to_agent",
+    "spawn_agent",
+    "update_goal",
+    "update_plan",
+  ])(
+    "treats a successful %s effect as visible manager activity",
+    async (toolName) => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+    projector.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "session_transcript",
+      channel: "web",
+    });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: {
+        type: "tool_execution_end",
+        toolName,
+        toolCallId: "async-agent-action-1",
+        result: { agentId: "worker-1" },
+        isError: false,
+      },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "turn_end", toolResults: [] },
+    });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("without a visible response") }),
+    );
+    },
+  );
+
+  it("still warns when an asynchronous worker spawn fails and the manager says nothing", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    vi.mocked(deps.getActiveTurnId).mockReturnValue("manager-1:1");
+    deps.resolveManagerAssistantFinalOutputRoute = vi.fn(() => ({
+      decision: {
+        visible: true,
+        decision: "render",
+        channel: "web",
+        reasonCode: "render:user_web",
+        targetKind: "session_transcript",
+      },
+      target: { kind: "session_transcript", channel: "web", sourceContext: { channel: "web" } },
+    }));
+    projector.activateManagerAssistantOutputTurn(manager.agentId, {
+      kind: "session_transcript",
+      channel: "web",
+    });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: {
+        type: "tool_execution_end",
+        toolName: "spawn_agent",
+        toolCallId: "spawn-1",
+        result: { error: "spawn failed" },
+        isError: true,
+      },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "turn_end", toolResults: [] },
+    });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "The manager completed this turn without a visible response." }),
     );
   });
 
@@ -1095,7 +1181,7 @@ describe("RuntimeEventProjector", () => {
       expect.objectContaining({
         routingReceipt: expect.objectContaining({
           decision: "route",
-          reasonCode: "route:worker_report_all_view",
+          reasonCode: "route:worker_result_all_view",
           sourceWorkerId: worker.agentId,
         }),
       }),

@@ -1,4 +1,11 @@
-import type { AgentDescriptor, AgentModelDescriptor, ExternalThreadInfo, ManagerProfile } from "../../types.js";
+import type {
+  AgentDescriptor,
+  AgentModelDescriptor,
+  ExternalThreadInfo,
+  ManagerProfile,
+  WorkerParentContext,
+} from "../../types.js";
+import { cloneAssistantOutputTarget } from "../../assistant-output-target.js";
 
 type LegacyWorkerSelfReportFields = {
   workerLastSelfReportAt?: string;
@@ -34,6 +41,20 @@ function cloneCliSessionMetadata(descriptor: AgentDescriptor): AgentDescriptor["
         startedAt: descriptor.cli.startedAt,
         ...(descriptor.cli.invocationCwd !== undefined ? { invocationCwd: descriptor.cli.invocationCwd } : {}),
         ...(descriptor.cli.label !== undefined ? { label: descriptor.cli.label } : {})
+      }
+    : undefined;
+}
+
+function cloneWorkerParentContext(context: WorkerParentContext | undefined): WorkerParentContext | undefined {
+  return context
+    ? {
+        schemaVersion: 1,
+        assignmentId: context.assignmentId,
+        managerId: context.managerId,
+        assignedAt: context.assignedAt,
+        outputTarget: cloneAssistantOutputTarget(context.outputTarget),
+        ...(context.rootTurnId ? { rootTurnId: context.rootTurnId } : {}),
+        ...(context.parentRootTurnId ? { parentRootTurnId: context.parentRootTurnId } : {}),
       }
     : undefined;
 }
@@ -84,6 +105,7 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     cli: cloneCliSessionMetadata(descriptor),
     externalThread: descriptor.externalThread ? cloneExternalThread(descriptor.externalThread) : undefined,
+    workerParentContext: cloneWorkerParentContext(descriptor.workerParentContext),
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {
@@ -108,6 +130,7 @@ export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDesc
   const {
     sessionSystemPrompt: _sessionSystemPrompt,
     internalWorkerKind: _internalWorkerKind,
+    workerParentContext: _workerParentContext,
     ...publicDescriptor
   } = cloneDescriptorForPersistence(descriptor);
 

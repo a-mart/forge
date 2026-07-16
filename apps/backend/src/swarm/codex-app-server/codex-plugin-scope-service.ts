@@ -178,7 +178,7 @@ export function buildCodexPluginInitialTask(params: {
     "Scoped tools available for this delegation (names are exact runtime tool names):",
     JSON.stringify(toolCards, null, 2),
     "",
-    "Use the scoped tools needed to answer the manager's task. If the task needs a full Fireflies transcript or summary download/export, call export_scoped_codex_plugin_result instead of sending chunks. Then send a concise sanitized report to the manager via send_message_to_agent. Include the returned artifactMarkdown/manifestMarkdown links when present plus enough context for the manager to answer the user, but do not include raw connector payloads, full transcripts, long summaries, or hidden metadata.",
+    "Use the scoped tools needed to answer the manager's task. If the task needs a full Fireflies transcript or summary download/export, call export_scoped_codex_plugin_result instead of returning chunks. End with a concise sanitized final response; Forge returns it to the manager automatically. Include the returned artifactMarkdown/manifestMarkdown links when present plus enough context for the manager to answer the user, but do not include raw connector payloads, full transcripts, long summaries, or hidden metadata.",
   ].join("\n");
 }
 

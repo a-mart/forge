@@ -1,5 +1,10 @@
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
-import type { ConversationMessageEvent, MessageSourceContext } from "../types.js";
+import type {
+  AssistantOutputTarget,
+  ConversationMessageEvent,
+  MessageSourceContext,
+  SessionTranscriptAssistantOutputTarget,
+} from "../types.js";
 import { extractMessageText, extractRole } from "../message-utils.js";
 import type { MessageRouteDecision } from "../message-router.js";
 import {
@@ -8,18 +13,7 @@ import {
   messageHasIneligibleStopOrError,
 } from "./manager-assistant-final-message.js";
 
-export type SessionTranscriptAssistantOutputTarget = {
-  kind: "session_transcript";
-  channel: "web" | "cli";
-  sourceContext?: MessageSourceContext;
-};
-
-export type AssistantOutputTarget =
-  | SessionTranscriptAssistantOutputTarget
-  | { kind: "explicit_tool_required"; reason: string }
-  | { kind: "peer_agent"; fromAgentId: string }
-  | { kind: "external_channel"; sourceContext: MessageSourceContext }
-  | { kind: "internal_only"; reason?: string };
+export type { AssistantOutputTarget, SessionTranscriptAssistantOutputTarget } from "../types.js";
 
 interface AssistantOutputCandidate {
   text: string;
@@ -136,7 +130,6 @@ export class ManagerAssistantOutputTracker {
         this.updateAssistantOutputCandidate(agentId, activeTurn, event);
         break;
 
-      case "turn_end":
       case "agent_end":
         this.flushTurn(agentId);
         break;

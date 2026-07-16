@@ -158,11 +158,7 @@ describe("runtime tool plan", () => {
   it("plans worker and manager base tool sets deterministically", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
 
-    expect(toolNames(createDescriptor(rootDir))).toEqual([
-      "list_agents",
-      "send_message_to_agent",
-      "knowledge",
-    ]);
+    expect(toolNames(createDescriptor(rootDir))).toEqual(["knowledge"]);
     expect(toolNames(createManagerDescriptor(rootDir))).toEqual([
       "list_agents",
       "send_message_to_agent",

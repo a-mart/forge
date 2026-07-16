@@ -172,7 +172,13 @@ function extractLegacyUserMessageTimestamp(entry: Record<string, unknown>): stri
   const text = extractMessageText(message);
   if (!text) return undefined;
   const trimmed = text.trimStart();
-  if (trimmed.startsWith("SYSTEM:") || trimmed.startsWith("WORKER REPORT:")) return undefined;
+  if (
+    trimmed.startsWith("SYSTEM:") ||
+    trimmed.startsWith("WORKER REPORT:") ||
+    trimmed.startsWith("[workerResult]")
+  ) {
+    return undefined;
+  }
 
   return nonEmptyTimestamp(entry.timestamp);
 }

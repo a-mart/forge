@@ -141,16 +141,6 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
       { name: 'FORK_TIMESTAMP', description: 'ISO timestamp of the fork' },
     ],
   },
-  {
-    category: 'operational',
-    promptId: 'idle-watchdog',
-    displayName: 'Idle Worker Watchdog Message',
-    description: 'Warning sent when workers go idle without reporting back.',
-    variables: [
-      { name: 'WORKER_COUNT', description: 'Number of idle workers' },
-      { name: 'WORKER_IDS', description: 'Comma-separated list of idle worker IDs' },
-    ],
-  },
 ];
 
 /**

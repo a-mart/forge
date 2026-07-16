@@ -315,6 +315,18 @@ function hasInternalCodexPluginWorker(manager: { listAgentsForInternalUse(): Age
   return Boolean(findInternalCodexPluginWorker(manager));
 }
 
+async function completeWorker(
+  manager: TestSwarmManager,
+  workerAgentId: string,
+  text: string,
+): Promise<void> {
+  await manager.handleRuntimeSessionEvent(workerAgentId, {
+    type: "message_end",
+    message: { role: "assistant", content: text, stopReason: "stop" },
+  });
+  await manager.handleRuntimeAgentEnd(workerAgentId);
+}
+
 async function createStoppedFirefliesRetryManager() {
   const { config } = await createTempConfig();
   const manager = createCodexEnabledManagerOnly(config);
@@ -724,7 +736,7 @@ describe("SwarmManager Codex mention routing", () => {
     expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.agentId);
   });
 
-  it("does not activate queued selector context for an earlier worker report message_start", async () => {
+  it("does not activate queued selector context for an earlier worker-result message_start", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
@@ -732,11 +744,12 @@ describe("SwarmManager Codex mention routing", () => {
 
     const managerRuntime = manager.runtimeByAgentId.get("manager");
     expect(managerRuntime).toBeDefined();
+    await manager.sendMessage("manager", worker.agentId, "Prepare a concise result.");
     managerRuntime!.busy = true;
 
-    await manager.sendMessage(worker.agentId, "manager", "status: done\nsummary: worker report");
-    const workerReportMessage = managerRuntime!.sendCalls.at(-1)!.message;
-    const workerReportText = typeof workerReportMessage === "string" ? workerReportMessage : workerReportMessage.text;
+    await completeWorker(manager, worker.agentId, "Worker result.");
+    const workerResultMessage = managerRuntime!.sendCalls.at(-1)!.message;
+    const workerResultText = typeof workerResultMessage === "string" ? workerResultMessage : workerResultMessage.text;
 
     await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
@@ -746,7 +759,7 @@ describe("SwarmManager Codex mention routing", () => {
 
     await manager.handleRuntimeSessionEvent("manager", {
       type: "message_start",
-      message: { role: "user", content: workerReportText },
+      message: { role: "user", content: workerResultText },
     });
     await expect(
       manager.spawnAgent("manager", {
@@ -878,8 +891,11 @@ describe("SwarmManager Codex mention routing", () => {
       manager.sendMessage(sibling.agentId, worker!.agentId, "sibling follow-up"),
     ).rejects.toThrow(/only accept follow-ups from their owning manager/i);
 
-    const reportReceipt = await manager.sendMessage(worker!.agentId, "manager", "status: done\nsummary: scoped report");
-    expect(reportReceipt.targetAgentId).toBe("manager");
+    const managerRuntime = manager.runtimeByAgentId.get("manager");
+    const managerSendCountBeforeResult = managerRuntime?.sendCalls.length ?? 0;
+    await completeWorker(manager, worker!.agentId, "Scoped plugin result.");
+    expect(managerRuntime?.sendCalls.length ?? 0).toBe(managerSendCountBeforeResult + 1);
+    expect(String(managerRuntime?.sendCalls.at(-1)?.message)).toContain("[workerResult]");
 
     expect(
       manager

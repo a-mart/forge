@@ -1,8 +1,7 @@
 import { isNonRunningAgentStatus, transitionAgentStatus } from "../agent-state-machine.js";
 import type {
   WorkerActivityStateLike,
-  WorkerStallStateLike,
-  WorkerWatchdogStateLike
+  WorkerStallStateLike
 } from "./worker-health-types.js";
 import type { AgentContextUsage, AgentDescriptor, AgentStatus } from "../types.js";
 import {
@@ -12,10 +11,8 @@ import {
 
 export interface RuntimeStatusProjectorDeps {
   descriptors: Map<string, AgentDescriptor>;
-  workerWatchdogState: Map<string, WorkerWatchdogStateLike>;
   workerStallState: Map<string, WorkerStallStateLike>;
   workerActivityState: Map<string, WorkerActivityStateLike>;
-  watchdogTimerTokens: Map<string, number>;
   now: () => string;
   patchDescriptorFromRuntimeStatus(
     agentId: string,
@@ -33,15 +30,6 @@ export interface RuntimeStatusProjectorDeps {
   ): void;
   emitAgentsSnapshot(): void;
   logDebug(message: string, details?: unknown): void;
-  getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogStateLike;
-  clearWatchdogTimer(agentId: string): void;
-  removeWorkerFromWatchdogBatchQueues(agentId: string): void;
-  finalizeWorkerIdleTurn(
-    agentId: string,
-    descriptor: AgentDescriptor,
-    source: "agent_end" | "status_idle" | "deferred"
-  ): Promise<void>;
-  shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean;
   handleManagerStatusTransition(
     descriptor: AgentDescriptor,
     status: AgentStatus,
@@ -139,22 +127,6 @@ export class RuntimeStatusProjector {
       pendingCount,
       contextUsage: updatedDescriptor.contextUsage
     });
-
-    if (updatedDescriptor.role === "worker") {
-      if (nextStatus === "streaming") {
-        const watchdogState = this.deps.getOrCreateWorkerWatchdogState(agentId);
-        watchdogState.hadStreamingThisTurn = true;
-        this.deps.workerWatchdogState.set(agentId, watchdogState);
-        this.deps.watchdogTimerTokens.set(agentId, (this.deps.watchdogTimerTokens.get(agentId) ?? 0) + 1);
-        this.deps.clearWatchdogTimer(agentId);
-        this.deps.removeWorkerFromWatchdogBatchQueues(agentId);
-      } else if (nextStatus === "idle" && pendingCount === 0) {
-        const watchdogState = this.deps.workerWatchdogState.get(agentId);
-        if (watchdogState?.hadStreamingThisTurn && !this.deps.shouldSuppressWorkerIdleFinalization(updatedDescriptor)) {
-          await this.deps.finalizeWorkerIdleTurn(agentId, updatedDescriptor, "status_idle");
-        }
-      }
-    }
 
     if (updatedDescriptor.role === "manager") {
       await this.deps.handleManagerStatusTransition(updatedDescriptor, nextStatus, pendingCount);

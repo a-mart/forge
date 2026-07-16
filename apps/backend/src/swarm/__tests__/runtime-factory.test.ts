@@ -1297,7 +1297,7 @@ describe("RuntimeFactory", () => {
       message: "bind failed",
     });
     expect(session.setActiveToolsByName).toHaveBeenCalledWith(
-      expect.arrayContaining(["z_existing", "send_message_to_agent", "list_agents"]),
+      expect.arrayContaining(["z_existing", "send_message_to_agent", "knowledge"]),
     );
   });
 
@@ -1634,7 +1634,7 @@ describe("RuntimeFactory", () => {
       "utf8"
     );
 
-    const descriptor = createDescriptor(rootDir);
+    const descriptor = createManagerDescriptor(rootDir);
     await writeFile(descriptor.sessionFile, "", "utf8");
 
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
@@ -1673,7 +1673,7 @@ describe("RuntimeFactory", () => {
     expect(sendMessage.mock.calls.map((call) => call[1])).toEqual(["worker-first", "worker-second"]);
   });
 
-  it("passes worker runtime context with worker agent data and owning manager session data on Pi runtimes", async () => {
+  it("does not expose manager coordination tools to ordinary Pi worker runtimes", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -1722,24 +1722,9 @@ describe("RuntimeFactory", () => {
     const sendTool = tools.find((tool) => tool.name === "send_message_to_agent");
     await sendTool?.execute("tool-context", { targetAgentId: "worker-original", message: "ignored" });
 
-    expect(sendMessage).toHaveBeenCalledWith(
-      "worker-1",
-      "worker-1",
-      JSON.stringify({
-        sessionAgentId: "manager-1",
-        sessionLabel: "Manager Session",
-        sessionCwd: managerCwd,
-        agentCwd: workerCwd,
-      }),
-      undefined,
-      {
-        observabilityParentTool: {
-          agentId: "worker-1",
-          toolCallId: "tool-context",
-          toolName: "send_message_to_agent",
-        },
-      }
-    );
+    expect(tools.map((tool) => tool.name)).toEqual(["knowledge"]);
+    expect(sendTool).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("does not leave active Forge runtime snapshots behind when Pi runtime creation fails", async () => {
@@ -2408,7 +2393,7 @@ describe("RuntimeFactory", () => {
     }));
 
     await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
+      createManagerDescriptor(rootDir, {
         model: {
           provider: "claude-sdk",
           modelId: "claude-opus-4-6",
@@ -2425,7 +2410,7 @@ describe("RuntimeFactory", () => {
     });
 
     await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
+      createManagerDescriptor(rootDir, {
         model: {
           provider: "cursor-sdk",
           modelId: "composer-2.5",

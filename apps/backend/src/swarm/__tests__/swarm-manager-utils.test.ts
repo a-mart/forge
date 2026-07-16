@@ -7,16 +7,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import type {
   AgentDescriptor,
-  ConversationEntryEvent,
-  ConversationMessageEvent
+  ConversationEntryEvent
 } from "../types.js";
 import {
   analyzeLatestCortexCloseoutNeed,
   areContextUsagesEqual,
   buildModelCapacityBlockKey,
   buildSessionMemoryRuntimeView,
-  buildWorkerCompletionReport,
-  summarizeTerminalWorkerReportForUser,
   clampModelCapacityBlockDurationMs,
   cloneDescriptor,
   cloneProjectAgentInfoValue,
@@ -432,6 +429,25 @@ describe("validateAgentDescriptor", () => {
     expect(result).toEqual(d);
   });
 
+  it("validates durable worker parent context and rejects it on managers", () => {
+    const worker = baseDescriptor({
+      role: "worker",
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment-1",
+        managerId: "mgr-1",
+        assignedAt: "2026-07-16T12:00:00.000Z",
+        outputTarget: { kind: "internal_only", reason: "test" },
+      },
+    });
+    expect(validateAgentDescriptor(worker)).toMatchObject({
+      workerParentContext: { assignmentId: "assignment-1", managerId: "mgr-1" },
+    });
+    expect(validateAgentDescriptor(baseDescriptor({
+      workerParentContext: worker.workerParentContext,
+    }))).toMatch(/only supported on worker descriptors/);
+  });
+
   it("normalizes project agent handle when sanitize changes it", () => {
     const d = baseDescriptor({
       projectAgent: {
@@ -704,115 +720,6 @@ describe("resolveModel", () => {
       thinkingLevel: "low"
     });
     expect(model).toBe(fallback);
-  });
-});
-
-describe("buildWorkerCompletionReport", () => {
-  const msg = (partial: Partial<ConversationMessageEvent>): ConversationMessageEvent => ({
-    type: "conversation_message",
-    agentId: "w1",
-    role: "assistant",
-    text: "hello",
-    timestamp: "2020-01-01T00:00:00.000Z",
-    source: "system",
-    ...partial
-  });
-
-  it("uses canonical done report when history is empty", () => {
-    const r = buildWorkerCompletionReport("worker-1", []);
-    expect(r.message).toBe([
-      "WORKER REPORT: status: done",
-      "summary: Auto-generated report because worker worker-1 completed its turn without an explicit callback."
-    ].join("\n"));
-    expect(r.summaryTimestamp).toBeUndefined();
-  });
-
-  it("includes latest assistant summary in a canonical done report", () => {
-    const history: ConversationEntryEvent[] = [
-      msg({ text: "old", timestamp: "2019-01-01T00:00:00.000Z" }),
-      msg({ text: "newer", timestamp: "2020-01-02T00:00:00.000Z" })
-    ];
-    const r = buildWorkerCompletionReport("w", history);
-    expect(r.message).toBe([
-      "WORKER REPORT: status: done",
-      "summary: Auto-generated report because worker w completed its turn without an explicit callback.",
-      "",
-      "Last assistant message:",
-      "newer"
-    ].join("\n"));
-    expect(r.summaryTimestamp).toBe(parseTimestampToMillis("2020-01-02T00:00:00.000Z"));
-  });
-
-  it("emits canonical blocked report for worker error summaries", () => {
-    const history: ConversationEntryEvent[] = [
-      msg({
-        role: "system",
-        text: "⚠️ Agent error: socket closed. Message may need to be resent.",
-        timestamp: "2020-01-03T00:00:00.000Z"
-      })
-    ];
-    const r = buildWorkerCompletionReport("w", history);
-    expect(r.message).toBe([
-      "WORKER REPORT: status: blocked",
-      "summary: Auto-generated report because worker w ended with an error without an explicit callback.",
-      "",
-      "Last system message:",
-      "⚠️ Agent error: socket closed. Message may need to be resent."
-    ].join("\n"));
-    expect(r.summaryTimestamp).toBe(parseTimestampToMillis("2020-01-03T00:00:00.000Z"));
-  });
-
-  it("preserves attachment counts in canonical reports", () => {
-    const history: ConversationEntryEvent[] = [
-      msg({
-        text: "Done with files.",
-        attachments: [
-          { type: "text", mimeType: "text/plain", text: "one" },
-          { type: "text", mimeType: "text/plain", text: "two" }
-        ] as any
-      })
-    ];
-    const r = buildWorkerCompletionReport("w", history);
-    expect(r.message).toContain("WORKER REPORT: status: done");
-    expect(r.message).toContain("Last assistant message:\nDone with files.");
-    expect(r.message).toContain("Attachments: 2 generated attachments.");
-  });
-});
-
-describe("summarizeTerminalWorkerReportForUser", () => {
-  const ROUTED_MARKER = '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}';
-
-  it("surfaces status and a clean summary attributed to the worker, never the raw report", () => {
-    const report = `WORKER REPORT: status: blocked\n${ROUTED_MARKER}\nsummary: rerun failed before a Graph response.`;
-    const line = summarizeTerminalWorkerReportForUser(report, "mammo-rerun");
-    expect(line).toContain("`mammo-rerun`");
-    expect(line).toContain("was blocked");
-    expect(line).toContain("status: blocked");
-    expect(line).toContain("rerun failed before a Graph response.");
-    // The internal routing metadata must never leak to the user.
-    expect(line).not.toContain("assistantOutputTarget");
-    expect(line).not.toContain("WORKER REPORT:");
-  });
-
-  it("normalizes completed to done and works without a source worker id", () => {
-    const line = summarizeTerminalWorkerReportForUser("WORKER REPORT: status: completed\nsummary: clean reset finished.");
-    expect(line).toContain("A background task");
-    expect(line).toContain("finished");
-    expect(line).toContain("status: done");
-    expect(line).toContain("clean reset finished.");
-  });
-
-  it("drops a summary line that itself is internal metadata rather than leaking it", () => {
-    const report = `WORKER REPORT: status: done\nsummary: ${ROUTED_MARKER}`;
-    const line = summarizeTerminalWorkerReportForUser(report, "w-1");
-    expect(line).not.toContain("assistantOutputTarget");
-    expect(line).toContain("status: done");
-  });
-
-  it("still surfaces an outcome pointer when no parsable status is present", () => {
-    const line = summarizeTerminalWorkerReportForUser("SYSTEM: Worker w-1 completed its turn.", "w-1");
-    expect(line).toContain("`w-1`");
-    expect(line).toContain("full details in the All view");
   });
 });
 

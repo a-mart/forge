@@ -62,6 +62,7 @@ import { getManagedModelProviderCredentialAvailability } from "./secrets-env-ser
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
 import { TurnContextCoordinator } from "./turn-context-coordinator.js";
+import { WorkerResultCoordinator } from "./worker-result-coordinator.js";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -128,13 +129,17 @@ export interface RuntimeCompositionMessaging {
     delivery?: RequestedDeliveryMode,
     options?: {
       origin?: "user" | "internal";
-      workerReportSourceAgentId?: string;
       skipTurnLedger?: boolean;
       internalDeliveryKind?: "bootstrap" | "codex_plugin_bootstrap";
       attachments?: ConversationAttachment[];
       planStep?: string;
       planAssignmentSource?: "spawn_agent" | "send_message_to_agent";
     },
+  ): Promise<SendMessageReceipt>;
+  sendWorkerResult(
+    workerAgentId: string,
+    resultText: string,
+    expectedAssignmentId?: string,
   ): Promise<SendMessageReceipt>;
   publishToUser(
     agentId: string,
@@ -272,6 +277,7 @@ export class SwarmManagerRuntimeComposition {
   readonly runtimeController: SwarmRuntimeController;
   readonly assistantOutput: AssistantOutputRouter;
   readonly modelChangeStartupRecovery: ModelChangeStartupRecoveryCoordinator;
+  readonly workerResults: WorkerResultCoordinator;
   readonly workerHealth: SwarmWorkerHealthService;
   readonly specialistFallback: SwarmSpecialistFallbackManager;
 
@@ -282,13 +288,15 @@ export class SwarmManagerRuntimeComposition {
   private completed: SwarmManagerCompletedRuntimeComposition | undefined;
 
   constructor(private readonly options: SwarmManagerRuntimeCompositionOptions) {
-    const { state } = options;
+    const { state, messaging } = options;
     this.captureCascade = this.createCaptureCascade();
     this.restartRecovery = new RestartRecoveryCoordinator({
       descriptors: state.descriptors,
       getSessionTarget: (agentId) => this.requireRuntimeLifecycle().getTurnLedgerSessionTarget(agentId),
       sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
         options.messaging.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
+      sendWorkerResult: (workerAgentId, resultText, expectedAssignmentId) =>
+        options.messaging.sendWorkerResult(workerAgentId, resultText, expectedAssignmentId),
       now: state.now,
       onDecisionResolved: () => this.requireGoals().scheduleContinuationsAfterBoot(),
       logDebug: options.events.logDebug,
@@ -317,6 +325,12 @@ export class SwarmManagerRuntimeComposition {
       getEffectiveContextWindow: (modelId, provider) =>
         modelCatalogService.getEffectiveContextWindow(modelId, provider),
       hasPinnedContent: (agentId) => options.foundation.sessionPins.hasPinnedContent(agentId),
+    });
+    this.workerResults = new WorkerResultCoordinator({
+      getConversationHistory: messaging.getConversationHistory,
+      deliverWorkerResult: (workerAgentId, resultText, expectedAssignmentId) =>
+        messaging.sendWorkerResult(workerAgentId, resultText, expectedAssignmentId),
+      logDebug: options.events.logDebug,
     });
     this.workerHealth = this.createWorkerHealth();
     this.specialistFallback = this.createSpecialistFallback();
@@ -434,10 +448,8 @@ export class SwarmManagerRuntimeComposition {
       descriptors: state.descriptors,
       runtimeRecoveryState: state.runtimeRecoveryState,
       getWorkerHealthState: () => ({
-        workerWatchdogState: this.workerHealth.workerWatchdogState,
         workerStallState: this.workerHealth.workerStallState,
         workerActivityState: this.workerHealth.workerActivityState,
-        watchdogTimerTokens: this.workerHealth.watchdogTimerTokens,
       }),
       getLateBoundServices: () => ({
         conversationProjector: this.requireServices().conversation,
@@ -504,8 +516,6 @@ export class SwarmManagerRuntimeComposition {
         this.assistantOutput.resolveManagerFinalTarget(agentId, target),
       resolveManagerAssistantFinalOutputRoute: (agentId, target) =>
         this.assistantOutput.resolveManagerFinalRoute(agentId, target),
-      deliverTerminalObligationBackstop: (agentId, text) =>
-        this.assistantOutput.deliverTerminalObligationBackstop(agentId, text),
     });
   }
 
@@ -543,19 +553,17 @@ export class SwarmManagerRuntimeComposition {
   }
 
   private createWorkerHealth(): SwarmWorkerHealthService {
-    const { state, messaging, events, resolution } = this.options;
+    const { state, messaging, events } = this.options;
     return new SwarmWorkerHealthService({
       descriptors: state.descriptors,
       runtimes: this.runtimeController.runtimes,
-      now: state.now,
-      getConversationHistory: messaging.getConversationHistory,
+      workerResults: this.workerResults,
       sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
         messaging.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
       publishToUser: messaging.publishToUser,
       terminateDescriptor: messaging.terminateDescriptor,
       saveStore: events.saveStore,
       emitAgentsSnapshot: events.emitAgentsSnapshot,
-      resolvePromptWithFallback: resolution.resolvePromptWithFallback,
       isRuntimeInContextRecovery: (agentId) =>
         this.requireRuntimeLifecycle().isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) =>
@@ -717,13 +725,9 @@ export class SwarmManagerRuntimeComposition {
       emitAgentsSnapshot: events.emitAgentsSnapshot,
       emitProfilesSnapshot: events.emitProfilesSnapshot,
       logDebug: events.logDebug,
-      seedWorkerCompletionReportTimestamp: (agentId) =>
-        runtimeLifecycle.seedWorkerCompletionReportTimestamp(agentId),
-      clearWatchdogState: (agentId) => runtimeLifecycle.clearWatchdogState(agentId),
+      clearWorkerHealthState: (agentId) => runtimeLifecycle.clearWorkerHealthState(agentId),
       deleteWorkerStallState: (agentId) => runtimeLifecycle.deleteWorkerStallState(agentId),
       deleteWorkerActivityState: (agentId) => runtimeLifecycle.deleteWorkerActivityState(agentId),
-      deleteWorkerCompletionReportState: (agentId) =>
-        runtimeLifecycle.deleteWorkerCompletionReportState(agentId),
       clearTrackedToolPaths: (agentId) => this.runtimeController.clearTrackedToolPaths(agentId),
       suppressIntentionalStopRuntimeCallbacks: (agentId, token) =>
         this.runtimeController.suppressIntentionalStopRuntimeCallbacks(agentId, token),
@@ -977,8 +981,7 @@ export class SwarmManagerRuntimeComposition {
   }
 
   private requirePlans(): SessionPlanCoordinator {
-    if (!this.plans) throw new Error("Runtime composition planning has not been attached");
-    return this.plans;
+    if (!this.plans) throw new Error("Runtime composition planning has not been attached"); return this.plans;
   }
 
   private requireGoals(): SessionGoalCoordinator {
@@ -1006,9 +1009,6 @@ export class SwarmManagerRuntimeComposition {
     return this.completed.projectExecutableTrust;
   }
 }
-
-export function createSwarmManagerRuntimeComposition(
-  options: SwarmManagerRuntimeCompositionOptions,
-): SwarmManagerRuntimeComposition {
+export function createSwarmManagerRuntimeComposition(options: SwarmManagerRuntimeCompositionOptions): SwarmManagerRuntimeComposition {
   return new SwarmManagerRuntimeComposition(options);
 }

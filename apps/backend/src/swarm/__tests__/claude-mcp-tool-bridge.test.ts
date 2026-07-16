@@ -229,17 +229,9 @@ describe("claude-mcp-tool-bridge", () => {
     const tools = buildSwarmTools(createMockHost(), worker);
     const { bridge, registeredTools } = await buildBridge(tools, { serverName: "custom-swarm" });
 
-    expect(registeredTools.map((tool) => tool.name)).toEqual([
-      "list_agents",
-      "send_message_to_agent",
-      "knowledge"
-    ]);
+    expect(registeredTools.map((tool) => tool.name)).toEqual(["knowledge"]);
     expect(bridge.serverName).toBe("custom-swarm");
-    expect(bridge.allowedTools).toEqual([
-      "mcp__custom-swarm__list_agents",
-      "mcp__custom-swarm__send_message_to_agent",
-      "mcp__custom-swarm__knowledge"
-    ]);
+    expect(bridge.allowedTools).toEqual(["mcp__custom-swarm__knowledge"]);
   });
 
   it("registers create_project_agent when provided", async () => {

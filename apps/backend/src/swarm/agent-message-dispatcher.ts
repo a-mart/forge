@@ -9,7 +9,9 @@ import { isSessionAgentDescriptor } from "./agent-directory.js";
 import type {
   AgentMessageOutputInput,
   AssistantOutputRouter,
+  WorkerResultOutputInput,
 } from "./assistant-output-router.js";
+import { cloneAssistantOutputTarget } from "./assistant-output-target.js";
 import {
   deliverProjectAgentMessage,
   formatProjectAgentRuntimeMessage,
@@ -32,6 +34,7 @@ import {
 import type {
   InboundTurnContextInput,
   QueuedInboundTurnHandle,
+  ActiveWorkerParentContext,
 } from "./turn-context-coordinator.js";
 import type {
   AgentDescriptor,
@@ -41,12 +44,11 @@ import type {
   ManagerProfile,
   RequestedDeliveryMode,
   SendMessageReceipt,
+  WorkerParentContext,
 } from "./types.js";
 
 const CORTEX_ARCHETYPE_ID = "cortex";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
-const WORKER_REPORT_MESSAGE_PREFIX = "WORKER REPORT: ";
-const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked|completed)\b/i;
 
 export type AgentMessageOrigin = "user" | "internal";
 export type AgentMessageInternalDeliveryKind =
@@ -59,7 +61,6 @@ export interface AgentMessageSendOptions {
   attachments?: ConversationAttachment[];
   internalDeliveryKind?: AgentMessageInternalDeliveryKind;
   observabilityParentTool?: ObservabilityParentTool;
-  workerReportSourceAgentId?: string;
   skipTurnLedger?: boolean;
   planStep?: string;
   planAssignmentSource?: "spawn_agent" | "send_message_to_agent";
@@ -82,6 +83,7 @@ export interface AgentMessageTurnPort<TCodexGate> {
     >,
   ): Promise<QueuedInboundTurnHandle>;
   getActiveTurnId(agentId: string): string | undefined;
+  getActiveWorkerParentContext(agentId: string): ActiveWorkerParentContext | undefined;
   getActiveExternalProjectAgentTurn(agentId: string): {
     fromAgentId: string;
     fromDisplayName: string;
@@ -104,16 +106,6 @@ export interface AgentMessageLedgerPort {
     deliveryId: string;
     at: string;
   }): Promise<void>;
-}
-
-export interface AgentMessageWorkerHealthPort {
-  getWorkerReportDispatchTurnSeq(
-    sender: AgentDescriptor,
-    target: AgentDescriptor,
-  ): number | undefined;
-  markPendingWorkerReportDispatch(agentId: string, turnSeq: number | undefined): void;
-  handleFailedWorkerReportDispatch(agentId: string, turnSeq: number | undefined): Promise<void>;
-  handleSuccessfulWorkerReportDispatch(agentId: string, turnSeq: number | undefined): Promise<void>;
 }
 
 export interface AgentMessageObservabilityPort {
@@ -223,7 +215,6 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
   turns: AgentMessageTurnPort<TCodexGate>;
   output: AssistantOutputRouter;
   ledger: AgentMessageLedgerPort;
-  workerHealth: AgentMessageWorkerHealthPort;
   observability: AgentMessageObservabilityPort;
   plans: AgentMessagePlanPort;
   goals: AgentMessageGoalPort;
@@ -240,6 +231,7 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
     },
   ): Promise<void>;
   emitAgentMessage(event: AgentMessageEvent): void;
+  saveStore(): Promise<void>;
   now(): string;
   createDeliveryNonce?(): string;
   logDebug(message: string, details?: unknown): void;
@@ -254,6 +246,12 @@ interface ProjectAgentDeliveryAuthorization {
 interface ResolvedPlanAssignment {
   descriptor: AgentDescriptor & { role: "manager"; profileId: string };
   assignment: PlanStepAssignment;
+}
+
+interface WorkerAssignmentTransaction {
+  worker: AgentDescriptor & { role: "worker" };
+  assignmentId: string;
+  previous?: WorkerParentContext;
 }
 
 /**
@@ -293,6 +291,12 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       );
     }
 
+    if (sender.role === "worker" && target.role === "manager") {
+      throw new Error(
+        "Workers return results through their final assistant output; direct worker-to-manager messages are not supported.",
+      );
+    }
+
     this.options.codex.assertWorkerDeliveryAllowed(sender, target, sendOptions);
 
     const origin = sendOptions?.origin ?? "internal";
@@ -328,6 +332,63 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       planAssignment,
       sendOptions,
     });
+  }
+
+  async sendWorkerResult(
+    workerAgentId: string,
+    resultText: string,
+    expectedAssignmentId?: string,
+  ): Promise<SendMessageReceipt> {
+    const worker = this.options.descriptors.get(workerAgentId);
+    if (!worker || worker.role !== "worker") {
+      throw new Error(`Worker result source is not a worker: ${workerAgentId}`);
+    }
+    this.options.assertMutable(worker);
+    const target = this.requireTarget(worker.managerId);
+    if (target.role !== "manager") {
+      throw new Error(`Worker ${workerAgentId} does not have a valid owning manager`);
+    }
+
+    const persistedParent = worker.workerParentContext;
+    if (
+      expectedAssignmentId &&
+      persistedParent?.assignmentId !== expectedAssignmentId
+    ) {
+      throw new Error(
+        `Worker result assignment changed before delivery: ${workerAgentId}`,
+      );
+    }
+    const parentContext = persistedParent ?? {
+      schemaVersion: 1 as const,
+      assignmentId: `legacy:${worker.agentId}:${this.createDeliveryNonce()}`,
+      managerId: target.agentId,
+      assignedAt: this.options.now(),
+      outputTarget: { kind: "internal_only" as const, reason: "missing_worker_parent" },
+    };
+    const message = formatWorkerResultMessage(worker.agentId, parentContext.assignmentId, resultText);
+    const receipt = await this.sendRuntimeMessage({
+      sender: worker,
+      target,
+      message,
+      delivery: "auto",
+      origin: "internal",
+      attachments: [],
+      workerResult: { parentContext },
+      ledgerMessage: resultText,
+    });
+
+    if (persistedParent && worker.workerParentContext?.assignmentId === persistedParent.assignmentId) {
+      delete worker.workerParentContext;
+      await this.options.saveStore().catch((error) => {
+        worker.workerParentContext = cloneWorkerParentContext(persistedParent);
+        this.options.logDebug("worker_result:clear_parent:error", {
+          workerAgentId,
+          assignmentId: persistedParent.assignmentId,
+          message: errorToMessage(error),
+        });
+      });
+    }
+    return receipt;
   }
 
   private async sendProjectAgentMessage(input: {
@@ -460,13 +521,11 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     attachments: ConversationAttachment[];
     planAssignment?: ResolvedPlanAssignment;
     sendOptions?: AgentMessageSendOptions;
+    workerResult?: { parentContext: WorkerParentContext };
+    ledgerMessage?: string;
   }): Promise<SendMessageReceipt> {
     const managerContextIds = resolveActivityManagerContextIds(input.sender, input.target);
     const runtime = await this.options.getOrCreateRuntime(input.target);
-    const watchdogTurnSeq = this.options.workerHealth.getWorkerReportDispatchTurnSeq(
-      input.sender,
-      input.target,
-    );
     let modelMessage = await this.prepareModelInboundMessage(
       input.target.agentId,
       { text: input.message, attachments: input.attachments },
@@ -476,15 +535,18 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       sender: input.sender,
       target: input.target,
       modelMessage,
-      rawMessage: input.message,
-      workerReportSourceAgentId: input.sendOptions?.workerReportSourceAgentId,
       sendMessageToolContinuation:
         input.sendOptions?.observabilityParentTool?.toolName === "send_message_to_agent",
     };
-    const output = this.options.output.prepareAgentMessage(outputInput);
+    const output = input.workerResult
+      ? this.options.output.prepareWorkerResult({
+          worker: input.sender as AgentDescriptor & { role: "worker" },
+          target: input.target as AgentDescriptor & { role: "manager" },
+          parentContext: input.workerResult.parentContext,
+          modelMessage,
+        } satisfies WorkerResultOutputInput)
+      : this.options.output.prepareAgentMessage(outputInput);
     modelMessage = output.modelMessage;
-
-    this.options.workerHealth.markPendingWorkerReportDispatch(input.sender.agentId, watchdogTurnSeq);
 
     const rootSource = classifyObservabilityRootSource({
       origin: input.origin,
@@ -492,7 +554,9 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       targetAgentId: input.target.agentId,
       internalDeliveryKind: input.sendOptions?.internalDeliveryKind,
     });
-    const parentRootTurnId = this.options.observability.getActiveRootTurnId(input.sender.agentId);
+    const parentRootTurnId =
+      input.workerResult?.parentContext.rootTurnId ??
+      this.options.observability.getActiveRootTurnId(input.sender.agentId);
     const observabilityInput = this.options.observability.beginRuntimeInput({
       target: input.target,
       rootSource,
@@ -511,15 +575,13 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       (
         Boolean(observabilityInput) ||
         output.projectionTarget.kind !== "internal_only" ||
-        output.inputTarget.kind !== "internal_only" ||
-        output.eligibleWorkerReport
+        output.inputTarget.kind !== "internal_only"
       );
-    const { rollback } = await this.options.turns.enqueue(input.target.agentId, {
-      source: "agent_message",
-      routeOrigin: output.eligibleWorkerReport ? "terminal_worker_report" : input.origin,
+    const queuedTurn = await this.options.turns.enqueue(input.target.agentId, {
+      source: input.workerResult ? "worker_result" : "agent_message",
+      routeOrigin: input.workerResult ? "worker_result" : input.origin,
       internalDeliveryKind: input.sendOptions?.internalDeliveryKind,
-      workerReportSourceAgentId: output.workerReportSourceAgentId,
-      normalBuilderWorkerCallback: output.normalBuilderWorkerCallback,
+      sourceWorkerId: output.sourceWorkerId,
       requiresVisibleResponse: output.requiresVisibleResponse,
       rootTurnId: observabilityInput?.rootTurnId,
       parentRootTurnId,
@@ -529,12 +591,22 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       activationEligible,
       skipTurnLedger: input.sendOptions?.skipTurnLedger,
     });
+    const { rollback, turnId: managerTurnId } = queuedTurn;
 
-    const managerTurnId = this.options.turns.getActiveTurnId(input.target.agentId);
+    let assignmentTransaction: WorkerAssignmentTransaction | undefined;
+    try {
+      assignmentTransaction = await this.persistWorkerAssignment(
+        input.sender,
+        input.target,
+      );
+    } catch (error) {
+      rollback();
+      this.options.observability.cancelRuntimeInput(observabilityInput, "worker_assignment_persist_failed");
+      throw error;
+    }
     const deliveryId = [
-      "worker-report",
+      input.workerResult ? "worker-result" : "agent-message",
       input.sender.agentId,
-      watchdogTurnSeq ?? "unknown",
       managerTurnId ?? "unknown",
       this.createDeliveryNonce(),
     ].join(":");
@@ -548,7 +620,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         deliveryId,
         fromAgentId: input.sender.agentId,
         targetAgentId: input.target.agentId,
-        message: input.message,
+        message: input.ledgerMessage ?? input.message,
         at: this.options.now(),
       }).catch((error) => {
         this.options.logDebug("turn_ledger:delivery_pending:error", {
@@ -566,18 +638,9 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     } catch (error) {
       rollback();
       this.options.observability.cancelRuntimeInput(observabilityInput, "runtime_send_message_failed");
-      await this.options.workerHealth.handleFailedWorkerReportDispatch(
-        input.sender.agentId,
-        watchdogTurnSeq,
-      );
+      await this.rollbackWorkerAssignment(assignmentTransaction);
       throw error;
     }
-
-    await this.options.workerHealth.handleSuccessfulWorkerReportDispatch(
-      input.sender.agentId,
-      watchdogTurnSeq,
-    );
-    this.options.output.recordSuccessfulAgentMessageDispatch(outputInput);
 
     if (hasDeliveryLedger) {
       await this.options.ledger.recordDeliveryAcked({
@@ -634,6 +697,80 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       (input.sender.projectAgent !== undefined || input.target.projectAgent !== undefined);
     this.emitAgentToAgentMessage(input, receipt, managerContextIds, projectAgentExchange);
     return receipt;
+  }
+
+  private async persistWorkerAssignment(
+    sender: AgentDescriptor,
+    target: AgentDescriptor,
+  ): Promise<WorkerAssignmentTransaction | undefined> {
+    if (
+      sender.role !== "manager" ||
+      target.role !== "worker" ||
+      target.managerId !== sender.agentId
+    ) {
+      return undefined;
+    }
+
+    if (target.workerParentContext) {
+      return undefined;
+    }
+
+    const previous = cloneWorkerParentContext(target.workerParentContext);
+    const activeParent = this.options.turns.getActiveWorkerParentContext(sender.agentId);
+    const assignmentId = `assignment:${target.agentId}:${this.createDeliveryNonce()}`;
+    target.workerParentContext = {
+      schemaVersion: 1,
+      assignmentId,
+      managerId: sender.agentId,
+      assignedAt: this.options.now(),
+      outputTarget: activeParent
+        ? cloneAssistantOutputTarget(activeParent.outputTarget)
+        : { kind: "internal_only", reason: "no_active_parent" },
+      ...(activeParent?.rootTurnId ? { rootTurnId: activeParent.rootTurnId } : {}),
+      ...(activeParent?.parentRootTurnId
+        ? { parentRootTurnId: activeParent.parentRootTurnId }
+        : {}),
+    };
+
+    try {
+      await this.options.saveStore();
+    } catch (error) {
+      if (previous) {
+        target.workerParentContext = previous;
+      } else {
+        delete target.workerParentContext;
+      }
+      throw error;
+    }
+
+    return {
+      worker: target as AgentDescriptor & { role: "worker" },
+      assignmentId,
+      ...(previous ? { previous } : {}),
+    };
+  }
+
+  private async rollbackWorkerAssignment(
+    transaction: WorkerAssignmentTransaction | undefined,
+  ): Promise<void> {
+    if (
+      !transaction ||
+      transaction.worker.workerParentContext?.assignmentId !== transaction.assignmentId
+    ) {
+      return;
+    }
+    if (transaction.previous) {
+      transaction.worker.workerParentContext = cloneWorkerParentContext(transaction.previous);
+    } else {
+      delete transaction.worker.workerParentContext;
+    }
+    await this.options.saveStore().catch((error) => {
+      this.options.logDebug("worker_assignment:rollback:error", {
+        workerAgentId: transaction.worker.agentId,
+        assignmentId: transaction.assignmentId,
+        message: errorToMessage(error),
+      });
+    });
   }
 
   private requireSender(agentId: string): AgentDescriptor {
@@ -737,10 +874,12 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     let text = input.text;
     if (origin !== "user") {
       const trimmedStart = text.trimStart();
-      if (text.trim().length > 0 && !/^(?:system|worker report):/i.test(trimmedStart)) {
-        text = TERMINAL_WORKER_REPORT_BODY_PATTERN.test(trimmedStart)
-          ? `${WORKER_REPORT_MESSAGE_PREFIX}${text}`
-          : `${INTERNAL_MODEL_MESSAGE_PREFIX}${text}`;
+      if (
+        text.trim().length > 0 &&
+        !/^system:/i.test(trimmedStart) &&
+        !/^\[workerResult\](?:\s|$)/i.test(trimmedStart)
+      ) {
+        text = `${INTERNAL_MODEL_MESSAGE_PREFIX}${text}`;
       }
     }
 
@@ -863,4 +1002,29 @@ function classifyObservabilityRootSource(input: {
   return input.fromAgentId === input.targetAgentId
     ? "internal_self_send"
     : "internal_agent_message";
+}
+
+function cloneWorkerParentContext(
+  context: WorkerParentContext | undefined,
+): WorkerParentContext | undefined {
+  return context
+    ? {
+        schemaVersion: 1,
+        assignmentId: context.assignmentId,
+        managerId: context.managerId,
+        assignedAt: context.assignedAt,
+        outputTarget: cloneAssistantOutputTarget(context.outputTarget),
+        ...(context.rootTurnId ? { rootTurnId: context.rootTurnId } : {}),
+        ...(context.parentRootTurnId ? { parentRootTurnId: context.parentRootTurnId } : {}),
+      }
+    : undefined;
+}
+
+function formatWorkerResultMessage(
+  workerAgentId: string,
+  assignmentId: string,
+  resultText: string,
+): string {
+  const body = resultText.trim() || "Worker completed without a final text result.";
+  return `[workerResult] ${JSON.stringify({ workerAgentId, assignmentId })}\n${body}`;
 }

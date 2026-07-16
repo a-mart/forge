@@ -151,7 +151,7 @@ describe("codex manager tools", () => {
     });
     const scopedTools = buildSwarmTools(host, internalWorker);
     expect(scopedTools.map((tool) => tool.name)).toEqual([
-      "send_message_to_agent",
+      "knowledge",
       "list_scoped_codex_plugin_tools",
       "export_scoped_codex_plugin_result",
       "codex_fireflies_list_recent",

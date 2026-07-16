@@ -72,4 +72,31 @@ describe("descriptor clone externalThread", () => {
     cloned.externalThread!.lastTurnId = "mutated";
     expect(source.externalThread?.lastTurnId).toBe("turn-1");
   });
+
+  it("persists worker parent context without exposing it publicly", () => {
+    const source = codexWorkerDescriptor({
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment-1",
+        managerId: "mgr-1",
+        assignedAt: "2026-07-16T12:00:00.000Z",
+        outputTarget: {
+          kind: "session_transcript",
+          channel: "web",
+          sourceContext: { channel: "web", channelId: "session-1" },
+        },
+        rootTurnId: "root-1",
+      },
+    });
+
+    const persisted = cloneDescriptorForPersistence(source);
+    expect(persisted.workerParentContext).toEqual(source.workerParentContext);
+    expect(persisted.workerParentContext).not.toBe(source.workerParentContext);
+    expect(persisted.workerParentContext?.outputTarget).not.toBe(
+      source.workerParentContext?.outputTarget,
+    );
+
+    const publicDescriptor = cloneDescriptorForPublic(source);
+    expect(publicDescriptor).not.toHaveProperty("workerParentContext");
+  });
 });

@@ -128,6 +128,10 @@ describe("ArchiveLastUsedHydrator", () => {
       legacyUserMessage("2026-05-21T00:00:00.000Z", "SYSTEM: Runtime bootstrap context."),
       legacyUserMessage("2026-05-22T00:00:00.000Z", "Fix the regression."),
       legacyUserMessage("2026-05-23T00:00:00.000Z", "WORKER REPORT: status: done\nsummary: archive fix verified."),
+      legacyUserMessage(
+        "2026-05-24T00:00:00.000Z",
+        '[workerResult] {"workerAgentId":"worker-1","assignmentId":"assignment-1"}\nstatus: done',
+      ),
     ]);
     const sessions = new Map([["session-1", session({ sessionFile: file })]]);
     const hydrator = new ArchiveLastUsedHydrator({

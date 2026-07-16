@@ -67,12 +67,6 @@ describe("ManagerBootstrapCoordinator", () => {
     expect(harness.resolve).toHaveBeenNthCalledWith(
       1,
       "operational",
-      "idle-watchdog",
-      "profile",
-    );
-    expect(harness.resolve).toHaveBeenNthCalledWith(
-      2,
-      "operational",
       "bootstrap",
       "profile",
     );

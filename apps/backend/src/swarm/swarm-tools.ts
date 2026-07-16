@@ -435,9 +435,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         })
       : [];
 
-    const workerBaseTools = isInternalCodexPluginWorker
-      ? shared.filter((tool) => tool.name === "send_message_to_agent")
-      : shared;
+    const workerBaseTools = shared.filter((tool) => tool.name === "knowledge");
 
     return [...workerBaseTools, ...codexPluginTools];
   }
@@ -449,7 +447,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        `Create and start a new worker agent. Prefer tier/lens mode via \`tier\` and optional \`lens\`; legacy \`specialist\` handles remain supported for custom specialists and compatibility. When the assignment maps to one current plan step, pass that step's exact text in planStep. Use ad-hoc archetype/prompt/model overrides only when no tier/lens fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
+        `Create and start a new worker agent asynchronously. The worker runs independently: this call returns after the assignment is accepted, and the manager remains available for user messages while the worker runs. Prefer tier/lens mode via \`tier\` and optional \`lens\`; legacy \`specialist\` handles remain supported for custom specialists and compatibility. When the assignment maps to one current plan step, pass that step's exact text in planStep. Use ad-hoc archetype/prompt/model overrides only when no tier/lens fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -637,7 +635,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "speak_to_user",
       label: "Speak To User",
       description:
-        "Publish a user-visible manager message with explicit routing. Use for non-web targets, routed/protected delivery, proactive external delivery, or cases where server metadata requires explicit target delivery. Do not use merely because a normal Builder turn came from a worker callback; normal web/session closeouts use final assistant text. If target is omitted, delivery defaults to web. For Telegram delivery, set target.channel and target.channelId explicitly.",
+        "Publish a user-visible manager message with explicit routing. Use for non-web targets, routed/protected delivery, proactive external delivery, or cases where server metadata requires explicit target delivery. Do not use merely because a normal Builder turn contains a worker result; normal web/session closeouts use final assistant text. If target is omitted, delivery defaults to web. For Telegram delivery, set target.channel and target.channelId explicitly.",
       parameters: Type.Object({
         text: Type.String({ description: "Message content to show to the user." }),
         target: Type.Optional(speakToUserTargetSchema)

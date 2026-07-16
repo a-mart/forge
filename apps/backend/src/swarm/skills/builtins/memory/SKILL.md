@@ -25,5 +25,5 @@ Do not write memory for normal one-off requests.
 4. Never store secrets (passwords, API keys, tokens, private keys) or highly sensitive personal data.
 5. If the request is ambiguous, ask a clarifying question before writing.
 6. After updating memory:
-   - manager: confirm with the appropriate output path (normal final text for normal web/session chat, including a closeout reached from an internal worker callback; `speak_to_user` for collaboration, Cortex/review, non-web, or protected delivery),
-   - worker: report the update back to the manager via `send_message_to_agent`.
+   - manager: confirm with the appropriate output path (normal final text for normal web/session chat, including a closeout reached from an internal worker result; `speak_to_user` for collaboration, Cortex/review, non-web, or protected delivery),
+   - worker: include the update in the final assistant response, which Forge returns to the manager automatically.

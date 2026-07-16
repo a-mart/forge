@@ -56,7 +56,7 @@ describe("MessageRouter", () => {
           senderAgentId: "worker-1",
           targetProjectAgent: true,
         },
-        reasonCode: "deny:project_agent_worker_report",
+        reasonCode: "deny:project_agent_worker_result",
       },
       {
         name: "D3 worker report into child manager",
@@ -65,7 +65,7 @@ describe("MessageRouter", () => {
           senderAgentId: "worker-1",
           targetCreatorAgentId: "creator-1",
         },
-        reasonCode: "deny:project_agent_worker_report",
+        reasonCode: "deny:project_agent_worker_result",
       },
       {
         name: "D4 collab surface routes to collab",
@@ -166,17 +166,17 @@ describe("MessageRouter", () => {
       },
       {
         name: "terminal worker report with explicit delivery stays routed",
-        input: { origin: "terminal_worker_report", sourceContext: { channel: "web" } },
-        reasonCode: "route:worker_report_all_view",
+        input: { origin: "worker_result", sourceContext: { channel: "web" } },
+        reasonCode: "route:worker_result_all_view",
       },
       {
         name: "terminal worker report with a vetted transcript target renders",
         input: {
-          origin: "terminal_worker_report",
+          origin: "worker_result",
           targetKind: "session_transcript",
           sourceContext: { channel: "web" },
         },
-        reasonCode: "render:terminal_worker_report_closeout",
+        reasonCode: "render:worker_result_closeout",
         visible: true,
         channel: "web",
       },

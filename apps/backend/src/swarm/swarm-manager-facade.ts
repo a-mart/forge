@@ -483,6 +483,18 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
     );
   }
 
+  sendWorkerResult(
+    workerAgentId: string,
+    resultText: string,
+    expectedAssignmentId?: string,
+  ): Promise<SendMessageReceipt> {
+    return this.services.messages.sendWorkerResult(
+      workerAgentId,
+      resultText,
+      expectedAssignmentId,
+    );
+  }
+
   publishToUser(
     agentId: string,
     text: string,
@@ -1346,13 +1358,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
     );
   }
 
-  deliverTerminalObligationBackstop(agentId: string, reportText: string): boolean {
-    return this.services.runtime.assistantOutput.deliverTerminalObligationBackstop(
-      agentId,
-      reportText,
-    );
-  }
-
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
     return this.services.runtime.controller.listRuntimeExtensionSnapshots();
   }
@@ -1405,7 +1410,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
       maybeError,
     );
   }
-
   async queueVersionedToolMutation(
     descriptor: AgentDescriptor,
     mutation: VersioningMutation,
@@ -1413,7 +1417,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
     void descriptor;
     this.queueFacadeVersioningMutation(mutation);
   }
-
   private queueFacadeVersioningMutation(mutation: VersioningMutation): void {
     void this.services.host.versioningService?.recordMutation(mutation).catch((error) => {
       this.services.host.logDebug("versioning:record_error", {
@@ -1428,16 +1431,13 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
     return this.getFacadeServices();
   }
 }
-
 function isOpenAICodexDescriptor(descriptor: AgentDescriptor): boolean {
   return String(descriptor.model?.provider ?? "").toLowerCase() === "openai-codex";
 }
-
 function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["selectedConfigTransport"] {
   const rawTransport = process.env.FORGE_OPENAI_CODEX_TRANSPORT?.trim().toLowerCase();
   switch (rawTransport) {
-    case undefined:
-    case "":
+    case undefined: case "":
       return "sse";
     case "sse":
     case "websocket":
@@ -1448,7 +1448,6 @@ function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["se
       return "sse";
   }
 }
-
 function hashDebugAgentId(agentId: string): string {
   return createHash("sha256").update(agentId).digest("hex").slice(0, 16);
 }

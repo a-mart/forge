@@ -55,9 +55,7 @@ import {
 } from "./swarm-manager-utils.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
-- You can list agents and send messages to other agents.
 - Use coding tools (read/bash/edit/write) to execute implementation tasks.
-- Report progress and outcomes back to the manager using send_message_to_agent.
 - You are not user-facing.
 - End users see only manager-owned user-visible outputs: final assistant replies, direct-web assistant progress updates, routed \`speak_to_user\` deliveries, and structured choice UI.
 - Your plain assistant text is not directly visible to end users.
@@ -70,8 +68,8 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Escalate to the manager before destructive actions, force pushes, deleting shared resources, or anything externally visible.
 - Keep working until the task is fully handled or you hit a concrete blocker.
 - Do not stop at the first plausible answer if more verification would improve correctness.
-- Always end your turn by reporting to your manager with send_message_to_agent — never finish silently.
-- When reporting completion, use this structure in your send_message_to_agent call:
+- Your final assistant response is returned to the manager automatically. Do not call a messaging tool to report completion.
+- End your turn with a concise result using this structure:
   - status: done | partial | blocked
   - summary: (1-3 sentences of what you did)
   - changed: (files modified/created)
@@ -82,11 +80,7 @@ const CURSOR_SDK_RUNTIME_GUIDANCE_BLOCK = `## Cursor SDK Runtime
 
 You are running as a Cursor SDK worker. Your coding tools (file read/write/edit, search, terminal) are provided natively by Cursor.
 
-Forge coordination tools are available through MCP:
-- \`send_message_to_agent\` — report back to your manager when done or blocked
-- \`list_agents\` — check other agents if needed
-
-Always report back to your manager with send_message_to_agent when your task is complete or if you hit a blocker.`;
+Your final assistant response is returned to the manager automatically. Do not call a messaging tool to report completion.`;
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
@@ -105,7 +99,7 @@ const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
 You are a Forge Project Agent: a promoted peer manager session. Final/standalone direct web end-user replies may use normal assistant final text. Direct-web progress before continuing work may use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work; if no same-turn action follows, assistant text ends the turn and must be final/standalone. Non-web, explicit-target, routed/protected, or proactive external delivery uses speak_to_user. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
 
-Treat WORKER REPORT: status: done|partial|blocked messages as terminal worker reports that require same-turn disposition. Routine callbacks are internal decision points, not automatic user updates: accept them, request one focused follow-up, classify a blocker, or continue other work. In normal direct web/session chat, use normal final text for an accepted outcome or material blocker even when callback metadata is internal; otherwise end with exactly NO_REPLY. Use speak_to_user for routed/protected/non-web delivery and send_message_to_agent for peer/context replies.
+Treat messages beginning with [workerResult] as terminal worker results that require same-turn disposition. Results are internal decision points, not automatic user updates: accept them, assign one focused follow-up, classify a blocker, or continue other work. In normal direct web/session chat, use normal final text for an accepted outcome or material blocker; otherwise end with exactly NO_REPLY. Use speak_to_user for routed/protected/non-web delivery and send_message_to_agent for peer/context replies.
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
@@ -115,15 +109,15 @@ const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
 - Non-web, proactive external, or explicit-target user delivery: use \`speak_to_user\` with the appropriate target metadata.
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
-- Worker reports require same-turn disposition, but routine callbacks are not automatic user update triggers. In normal direct web/session chat, use normal assistant final text for an accepted outcome or material blocker even when callback metadata is internal; otherwise end with exactly \`NO_REPLY\`. Use routed delivery (\`speak_to_user\` for protected/non-web/external delivery, \`send_message_to_agent\` for peer/context replies) when the surface requires it.
+- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal direct web/session chat, use normal assistant final text for an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Use routed delivery (\`speak_to_user\` for protected/non-web/external delivery, \`send_message_to_agent\` for peer/context replies) when the surface requires it.
 - After \`speak_to_user\` fully delivers a response, end the provider cycle with exactly \`NO_REPLY\` unless there is distinct new closeout content. Never use \`NO_REPLY\` to skip an unanswered direct user request.
 - Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply. A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content.`;
 const MANAGER_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Normal direct web/session-transcript final replies: just answer normally with final assistant text. Do not use \`speak_to_user\` for normal final web replies.
 - Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
-- Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn came from a worker callback.
+- Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn contains a worker result.
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender unless explicitly reporting to the end user.
-- Worker reports require same-turn disposition, but routine callbacks are not automatic user update triggers. In normal web/session chat, answer normally with an accepted outcome or material blocker even when callback metadata is internal; otherwise end with exactly \`NO_REPLY\`. Protected/non-web/peer contexts keep their routed delivery contract.
+- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal web/session chat, answer normally with an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Protected/non-web/peer contexts keep their routed delivery contract.
 - After \`speak_to_user\` fully delivers a response, end the provider cycle with exactly \`NO_REPLY\` unless there is distinct new closeout content. Never use \`NO_REPLY\` to skip an unanswered direct user request.
 - Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply. A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content.`;
 

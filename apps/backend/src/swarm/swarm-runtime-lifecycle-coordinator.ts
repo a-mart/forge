@@ -14,10 +14,8 @@ import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type { SwarmRuntimeControllerHost } from "./swarm-runtime-controller.js";
 import type {
   SwarmWorkerHealthService,
-  WatchdogBatchEntry,
   WorkerActivityState,
   WorkerStallState,
-  WorkerWatchdogState,
 } from "./swarm-worker-health-service.js";
 import { ManagerTurnWatchdog } from "./manager-turn-watchdog.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
@@ -125,13 +123,10 @@ export interface SwarmRuntimeLifecycleCoordinatorOptions {
 type RuntimeLifecycleHostCallbackKey =
   | "consumePendingManualManagerStopNoticeIfApplicable"
   | "stripManagerAbortErrorFromEvent"
-  | "getOrCreateWorkerWatchdogState"
-  | "clearWatchdogTimer"
-  | "removeWorkerFromWatchdogBatchQueues"
   | "beginPendingTransientWorkerTerminatedError"
   | "cancelPendingTransientWorkerTerminatedError"
   | "hasPendingTransientWorkerTerminatedError"
-  | "finalizeWorkerIdleTurn"
+  | "handleWorkerAgentEnd"
   | "isRuntimeRecoveryActive"
   | "beforeRuntimeEventProjection"
   | "getActiveTurnId"
@@ -159,18 +154,14 @@ export function createRuntimeLifecycleControllerHostCallbacks(
     consumePendingManualManagerStopNoticeIfApplicable: (agentId, event) =>
       getCoordinator().consumePendingManualManagerStopNoticeIfApplicable(agentId, event),
     stripManagerAbortErrorFromEvent: (event) => getCoordinator().stripManagerAbortErrorFromEvent(event),
-    getOrCreateWorkerWatchdogState: (agentId) => getCoordinator().getOrCreateWorkerWatchdogState(agentId),
-    clearWatchdogTimer: (agentId) => getCoordinator().clearWatchdogTimer(agentId),
-    removeWorkerFromWatchdogBatchQueues: (agentId) =>
-      getCoordinator().removeWorkerFromWatchdogBatchQueues(agentId),
     beginPendingTransientWorkerTerminatedError: (agentId, event, expire) =>
       getCoordinator().beginPendingTransientWorkerTerminatedError(agentId, event, expire),
     cancelPendingTransientWorkerTerminatedError: (agentId, reason) =>
       getCoordinator().cancelPendingTransientWorkerTerminatedError(agentId, reason),
     hasPendingTransientWorkerTerminatedError: (agentId) =>
       getCoordinator().hasPendingTransientWorkerTerminatedError(agentId),
-    finalizeWorkerIdleTurn: (agentId, descriptor, source) =>
-      getCoordinator().finalizeWorkerIdleTurn(agentId, descriptor, source),
+    handleWorkerAgentEnd: (agentId, descriptor) =>
+      getCoordinator().handleWorkerAgentEnd(agentId, descriptor),
     isRuntimeRecoveryActive: (agentId) => getCoordinator().isRuntimeRecoveryActive(agentId),
     beforeRuntimeEventProjection: (agentId, runtimeToken, event) =>
       getCoordinator().beforeRuntimeEventProjection(agentId, runtimeToken, event),
@@ -191,7 +182,7 @@ export function createRuntimeLifecycleControllerHostCallbacks(
 }
 
 /**
- * Owns runtime callback ordering, health/watchdog projection, turn-ledger target
+ * Owns runtime callback ordering, health projection, turn-ledger target
  * resolution, and manual-stop callback reconciliation. Provider construction
  * remains in SwarmRuntimeController; worker-health policy remains in its leaf
  * service.
@@ -486,16 +477,11 @@ export class SwarmRuntimeLifecycleCoordinator {
     return this.options.workerHealth.handleStallAutoKill(agentId, elapsedMs);
   }
 
-  finalizeWorkerIdleTurn(
+  handleWorkerAgentEnd(
     agentId: string,
     descriptor: AgentDescriptor,
-    source: "agent_end" | "status_idle" | "deferred",
   ): Promise<void> {
-    return this.options.workerHealth.finalizeWorkerIdleTurn(agentId, descriptor, source);
-  }
-
-  seedWorkerCompletionReportTimestamp(agentId: string): void {
-    this.options.workerHealth.seedWorkerCompletionReportTimestamp(agentId);
+    return this.options.workerHealth.handleRuntimeAgentEnd(agentId, descriptor);
   }
 
   deleteWorkerStallState(agentId: string): void {
@@ -506,24 +492,8 @@ export class SwarmRuntimeLifecycleCoordinator {
     this.options.workerHealth.deleteWorkerActivityState(agentId);
   }
 
-  deleteWorkerCompletionReportState(agentId: string): void {
-    this.options.workerHealth.deleteWorkerCompletionReportState(agentId);
-  }
-
-  getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogState {
-    return this.options.workerHealth.getOrCreateWorkerWatchdogState(agentId);
-  }
-
-  clearWatchdogTimer(agentId: string): void {
-    this.options.workerHealth.clearWatchdogTimer(agentId);
-  }
-
-  clearWatchdogState(agentId: string): void {
-    this.options.workerHealth.clearWatchdogState(agentId);
-  }
-
-  removeWorkerFromWatchdogBatchQueues(agentId: string): void {
-    this.options.workerHealth.removeWorkerFromWatchdogBatchQueues(agentId);
+  clearWorkerHealthState(agentId: string): void {
+    this.options.workerHealth.clearWorkerHealthState(agentId);
   }
 
   beginPendingTransientWorkerTerminatedError(
@@ -536,7 +506,7 @@ export class SwarmRuntimeLifecycleCoordinator {
 
   cancelPendingTransientWorkerTerminatedError(
     agentId: string,
-    reason: "runtime_progress" | "worker_reported" | "clear_state",
+    reason: "runtime_progress" | "clear_state",
   ): void {
     this.options.workerHealth.cancelPendingTransientWorkerTerminatedError(agentId, reason);
   }
@@ -545,32 +515,12 @@ export class SwarmRuntimeLifecycleCoordinator {
     return this.options.workerHealth.hasPendingTransientWorkerTerminatedError(agentId);
   }
 
-  get workerWatchdogState(): Map<string, WorkerWatchdogState> {
-    return this.options.workerHealth.workerWatchdogState;
-  }
-
   get workerStallState(): Map<string, WorkerStallState> {
     return this.options.workerHealth.workerStallState;
   }
 
   get workerActivityState(): Map<string, WorkerActivityState> {
     return this.options.workerHealth.workerActivityState;
-  }
-
-  get watchdogTimers(): Map<string, NodeJS.Timeout> {
-    return this.options.workerHealth.watchdogTimers;
-  }
-
-  get watchdogTimerTokens(): Map<string, number> {
-    return this.options.workerHealth.watchdogTimerTokens;
-  }
-
-  get watchdogBatchQueueByManager(): Map<string, Map<string, WatchdogBatchEntry>> {
-    return this.options.workerHealth.watchdogBatchQueueByManager;
-  }
-
-  get watchdogBatchTimersByManager(): Map<string, NodeJS.Timeout> {
-    return this.options.workerHealth.watchdogBatchTimersByManager;
   }
 
   private clearPendingManualManagerStopNoticeTimer(agentId: string): void {

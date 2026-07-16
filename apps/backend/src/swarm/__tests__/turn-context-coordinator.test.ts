@@ -188,6 +188,25 @@ describe("TurnContextCoordinator", () => {
     expect(harness.coordinator.getActiveTurnId("manager-1")).toBeUndefined();
   });
 
+  it("records typed worker results distinctly in the durable turn ledger", async () => {
+    const harness = createHarness();
+
+    await harness.coordinator.enqueue("manager-1", {
+      source: "worker_result",
+      routeOrigin: "worker_result",
+      sourceWorkerId: "worker-1",
+      runtimeMessageText: "[workerResult] result",
+    });
+
+    expect(harness.ledgerRecords).toEqual([{
+      turnId: "turn-1",
+      agentId: "manager-1",
+      role: "manager",
+      kind: "worker_report",
+      initiatedBy: "local",
+    }]);
+  });
+
   it("promotes the next queued turn when the active enqueue rolls back", async () => {
     const harness = createHarness();
     const first = await harness.coordinator.enqueue("manager-1", {
@@ -309,10 +328,10 @@ describe("TurnContextCoordinator", () => {
     });
     await harness.coordinator.enqueue("manager-1", {
       source: "agent_message",
+      routeOrigin: "worker_result",
       runtimeMessageText: "  second\r\nmessage  ",
       assistantOutputTarget: webTarget,
-      workerReportSourceAgentId: "worker-1",
-      normalBuilderWorkerCallback: true,
+      sourceWorkerId: "worker-1",
     });
 
     harness.coordinator.beforeRuntimeEventProjection(
@@ -326,9 +345,8 @@ describe("TurnContextCoordinator", () => {
     expect(harness.outputActivations.at(-1)).toEqual({
       target: webTarget,
       routeContext: {
-        origin: "internal",
-        workerReportSourceAgentId: "worker-1",
-        normalBuilderWorkerCallback: true,
+        origin: "worker_result",
+        sourceWorkerId: "worker-1",
         requiresVisibleResponse: false,
       },
       turnId: "turn-2",
@@ -518,7 +536,7 @@ describe("TurnContextCoordinator", () => {
     ]);
   });
 
-  it("clears the activation marker at a clean final so turn_end consumes one provider-unqueued context", async () => {
+  it("keeps a later queued input intact when the current provider turn ends", async () => {
     const harness = createHarness();
     await harness.coordinator.enqueue("manager-1", {
       source: "user_input",
@@ -554,10 +572,10 @@ describe("TurnContextCoordinator", () => {
       41,
       { type: "turn_end", toolResults: [] },
     );
-    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
   });
 
-  it("does not consume queued input when an external continuation owns the provider cycle", async () => {
+  it("does not consume queued input during repeated external provider cycles", async () => {
     const harness = createHarness();
     await harness.coordinator.enqueue("manager-1", {
       source: "agent_message",
@@ -578,7 +596,7 @@ describe("TurnContextCoordinator", () => {
       41,
       { type: "turn_end", toolResults: [] },
     );
-    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(0);
+    expect(harness.coordinator.getPendingContextCount("manager-1")).toBe(1);
   });
 
   it("applies agent-end cleanup before observability", async () => {

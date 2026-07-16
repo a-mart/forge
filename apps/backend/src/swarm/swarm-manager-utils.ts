@@ -39,13 +39,12 @@ import type {
   ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
   ConversationEntryEvent,
-  ConversationMessageEvent,
   ConversationTextAttachment,
   ExternalThreadInfo,
   MessageSourceContext,
-  MessageTargetContext
+  MessageTargetContext,
+  AssistantOutputTarget,
 } from "./types.js";
-import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
 import { formatAssistantOutputTargetMetadata } from "./runtime/manager-assistant-output-target-metadata.js";
 import { validateCodexExternalThreadModelInvariant } from "./external-threads.js";
 
@@ -71,18 +70,8 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "stopped_on_restart"
 ]);
 const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.3-codex-spark", "gpt-5.5", "gpt-5.4"];
-const MAX_WORKER_COMPLETION_REPORT_CHARS = 4_000;
-const WORKER_COMPLETION_TRUNCATION_SUFFIX = "\n\n[truncated]";
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
-const WORKER_ERROR_SUMMARY_PATTERNS = [
-  /^⚠️\s*Worker reply failed\b/i,
-  /^⚠️\s*Agent error\b/i,
-  /^⚠️\s*Extension error\b/i,
-  /^⚠️\s*Context guard error\b/i,
-  /^⚠️\s*Compaction error\b/i,
-  /^🚨\s*Context recovery failed\b/i,
-];
 
 export function cloneProjectAgentInfoValue(
   projectAgent: AgentDescriptor["projectAgent"] | null | undefined
@@ -411,6 +400,19 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'internalWorkerKind must be "codex_plugin" when provided';
   }
 
+  if (value.workerParentContext !== undefined) {
+    if (value.role !== "worker") {
+      return "workerParentContext is only supported on worker descriptors";
+    }
+    const parentContextError = validateWorkerParentContext(
+      value.workerParentContext,
+      value.managerId,
+    );
+    if (parentContextError) {
+      return parentContextError;
+    }
+  }
+
   if (value.agentCreatorResult !== undefined) {
     if (!isRecord(value.agentCreatorResult)) {
       return "agentCreatorResult must be an object when provided";
@@ -484,6 +486,85 @@ export function extractDescriptorAgentId(value: unknown): string | undefined {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateWorkerParentContext(value: unknown, descriptorManagerId: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return "workerParentContext must be an object when provided";
+  }
+  if (value.schemaVersion !== 1) {
+    return "workerParentContext.schemaVersion must be 1";
+  }
+  if (!isNonEmptyString(value.assignmentId)) {
+    return "workerParentContext.assignmentId must be a non-empty string";
+  }
+  if (!isNonEmptyString(value.managerId) || value.managerId !== descriptorManagerId) {
+    return "workerParentContext.managerId must match the worker managerId";
+  }
+  if (!isNonEmptyString(value.assignedAt)) {
+    return "workerParentContext.assignedAt must be a non-empty string";
+  }
+  if (value.rootTurnId !== undefined && !isNonEmptyString(value.rootTurnId)) {
+    return "workerParentContext.rootTurnId must be a non-empty string when provided";
+  }
+  if (value.parentRootTurnId !== undefined && !isNonEmptyString(value.parentRootTurnId)) {
+    return "workerParentContext.parentRootTurnId must be a non-empty string when provided";
+  }
+  return validatePersistedAssistantOutputTarget(value.outputTarget);
+}
+
+function validatePersistedAssistantOutputTarget(value: unknown): string | undefined {
+  if (!isRecord(value) || !isNonEmptyString(value.kind)) {
+    return "workerParentContext.outputTarget must be an object with a kind";
+  }
+
+  switch (value.kind) {
+    case "session_transcript":
+      if (value.channel !== "web" && value.channel !== "cli") {
+        return 'workerParentContext.outputTarget.channel must be "web" or "cli"';
+      }
+      return validateOptionalMessageSourceContext(value.sourceContext);
+    case "external_channel":
+      return validateRequiredMessageSourceContext(value.sourceContext);
+    case "peer_agent":
+      return isNonEmptyString(value.fromAgentId)
+        ? undefined
+        : "workerParentContext.outputTarget.fromAgentId must be a non-empty string";
+    case "explicit_tool_required":
+      return isNonEmptyString(value.reason)
+        ? undefined
+        : "workerParentContext.outputTarget.reason must be a non-empty string";
+    case "internal_only":
+      return value.reason === undefined || typeof value.reason === "string"
+        ? undefined
+        : "workerParentContext.outputTarget.reason must be a string when provided";
+    default:
+      return "workerParentContext.outputTarget.kind is not supported";
+  }
+}
+
+function validateOptionalMessageSourceContext(value: unknown): string | undefined {
+  return value === undefined ? undefined : validateRequiredMessageSourceContext(value);
+}
+
+function validateRequiredMessageSourceContext(value: unknown): string | undefined {
+  if (!isRecord(value) || !isNonEmptyString(value.channel)) {
+    return "workerParentContext.outputTarget.sourceContext must include a channel";
+  }
+  for (const field of [
+    "channelId",
+    "userId",
+    "messageId",
+    "threadTs",
+    "integrationProfileId",
+    "channelType",
+    "teamId",
+  ]) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      return `workerParentContext.outputTarget.sourceContext.${field} must be a string when provided`;
+    }
+  }
+  return undefined;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -872,207 +953,6 @@ function synthesizeCatalogBackedPiModel(descriptor: AgentModelDescriptor): Model
       catalogModel.contextWindow,
     maxTokens: catalogModel.maxOutputTokens
   };
-}
-
-export function buildWorkerCompletionFallbackReport(agentId: string): string {
-  return buildWorkerCompletionReportMessage({ agentId, status: "done" });
-}
-
-const TERMINAL_REPORT_STATUS_PATTERN =
-  /(?:^|\n)\s*(?:WORKER REPORT|SYSTEM):\s*status:\s*(done|partial|blocked|completed)\b/i;
-const MAX_BACKSTOP_SUMMARY_CHARS = 400;
-
-/**
- * Deterministic manager→user surface line for an unacknowledged terminal worker
- * report (docs/MANAGER_EMPTY_TURN_FIX.md). The manager stayed silent through
- * every resample, so the server surfaces the outcome itself.
- *
- * This intentionally does NOT echo the raw report: that text still carries the
- * internal `[assistantOutputTarget]`/`[sourceContext]` routing metadata and the
- * internal `WORKER REPORT:` framing. We mechanically parse the structured
- * `status:` (and a metadata-stripped one-line `summary:` when present, capped)
- * and attribute the line to the manager surface, preserving the single-voice
- * rule while guaranteeing the outcome reaches the user.
- */
-export function summarizeTerminalWorkerReportForUser(
-  reportText: string,
-  sourceWorkerId?: string
-): string {
-  const statusMatch = reportText.match(TERMINAL_REPORT_STATUS_PATTERN);
-  const rawStatus = statusMatch?.[1]?.toLowerCase();
-  const status = rawStatus === "completed" ? "done" : rawStatus;
-
-  const worker = sourceWorkerId ? `\`${sourceWorkerId}\`` : "A background task";
-  const outcome =
-    status === "blocked"
-      ? "was blocked"
-      : status === "partial"
-        ? "partially completed"
-        : "finished";
-
-  const summaryDetail = extractTerminalReportSummaryLine(reportText);
-  const detailSuffix = summaryDetail ? ` — ${summaryDetail}` : "";
-
-  return (
-    `${worker} ${outcome}${status ? ` (status: ${status})` : ""}${detailSuffix}. ` +
-    "Auto-surfaced from the worker's final report — full details in the All view."
-  );
-}
-
-function extractTerminalReportSummaryLine(reportText: string): string | undefined {
-  for (const rawLine of reportText.split("\n")) {
-    const line = rawLine.trim();
-    const match = line.match(/^summary:\s*(.+)$/i);
-    if (!match) {
-      continue;
-    }
-    const summary = match[1].trim();
-    // Never surface a line that itself is (or embeds) internal routing metadata.
-    if (summary.length === 0 || summary.startsWith("[")) {
-      return undefined;
-    }
-    return truncateWorkerCompletionText(summary, MAX_BACKSTOP_SUMMARY_CHARS);
-  }
-  return undefined;
-}
-
-export function buildWorkerCompletionReport(
-  agentId: string,
-  history: ConversationEntryEvent[]
-): { message: string; summaryTimestamp?: number; summaryKey?: string } {
-  const latestSummary = findLatestWorkerCompletionSummary(history);
-  if (!latestSummary) {
-    return {
-      message: buildWorkerCompletionFallbackReport(agentId)
-    };
-  }
-
-  const summaryTimestamp = parseTimestampToMillis(latestSummary.timestamp);
-  const summaryKey = buildWorkerCompletionSummaryKey(latestSummary);
-  const summaryText = truncateWorkerCompletionText(
-    latestSummary.text,
-    MAX_WORKER_COMPLETION_REPORT_CHARS
-  );
-  const attachmentCount = latestSummary.attachments?.length ?? 0;
-  const status = isWorkerErrorSummary(latestSummary) ? "blocked" : "done";
-  const attachmentLine =
-    attachmentCount > 0
-      ? `Attachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}.`
-      : undefined;
-
-  if (summaryText.length > 0) {
-    return {
-      message: buildWorkerCompletionReportMessage({
-        agentId,
-        status,
-        detailLines: [
-          `${latestSummary.role === "system" ? "Last system message" : "Last assistant message"}:`,
-          summaryText,
-          ...(attachmentLine ? ["", attachmentLine] : [])
-        ]
-      }),
-      summaryTimestamp,
-      summaryKey
-    };
-  }
-
-  if (attachmentLine) {
-    return {
-      message: buildWorkerCompletionReportMessage({
-        agentId,
-        status,
-        detailLines: [attachmentLine]
-      }),
-      summaryTimestamp,
-      summaryKey
-    };
-  }
-
-  return {
-    message: buildWorkerCompletionReportMessage({ agentId, status }),
-    summaryTimestamp,
-    summaryKey
-  };
-}
-
-type WorkerCompletionReportStatus = "done" | "blocked";
-
-function buildWorkerCompletionReportMessage(options: {
-  agentId: string;
-  status: WorkerCompletionReportStatus;
-  detailLines?: string[];
-}): string {
-  const outcome = options.status === "blocked" ? "ended with an error" : "completed its turn";
-  const lines = [
-    `WORKER REPORT: status: ${options.status}`,
-    `summary: Auto-generated report because worker ${options.agentId} ${outcome} without an explicit callback.`
-  ];
-
-  if (options.detailLines && options.detailLines.length > 0) {
-    lines.push("", ...options.detailLines);
-  }
-
-  return lines.join("\n");
-}
-
-function findLatestWorkerCompletionSummary(
-  history: ConversationEntryEvent[]
-): ConversationMessageEvent | undefined {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const entry = history[index];
-    if (entry.type !== "conversation_message") {
-      continue;
-    }
-
-    if (entry.role !== "assistant" && entry.role !== "system") {
-      continue;
-    }
-
-    const trimmedText = entry.text.trim();
-    const attachmentCount = entry.attachments?.length ?? 0;
-    if (trimmedText.length === 0 && attachmentCount === 0) {
-      continue;
-    }
-
-    return entry;
-  }
-
-  return undefined;
-}
-
-function buildWorkerCompletionSummaryKey(entry: ConversationMessageEvent): string {
-  return createHash("sha256").update(JSON.stringify({
-    role: entry.role,
-    text: entry.text,
-    attachmentCount: entry.attachments?.length ?? 0,
-    timestamp: entry.timestamp
-  })).digest("hex");
-}
-
-function isWorkerErrorSummary(entry: ConversationMessageEvent): boolean {
-  if (entry.role !== "system") {
-    return false;
-  }
-
-  const trimmed = entry.text.trim();
-  return WORKER_ERROR_SUMMARY_PATTERNS.some((pattern) => pattern.test(trimmed));
-}
-
-function truncateWorkerCompletionText(text: string, maxChars: number): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= maxChars) {
-    return trimmed;
-  }
-
-  const availableChars = Math.max(0, maxChars - WORKER_COMPLETION_TRUNCATION_SUFFIX.length);
-  let truncated = trimmed.slice(0, availableChars).trimEnd();
-
-  const lastBreak = Math.max(truncated.lastIndexOf("\n"), truncated.lastIndexOf(" "));
-  if (lastBreak > Math.floor(availableChars * 0.6)) {
-    truncated = truncated.slice(0, lastBreak).trimEnd();
-  }
-
-  return `${truncated}${WORKER_COMPLETION_TRUNCATION_SUFFIX}`;
 }
 
 export function normalizeCortexUserVisiblePaths(text: string): string {

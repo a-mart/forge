@@ -121,12 +121,17 @@ export class RuntimeErrorProjector {
       }
     }
 
-    // A silent_turn whose outcome was already surfaced by the deterministic
-    // delivery backstop needs NO user-facing artifact — the delivery is the
-    // resolution.  Rendering the generic "Agent error … may need to be resent"
-    // on top of it double-reports a handled situation (telemetry above already
-    // recorded the error).
-    if (error.phase === "silent_turn" && readBooleanDetail(error.details, "backstopDelivered")) {
+    // Older runtimes attached a terminal worker report to silent-turn errors.
+    // Worker results no longer create a user-visible response obligation, so
+    // never revive those legacy false-positive warnings. Direct-user
+    // silent-turn errors have no terminalReportText and still project below.
+    if (
+      error.phase === "silent_turn"
+      && (
+        readBooleanDetail(error.details, "backstopDelivered")
+        || readStringDetail(error.details, "terminalReportText") !== undefined
+      )
+    ) {
       return;
     }
 

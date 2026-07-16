@@ -4,9 +4,7 @@ import type {
   MessageRouteInternalDeliveryKind,
   MessageRouteOrigin,
 } from "./message-router.js";
-import type {
-  AssistantOutputTarget,
-} from "./runtime/manager-assistant-output-tracker.js";
+import { cloneAssistantOutputTarget } from "./assistant-output-target.js";
 import { isCleanManagerAssistantFinalMessage } from "./runtime/manager-assistant-final-message.js";
 import type {
   RuntimeSessionEvent,
@@ -14,12 +12,17 @@ import type {
 } from "./runtime-contracts.js";
 import type {
   AgentDescriptor,
+  AssistantOutputTarget,
   ConversationMessageEvent,
   MessageSourceContext,
 } from "./types.js";
 import type { TurnLedgerInboundKind } from "./turn-ledger.js";
 
-export type InboundTurnSource = "user_input" | "project_agent_input" | "agent_message";
+export type InboundTurnSource =
+  | "user_input"
+  | "project_agent_input"
+  | "agent_message"
+  | "worker_result";
 
 export interface InboundTurnContextInput<
   TCodexGate = unknown,
@@ -30,8 +33,7 @@ export interface InboundTurnContextInput<
   source: InboundTurnSource;
   routeOrigin?: MessageRouteOrigin;
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
-  workerReportSourceAgentId?: string;
-  normalBuilderWorkerCallback?: boolean;
+  sourceWorkerId?: string;
   /** Whether ending this inbound obligation silently is a user-facing failure. */
   requiresVisibleResponse?: boolean;
   rootTurnId?: string;
@@ -68,8 +70,7 @@ export interface ActiveExternalProjectAgentTurn {
 export interface ActiveMessageRouteActivation {
   origin: MessageRouteOrigin;
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
-  workerReportSourceAgentId?: string;
-  normalBuilderWorkerCallback?: boolean;
+  sourceWorkerId?: string;
   requiresVisibleResponse: boolean;
   collaboration?: boolean;
 }
@@ -166,6 +167,13 @@ export interface TurnContextCoordinatorOptions<
 interface ActiveTurnContext {
   turnId: string;
   runtimeToken?: number;
+  parentContext?: ActiveWorkerParentContext;
+}
+
+export interface ActiveWorkerParentContext {
+  outputTarget: AssistantOutputTarget;
+  rootTurnId?: string;
+  parentRootTurnId?: string;
 }
 
 /**
@@ -215,6 +223,19 @@ export class TurnContextCoordinator<
 
   getPendingContextCount(agentId: string): number {
     return this.pendingByAgentId.get(agentId)?.length ?? 0;
+  }
+
+  getActiveWorkerParentContext(agentId: string): ActiveWorkerParentContext | undefined {
+    const parentContext = this.activeTurnByAgentId.get(agentId)?.parentContext;
+    return parentContext
+      ? {
+          outputTarget: cloneAssistantOutputTarget(parentContext.outputTarget),
+          ...(parentContext.rootTurnId ? { rootTurnId: parentContext.rootTurnId } : {}),
+          ...(parentContext.parentRootTurnId
+            ? { parentRootTurnId: parentContext.parentRootTurnId }
+            : {}),
+        }
+      : undefined;
   }
 
   hasPendingSupersedingUserInput(agentId: string, activeTurnId?: string): boolean {
@@ -387,24 +408,26 @@ export class TurnContextCoordinator<
     }
 
     if (phase === "after_projection" && event.type === "turn_end") {
-      if (!this.activatedByAgentId.has(agentId)) {
-        this.dequeueNext(agentId);
-      }
-      this.activatedByAgentId.delete(agentId);
-      this.activeTurnByAgentId.delete(agentId);
+      this.consumeActivePendingContext(agentId);
+      // Project-agent reply restrictions are scoped to the provider turn. The
+      // output route may stay alive until agent_end for providers that emit a
+      // trailing final, but those capability restrictions must not leak into
+      // the next turn.
       this.activeExternalTurnByAgentId.delete(agentId);
-      this.options.observability.clearRoot(agentId);
       this.options.output.completeProviderCycle(agentId, {
         pendingTargets: this.pendingOutputTargets(agentId),
       });
       this.options.codex.completeProviderCycle(agentId);
+      if (descriptor?.role !== "manager") {
+        this.activatedByAgentId.delete(agentId);
+        this.activeTurnByAgentId.delete(agentId);
+        this.options.observability.clearRoot(agentId);
+      }
       return;
     }
 
     if (phase === "after_projection" && event.type === "agent_end") {
-      if (!this.activatedByAgentId.has(agentId)) {
-        this.dequeueNext(agentId);
-      }
+      this.consumeActivePendingContext(agentId);
       this.activatedByAgentId.delete(agentId);
       this.activeTurnByAgentId.delete(agentId);
       this.activeExternalTurnByAgentId.delete(agentId);
@@ -493,11 +516,8 @@ export class TurnContextCoordinator<
               ...(context?.internalDeliveryKind
                 ? { internalDeliveryKind: context.internalDeliveryKind }
                 : {}),
-              ...(context?.workerReportSourceAgentId
-                ? { workerReportSourceAgentId: context.workerReportSourceAgentId }
-                : {}),
-              ...(context?.normalBuilderWorkerCallback
-                ? { normalBuilderWorkerCallback: true }
+              ...(context?.sourceWorkerId
+                ? { sourceWorkerId: context.sourceWorkerId }
                 : {}),
               requiresVisibleResponse:
                 context?.requiresVisibleResponse ??
@@ -521,9 +541,21 @@ export class TurnContextCoordinator<
     agentId: string,
     context: QueuedInboundTurnContext<TCodexGate, TCodexDelegation, TCodexRetryAuthorization>,
   ): void {
+    const outputTarget = context.assistantOutputProjectionTarget ?? context.assistantOutputTarget;
     this.activeTurnByAgentId.set(agentId, {
       turnId: context.turnId,
       ...(context.runtimeToken !== undefined ? { runtimeToken: context.runtimeToken } : {}),
+      ...(outputTarget
+        ? {
+            parentContext: {
+              outputTarget: cloneAssistantOutputTarget(outputTarget),
+              ...(context.rootTurnId ? { rootTurnId: context.rootTurnId } : {}),
+              ...(context.parentRootTurnId
+                ? { parentRootTurnId: context.parentRootTurnId }
+                : {}),
+            },
+          }
+        : {}),
     });
   }
 
@@ -566,6 +598,21 @@ export class TurnContextCoordinator<
     return nextContext;
   }
 
+  private consumeActivePendingContext(agentId: string): void {
+    if (this.activatedByAgentId.has(agentId)) {
+      return;
+    }
+    const activeTurnId = this.activeTurnByAgentId.get(agentId)?.turnId;
+    const firstPending = this.pendingByAgentId.get(agentId)?.[0];
+    if (!activeTurnId) {
+      this.dequeueNext(agentId);
+      return;
+    }
+    if (activeTurnId && firstPending?.turnId === activeTurnId) {
+      this.dequeueNext(agentId);
+    }
+  }
+
   private pendingOutputTargets(agentId: string): AssistantOutputTarget[] {
     return (this.pendingByAgentId.get(agentId) ?? []).flatMap((context) => {
       const target = context.assistantOutputProjectionTarget ?? context.assistantOutputTarget;
@@ -577,6 +624,7 @@ export class TurnContextCoordinator<
 function classifyInboundKind(source: InboundTurnSource): TurnLedgerInboundKind {
   if (source === "user_input") return "user";
   if (source === "project_agent_input") return "project_agent";
+  if (source === "worker_result") return "worker_report";
   return "agent_message";
 }
 

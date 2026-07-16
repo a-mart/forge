@@ -22,8 +22,9 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `swarm-session-meta-service.ts` - session manifest/meta hydration, boot backfill, and initial meta writes.
 - `conversation-attachment-service.ts` - inbound attachment normalization, persistence, runtime projection, and binary artifact writes.
 - `user-message-coordinator.ts` - inbound user-message target/reply resolution, canonical conversation append, route short-circuits, and manager/worker runtime dispatch transaction ordering.
-- `agent-message-dispatcher.ts` - manager/worker delivery validation, turn-aware queueing, observability roots, message receipts, and runtime send rollback.
-- `assistant-output-router.ts` - manager final-output routing, explicit user publication, terminal obligation backstops, and internal-callback suppression.
+- `agent-message-dispatcher.ts` - manager/peer delivery validation, asynchronous worker assignment/result queueing, observability roots, message receipts, and runtime send rollback.
+- `assistant-output-router.ts` - manager final-output routing, explicit user publication, and typed internal-result suppression.
+- `worker-result-coordinator.ts` - terminal worker-result extraction and automatic delivery to the owning manager.
 - `turn-context-coordinator.ts` - queued inbound-turn identity, runtime activation, Codex delegation gates, observability turn roots, and rollback cleanup.
 - `swarm-event-coordinator.ts` - server-event projection, snapshot versioning, activity bookkeeping, and conversation/status publication.
 - `restart-recovery-coordinator.ts` - boot recovery snapshot creation, single-claim resume delivery, and dismissal.
@@ -52,7 +53,7 @@ Treat those items as separate follow-up changes, not reasons to broaden unrelate
 - `swarm-runtime-controller-host-adapter.ts` - compiler-checked, lazy-safe adapter between the manager facade and runtime controller.
 - `swarm-manager-runtime-composition.ts` - explicit three-phase runtime composition root for controller/health/fallback, planning/compaction, and turn/lifecycle/trust/session/boot completion; preserves the constructor's late-bound callback order.
 - `swarm-specialist-fallback-manager.ts` - specialist fallback selection, replay, and handoff recovery.
-- `swarm-worker-health-service.ts` - worker watchdog, stall detection, idle-turn finalization, and completion reporting.
+- `swarm-worker-health-service.ts` - worker stall detection and transient runtime-error grace handling.
 - `planning/session-plan-coordinator.ts` - live plan state, persistence, usage accounting, summary projection, and runtime context.
 - `capture-cascade-coordinator.ts` - Cortex capture cadence, watermarks, judge decisions, and temporary capture-fork lifecycle.
 - `knowledge-memory-coordinator.ts` - application-level knowledge, Cortex, capture, session-memory, session-meta boot, and compaction-settings policy; composes the focused state owners without reimplementing them.

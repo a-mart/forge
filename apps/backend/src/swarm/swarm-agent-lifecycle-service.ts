@@ -215,11 +215,9 @@ export interface SwarmAgentLifecycleServiceOptions {
   emitAgentsSnapshot: () => void;
   emitProfilesSnapshot: () => void;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
-  seedWorkerCompletionReportTimestamp: (agentId: string) => void;
-  clearWatchdogState: (agentId: string) => void;
+  clearWorkerHealthState: (agentId: string) => void;
   deleteWorkerStallState: (agentId: string) => void;
   deleteWorkerActivityState: (agentId: string) => void;
-  deleteWorkerCompletionReportState: (agentId: string) => void;
   clearTrackedToolPaths: (agentId: string) => void;
   suppressIntentionalStopRuntimeCallbacks: (agentId: string, runtimeToken?: number) => void;
   clearIntentionalStopRuntimeCallbackSuppression: (agentId: string, runtimeToken?: number) => void;
@@ -309,10 +307,9 @@ export class SwarmAgentLifecycleService {
   }
 
   private clearWorkerTeardownState(agentId: string): void {
-    this.options.clearWatchdogState(agentId);
+    this.options.clearWorkerHealthState(agentId);
     this.options.deleteWorkerStallState(agentId);
     this.options.deleteWorkerActivityState(agentId);
-    this.options.deleteWorkerCompletionReportState(agentId);
     this.options.clearTrackedToolPaths(agentId);
     this.options.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
@@ -852,7 +849,6 @@ export class SwarmAgentLifecycleService {
       }
 
       this.options.attachRuntime(agentId, runtime);
-      this.options.seedWorkerCompletionReportTimestamp(agentId);
 
       const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
       const contextUsage = runtime.getContextUsage();
@@ -876,10 +872,9 @@ export class SwarmAgentLifecycleService {
         });
       }
 
-      this.options.clearWatchdogState(agentId);
+      this.options.clearWorkerHealthState(agentId);
       this.options.deleteWorkerStallState(agentId);
       this.options.deleteWorkerActivityState(agentId);
-      this.options.deleteWorkerCompletionReportState(agentId);
       this.options.clearAgentTurnState(agentId);
 
       this.deleteDescriptor(agentId);
@@ -2077,10 +2072,6 @@ export class SwarmAgentLifecycleService {
 
     attachDescriptor = postWriteDescriptor;
     this.options.attachRuntime(descriptor.agentId, runtime);
-
-    if (attachDescriptor.role === "worker") {
-      this.options.seedWorkerCompletionReportTimestamp(attachDescriptor.agentId);
-    }
 
     const contextUsage = runtime.getContextUsage();
     attachDescriptor.contextUsage = contextUsage;

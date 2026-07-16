@@ -1,5 +1,4 @@
 import { isSystemProfile, type CollaborationAuthor } from "@forge/protocol";
-import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import {
   MessageRouter,
   type MessageRouteDecision,
@@ -7,18 +6,13 @@ import {
   type MessageRouteTargetKind,
 } from "./message-router.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
-import type {
-  AssistantOutputTarget,
-  SessionTranscriptAssistantOutputTarget,
-} from "./runtime/manager-assistant-output-tracker.js";
+import {
+  cloneAssistantOutputTarget,
+  cloneSessionTranscriptAssistantOutputTarget,
+} from "./assistant-output-target.js";
 import { formatAssistantOutputTargetMetadata } from "./runtime/manager-assistant-output-target-metadata.js";
 import type { ManagerAssistantOutputRouteResult } from "./runtime/runtime-event-projector.js";
 import type { RuntimeUserMessage } from "./runtime-contracts.js";
-import {
-  extractRuntimeMessageText,
-  previewForLog,
-  summarizeTerminalWorkerReportForUser,
-} from "./swarm-manager-utils.js";
 import type {
   ActiveMessageRouteActivation,
   ManagerOutputTurnActivation,
@@ -27,19 +21,17 @@ import type {
 } from "./turn-context-coordinator.js";
 import type {
   AgentDescriptor,
+  AssistantOutputTarget,
   ConversationMessageEvent,
   ManagerProfile,
   MessageSourceContext,
+  SessionTranscriptAssistantOutputTarget,
+  WorkerParentContext,
 } from "./types.js";
 
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
 const COLLABORATION_PROFILE_ID = "_collaboration";
-const WORKER_REPORT_MESSAGE_PREFIX = "WORKER REPORT: ";
-const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked|completed)\b/i;
-const WORKER_COMPLETION_REPORT_BODY_PATTERN = /^SYSTEM:\s*##\s*Completion Report:\s*\S/i;
-const WORKER_COMPLETION_SUMMARY_PATTERN =
-  /^(?:completed|corrected|finished)\b[^\n]*\n(?:\s*\n)?summary:\s*\S/iu;
 
 interface PendingChoiceContinuation {
   managerId: string;
@@ -71,18 +63,21 @@ export interface AgentMessageOutputInput {
   sender: AgentDescriptor;
   target: AgentDescriptor;
   modelMessage: string | RuntimeUserMessage;
-  rawMessage?: string;
-  workerReportSourceAgentId?: string;
   sendMessageToolContinuation?: boolean;
+}
+
+export interface WorkerResultOutputInput {
+  worker: AgentDescriptor & { role: "worker" };
+  target: AgentDescriptor & { role: "manager" };
+  parentContext: WorkerParentContext;
+  modelMessage: string | RuntimeUserMessage;
 }
 
 export interface PreparedAgentMessageOutput {
   modelMessage: string | RuntimeUserMessage;
   inputTarget: AssistantOutputTarget;
   projectionTarget: AssistantOutputTarget;
-  eligibleWorkerReport: boolean;
-  workerReportSourceAgentId?: string;
-  normalBuilderWorkerCallback: boolean;
+  sourceWorkerId?: string;
   requiresVisibleResponse: boolean;
 }
 
@@ -90,15 +85,13 @@ export interface PreparedAgentMessageOutput {
  * Owns server-authoritative assistant-output routing state.
  *
  * MessageRouter remains the policy matrix. This owner adds the stateful seams
- * around that matrix: active turn targets, worker handoff inheritance, choice
- * continuation, final projection, and the terminal worker-report backstop.
+ * around that matrix: active turn targets, choice continuation, and final
+ * projection.
  */
 export class AssistantOutputRouter implements ManagerOutputTurnPort {
   private readonly activeTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly activeWebTurnByManagerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly activeRouteByManagerId = new Map<string, ActiveMessageRouteActivation>();
-  private readonly inheritedTargetByWorkerId = new Map<string, AssistantOutputTarget>();
-  private readonly lastTerminalBackstopReportByManagerId = new Map<string, string>();
   private readonly pendingChoiceByChoiceId = new Map<string, PendingChoiceContinuation>();
   private readonly messageRouter = new MessageRouter();
 
@@ -136,27 +129,6 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
   prepareAgentMessage(input: AgentMessageOutputInput): PreparedAgentMessageOutput {
     const inputTarget = this.resolveTargetForAgentMessage(input);
-    const eligibleWorkerReport = this.isEligibleWorkerReport(input);
-    const workerReportSourceAgentId = eligibleWorkerReport
-      ? this.resolveWorkerReportSourceId(input)
-      : undefined;
-    const inheritedWorkerTarget = input.sender.role === "worker"
-      ? this.inheritedTargetByWorkerId.get(input.sender.agentId)
-      : undefined;
-    const normalBuilderWorkerCallback =
-      eligibleWorkerReport &&
-      input.target.role === "manager" &&
-      input.sender.role === "worker" &&
-      input.sender.managerId === input.target.agentId &&
-      (
-        inheritedWorkerTarget === undefined ||
-        inheritedWorkerTarget.kind === "internal_only" ||
-        (inheritedWorkerTarget.kind === "session_transcript" && inheritedWorkerTarget.channel === "web")
-      ) &&
-      this.canProjectFinalTextToWeb(
-        input,
-        inheritedWorkerTarget ?? inputTarget,
-      );
     const projectionTarget = this.resolveProjectionTargetForAgentMessage(input, inputTarget);
     const requiresVisibleResponse =
       input.sendMessageToolContinuation && input.sender.agentId === input.target.agentId
@@ -169,30 +141,19 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
         : input.modelMessage,
       inputTarget,
       projectionTarget,
-      eligibleWorkerReport,
-      ...(workerReportSourceAgentId ? { workerReportSourceAgentId } : {}),
-      normalBuilderWorkerCallback,
       requiresVisibleResponse,
     };
   }
 
-  recordSuccessfulAgentMessageDispatch(input: AgentMessageOutputInput): void {
-    if (this.isEligibleWorkerReport(input) && isExplicitTerminalWorkerReport(input)) {
-      const sourceWorkerId = this.resolveWorkerReportSourceId(input);
-      if (sourceWorkerId) {
-        this.clearConsumedWorkerTarget(sourceWorkerId);
-      }
-    }
-
-    const { sender, target } = input;
-    if (sender.role !== "manager" || target.role !== "worker" || target.managerId !== sender.agentId) {
-      return;
-    }
-
-    this.inheritedTargetByWorkerId.set(
-      target.agentId,
-      this.getActiveTargetForDelegation(sender.agentId),
-    );
+  prepareWorkerResult(input: WorkerResultOutputInput): PreparedAgentMessageOutput {
+    const target = cloneAssistantOutputTarget(input.parentContext.outputTarget);
+    return {
+      modelMessage: appendAssistantOutputTargetMetadata(input.modelMessage, target),
+      inputTarget: target,
+      projectionTarget: target,
+      sourceWorkerId: input.worker.agentId,
+      requiresVisibleResponse: false,
+    };
   }
 
   annotateText(text: string, target: AssistantOutputTarget): string {
@@ -212,7 +173,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
     this.pendingChoiceByChoiceId.set(choiceId, {
       managerId: agentId,
-      target: cloneSessionTranscriptTarget(target),
+      target: cloneSessionTranscriptAssistantOutputTarget(target),
     });
   }
 
@@ -273,18 +234,18 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
       beginUserVisibleObligation: activation.beginUserVisibleObligation,
     });
     if (target.kind === "session_transcript" && target.channel === "web") {
-      this.activeWebTurnByManagerId.set(agentId, cloneSessionTranscriptTarget(target));
+      this.activeWebTurnByManagerId.set(
+        agentId,
+        cloneSessionTranscriptAssistantOutputTarget(target),
+      );
     } else {
       this.activeWebTurnByManagerId.delete(agentId);
     }
   }
 
   completeProviderCycle(agentId: string, context: ManagerOutputTurnEndContext): void {
-    this.activeWebTurnByManagerId.delete(agentId);
-    this.expireWebTargetIfUncontinued(agentId, context.pendingTargets);
-    if (!this.activeRouteByManagerId.get(agentId)?.normalBuilderWorkerCallback) {
-      this.activeRouteByManagerId.delete(agentId);
-    }
+    void agentId;
+    void context;
   }
 
   completeAgentTurn(agentId: string): void {
@@ -293,27 +254,21 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   }
 
   acceptCleanManagerFinal(agentId: string, context: ManagerOutputTurnEndContext): void {
-    this.activeWebTurnByManagerId.delete(agentId);
-    this.expireWebTargetIfUncontinued(agentId, context.pendingTargets);
+    void agentId;
+    void context;
   }
 
   handleRuntimeError(agentId: string, descriptor: AgentDescriptor | undefined): void {
     if (descriptor?.role === "manager") {
       this.clearActiveManagerTurn(agentId);
       this.clearChoiceContinuationsForAgent(agentId);
-      this.clearInheritedTargetsForManager(agentId);
       this.options.projection.clearManagerAssistantOutputTurn(agentId);
-      return;
     }
-
-    this.clearRuntimeResettableInheritedTarget(agentId);
   }
 
   clearForRuntimeReset(agentId: string): void {
     this.clearActiveManagerTurn(agentId);
     this.clearChoiceContinuationsForAgent(agentId);
-    this.inheritedTargetByWorkerId.delete(agentId);
-    this.clearInheritedTargetsForManager(agentId);
     this.options.projection.clearManagerAssistantOutputTurn(agentId);
   }
 
@@ -362,31 +317,8 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
     if (!decision.visible || decision.channel !== "web") {
       if (
-        routeContext?.normalBuilderWorkerCallback &&
-        targetForRouting.kind === "internal_only" &&
-        this.canProjectFinalTextToWeb(
-          { sender: manager, target: manager },
-          webTarget(),
-        )
-      ) {
-        const target = webTarget();
-        const closeoutDecision = this.messageRouter.resolve(this.buildProvenance({
-          manager,
-          sender: manager,
-          target: manager,
-          targetKind: "session_transcript",
-          sourceContext: target.sourceContext,
-          routeContext,
-        }));
-        if (!closeoutDecision.visible || closeoutDecision.channel !== "web") {
-          return { decision };
-        }
-        return this.visibleRouteResult(closeoutDecision, target, routeContext, requiresVisibleResponse);
-      }
-
-      if (
         decision.reasonCode === "route:peer_agent" &&
-        routeContext?.origin !== "terminal_worker_report" &&
+        routeContext?.origin !== "worker_result" &&
         this.canProjectFinalTextToWeb({ sender: manager, target: manager }, targetForRouting)
       ) {
         return this.forcedWebRouteResult(decision, routeContext, requiresVisibleResponse);
@@ -399,7 +331,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
       ) {
         return this.visibleRouteResult(
           forceWebDecision(decision),
-          cloneSessionTranscriptTarget(rememberedTarget),
+          cloneSessionTranscriptAssistantOutputTarget(rememberedTarget),
           routeContext,
           requiresVisibleResponse,
         );
@@ -407,8 +339,8 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
       return {
         decision,
-        ...(routeContext?.workerReportSourceAgentId
-          ? { sourceWorkerId: routeContext.workerReportSourceAgentId }
+        ...(routeContext?.sourceWorkerId
+          ? { sourceWorkerId: routeContext.sourceWorkerId }
           : {}),
         requiresVisibleResponse,
       };
@@ -422,48 +354,6 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
     return this.visibleRouteResult(decision, target, routeContext, requiresVisibleResponse);
   }
 
-  deliverTerminalObligationBackstop(agentId: string, reportText: string): boolean {
-    const manager = this.options.descriptors.get(agentId);
-    if (!manager || manager.role !== "manager" || isNonRunningAgentStatus(manager.status)) {
-      return false;
-    }
-
-    const route = this.resolveManagerFinalRoute(
-      agentId,
-      this.activeTargetByManagerId.get(agentId),
-    );
-    const target = route.target;
-    if (!target || target.channel !== "web" || route.requiresVisibleResponse === false) {
-      return false;
-    }
-
-    if (this.lastTerminalBackstopReportByManagerId.get(agentId) === reportText) {
-      return false;
-    }
-
-    const summary = summarizeTerminalWorkerReportForUser(reportText, route.sourceWorkerId);
-    const timestamp = this.options.now();
-    this.options.emitConversationMessage({
-      type: "conversation_message",
-      agentId,
-      role: "system",
-      text: summary,
-      timestamp,
-      source: "system",
-      systemNoticeKind: "worker_outcome_backstop",
-      ...(route.sourceWorkerId ? { sourceWorkerId: route.sourceWorkerId } : {}),
-      sourceContext: target.sourceContext ?? { channel: "web" },
-    });
-    this.options.markSessionActivity(agentId, timestamp);
-    this.lastTerminalBackstopReportByManagerId.set(agentId, reportText);
-    this.options.logDebug("manager:terminal_obligation_backstop_delivered", {
-      agentId,
-      sourceWorkerId: route.sourceWorkerId,
-      textPreview: previewForLog(summary),
-    });
-    return true;
-  }
-
   getActiveTarget(agentId: string): AssistantOutputTarget | undefined {
     const target = this.activeTargetByManagerId.get(agentId);
     return target ? cloneAssistantOutputTarget(target) : undefined;
@@ -474,60 +364,15 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
     return route ? { ...route } : undefined;
   }
 
-  getInheritedTarget(workerId: string): AssistantOutputTarget | undefined {
-    const target = this.inheritedTargetByWorkerId.get(workerId);
-    return target ? cloneAssistantOutputTarget(target) : undefined;
-  }
-
   private resolveTargetForAgentMessage(input: AgentMessageOutputInput): AssistantOutputTarget {
-    const reportLike =
-      input.target.role === "manager" &&
-      (
-        isWorkerReportRuntimeMessage(input.modelMessage) ||
-        isWorkerStatusCloseoutMessage(input.rawMessage) ||
-        (input.sender.role === "worker" && isWorkerCompletionReportMessage(input.rawMessage))
-      );
-    if (!this.isEligibleWorkerReport(input)) {
-      return reportLike
-        ? { kind: "internal_only", reason: "missing_worker_report_provenance" }
-        : { kind: "explicit_tool_required", reason: "agent_message" };
-    }
-
-    const sourceWorkerId = this.resolveWorkerReportSourceId(input);
-    if (!sourceWorkerId) {
-      return { kind: "internal_only", reason: "missing_worker_report_provenance" };
-    }
-
-    const inheritedTarget = this.inheritedTargetByWorkerId.get(sourceWorkerId);
-    if (inheritedTarget?.kind === "session_transcript" && inheritedTarget.channel === "web") {
-      return { kind: "internal_only", reason: "worker_report_callback" };
-    }
-    if (inheritedTarget?.kind === "session_transcript" || inheritedTarget?.kind === "internal_only") {
-      return cloneAssistantOutputTarget(inheritedTarget);
-    }
-    return inheritedTarget
-      ? { kind: "explicit_tool_required", reason: "worker_report" }
-      : { kind: "internal_only", reason: "missing_worker_report_handoff" };
+    void input;
+    return { kind: "explicit_tool_required", reason: "agent_message" };
   }
 
   private resolveProjectionTargetForAgentMessage(
     input: AgentMessageOutputInput,
     inputTarget: AssistantOutputTarget,
   ): AssistantOutputTarget {
-    if (inputTarget.kind === "explicit_tool_required" && inputTarget.reason === "worker_report") {
-      const sourceWorkerId = this.resolveWorkerReportSourceId(input);
-      const inheritedTarget = sourceWorkerId
-        ? this.inheritedTargetByWorkerId.get(sourceWorkerId)
-        : undefined;
-      if (
-        inheritedTarget?.kind === "external_channel" ||
-        inheritedTarget?.kind === "peer_agent" ||
-        inheritedTarget?.kind === "explicit_tool_required"
-      ) {
-        return cloneAssistantOutputTarget(inheritedTarget);
-      }
-    }
-
     const activeContinuation = this.resolveActiveWebContinuation(input, inputTarget);
     if (activeContinuation) {
       return activeContinuation;
@@ -557,14 +402,12 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   }
 
   private resolveDefaultWebProjection(
-    input: Pick<AgentMessageOutputInput, "sender" | "target" | "workerReportSourceAgentId">,
+    input: Pick<AgentMessageOutputInput, "sender" | "target">,
     inputTarget: AssistantOutputTarget,
   ): SessionTranscriptAssistantOutputTarget | undefined {
-    const workerReportSourceAgentId = this.resolveWorkerReportSourceId(input);
-
     if (inputTarget.kind === "session_transcript") {
       if (inputTarget.channel !== "web") {
-        return cloneSessionTranscriptTarget(inputTarget);
+        return cloneSessionTranscriptAssistantOutputTarget(inputTarget);
       }
 
       const decision = this.messageRouter.resolve(this.buildProvenance({
@@ -574,17 +417,16 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
         targetKind: "session_transcript",
         sourceContext: inputTarget.sourceContext ?? { channel: "web" },
         routeContext: {
-          origin: workerReportSourceAgentId ? "terminal_worker_report" : "internal",
+          origin: "internal",
           requiresVisibleResponse: false,
-          ...(workerReportSourceAgentId ? { workerReportSourceAgentId } : {}),
         },
       }));
       if (!decision.visible || decision.channel !== "web") {
         return this.canProjectFinalTextToWeb(input, inputTarget)
-          ? cloneSessionTranscriptTarget(inputTarget)
+          ? cloneSessionTranscriptAssistantOutputTarget(inputTarget)
           : undefined;
       }
-      return cloneSessionTranscriptTarget(inputTarget);
+      return cloneSessionTranscriptAssistantOutputTarget(inputTarget);
     }
 
     const decision = this.messageRouter.resolve(this.buildProvenance({
@@ -594,14 +436,13 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
       targetKind: targetKind(inputTarget),
       sourceContext: sourceContext(inputTarget),
       routeContext: {
-        origin: workerReportSourceAgentId ? "terminal_worker_report" : "internal",
+        origin: "internal",
         requiresVisibleResponse: false,
-        ...(workerReportSourceAgentId ? { workerReportSourceAgentId } : {}),
       },
     }));
     if (!decision.visible || decision.channel !== "web") {
       const restoredDefaultWebAllowance =
-        (inputTarget.kind === "peer_agent" && !workerReportSourceAgentId) ||
+        inputTarget.kind === "peer_agent" ||
         (
           inputTarget.kind === "explicit_tool_required" &&
           inputTarget.reason === "agent_message" &&
@@ -617,7 +458,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   }
 
   private canProjectFinalTextToWeb(
-    input: Pick<AgentMessageOutputInput, "sender" | "target" | "workerReportSourceAgentId">,
+    input: Pick<AgentMessageOutputInput, "sender" | "target">,
     inputTarget: AssistantOutputTarget,
   ): boolean {
     const { sender, target } = input;
@@ -676,35 +517,6 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
     );
   }
 
-  private isEligibleWorkerReport(input: AgentMessageOutputInput): boolean {
-    if (input.target.role !== "manager" || !this.resolveWorkerReportSourceId(input)) {
-      return false;
-    }
-
-    return (
-      isWorkerReportRuntimeMessage(input.modelMessage) ||
-      isWorkerStatusCloseoutMessage(input.rawMessage) ||
-      isWorkerCompletionReportMessage(input.rawMessage)
-    );
-  }
-
-  private resolveWorkerReportSourceId(
-    input: Pick<AgentMessageOutputInput, "sender" | "target" | "workerReportSourceAgentId">,
-  ): string | undefined {
-    if (input.sender.role === "worker" && input.sender.managerId === input.target.agentId) {
-      return input.sender.agentId;
-    }
-
-    if (!input.workerReportSourceAgentId) {
-      return undefined;
-    }
-
-    const worker = this.options.descriptors.get(input.workerReportSourceAgentId);
-    return worker?.role === "worker" && worker.managerId === input.target.agentId
-      ? worker.agentId
-      : undefined;
-  }
-
   private buildProvenance(input: {
     manager: AgentDescriptor;
     sender: AgentDescriptor;
@@ -751,8 +563,8 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   ): ManagerAssistantOutputRouteResult {
     return {
       decision,
-      ...(routeContext?.workerReportSourceAgentId
-        ? { sourceWorkerId: routeContext.workerReportSourceAgentId }
+      ...(routeContext?.sourceWorkerId
+        ? { sourceWorkerId: routeContext.sourceWorkerId }
         : {}),
       target,
       requiresVisibleResponse,
@@ -772,57 +584,12 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
     );
   }
 
-  private getActiveTargetForDelegation(managerId: string): AssistantOutputTarget {
-    const target = this.activeTargetByManagerId.get(managerId);
-    return target
-      ? cloneAssistantOutputTarget(target)
-      : { kind: "internal_only", reason: "no_active_root" };
-  }
-
-  private clearConsumedWorkerTarget(agentId: string): void {
-    const target = this.inheritedTargetByWorkerId.get(agentId);
-    if (target?.kind === "session_transcript") {
-      this.inheritedTargetByWorkerId.delete(agentId);
-    }
-  }
-
-  private clearInheritedTargetsForManager(managerId: string): void {
-    this.clearRuntimeResettableInheritedTarget(managerId);
-    for (const descriptor of this.options.descriptors.values()) {
-      if (descriptor.role === "worker" && descriptor.managerId === managerId) {
-        this.clearRuntimeResettableInheritedTarget(descriptor.agentId);
-      }
-    }
-  }
-
-  private clearRuntimeResettableInheritedTarget(agentId: string): void {
-    if (this.inheritedTargetByWorkerId.get(agentId)?.kind === "session_transcript") {
-      this.inheritedTargetByWorkerId.delete(agentId);
-    }
-  }
-
   private clearActiveManagerTurn(agentId: string): void {
     this.activeTargetByManagerId.delete(agentId);
     this.activeWebTurnByManagerId.delete(agentId);
     this.activeRouteByManagerId.delete(agentId);
   }
 
-  private expireWebTargetIfUncontinued(
-    agentId: string,
-    pendingTargets: readonly AssistantOutputTarget[],
-  ): void {
-    const activeTarget = this.activeTargetByManagerId.get(agentId);
-    if (activeTarget?.kind !== "session_transcript" || activeTarget.channel !== "web") {
-      return;
-    }
-
-    const hasPendingWebTarget = pendingTargets.some(
-      (target) => target.kind === "session_transcript" && target.channel === "web",
-    );
-    if (!hasPendingWebTarget) {
-      this.activeTargetByManagerId.delete(agentId);
-    }
-  }
 }
 
 function webTarget(): SessionTranscriptAssistantOutputTarget {
@@ -851,62 +618,6 @@ function sourceContext(target: AssistantOutputTarget): MessageSourceContext | un
   return target.kind === "session_transcript" || target.kind === "external_channel"
     ? target.sourceContext
     : undefined;
-}
-
-function cloneSessionTranscriptTarget(
-  target: SessionTranscriptAssistantOutputTarget,
-): SessionTranscriptAssistantOutputTarget {
-  return {
-    kind: "session_transcript",
-    channel: target.channel,
-    ...(target.sourceContext ? { sourceContext: { ...target.sourceContext } } : {}),
-  };
-}
-
-function cloneAssistantOutputTarget(target: AssistantOutputTarget): AssistantOutputTarget {
-  switch (target.kind) {
-    case "session_transcript":
-      return cloneSessionTranscriptTarget(target);
-    case "external_channel":
-      return { kind: "external_channel", sourceContext: { ...target.sourceContext } };
-    case "peer_agent":
-      return { kind: "peer_agent", fromAgentId: target.fromAgentId };
-    case "explicit_tool_required":
-      return { kind: "explicit_tool_required", reason: target.reason };
-    case "internal_only":
-      return { kind: "internal_only", ...(target.reason ? { reason: target.reason } : {}) };
-  }
-}
-
-function isWorkerReportRuntimeMessage(message: string | RuntimeUserMessage): boolean {
-  return extractRuntimeMessageText(message).trimStart().startsWith(WORKER_REPORT_MESSAGE_PREFIX);
-}
-
-function isWorkerStatusCloseoutMessage(message: string | undefined): boolean {
-  return typeof message === "string" && TERMINAL_WORKER_REPORT_BODY_PATTERN.test(message.trimStart());
-}
-
-function isWorkerCompletionReportMessage(message: string | undefined): boolean {
-  if (typeof message !== "string") {
-    return false;
-  }
-  const normalized = message.trimStart();
-  return (
-    WORKER_COMPLETION_REPORT_BODY_PATTERN.test(normalized) ||
-    WORKER_COMPLETION_SUMMARY_PATTERN.test(normalized)
-  );
-}
-
-function isExplicitTerminalWorkerReport(input: AgentMessageOutputInput): boolean {
-  return (
-    input.workerReportSourceAgentId !== undefined ||
-    isWorkerReportRuntimeMessage(input.modelMessage) ||
-    isWorkerStatusCloseoutMessage(input.rawMessage) ||
-    (
-      typeof input.rawMessage === "string" &&
-      WORKER_COMPLETION_REPORT_BODY_PATTERN.test(input.rawMessage.trimStart())
-    )
-  );
 }
 
 function appendAssistantOutputTargetMetadata(

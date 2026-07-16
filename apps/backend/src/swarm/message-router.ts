@@ -1,6 +1,6 @@
 import type { MessageSourceContext } from "./types.js";
 
-export type MessageRouteOrigin = "user" | "internal" | "scheduled" | "terminal_worker_report";
+export type MessageRouteOrigin = "user" | "internal" | "scheduled" | "worker_result";
 
 export type MessageRouteInternalDeliveryKind =
   | "bootstrap"
@@ -20,17 +20,17 @@ export type MessageRouteRole = "manager" | "worker";
 export type MessageRouteReasonCode =
   | "render:user_web"
   | "render:scheduled_web"
-  | "render:terminal_worker_report_closeout"
+  | "render:worker_result_closeout"
   | "route:telegram"
   | "route:cli"
   | "route:collab"
   | "route:external_channel"
   | "route:peer_agent"
-  | "route:worker_report_all_view"
+  | "route:worker_result_all_view"
   | "route:internal_origin"
   | "deny:target_not_manager"
   | "deny:project_agent_exchange"
-  | "deny:project_agent_worker_report"
+  | "deny:project_agent_worker_result"
   | "deny:collaboration_profile"
   | "deny:cortex_profile"
   | "deny:system_profile"
@@ -93,7 +93,7 @@ export class MessageRouter {
     }
 
     if (input.senderRole === "worker" && (input.targetProjectAgent || input.targetCreatorAgentId !== undefined)) {
-      return drop(targetKind, "deny:project_agent_worker_report");
+      return drop(targetKind, "deny:project_agent_worker_result");
     }
 
     if (input.targetSessionSurface === "collab" || input.targetCollab) {
@@ -163,10 +163,10 @@ export class MessageRouter {
       return render(targetKind, "render:scheduled_web");
     }
 
-    if (input.origin === "terminal_worker_report") {
+    if (input.origin === "worker_result") {
       return targetKind === "session_transcript"
-        ? render(targetKind, "render:terminal_worker_report_closeout")
-        : route(targetKind, "route:worker_report_all_view");
+        ? render(targetKind, "render:worker_result_closeout")
+        : route(targetKind, "route:worker_result_all_view");
     }
 
     return render(targetKind, "render:user_web");

@@ -60,7 +60,7 @@ export interface SwarmManagerFacadeRuntimeServices {
   >;
   assistantOutput: Pick<
     AssistantOutputRouter,
-    "deliverTerminalObligationBackstop" | "resolveManagerFinalRoute" | "resolveManagerFinalTarget"
+    "resolveManagerFinalRoute" | "resolveManagerFinalTarget"
   >;
   activeTools: Pick<SessionActiveToolsState, "buildSnapshotEvent">;
   runtimes: ReadonlyMap<string, SwarmAgentRuntime>;
@@ -89,7 +89,7 @@ export interface SwarmManagerSessionFacadeServices {
     "notifySpecialistRosterChanged" | "resumeWorker" | "stopWorker"
   >;
   codexPlugin: CodexPluginDelegationCoordinator;
-  messages: Pick<AgentMessageDispatcher<unknown>, "sendMessage">;
+  messages: Pick<AgentMessageDispatcher<unknown>, "sendMessage" | "sendWorkerResult">;
   userMessages: UserMessageCoordinator;
 }
 

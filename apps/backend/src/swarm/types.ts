@@ -105,6 +105,11 @@ export interface AgentDescriptor {
   specialistDisplayName?: string;
   specialistColor?: string;
   internalWorkerKind?: InternalWorkerKind;
+  /**
+   * Private persisted ownership for the worker's current assignment. This is
+   * intentionally omitted from public agent snapshots.
+   */
+  workerParentContext?: WorkerParentContext;
   projectAgent?: ProjectAgentInfo;
   agentCreatorResult?: AgentCreatorResult;
   webSearch?: boolean;
@@ -131,6 +136,30 @@ export interface MessageSourceContext {
   integrationProfileId?: string;
   channelType?: "dm" | "channel" | "group" | "mpim";
   teamId?: string;
+}
+
+export type SessionTranscriptAssistantOutputTarget = {
+  kind: "session_transcript";
+  channel: "web" | "cli";
+  sourceContext?: MessageSourceContext;
+};
+
+export type AssistantOutputTarget =
+  | SessionTranscriptAssistantOutputTarget
+  | { kind: "explicit_tool_required"; reason: string }
+  | { kind: "peer_agent"; fromAgentId: string }
+  | { kind: "external_channel"; sourceContext: MessageSourceContext }
+  | { kind: "internal_only"; reason?: string };
+
+/** Durable private link from one worker assignment back to its manager work. */
+export interface WorkerParentContext {
+  schemaVersion: 1;
+  assignmentId: string;
+  managerId: string;
+  assignedAt: string;
+  outputTarget: AssistantOutputTarget;
+  rootTurnId?: string;
+  parentRootTurnId?: string;
 }
 
 export type MessageTargetContext = Pick<

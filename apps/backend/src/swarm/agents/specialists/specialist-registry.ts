@@ -939,9 +939,8 @@ export async function getWorkerTemplate(): Promise<string> {
     // Fallback minimal template
     return [
       "You are a worker agent in a swarm.",
-      "- You can list agents and send messages to other agents.",
       "- Use coding tools (read/bash/edit/write) to execute implementation tasks.",
-      "- Report progress and outcomes back to the manager using send_message_to_agent.",
+      "- Your final assistant response is returned to the manager automatically.",
       "- You are not user-facing.",
     ].join("\n");
   }

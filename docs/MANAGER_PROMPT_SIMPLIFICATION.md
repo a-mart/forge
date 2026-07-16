@@ -8,7 +8,7 @@ Status: design baseline for the next manager-prompt revision.
 - Reduce duplicated routing, tool, and process instructions.
 - Let the model choose the execution path unless Forge requires a particular path.
 - Keep manager involvement useful without allowing it to drift into unbounded implementation.
-- Evaluate the reduced prompt against the callback and delivery failures documented in [MANAGER_EMPTY_TURN_FIX.md](MANAGER_EMPTY_TURN_FIX.md) and [MANAGER_SILENCE_INVESTIGATION.md](MANAGER_SILENCE_INVESTIGATION.md).
+- Evaluate the reduced prompt against direct-user delivery, internal worker-result handling, and intentional-silence regressions.
 
 ## Accepted decisions
 
@@ -64,7 +64,7 @@ Tool parameters and tool-local mechanics belong in tool descriptions. Source-spe
 Compare the current and reduced prompts on representative cases covering:
 
 - direct web turns and same-turn progress;
-- completed, partial, and blocked worker reports;
+- completed, partial, and blocked worker results;
 - intentional internal silence and duplicate-delivery prevention;
 - peer/project-agent and non-web routing;
 - user-authored model-specific instructions and an empty default;

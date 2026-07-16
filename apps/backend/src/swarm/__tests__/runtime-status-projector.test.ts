@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeStatusProjector, type RuntimeStatusProjectorDeps } from "../runtime/runtime-status-projector.js";
-import type { WorkerActivityStateLike, WorkerStallStateLike, WorkerWatchdogStateLike } from "../runtime/worker-health-types.js";
+import type { WorkerActivityStateLike, WorkerStallStateLike } from "../runtime/worker-health-types.js";
 import type { AgentDescriptor, AgentStatus } from "../types.js";
 
 function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "role" | "managerId">): AgentDescriptor {
@@ -24,39 +24,21 @@ function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescript
   };
 }
 
-function watchdogState(overrides: Partial<WorkerWatchdogStateLike> = {}): WorkerWatchdogStateLike {
-  return {
-    turnSeq: 0,
-    reportedThisTurn: false,
-    pendingReportTurnSeq: null,
-    deferredFinalizeTurnSeq: null,
-    hadStreamingThisTurn: false,
-    lastFinalizedTurnSeq: null,
-    ...overrides
-  };
-}
-
 function createHarness(): {
   projector: RuntimeStatusProjector;
   deps: RuntimeStatusProjectorDeps;
   descriptors: Map<string, AgentDescriptor>;
-  workerWatchdogState: Map<string, WorkerWatchdogStateLike>;
   workerStallState: Map<string, WorkerStallStateLike>;
   workerActivityState: Map<string, WorkerActivityStateLike>;
-  watchdogTimerTokens: Map<string, number>;
 } {
   const descriptors = new Map<string, AgentDescriptor>();
-  const workerWatchdogState = new Map<string, WorkerWatchdogStateLike>();
   const workerStallState = new Map<string, WorkerStallStateLike>();
   const workerActivityState = new Map<string, WorkerActivityStateLike>();
-  const watchdogTimerTokens = new Map<string, number>();
 
   const deps: RuntimeStatusProjectorDeps = {
     descriptors,
-    workerWatchdogState,
     workerStallState,
     workerActivityState,
-    watchdogTimerTokens,
     now: vi.fn(() => "2026-05-06T00:00:01.000Z"),
     patchDescriptorFromRuntimeStatus: vi.fn(async (agentId: string, patch: Partial<AgentDescriptor>) => {
       const descriptor = descriptors.get(agentId);
@@ -72,11 +54,6 @@ function createHarness(): {
     emitStatus: vi.fn(),
     emitAgentsSnapshot: vi.fn(),
     logDebug: vi.fn(),
-    getOrCreateWorkerWatchdogState: vi.fn((agentId: string) => workerWatchdogState.get(agentId) ?? watchdogState()),
-    clearWatchdogTimer: vi.fn(),
-    removeWorkerFromWatchdogBatchQueues: vi.fn(),
-    finalizeWorkerIdleTurn: vi.fn(async () => undefined),
-    shouldSuppressWorkerIdleFinalization: vi.fn(() => false),
     handleManagerStatusTransition: vi.fn(async () => undefined),
     applyManagerRuntimeRecyclePolicy: vi.fn(async () => "none")
   };
@@ -85,10 +62,8 @@ function createHarness(): {
     projector: new RuntimeStatusProjector(deps),
     deps,
     descriptors,
-    workerWatchdogState,
     workerStallState,
     workerActivityState,
-    watchdogTimerTokens
   };
 }
 
@@ -140,11 +115,10 @@ describe("RuntimeStatusProjector", () => {
     expect(secondSaveOrder).toBeLessThan(snapshotOrder);
   });
 
-  it("projects worker idle-to-streaming with normalized context usage before meta/stats, save, emit, and watchdog cleanup", async () => {
-    const { projector, deps, descriptors, workerStallState, watchdogTimerTokens } = createHarness();
+  it("projects worker idle-to-streaming with normalized context usage before meta/stats, save, and emit", async () => {
+    const { projector, deps, descriptors, workerStallState } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-1", role: "worker", managerId: "manager-1", status: "idle" });
     descriptors.set(worker.agentId, worker);
-    watchdogTimerTokens.set(worker.agentId, 2);
 
     await projector.projectStatus({
       agentId: worker.agentId,
@@ -168,22 +142,16 @@ describe("RuntimeStatusProjector", () => {
     expect(deps.refreshSessionMetaStatsBySessionId).toHaveBeenCalledWith(worker.managerId);
     expect(deps.saveStore).toHaveBeenCalledTimes(1);
     expect(deps.emitStatus).toHaveBeenCalledWith(worker.agentId, "streaming", 1, { tokens: 2, contextWindow: 100, percent: 100 });
-    expect(deps.getOrCreateWorkerWatchdogState).toHaveBeenCalledWith(worker.agentId);
-    expect(deps.clearWatchdogTimer).toHaveBeenCalledWith(worker.agentId);
-    expect(deps.removeWorkerFromWatchdogBatchQueues).toHaveBeenCalledWith(worker.agentId);
-    expect(watchdogTimerTokens.get(worker.agentId)).toBe(3);
 
     const patchOrder = vi.mocked(deps.patchDescriptorFromRuntimeStatus).mock.invocationCallOrder[0];
     const metaOrder = vi.mocked(deps.updateSessionMetaForWorkerDescriptor).mock.invocationCallOrder[0];
     const statsOrder = vi.mocked(deps.refreshSessionMetaStatsBySessionId).mock.invocationCallOrder[0];
     const saveOrder = vi.mocked(deps.saveStore).mock.invocationCallOrder[0];
     const emitOrder = vi.mocked(deps.emitStatus).mock.invocationCallOrder[0];
-    const watchdogOrder = vi.mocked(deps.clearWatchdogTimer).mock.invocationCallOrder[0];
     expect(patchOrder).toBeLessThan(metaOrder);
     expect(metaOrder).toBeLessThan(statsOrder);
     expect(statsOrder).toBeLessThan(saveOrder);
     expect(saveOrder).toBeLessThan(emitOrder);
-    expect(emitOrder).toBeLessThan(watchdogOrder);
   });
 
   it("refreshes worker meta/stats for context-usage-only updates without saving", async () => {
@@ -229,11 +197,10 @@ describe("RuntimeStatusProjector", () => {
     expect(deps.emitStatus).toHaveBeenCalledWith(worker.agentId, "stopped", 0, undefined);
   });
 
-  it("finalizes worker streaming-to-idle only when pending count is zero, prior streaming occurred, and finalization is not suppressed", async () => {
-    const { projector, deps, descriptors, workerWatchdogState, workerStallState, workerActivityState } = createHarness();
+  it("clears worker activity on streaming-to-idle without owning result delivery", async () => {
+    const { projector, descriptors, workerStallState, workerActivityState } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-finish", role: "worker", managerId: "manager-1", status: "streaming" });
     descriptors.set(worker.agentId, worker);
-    workerWatchdogState.set(worker.agentId, watchdogState({ hadStreamingThisTurn: true }));
     workerStallState.set(worker.agentId, { lastProgressAt: 1 } as WorkerStallStateLike);
     workerActivityState.set(worker.agentId, { lastProgressAt: 1 } as WorkerActivityStateLike);
 
@@ -241,29 +208,6 @@ describe("RuntimeStatusProjector", () => {
 
     expect(workerStallState.has(worker.agentId)).toBe(false);
     expect(workerActivityState.has(worker.agentId)).toBe(false);
-    expect(deps.finalizeWorkerIdleTurn).toHaveBeenCalledWith(
-      worker.agentId,
-      expect.objectContaining({ status: "idle" }),
-      "status_idle"
-    );
-  });
-
-  it("does not finalize worker idle turns for pending work, no prior streaming, or suppression", async () => {
-    for (const [agentId, pendingCount, hadStreaming, suppress] of [
-      ["pending", 1, true, false],
-      ["no-prior", 0, false, false],
-      ["suppressed", 0, true, true]
-    ] as const) {
-      const { projector, deps, descriptors, workerWatchdogState } = createHarness();
-      const worker = baseDescriptor({ agentId, role: "worker", managerId: "manager-1", status: "streaming" });
-      descriptors.set(worker.agentId, worker);
-      workerWatchdogState.set(worker.agentId, watchdogState({ hadStreamingThisTurn: hadStreaming }));
-      vi.mocked(deps.shouldSuppressWorkerIdleFinalization).mockReturnValue(suppress);
-
-      await projector.projectStatus({ agentId: worker.agentId, status: "idle", pendingCount });
-
-      expect(deps.finalizeWorkerIdleTurn).not.toHaveBeenCalled();
-    }
   });
 
   it("no-ops when descriptor is missing", async () => {

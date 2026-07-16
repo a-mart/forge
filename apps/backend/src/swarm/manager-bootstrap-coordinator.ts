@@ -63,13 +63,6 @@ Useful first-message shapes:
 Do not include the old generic "how do you like to work" interview.
 This manager's onboarding is about the project, not the person.`;
 
-const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — BATCHED]
-
-\${WORKER_COUNT} \${WORKER_WORD} went idle without reporting this turn.
-Workers: \${WORKER_IDS}
-
-Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
-
 export interface ManagerBootstrapCoordinatorOptions {
   dataDir: string;
   descriptors: ReadonlyMap<string, AgentDescriptor>;
@@ -104,13 +97,6 @@ export class ManagerBootstrapCoordinator {
     }
 
     const profileId = manager.profileId ?? manager.agentId;
-
-    await this.resolvePromptWithFallback(
-      "operational",
-      "idle-watchdog",
-      profileId,
-      IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE,
-    );
 
     try {
       const bootstrapMessage = await this.resolvePromptWithFallback(

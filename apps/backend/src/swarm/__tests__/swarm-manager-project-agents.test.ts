@@ -151,6 +151,11 @@ async function emitCleanAssistantFinal(manager: TestSwarmManager, agentId: strin
   })
 }
 
+async function completeWorker(manager: TestSwarmManager, agentId: string, text: string): Promise<void> {
+  await emitCleanAssistantFinal(manager, agentId, text)
+  await manager.handleRuntimeAgentEnd(agentId)
+}
+
 function assistantOutputTexts(manager: TestSwarmManager, agentId: string): string[] {
   return manager
     .getConversationHistory(agentId)
@@ -1754,7 +1759,7 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('shows substantive manager finals from routine direct-web worker callbacks', async () => {
+  it('shows substantive manager finals from direct-web worker results', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1764,14 +1769,10 @@ describe('SwarmManager', () => {
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Health Worker' })
     await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
-    await manager.sendMessage(
-      worker.agentId,
-      'manager',
-      'status: done\nsummary: Completed the health check.',
-      'auto',
-    )
-    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
-    expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    await completeWorker(manager, worker.agentId, 'Completed the health check.')
+    const workerResultRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
+    expect(workerResultRuntimeText).toContain('[workerResult]')
+    expect(workerResultRuntimeText).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
 
     await manager.publishToUser('manager', 'Health check accepted.', 'speak_to_user')
     await emitCleanAssistantFinal(manager, 'manager', 'The full health-check report is ready.')
@@ -1796,7 +1797,7 @@ describe('SwarmManager', () => {
     ])
   })
 
-  it('preserves explicit routing for non-web worker-report closeouts', async () => {
+  it('preserves explicit routing for non-web worker-result closeouts', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1808,17 +1809,11 @@ describe('SwarmManager', () => {
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Telegram Health Worker' })
     await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
-    await manager.sendMessage(
-      worker.agentId,
-      'manager',
-      'status: done\nsummary: Completed the Telegram health check.',
-      'auto',
-    )
+    await completeWorker(manager, worker.agentId, 'Completed the Telegram health check.')
 
-    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
-    expect(workerReportRuntimeText).toContain(
-      '[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"worker_report"}',
-    )
+    const workerResultRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
+    expect(workerResultRuntimeText).toContain('[workerResult]')
+    expect(workerResultRuntimeText).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
   })
 
   it('keeps later internal same-manager project-agent self messages hidden after a direct-web turn completes', async () => {
@@ -1850,7 +1845,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual(['Visible direct web final.'])
   })
 
-  it('keeps unassociated worker completions hidden after a direct-web project-agent turn completes', async () => {
+  it('does not synthesize results for workers without an active assignment', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1866,18 +1861,11 @@ describe('SwarmManager', () => {
     await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
 
     const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Unassociated Worker' })
-    await manager.sendMessage(
-      worker.agentId,
-      sessionAgent.agentId,
-      'status: done\nsummary: unassociated worker completion',
-      'auto',
-    )
-    const workerReportRuntimeText = await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
-    expect(workerReportRuntimeText).toContain('[assistantOutputTarget] {"mode":"internal_only"}')
+    const runtime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const sendCountBefore = runtime?.sendCalls.length ?? 0
+    await completeWorker(manager, worker.agentId, 'Unassociated worker completion.')
 
-    await emitCleanAssistantFinal(manager, sessionAgent.agentId, 'Hidden unassociated worker final.')
-    await manager.handleRuntimeSessionEvent(sessionAgent.agentId, { type: 'turn_end', toolResults: [] })
-
+    expect(runtime?.sendCalls.length ?? 0).toBe(sendCountBefore)
     expect(assistantOutputTexts(manager, sessionAgent.agentId)).toEqual(['Visible direct web final.'])
   })
 

@@ -13,7 +13,6 @@ import type {
 
 interface InternalSendOptions {
   origin: "internal";
-  workerReportSourceAgentId?: string;
 }
 
 export interface RestartRecoveryCoordinatorOptions {
@@ -25,6 +24,11 @@ export interface RestartRecoveryCoordinatorOptions {
     message: string,
     delivery: RequestedDeliveryMode,
     options: InternalSendOptions,
+  ) => Promise<SendMessageReceipt>;
+  sendWorkerResult: (
+    workerAgentId: string,
+    resultText: string,
+    expectedAssignmentId?: string,
   ) => Promise<SendMessageReceipt>;
   now: () => string;
   onDecisionResolved?: () => void;
@@ -200,11 +204,24 @@ export class RestartRecoveryCoordinator {
       for (const report of snapshot.undeliveredReports) {
       const message = pendingMessages.get(report.deliveryId);
       if (!message) continue;
-      await this.options
-        .sendMessage(report.fromAgentId, report.toAgentId, message, "auto", {
-          origin: "internal",
-          workerReportSourceAgentId: report.fromAgentId,
-        })
+      const source = this.options.descriptors.get(report.fromAgentId);
+      const isWorkerResult =
+        report.deliveryId.startsWith("worker-result:") ||
+        (report.deliveryId.startsWith("worker-report:") && source?.role === "worker");
+      const redelivery = isWorkerResult && source?.role === "worker"
+        ? this.options.sendWorkerResult(
+            source.agentId,
+            message,
+            source.workerParentContext?.assignmentId,
+          )
+        : this.options.sendMessage(
+            report.fromAgentId,
+            report.toAgentId,
+            message,
+            "auto",
+            { origin: "internal" },
+          );
+      await redelivery
         .catch((error) => {
           this.options.logDebug("restart_recovery:report_redelivery:error", {
             deliveryId: report.deliveryId,

@@ -15,6 +15,7 @@ import {
 
 const NOW = '2026-07-13T12:00:00.000Z'
 const RECOVERED_REPORT = 'Recovered worker result from the persisted ledger.'
+const RECOVERED_DELIVERY_ID = 'worker-result:recovery-worker:persisted'
 
 interface RecoveryFixture {
   cleanup: () => Promise<void>
@@ -38,6 +39,7 @@ async function createRecoveryFixture(): Promise<RecoveryFixture> {
     ['manager', 'streaming'],
     [worker.agentId, 'streaming'],
   ]))
+  await persistWorkerParentContext(handle.config, worker.agentId)
 
   const target: TurnLedgerSessionTarget = {
     dataDir: handle.config.paths.dataDir,
@@ -63,7 +65,7 @@ async function createRecoveryFixture(): Promise<RecoveryFixture> {
   await appendTurnLedgerRecord(target, {
     t: 'delivery_pending',
     turnId: 'manager-turn-before-restart',
-    deliveryId: 'persisted-worker-report',
+    deliveryId: RECOVERED_DELIVERY_ID,
     from: worker.agentId,
     to: 'manager',
     message: RECOVERED_REPORT,
@@ -93,6 +95,26 @@ async function persistAgentStatuses(
   await writeFile(config.paths.agentsStoreFile, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
 }
 
+async function persistWorkerParentContext(config: SwarmConfig, workerId: string): Promise<void> {
+  const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+    agents: AgentDescriptor[]
+    profiles?: unknown[]
+  }
+  store.agents = store.agents.map((agent) => agent.agentId === workerId
+    ? {
+        ...agent,
+        workerParentContext: {
+          schemaVersion: 1,
+          assignmentId: 'assignment:recovery-worker:persisted',
+          managerId: 'manager',
+          assignedAt: NOW,
+          outputTarget: { kind: 'internal_only', reason: 'restart_recovery_test' },
+        },
+      }
+    : agent)
+  await writeFile(config.paths.agentsStoreFile, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+}
+
 function sentMessageText(runtime: FakeRuntime | undefined): string[] {
   return runtime?.sendCalls.map(({ message }) => typeof message === 'string' ? message : message.text) ?? []
 }
@@ -111,7 +133,7 @@ describe('SwarmManager restart recovery characterization', () => {
         interruptedManagers: ['manager'],
         interruptedWorkers: [fixture.workerId],
         undeliveredReports: [{
-          deliveryId: 'persisted-worker-report',
+          deliveryId: RECOVERED_DELIVERY_ID,
           fromAgentId: fixture.workerId,
           toAgentId: 'manager',
           turnId: 'manager-turn-before-restart',

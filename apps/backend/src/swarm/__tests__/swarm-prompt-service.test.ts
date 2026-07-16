@@ -43,10 +43,10 @@ afterEach(async () => {
 });
 
 function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
-  expect(prompt).toContain("Worker reports require same-turn disposition");
-  expect(prompt).toContain("routine callbacks are not automatic user update triggers");
+  expect(prompt).toContain("Worker results require same-turn disposition");
+  expect(prompt).toContain("they are not automatic user update triggers");
   expect(prompt).toContain("Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.");
-  expect(prompt).toContain("even when callback metadata is internal; otherwise end with exactly `NO_REPLY`");
+  expect(prompt).toContain("otherwise end with exactly `NO_REPLY`");
   expect(prompt).toContain("After `speak_to_user` fully delivers a response, end the provider cycle with exactly `NO_REPLY`");
   expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
   expect(prompt).not.toContain("an accepted outcome/material blocker reached from an internal callback");
@@ -223,7 +223,7 @@ Never use plain assistant text for user communication.`;
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn came from a worker callback."
+      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn contains a worker result."
     );
     expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
     expect(prompt).not.toContain("other routed user-facing delivery");
@@ -290,7 +290,7 @@ Custom project instruction: always mention the release train when summarizing de
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn came from a worker callback."
+      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn contains a worker result."
     );
     expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
     expect(prompt).not.toContain("other routed user-facing delivery");
@@ -619,13 +619,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(prompt).not.toContain("private.md");
   });
 
-  it("gives a lens-less (bare-tier) worker the structured report-back contract", async () => {
-    // Regression guard for BUG-1 (WP-S1): retiring `scout` to a bare `light` tier with no lens must
-    // NOT strip the report-back protocol. A worker with no specialist lens falls through to the base
-    // `worker` archetype (resolveSystemPromptForDescriptor), which must carry the explicit
-    // report-to-manager directive and the structured completion block that every surviving lens
-    // still embeds — otherwise small light-tier models finish silently and lean on the auto-report
-    // failsafe (which then fires the confusing synthetic "completed without an explicit callback").
+  it("gives a lens-less worker the automatic structured-result contract", async () => {
     const { config } = await makeConfig();
     const worker = {
       ...createManagerDescriptor(config, repoRoot, {
@@ -642,11 +636,10 @@ Custom project instruction: always mention the release train when summarizing de
     const service = createPromptServiceForDescriptor(config, worker);
     const prompt = await service.resolveSystemPromptForDescriptor(worker);
 
-    expect(prompt).toContain("Report progress and outcomes back to the manager using send_message_to_agent");
     expect(prompt).toContain(
-      "Always end your turn by reporting to your manager with send_message_to_agent — never finish silently."
+      "Your final assistant response is returned to the manager automatically. Do not call a messaging tool to report completion."
     );
-    expect(prompt).toContain("When reporting completion, use this structure in your send_message_to_agent call:");
+    expect(prompt).toContain("End your turn with a concise result using this structure:");
     expect(prompt).toContain("status: done | partial | blocked");
   });
 
@@ -883,7 +876,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(composition.rolePrompt).toBeUndefined();
     expect(composition.sources.map((source) => source.kind)).toEqual(["project_agent_base", "base_only"]);
     expect(composition.content).toContain("Forge Project Agent Operating Contract");
-    expect(composition.content).toContain("WORKER REPORT: status: done|partial|blocked");
+    expect(composition.content).toContain("messages beginning with `[workerResult]`");
     expect(composition.content).not.toContain("Non-Negotiable Forge Routing Contract");
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
