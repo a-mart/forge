@@ -567,12 +567,12 @@ export class SwarmManagerRuntimeComposition {
       isRuntimeInContextRecovery: (agentId) =>
         this.requireRuntimeLifecycle().isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) => this.requireRuntimeLifecycle().isRuntimeRecoveryActive(agentId),
+      isRestartRecoveryDecisionPending: () => this.restartRecovery.isDecisionPending(),
       now: state.now,
       onHealthSweep: () => this.requireRuntimeLifecycle().runLivenessHealthSweep(),
       logDebug: events.logDebug,
     });
   }
-
   private createSpecialistFallback(): SwarmSpecialistFallbackManager {
     const { state, resolution, events } = this.options;
     return new SwarmSpecialistFallbackManager({

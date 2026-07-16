@@ -17,6 +17,7 @@ function createHarness(options: {
   deliverCompletedWorker?: WorkerResultCoordinator["deliverCompletedWorker"];
   isRuntimeInContextRecovery?: (agentId: string) => boolean;
   isRuntimeRecoveryActive?: (agentId: string) => boolean;
+  isRestartRecoveryDecisionPending?: () => boolean;
 } = {}) {
   const deliverCompletedWorker = vi.fn(
     options.deliverCompletedWorker ?? (async () => "sent" as const),
@@ -34,6 +35,7 @@ function createHarness(options: {
     emitAgentsSnapshot: vi.fn(),
     isRuntimeInContextRecovery: options.isRuntimeInContextRecovery ?? (() => false),
     isRuntimeRecoveryActive: options.isRuntimeRecoveryActive,
+    isRestartRecoveryDecisionPending: options.isRestartRecoveryDecisionPending,
     now: () => "2026-07-16T12:00:00.000Z",
     logDebug: vi.fn(),
   };
@@ -128,7 +130,7 @@ describe("SwarmWorkerHealthService", () => {
     );
   });
 
-  it("does not use worker idle status as a second completion signal", async () => {
+  it("delivers promptly when an observed streaming assignment settles idle", async () => {
     const workerDescriptor = worker();
     const { service, deliverCompletedWorker } = createHarness({
       descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
@@ -138,19 +140,71 @@ describe("SwarmWorkerHealthService", () => {
     workerDescriptor.status = "idle";
     await service.handleRuntimeStatus(workerDescriptor.agentId, workerDescriptor, "idle", 0);
 
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not complete an idle assignment before observing that worker run", async () => {
+    const workerDescriptor = worker("worker-1", "idle");
+    const { service, deliverCompletedWorker } = createHarness({
+      descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
+    });
+
+    await service.handleRuntimeStatus(workerDescriptor.agentId, workerDescriptor, "idle", 0);
+
     expect(deliverCompletedWorker).not.toHaveBeenCalled();
   });
 
-  it("skips terminal delivery while the worker runtime is recovering", async () => {
+  it("delivers a settlement immediately after context recovery releases it", async () => {
     const workerDescriptor = worker();
+    let recoveryInProgress = true;
     const { service, deliverCompletedWorker } = createHarness({
       descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
-      isRuntimeRecoveryActive: (agentId) => agentId === workerDescriptor.agentId,
+      isRuntimeInContextRecovery: (agentId) =>
+        agentId === workerDescriptor.agentId && recoveryInProgress,
+      isRuntimeRecoveryActive: (agentId) =>
+        agentId === workerDescriptor.agentId && recoveryInProgress,
     });
 
+    await service.handleRuntimeStatus(workerDescriptor.agentId, workerDescriptor, "streaming", 0);
+    workerDescriptor.status = "idle";
+    await service.handleRuntimeStatus(workerDescriptor.agentId, workerDescriptor, "idle", 0);
     await service.handleRuntimeAgentEnd(workerDescriptor.agentId, workerDescriptor);
-
     expect(deliverCompletedWorker).not.toHaveBeenCalled();
+
+    recoveryInProgress = false;
+    await service.handleRuntimeStatus(workerDescriptor.agentId, workerDescriptor, "idle", 0);
+
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a persisted idle assignment on the health sweep", async () => {
+    const workerDescriptor = worker("worker-1", "idle");
+    const { service, deliverCompletedWorker } = createHarness({
+      descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
+      runtimes: new Map([[workerDescriptor.agentId, {
+        getPendingCount: () => 0,
+      } as SwarmAgentRuntime]]),
+    });
+
+    await service.checkForStalledWorkers();
+
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits to reconcile an interrupted idle worker until restart recovery resolves", async () => {
+    const workerDescriptor = worker("worker-1", "idle");
+    let restartDecisionPending = true;
+    const { service, deliverCompletedWorker } = createHarness({
+      descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
+      isRestartRecoveryDecisionPending: () => restartDecisionPending,
+    });
+
+    await service.checkForStalledWorkers();
+    expect(deliverCompletedWorker).not.toHaveBeenCalled();
+
+    restartDecisionPending = false;
+    await service.checkForStalledWorkers();
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
   });
 
   it("defers a result until a pending transient termination is confirmed", async () => {

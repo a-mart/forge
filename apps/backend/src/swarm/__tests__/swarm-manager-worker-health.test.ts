@@ -130,6 +130,64 @@ describe("SwarmManager worker results", () => {
     expect(managerRuntime.sendCalls).toHaveLength(1);
   });
 
+  it("delivers once when context recovery releases a settled worker", async () => {
+    const config = await makeTempConfig();
+    const manager = new TestSwarmManager(config);
+    const managerDescriptor = await bootWithDefaultManager(manager, config);
+    await beginManagerTurn(manager, "Delegate recovered-result-worker.");
+    const worker = await manager.spawnAgent(managerDescriptor.agentId, {
+      agentId: "recovered-result-worker",
+    });
+    await manager.sendMessage(
+      managerDescriptor.agentId,
+      worker.agentId,
+      "Do the delegated task and return a concise final result.",
+    );
+    const managerRuntime = manager.runtimeByAgentId.get("manager");
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId);
+    if (!managerRuntime || !workerRuntime) throw new Error("Missing runtime");
+
+    const state = manager as unknown as {
+      runtimeController: { allocateRuntimeToken(agentId: string): number };
+      handleRuntimeStatus(
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor["status"],
+        pendingCount: number,
+      ): Promise<void>;
+    };
+    const runtimeToken = state.runtimeController.allocateRuntimeToken(worker.agentId);
+
+    let recoveryInProgress = true;
+    workerRuntime.isContextRecoveryInProgress = () => recoveryInProgress;
+    workerRuntime.isContextRecoveryActive = () => recoveryInProgress;
+    await state.handleRuntimeStatus(runtimeToken, worker.agentId, "streaming", 0);
+    await manager.handleRuntimeSessionEvent(worker.agentId, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: "Resumed after compaction and completed the assignment.",
+        stopReason: "stop",
+      },
+    });
+    managerRuntime.sendCalls = [];
+
+    await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
+    await manager.handleRuntimeAgentEnd(worker.agentId);
+    expect(managerRuntime.sendCalls).toHaveLength(0);
+
+    recoveryInProgress = false;
+    await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
+    await manager.handleRuntimeAgentEnd(worker.agentId);
+
+    expect(managerRuntime.sendCalls).toHaveLength(1);
+    expect(String(managerRuntime.sendCalls[0]?.message)).toContain("[workerResult]");
+    expect(String(managerRuntime.sendCalls[0]?.message)).toContain(
+      "Resumed after compaction and completed the assignment.",
+    );
+    expect(internalWorker(manager, worker.agentId).workerParentContext).toBeUndefined();
+  });
+
   it("returns a blocked result from the worker's terminal error context", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);

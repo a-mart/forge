@@ -126,9 +126,13 @@ describe("WorkerResultCoordinator", () => {
   });
 
   it("does not classify a benign system summary as blocked for mentioning a handled error", () => {
-    expect(buildWorkerResult("worker-1", [
+    const result = buildWorkerResult("worker-1", [
       message("Completed successfully after handling an expected error case.", { role: "system" }),
-    ])).toContain("status: done");
+    ]);
+
+    expect(result).toContain("status: blocked");
+    expect(result).toContain("settled without returning a final result");
+    expect(result).not.toContain("Completed successfully");
   });
 
   it("does not replay an assistant final from before the current assignment", async () => {
@@ -148,7 +152,11 @@ describe("WorkerResultCoordinator", () => {
 
     expect(deliverWorkerResult).toHaveBeenCalledWith(
       worker.agentId,
-      "status: done\nsummary: Worker worker-1 completed without a final text result.",
+      [
+        "status: blocked",
+        "summary: Worker worker-1 settled without returning a final result.",
+        "follow-up: Check the worker or retry the assignment.",
+      ].join("\n"),
       "assignment-1",
     );
   });

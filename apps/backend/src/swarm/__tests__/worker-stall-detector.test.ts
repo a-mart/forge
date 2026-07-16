@@ -496,7 +496,7 @@ describe("worker stall detector", () => {
     await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
     expect(
       manager.listAgentsForInternalUse().find((entry) => entry.agentId === worker.agentId)?.workerParentContext,
-    ).toBeDefined();
+    ).toBeUndefined();
     await manager.handleRuntimeAgentEnd(worker.agentId);
     const managerMessages = managerRuntime.sendCalls
       .map((call) => typeof call.message === "string" ? call.message : call.message.text);
@@ -509,7 +509,7 @@ describe("worker stall detector", () => {
     expect(readWorkerStallState(manager, worker.agentId)).toBeUndefined();
   });
 
-  it("does not treat an idle status update as worker completion", async () => {
+  it("returns a blocked result when a streaming worker settles idle without a final", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
 
@@ -520,7 +520,12 @@ describe("worker stall detector", () => {
 
     await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
 
-    expect(managerRuntime.sendCalls).toHaveLength(0);
+    expect(managerRuntime.sendCalls).toHaveLength(1);
+    expect(String(managerRuntime.sendCalls[0]?.message)).toContain("[workerResult]");
+    expect(String(managerRuntime.sendCalls[0]?.message)).toContain("status: blocked");
+    expect(String(managerRuntime.sendCalls[0]?.message)).toContain(
+      "settled without returning a final result",
+    );
     expect(readWorkerStallState(manager, worker.agentId)).toBeUndefined();
   });
 

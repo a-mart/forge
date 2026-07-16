@@ -71,8 +71,9 @@ export function buildWorkerResult(
   const finalMessage = findLatestWorkerFinal(history, assignedAt);
   if (!finalMessage) {
     return [
-      "status: done",
-      `summary: Worker ${workerAgentId} completed without a final text result.`,
+      "status: blocked",
+      `summary: Worker ${workerAgentId} settled without returning a final result.`,
+      "follow-up: Check the worker or retry the assignment.",
     ].join("\n");
   }
 
@@ -105,7 +106,7 @@ function findLatestWorkerFinal(
     const entry = history[index];
     if (
       entry?.type === "conversation_message" &&
-      (entry.role === "assistant" || entry.role === "system") &&
+      (entry.role === "assistant" || (entry.role === "system" && looksLikeWorkerError(entry))) &&
       entry.source !== "worker_report" &&
       (entry.text.trim().length > 0 || (entry.attachments?.length ?? 0) > 0) &&
       (

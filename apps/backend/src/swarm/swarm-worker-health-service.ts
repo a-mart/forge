@@ -71,6 +71,7 @@ export interface SwarmWorkerHealthServiceOptions {
   emitAgentsSnapshot(): void;
   isRuntimeInContextRecovery(agentId: string): boolean;
   isRuntimeRecoveryActive?(agentId: string): boolean;
+  isRestartRecoveryDecisionPending?(): boolean;
   now(): string;
   logDebug(message: string, details?: unknown): void;
   onHealthSweep?(): void | Promise<void>;
@@ -83,6 +84,7 @@ export class SwarmWorkerHealthService {
   private readonly transientWorkerTerminatedTimers = new Map<string, NodeJS.Timeout>();
   private readonly transientWorkerTerminatedTimerTokens = new Map<string, number>();
   private readonly deferredWorkerResultAgentIds = new Set<string>();
+  private readonly workerCompletionCandidateAgentIds = new Set<string>();
   private readonly workerResultDeliveryInFlight = new Set<string>();
   private readonly notifiedFailedAssignmentIds = new Set<string>();
 
@@ -96,8 +98,8 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    void this.retryCompletedWorkerResults().catch((error) => {
-      this.options.logDebug("worker_result:startup_retry:error", {
+    void this.reconcileWorkerResults().catch((error) => {
+      this.options.logDebug("worker_result:startup_reconcile:error", {
         message: error instanceof Error ? error.message : String(error)
       });
     });
@@ -212,8 +214,8 @@ export class SwarmWorkerHealthService {
   async handleRuntimeStatus(
     agentId: string,
     descriptor: AgentDescriptor & { role: "worker" },
-    _nextStatus: AgentStatus,
-    _pendingCount: number
+    nextStatus: AgentStatus,
+    pendingCount: number
   ): Promise<void> {
     if (isExternalThreadDescriptor(descriptor)) {
       return;
@@ -235,6 +237,28 @@ export class SwarmWorkerHealthService {
       this.workerActivityState.delete(agentId);
     }
 
+    if (nextStatus === "streaming" && descriptor.workerParentContext) {
+      this.workerCompletionCandidateAgentIds.add(agentId);
+      return;
+    }
+    if (
+      nextStatus !== "idle" ||
+      pendingCount > 0 ||
+      !this.workerCompletionCandidateAgentIds.has(agentId)
+    ) {
+      return;
+    }
+    if (this.options.isRuntimeInContextRecovery(agentId)) {
+      this.options.logDebug("worker_result:deferred_context_recovery", { agentId });
+      return;
+    }
+    if (this.hasPendingTransientWorkerTerminatedError(agentId)) {
+      this.deferredWorkerResultAgentIds.add(agentId);
+      return;
+    }
+
+    this.workerCompletionCandidateAgentIds.delete(agentId);
+    await this.deliverCompletedWorkerResult(descriptor);
   }
 
   async handleRuntimeAgentEnd(
@@ -245,7 +269,9 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (this.isRuntimeRecoveryActive(agentId)) {
+    if (this.options.isRuntimeInContextRecovery(agentId)) {
+      this.workerCompletionCandidateAgentIds.add(agentId);
+      this.options.logDebug("worker_result:deferred_context_recovery", { agentId });
       return;
     }
 
@@ -265,6 +291,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
+    this.workerCompletionCandidateAgentIds.delete(agentId);
     await this.deliverCompletedWorkerResult(descriptor);
   }
 
@@ -339,6 +366,7 @@ export class SwarmWorkerHealthService {
   clearWorkerHealthState(agentId: string): void {
     this.cancelPendingTransientWorkerTerminatedError(agentId, "clear_state");
     this.deferredWorkerResultAgentIds.delete(agentId);
+    this.workerCompletionCandidateAgentIds.delete(agentId);
     this.workerResultDeliveryInFlight.delete(agentId);
     const assignmentId = this.options.descriptors.get(agentId)?.workerParentContext?.assignmentId;
     if (assignmentId) {
@@ -373,19 +401,32 @@ export class SwarmWorkerHealthService {
   }
 
   private async runWorkerHealthCheck(): Promise<void> {
-    await this.retryCompletedWorkerResults();
+    await this.reconcileWorkerResults();
     await this.runStalledWorkerCheck();
   }
 
-  private async retryCompletedWorkerResults(): Promise<void> {
+  private async reconcileWorkerResults(): Promise<void> {
     for (const descriptor of this.options.descriptors.values()) {
       if (
         !isWorkerDescriptor(descriptor) ||
         isExternalThreadDescriptor(descriptor) ||
-        !descriptor.workerParentContext?.completedAt ||
+        !descriptor.workerParentContext ||
         this.isRuntimeRecoveryActive(descriptor.agentId)
       ) {
         continue;
+      }
+      if (!descriptor.workerParentContext.completedAt) {
+        if (this.options.isRestartRecoveryDecisionPending?.()) {
+          continue;
+        }
+        const pendingCount = this.options.runtimes.get(descriptor.agentId)?.getPendingCount() ?? 0;
+        if (
+          descriptor.status !== "idle" ||
+          pendingCount > 0 ||
+          this.hasPendingTransientWorkerTerminatedError(descriptor.agentId)
+        ) {
+          continue;
+        }
       }
       await this.deliverCompletedWorkerResult(descriptor);
     }
@@ -399,6 +440,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
+    this.workerCompletionCandidateAgentIds.delete(descriptor.agentId);
     this.workerResultDeliveryInFlight.add(descriptor.agentId);
     const assignmentId = parentContext.assignmentId;
     try {

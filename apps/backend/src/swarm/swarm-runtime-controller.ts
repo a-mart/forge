@@ -127,6 +127,12 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): boolean;
   cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "clear_state"): void;
   hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
+  handleWorkerStatus(
+    agentId: string,
+    descriptor: AgentDescriptor & { role: "worker" },
+    status: AgentStatus,
+    pendingCount: number
+  ): Promise<void>;
   handleWorkerAgentEnd(
     agentId: string,
     descriptor: AgentDescriptor
@@ -757,6 +763,15 @@ export class SwarmRuntimeController {
 
     this.host.recordManagerTurnWatchdogStatus?.(agentId, runtimeToken, status, pendingCount);
     await this.getRuntimeStatusProjector().projectStatus({ agentId, status, pendingCount, contextUsage });
+    const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "worker") {
+      await this.host.handleWorkerStatus(
+        agentId,
+        descriptor as AgentDescriptor & { role: "worker" },
+        descriptor.status,
+        pendingCount,
+      );
+    }
   }
 
   async handleRuntimeSessionEvent(

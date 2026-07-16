@@ -215,6 +215,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     beginPendingTransientWorkerTerminatedError: vi.fn(() => true),
     cancelPendingTransientWorkerTerminatedError: vi.fn(),
     hasPendingTransientWorkerTerminatedError: vi.fn(() => false),
+    handleWorkerStatus: vi.fn(async () => undefined),
     finalizeWorkerIdleTurn,
     handleWorkerAgentEnd: finalizeWorkerIdleTurn,
     isRuntimeRecoveryActive: vi.fn(() => false),
@@ -473,6 +474,12 @@ describe("SwarmRuntimeController", () => {
       "streaming",
       0,
       expect.objectContaining({ tokens: 1 })
+    );
+    expect(host.handleWorkerStatus).toHaveBeenCalledWith(
+      worker.agentId,
+      expect.objectContaining({ status: "streaming" }),
+      "streaming",
+      0
     );
     const metaOrder = vi.mocked(host.updateSessionMetaForWorkerDescriptor).mock.invocationCallOrder[0];
     const statsOrder = vi.mocked(host.refreshSessionMetaStatsBySessionId).mock.invocationCallOrder[0];
