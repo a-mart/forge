@@ -80,6 +80,7 @@ describe("descriptor clone externalThread", () => {
         assignmentId: "assignment-1",
         managerId: "mgr-1",
         assignedAt: "2026-07-16T12:00:00.000Z",
+        completedAt: "2026-07-16T12:05:00.000Z",
         outputTarget: {
           kind: "session_transcript",
           channel: "web",

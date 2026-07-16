@@ -497,14 +497,14 @@ describe("CursorSdkAgentRuntime", () => {
     ["wait error status", createRun({ waitResult: { status: "error" } })],
     ["SDK ERROR status", createRun({ streamItems: [statusMessage("ERROR")], waitResult: { status: "finished" } })],
     ["SDK EXPIRED status", createRun({ streamItems: [statusMessage("EXPIRED")], waitResult: { status: "finished" } })],
-  ])("emits runtime error and suppresses success completion on %s", async (_label, run) => {
+  ])("emits runtime error and terminal agent_end without success output on %s", async (_label, run) => {
     const send = vi.fn(async () => run);
     const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
 
     await runtime.sendMessage("hello");
 
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalled());
-    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1);
     expect(callbacks.onSessionEvent).not.toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_end" }));
   });
 
@@ -753,7 +753,7 @@ describe("CursorSdkAgentRuntime", () => {
     activeScope.close();
   });
 
-  it("contains detached background auth/connect failures and projects them through prompt_dispatch without success completion", async () => {
+  it("contains detached background auth/connect failures and terminates prompt_dispatch without success output", async () => {
     const cancel = vi.fn(async () => undefined);
     const send = vi.fn(async () => {
       const backgroundError = createCursorAuthConnectError();
@@ -769,7 +769,7 @@ describe("CursorSdkAgentRuntime", () => {
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
     expect(send).toHaveBeenCalledTimes(1);
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1);
     expect(callbacks.onSessionEvent).not.toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_end" }));
     expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
       phase: "prompt_dispatch",
@@ -954,7 +954,7 @@ describe("CursorSdkAgentRuntime", () => {
 
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
     expect(send).toHaveBeenCalledTimes(2);
-    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1);
     expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
       details: expect.objectContaining({
         source: "cursor_sdk_background",
@@ -985,7 +985,7 @@ describe("CursorSdkAgentRuntime", () => {
     await waitFor(() => expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_update" })));
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
     expect(send).toHaveBeenCalledTimes(1);
-    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry after stopInFlight cancels the active attempt", async () => {
@@ -1034,7 +1034,7 @@ describe("CursorSdkAgentRuntime", () => {
     await runtime.sendMessage("hello");
 
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
-    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry unrelated awaited errors", async () => {

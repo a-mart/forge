@@ -437,6 +437,7 @@ describe("validateAgentDescriptor", () => {
         assignmentId: "assignment-1",
         managerId: "mgr-1",
         assignedAt: "2026-07-16T12:00:00.000Z",
+        completedAt: "2026-07-16T12:05:00.000Z",
         outputTarget: { kind: "internal_only", reason: "test" },
       },
     });
@@ -446,6 +447,10 @@ describe("validateAgentDescriptor", () => {
     expect(validateAgentDescriptor(baseDescriptor({
       workerParentContext: worker.workerParentContext,
     }))).toMatch(/only supported on worker descriptors/);
+    expect(validateAgentDescriptor({
+      ...worker,
+      workerParentContext: { ...worker.workerParentContext!, completedAt: " " },
+    })).toMatch(/completedAt must be a non-empty string/);
   });
 
   it("normalizes project agent handle when sanitize changes it", () => {

@@ -69,6 +69,7 @@ async function createRecoveryFixture(): Promise<RecoveryFixture> {
     from: worker.agentId,
     to: 'manager',
     message: RECOVERED_REPORT,
+    assignmentId: 'assignment:recovery-worker:persisted',
     at: NOW,
   })
 
@@ -95,7 +96,11 @@ async function persistAgentStatuses(
   await writeFile(config.paths.agentsStoreFile, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
 }
 
-async function persistWorkerParentContext(config: SwarmConfig, workerId: string): Promise<void> {
+async function persistWorkerParentContext(
+  config: SwarmConfig,
+  workerId: string,
+  assignmentId = 'assignment:recovery-worker:persisted',
+): Promise<void> {
   const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
     agents: AgentDescriptor[]
     profiles?: unknown[]
@@ -105,7 +110,7 @@ async function persistWorkerParentContext(config: SwarmConfig, workerId: string)
         ...agent,
         workerParentContext: {
           schemaVersion: 1,
-          assignmentId: 'assignment:recovery-worker:persisted',
+          assignmentId,
           managerId: 'manager',
           assignedAt: NOW,
           outputTarget: { kind: 'internal_only', reason: 'restart_recovery_test' },
@@ -137,6 +142,7 @@ describe('SwarmManager restart recovery characterization', () => {
           fromAgentId: fixture.workerId,
           toAgentId: 'manager',
           turnId: 'manager-turn-before-restart',
+          assignmentId: 'assignment:recovery-worker:persisted',
         }],
       })
 
@@ -208,6 +214,10 @@ describe('SwarmManager restart recovery characterization', () => {
       expect(managerMessages.some((message) => message.includes('backend restarted while you were mid-turn'))).toBe(true)
       expect(managerMessages.some((message) => message.includes(RECOVERED_REPORT))).toBe(true)
 
+      const ledgerAfterResume = await replayTurnLedger(fixture.target)
+      expect(ledgerAfterResume.pendingDeliveries.has(RECOVERED_DELIVERY_ID)).toBe(false)
+      expect(ledgerAfterResume.ackedDeliveries.has(RECOVERED_DELIVERY_ID)).toBe(true)
+
       const callsAfterFirstResume = {
         manager: managerMessages.length,
         worker: workerMessages.length,
@@ -215,6 +225,33 @@ describe('SwarmManager restart recovery characterization', () => {
       expect(await recovered.resumeRestartRecovery()).toMatchObject({ resumedAt: NOW })
       expect(recovered.runtimeByAgentId.get('manager')?.sendCalls).toHaveLength(callsAfterFirstResume.manager)
       expect(recovered.runtimeByAgentId.get(fixture.workerId)?.sendCalls).toHaveLength(callsAfterFirstResume.worker)
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
+  it('does not let a stale recovered result consume a newer worker assignment', async () => {
+    const fixture = await createRecoveryFixture()
+    try {
+      await persistWorkerParentContext(
+        fixture.config,
+        fixture.workerId,
+        'assignment:recovery-worker:newer',
+      )
+      const recovered = new TestSwarmManager(fixture.config, { now: () => NOW })
+      await recovered.boot()
+
+      await recovered.resumeRestartRecovery()
+
+      const currentWorker = recovered.listAgentsForInternalUse()
+        .find((agent) => agent.agentId === fixture.workerId)
+      expect(currentWorker?.workerParentContext?.assignmentId)
+        .toBe('assignment:recovery-worker:newer')
+      expect(sentMessageText(recovered.runtimeByAgentId.get('manager')))
+        .not.toContain(expect.stringContaining(RECOVERED_REPORT))
+      const ledger = await replayTurnLedger(fixture.target)
+      expect(ledger.pendingDeliveries.has(RECOVERED_DELIVERY_ID)).toBe(false)
+      expect(ledger.ackedDeliveries.has(RECOVERED_DELIVERY_ID)).toBe(true)
     } finally {
       await fixture.cleanup()
     }

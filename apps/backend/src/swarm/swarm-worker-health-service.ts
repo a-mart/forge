@@ -71,6 +71,7 @@ export interface SwarmWorkerHealthServiceOptions {
   emitAgentsSnapshot(): void;
   isRuntimeInContextRecovery(agentId: string): boolean;
   isRuntimeRecoveryActive?(agentId: string): boolean;
+  now(): string;
   logDebug(message: string, details?: unknown): void;
   onHealthSweep?(): void | Promise<void>;
 }
@@ -82,6 +83,8 @@ export class SwarmWorkerHealthService {
   private readonly transientWorkerTerminatedTimers = new Map<string, NodeJS.Timeout>();
   private readonly transientWorkerTerminatedTimerTokens = new Map<string, number>();
   private readonly deferredWorkerResultAgentIds = new Set<string>();
+  private readonly workerResultDeliveryInFlight = new Set<string>();
+  private readonly notifiedFailedAssignmentIds = new Set<string>();
 
   private stallCheckInterval: NodeJS.Timeout | null = null;
   private stallCheckPromise: Promise<void> | null = null;
@@ -92,6 +95,12 @@ export class SwarmWorkerHealthService {
     if (this.stallCheckInterval) {
       return;
     }
+
+    void this.retryCompletedWorkerResults().catch((error) => {
+      this.options.logDebug("worker_result:startup_retry:error", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
 
     this.stallCheckInterval = setInterval(() => {
       void this.checkForStalledWorkers().catch((error) => {
@@ -246,7 +255,17 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    await this.options.workerResults.deliverCompletedWorker(descriptor);
+    const runtime = this.options.runtimes.get(agentId);
+    const pendingCount = runtime?.getPendingCount() ?? 0;
+    if (pendingCount > 0) {
+      this.options.logDebug("worker_result:deferred_pending_followups", {
+        agentId,
+        pendingCount
+      });
+      return;
+    }
+
+    await this.deliverCompletedWorkerResult(descriptor);
   }
 
   reconcileRuntimeStateAfterFallbackRollback(
@@ -279,7 +298,7 @@ export class SwarmWorkerHealthService {
       return this.stallCheckPromise;
     }
 
-    const run = this.runStalledWorkerCheck().finally(() => {
+    const run = this.runWorkerHealthCheck().finally(() => {
       if (this.stallCheckPromise === run) {
         this.stallCheckPromise = null;
       }
@@ -320,6 +339,11 @@ export class SwarmWorkerHealthService {
   clearWorkerHealthState(agentId: string): void {
     this.cancelPendingTransientWorkerTerminatedError(agentId, "clear_state");
     this.deferredWorkerResultAgentIds.delete(agentId);
+    this.workerResultDeliveryInFlight.delete(agentId);
+    const assignmentId = this.options.descriptors.get(agentId)?.workerParentContext?.assignmentId;
+    if (assignmentId) {
+      this.notifiedFailedAssignmentIds.delete(assignmentId);
+    }
     this.transientWorkerTerminatedTimerTokens.delete(agentId);
   }
 
@@ -343,8 +367,76 @@ export class SwarmWorkerHealthService {
         !isExternalThreadDescriptor(descriptor) &&
         !this.isRuntimeRecoveryActive(agentId)
       ) {
-        await this.options.workerResults.deliverCompletedWorker(descriptor);
+        await this.handleRuntimeAgentEnd(agentId, descriptor);
       }
+    }
+  }
+
+  private async runWorkerHealthCheck(): Promise<void> {
+    await this.retryCompletedWorkerResults();
+    await this.runStalledWorkerCheck();
+  }
+
+  private async retryCompletedWorkerResults(): Promise<void> {
+    for (const descriptor of this.options.descriptors.values()) {
+      if (
+        !isWorkerDescriptor(descriptor) ||
+        isExternalThreadDescriptor(descriptor) ||
+        !descriptor.workerParentContext?.completedAt ||
+        this.isRuntimeRecoveryActive(descriptor.agentId)
+      ) {
+        continue;
+      }
+      await this.deliverCompletedWorkerResult(descriptor);
+    }
+  }
+
+  private async deliverCompletedWorkerResult(
+    descriptor: AgentDescriptor & { role: "worker" }
+  ): Promise<void> {
+    const parentContext = descriptor.workerParentContext;
+    if (!parentContext || this.workerResultDeliveryInFlight.has(descriptor.agentId)) {
+      return;
+    }
+
+    this.workerResultDeliveryInFlight.add(descriptor.agentId);
+    const assignmentId = parentContext.assignmentId;
+    try {
+      if (!parentContext.completedAt) {
+        parentContext.completedAt = this.options.now();
+        await this.options.saveStore().catch((error) => {
+          this.options.logDebug("worker_result:completion_persist:error", {
+            agentId: descriptor.agentId,
+            assignmentId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }
+
+      const outcome = await this.options.workerResults.deliverCompletedWorker(descriptor);
+      if (outcome !== "failed") {
+        this.notifiedFailedAssignmentIds.delete(assignmentId);
+        return;
+      }
+
+      if (this.notifiedFailedAssignmentIds.has(assignmentId)) {
+        return;
+      }
+      this.notifiedFailedAssignmentIds.add(assignmentId);
+      await this.options.publishToUser(
+        descriptor.managerId,
+        `Worker \`${descriptor.agentId}\` completed, but its result is waiting for delivery. Forge will retry automatically.`,
+        "system"
+      ).catch((error) => {
+        this.notifiedFailedAssignmentIds.delete(assignmentId);
+        this.options.logDebug("worker_result:delivery_failure_notice:error", {
+          agentId: descriptor.agentId,
+          assignmentId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+    } finally {
+      this.workerResultDeliveryInFlight.delete(descriptor.agentId);
     }
   }
 

@@ -13,15 +13,19 @@ const STALL_NUDGE_THRESHOLD_MS = 5 * 60 * 1000;
 
 function createHarness(options: {
   descriptors?: Map<string, AgentDescriptor>;
+  runtimes?: Map<string, SwarmAgentRuntime>;
+  deliverCompletedWorker?: WorkerResultCoordinator["deliverCompletedWorker"];
   isRuntimeInContextRecovery?: (agentId: string) => boolean;
   isRuntimeRecoveryActive?: (agentId: string) => boolean;
 } = {}) {
-  const deliverCompletedWorker = vi.fn(async () => "sent" as const);
+  const deliverCompletedWorker = vi.fn(
+    options.deliverCompletedWorker ?? (async () => "sent" as const),
+  );
   const sendMessage = vi.fn(async () => ({}));
   const publishToUser = vi.fn(async () => ({}));
   const serviceOptions: SwarmWorkerHealthServiceOptions = {
     descriptors: options.descriptors ?? new Map(),
-    runtimes: new Map<string, SwarmAgentRuntime>(),
+    runtimes: options.runtimes ?? new Map<string, SwarmAgentRuntime>(),
     workerResults: { deliverCompletedWorker } as unknown as WorkerResultCoordinator,
     sendMessage,
     publishToUser,
@@ -30,6 +34,7 @@ function createHarness(options: {
     emitAgentsSnapshot: vi.fn(),
     isRuntimeInContextRecovery: options.isRuntimeInContextRecovery ?? (() => false),
     isRuntimeRecoveryActive: options.isRuntimeRecoveryActive,
+    now: () => "2026-07-16T12:00:00.000Z",
     logDebug: vi.fn(),
   };
   return {
@@ -41,7 +46,16 @@ function createHarness(options: {
 }
 
 function worker(agentId = "worker-1", status: AgentDescriptor["status"] = "streaming") {
-  return createWorkerDescriptor("/tmp/project", "manager-1", { agentId, status });
+  return {
+    ...createWorkerDescriptor("/tmp/project", "manager-1", { agentId, status }),
+    workerParentContext: {
+      schemaVersion: 1 as const,
+      assignmentId: `assignment:${agentId}`,
+      managerId: "manager-1",
+      assignedAt: "2026-07-16T11:59:00.000Z",
+      outputTarget: { kind: "internal_only" as const },
+    },
+  };
 }
 
 function manager(status: AgentDescriptor["status"] = "streaming") {
@@ -73,6 +87,45 @@ describe("SwarmWorkerHealthService", () => {
 
     expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
     expect(deliverCompletedWorker).toHaveBeenCalledWith(workerDescriptor);
+    expect(workerDescriptor.workerParentContext.completedAt).toBe("2026-07-16T12:00:00.000Z");
+  });
+
+  it("waits for queued worker follow-ups before treating agent_end as assignment completion", async () => {
+    const workerDescriptor = worker();
+    let pendingCount = 2;
+    const runtime = {
+      getPendingCount: () => pendingCount,
+    } as SwarmAgentRuntime;
+    const { service, deliverCompletedWorker } = createHarness({
+      descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
+      runtimes: new Map([[workerDescriptor.agentId, runtime]]),
+    });
+
+    await service.handleRuntimeAgentEnd(workerDescriptor.agentId, workerDescriptor);
+    pendingCount = 0;
+    await service.handleRuntimeAgentEnd(workerDescriptor.agentId, workerDescriptor);
+
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains and retries a completed assignment after delivery fails", async () => {
+    const workerDescriptor = worker();
+    const { service, deliverCompletedWorker, publishToUser } = createHarness({
+      descriptors: new Map([[workerDescriptor.agentId, workerDescriptor]]),
+      deliverCompletedWorker: async () => "failed",
+    });
+
+    await service.handleRuntimeAgentEnd(workerDescriptor.agentId, workerDescriptor);
+    await service.checkForStalledWorkers();
+
+    expect(workerDescriptor.workerParentContext.completedAt).toBe("2026-07-16T12:00:00.000Z");
+    expect(deliverCompletedWorker).toHaveBeenCalledTimes(2);
+    expect(publishToUser).toHaveBeenCalledTimes(1);
+    expect(publishToUser).toHaveBeenCalledWith(
+      "manager-1",
+      expect.stringContaining("Forge will retry automatically"),
+      "system",
+    );
   });
 
   it("does not use worker idle status as a second completion signal", async () => {

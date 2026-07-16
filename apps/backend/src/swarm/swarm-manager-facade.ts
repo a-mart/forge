@@ -486,7 +486,7 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
   sendWorkerResult(
     workerAgentId: string,
     resultText: string,
-    expectedAssignmentId?: string,
+    expectedAssignmentId: string,
   ): Promise<SendMessageReceipt> {
     return this.services.messages.sendWorkerResult(
       workerAgentId,

@@ -504,6 +504,9 @@ function validateWorkerParentContext(value: unknown, descriptorManagerId: unknow
   if (!isNonEmptyString(value.assignedAt)) {
     return "workerParentContext.assignedAt must be a non-empty string";
   }
+  if (value.completedAt !== undefined && !isNonEmptyString(value.completedAt)) {
+    return "workerParentContext.completedAt must be a non-empty string when provided";
+  }
   if (value.rootTurnId !== undefined && !isNonEmptyString(value.rootTurnId)) {
     return "workerParentContext.rootTurnId must be a non-empty string when provided";
   }

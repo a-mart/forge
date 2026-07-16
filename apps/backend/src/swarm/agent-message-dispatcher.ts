@@ -99,6 +99,7 @@ export interface AgentMessageLedgerPort {
     fromAgentId: string;
     targetAgentId: string;
     message: string;
+    assignmentId?: string;
     at: string;
   }): Promise<void>;
   recordDeliveryAcked(input: {
@@ -276,6 +277,15 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     if (sender.role === "manager" && target.role === "worker" && target.managerId !== sender.agentId) {
       throw new Error(`Manager ${sender.agentId} does not own worker ${targetAgentId}`);
     }
+    if (
+      sender.role === "manager" &&
+      target.role === "worker" &&
+      target.workerParentContext?.completedAt
+    ) {
+      throw new Error(
+        `Worker ${targetAgentId} completed its current assignment and is waiting for result delivery.`,
+      );
+    }
 
     if (sendOptions?.planStep && (sender.role !== "manager" || target.role !== "worker")) {
       throw new Error("planStep can only accompany a manager assignment to one of its workers.");
@@ -337,7 +347,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
   async sendWorkerResult(
     workerAgentId: string,
     resultText: string,
-    expectedAssignmentId?: string,
+    expectedAssignmentId: string,
   ): Promise<SendMessageReceipt> {
     const worker = this.options.descriptors.get(workerAgentId);
     if (!worker || worker.role !== "worker") {
@@ -350,21 +360,12 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     }
 
     const persistedParent = worker.workerParentContext;
-    if (
-      expectedAssignmentId &&
-      persistedParent?.assignmentId !== expectedAssignmentId
-    ) {
+    if (!persistedParent || persistedParent.assignmentId !== expectedAssignmentId) {
       throw new Error(
         `Worker result assignment changed before delivery: ${workerAgentId}`,
       );
     }
-    const parentContext = persistedParent ?? {
-      schemaVersion: 1 as const,
-      assignmentId: `legacy:${worker.agentId}:${this.createDeliveryNonce()}`,
-      managerId: target.agentId,
-      assignedAt: this.options.now(),
-      outputTarget: { kind: "internal_only" as const, reason: "missing_worker_parent" },
-    };
+    const parentContext = persistedParent;
     const message = formatWorkerResultMessage(worker.agentId, parentContext.assignmentId, resultText);
     const receipt = await this.sendRuntimeMessage({
       sender: worker,
@@ -621,6 +622,9 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
         fromAgentId: input.sender.agentId,
         targetAgentId: input.target.agentId,
         message: input.ledgerMessage ?? input.message,
+        ...(input.workerResult
+          ? { assignmentId: input.workerResult.parentContext.assignmentId }
+          : {}),
         at: this.options.now(),
       }).catch((error) => {
         this.options.logDebug("turn_ledger:delivery_pending:error", {
@@ -1013,6 +1017,7 @@ function cloneWorkerParentContext(
         assignmentId: context.assignmentId,
         managerId: context.managerId,
         assignedAt: context.assignedAt,
+        ...(context.completedAt ? { completedAt: context.completedAt } : {}),
         outputTarget: cloneAssistantOutputTarget(context.outputTarget),
         ...(context.rootTurnId ? { rootTurnId: context.rootTurnId } : {}),
         ...(context.parentRootTurnId ? { parentRootTurnId: context.parentRootTurnId } : {}),

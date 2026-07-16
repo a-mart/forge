@@ -32,19 +32,17 @@ function assignedWorker(): AgentDescriptor & { role: "worker" } {
       status: "idle",
     }),
     workerParentContext: {
-      version: 1,
+      schemaVersion: 1,
       assignmentId: "assignment-1",
       managerId: "manager-1",
       assignedAt: "2026-07-16T11:59:00.000Z",
       outputTarget: {
         kind: "session_transcript",
-        sessionAgentId: "manager-1",
         channel: "web",
       },
       rootTurnId: "user-turn-1",
-      rootMessageId: "user-message-1",
     },
-  } as AgentDescriptor & { role: "worker" };
+  };
 }
 
 describe("WorkerResultCoordinator", () => {
@@ -93,6 +91,14 @@ describe("WorkerResultCoordinator", () => {
     ].join("\n"));
   });
 
+  it("marks projected runtime errors blocked", () => {
+    expect(buildWorkerResult("worker-1", [
+      message("⚠️ Agent error: provider unavailable. Message may need to be resent.", {
+        role: "system",
+      }),
+    ])).toContain("status: blocked");
+  });
+
   it("ignores legacy worker-report rows when selecting the final", () => {
     const history: ConversationEntryEvent[] = [
       message("The actual worker conclusion."),
@@ -104,6 +110,25 @@ describe("WorkerResultCoordinator", () => {
 
     expect(buildWorkerResult("worker-1", history)).toContain("The actual worker conclusion.");
     expect(buildWorkerResult("worker-1", history)).not.toContain("legacy wrapper");
+  });
+
+  it("preserves an already structured worker result without nesting status fields", () => {
+    expect(buildWorkerResult("worker-1", [
+      message("status: partial\nsummary: Core work passed; one optional check remains."),
+    ])).toBe("status: partial\nsummary: Core work passed; one optional check remains.");
+  });
+
+  it("ignores trailing whitespace-only messages", () => {
+    expect(buildWorkerResult("worker-1", [
+      message("The actual worker conclusion."),
+      message("  \n  ", { role: "system" }),
+    ])).toContain("The actual worker conclusion.");
+  });
+
+  it("does not classify a benign system summary as blocked for mentioning a handled error", () => {
+    expect(buildWorkerResult("worker-1", [
+      message("Completed successfully after handling an expected error case.", { role: "system" }),
+    ])).toContain("status: done");
   });
 
   it("does not replay an assistant final from before the current assignment", async () => {

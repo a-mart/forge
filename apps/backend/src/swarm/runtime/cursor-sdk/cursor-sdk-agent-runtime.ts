@@ -497,6 +497,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
           freezeCursorUsageOutcome(active, active.cancelled ? undefined : "error");
           if (!active.cancelled) {
             await this.safeEmitRuntimeError(error, active);
+            await this.safeEmitFailedPromptEnd();
           }
           break;
         } finally {
@@ -781,6 +782,25 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       if (event.type === "agent_end") {
         await this.callbacks.onAgentEnd?.(this.descriptor.agentId);
       }
+    }
+  }
+
+  private async safeEmitFailedPromptEnd(): Promise<void> {
+    this.eventMapper.reset();
+    const event = { type: "agent_end" } as const;
+    try {
+      await this.callbacks.onSessionEvent?.(this.descriptor.agentId, event);
+    } catch (error) {
+      this.logDebug("cursor_sdk:failed_prompt_agent_end_event:error", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+    try {
+      await this.callbacks.onAgentEnd?.(this.descriptor.agentId);
+    } catch (error) {
+      this.logDebug("cursor_sdk:failed_prompt_agent_end_callback:error", {
+        message: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 

@@ -617,19 +617,15 @@ export class RuntimeEventProjector {
         route?.requiresVisibleResponse !== false &&
         (
           reasonCode === "render:user_web" ||
-          reasonCode === "render:scheduled_web" ||
-          reasonCode === "render:worker_result_closeout"
+          reasonCode === "render:scheduled_web"
         )
       ) {
-        const text = route?.sourceWorkerId
-          ? `Worker \`${route.sourceWorkerId}\` completed; the manager did not summarize the result. View the worker result in All.`
-          : "The manager completed this turn without a visible response.";
         this.pendingSilentManagerNotices.set(agentId, {
           type: "conversation_message",
           agentId,
           turnId,
           role: "system",
-          text,
+          text: "The manager completed this turn without a visible response.",
           timestamp: this.deps.now(),
           source: "system",
         });

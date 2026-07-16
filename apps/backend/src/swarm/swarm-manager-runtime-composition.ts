@@ -139,7 +139,7 @@ export interface RuntimeCompositionMessaging {
   sendWorkerResult(
     workerAgentId: string,
     resultText: string,
-    expectedAssignmentId?: string,
+    expectedAssignmentId: string,
   ): Promise<SendMessageReceipt>;
   publishToUser(
     agentId: string,
@@ -566,8 +566,8 @@ export class SwarmManagerRuntimeComposition {
       emitAgentsSnapshot: events.emitAgentsSnapshot,
       isRuntimeInContextRecovery: (agentId) =>
         this.requireRuntimeLifecycle().isRuntimeInContextRecovery(agentId),
-      isRuntimeRecoveryActive: (agentId) =>
-        this.requireRuntimeLifecycle().isRuntimeRecoveryActive(agentId),
+      isRuntimeRecoveryActive: (agentId) => this.requireRuntimeLifecycle().isRuntimeRecoveryActive(agentId),
+      now: state.now,
       onHealthSweep: () => this.requireRuntimeLifecycle().runLivenessHealthSweep(),
       logDebug: events.logDebug,
     });

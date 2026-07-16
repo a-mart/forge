@@ -157,6 +157,8 @@ export interface WorkerParentContext {
   assignmentId: string;
   managerId: string;
   assignedAt: string;
+  /** Set before result delivery so a completed assignment survives delivery failure/restart. */
+  completedAt?: string;
   outputTarget: AssistantOutputTarget;
   rootTurnId?: string;
   parentRootTurnId?: string;

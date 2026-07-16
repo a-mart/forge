@@ -291,7 +291,11 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     const harness = createHarness();
     harness.worker.workerParentContext = parentContext();
 
-    await harness.dispatcher.sendWorkerResult("worker-1", "status: done\nsummary: finished");
+    await harness.dispatcher.sendWorkerResult(
+      "worker-1",
+      "status: done\nsummary: finished",
+      "assignment-1",
+    );
 
     const resultInput = harness.runtimeInputs[0]?.input;
     expect(resultInput).toBeTypeOf("string");
@@ -312,6 +316,7 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     expect(harness.ledgerPending[0]).toMatchObject({
       turnId: "turn-1",
       message: "status: done\nsummary: finished",
+      assignmentId: "assignment-1",
     });
     expect(harness.ledgerPending[0]?.turnId).not.toBe("active-user-b");
     expect(harness.worker.workerParentContext).toBeUndefined();
@@ -323,8 +328,26 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     harness.worker.workerParentContext = parentContext();
 
     await expect(
-      harness.dispatcher.sendWorkerResult("worker-1", "status: blocked\nsummary: failed"),
+      harness.dispatcher.sendWorkerResult(
+        "worker-1",
+        "status: blocked\nsummary: failed",
+        "assignment-1",
+      ),
     ).resolves.toMatchObject({ targetAgentId: "manager-1" });
+  });
+
+  it("does not reuse a worker while its completed result is awaiting delivery", async () => {
+    const harness = createHarness();
+    harness.worker.workerParentContext = {
+      ...parentContext("assignment-awaiting-delivery"),
+      completedAt: "2026-07-16T01:01:00.000Z",
+    };
+
+    await expect(
+      harness.dispatcher.sendMessage("manager-1", "worker-1", "Start different work"),
+    ).rejects.toThrow("waiting for result delivery");
+
+    expect(harness.runtimeInputs).toHaveLength(0);
   });
 
   it("does not let workers recreate the old callback protocol", async () => {

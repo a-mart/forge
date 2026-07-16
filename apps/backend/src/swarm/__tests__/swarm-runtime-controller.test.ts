@@ -1215,7 +1215,14 @@ describe("SwarmRuntimeController", () => {
       agentId: "worker-transient-controller",
       role: "worker",
       managerId: manager.agentId,
-      status: "streaming"
+      status: "streaming",
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment:worker-transient-controller",
+        managerId: manager.agentId,
+        assignedAt: "2026-07-16T12:00:00.000Z",
+        outputTarget: { kind: "internal_only" }
+      }
     });
     descriptors.set(manager.agentId, manager);
     descriptors.set(worker.agentId, worker);
@@ -1232,6 +1239,7 @@ describe("SwarmRuntimeController", () => {
       emitAgentsSnapshot: vi.fn(),
       isRuntimeInContextRecovery: vi.fn(() => false),
       isRuntimeRecoveryActive: vi.fn(() => false),
+      now: () => "2026-07-16T12:01:00.000Z",
       logDebug: vi.fn()
     });
     host.beginPendingTransientWorkerTerminatedError = vi.fn((agentId, event, expire) =>
@@ -1563,7 +1571,14 @@ describe("SwarmRuntimeController", () => {
       role: "worker",
       managerId: "m1",
       status: "streaming",
-      profileId: "p1"
+      profileId: "p1",
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "assignment:w-transient-controller",
+        managerId: "m1",
+        assignedAt: "2026-07-16T12:00:00.000Z",
+        outputTarget: { kind: "internal_only" }
+      }
     });
     descriptors.set(manager.agentId, manager);
     descriptors.set(worker.agentId, worker);
@@ -1587,6 +1602,7 @@ describe("SwarmRuntimeController", () => {
       emitAgentsSnapshot: vi.fn(),
       isRuntimeInContextRecovery: vi.fn(() => false),
       isRuntimeRecoveryActive: vi.fn(() => false),
+      now: () => "2026-07-16T12:01:00.000Z",
       logDebug: vi.fn()
     });
     host.workerStallState = health.workerStallState;

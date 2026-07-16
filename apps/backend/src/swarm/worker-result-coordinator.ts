@@ -3,7 +3,7 @@ import type {
   ConversationEntryEvent,
   ConversationMessageEvent,
 } from "./types.js";
-import { previewForLog, trimToMaxChars } from "./swarm-manager-utils.js";
+import { previewForLog } from "./swarm-manager-utils.js";
 
 const MAX_WORKER_RESULT_CHARS = 16_000;
 
@@ -77,14 +77,15 @@ export function buildWorkerResult(
   }
 
   const rawText = finalMessage.text.trim();
-  const status = looksLikeWorkerError(finalMessage) ? "blocked" : "done";
-  const lines = [
-    `status: ${status}`,
-    "summary:",
-    rawText.length > 0
-      ? trimToMaxChars(rawText, MAX_WORKER_RESULT_CHARS)
-      : `Worker ${workerAgentId} completed without a final text result.`,
-  ];
+  const lines = /^status:\s*(?:done|partial|blocked)(?:\s|$)/i.test(rawText)
+    ? [rawText]
+    : [
+        `status: ${looksLikeWorkerError(finalMessage) ? "blocked" : "done"}`,
+        "summary:",
+        rawText.length > 0
+          ? rawText
+          : `Worker ${workerAgentId} completed without a final text result.`,
+      ];
   const attachmentCount = finalMessage.attachments?.length ?? 0;
   if (attachmentCount > 0) {
     lines.push(
@@ -92,7 +93,7 @@ export function buildWorkerResult(
       `attachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}`,
     );
   }
-  return lines.join("\n");
+  return truncateWorkerResult(lines.join("\n"));
 }
 
 function findLatestWorkerFinal(
@@ -106,6 +107,7 @@ function findLatestWorkerFinal(
       entry?.type === "conversation_message" &&
       (entry.role === "assistant" || entry.role === "system") &&
       entry.source !== "worker_report" &&
+      (entry.text.trim().length > 0 || (entry.attachments?.length ?? 0) > 0) &&
       (
         assignedAtMs === undefined ||
         Number.isNaN(assignedAtMs) ||
@@ -121,6 +123,16 @@ function findLatestWorkerFinal(
 function looksLikeWorkerError(message: ConversationMessageEvent): boolean {
   return (
     message.role === "system" &&
-    /(?:error|failed|blocked|terminated|timed out)/i.test(message.text)
+    /^(?:⚠️\s*)?(?:worker\b.*\b(?:failed|blocked|terminated|timed out)\b|(?:agent|runtime|compaction|context guard|extension) error\b|error:)/i.test(
+      message.text.trim(),
+    )
   );
+}
+
+function truncateWorkerResult(text: string): string {
+  if (text.length <= MAX_WORKER_RESULT_CHARS) {
+    return text;
+  }
+  const marker = "\n\n[worker result truncated]";
+  return `${text.slice(0, MAX_WORKER_RESULT_CHARS - marker.length).trimEnd()}${marker}`;
 }

@@ -1121,6 +1121,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           from: input.fromAgentId,
           to: input.targetAgentId,
           message: input.message,
+          ...(input.assignmentId ? { assignmentId: input.assignmentId } : {}),
           at: input.at,
         });
       },

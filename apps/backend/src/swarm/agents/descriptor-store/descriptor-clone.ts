@@ -52,6 +52,7 @@ function cloneWorkerParentContext(context: WorkerParentContext | undefined): Wor
         assignmentId: context.assignmentId,
         managerId: context.managerId,
         assignedAt: context.assignedAt,
+        ...(context.completedAt ? { completedAt: context.completedAt } : {}),
         outputTarget: cloneAssistantOutputTarget(context.outputTarget),
         ...(context.rootTurnId ? { rootTurnId: context.rootTurnId } : {}),
         ...(context.parentRootTurnId ? { parentRootTurnId: context.parentRootTurnId } : {}),

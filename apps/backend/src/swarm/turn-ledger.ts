@@ -23,7 +23,16 @@ export type TurnLedgerRecord =
       initiatedBy?: string;
       at: string;
     }
-  | { t: "delivery_pending"; turnId?: string; deliveryId: string; from: string; to: string; message?: string; at: string }
+  | {
+      t: "delivery_pending";
+      turnId?: string;
+      deliveryId: string;
+      from: string;
+      to: string;
+      message?: string;
+      assignmentId?: string;
+      at: string;
+    }
   | { t: "delivery_acked"; deliveryId: string; at: string }
   | { t: "turn_terminal"; turnId: string; outcome: TurnLedgerTerminalOutcome; at: string }
   | { t: "turn_stalled"; turnId: string; agentId: string; tier: 1 | 2 | 3; at: string }

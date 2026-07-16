@@ -3,6 +3,7 @@ export interface RestartRecoveryReport {
   fromAgentId: string
   toAgentId: string
   turnId?: string
+  assignmentId?: string
 }
 
 export interface RestartRecoverySnapshot {

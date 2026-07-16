@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RestartRecoverySnapshot } from "@forge/protocol";
+import type { RestartRecoveryReport, RestartRecoverySnapshot } from "@forge/protocol";
 import {
   appendTurnLedgerRecord,
   replayTurnLedger,
@@ -28,7 +28,7 @@ export interface RestartRecoveryCoordinatorOptions {
   sendWorkerResult: (
     workerAgentId: string,
     resultText: string,
-    expectedAssignmentId?: string,
+    expectedAssignmentId: string,
   ) => Promise<SendMessageReceipt>;
   now: () => string;
   onDecisionResolved?: () => void;
@@ -47,7 +47,13 @@ export class RestartRecoveryCoordinator {
     const interruptedWorkers = new Set<string>();
     const undeliveredReports = new Map<
       string,
-      { deliveryId: string; fromAgentId: string; toAgentId: string; turnId?: string }
+      {
+        deliveryId: string;
+        fromAgentId: string;
+        toAgentId: string;
+        turnId?: string;
+        assignmentId?: string;
+      }
     >();
 
     for (const descriptor of this.options.descriptors.values()) {
@@ -126,6 +132,7 @@ export class RestartRecoveryCoordinator {
           fromAgentId: pending.from,
           toAgentId: pending.to,
           ...(pending.turnId ? { turnId: pending.turnId } : {}),
+          ...(pending.assignmentId ? { assignmentId: pending.assignmentId } : {}),
         });
       }
     }
@@ -202,34 +209,57 @@ export class RestartRecoveryCoordinator {
 
       const pendingMessages = await this.resolvePendingReportMessages(snapshot);
       for (const report of snapshot.undeliveredReports) {
-      const message = pendingMessages.get(report.deliveryId);
-      if (!message) continue;
-      const source = this.options.descriptors.get(report.fromAgentId);
-      const isWorkerResult =
-        report.deliveryId.startsWith("worker-result:") ||
-        (report.deliveryId.startsWith("worker-report:") && source?.role === "worker");
-      const redelivery = isWorkerResult && source?.role === "worker"
-        ? this.options.sendWorkerResult(
-            source.agentId,
-            message,
-            source.workerParentContext?.assignmentId,
-          )
-        : this.options.sendMessage(
-            report.fromAgentId,
-            report.toAgentId,
-            message,
-            "auto",
-            { origin: "internal" },
-          );
-      await redelivery
-        .catch((error) => {
+        const message = pendingMessages.get(report.deliveryId);
+        if (!message) continue;
+        const source = this.options.descriptors.get(report.fromAgentId);
+        const isWorkerResult =
+          report.deliveryId.startsWith("worker-result:") ||
+          (report.deliveryId.startsWith("worker-report:") && source?.role === "worker");
+        try {
+          if (isWorkerResult && source?.role === "worker") {
+            if (
+              report.assignmentId &&
+              source.workerParentContext?.assignmentId === report.assignmentId
+            ) {
+              await this.options.sendWorkerResult(
+                source.agentId,
+                message,
+                report.assignmentId,
+              );
+            } else if (report.assignmentId) {
+              this.options.logDebug("restart_recovery:worker_result_obsolete", {
+                deliveryId: report.deliveryId,
+                workerAgentId: source.agentId,
+                assignmentId: report.assignmentId,
+                currentAssignmentId: source.workerParentContext?.assignmentId,
+              });
+            } else {
+              await this.options.sendMessage(
+                report.toAgentId,
+                report.toAgentId,
+                formatLegacyRecoveredWorkerResult(source.agentId, message),
+                "auto",
+                { origin: "internal" },
+              );
+            }
+          } else {
+            await this.options.sendMessage(
+              report.fromAgentId,
+              report.toAgentId,
+              message,
+              "auto",
+              { origin: "internal" },
+            );
+          }
+          await this.ackRecoveredDelivery(report);
+        } catch (error) {
           this.options.logDebug("restart_recovery:report_redelivery:error", {
             deliveryId: report.deliveryId,
             fromAgentId: report.fromAgentId,
             toAgentId: report.toAgentId,
             message: error instanceof Error ? error.message : String(error),
           });
-        });
+        }
       }
 
       return this.getSnapshot();
@@ -269,6 +299,18 @@ export class RestartRecoveryCoordinator {
     return messages;
   }
 
+  private async ackRecoveredDelivery(report: RestartRecoveryReport): Promise<void> {
+    const target = this.options.getSessionTarget(report.toAgentId);
+    if (!target) {
+      return;
+    }
+    await appendTurnLedgerRecord(target, {
+      t: "delivery_acked",
+      deliveryId: report.deliveryId,
+      at: this.options.now(),
+    });
+  }
+
   private logResumeError(
     role: "worker" | "manager",
     agentId: string,
@@ -279,6 +321,14 @@ export class RestartRecoveryCoordinator {
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function formatLegacyRecoveredWorkerResult(workerAgentId: string, message: string): string {
+  return [
+    `SYSTEM: Recovered an undelivered result from worker \`${workerAgentId}\`:`,
+    "",
+    message,
+  ].join("\n");
 }
 
 function cloneSnapshot(snapshot: RestartRecoverySnapshot): RestartRecoverySnapshot {
