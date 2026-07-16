@@ -26,6 +26,8 @@ type CollaborationInviteErrorCode =
   | "invalid_password"
   | "email_mismatch"
   | "duplicate_email"
+  | "existing_member"
+  | "duplicate_pending_invite"
   | "invalid_expires_in_days"
   | "missing_base_url";
 
@@ -74,34 +76,34 @@ export class CollaborationInviteService {
     const expiresAtIso = expiresAt.toISOString();
 
     this.db.transaction(() => {
-      const replacedInvites = this.db.prepare<[string, string], CollaborationInviteRow>(
-        `SELECT invite_id,
-                token_hash,
-                email,
-                role,
-                invited_by_user_id,
-                created_at,
-                expires_at,
-                revoked_at,
-                consumed_at,
-                consumed_by_user_id
+      const existingMember = this.db.prepare<[string], { user_id: string }>(
+        `SELECT cu.user_id
+         FROM collaboration_user cu
+         JOIN "user" u ON u.id = cu.user_id
+         WHERE LOWER(u.email) = ?
+         LIMIT 1`,
+      ).get(normalizedEmail);
+      if (existingMember) {
+        throw new CollaborationInviteServiceError(
+          "existing_member",
+          `A member with email ${normalizedEmail} already belongs to this collaboration workspace`,
+        );
+      }
+
+      const pendingInvite = this.db.prepare<[string, string], { invite_id: string }>(
+        `SELECT invite_id
          FROM collaboration_invite
-         WHERE email = ?
+         WHERE LOWER(email) = ?
            AND revoked_at IS NULL
            AND consumed_at IS NULL
            AND expires_at > ?
-         ORDER BY created_at ASC, invite_id ASC`,
-      ).all(normalizedEmail, createdAtIso);
-
-      if (replacedInvites.length > 0) {
-        this.db.prepare(
-          `UPDATE collaboration_invite
-           SET revoked_at = ?
-           WHERE email = ?
-             AND revoked_at IS NULL
-             AND consumed_at IS NULL
-             AND expires_at > ?`,
-        ).run(createdAtIso, normalizedEmail, createdAtIso);
+         LIMIT 1`,
+      ).get(normalizedEmail, createdAtIso);
+      if (pendingInvite) {
+        throw new CollaborationInviteServiceError(
+          "duplicate_pending_invite",
+          `A pending collaboration invite already exists for ${normalizedEmail}; revoke it before creating a new invite`,
+        );
       }
 
       this.db.prepare(
@@ -119,15 +121,6 @@ export class CollaborationInviteService {
          )
          VALUES (?, ?, ?, 'member', ?, ?, ?, NULL, NULL, NULL)`,
       ).run(inviteId, tokenHash, normalizedEmail, normalizedInvitedByUserId, createdAtIso, expiresAtIso);
-
-      for (const replacedInvite of replacedInvites) {
-        this.auditService?.log({
-          action: "collaboration_invite_revoked",
-          actorUserId: normalizedInvitedByUserId,
-          targetInviteId: replacedInvite.invite_id,
-          metadata: { status: "revoked", reason: "replaced" },
-        });
-      }
 
       this.auditService?.log({
         action: "collaboration_invite_created",

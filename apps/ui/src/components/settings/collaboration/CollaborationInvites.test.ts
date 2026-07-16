@@ -89,7 +89,30 @@ function render(apiBaseUrl: string) {
 /*  Tests                                                             */
 /* ================================================================== */
 
-describe('CollaborationInvites — stale-request race protection', () => {
+describe('CollaborationInvites', () => {
+  it('surfaces the server error when invite creation is rejected', async () => {
+    apiMock.fetchCollaborationInvites.mockResolvedValue([])
+    apiMock.createCollaborationInvite.mockRejectedValue(
+      new Error('409: A member with email member@example.com already belongs to this collaboration workspace'),
+    )
+
+    render('https://server-a.test/')
+    await flush()
+
+    const form = container.querySelector('[data-testid="create-invite-form"]') as HTMLFormElement
+    const emailInput = form.querySelector('input[type="email"]') as HTMLInputElement
+    fireEvent.change(emailInput, { target: { value: 'member@example.com' } })
+    fireEvent.submit(form)
+
+    await waitFor(() => {
+      const error = container.querySelector('[data-testid="create-invite-error"]')
+      expect(error?.textContent).toBe(
+        '409: A member with email member@example.com already belongs to this collaboration workspace',
+      )
+    })
+    expect(container.querySelector('[data-testid="created-invite-banner"]')).toBeNull()
+  })
+
   it('late-resolving invites for backend A do not overwrite state after switching to backend B', async () => {
     // Backend A: slow
     let resolveInvitesA: ((v: unknown[]) => void) | null = null

@@ -211,6 +211,9 @@ export function mapCollaborationInviteErrorStatus(error: unknown): number {
       case "invalid_expires_in_days":
       case "missing_base_url":
         return 400;
+      case "existing_member":
+      case "duplicate_pending_invite":
+        return 409;
     }
   }
 

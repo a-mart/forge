@@ -123,6 +123,85 @@ describe("collaboration HTTP routes", () => {
     expect(adminRouteAuthedResponse.status).toBe(200);
   });
 
+  it("rejects duplicate pending invites and invites for existing workspace members", async () => {
+    const { baseUrl } = await startCollaborationServer();
+
+    const loginResponse = await fetch(`${baseUrl}/api/auth/sign-in/email`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: baseUrl,
+      },
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+    });
+    expect(loginResponse.ok).toBe(true);
+    const adminCookieHeader = setCookieHeadersToCookieHeader(readSetCookieHeaders(loginResponse));
+
+    const createInviteResponse = await fetch(`${baseUrl}/api/collaboration/invites`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({ email: MEMBER_EMAIL }),
+    });
+    expect(createInviteResponse.status).toBe(200);
+    const createInviteBody = await createInviteResponse.json() as {
+      invite: { inviteId: string; inviteUrl: string };
+    };
+
+    const duplicatePendingResponse = await fetch(`${baseUrl}/api/collaboration/invites`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({ email: MEMBER_EMAIL.toUpperCase() }),
+    });
+    expect(duplicatePendingResponse.status).toBe(409);
+    await expect(duplicatePendingResponse.json()).resolves.toEqual({
+      error: `A pending collaboration invite already exists for ${MEMBER_EMAIL}; revoke it before creating a new invite`,
+    });
+
+    const inviteToken = createInviteBody.invite.inviteUrl.split("/").at(-1);
+    expect(inviteToken).toBeTruthy();
+    const redeemResponse = await fetch(`${baseUrl}/api/collaboration/invites/${inviteToken}/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: MEMBER_EMAIL,
+        name: "Member",
+        password: MEMBER_PASSWORD,
+      }),
+    });
+    expect(redeemResponse.status).toBe(200);
+
+    const existingMemberResponse = await fetch(`${baseUrl}/api/collaboration/invites`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({ email: MEMBER_EMAIL.toUpperCase() }),
+    });
+    expect(existingMemberResponse.status).toBe(409);
+    await expect(existingMemberResponse.json()).resolves.toEqual({
+      error: `A member with email ${MEMBER_EMAIL} already belongs to this collaboration workspace`,
+    });
+
+    const invitesResponse = await fetch(`${baseUrl}/api/collaboration/invites`, {
+      headers: { cookie: adminCookieHeader },
+    });
+    expect(invitesResponse.status).toBe(200);
+    await expect(invitesResponse.json()).resolves.toEqual({
+      invites: [expect.objectContaining({
+        inviteId: createInviteBody.invite.inviteId,
+        email: MEMBER_EMAIL,
+        status: "consumed",
+      })],
+    });
+  });
+
   it("supports users, invites, categories, channels, and prompt preview without AI roles", async () => {
     const { baseUrl, config } = await startCollaborationServer();
 
