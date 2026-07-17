@@ -6,7 +6,6 @@ This is a safe, test-only reference document for validating repo-root `.forge/re
 
 - Validation token: `FRSR-2026-05-20`
 - Skill expected phrase: `forge-resource-smoke-skill called`
-- Specialist expected phrase: `forge-resource-smoke-specialist called`
 - Pi extension tool name: `forge_resource_smoke_pi_tool`
 - Pi extension expected tool result: `forge-resource-smoke-pi-extension tool called; token FRSR-2026-05-20`
 - Forge extension probe command: `echo forge-resource-smoke-extension-probe`
