@@ -258,6 +258,109 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     expect(sentEvents).toEqual([])
   })
 
+  it('uses the bootstrap capability policy for live new-only entries without changing ordinary messages', async () => {
+    const manager = createManagerStub()
+    const legacySocket = createSocket()
+    const currentSocket = createSocket()
+    const legacyEvents: ServerEvent[] = []
+    const currentEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (socket, event) => {
+        if (socket === legacySocket) legacyEvents.push(event)
+        if (socket === currentSocket) currentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([legacySocket, currentSocket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(legacySocket, 'manager', undefined, false)
+    await subscriptions.handleSubscribe(currentSocket, 'manager', undefined, true)
+    legacyEvents.length = 0
+    currentEvents.length = 0
+
+    subscriptions.broadcastToSubscribed({
+      type: 'conversation_message',
+      id: 'ordinary-live-message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'ordinary live message',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'system',
+    })
+    subscriptions.broadcastToSubscribed({
+      type: 'activity_summary',
+      schemaVersion: 1,
+      itemId: 'tool:manager:live-tool',
+      agentId: 'manager',
+      actorAgentId: 'manager',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      kind: 'tool_activity',
+      status: 'completed',
+      toolName: 'bash',
+      correlationId: 'live-tool',
+      displaySummary: 'Ran command',
+    })
+    subscriptions.broadcastToSubscribed({
+      type: 'plan_summary',
+      id: 'live-plan',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      updatedAt: '2026-01-01T00:00:02.000Z',
+      revision: 1,
+      plan: [{ step: 'Ship compatibility shield', status: 'in_progress' }],
+    })
+    subscriptions.broadcastToSubscribed({
+      type: 'model_cache_observation',
+      id: 'live-cache-observation',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:03.000Z',
+      runtimeType: 'pi',
+      provider: 'openai',
+      modelId: 'gpt-5',
+      tokens: {
+        promptInputTokens: 2000,
+        cachedInputTokens: 1600,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 400,
+        outputTokens: 120,
+        totalTokens: 2120,
+        normalization: 'raw_input_tokens_total',
+      },
+      classification: {
+        version: 1,
+        status: 'hit',
+        cachedRatio: 0.8,
+        thresholdTokens: 1024,
+        hitRatioThreshold: 0.8,
+      },
+    })
+
+    expect(legacyEvents.map((event) => event.type)).toEqual([
+      'conversation_message',
+      'conversation_log',
+    ])
+    expect(legacyEvents[0]).toMatchObject({ id: 'ordinary-live-message', text: 'ordinary live message' })
+    expect(legacyEvents[1]).toMatchObject({
+      type: 'conversation_log',
+      kind: 'tool_execution_end',
+      toolCallId: 'live-tool',
+      text: 'Ran command',
+    })
+    expect(currentEvents.map((event) => event.type)).toEqual([
+      'conversation_message',
+      'activity_summary',
+      'plan_summary',
+      'model_cache_observation',
+    ])
+    expect(currentEvents[0]).toMatchObject({ id: 'ordinary-live-message', text: 'ordinary live message' })
+  })
+
   it('sends full snapshots on first subscribe and skips them on same-socket resubscribe when versions match', async () => {
     const manager = createManagerStub()
     const socket = createSocket()
@@ -571,9 +674,9 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       getServer: () => ({ clients: new Set([socket]) }) as any,
     })
 
-    const firstSubscribe = subscriptions.handleSubscribe(socket, 'manager', 7)
+    const firstSubscribe = subscriptions.handleSubscribe(socket, 'manager', 7, true)
     await waitFor(() => initialProfilesSnapshotPaused)
-    const secondSubscribe = subscriptions.handleSubscribe(socket, 'manager', 25)
+    const secondSubscribe = subscriptions.handleSubscribe(socket, 'manager', 25, true)
     pauseAfterInitialProfilesSnapshot.resolve()
 
     await Promise.all([firstSubscribe, secondSubscribe])

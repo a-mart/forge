@@ -15,8 +15,10 @@ import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
-import { projectConversationEntryForBuilderWire } from "../swarm/session/conversation-wire-projection.js";
-import type { ConversationEntryEvent } from "../swarm/types.js";
+import {
+  isConversationEntryServerEvent,
+  projectConversationEntryForSubscriptionWire,
+} from "./conversation-subscription-projection.js";
 import {
   DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
   normalizeSubscribeMessageCount,
@@ -53,6 +55,7 @@ export class WsSubscriptions {
   private readonly deliveredSnapshotVersions = new Map<WebSocket, DeliveredSnapshotVersions>();
   private readonly bootstrapControllers = new Map<WebSocket, SocketBootstrapControllerState>();
   private readonly conversationViews = new Map<WebSocket, BuilderTimelineChannelView>();
+  private readonly conversationPagingCapabilities = new Map<WebSocket, boolean>();
 
   private readonly swarmManager: SwarmManager;
   private readonly integrationRegistry: IntegrationRegistryService | null;
@@ -97,6 +100,7 @@ export class WsSubscriptions {
   clear(): void {
     this.subscriptions.clear();
     this.deliveredSnapshotVersions.clear();
+    this.conversationPagingCapabilities.clear();
     for (const socket of this.bootstrapControllers.keys()) {
       this.cancelBootstrapController(socket);
     }
@@ -156,6 +160,7 @@ export class WsSubscriptions {
   private removeInternal(socket: WebSocket): void {
     this.subscriptions.delete(socket);
     this.conversationViews.delete(socket);
+    this.conversationPagingCapabilities.delete(socket);
     this.deliveredSnapshotVersions.delete(socket);
     this.cancelBootstrapController(socket);
   }
@@ -170,7 +175,7 @@ export class WsSubscriptions {
       return;
     }
 
-    const outboundEvent = this.filterBuilderSnapshotEvent(event);
+    const sharedOutboundEvent = this.filterBuilderSnapshotEvent(event);
 
     for (const client of wss.clients) {
       if (client.readyState !== WebSocket.OPEN) {
@@ -182,6 +187,14 @@ export class WsSubscriptions {
         continue;
       }
 
+      let outboundEvent = sharedOutboundEvent;
+      const currentConversationEntry = isConversationEntryServerEvent(outboundEvent)
+        ? projectConversationEntryForSubscriptionWire(outboundEvent, true)
+        : undefined;
+      if (currentConversationEntry) {
+        outboundEvent = currentConversationEntry;
+      }
+
       if (
         outboundEvent.type === "conversation_message" ||
         outboundEvent.type === "conversation_log" ||
@@ -190,6 +203,7 @@ export class WsSubscriptions {
         outboundEvent.type === "agent_tool_call" ||
         outboundEvent.type === "conversation_reset" ||
         outboundEvent.type === "choice_request" ||
+        outboundEvent.type === "plan_summary" ||
         outboundEvent.type === "model_cache_observation" ||
         outboundEvent.type === "message_pinned"
       ) {
@@ -208,6 +222,17 @@ export class WsSubscriptions {
             continue;
           }
         }
+      }
+
+      if (currentConversationEntry && this.conversationPagingCapabilities.get(client) !== true) {
+        const legacyConversationEntry = projectConversationEntryForSubscriptionWire(
+          currentConversationEntry,
+          false,
+        );
+        if (!legacyConversationEntry) {
+          continue;
+        }
+        outboundEvent = legacyConversationEntry;
       }
 
       const payloadBytes = this.send(client, outboundEvent);
@@ -319,7 +344,7 @@ export class WsSubscriptions {
     socket: WebSocket,
     requestedAgentId?: string,
     requestedMessageCount?: number,
-    supportsConversationPaging = true,
+    supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
   ): Promise<void> {
     const managerId = this.resolveConfiguredManagerId();
@@ -356,6 +381,7 @@ export class WsSubscriptions {
     const previousAgentId = this.subscriptions.get(socket);
     this.subscriptions.set(socket, targetAgentId);
     this.conversationViews.set(socket, conversationView);
+    this.conversationPagingCapabilities.set(socket, supportsConversationPaging);
     if (previousAgentId && previousAgentId !== targetAgentId) {
       this.emitProjectPresence(previousAgentId);
     }
@@ -396,7 +422,13 @@ export class WsSubscriptions {
 
     this.subscriptions.set(socket, fallbackAgentId);
     this.resetDeliveredSnapshotVersions(socket);
-    void this.requestSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+    void this.requestSubscriptionBootstrap(
+      socket,
+      fallbackAgentId,
+      DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
+      this.conversationPagingCapabilities.get(socket) === true,
+      this.conversationViews.get(socket) ?? "all",
+    );
 
     return fallbackAgentId;
   }
@@ -472,7 +504,13 @@ export class WsSubscriptions {
       }
 
       this.subscriptions.set(socket, fallbackAgentId);
-      void this.requestSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+      void this.requestSubscriptionBootstrap(
+        socket,
+        fallbackAgentId,
+        DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
+        this.conversationPagingCapabilities.get(socket) === true,
+        this.conversationViews.get(socket) ?? "all",
+      );
     }
   }
 
@@ -480,7 +518,7 @@ export class WsSubscriptions {
     socket: WebSocket,
     targetAgentId: string,
     requestedMessageCount?: number,
-    supportsConversationPaging = true,
+    supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
   ): Promise<void> {
     const messageCount = normalizeSubscribeMessageCount(requestedMessageCount);
@@ -598,7 +636,7 @@ export class WsSubscriptions {
     socket: WebSocket,
     targetAgentId: string,
     requestedMessageCount?: number,
-    supportsConversationPaging = true,
+    supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     shouldContinue?: () => boolean,
   ): Promise<void> {
@@ -668,7 +706,7 @@ export class WsSubscriptions {
     state: SocketBootstrapControllerState,
     targetAgentId: string,
     messageCount?: number,
-    supportsConversationPaging = true,
+    supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
   ): boolean {
     const activeRequest = state.activeRequest;
@@ -740,6 +778,7 @@ export class WsSubscriptions {
       | { type: "agent_tool_call" }
       | { type: "conversation_reset" }
       | { type: "choice_request" }
+      | { type: "plan_summary" }
       | { type: "model_cache_observation" }
       | { type: "message_pinned" }
     >,
@@ -788,19 +827,6 @@ export class WsSubscriptions {
   }
 
   private filterBuilderSnapshotEvent(event: ServerEvent): ServerEvent {
-    if (
-      event.type === "conversation_message" ||
-      event.type === "conversation_log" ||
-      event.type === "activity_summary" ||
-      event.type === "agent_message" ||
-      event.type === "agent_tool_call" ||
-      event.type === "choice_request" ||
-      event.type === "plan_summary" ||
-      event.type === "model_cache_observation"
-    ) {
-      return projectConversationEntryForBuilderWire(event as ConversationEntryEvent) as ServerEvent;
-    }
-
     if (event.type === "profiles_snapshot") {
       return {
         ...event,

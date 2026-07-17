@@ -603,7 +603,7 @@ export class WsHandler {
     socket: WebSocket,
     requestedAgentId?: string,
     requestedMessageCount?: number,
-    supportsConversationPaging = true,
+    supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
   ): Promise<void> {
     await this.subscriptionManager.handleSubscribe(

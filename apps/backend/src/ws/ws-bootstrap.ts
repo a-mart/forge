@@ -25,6 +25,7 @@ import { WebSocket } from "ws";
 import { projectConversationEntryForBuilderWire } from "../swarm/session/conversation-wire-projection.js";
 import type { ConversationEntryEvent } from "../swarm/types.js";
 import { projectConversationPageMetadataForWire } from "./conversation-page-wire.js";
+import { projectConversationEntryForSubscriptionWire } from "./conversation-subscription-projection.js";
 
 export const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
 const MAX_SUBSCRIBE_MESSAGE_COUNT = 2000;
@@ -81,7 +82,7 @@ export async function sendSubscriptionBootstrap(options: {
     socket,
     targetAgentId,
     requestedMessageCount,
-    supportsConversationPaging = true,
+    supportsConversationPaging = false,
     conversationView = "all",
     swarmManager,
     integrationRegistry,
@@ -236,8 +237,13 @@ export async function sendSubscriptionBootstrap(options: {
           scanBytes: legacyHistoryResult?.diagnostics.fsReadBytes ?? 0,
         },
       };
-  const projectedHistory = historyPageResult.messages.map((entry) =>
-    projectConversationEntryForBuilderWire(entry as ConversationEntryEvent));
+  const projectedHistory = historyPageResult.messages.flatMap((entry) => {
+    const projected = projectConversationEntryForSubscriptionWire(
+      entry as ConversationEntryEvent,
+      supportsConversationPaging,
+    );
+    return projected ? [projected] : [];
+  });
   // A canonical page and its cursor are one atomic result. Applying the
   // legacy bootstrap selector afterward could discard a returned row while
   // leaving the cursor advanced past it. Paging clients receive the page

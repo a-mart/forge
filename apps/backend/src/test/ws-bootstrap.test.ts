@@ -99,6 +99,7 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as WebSocket,
       targetAgentId: worker.agentId,
+      supportsConversationPaging: true,
       swarmManager: {
         listBootstrapAgents: () => [manager],
         getAgent: (agentId: string) => agentId === worker.agentId ? worker : manager,
@@ -215,6 +216,194 @@ describe('sendSubscriptionBootstrap', () => {
     expect(getConversationHistoryPage).not.toHaveBeenCalled()
     expect(historyEvent?.messages).toHaveLength(350)
     expect(historyEvent).not.toHaveProperty('page')
+  })
+
+  it('projects absent-capability bootstrap history onto the bounded legacy entry union', async () => {
+    const sent: ServerEvent[] = []
+    const rawToolPayload = 'raw-secret-tool-payload'.repeat(100)
+    const history = [
+      {
+        type: 'conversation_message' as const,
+        id: 'ordinary-message',
+        agentId: 'manager-1',
+        role: 'assistant' as const,
+        text: 'ordinary message',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'system' as const,
+      },
+      {
+        type: 'agent_tool_call' as const,
+        timelineEntryId: 'terminal-tool-row',
+        agentId: 'manager-1',
+        actorAgentId: 'manager-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        kind: 'tool_execution_end' as const,
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: rawToolPayload,
+      },
+      {
+        type: 'plan_summary' as const,
+        id: 'plan-1',
+        agentId: 'manager-1',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        updatedAt: '2026-01-01T00:00:02.000Z',
+        revision: 1,
+        plan: [{ step: 'Ship compatibility shield', status: 'in_progress' as const }],
+      },
+      createModelCacheObservationEvent('manager-1'),
+    ]
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: 'manager-1',
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics: () => ({
+          history,
+          diagnostics: {
+            cacheState: 'memory' as const,
+            historySource: 'memory' as const,
+            coldLoad: false,
+            fsReadOps: 0,
+            fsReadBytes: 0,
+            sessionFileBytes: 0,
+            cacheFileBytes: 0,
+            persistedEntryCount: history.length,
+            cachedEntryCount: history.length,
+            sessionSummaryBytesScanned: 0,
+            cacheReadMs: 0,
+            sessionSummaryReadMs: 0,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+        isModelCacheVisualizationEnabled: () => true,
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sent.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
+    })
+
+    const historyEvent = sent.find(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> =>
+        event.type === 'conversation_history',
+    )
+    expect(historyEvent).not.toHaveProperty('page')
+    expect(historyEvent?.messages.map((entry) => entry.type)).toEqual([
+      'conversation_message',
+      'conversation_log',
+    ])
+    expect(historyEvent?.messages[0]).toMatchObject({ id: 'ordinary-message', text: 'ordinary message' })
+    expect(historyEvent?.messages[1]).toMatchObject({
+      type: 'conversation_log',
+      kind: 'tool_execution_end',
+      toolName: 'bash',
+      toolCallId: 'tool-1',
+      text: 'Ran command',
+    })
+    expect(JSON.stringify(historyEvent)).not.toContain(rawToolPayload)
+  })
+
+  it('keeps current canonical entry types and page metadata for paging-capable bootstrap clients', async () => {
+    const sent: ServerEvent[] = []
+    const history = [
+      {
+        type: 'conversation_message' as const,
+        id: 'ordinary-message',
+        agentId: 'manager-1',
+        role: 'assistant' as const,
+        text: 'ordinary message',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'system' as const,
+      },
+      {
+        type: 'agent_tool_call' as const,
+        agentId: 'manager-1',
+        actorAgentId: 'manager-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        kind: 'tool_execution_end' as const,
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: 'raw payload',
+      },
+      {
+        type: 'plan_summary' as const,
+        id: 'plan-1',
+        agentId: 'manager-1',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        updatedAt: '2026-01-01T00:00:02.000Z',
+        revision: 1,
+        plan: [{ step: 'Ship compatibility shield', status: 'completed' as const }],
+      },
+      createModelCacheObservationEvent('manager-1'),
+    ]
+
+    await sendSubscriptionBootstrap({
+      socket: {} as WebSocket,
+      targetAgentId: 'manager-1',
+      supportsConversationPaging: true,
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryPage: () => ({
+          messages: history,
+          page: {
+            hasOlder: true,
+            nextCursor: 'current-cursor',
+            completeness: 'complete' as const,
+            source: 'canonical' as const,
+            sourceRevision: 'fixture',
+            pageBytes: Buffer.byteLength(JSON.stringify(history), 'utf8'),
+            scanBytes: 100,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
+        getSessionPlanSnapshot: async (agentId: string) => createPlanSnapshotEvent(agentId),
+        getSessionGoalSnapshot: async (agentId: string) => createGoalSnapshotEvent(agentId),
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sent.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolvePlanSnapshotSessionAgentId: () => undefined,
+    })
+
+    const historyEvent = sent.find(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> =>
+        event.type === 'conversation_history',
+    )
+    expect(historyEvent?.messages.map((entry) => entry.type)).toEqual([
+      'conversation_message',
+      'activity_summary',
+      'plan_summary',
+      'model_cache_observation',
+    ])
+    expect(historyEvent?.messages[0]).toMatchObject({ id: 'ordinary-message', text: 'ordinary message' })
+    expect(historyEvent?.page).toEqual({
+      hasOlder: true,
+      nextCursor: 'current-cursor',
+      completeness: 'complete',
+      source: 'canonical',
+    })
   })
 
   it('does not trim a canonical page after its cursor has already advanced', async () => {
@@ -513,26 +702,19 @@ describe('sendSubscriptionBootstrap', () => {
     await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
-      supportsConversationPaging: false,
+      supportsConversationPaging: true,
       swarmManager: {
         listBootstrapAgents: () => [],
         listProfiles: () => [],
-        getConversationHistoryWithDiagnostics: () => ({
-          history,
-          diagnostics: {
-            cacheState: 'hit' as const,
-            historySource: 'cache_hit' as const,
-            coldLoad: false,
-            fsReadOps: 0,
-            fsReadBytes: 0,
-            sessionFileBytes: 0,
-            cacheFileBytes: 0,
-            persistedEntryCount: history.length,
-            cachedEntryCount: history.length,
-            sessionSummaryBytesScanned: 0,
-            cacheReadMs: 0,
-            sessionSummaryReadMs: 0,
-            detail: undefined,
+        getConversationHistoryPage: () => ({
+          messages: history,
+          page: {
+            hasOlder: false,
+            completeness: 'complete' as const,
+            source: 'canonical' as const,
+            sourceRevision: 'fixture',
+            pageBytes: Buffer.byteLength(JSON.stringify(history), 'utf8'),
+            scanBytes: 0,
           },
         }),
         getPendingChoiceIdsForSession: () => [],
