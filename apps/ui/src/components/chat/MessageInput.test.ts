@@ -6,12 +6,14 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MessageInput, type MessageInputHandle, type ProjectAgentSuggestion } from './MessageInput'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ConversationAttachment } from '@forge/protocol'
 import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
 import { clearCodexCatalogCache } from '@/lib/codex-catalog-cache'
 
 const fetchCodexCatalogMock = vi.mocked(fetchCodexCatalog)
+const pickerApiClient = { target: { kind: 'collab' } } as unknown as SettingsApiClient
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -51,6 +53,23 @@ vi.mock('@/lib/api-endpoint', () => ({
 vi.mock('@/lib/codex-catalog-api', () => ({
   fetchCodexCatalog: vi.fn(),
 }))
+
+const modelsApiMock = vi.hoisted(() => ({
+  fetchModelOverrides: vi.fn(async () => ({
+    version: 1,
+    overrides: {},
+    providerAvailability: {
+      'openai-codex': true,
+      anthropic: true,
+      'claude-sdk': true,
+      'cursor-sdk': true,
+      xai: true,
+    },
+    providerCredentials: {},
+  })),
+}))
+
+vi.mock('@/components/settings/models-api', () => modelsApiMock)
 
 const voiceInputMockState: {
   transcribedText: string | null
@@ -158,6 +177,7 @@ function renderMessageInput(
     wsUrl: string
     replyTarget: ComponentProps<typeof MessageInput>['replyTarget']
     onClearReplyTarget: () => void
+    sessionModelPicker: ComponentProps<typeof MessageInput>['sessionModelPicker']
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
 ): void {
@@ -398,6 +418,143 @@ describe('MessageInput', () => {
 
       // Menu should not be showing command items
       expect(container.textContent).not.toContain('/review')
+    })
+  })
+
+  /* ---- Session model picker ---- */
+
+  describe('session model picker', () => {
+    const basePicker = {
+      originId: 'remote-origin',
+      httpClientRef: { current: pickerApiClient },
+      sessionAgentId: 'manager-1',
+      sessionLabel: 'Main',
+      currentModel: {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        thinkingLevel: 'xhigh',
+      },
+      modelOrigin: 'profile_default' as const,
+      profileDefaultModel: {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        thinkingLevel: 'xhigh',
+      },
+      onUpdate: vi.fn(),
+    }
+
+    it('stays hidden when the parent does not provide a writable Builder manager session', async () => {
+      renderMessageInput()
+      await flush()
+
+      expect(container.querySelector('[aria-haspopup="dialog"]')).toBeNull()
+    })
+
+    it('shows the effective catalog model and friendly reasoning label', async () => {
+      renderMessageInput({ sessionModelPicker: basePicker })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
+      expect(trigger.textContent).toContain('GPT-5.5 · Max')
+      expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    })
+
+    it('disables the trigger while its Builder connection is not writable', async () => {
+      renderMessageInput({
+        sessionModelPicker: {
+          ...basePicker,
+          disabled: true,
+        },
+      })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
+      expect(trigger).toBeInstanceOf(HTMLButtonElement)
+      expect((trigger as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    it('falls back to the effective raw model id and formats legacy reasoning', async () => {
+      renderMessageInput({
+        sessionModelPicker: {
+          ...basePicker,
+          currentModel: {
+            provider: 'custom-provider',
+            modelId: 'custom-model-v2',
+            thinkingLevel: 'x-high',
+          },
+        },
+      })
+      await flush()
+
+      expect(container.textContent).toContain('custom-model-v2 · Max')
+    })
+
+    it('opens the existing Session Model dialog from the compact trigger', async () => {
+      renderMessageInput({ sessionModelPicker: basePicker })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
+      fireEvent.click(trigger)
+      await flush()
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain('Session Model')
+      expect(dialog?.textContent).toContain('Main uses the project default model')
+      expect(trigger.getAttribute('aria-expanded')).toBe('true')
+      expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(pickerApiClient)
+    })
+
+    it.each([
+      ['Cancel', (_trigger: HTMLElement) => {
+        const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+          .find((button) => button.textContent === 'Cancel')
+        expect(cancel).toBeTruthy()
+        fireEvent.click(cancel!)
+      }],
+      ['Escape', () => {
+        fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+      }],
+    ])('restores keyboard focus to the pill after closing with %s', async (_path, closeDialog) => {
+      renderMessageInput({ sessionModelPicker: basePicker })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
+      trigger.focus()
+      fireEvent.click(trigger)
+      await flush()
+
+      closeDialog(trigger)
+      await flush()
+
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.activeElement).toBe(trigger)
+    })
+
+    it('wires Use Project Default through inherit and restores focus', async () => {
+      const onUpdate = vi.fn()
+      renderMessageInput({
+        sessionModelPicker: {
+          ...basePicker,
+          modelOrigin: 'session_override',
+          onUpdate,
+        },
+      })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
+      trigger.focus()
+      fireEvent.click(trigger)
+      await flush()
+
+      const reset = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Use Project Default')
+      expect(reset).toBeTruthy()
+      fireEvent.click(reset!)
+      await flush()
+
+      expect(onUpdate).toHaveBeenCalledWith('manager-1', 'inherit')
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.activeElement).toBe(trigger)
     })
   })
 

@@ -1,4 +1,14 @@
-import type { ConversationAttachment, ConversationReplyTargetInput } from '@forge/protocol'
+import type {
+  AgentModelDescriptor,
+  AgentModelOrigin,
+  ConversationAttachment,
+  ConversationReplyTargetInput,
+  ManagerExactModelSelection,
+  ManagerReasoningLevel,
+  SessionModelUpdateMode,
+} from '@forge/protocol'
+import type { RefObject } from 'react'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ProjectAgentSuggestion } from './mention-types'
 
@@ -6,6 +16,23 @@ export type { ProjectAgentSuggestion } from './mention-types'
 
 export interface MessageInputSendOptions {
   replyTo?: ConversationReplyTargetInput
+}
+
+export interface SessionModelPickerConfig {
+  originId: string
+  httpClientRef: RefObject<SettingsApiClient | null>
+  sessionAgentId: string
+  sessionLabel: string
+  currentModel: AgentModelDescriptor
+  modelOrigin?: AgentModelOrigin
+  profileDefaultModel?: AgentModelDescriptor
+  disabled?: boolean
+  onUpdate: (
+    sessionAgentId: string,
+    mode: SessionModelUpdateMode,
+    modelSelection?: ManagerExactModelSelection,
+    reasoningLevel?: ManagerReasoningLevel,
+  ) => void | Promise<void>
 }
 
 export interface MessageInputProps {
@@ -28,6 +55,8 @@ export interface MessageInputProps {
   managerAgentId?: string
   replyTarget?: ConversationReplyTargetInput | null
   onClearReplyTarget?: () => void
+  /** Builder manager sessions only: compact access to the existing session model override flow. */
+  sessionModelPicker?: SessionModelPickerConfig
 }
 
 export interface MessageInputHandle {
