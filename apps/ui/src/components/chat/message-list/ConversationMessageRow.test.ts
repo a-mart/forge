@@ -229,4 +229,36 @@ describe('ConversationMessageRow', () => {
     expect(bubble?.getAttribute('data-project-agent-tone')).toBe('sky')
     expect(bubble?.textContent).toContain('Documentation → Manager')
   })
+
+  it('renders worker reports as clearly attributed indigo result cards', () => {
+    const message: ConversationMessageEvent = {
+      type: 'conversation_message',
+      agentId: 'manager-1',
+      id: 'worker-report-1',
+      role: 'system',
+      text: 'status: done\n\nsummary: Validation passed.',
+      timestamp: '2026-07-17T16:24:15.073Z',
+      source: 'worker_report',
+      sourceWorkerId: 'dataflow-pr17-remediation-gpt55',
+      terminal: true,
+      excludeFromModelContext: true,
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message,
+        }),
+      )
+    })
+
+    const result = container.querySelector(
+      '[data-worker-result-source="dataflow-pr17-remediation-gpt55"]',
+    )
+    expect(result).toBeTruthy()
+    expect(result?.textContent).toContain('Worker result · dataflow-pr17-remediation-gpt55')
+    expect(result?.textContent).toContain('summary: Validation passed.')
+    expect(result?.className).toContain('border-indigo-300/70')
+    expect(result?.textContent).not.toContain('System')
+  })
 })

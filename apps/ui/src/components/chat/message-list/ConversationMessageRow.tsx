@@ -211,6 +211,35 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   }
 
   if (message.role === 'system') {
+    if (message.source === 'worker_report') {
+      const sourceWorkerId = message.sourceWorkerId?.trim()
+      const workerLabel = sourceWorkerId ? `Worker result · ${sourceWorkerId}` : 'Worker result'
+
+      return (
+        <div
+          className="rounded-lg border border-indigo-300/70 bg-indigo-50/70 px-3 py-2 text-sm text-indigo-950 dark:border-indigo-400/30 dark:bg-indigo-500/10 dark:text-indigo-100"
+          data-worker-result-source={sourceWorkerId || undefined}
+        >
+          <div className="break-words text-[11px] font-medium uppercase tracking-wide text-indigo-700 dark:text-indigo-300/90">
+            {workerLabel}
+          </div>
+          <div className="mt-1 space-y-2">
+            {hasText ? (
+              <p className="whitespace-pre-wrap break-words leading-relaxed">
+                {normalizedText}
+              </p>
+            ) : null}
+            <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
+          </div>
+          {timestampLabel ? (
+            <div className="mt-1 text-[11px] text-indigo-700/80 dark:text-indigo-300/80">
+              <span>{timestampLabel}</span>
+            </div>
+          ) : null}
+        </div>
+      )
+    }
+
     // Informational notices (auto-surfaced worker outcomes) get a calm,
     // neutral presentation; the amber styling stays reserved for warnings and
     // errors so its signal is not diluted.
