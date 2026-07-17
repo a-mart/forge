@@ -79,7 +79,8 @@
     ],
     "patchedDependencies": {
       "@earendil-works/pi-coding-agent@0.80.6": "patches/@earendil-works__pi-coding-agent@0.80.6.patch",
-      "@earendil-works/pi-ai@0.80.6": "patches/@earendil-works__pi-ai@0.80.6.patch"
+      "@earendil-works/pi-ai@0.80.6": "patches/@earendil-works__pi-ai@0.80.6.patch",
+      "nitro-nightly@3.0.1-20260223-102354-c0b46421": "patches/nitro-nightly@3.0.1-20260223-102354-c0b46421.patch"
     }
   },
   "devDependencies": {

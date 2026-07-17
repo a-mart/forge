@@ -3,10 +3,12 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { terminateDevChild } from "./dev-remote-process-tree.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const isWindows = process.platform === "win32";
-const pnpmCommand = isWindows ? "pnpm.cmd" : "pnpm";
+const pnpmCommand = isWindows ? (process.env.ComSpec ?? "cmd.exe") : "pnpm";
+const pnpmArgs = (args) => isWindows ? ["/d", "/s", "/c", "pnpm.cmd", ...args] : args;
 const forceKillAfterMs = 5_000;
 const dryRun = process.argv.includes("--dry-run");
 
@@ -19,13 +21,13 @@ const processes = [
   {
     label: "backend",
     command: pnpmCommand,
-    args: ["--filter", "@forge/backend", "dev"],
+    args: pnpmArgs(["--filter", "@forge/backend", "dev"]),
     env: commonEnv,
   },
   {
     label: "ui",
     command: pnpmCommand,
-    args: ["--filter", "@forge/ui", "dev", "--host", "0.0.0.0"],
+    args: pnpmArgs(["--filter", "@forge/ui", "dev", "--host", "0.0.0.0"]),
     env: {
       ...commonEnv,
       FORGE_DISABLE_TANSTACK_DEVTOOLS: "true",
@@ -37,7 +39,7 @@ const processes = [
 const preflight = {
   label: "preflight",
   command: pnpmCommand,
-  args: ["run", "dev:preflight"],
+  args: pnpmArgs(["run", "dev:preflight"]),
   env: commonEnv,
 };
 
@@ -68,8 +70,6 @@ const preflightResult = spawnSync(preflight.command, preflight.args, {
   cwd: repoRoot,
   env: preflight.env,
   stdio: "inherit",
-  // Windows package-manager shims are .cmd files; launch them via cmd.exe.
-  shell: isWindows,
   windowsHide: false,
 });
 
@@ -107,39 +107,22 @@ function prefixStream(label, stream, output) {
 }
 
 function killChild(child, signal = "SIGINT") {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return;
-  }
-
-  try {
-    if (!isWindows && child.pid) {
-      process.kill(-child.pid, signal);
-    } else {
-      child.kill(signal);
-    }
-  } catch (error) {
-    if (error.code !== "ESRCH") {
-      console.error(`[dev:remote] Failed to signal child ${child.pid}: ${error.message}`);
-    }
-  }
+  terminateDevChild(child, {
+    platform: process.platform,
+    signal,
+    onError: (error) => {
+      console.error(`[dev:remote] Failed to terminate child tree ${child.pid}: ${error.message}`);
+    },
+  });
 }
 
 function forceKillChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null || !child.pid) {
-    return;
-  }
-
-  try {
-    if (isWindows) {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
-    } else {
-      process.kill(-child.pid, "SIGKILL");
-    }
-  } catch (error) {
-    if (error.code !== "ESRCH") {
+  terminateDevChild(child, {
+    signal: "SIGKILL",
+    onError: (error) => {
       console.error(`[dev:remote] Failed to force-kill child ${child.pid}: ${error.message}`);
-    }
-  }
+    },
+  });
 }
 
 function shutdown(exitCode) {
@@ -153,11 +136,15 @@ function shutdown(exitCode) {
     killChild(child);
   }
 
-  setTimeout(() => {
-    for (const child of children.values()) {
-      forceKillChild(child);
-    }
-  }, forceKillAfterMs).unref();
+  // Windows signals only terminate the cmd.exe wrapper, so kill its full tree
+  // immediately above. POSIX children keep the graceful timeout before SIGKILL.
+  if (!isWindows) {
+    setTimeout(() => {
+      for (const child of children.values()) {
+        forceKillChild(child);
+      }
+    }, forceKillAfterMs).unref();
+  }
 
   if (children.size === 0) {
     process.exit(finalExitCode);
@@ -170,8 +157,6 @@ for (const processConfig of processes) {
     env: processConfig.env,
     stdio: ["inherit", "pipe", "pipe"],
     detached: !isWindows,
-    // Windows package-manager shims are .cmd files; launch them via cmd.exe.
-    shell: isWindows,
     windowsHide: false,
   });
 

@@ -1,0 +1,51 @@
+diff --git a/dist/runtime/internal/vite/node-runner.mjs b/dist/runtime/internal/vite/node-runner.mjs
+index 3e2e33eafdd79ca998d45ae4665e87c03462c11c..d89d75ef56743a38681976203b79f0735391b590 100644
+--- a/dist/runtime/internal/vite/node-runner.mjs
++++ b/dist/runtime/internal/vite/node-runner.mjs
+@@ -16,6 +16,7 @@ class EnvRunner {
+ 
+     this.entry = undefined;
+     this.entryError = undefined;
++    this.entryLoad = undefined;
+ 
+     // Create Vite Module Runner
+     // https://vite.dev/guide/api-environment-runtimes.html#modulerunner
+@@ -43,22 +44,25 @@ class EnvRunner {
+     this.reload();
+   }
+ 
+-  async reload() {
+-    try {
+-      this.entry = await this.runner.import(this.entryPath);
+-      this.entryError = undefined;
+-    } catch (error) {
+-      console.error(error);
+-      this.entryError = error;
+-    }
++  reload() {
++    this.entryLoad = this.runner.import(this.entryPath).then(
++      (entry) => {
++        this.entry = entry;
++        this.entryError = undefined;
++      },
++      (error) => {
++        console.error(error);
++        this.entryError = error;
++      }
++    );
++    return this.entryLoad;
+   }
+ 
+   async fetch(req, init) {
+-    if (this.entryError) {
+-      return renderError(req, this.entryError);
+-    }
+-    for (let i = 0; i < 5 && !(this.entry || this.entryError); i++) {
+-      await new Promise((r) => setTimeout(r, 100 * Math.pow(2, i)));
++    // Vite can accept requests before the initial module graph finishes loading,
++    // especially on slower filesystems. Wait for readiness instead of timing out.
++    if (!this.entry && !this.entryError) {
++      await this.entryLoad;
+     }
+     if (this.entryError) {
+       return renderError(req, this.entryError);

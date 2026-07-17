@@ -82,12 +82,45 @@ describe("index shutdown signal registration", () => {
     expect(signals).toContain("SIGBREAK");
     expect(signals).toContain("message");
   });
+
+  it("exits a desktop backend after an IPC shutdown completes", async () => {
+    const calls: string[] = [];
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      calls.push(`exit:${code}`);
+      return undefined as never;
+    });
+
+    await loadRegisteredSignals("win32", {}, undefined, {
+      isDesktop: true,
+      stop: async () => {
+        calls.push("stop:start");
+        await Promise.resolve();
+        calls.push("stop:complete");
+      },
+      inspect: async (listeners) => {
+        expect(listeners.message).toHaveLength(1);
+        listeners.message[0]?.({ type: "shutdown" });
+        await waitFor(() => exitSpy.mock.calls.length > 0);
+      },
+    });
+
+    expect(calls).toEqual(["stop:start", "stop:complete", "exit:0"]);
+  });
 });
+
+interface LifecycleTestOptions {
+  isDesktop?: boolean;
+  stop?: () => Promise<void>;
+  inspect?: (
+    listeners: Partial<Record<(typeof TRACKED_EVENTS)[number], Array<(...args: any[]) => void>>>,
+  ) => Promise<void> | void;
+}
 
 async function loadRegisteredSignals(
   platform: NodeJS.Platform,
   envOverrides: Record<string, string | undefined> = {},
-  startupCalls?: string[]
+  startupCalls?: string[],
+  lifecycleOptions: LifecycleTestOptions = {},
 ): Promise<string[]> {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
   Object.defineProperty(process, "platform", { value: platform });
@@ -124,7 +157,10 @@ async function loadRegisteredSignals(
   }));
 
   vi.doMock("../config.js", () => ({
-    createConfig: () => BASE_CONFIG
+    createConfig: () => ({
+      ...BASE_CONFIG,
+      isDesktop: lifecycleOptions.isDesktop ?? BASE_CONFIG.isDesktop,
+    }),
   }));
 
   vi.doMock("../startup-migration.js", () => ({
@@ -180,7 +216,7 @@ async function loadRegisteredSignals(
       host: BASE_CONFIG.host,
       port: BASE_CONFIG.port,
       config: BASE_CONFIG,
-      stop: async () => {},
+      stop: lifecycleOptions.stop ?? (async () => {}),
       stopListening: async () => {},
       startListening: async () => {},
     }),
@@ -197,10 +233,18 @@ async function loadRegisteredSignals(
     await import("../index.js");
     await waitForSignalRegistration(processEvents, baselineListeners);
 
-    return TRACKED_EVENTS.filter((eventName) => {
-      const baseline = baselineListeners.get(eventName) ?? new Set();
-      return processEvents.listeners(eventName).some((listener) => !baseline.has(listener));
-    });
+    const addedListeners = Object.fromEntries(
+      TRACKED_EVENTS.map((eventName) => {
+        const baseline = baselineListeners.get(eventName) ?? new Set();
+        return [
+          eventName,
+          processEvents.listeners(eventName).filter((listener) => !baseline.has(listener)),
+        ];
+      }),
+    ) as Record<(typeof TRACKED_EVENTS)[number], Array<(...args: any[]) => void>>;
+    await lifecycleOptions.inspect?.(addedListeners);
+
+    return TRACKED_EVENTS.filter((eventName) => addedListeners[eventName].length > 0);
   } finally {
     for (const eventName of TRACKED_EVENTS) {
       const baseline = baselineListeners.get(eventName) ?? new Set();
@@ -231,16 +275,18 @@ async function waitForSignalRegistration(
   },
   baselineListeners: Map<string, Set<(...args: any[]) => void>>
 ): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const hasNewListener = TRACKED_EVENTS.some((eventName) => {
-      const baseline = baselineListeners.get(eventName) ?? new Set();
-      return processEvents.listeners(eventName).some((listener) => !baseline.has(listener));
-    });
+  await waitFor(() => TRACKED_EVENTS.some((eventName) => {
+    const baseline = baselineListeners.get(eventName) ?? new Set();
+    return processEvents.listeners(eventName).some((listener) => !baseline.has(listener));
+  }));
+}
 
-    if (hasNewListener) {
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) {
       return;
     }
-
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  throw new Error("Timed out waiting for process lifecycle callback");
 }

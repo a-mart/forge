@@ -59,9 +59,8 @@ function registerProcessLifecycle(server: StartedServer, isDesktop: boolean): vo
     shuttingDown = true;
     console.log(`Received ${signal}. Shutting down...`);
     await server.stop();
-    if (!isDesktop) {
-      process.exit(0);
-    }
+    // The Electron supervisor waits for this child to exit before falling back to force termination.
+    process.exit(0);
   };
 
   const restart = async (): Promise<void> => {

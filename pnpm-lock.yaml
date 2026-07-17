@@ -23,6 +23,9 @@ patchedDependencies:
   '@earendil-works/pi-coding-agent@0.80.6':
     hash: fa749eff036cc1af3c08757e8f7c523f3f0cd867f36d928ff519005e8c9ed5f1
     path: patches/@earendil-works__pi-coding-agent@0.80.6.patch
+  nitro-nightly@3.0.1-20260223-102354-c0b46421:
+    hash: fbc2f8ac638ee617758b47695237f1451580555a8333f46b404f0290e09badb0
+    path: patches/nitro-nightly@3.0.1-20260223-102354-c0b46421.patch
 
 importers:
 
@@ -358,7 +361,7 @@ importers:
         version: 11.12.3
       nitro:
         specifier: npm:nitro-nightly@3.0.1-20260223-102354-c0b46421
-        version: nitro-nightly@3.0.1-20260223-102354-c0b46421(better-sqlite3@12.9.0)(dotenv@17.3.1)(jiti@2.7.0)(lru-cache@11.2.7)(rollup@4.57.1)(sqlite3@5.1.7)(vite@7.3.1(@types/node@22.19.11)(jiti@2.7.0)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: nitro-nightly@3.0.1-20260223-102354-c0b46421(patch_hash=fbc2f8ac638ee617758b47695237f1451580555a8333f46b404f0290e09badb0)(better-sqlite3@12.9.0)(dotenv@17.3.1)(jiti@2.7.0)(lru-cache@11.2.7)(rollup@4.57.1)(sqlite3@5.1.7)(vite@7.3.1(@types/node@22.19.11)(jiti@2.7.0)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.9.0))
       pdfjs-dist:
         specifier: 4.10.38
         version: 4.10.38
@@ -14849,7 +14852,7 @@ snapshots:
 
   nf3@0.3.10: {}
 
-  nitro-nightly@3.0.1-20260223-102354-c0b46421(better-sqlite3@12.9.0)(dotenv@17.3.1)(jiti@2.7.0)(lru-cache@11.2.7)(rollup@4.57.1)(sqlite3@5.1.7)(vite@7.3.1(@types/node@22.19.11)(jiti@2.7.0)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.9.0)):
+  nitro-nightly@3.0.1-20260223-102354-c0b46421(patch_hash=fbc2f8ac638ee617758b47695237f1451580555a8333f46b404f0290e09badb0)(better-sqlite3@12.9.0)(dotenv@17.3.1)(jiti@2.7.0)(lru-cache@11.2.7)(rollup@4.57.1)(sqlite3@5.1.7)(vite@7.3.1(@types/node@22.19.11)(jiti@2.7.0)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.9.0)):
     dependencies:
       consola: 3.4.2
       crossws: 0.4.4(srvx@0.11.7)

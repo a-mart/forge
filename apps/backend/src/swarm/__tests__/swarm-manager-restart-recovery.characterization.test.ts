@@ -181,6 +181,35 @@ describe('SwarmManager restart recovery characterization', () => {
     }
   })
 
+  it('reconciles open turns without resuming actors persisted as idle', async () => {
+    const fixture = await createRecoveryFixture()
+    try {
+      await persistAgentStatuses(fixture.config, new Map([
+        ['manager', 'idle'],
+        [fixture.workerId, 'idle'],
+      ]))
+      await appendTurnLedgerRecord(fixture.target, {
+        t: 'delivery_acked',
+        deliveryId: RECOVERED_DELIVERY_ID,
+        at: NOW,
+      })
+
+      const recovered = new TestSwarmManager(fixture.config, { now: () => NOW })
+      await recovered.boot()
+
+      expect(recovered.getRestartRecoverySnapshot()).toBeNull()
+      expect(recovered.runtimeByAgentId.size).toBe(0)
+      const ledger = await replayTurnLedger(fixture.target)
+      expect(ledger.openTurns.size).toBe(0)
+      expect([...ledger.terminalTurns.values()]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ turnId: 'manager-turn-before-restart', outcome: 'reconciled' }),
+        expect.objectContaining({ turnId: 'worker-turn-before-restart', outcome: 'reconciled' }),
+      ]))
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
   it('keeps dismissal non-delivering across repeated dismiss and resume requests', async () => {
     const fixture = await createRecoveryFixture()
     try {
