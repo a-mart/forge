@@ -1,25 +1,27 @@
 /** @vitest-environment jsdom */
 
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 
-// Mock fetchModelOverrides to return empty (catalog defaults, no server filtering)
-vi.mock('@/components/settings/models-api', () => ({
-  fetchModelOverrides: () =>
-    Promise.resolve({
-      version: 1,
-      overrides: {},
-      providerAvailability: {
-        'openai-codex': true,
-        'anthropic': true,
-        'claude-sdk': true,
-        'xai': true,
-      },
-    }),
+const modelsApiMock = vi.hoisted(() => ({
+  fetchModelOverrides: vi.fn(() => Promise.resolve({
+    version: 1,
+    overrides: {},
+    providerAvailability: {
+      'openai-codex': true,
+      anthropic: true,
+      'claude-sdk': true,
+      xai: true,
+    },
+  })),
 }))
+
+// Mock availability while retaining the exact client argument for origin-target tests.
+vi.mock('@/components/settings/models-api', () => modelsApiMock)
 
 // Must import after mock setup
 const { SessionModelDialog } = await import('./SessionModelDialog')
@@ -27,9 +29,12 @@ const { SessionModelDialog } = await import('./SessionModelDialog')
 let container: HTMLDivElement
 let root: Root | null = null
 
+const dialogApiClient = { target: { kind: 'collab' } } as unknown as SettingsApiClient
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  modelsApiMock.fetchModelOverrides.mockClear()
 })
 
 afterEach(() => {
@@ -44,7 +49,7 @@ afterEach(() => {
 
 async function renderDialog(overrides: Record<string, unknown> = {}) {
   const defaultProps = {
-    wsUrl: undefined,
+    apiClient: dialogApiClient,
     sessionAgentId: 'session-1',
     sessionLabel: 'Test Session',
     currentModel: {
@@ -72,6 +77,12 @@ async function renderDialog(overrides: Record<string, unknown> = {}) {
   return defaultProps
 }
 
+async function rerenderDialog(props: ComponentProps<typeof SessionModelDialog>): Promise<void> {
+  await act(async () => {
+    root?.render(createElement(SessionModelDialog, props))
+  })
+}
+
 // Radix Dialog renders content in a portal on document.body, so query from there
 function findSubmitButton(): HTMLButtonElement | null {
   return document.body.querySelector('button[type="submit"]')
@@ -95,6 +106,12 @@ function findModelTrigger(): HTMLButtonElement | null {
 
 describe('SessionModelDialog', () => {
   describe('single-screen layout', () => {
+    it('loads availability through the supplied target-aware API client', async () => {
+      await renderDialog()
+
+      expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(dialogApiClient)
+    })
+
     it('shows model and reasoning selectors immediately without a mode dropdown', async () => {
       await renderDialog({ modelOrigin: 'profile_default' })
 
@@ -286,6 +303,24 @@ describe('SessionModelDialog', () => {
 
       // Reset to project default should still fire — it sends 'inherit' mode, not the unavailable model
       expect(props.onConfirm).toHaveBeenCalledWith('session-1', 'inherit')
+    })
+  })
+
+  describe('authoritative descriptor updates', () => {
+    it('synchronizes model and reasoning when props change while open', async () => {
+      const props = await renderDialog({ modelOrigin: 'session_override' })
+
+      await rerenderDialog({
+        ...props,
+        currentModel: {
+          provider: 'anthropic',
+          modelId: 'claude-sonnet-4-20250514',
+          thinkingLevel: 'low',
+        },
+        currentReasoningLevel: 'low',
+      })
+
+      expect(findSubmitButton()?.disabled).toBe(true)
     })
   })
 

@@ -1,8 +1,4 @@
-import type {
-  SessionActiveToolsSnapshotEvent,
-  SessionGoalSnapshotEvent,
-  SpecialistTargetSpace,
-} from "@forge/protocol";
+import type { SessionActiveToolsSnapshotEvent, SessionGoalSnapshotEvent, SpecialistTargetSpace } from "@forge/protocol";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
@@ -564,9 +560,11 @@ export class SwarmManagerRuntimeComposition {
       terminateDescriptor: messaging.terminateDescriptor,
       saveStore: events.saveStore,
       emitAgentsSnapshot: events.emitAgentsSnapshot,
-      isRuntimeInContextRecovery: (agentId) =>
-        this.requireRuntimeLifecycle().isRuntimeInContextRecovery(agentId),
+      isRuntimeInContextRecovery: (agentId) => this.requireRuntimeLifecycle().isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) => this.requireRuntimeLifecycle().isRuntimeRecoveryActive(agentId),
+      hasRecoveryAbortedWorkerTurn: (agentId) => state.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(agentId),
+      clearRecoveryAbortedWorkerTurn: (agentId) => state.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId),
+      isRestartRecoveryDecisionPending: () => this.restartRecovery.isDecisionPending(),
       now: state.now,
       onHealthSweep: () => this.requireRuntimeLifecycle().runLivenessHealthSweep(),
       logDebug: events.logDebug,

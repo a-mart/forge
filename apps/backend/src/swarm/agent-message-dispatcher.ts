@@ -262,6 +262,8 @@ interface WorkerAssignmentTransaction {
  * single explicit order.
  */
 export class AgentMessageDispatcher<TCodexGate = unknown> {
+  private readonly workerResultDeliveries = new Map<string, Promise<SendMessageReceipt>>();
+
   constructor(private readonly options: AgentMessageDispatcherOptions<TCodexGate>) {}
 
   async sendMessage(
@@ -344,7 +346,33 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     });
   }
 
-  async sendWorkerResult(
+  sendWorkerResult(
+    workerAgentId: string,
+    resultText: string,
+    expectedAssignmentId: string,
+  ): Promise<SendMessageReceipt> {
+    const deliveryKey = `${workerAgentId}:${expectedAssignmentId}`;
+    const existing = this.workerResultDeliveries.get(deliveryKey);
+    if (existing) {
+      return existing;
+    }
+
+    const trackedDelivery = this.deliverWorkerResult(
+      workerAgentId,
+      resultText,
+      expectedAssignmentId,
+    );
+    const clearTrackedDelivery = () => {
+      if (this.workerResultDeliveries.get(deliveryKey) === trackedDelivery) {
+        this.workerResultDeliveries.delete(deliveryKey);
+      }
+    };
+    this.workerResultDeliveries.set(deliveryKey, trackedDelivery);
+    void trackedDelivery.then(clearTrackedDelivery, clearTrackedDelivery);
+    return trackedDelivery;
+  }
+
+  private async deliverWorkerResult(
     workerAgentId: string,
     resultText: string,
     expectedAssignmentId: string,
@@ -525,6 +553,10 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     workerResult?: { parentContext: WorkerParentContext };
     ledgerMessage?: string;
   }): Promise<SendMessageReceipt> {
+    const workerAssignmentExpectation =
+      input.sender.role === "manager" && input.target.role === "worker"
+        ? input.target.workerParentContext?.assignmentId ?? null
+        : undefined;
     const managerContextIds = resolveActivityManagerContextIds(input.sender, input.target);
     const runtime = await this.options.getOrCreateRuntime(input.target);
     let modelMessage = await this.prepareModelInboundMessage(
@@ -599,12 +631,16 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       assignmentTransaction = await this.persistWorkerAssignment(
         input.sender,
         input.target,
+        workerAssignmentExpectation,
       );
     } catch (error) {
       rollback();
       this.options.observability.cancelRuntimeInput(observabilityInput, "worker_assignment_persist_failed");
       throw error;
     }
+    const expectedWorkerAssignmentId =
+      assignmentTransaction?.assignmentId ??
+      (workerAssignmentExpectation === null ? undefined : workerAssignmentExpectation);
     const deliveryId = [
       input.workerResult ? "worker-result" : "agent-message",
       input.sender.agentId,
@@ -634,6 +670,37 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
           message: errorToMessage(error),
         });
       });
+    }
+
+    if (
+      expectedWorkerAssignmentId &&
+      (
+        input.target.role !== "worker" ||
+        input.target.workerParentContext?.assignmentId !== expectedWorkerAssignmentId ||
+        Boolean(input.target.workerParentContext?.completedAt)
+      )
+    ) {
+      rollback();
+      this.options.observability.cancelRuntimeInput(
+        observabilityInput,
+        "worker_assignment_completed_before_dispatch",
+      );
+      await this.rollbackWorkerAssignment(assignmentTransaction);
+      if (hasDeliveryLedger) {
+        await this.options.ledger.recordDeliveryAcked({
+          sessionAgentId: input.target.agentId,
+          deliveryId,
+          at: this.options.now(),
+        }).catch((error) => {
+          this.options.logDebug("turn_ledger:delivery_acked:error", {
+            deliveryId,
+            message: errorToMessage(error),
+          });
+        });
+      }
+      throw new Error(
+        `Worker ${input.target.agentId} completed its assignment before this message could be dispatched. Retry the message.`,
+      );
     }
 
     let receipt: SendMessageReceipt;
@@ -706,6 +773,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
   private async persistWorkerAssignment(
     sender: AgentDescriptor,
     target: AgentDescriptor,
+    expectedAssignmentId: string | null | undefined,
   ): Promise<WorkerAssignmentTransaction | undefined> {
     if (
       sender.role !== "manager" ||
@@ -715,8 +783,23 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       return undefined;
     }
 
-    if (target.workerParentContext) {
+    if (expectedAssignmentId !== null) {
+      if (
+        expectedAssignmentId === undefined ||
+        target.workerParentContext?.assignmentId !== expectedAssignmentId ||
+        target.workerParentContext?.completedAt
+      ) {
+        throw new Error(
+          `Worker ${target.agentId} assignment changed before this message could be dispatched. Retry the message.`,
+        );
+      }
       return undefined;
+    }
+
+    if (target.workerParentContext) {
+      throw new Error(
+        `Worker ${target.agentId} received another assignment before this message could be dispatched. Retry the message.`,
+      );
     }
 
     const previous = cloneWorkerParentContext(target.workerParentContext);

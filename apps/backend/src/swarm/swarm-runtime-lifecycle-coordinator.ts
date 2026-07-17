@@ -126,6 +126,7 @@ type RuntimeLifecycleHostCallbackKey =
   | "beginPendingTransientWorkerTerminatedError"
   | "cancelPendingTransientWorkerTerminatedError"
   | "hasPendingTransientWorkerTerminatedError"
+  | "handleWorkerStatus"
   | "handleWorkerAgentEnd"
   | "isRuntimeRecoveryActive"
   | "beforeRuntimeEventProjection"
@@ -160,6 +161,8 @@ export function createRuntimeLifecycleControllerHostCallbacks(
       getCoordinator().cancelPendingTransientWorkerTerminatedError(agentId, reason),
     hasPendingTransientWorkerTerminatedError: (agentId) =>
       getCoordinator().hasPendingTransientWorkerTerminatedError(agentId),
+    handleWorkerStatus: (agentId, descriptor, status, pendingCount) =>
+      getCoordinator().handleWorkerStatus(agentId, descriptor, status, pendingCount),
     handleWorkerAgentEnd: (agentId, descriptor) =>
       getCoordinator().handleWorkerAgentEnd(agentId, descriptor),
     isRuntimeRecoveryActive: (agentId) => getCoordinator().isRuntimeRecoveryActive(agentId),
@@ -482,6 +485,15 @@ export class SwarmRuntimeLifecycleCoordinator {
     descriptor: AgentDescriptor,
   ): Promise<void> {
     return this.options.workerHealth.handleRuntimeAgentEnd(agentId, descriptor);
+  }
+
+  handleWorkerStatus(
+    agentId: string,
+    descriptor: AgentDescriptor & { role: "worker" },
+    status: AgentStatus,
+    pendingCount: number,
+  ): Promise<void> {
+    return this.options.workerHealth.handleRuntimeStatus(agentId, descriptor, status, pendingCount);
   }
 
   deleteWorkerStallState(agentId: string): void {

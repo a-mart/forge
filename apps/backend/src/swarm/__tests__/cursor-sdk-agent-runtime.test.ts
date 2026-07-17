@@ -221,6 +221,26 @@ describe("CursorSdkAgentRuntime", () => {
     ]);
   });
 
+  it("reports a pending input dispatch before the scheduled Cursor run takes ownership", async () => {
+    const sendGate = deferred();
+    const send = vi.fn(async () => {
+      await sendGate.promise;
+      return createRun();
+    });
+    const { runtime, callbacks } = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+    });
+
+    const receipt = runtime.sendMessage("hello");
+    expect(runtime.hasPendingInputDispatch()).toBe(true);
+    await receipt;
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+
+    sendGate.resolve();
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(runtime.hasPendingInputDispatch()).toBe(false);
+  });
+
   it("keeps in-memory custom entries consistent when disk append fails", async () => {
     const { rootDir, runtime } = await setupRuntime();
 

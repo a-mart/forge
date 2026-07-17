@@ -22,6 +22,14 @@ const webTarget: AssistantOutputTarget = {
   sourceContext: { channel: "web", messageId: "user-a" },
 };
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function descriptor(
   agentId: string,
   role: AgentDescriptor["role"] = "manager",
@@ -91,6 +99,9 @@ function createHarness() {
   let nonce = 0;
   let saveError: Error | undefined;
   let runtimeError: Error | undefined;
+  let runtimeSendGate: Promise<void> | undefined;
+  let runtimeCreationGate: Promise<void> | undefined;
+  let ledgerPendingGate: Promise<void> | undefined;
   let activeParent: ReturnType<
     AgentMessageDispatcherOptions<TestGate>["turns"]["getActiveWorkerParentContext"]
   > = {
@@ -142,6 +153,7 @@ function createHarness() {
       recordDeliveryPending: async (input) => {
         order.push("ledger:pending");
         ledgerPending.push(input);
+        await ledgerPendingGate;
       },
       recordDeliveryAcked: async (input) => {
         order.push("ledger:acked");
@@ -174,19 +186,24 @@ function createHarness() {
       assertWorkerDeliveryAllowed: () => undefined,
       buildProjectAgentTurnGate: () => ({ allowed: true }),
     },
-    getOrCreateRuntime: async (target) => ({
-      descriptor: target,
-      sendMessage: vi.fn(async (input: string | RuntimeUserMessage) => {
-        order.push("runtime:send");
-        runtimeInputs.push({ targetAgentId: target.agentId, input });
-        if (runtimeError) throw runtimeError;
-        return {
-          targetAgentId: target.agentId,
-          deliveryId: `runtime-${runtimeInputs.length}`,
-          acceptedMode: target.status === "streaming" ? "steer" : "prompt",
-        } satisfies SendMessageReceipt;
-      }),
-    } as unknown as SwarmAgentRuntime),
+    getOrCreateRuntime: async (target) => {
+      order.push("runtime:create");
+      await runtimeCreationGate;
+      return {
+        descriptor: target,
+        sendMessage: vi.fn(async (input: string | RuntimeUserMessage) => {
+          order.push("runtime:send");
+          runtimeInputs.push({ targetAgentId: target.agentId, input });
+          await runtimeSendGate;
+          if (runtimeError) throw runtimeError;
+          return {
+            targetAgentId: target.agentId,
+            deliveryId: `runtime-${runtimeInputs.length}`,
+            acceptedMode: target.status === "streaming" ? "steer" : "prompt",
+          } satisfies SendMessageReceipt;
+        }),
+      } as unknown as SwarmAgentRuntime;
+    },
     appendProjectAgentConversation: async () => undefined,
     emitAgentMessage: () => undefined,
     saveStore: async () => {
@@ -209,6 +226,9 @@ function createHarness() {
     ledgerAcked,
     setActiveParent: (value: typeof activeParent) => { activeParent = value; },
     setRuntimeError: (value: Error | undefined) => { runtimeError = value; },
+    setRuntimeSendGate: (value: Promise<void> | undefined) => { runtimeSendGate = value; },
+    setRuntimeCreationGate: (value: Promise<void> | undefined) => { runtimeCreationGate = value; },
+    setLedgerPendingGate: (value: Promise<void> | undefined) => { ledgerPendingGate = value; },
     setSaveError: (value: Error | undefined) => { saveError = value; },
   };
 }
@@ -320,6 +340,79 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     });
     expect(harness.ledgerPending[0]?.turnId).not.toBe("active-user-b");
     expect(harness.worker.workerParentContext).toBeUndefined();
+  });
+
+  it("coalesces concurrent delivery attempts for the same worker assignment", async () => {
+    const harness = createHarness();
+    const sendGate = deferred();
+    harness.worker.workerParentContext = parentContext();
+    harness.setRuntimeSendGate(sendGate.promise);
+
+    const first = harness.dispatcher.sendWorkerResult(
+      "worker-1",
+      "status: done\nsummary: finished",
+      "assignment-1",
+    );
+    await vi.waitFor(() => expect(harness.runtimeInputs).toHaveLength(1));
+    const second = harness.dispatcher.sendWorkerResult(
+      "worker-1",
+      "status: done\nsummary: finished",
+      "assignment-1",
+    );
+
+    expect(second).toBe(first);
+    expect(harness.runtimeInputs).toHaveLength(1);
+    sendGate.resolve();
+    await Promise.all([first, second]);
+
+    expect(harness.runtimeInputs).toHaveLength(1);
+    expect(harness.ledgerPending).toHaveLength(1);
+    expect(harness.ledgerAcked).toHaveLength(1);
+  });
+
+  it("does not dispatch a follow-up after that assignment completes while its ledger write is pending", async () => {
+    const harness = createHarness();
+    const ledgerGate = deferred();
+    harness.worker.workerParentContext = parentContext("assignment-original");
+    harness.worker.status = "streaming";
+    harness.setLedgerPendingGate(ledgerGate.promise);
+
+    const delivery = harness.dispatcher.sendMessage(
+      "manager-1",
+      "worker-1",
+      "Also check the final edge case",
+    );
+    await vi.waitFor(() => expect(harness.ledgerPending).toHaveLength(1));
+    harness.worker.workerParentContext.completedAt = "2026-07-16T01:01:00.000Z";
+    ledgerGate.resolve();
+
+    await expect(delivery).rejects.toThrow("completed its assignment before this message could be dispatched");
+    expect(harness.runtimeInputs).toHaveLength(0);
+    expect(harness.ledgerAcked).toHaveLength(1);
+    expect(harness.order).toContain("rollback:turn-1");
+  });
+
+  it("does not turn a follow-up into a new assignment when completion clears the old assignment during setup", async () => {
+    const harness = createHarness();
+    const runtimeGate = deferred();
+    harness.worker.workerParentContext = parentContext("assignment-original");
+    harness.worker.status = "streaming";
+    harness.setRuntimeCreationGate(runtimeGate.promise);
+
+    const delivery = harness.dispatcher.sendMessage(
+      "manager-1",
+      "worker-1",
+      "Also check the final edge case",
+    );
+    await vi.waitFor(() => expect(harness.order).toContain("runtime:create"));
+    delete harness.worker.workerParentContext;
+    runtimeGate.resolve();
+
+    await expect(delivery).rejects.toThrow("assignment changed before this message could be dispatched");
+    expect(harness.worker.workerParentContext).toBeUndefined();
+    expect(harness.runtimeInputs).toHaveLength(0);
+    expect(harness.ledgerPending).toHaveLength(0);
+    expect(harness.order).toContain("rollback:turn-1");
   });
 
   it("can return a blocked result after the worker entered an error status", async () => {

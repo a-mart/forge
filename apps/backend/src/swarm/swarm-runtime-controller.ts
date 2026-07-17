@@ -71,7 +71,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   workerActivityState: Map<string, WorkerActivityStateLike>;
   runtimeRecoveryState: Pick<
     RuntimeRecoveryState,
-    "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
+    "markRecoveryAbortedWorkerTurn"
   >;
   conversationProjector: {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent, options?: { turnId?: string }): void;
@@ -127,6 +127,12 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): boolean;
   cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "clear_state"): void;
   hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
+  handleWorkerStatus(
+    agentId: string,
+    descriptor: AgentDescriptor & { role: "worker" },
+    status: AgentStatus,
+    pendingCount: number
+  ): Promise<void>;
   handleWorkerAgentEnd(
     agentId: string,
     descriptor: AgentDescriptor
@@ -757,6 +763,15 @@ export class SwarmRuntimeController {
 
     this.host.recordManagerTurnWatchdogStatus?.(agentId, runtimeToken, status, pendingCount);
     await this.getRuntimeStatusProjector().projectStatus({ agentId, status, pendingCount, contextUsage });
+    const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "worker") {
+      await this.host.handleWorkerStatus(
+        agentId,
+        descriptor as AgentDescriptor & { role: "worker" },
+        descriptor.status,
+        pendingCount,
+      );
+    }
   }
 
   async handleRuntimeSessionEvent(
@@ -842,11 +857,6 @@ export class SwarmRuntimeController {
       return;
     }
 
-    if (this.shouldSuppressWorkerIdleFinalization(descriptor)) {
-      this.getRuntimeEventProjector().clearRecoveryAbortedWorkerTurn(agentId);
-      return;
-    }
-
     await this.host.handleWorkerAgentEnd(agentId, descriptor);
   }
 
@@ -879,10 +889,6 @@ export class SwarmRuntimeController {
         status: descriptor.status,
       },
     });
-  }
-
-  private shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
-    return this.getRuntimeEventProjector().shouldSuppressWorkerIdleFinalization(descriptor);
   }
 
   private get descriptors(): Map<string, AgentDescriptor> {
