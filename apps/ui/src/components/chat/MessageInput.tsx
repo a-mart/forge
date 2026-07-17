@@ -10,6 +10,7 @@ import { MentionMenu } from './message-input/MentionMenu'
 import { mentionMenuActiveDescendantId } from './message-input/mention-menu-a11y'
 import { VoiceRecordingBar } from './message-input/VoiceRecordingBar'
 import { ComposerTextarea } from './message-input/ComposerTextarea'
+import { SessionModelPicker } from './message-input/SessionModelPicker'
 import { useDraft } from './message-input/hooks/use-draft'
 import { useSlashCommands } from './message-input/hooks/use-slash-commands'
 import { useMentions } from './message-input/hooks/use-mentions'
@@ -19,7 +20,12 @@ import { useComposer } from './message-input/hooks/use-composer'
 import { ReplyPreview } from './message-list/ReplyPreview'
 
 // Re-export public types for external consumers
-export type { ProjectAgentSuggestion, MessageInputHandle, MessageInputProps } from './message-input/types'
+export type {
+  ProjectAgentSuggestion,
+  MessageInputHandle,
+  MessageInputProps,
+  SessionModelPickerConfig,
+} from './message-input/types'
 import type { MessageInputHandle, MessageInputProps } from './message-input/types'
 
 export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(function MessageInput(
@@ -40,6 +46,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     managerAgentId,
     replyTarget,
     onClearReplyTarget,
+    sessionModelPicker,
   },
   ref,
 ) {
@@ -420,8 +427,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             aria-label="Attach files"
           />
 
-          <div className="flex items-center justify-between px-1.5 pb-1.5 pt-1">
-            <div className="flex items-center gap-0.5">
+          <div className="flex items-center justify-between gap-1.5 px-1.5 pb-1.5 pt-1">
+            <div className="flex min-w-0 items-center gap-0.5">
               <Button
                 type="button"
                 variant="ghost"
@@ -476,26 +483,30 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               </Button>
 
               {formatMode ? (
-                <span className="ml-1 select-none text-[11px] text-muted-foreground/50">
+                <span className="ml-1 hidden select-none text-[11px] text-muted-foreground/50 sm:inline">
                   {navigator.platform?.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'}+Enter to send
                 </span>
               ) : null}
             </div>
 
-            <Button
-              type="submit"
-              disabled={!canSubmit}
-              size="icon"
-              className={cn(
-                'size-7 rounded-full transition-all',
-                canSubmit
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95'
-                  : 'cursor-default bg-muted text-muted-foreground/40',
-              )}
-              aria-label="Send message"
-            >
-              <ArrowUp className="size-3.5" strokeWidth={2.5} />
-            </Button>
+            <div className="flex min-w-0 items-center gap-1">
+              {sessionModelPicker ? <SessionModelPicker config={sessionModelPicker} /> : null}
+
+              <Button
+                type="submit"
+                disabled={!canSubmit}
+                size="icon"
+                className={cn(
+                  'size-7 shrink-0 rounded-full transition-all',
+                  canSubmit
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95'
+                    : 'cursor-default bg-muted text-muted-foreground/40',
+                )}
+                aria-label="Send message"
+              >
+                <ArrowUp className="size-3.5" strokeWidth={2.5} />
+              </Button>
+            </div>
           </div>
 
           {voice.voiceError ? <p className="px-3 pb-2 text-xs text-destructive">{voice.voiceError}</p> : null}

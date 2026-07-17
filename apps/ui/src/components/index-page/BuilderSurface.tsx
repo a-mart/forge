@@ -14,6 +14,7 @@ import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { type MessageInputHandle } from '@/components/chat/MessageInput'
+import { isSessionModelPickerEligible } from '@/components/chat/message-input/session-model-picker-eligibility'
 import { type MessageListHandle } from '@/components/chat/MessageList'
 import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
@@ -326,10 +327,11 @@ export function BuilderSurface({
 
   const activeAgentRole = activeAgent?.role ?? null
   const activeAgentProfileId = activeAgent?.profileId ?? null
-  const activeAgentProfileType = useMemo(
-    () => state.profiles.find((profile) => profile.profileId === activeAgentProfileId)?.profileType ?? null,
+  const activeAgentProfile = useMemo(
+    () => state.profiles.find((profile) => profile.profileId === activeAgentProfileId) ?? null,
     [activeAgentProfileId, state.profiles],
   )
+  const activeAgentProfileType = activeAgentProfile?.profileType ?? null
 
   useEffect(() => {
     if (!state.connected || !shouldLoadExternalProjectAgentDirectory({
@@ -619,6 +621,21 @@ export function BuilderSurface({
       ? transcript.clearPendingResponseForAgent
       : () => {},
   })
+
+  const sessionModelPicker =
+    isActiveManager && isSessionModelPickerEligible(activeAgent, activeAgentProfile)
+      ? {
+          originId: activeOriginId,
+          httpClientRef,
+          sessionAgentId: activeAgent.agentId,
+          sessionLabel: activeAgent.sessionLabel || activeAgent.displayName || activeAgent.agentId,
+          currentModel: activeAgent.model,
+          modelOrigin: activeAgent.modelOrigin,
+          profileDefaultModel: activeAgentProfile?.defaultModel,
+          disabled: !state.connected,
+          onUpdate: session.handleUpdateSessionModel,
+        }
+      : undefined
 
   const localSidebarSession = useSessionActions({
     clientRef: localClientRef,
@@ -1165,6 +1182,7 @@ export function BuilderSurface({
                   managerAgentId: activeAgentId ?? undefined,
                   replyTarget,
                   onClearReplyTarget: () => setReplyTarget(null),
+                  sessionModelPicker,
                 }}
               />
             )}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type RefObject } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import {
   MANAGER_REASONING_LEVELS,
   type AgentModelDescriptor,
@@ -38,6 +39,7 @@ const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
 }
 
 export function SessionModelDialog({
+  apiClient,
   wsUrl,
   sessionAgentId,
   sessionLabel,
@@ -47,7 +49,11 @@ export function SessionModelDialog({
   profileDefaultModel,
   onConfirm,
   onClose,
+  returnFocusRef,
 }: {
+  /** Target-aware origin client. New call sites should prefer this over wsUrl. */
+  apiClient?: SettingsApiClient
+  /** Legacy local-sidebar compatibility path. */
   wsUrl?: string
   sessionAgentId: string
   sessionLabel: string
@@ -62,6 +68,7 @@ export function SessionModelDialog({
     reasoningLevel?: ManagerReasoningLevel,
   ) => void
   onClose: () => void
+  returnFocusRef?: RefObject<HTMLElement | null>
 }) {
   const isCurrentlyOverridden = modelOrigin === 'session_override'
   const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
@@ -71,14 +78,14 @@ export function SessionModelDialog({
   const loadAvailability = useCallback(() => {
     setAvailabilityLoading(true)
     setAvailabilityError(null)
-    void fetchModelOverrides(wsUrl).then((data) => {
+    void fetchModelOverrides(apiClient ?? wsUrl).then((data) => {
       setOverridesData(data)
       setAvailabilityLoading(false)
     }).catch((err) => {
       setAvailabilityError(err instanceof Error ? err.message : 'Failed to load model availability')
       setAvailabilityLoading(false)
     })
-  }, [wsUrl])
+  }, [apiClient, wsUrl])
 
   useEffect(() => {
     loadAvailability()
@@ -123,12 +130,12 @@ export function SessionModelDialog({
   const [selectedKey, setSelectedKey] = useState<string>(currentKey ?? '')
   const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
 
-  // Update selected key when data loads
+  // Snapshot updates are authoritative. Reset any in-progress selection when the
+  // effective model/reasoning changes so stale dialog state can never be saved.
   useEffect(() => {
-    if (currentKey && selectableRows.some((r) => r.key === currentKey)) {
-      setSelectedKey(currentKey)
-    }
-  }, [currentKey, selectableRows])
+    setSelectedKey(currentKey ?? '')
+    setReasoning(currentReasoningLevel ?? 'xhigh')
+  }, [currentKey, currentReasoningLevel, sessionAgentId])
 
   // Get reasoning levels for selected model
   const selectedRow = selectableRows.find((r) => r.key === selectedKey)
@@ -178,7 +185,14 @@ export function SessionModelDialog({
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-w-sm p-4">
+      <DialogContent
+        className="max-w-sm p-4"
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusRef?.current) return
+          event.preventDefault()
+          returnFocusRef.current.focus()
+        }}
+      >
         <DialogHeader className="mb-3">
           <DialogTitle>Session Model</DialogTitle>
           <DialogDescription>
