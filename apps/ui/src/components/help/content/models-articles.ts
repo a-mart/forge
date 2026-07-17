@@ -79,7 +79,7 @@ const modelsRouting: HelpArticle = {
   id: 'models-routing',
   title: 'How Model Routing Works',
   category: 'models',
-  summary: 'How Forge picks which model runs each task through specialists and fallbacks.',
+  summary: 'How session model choices, specialist routing, and fallbacks determine which model runs work.',
   content: modelsRoutingContent,
   keywords: [
     'routing',
@@ -89,9 +89,14 @@ const modelsRouting: HelpArticle = {
     'manager',
     'worker',
     'spawn',
+    'session model',
+    'composer pill',
+    'override session model',
+    'use project default',
+    'reasoning level',
   ],
-  relatedIds: ['models-overview', 'models-providers', 'concepts-specialists'],
-  contextKeys: ['settings.specialists', 'chat.workers'],
+  relatedIds: ['models-overview', 'models-providers', 'concepts-specialists', 'chat-sending'],
+  contextKeys: ['settings.specialists', 'chat.workers', 'chat.main'],
 }
 
 const modelsCost: HelpArticle = {

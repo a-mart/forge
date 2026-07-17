@@ -96,6 +96,8 @@ You're the executive. The manager is your team lead. The workers are the ICs doi
 
 A session is a conversation thread within a manager. Your first session is created automatically when you create the manager. You can create additional sessions for different workstreams: one for a feature, one for bug fixes, one for documentation. Each session has its own conversation history, its own memory, and can run workers independently. Sessions inherit the profile's default manager model unless you override the session explicitly.
 
+In eligible Builder manager sessions, a compact pill beside **Send** shows the effective model and reasoning level. Click it to open **Session Model**, choose a session override, or select **Use Project Default** to clear an existing override and resume tracking the project default. The pill is not shown in worker views, Collaboration channels, or system profiles such as Cortex.
+
 Sessions are where work actually happens. The manager is just the container.
 
 ### The Manager–Worker Relationship

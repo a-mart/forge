@@ -9,6 +9,12 @@ Forge has two input modes, toggled with the **Aa** button (or `Shift+Cmd+X` / `S
 
 Your mode preference is saved across sessions.
 
+## Changing the session model
+
+Eligible Builder manager sessions show a compact model pill beside **Send**. The pill shows the effective model and reasoning level; hover it to see whether the session is using the project default or a session override. Click it to open **Session Model**, where you can choose a model and reasoning level for this session. If the session already has an override, **Use Project Default** clears it so the session tracks future project-default changes again.
+
+For Remote Projects, the pill loads model availability from and applies the change to the active project's server. It is hidden when you are viewing a worker, a Collaboration channel, or a system profile such as Cortex.
+
 ## Replying to a message
 
 Hover a visible normal user or assistant message and click **Reply** to attach it as the target for your next send. The composer preview means your message will include that quoted context. Use the clear control to remove the target, or click Reply on a different message to change it before sending.
