@@ -5,9 +5,6 @@ import { isEnoentError, isNotDirLikeMissingError } from "../../../utils/fs-error
 import { writeFileAtomic, writeJsonFileAtomic } from "../../../utils/atomic-files.js";
 import type { RuntimeTarget } from "../../../runtime-target.js";
 import {
-  FORGE_MODEL_CATALOG,
-  getCatalogFamily,
-  getCatalogModelsByFamily,
   type EffortTier,
   type ResolvedSpecialistDefinition,
   type SpecialistTargetSpace,
@@ -32,7 +29,6 @@ import {
 const FRONTMATTER_BLOCK_PATTERN = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
-const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
 const TIER_CONFIGS_FILENAME = "tier-configs.json";
 const REMOVED_BUILTIN_SPECIALIST_FILES = new Set([
   "app-runtime.md",
@@ -116,13 +112,18 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     fallbackReasoningLevel: "medium",
   },
 };
-const TIER_ROSTER_DESCRIPTIONS: Record<EffortTier, string> = {
-  light: "quick checks/simple edits",
-  fast: "low-latency implementation",
-  standard: "balanced default work",
-  deep: "planning/review/debugging",
-  max: "architecture/high-risk debugging",
-};
+const EXECUTION_POLICY_CONFIGS = [
+  { policy: "support", tier: "fast", description: "low-cost, low-latency support work" },
+  { policy: "routine", tier: "standard", description: "ordinary well-specified implementation" },
+  { policy: "deep", tier: "deep", description: "complex, ambiguous, or high-risk work" },
+] as const satisfies ReadonlyArray<{ policy: string; tier: EffortTier; description: string }>;
+
+const BEHAVIOR_MODE_CONFIGS = [
+  { mode: "plan", lens: "planner", description: "task breakdown, sequencing, and risk analysis" },
+  { mode: "correctness-review", lens: "code-reviewer", description: "bugs, edge cases, and contract validation" },
+  { mode: "design-review", lens: "code-reviewer-2", description: "maintainability, API design, and consistency" },
+  { mode: "research", lens: "researcher", description: "fact-checking, docs, and source-backed investigation" },
+] as const;
 
 export interface LegacySpecialistRewrite {
   tier: EffortTier;
@@ -148,62 +149,6 @@ export const LEGACY_SPECIALIST_REWRITE_TABLE: Record<string, LegacySpecialistRew
   "collab-scout": { tier: "light" },
   "collab-researcher": { tier: "standard" },
 };
-
-function formatPresetList(entries: string[]): string {
-  if (entries.length === 0) {
-    return "none";
-  }
-
-  if (entries.length === 1) {
-    return entries[0];
-  }
-
-  if (entries.length === 2) {
-    return `${entries[0]} and ${entries[1]}`;
-  }
-
-  return `${entries.slice(0, -1).join(", ")}, and ${entries[entries.length - 1]}`;
-}
-
-function selectVariantModelId(
-  familyId: string,
-  matcher: (model: { modelId: string; displayName: string; isFamilyDefault: boolean }) => boolean,
-): string | undefined {
-  const variants = getCatalogModelsByFamily(familyId).filter((model) => !model.isFamilyDefault);
-  return variants.find(matcher)?.modelId ?? variants[0]?.modelId;
-}
-
-function buildLegacyModelRoutingGuidance(): string {
-  const presetList = formatPresetList(
-    Object.values(FORGE_MODEL_CATALOG.families)
-      .filter((family) => family.visibleInSpawnPreset)
-      .map((family) => `\`${family.familyId}\` (\`${family.defaultModelId}\`)`),
-  );
-
-  const codexQuickModelId = getCatalogFamily("pi-codex-spark")?.defaultModelId ?? "gpt-5.3-codex-spark";
-  const anthropicQuickModelId =
-    selectVariantModelId("pi-opus", (model) => model.displayName.toLowerCase().includes("haiku")) ??
-    "claude-haiku-4-5-20251001";
-  const complexCodingPreset = getCatalogFamily("pi-5.5")?.familyId ?? "pi-5.5";
-  const complexReviewPreset = getCatalogFamily("pi-opus")?.familyId ?? "pi-opus";
-
-  return `Model and reasoning selection for workers:
-- spawn_agent accepts optional \`model\`, \`modelId\`, and \`reasoningLevel\` to tune cost, speed, and capability per worker.
-- Available model presets: ${presetList}.
-- Think in three tiers when assigning work:
-  1. **Quick/cheap** — file reads, searches, command runs, simple edits. Use \`modelId: "${codexQuickModelId}"\` or \`modelId: "${anthropicQuickModelId}"\` with \`reasoningLevel: "low"\`. Fast, minimal cost.
-  2. **Standard** — normal implementation, moderate complexity. Use preset defaults with no overrides. This is the baseline and needs no tuning.
-  3. **Complex** — architecture, thorough code review, debugging subtle issues. Choose the model explicitly (e.g., \`model: "${complexCodingPreset}"\` for heavy coding tasks, \`model: "${complexReviewPreset}"\` for nuanced review).
-- The primary optimization lever is **model selection**, not reasoning level. A haiku worker costs a fraction of opus; a spark worker is ultra-fast. Use cheaper models for sub-tasks and exploration.
-- Reasoning level defaults are already high for all presets. Lower it for quick tasks; raising it further is rarely needed.
-- Cross-provider strengths: Codex models tend to excel at backend/algorithmic work. Claude models shine at UI polish, nuanced code review, and writing. Mix them on the same project like specialists on a team.`;
-}
-
-/**
- * Legacy model routing guidance injected into the manager prompt when specialists are disabled.
- * Extracted from the pre-specialists manager archetype.
- */
-export const LEGACY_MODEL_ROUTING_GUIDANCE = buildLegacyModelRoutingGuidance();
 
 type InternalResolvedSpecialistDefinition = ResolvedSpecialistDefinition & { forgePrecedence?: "override" };
 
@@ -507,46 +452,55 @@ function getRosterCacheKey(options: {
   ].join(CACHE_KEY_SEPARATOR);
 }
 
-export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): string {
-  return generateTierLensRosterBlock(roster, Object.values(DEFAULT_TIER_CONFIGS));
+export function generateRosterBlock(
+  roster: ResolvedSpecialistDefinition[],
+  tierConfigs: readonly TierConfig[] = Object.values(DEFAULT_TIER_CONFIGS),
+): string {
+  return generateTierLensRosterBlock(roster, tierConfigs);
 }
 
 export function generateTierLensRosterBlock(
   roster: ResolvedSpecialistDefinition[],
   tierConfigs: readonly TierConfig[] = Object.values(DEFAULT_TIER_CONFIGS),
 ): string {
-  const available = roster.filter((entry) => entry.enabled && entry.available);
+  const enabled = roster.filter((entry) => entry.enabled);
+  const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "Spawn workers with `tier`; add `lens` for role/output guidance.",
+    "Delegate workers with a behavior `mode` and an `executionPolicy`.",
     "",
-    "Effort tiers:",
+    "Execution policies:",
   ];
 
   const configsByTier = new Map(tierConfigs.map((config) => [config.tier, config]));
-  for (const tier of EFFORT_TIER_ORDER) {
-    const config = configsByTier.get(tier) ?? DEFAULT_TIER_CONFIGS[tier];
+  for (const policyConfig of EXECUTION_POLICY_CONFIGS) {
+    const config = configsByTier.get(policyConfig.tier) ?? DEFAULT_TIER_CONFIGS[policyConfig.tier];
     const primary = `${compactProvider(config.provider)}/${config.modelId}${config.reasoningLevel ? ` ${config.reasoningLevel}` : ""}`;
     const fallback = config.fallbackModelId
       ? ` -> fb ${compactProvider(config.fallbackProvider ?? "unknown")}/${config.fallbackModelId}${
           config.fallbackReasoningLevel ? ` ${config.fallbackReasoningLevel}` : ""
         }`
       : "";
-    lines.push(`- \`${tier}\`: ${TIER_ROSTER_DESCRIPTIONS[tier]} [${primary}${fallback}]`);
+    lines.push(`- \`${policyConfig.policy}\`: ${policyConfig.description} [${primary}${fallback}]`);
   }
 
-  const builtinLenses = available.filter((entry) => entry.builtin);
-  if (builtinLenses.length > 0) {
-    lines.push("", "Lenses (attach to any tier):");
-    for (const lens of builtinLenses) {
-      const defaultTier = lens.defaultTier ? ` (${lens.defaultTier})` : "";
-      const webSearchTag = lens.webSearch ? " Web/source rules included." : "";
-      lines.push(`- \`${lens.specialistId}\`${defaultTier}: ${compactRosterText(lens.whenToUse)}${webSearchTag}`);
+  // Shipped mode handles contribute prompts only; their persisted model fields
+  // do not control policy routing and therefore must not hide a mode when a
+  // stale legacy model is unavailable.
+  const enabledById = new Map(enabled.map((entry) => [entry.specialistId, entry]));
+  lines.push("", "Behavior modes:", "- `general` (default): implementation, debugging, and other outcome-focused work");
+  for (const modeConfig of BEHAVIOR_MODE_CONFIGS) {
+    const lens = enabledById.get(modeConfig.lens);
+    if (lens) {
+      const defaultPolicy = modeConfig.mode === "research" ? "support" : "deep";
+      lines.push(`- \`${modeConfig.mode}\` (default ${defaultPolicy}): ${modeConfig.description}`);
     }
   }
 
-  const customSpecialists = available.filter((entry) => !entry.builtin);
+  const customSpecialists = available.filter(
+    (entry) => !entry.builtin && !LEGACY_SPECIALIST_REWRITE_TABLE[entry.specialistId],
+  );
   if (customSpecialists.length > 0) {
-    lines.push("", "Custom specialists (legacy `specialist` handle):");
+    lines.push("", "Custom specialists (use `customSpecialist` instead of mode/policy):");
     for (const s of customSpecialists) {
       const fallback = s.fallbackModelId
         ? ` -> fb ${compactProvider(s.fallbackProvider ?? "unknown")}/${s.fallbackModelId}${
@@ -564,9 +518,9 @@ export function generateTierLensRosterBlock(
   lines.push(
     "",
     "Routing guidance:",
-    "- Prefer `light`/`fast` for clear work; reserve `deep`/`max` for planning, review, architecture, and hard debugging.",
-    "- Dual-angle review: spawn `code-reviewer` plus `code-reviewer-2`.",
-    "- If no combo fits, use ad-hoc `spawn_agent` with explicit model/reasoning.",
+    "- Match policy to task difficulty and risk; model availability fallback is automatic.",
+    "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
+    "- Mode defaults are guidance, not a capability floor. A bounded plan or review may use `support`; raise the policy when ambiguity or risk warrants it.",
   );
 
   return lines.join("\n");
@@ -658,21 +612,6 @@ export async function seedBuiltins(dataDir: string, options: SeedBuiltinsOptions
   await refreshSharedRosterHandleCache(dataDir);
 }
 
-export async function getSpecialistsEnabled(dataDir: string): Promise<boolean> {
-  const filePath = join(getSharedSpecialistsDir(dataDir), SPECIALISTS_ENABLED_FILENAME);
-  try {
-    const raw = await readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as { enabled?: unknown };
-    return parsed.enabled !== false;
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return true;
-    }
-
-    throw error;
-  }
-}
-
 export function normalizeEffortTier(value: string | undefined): EffortTier | undefined {
   return parseEffortTier(value);
 }
@@ -732,10 +671,8 @@ export async function resolveTierConfig(dataDir: string, tier: EffortTier): Prom
 }
 
 export async function saveTierConfigs(dataDir: string, configs: readonly TierConfig[]): Promise<TierConfig[]> {
-  const byTier = new Map<EffortTier, TierConfig>();
-  for (const tier of EFFORT_TIER_ORDER) {
-    byTier.set(tier, { ...DEFAULT_TIER_CONFIGS[tier] });
-  }
+  const existing = await resolveTierConfigs(dataDir);
+  const byTier = new Map(existing.map((config) => [config.tier, { ...config }]));
   for (const raw of configs) {
     const config = parseTierConfig(raw);
     if (!config) {
@@ -749,13 +686,6 @@ export async function saveTierConfigs(dataDir: string, configs: readonly TierCon
   await mkdir(dir, { recursive: true });
   await writeJsonFileAtomic(join(dir, TIER_CONFIGS_FILENAME), { tiers: normalized });
   return cloneTierConfigs(normalized);
-}
-
-export async function setSpecialistsEnabled(dataDir: string, enabled: boolean): Promise<void> {
-  const dir = getSharedSpecialistsDir(dataDir);
-  const filePath = join(dir, SPECIALISTS_ENABLED_FILENAME);
-
-  await writeJsonFileAtomic(filePath, { enabled });
 }
 
 export async function saveProfileSpecialist(
@@ -774,6 +704,13 @@ export async function saveProfileSpecialist(
   const frontmatter = validateSaveRequest(data);
   const profileDir = getProfileSpecialistsDir(dataDir, normalizedProfileId);
   const filePath = join(profileDir, `${sanitizePathSegment(specialistId)}.md`);
+
+  const shared = await parseSpecialistFile(
+    join(getSharedSpecialistsDir(dataDir), `${sanitizePathSegment(specialistId)}.md`),
+  );
+  if (shared?.frontmatter.builtin) {
+    frontmatter.builtin = true;
+  }
 
   await mkdir(profileDir, { recursive: true });
   await writeSpecialistFile(filePath, serializeSpecialistFile(frontmatter, data.promptBody));
@@ -797,6 +734,13 @@ export async function saveChannelSpecialist(
   const frontmatter = validateSaveRequest({ ...data, targetSpace: ["collaboration"] });
   const channelDir = getSessionSpecialistsDir(dataDir, "_collaboration", normalizedSessionAgentId);
   const filePath = join(channelDir, `${sanitizePathSegment(specialistId)}.md`);
+
+  const shared = await parseSpecialistFile(
+    join(getSharedSpecialistsDir(dataDir), `${sanitizePathSegment(specialistId)}.md`),
+  );
+  if (shared?.frontmatter.builtin) {
+    frontmatter.builtin = true;
+  }
 
   await mkdir(channelDir, { recursive: true });
   await writeSpecialistFile(filePath, serializeSpecialistFile(frontmatter, data.promptBody));

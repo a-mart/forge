@@ -911,7 +911,7 @@ function appendDelegationGuidance(
     "[Codex Plugin selector context]",
     `Selected selector(s), bound server-side for this scoped Codex Plugin worker: ${context.selectors.join(", ")}`,
     `Request after removing selector tokens: ${stripped}`,
-    "If plugin data or work is needed, spawn the visible Codex Plugin specialist with spawn_agent({ specialist: \"codex-plugin\", initialMessage: \"<task and context>\" }). The server binds only the selected scope to that worker for its lifetime; do not include or invent selectors in the worker input.",
+    "If plugin data or work is needed, use delegate_codex_plugin({ initialMessage: \"<task and context>\" }). The server binds only the selected scope to that worker for its lifetime; do not include or invent selectors in the worker input.",
     `Retry context id if this scoped worker is later stopped or fails: ${context.contextId}. Retry is server-authorized only on a future user turn that explicitly asks to retry/continue this request; otherwise require a fresh @Codex selector tag.`,
     "If this user turn includes attachments, inspect them in the manager context and pass only relevant text summaries to the Codex Plugin specialist; attachment payloads are not forwarded to Codex Plugin workers.",
     "Do not relay full transcripts or long connector results in chunks. Tell Codex Plugin workers to use export_scoped_codex_plugin_result for full Fireflies transcript/summary downloads, then report only artifact metadata/path and a bounded preview.",
@@ -932,7 +932,7 @@ function appendRetryGuidance(
     `Forge classified this user turn as an explicit retry/continuation of a stopped or failed scoped Codex Plugin worker. Retry context id: ${authorization.retryContextId}`,
     `Stored selector(s), bound server-side for the retried scoped worker: ${authorization.activeContext.selectors.join(", ")}`,
     `Original request after removing selector tokens: ${stripped}`,
-    "Use retry_codex_plugin_worker({ initialMessage, retryContextId }) if Codex Plugin work is still needed. Do not use spawn_agent({ specialist: \"codex-plugin\" }) on this retry turn, and do not include, invent, or widen selectors in the retry input.",
+    "Use retry_codex_plugin_worker({ initialMessage, retryContextId }) if Codex Plugin work is still needed. Do not use delegate_codex_plugin on this retry turn, and do not include, invent, or widen selectors in the retry input.",
     "If the user asks for a different plugin/scope, or this retry tool fails authorization, ask for a fresh @Codex plugin selector tag.",
     "Do not relay full transcripts or long connector results in chunks. Tell Codex Plugin workers to use export_scoped_codex_plugin_result for full Fireflies transcript/summary downloads, then report only artifact metadata/path and a bounded preview.",
   ].join("\n");

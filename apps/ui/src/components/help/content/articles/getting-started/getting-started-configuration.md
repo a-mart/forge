@@ -18,7 +18,7 @@ Each manager has a default model set during creation. To change it, open Setting
 - **Claude Opus** is stronger for complex reasoning and code review.
 - **GPT models** work well and offer an alternative when you want model diversity.
 
-Specialists (named worker templates) can use different models than the manager. Configure these under **Settings → Specialists**.
+Delegated workers can use different models than the manager. Configure Support, Routine, and Deep under **Settings → Delegation**.
 
 ## Profile basics
 
@@ -28,7 +28,7 @@ Profile settings include:
 
 - **System prompt** — base instructions for the manager. You can customize this or use the default.
 - **Skills** — toggle built-in capabilities like web search, image generation, and browser automation.
-- **Specialists** — named worker templates with their own model and prompt configuration.
+- **Delegation** — worker execution policies, behavior-mode prompts, and custom specialists.
 - **Memory** — canonical profile and session memory. This is distinct from profile-scoped Knowledge v2 entries.
 
 Most of these work well with defaults. Adjust them as you learn what your workflow needs.

@@ -112,12 +112,15 @@ const conceptsPromptResolution: HelpArticle = {
 
 const conceptsSpecialists: HelpArticle = {
   id: 'concepts-specialists',
-  title: 'Specialist Workers',
+  title: 'Worker Delegation',
   category: 'concepts',
-  summary: 'Named worker templates with dedicated models, prompts, and routing rules.',
+  summary: 'Behavior modes, execution policies, custom specialists, and worker fallback routing.',
   content: conceptsSpecialistsContent,
   keywords: [
     'specialist',
+    'delegation',
+    'behavior mode',
+    'execution policy',
     'worker',
     'routing',
     'model',

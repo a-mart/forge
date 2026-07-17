@@ -6,7 +6,7 @@ import {
   deleteChannelSpecialist,
   deleteProfileSpecialist,
   deleteSharedSpecialist,
-  EFFORT_TIER_ORDER,
+  DEFAULT_TIER_CONFIGS,
   generateRosterBlock,
   generateTierLensRosterBlock,
   invalidateSpecialistCache,
@@ -16,10 +16,12 @@ import {
   resolveCollaborationChannelRoster,
   resolveRoster,
   resolveSharedRoster,
+  resolveTierConfigs,
   resolveWorkspaceRoster,
   saveChannelSpecialist,
   saveProfileSpecialist,
   saveSharedSpecialist,
+  saveTierConfigs,
   seedBuiltins,
 } from "../specialist-registry.js";
 import { getBuiltinSpecialistsDir } from "../../agents/specialists/specialist-paths.js";
@@ -630,6 +632,24 @@ describe("specialist-registry", () => {
     expect(markdown).not.toContain("webSearch:");
   });
 
+  it("preserves omitted tier settings when saving a partial policy update", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await saveTierConfigs(dataDir, [
+      { ...DEFAULT_TIER_CONFIGS.light, modelId: "custom-light-model", reasoningLevel: "low" },
+      { ...DEFAULT_TIER_CONFIGS.max, modelId: "custom-max-model", reasoningLevel: "max" },
+    ]);
+    await saveTierConfigs(dataDir, [
+      { ...DEFAULT_TIER_CONFIGS.fast, modelId: "updated-support-model", reasoningLevel: "medium" },
+    ]);
+
+    const reloaded = await resolveTierConfigs(dataDir);
+    expect(reloaded.find((config) => config.tier === "light")?.modelId).toBe("custom-light-model");
+    expect(reloaded.find((config) => config.tier === "max")?.modelId).toBe("custom-max-model");
+    expect(reloaded.find((config) => config.tier === "fast")?.modelId).toBe("updated-support-model");
+  });
+
   it("coerces webSearch to false when saving a non-Grok specialist", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
@@ -799,11 +819,11 @@ describe("specialist-registry", () => {
   it("generates a roster block with only enabled and available specialists", () => {
     const markdown = generateRosterBlock([
       {
-        specialistId: "backend",
-        displayName: "Backend Engineer",
+        specialistId: "domain-expert",
+        displayName: "Domain Expert",
         color: "#2563eb",
         enabled: true,
-        whenToUse: "Backend work",
+        whenToUse: "Domain work",
         modelId: "gpt-5.5",
         provider: "openai-codex",
         reasoningLevel: "high",
@@ -853,13 +873,15 @@ describe("specialist-registry", () => {
       },
     ]);
 
-    expect(markdown).toContain("Effort tiers");
-    for (const tier of EFFORT_TIER_ORDER) {
-      expect(markdown).toContain(`\`${tier}\``);
-    }
-    expect(markdown).toContain("`backend`");
-    expect(markdown).toContain("Backend work");
-    expect(markdown).toContain("Custom specialists (legacy `specialist` handle)");
+    expect(markdown).toContain("Execution policies");
+    expect(markdown).toContain("`support`");
+    expect(markdown).toContain("`routine`");
+    expect(markdown).toContain("`deep`");
+    expect(markdown).not.toContain("`light`");
+    expect(markdown).not.toContain("`max`");
+    expect(markdown).toContain("`domain-expert`");
+    expect(markdown).toContain("Domain work");
+    expect(markdown).toContain("Custom specialists (use `customSpecialist` instead of mode/policy)");
     expect(markdown).not.toContain("`disabled`");
     expect(markdown).not.toContain("`invalid`");
   });
@@ -1184,9 +1206,10 @@ describe("specialist-registry", () => {
 
   it("generates a compact message for an empty roster", () => {
     const markdown = generateRosterBlock([]);
-    expect(markdown).toContain("Effort tiers");
-    expect(markdown).toContain("`light`");
-    expect(markdown).not.toContain("Lenses (attach to any tier)");
+    expect(markdown).toContain("Execution policies");
+    expect(markdown).toContain("`support`");
+    expect(markdown).toContain("`general`");
+    expect(markdown).not.toContain("Lenses");
   });
 
   it("rejects files with missing frontmatter fields", async () => {
@@ -1278,6 +1301,50 @@ describe("specialist-registry", () => {
 
     roster = await resolveRoster("profile-a", dataDir);
     expect(roster.some((entry) => entry.specialistId === "custom-worker")).toBe(false);
+  });
+
+  it("preserves behavior-mode identity for profile and channel overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-mode-override-"));
+    const dataDir = join(root, "data");
+    process.env.FORGE_DATA_DIR = dataDir;
+    await seedBuiltins(dataDir);
+
+    await saveProfileSpecialist(dataDir, "profile-a", "planner", {
+      displayName: "Profile Plan",
+      color: "#7c3aed",
+      enabled: true,
+      whenToUse: "Plan for this profile.",
+      modelId: "removed-mode-model",
+      provider: "openai-codex",
+      targetSpace: ["builder", "collaboration"],
+      defaultTier: "deep",
+      promptBody: "Profile planning instructions.",
+    });
+
+    const profileRoster = await resolveRoster("profile-a", dataDir, "builder");
+    const profilePlan = profileRoster.find((entry) => entry.specialistId === "planner");
+    expect(profilePlan).toMatchObject({ sourceKind: "profile", builtin: true, available: false });
+    const profileBlock = generateRosterBlock(profileRoster);
+    expect(profileBlock).toContain("`plan` (default deep)");
+    expect(profileBlock).not.toContain("`planner`: Plan for this profile");
+
+    await saveChannelSpecialist(dataDir, "channel-a", "planner", {
+      displayName: "Channel Plan",
+      color: "#7c3aed",
+      enabled: true,
+      whenToUse: "Plan for this channel.",
+      defaultTier: "deep",
+      promptBody: "Channel planning instructions.",
+    });
+    const channelRoster = await resolveCollaborationChannelRoster(dataDir, {
+      sessionAgentId: "channel-a",
+      selectedGlobalHandles: ["planner"],
+    });
+    const channelPlan = channelRoster.find((entry) => entry.specialistId === "planner");
+    expect(channelPlan).toMatchObject({ sourceKind: "channel", builtin: true });
+    const channelBlock = generateRosterBlock(channelRoster);
+    expect(channelBlock).toContain("`plan` (default deep)");
+    expect(channelBlock).not.toContain("`planner`: Plan for this channel");
   });
 
   it("saves shared specialists and exposes them through the shared roster", async () => {
@@ -1412,32 +1479,18 @@ describe("specialist-registry", () => {
     });
   });
 
-  it("generates roster block with fallback model info", () => {
-    const markdown = generateRosterBlock([
-      {
-        specialistId: "backend",
-        displayName: "Backend Engineer",
-        color: "#2563eb",
-        enabled: true,
-        whenToUse: "Backend work",
-        modelId: "gpt-5.5",
-        provider: "openai-codex",
-        reasoningLevel: "high",
-        fallbackModelId: "gpt-5.5",
-        fallbackProvider: "openai-codex",
-        fallbackReasoningLevel: "medium",
-        builtin: true,
-        pinned: false,
-        targetSpace: ["builder"],
-        promptBody: "Prompt",
-        sourceKind: "builtin",
-        available: true,
-        availabilityCode: "ok",
-        shadowsGlobal: false,
-      },
-    ]);
+  it("generates policy rows with the configured primary and fallback model", () => {
+    const markdown = generateRosterBlock([], [{
+      ...DEFAULT_TIER_CONFIGS.fast,
+      modelId: "gpt-5.5",
+      provider: "openai-codex",
+      reasoningLevel: "high",
+      fallbackModelId: "gpt-5.5",
+      fallbackProvider: "openai-codex",
+      fallbackReasoningLevel: "medium",
+    }]);
 
-    expect(markdown).toContain("`backend`");
+    expect(markdown).toContain("`support`");
     expect(markdown).toContain("[codex/gpt-5.5 high");
     expect(markdown).toContain("-> fb codex/gpt-5.5 medium]");
   });

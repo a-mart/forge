@@ -12,7 +12,6 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from './settings-row'
 import {
   getAllSelectableModels,
@@ -45,8 +44,31 @@ import { ModelIdSelect } from './specialists/ModelIdSelect'
 import { FallbackModelSection } from './specialists/FallbackModelSection'
 import { REASONING_LEVEL_LABELS } from './specialists/types'
 import { getSupportedReasoningLevelsForModelId } from '@/lib/model-preset'
+import {
+  getBehaviorModeCardMetadata,
+  isDelegationChoiceSpecialist,
+  SYSTEM_DELEGATION_SPECIALIST_IDS,
+} from './specialists/utils'
 
 export { type SettingsSpecialistsProps } from './specialists/types'
+
+const EXECUTION_POLICY_TIERS = {
+  fast: {
+    displayName: 'Support',
+    policy: 'support',
+    description: 'Low-cost, low-latency support work such as scans, lookups, and simple implementation.',
+  },
+  standard: {
+    displayName: 'Routine',
+    policy: 'routine',
+    description: 'Ordinary well-specified implementation and balanced day-to-day work.',
+  },
+  deep: {
+    displayName: 'Deep',
+    policy: 'deep',
+    description: 'Complex, ambiguous, or high-risk implementation, planning, and review.',
+  },
+} as const
 
 /* ================================================================== */
 /*  Main component                                                     */
@@ -126,6 +148,11 @@ export function SettingsSpecialists({
     }
   }, [clientOrWsUrl, tierConfigs])
 
+  const policyTierConfigs = useMemo(
+    () => tierConfigs.filter((config) => config.tier in EXECUTION_POLICY_TIERS),
+    [tierConfigs],
+  )
+
   /* ---- Collab scope data (shared hook, WP-U3) ---- */
   const { collabCategories, collabChannels, setCollabCategories } = useCollabScopeData(
     clientOrWsUrl,
@@ -140,10 +167,6 @@ export function SettingsSpecialists({
     loading,
     error,
     loadSpecialists,
-    specialistsEnabled,
-    enabledLoading,
-    enabledToggling,
-    handleToggleEnabled,
     selectedGlobalHandles,
     missingSelectedHandles,
   } = useSpecialistsData(clientOrWsUrl, selectedScope, isGlobal, specialistChangeKey, channelId, previewSession)
@@ -232,8 +255,20 @@ export function SettingsSpecialists({
 
   /* ---- Derived lists ---- */
 
+  const visibleSpecialists = useMemo(
+    () => specialists.filter((specialist) => isDelegationChoiceSpecialist(specialist.specialistId)),
+    [specialists],
+  )
+
+  const systemSpecialists = useMemo(
+    () => specialists
+      .filter((specialist) => SYSTEM_DELEGATION_SPECIALIST_IDS.has(specialist.specialistId))
+      .sort((a, b) => a.specialistId.localeCompare(b.specialistId)),
+    [specialists],
+  )
+
   const { profileOverrides, inheritedSpecialists } = useMemo(() => {
-    const sorted = [...specialists].sort((a, b) => a.specialistId.localeCompare(b.specialistId))
+    const sorted = [...visibleSpecialists].sort((a, b) => a.specialistId.localeCompare(b.specialistId))
     if (isChannel) {
       // For channel scope, split by sourceKind: 'channel' is local override, rest are inherited
       return {
@@ -245,15 +280,15 @@ export function SettingsSpecialists({
       profileOverrides: sorted.filter((s) => s.sourceKind === 'profile'),
       inheritedSpecialists: sorted.filter((s) => s.sourceKind !== 'profile'),
     }
-  }, [specialists, isChannel])
+  }, [visibleSpecialists, isChannel])
 
   const { hideDisabled, handleToggleHideDisabled } = useHideDisabled()
 
   // Apply hide-disabled filter — never hide cards that are currently being edited
   const filteredGlobalSpecialists = useMemo(() => {
-    if (!hideDisabled) return specialists
-    return specialists.filter((s) => s.enabled || editingIds.has(s.specialistId))
-  }, [specialists, hideDisabled, editingIds])
+    if (!hideDisabled) return visibleSpecialists
+    return visibleSpecialists.filter((s) => s.enabled || editingIds.has(s.specialistId))
+  }, [visibleSpecialists, hideDisabled, editingIds])
 
   const filteredProfileOverrides = useMemo(() => {
     if (!hideDisabled) return profileOverrides
@@ -287,12 +322,57 @@ export function SettingsSpecialists({
     ? collabChannels.find((ch) => ch.channelId === channelId)?.name ?? channelId ?? ''
     : ''
 
+  const renderSystemSpecialistCard = (spec: (typeof systemSpecialists)[number]) => {
+    const isLocal = isGlobal || (isChannel
+      ? spec.sourceKind === 'channel'
+      : spec.sourceKind === 'profile')
+    const cardMode = isGlobal
+      ? 'global' as const
+      : isLocal
+        ? (isChannel ? 'channelLocal' as const : 'profileOverride' as const)
+        : 'inherited' as const
+
+    return (
+      <SpecialistCard
+        key={spec.specialistId}
+        mode={cardMode}
+        specialist={spec}
+        isEditing={isLocal && editingIds.has(spec.specialistId)}
+        editState={isLocal ? editStates[spec.specialistId] : undefined}
+        isSaving={savingIds.has(spec.specialistId)}
+        isCloning={cloningIds.has(spec.specialistId)}
+        cardError={cardErrors[spec.specialistId]}
+        isPromptExpanded={isLocal && expandedPromptIds.has(spec.specialistId)}
+        isFallbackExpanded={isLocal && expandedFallbackIds.has(spec.specialistId)}
+        onExpand={() => isLocal ? startEditing(spec) : handleCreateOverride(spec)}
+        onCancelEditing={() => isGlobal
+          ? cancelEditing(spec.specialistId)
+          : handleCancelProfileEditing(spec.specialistId)}
+        onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
+        onSave={() => requestSave(spec.specialistId, spec.builtin)}
+        onRevert={isGlobal ? undefined : () => handleRevert(spec.specialistId)}
+        onDelete={() => handleDelete(spec.specialistId)}
+        onClone={spec.specialistId === 'codex-plugin' ? undefined : () => handleClone(spec)}
+        onToggleEnabled={() => isGlobal
+          ? handleGlobalToggleEnabled(spec)
+          : isLocal
+            ? handleProfileToggleEnabled(spec)
+            : handleInheritedToggleEnabled(spec)}
+        onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
+        onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
+        modelPresets={modelPresets}
+        selectableModels={selectableModels}
+        allSpecialists={specialists}
+      />
+    )
+  }
+
   /* ---- Render ---- */
 
   const disabledCount = useMemo(() => {
-    if (isGlobal) return specialists.filter((s) => !s.enabled).length
+    if (isGlobal) return visibleSpecialists.filter((s) => !s.enabled).length
     return [...profileOverrides, ...inheritedSpecialists].filter((s) => !s.enabled).length
-  }, [isGlobal, specialists, profileOverrides, inheritedSpecialists])
+  }, [isGlobal, visibleSpecialists, profileOverrides, inheritedSpecialists])
 
   const headerButtons = (
     <div className="flex items-center gap-3">
@@ -356,10 +436,10 @@ export function SettingsSpecialists({
 
       {/* Scope selector */}
       <SettingsSection
-        label="Specialist Roster"
+        label="Delegation Configuration"
         description={isCollab
-          ? 'Manage specialist worker definitions. Global collaboration specialists are shared across all channels on this server.'
-          : 'Manage specialist worker definitions. Global specialists are shared across all profiles.'}
+          ? 'Configure worker behavior modes, custom specialists, and execution policies shared across collaboration channels.'
+          : 'Configure how managers delegate work. Global behavior modes and custom specialists are shared across all profiles.'}
       >
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
@@ -380,55 +460,31 @@ export function SettingsSpecialists({
         </div>
       </SettingsSection>
 
-      {/* Global specialists enabled toggle */}
       <SettingsSection
-        label="Specialist Workers"
-        description="When enabled, the manager uses named specialist workers with pre-configured models and prompts. When disabled, the manager falls back to legacy model routing guidance."
-      >
-        <div className="flex items-center gap-3">
-          <Switch
-            id="specialists-enabled-toggle"
-            checked={specialistsEnabled}
-            disabled={enabledLoading || enabledToggling}
-            onCheckedChange={handleToggleEnabled}
-            aria-label="Enable specialist workers"
-          />
-          <Label htmlFor="specialists-enabled-toggle" className="text-sm font-medium">
-            Enable specialist workers
-          </Label>
-          {enabledToggling && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-        </div>
-        {!specialistsEnabled && !enabledLoading && (
-          <p className="text-xs text-muted-foreground/70 italic mt-2">
-            Specialist workers are disabled. The manager will use legacy model routing guidance for worker delegation.
-          </p>
-        )}
-      </SettingsSection>
-
-      <SettingsSection
-        label="Tiers"
-        description="Configure the global model and fallback used by each effort tier."
+        label="Execution Policies"
+        description="Choose the model and availability fallback used for support, routine, and deep delegated work."
         cta={(
           <Button
             variant="outline"
             size="sm"
             onClick={saveTierConfigs}
-            disabled={tiersSaving || tiersLoading || tierConfigs.length === 0}
+            disabled={tiersSaving || tiersLoading || policyTierConfigs.length === 0}
             className="gap-1.5"
           >
             {tiersSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            Save Tiers
+            Save Policies
           </Button>
         )}
       >
         {tiersLoading ? (
           <div className="flex items-center py-3 text-xs text-muted-foreground">
             <Loader2 className="mr-2 size-3.5 animate-spin" />
-            Loading tiers
+            Loading execution policies
           </div>
         ) : (
           <div className="space-y-3">
-            {tierConfigs.map((tier) => {
+            {policyTierConfigs.map((tier) => {
+              const policy = EXECUTION_POLICY_TIERS[tier.tier as keyof typeof EXECUTION_POLICY_TIERS]
               const supportedLevels = getSupportedReasoningLevelsForModelId(tier.modelId, modelPresets, tier.provider)
               const fallbackExpanded = expandedTierFallbacks.has(tier.tier)
               return (
@@ -437,11 +493,11 @@ export function SettingsSpecialists({
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="size-2.5 rounded-full" style={{ backgroundColor: tier.color }} />
-                        <p className="text-sm font-medium">{tier.displayName}</p>
+                        <p className="text-sm font-medium">{policy.displayName}</p>
                       </div>
-                      <p className="font-mono text-[11px] text-muted-foreground">{tier.tier}</p>
+                      <p className="font-mono text-[11px] text-muted-foreground">{policy.policy}</p>
                     </div>
-                    <p className="text-xs text-muted-foreground">{tier.description}</p>
+                    <p className="text-xs text-muted-foreground">{policy.description}</p>
                     <div className="flex flex-col gap-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Model</Label>
                       <ModelIdSelect
@@ -518,7 +574,7 @@ export function SettingsSpecialists({
       {/*  Category Defaults View                                       */}
       {/* ============================================================ */}
       {isCategory && selectedCategory && (
-        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
+        <div>
           <CategoryDefaultsView
             clientOrWsUrl={clientOrWsUrl}
             category={selectedCategory}
@@ -538,7 +594,7 @@ export function SettingsSpecialists({
       {/*  Channel View — Selection + Local specialists                 */}
       {/* ============================================================ */}
       {isChannel && (
-        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
+        <div>
           {/* Global specialist selection controls */}
           <ChannelSpecialistSelection
             clientOrWsUrl={clientOrWsUrl}
@@ -569,21 +625,21 @@ export function SettingsSpecialists({
       {/*  Global View                                                  */}
       {/* ============================================================ */}
       {!loading && !error && isGlobal && (
-        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
+        <div>
         <SettingsSection
-          label={isCollab ? 'Global Collaboration Specialists' : 'Global Specialists'}
+          label={isCollab ? 'Collaboration Behavior Modes & Custom Specialists' : 'Behavior Modes & Custom Specialists'}
           description={isCollab
-            ? 'Shared collaboration specialist definitions available to all channels. Builder-only specialists may exist on this server but are hidden from collaboration rosters.'
-            : 'Shared specialist definitions inherited by all profiles. Builtins are editable but cannot be deleted.'}
+            ? 'Shared mode prompts and custom specialist definitions available to collaboration channels.'
+            : 'Builtin mode prompts and custom specialist definitions inherited by all profiles. Builtins are editable but cannot be deleted.'}
           cta={headerButtons}
         >
           {newFormElement}
 
           {filteredGlobalSpecialists.length === 0 && !showNewForm ? (
             <p className="py-3 text-sm text-muted-foreground/70 italic">
-              {hideDisabled && specialists.length > 0
-                ? `All ${specialists.length} specialist${specialists.length === 1 ? '' : 's'} hidden by filter.`
-                : 'No global specialists found.'}
+              {hideDisabled && visibleSpecialists.length > 0
+                ? `All ${visibleSpecialists.length} specialist${visibleSpecialists.length === 1 ? '' : 's'} hidden by filter.`
+                : 'No behavior modes or custom specialists found.'}
             </p>
           ) : (
             <div className="space-y-2">
@@ -604,7 +660,7 @@ export function SettingsSpecialists({
                   onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
                   onSave={() => requestSave(spec.specialistId, spec.builtin)}
                   onDelete={() => handleDelete(spec.specialistId)}
-                  onClone={() => handleClone(spec)}
+                  onClone={getBehaviorModeCardMetadata(spec.specialistId) ? undefined : () => handleClone(spec)}
                   onToggleEnabled={() => handleGlobalToggleEnabled(spec)}
                   onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
                   onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
@@ -623,7 +679,7 @@ export function SettingsSpecialists({
       {/*  Profile / Channel — Overrides                                */}
       {/* ============================================================ */}
       {!loading && !error && (isProfile || isChannel) && (
-        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
+        <div>
           <SettingsSection
             label={isChannel ? 'Channel Specialists' : 'Profile Customizations'}
             description={isChannel
@@ -661,7 +717,7 @@ export function SettingsSpecialists({
                     onSave={() => requestSave(spec.specialistId, spec.builtin)}
                     onRevert={() => handleRevert(spec.specialistId)}
                     onDelete={() => handleDelete(spec.specialistId)}
-                    onClone={() => handleClone(spec)}
+                    onClone={getBehaviorModeCardMetadata(spec.specialistId) ? undefined : () => handleClone(spec)}
                     onToggleEnabled={() => handleProfileToggleEnabled(spec)}
                     onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
                     onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
@@ -706,7 +762,7 @@ export function SettingsSpecialists({
                     onCancelEditing={() => {}}
                     onUpdateField={() => {}}
                     onSave={() => {}}
-                    onClone={() => handleClone(spec)}
+                    onClone={getBehaviorModeCardMetadata(spec.specialistId) ? undefined : () => handleClone(spec)}
                     onToggleEnabled={() => handleInheritedToggleEnabled(spec)}
                     onTogglePrompt={() => {}}
                     onToggleFallback={() => {}}
@@ -720,6 +776,22 @@ export function SettingsSpecialists({
             </SettingsSection>
           )}
         </div>
+      )}
+
+      {!loading && !error && !isCategory && systemSpecialists.length > 0 && (
+        <SettingsSection
+          label="System & Compatibility"
+          description="Retained legacy and system-managed definitions. They are not offered as normal manager behavior modes, but remain configurable so existing customizations are not stranded."
+        >
+          <details>
+            <summary className="cursor-pointer text-sm text-muted-foreground">
+              Show {systemSpecialists.length} system definition{systemSpecialists.length === 1 ? '' : 's'}
+            </summary>
+            <div className="mt-3 space-y-2">
+              {systemSpecialists.map(renderSystemSpecialistCard)}
+            </div>
+          </details>
+        </SettingsSection>
       )}
 
       {/* Roster prompt dialog */}

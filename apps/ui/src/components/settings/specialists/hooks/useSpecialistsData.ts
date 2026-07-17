@@ -5,13 +5,11 @@ import type { SettingsApiClient } from '../../settings-api-client'
 import {
   fetchSpecialists,
   fetchSharedSpecialists,
-  fetchSpecialistsEnabled,
-  setSpecialistsEnabledApi,
   fetchChannelSpecialists,
 } from '../../specialists-api'
 
 /**
- * Manages loading of specialist definitions and the global enabled toggle.
+ * Manages loading of specialist definitions for the selected scope.
  *
  * When `channelId` is provided, specialists are loaded from the channel
  * specialist endpoint rather than the global or profile endpoints.
@@ -32,11 +30,6 @@ export function useSpecialistsData(
   // Channel selection metadata (only populated for channel scope)
   const [selectedGlobalHandles, setSelectedGlobalHandles] = useState<string[]>([])
   const [missingSelectedHandles, setMissingSelectedHandles] = useState<string[]>([])
-
-  // Global specialists enabled toggle
-  const [specialistsEnabled, setSpecialistsEnabled] = useState(true)
-  const [enabledLoading, setEnabledLoading] = useState(true)
-  const [enabledToggling, setEnabledToggling] = useState(false)
 
   // Reset specialists on scope change — MUST be declared before the load effect
   // so that React runs it first (effects fire in declaration order), ensuring the
@@ -94,39 +87,11 @@ export function useSpecialistsData(
     void loadSpecialists()
   }, [loadSpecialists, specialistChangeKey])
 
-  // Load global enabled state
-  useEffect(() => {
-    let cancelled = false
-    setEnabledLoading(true)
-    fetchSpecialistsEnabled(clientOrWsUrl)
-      .then((enabled) => { if (!cancelled) setSpecialistsEnabled(enabled) })
-      .catch(() => { /* default to true on error */ })
-      .finally(() => { if (!cancelled) setEnabledLoading(false) })
-    return () => { cancelled = true }
-  }, [clientOrWsUrl, specialistChangeKey])
-
-  const handleToggleEnabled = useCallback(async () => {
-    const next = !specialistsEnabled
-    setEnabledToggling(true)
-    try {
-      await setSpecialistsEnabledApi(clientOrWsUrl, next)
-      setSpecialistsEnabled(next)
-    } catch {
-      // Revert on failure — the WS event will correct if needed
-    } finally {
-      setEnabledToggling(false)
-    }
-  }, [clientOrWsUrl, specialistsEnabled])
-
   return {
     specialists,
     loading,
     error,
     loadSpecialists,
-    specialistsEnabled,
-    enabledLoading,
-    enabledToggling,
-    handleToggleEnabled,
     selectedGlobalHandles,
     missingSelectedHandles,
   }

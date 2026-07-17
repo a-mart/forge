@@ -1,7 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getSpawnPresetFamilies } from "@forge/protocol";
-import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { ChoiceRequestCancelledError } from "./swarm-choice-service.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import {
@@ -17,6 +16,12 @@ import {
 } from "./types.js";
 import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
 import { buildGoalTools } from "./goals/goal-tools.js";
+import {
+  resolveManagerDelegation,
+  translateManagerDelegationError,
+  WORKER_BEHAVIOR_MODES,
+  WORKER_EXECUTION_POLICIES,
+} from "./specialists/delegation-policy.js";
 
 export type { SwarmToolHost } from "./swarm-tool-host.js";
 
@@ -78,6 +83,14 @@ const knowledgeEntryTypeSchema = Type.Union([
   Type.Literal("gotcha"),
   Type.Literal("pointer")
 ]);
+
+const workerBehaviorModeSchema = Type.Union(
+  WORKER_BEHAVIOR_MODES.map((mode) => Type.Literal(mode)),
+);
+
+const workerExecutionPolicySchema = Type.Union(
+  WORKER_EXECUTION_POLICIES.map((policy) => Type.Literal(policy)),
+);
 
 function includeListAgentsEntry(agent: AgentDescriptor, includeTerminated: boolean): boolean {
   if (includeTerminated) {
@@ -447,7 +460,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        `Create and start a new worker agent asynchronously. The worker runs independently: this call returns after the assignment is accepted, and the manager remains available for user messages while the worker runs. Prefer tier/lens mode via \`tier\` and optional \`lens\`; legacy \`specialist\` handles remain supported for custom specialists and compatibility. When the assignment maps to one current plan step, pass that step's exact text in planStep. Use ad-hoc archetype/prompt/model overrides only when no tier/lens fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts ${SPAWN_PRESET_IDS.join("|")}.`,
+        "Delegate a concrete task to an independent worker. Choose a behavior mode for the output contract and an execution policy for model cost/capability. Defaults are mode=general and executionPolicy=routine; plan and review modes default to deep, but any mode can use support for bounded low-risk work. Use customSpecialist only for a saved custom specialist, without mode or executionPolicy. The call returns after the assignment is accepted.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -458,85 +471,34 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             description: "Exact text of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
           })
         ),
-        specialist: Type.Optional(
-          Type.String({
-            description:
-              "Legacy specialist handle. Builtin handles are rewritten to tier/lens; custom specialist handles still use their saved model/prompt."
-          })
+        mode: Type.Optional(workerBehaviorModeSchema),
+        executionPolicy: Type.Optional(workerExecutionPolicySchema),
+        customSpecialist: Type.Optional(
+          Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and executionPolicy." })
         ),
-        tier: Type.Optional(
-          Type.Union([
-            Type.Literal("light"),
-            Type.Literal("fast"),
-            Type.Literal("standard"),
-            Type.Literal("deep"),
-            Type.Literal("max"),
-          ], {
-            description: "Effort tier for the worker: light, fast, standard, deep, or max."
-          })
-        ),
-        lens: Type.Optional(
-          Type.String({
-            description: "Optional lens id for technique/output-contract guidance, such as planner, researcher, code-reviewer, code-reviewer-2, architect, or codex-plugin."
-          })
-        ),
-        archetypeId: Type.Optional(
-          Type.String({ description: "Optional archetype id (for example: merger)." })
-        ),
-        systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt override." })),
-        model: Type.Optional(spawnModelPresetSchema),
-        modelId: Type.Optional(
-          Type.String({
-            description:
-              "Override model ID within the selected provider. Use specific model IDs from the catalog " +
-              "(e.g. 'gpt-5.3-codex-spark' for fast/cheap, 'claude-haiku-4-5-20251001' for balanced Anthropic). " +
-              "Leave empty for preset default."
-          })
-        ),
-        reasoningLevel: Type.Optional(spawnReasoningLevelSchema),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
-        initialMessage: Type.Optional(Type.String({ description: "Optional first message to send after spawn." })),
-        webSearch: Type.Optional(
-          Type.Boolean({
-            description:
-              "Enable xAI native web search for this worker. Only effective with Grok models in ad-hoc mode. Ignored when specialist is provided (specialist config controls web search)."
-          })
-)
+        initialMessage: Type.String({ description: "Concrete task and expected outcome for the worker." }),
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
           agentId: string;
           planStep?: string;
-          specialist?: string;
-          tier?: "light" | "fast" | "standard" | "deep" | "max";
-          lens?: string;
-          archetypeId?: string;
-          systemPrompt?: string;
-          model?: unknown;
-          modelId?: string;
-          reasoningLevel?: unknown;
+          mode?: "general" | "plan" | "correctness-review" | "design-review" | "research";
+          executionPolicy?: "support" | "routine" | "deep";
+          customSpecialist?: string;
           cwd?: string;
-          initialMessage?: string;
-          webSearch?: boolean;
+          initialMessage: string;
         };
 
-        const spawnInput: SpawnAgentInput = {
-          agentId: parsed.agentId,
-          planStep: parsed.planStep,
-          specialist: parsed.specialist,
-          tier: parsed.tier,
-          lens: parsed.lens,
-          archetypeId: parsed.archetypeId,
-          systemPrompt: parsed.systemPrompt,
-          model: parseSwarmModelPreset(parsed.model, "spawn_agent.model"),
-          modelId: parsed.modelId,
-          reasoningLevel: parseSwarmReasoningLevel(parsed.reasoningLevel, "spawn_agent.reasoningLevel"),
-          cwd: parsed.cwd,
-          initialMessage: parsed.initialMessage,
-          webSearch: parsed.webSearch
-        };
+        const resolvedDelegation = resolveManagerDelegation(parsed);
+        const spawnInput = resolvedDelegation.spawnInput;
 
-        const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
+        let spawned: AgentDescriptor;
+        try {
+          spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
+        } catch (error) {
+          throw translateManagerDelegationError(error, resolvedDelegation);
+        }
         recordToolSideEffect(host, descriptor, {
           toolName: "spawn_agent",
           toolCallId: _toolCallId,
@@ -549,6 +511,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             specialist: spawnInput.specialist,
             tier: spawnInput.tier,
             lens: spawnInput.lens,
+            requestedMode: resolvedDelegation.requestedMode,
+            requestedExecutionPolicy: resolvedDelegation.requestedExecutionPolicy,
             modelProvider: spawned.model.provider,
             modelId: spawned.model.modelId,
           },
@@ -564,6 +528,49 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           details: spawned
         };
       }
+    },
+    {
+      name: "delegate_codex_plugin",
+      label: "Delegate to Codex Plugin",
+      description:
+        "Delegate a task using the server-owned Codex Plugin selector context attached to the current user turn. Selectors and scope are never accepted from the model; ask the user to tag @Codex again when no current context is available.",
+      parameters: Type.Object({
+        initialMessage: Type.String({ description: "Concrete read-only task for the selected Codex Plugin context." }),
+        planStep: Type.Optional(
+          Type.String({ description: "Exact text of the current plan step this worker assignment supports." }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const parsed = params as { initialMessage: string; planStep?: string };
+        const spawnInput: SpawnAgentInput = {
+          agentId: CODEX_PLUGIN_SPECIALIST_ID,
+          specialist: CODEX_PLUGIN_SPECIALIST_ID,
+          initialMessage: parsed.initialMessage,
+          planStep: parsed.planStep,
+        };
+        const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
+        recordToolSideEffect(host, descriptor, {
+          toolName: "delegate_codex_plugin",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: { agentId: spawned.agentId, role: spawned.role, displayName: spawned.displayName },
+          metadata: {
+            spawnedAgentId: spawned.agentId,
+            specialist: CODEX_PLUGIN_SPECIALIST_ID,
+            planStep: parsed.planStep,
+          },
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Delegated to Codex Plugin worker ${spawned.agentId} (${spawned.displayName})`,
+            },
+          ],
+          details: spawned,
+        };
+      },
     },
     {
       name: "retry_codex_plugin_worker",

@@ -9,6 +9,30 @@ import type { CardEditState } from './types'
 import { PROVIDER_LABELS, SPECIALIST_COLORS } from './types'
 import type { SaveSpecialistPayload } from '../specialists-api'
 
+export const SYSTEM_DELEGATION_SPECIALIST_IDS = new Set(['architect', 'codex-plugin'])
+
+const BEHAVIOR_MODE_BY_SPECIALIST_ID = {
+  planner: { mode: 'plan', defaultPolicy: 'deep' },
+  'code-reviewer': { mode: 'correctness-review', defaultPolicy: 'deep' },
+  'code-reviewer-2': { mode: 'design-review', defaultPolicy: 'deep' },
+  researcher: { mode: 'research', defaultPolicy: 'support' },
+} as const
+
+export type BehaviorModeCardMetadata =
+  (typeof BEHAVIOR_MODE_BY_SPECIALIST_ID)[keyof typeof BEHAVIOR_MODE_BY_SPECIALIST_ID]
+
+export function getBehaviorModeCardMetadata(
+  specialistId: string,
+): BehaviorModeCardMetadata | undefined {
+  return BEHAVIOR_MODE_BY_SPECIALIST_ID[
+    specialistId as keyof typeof BEHAVIOR_MODE_BY_SPECIALIST_ID
+  ]
+}
+
+export function isDelegationChoiceSpecialist(specialistId: string): boolean {
+  return !SYSTEM_DELEGATION_SPECIALIST_IDS.has(specialistId)
+}
+
 /* ------------------------------------------------------------------ */
 /*  Type guards                                                        */
 /* ------------------------------------------------------------------ */

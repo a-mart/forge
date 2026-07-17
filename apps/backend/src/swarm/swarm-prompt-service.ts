@@ -53,6 +53,7 @@ import {
   isEnoentError,
   normalizeOptionalAgentId,
 } from "./swarm-manager-utils.js";
+import { composeBuiltinModeSystemPrompt } from "./worker-mode-prompt.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Use coding tools (read/bash/edit/write) to execute implementation tasks.
@@ -144,8 +145,6 @@ interface SpecialistRegistryModuleLike {
   resolveRoster(profileId: string, targetSpace?: SpecialistTargetSpace): Promise<ResolvedSpecialistDefinitionLike[]>;
   generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[], tierConfigs?: readonly TierConfig[]): string;
   resolveTierConfigs(): Promise<TierConfig[]>;
-  getSpecialistsEnabled(): Promise<boolean>;
-  legacyModelRoutingGuidance: string;
 }
 
 interface MemoryRuntimeResources {
@@ -291,20 +290,17 @@ export class SwarmPromptService {
       ? await this.resolveProjectAgentPromptComposition(descriptor, options)
       : undefined;
     const normalizedSessionSystemPrompt = normalizeOptionalAgentId(descriptor.sessionSystemPrompt)?.trim();
-    const [promptTemplate, roster, specialistsEnabled, tierConfigs] = await Promise.all([
+    const [promptTemplate, roster, tierConfigs] = await Promise.all([
       projectAgentComposition
         ? Promise.resolve(projectAgentComposition.content)
         : normalizedSessionSystemPrompt
           ? Promise.resolve(normalizedSessionSystemPrompt)
           : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
       this.resolveSpecialistRosterForDescriptor(descriptor, specialistRegistry),
-      specialistRegistry.getSpecialistsEnabled(),
       specialistRegistry.resolveTierConfigs(),
     ]);
 
-    const delegationBlock = specialistsEnabled
-      ? specialistRegistry.generateRosterBlock(roster, tierConfigs)
-      : specialistRegistry.legacyModelRoutingGuidance;
+    const delegationBlock = specialistRegistry.generateRosterBlock(roster, tierConfigs);
     const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
       await this.resolveProjectAgentDirectoryEntries(profileId, descriptor),
     );
@@ -466,9 +462,14 @@ export class SwarmPromptService {
       return this.buildResolvedManagerPrompt(descriptor);
     }
 
-    const specialistId = normalizeOptionalAgentId(
-      descriptor.specialistLens ?? descriptor.specialistId?.split(":")[1] ?? descriptor.specialistId
-    )?.toLowerCase();
+    const requiredBehaviorPromptId = normalizeOptionalAgentId(descriptor.specialistLens)?.toLowerCase();
+    const specialistId = requiredBehaviorPromptId ?? (
+      descriptor.specialistTier
+        ? undefined
+        : normalizeOptionalAgentId(
+            descriptor.specialistId?.split(":")[1] ?? descriptor.specialistId
+          )?.toLowerCase()
+    );
     if (specialistId) {
       try {
         const specialistRegistry = await this.options.loadSpecialistRegistryModule();
@@ -476,15 +477,30 @@ export class SwarmPromptService {
         const specialist = roster.find((entry) => entry.specialistId === specialistId);
         const specialistPrompt = specialist?.promptBody?.trim();
         if (specialistPrompt) {
-          return this.appendRepositoryReferenceInventory(specialistPrompt, descriptor);
+          return this.appendRepositoryReferenceInventory(
+            composeBuiltinModeSystemPrompt(specialistId, specialistPrompt),
+            descriptor,
+          );
         }
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         this.options.logDebug("specialist:resolve:error", {
           agentId: descriptor.agentId,
           profileId,
           specialistId,
-          message: error instanceof Error ? error.message : String(error),
+          message,
         });
+        if (requiredBehaviorPromptId) {
+          throw new Error(
+            `Required worker behavior prompt "${requiredBehaviorPromptId}" could not be resolved: ${message}`,
+          );
+        }
+      }
+
+      if (requiredBehaviorPromptId) {
+        throw new Error(
+          `Required worker behavior prompt "${requiredBehaviorPromptId}" is missing or empty.`,
+        );
       }
     }
 

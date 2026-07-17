@@ -1,73 +1,53 @@
-Specialists combine effort tiers with lenses. Tiers choose the model, reasoning level, and fallback chain; lenses choose the worker persona and prompt guidance. Instead of a single generic worker, the manager can ask for a `fast` implementation worker, a `deep:planner`, or a `max:architect`.
+Delegation separates what a worker should do from how much model capability the task needs. Managers choose a behavior mode and an execution policy for each assignment; Forge translates those choices onto the configured worker runtime, fallback, and attribution machinery.
 
-Forge ships shared builtin lenses for `architect`, `planner`, `code-reviewer`, `code-reviewer-2`, `researcher`, and the contextual `codex-plugin` path. Collaboration channels use the same global tiers and TargetSpace-filtered lenses. The `Codex Plugin` lens appears when an active `@Codex` plugin selector scope exists; it is automatic rather than manually spawned and stays bound to that selector scope.
+## Behavior modes
 
-## Global vs. profile scope
+- **General** — implementation, debugging, and other outcome-focused work. This is the default.
+- **Plan** — task breakdown, sequencing, design analysis, and risks.
+- **Correctness review** — bugs, edge cases, invariants, and contract validation.
+- **Design review** — maintainability, API design, architecture fit, and consistency.
+- **Research** — fact-checking, documentation, and source-backed investigation.
 
-Use the scope dropdown to switch between:
+Those defaults are guidance, not capability floors. A manager may use Support for a bounded, low-risk plan or review and raise the policy when ambiguity or risk warrants it.
 
-- **Global** — specialists shared across all profiles. Builtin specialists live here.
-- **Per-profile** — overrides that apply to one profile only, taking priority over global definitions.
+## Execution policies
 
-## Builder vs. Collaboration visibility
+- **Support** — low-cost, low-latency scans, lookups, and simple work.
+- **Routine** — ordinary well-specified implementation and balanced day-to-day work.
+- **Deep** — complex, ambiguous, or high-risk implementation, planning, and review.
 
-Specialists are TargetSpace-aware. The Builder roster shows the local Builder set, while Collaboration mode shows the collaboration set for the active channel or server context. That keeps channel-only helpers out of the Builder roster and keeps Builder-only definitions out of Collab views.
+Each policy has a primary model, reasoning level, and optional availability fallback. Fallback and recovery happen inside the worker runtime; the manager does not need to retry on another model manually.
 
-## Collaboration scopes
+## Global, profile, and Collaboration scopes
 
-Collab Settings supports three scopes:
+Use the scope selector to edit shared definitions or narrower overrides:
 
-- **Global** — shared collaboration specialists available to all channels.
-- **Category** — the default specialists selected for new channels in that category.
-- **Channel** — the active selected specialists for one channel session, plus channel-local specialist CRUD.
+- **Global** — behavior-mode prompts and custom specialists shared by all Builder profiles.
+- **Profile** — overrides for one Builder profile.
+- **Collaboration global** — shared definitions available to collaboration channels.
+- **Category** — default behavior-mode and custom-specialist availability for new channels in a category.
+- **Channel** — available shared behavior modes and custom specialists plus channel-local definitions for one channel.
 
-Channel-local specialists live at `profiles/_collaboration/sessions/<channelSessionId>/specialists/<handle>.md` and shadow any global specialist with the same handle inside that channel.
+Definitions use `TargetSpace` to stay in Builder, Collaboration, or both. Channel-local files shadow the same global handle only inside that channel. Skill selection is managed on the **Skills** settings page.
 
-Skill selection (all/custom mode per category or channel) is managed on the **Skills** settings page, not here.
+## Custom specialists
 
-## Filtering the roster
+Use **New Specialist** when a durable domain-specific worker needs a complete fixed execution template with its own saved prompt and model configuration. A manager selects it through the custom-specialist path instead of combining it with a behavior mode or execution policy.
 
-When you have disabled specialists, a **Hide disabled** checkbox appears next to the toolbar buttons. Check it to filter disabled specialists from all sections. The preference persists across sessions.
+1. Enter a kebab-case handle and display name.
+2. Describe when the manager should use it.
+3. Choose its model, reasoning, and optional fallback, or keep its stored tier default.
+4. Write a concise standalone worker prompt with its role and output contract.
+5. Save it.
 
-## Enabling specialists
+Builtin mode prompts can be customized per profile. Pin a builtin customization to prevent a future Forge update from replacing it. Use **Revert** to remove a profile override and return to the inherited definition.
 
-The global toggle at the top turns the specialist system on or off. When disabled, the manager uses legacy model routing guidance instead. Leave it enabled unless you have a specific reason to turn it off.
+Legacy Architect and system-managed Codex Plugin definitions live in the collapsed **System & Compatibility** section. They are not offered as normal manager behavior modes, but remain inspectable so existing customizations can be repaired or reverted.
 
-## Creating a specialist
+## Dedicated Codex Plugin delegation
 
-1. Click **New Specialist**.
-2. Enter a handle (kebab-case identifier) and display name.
-3. Click **Create**. The specialist opens in edit mode with a default prompt.
-4. Set the default tier or, for a direct custom specialist, its model and reasoning level.
-5. Edit the prompt body to describe this specialist's focus.
-6. Click **Save**.
-
-## Project Agent settings
-
-Project Agent settings include role instructions, reference docs, same-profile session-creation capability, and Builder sharing controls. Sharing is source-owned: grant another profile access from the source Project Agent, and remove the grant there when access should end. Target profiles see granted agents in their external/shared-agent directory and @mention autocomplete, labeled separately from local agents.
-
-Shared/external Project Agent turns are constrained and do not inherit source-only capabilities from target sessions. Project Agent sends reject attachments, and sharing changes refresh affected runtime prompts so directory updates propagate.
-
-## Project agent session creation
-
-If a project agent has the **Can create sessions** toggle enabled in its settings, it can create new manager sessions in the same profile. Those created sessions can show creator attribution in the sidebar, and the creator keeps using the normal messaging path.
-
-## Model and fallback
-
-Each effort tier has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Direct custom specialists with their own model keep their own fallback settings. The contextual `Codex Plugin` specialist is visible in Settings as `Codex Plugin` only when an active selector scope exists, stays with that scope until stop/replacement/session cleanup/delete/archive/runtime error, and is not a general spawnable worker. Manager follow-ups are allowed while scope remains active, and explicit retry/continuation turns after a stopped or failed scoped worker can reuse the server-stored selector scope without widening it. Direct user or sibling-worker targeting remains blocked.
-
-## Specialist web research
-
-Forge's current production web research path is the `researcher` lens, which includes Brave-backed research guidance. xAI native web/X search is not a current production path unless a future adapter enables it.
-
-## Pinning
-
-Builtin specialists are updated when Forge updates. If you customize a builtin, enable **Pin customizations** to prevent your changes from being overwritten. Without pinning, Forge warns you before saving.
-
-## Profile overrides
-
-When viewing a profile scope, inherited specialists appear below your overrides. Click an inherited specialist to create a profile-specific copy you can customize. Use **Revert** to delete the override and return to the inherited version.
+Codex Plugin is not a normal behavior mode or custom specialist. When a user includes an active `@Codex` plugin selector, Forge provides a dedicated delegation tool and binds its worker to the server-owned selector scope. The model cannot supply or widen selectors. Explicit retry turns can reuse a stopped or failed worker's stored scope; unrelated turns require a fresh selector tag.
 
 ## Roster prompt
 
-In profile scope, click **Roster Prompt** to see the specialist roster block that gets injected into the manager's system prompt. This shows exactly what the manager knows about its available specialists.
+In profile or channel scope, click **Roster Prompt** to inspect the compact delegation block injected into the manager prompt. It shows the available behavior modes, exact model behind each execution policy, and selectable custom specialists.

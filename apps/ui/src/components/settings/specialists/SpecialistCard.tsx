@@ -15,7 +15,12 @@ import { SpecialistBadge } from '@/components/chat/SpecialistBadge'
 import { getModelDisplayLabel, getSupportedReasoningLevelsForModelId } from '@/lib/model-preset'
 import type { SpecialistCardProps } from './types'
 import { REASONING_LEVEL_LABELS } from './types'
-import { normalizeHandle, specialistToEditState, modelSupportsWebSearch } from './utils'
+import {
+  getBehaviorModeCardMetadata,
+  normalizeHandle,
+  specialistToEditState,
+  modelSupportsWebSearch,
+} from './utils'
 import { ColorSwatchPicker } from './ColorSwatchPicker'
 import { ModelIdSelect } from './ModelIdSelect'
 import { FallbackModelSection } from './FallbackModelSection'
@@ -46,7 +51,8 @@ export function SpecialistCard({
   allSpecialists,
 }: SpecialistCardProps) {
   const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
-  const usesTierModel = !specialist.modelId && !!specialist.defaultTier
+  const behaviorMode = getBehaviorModeCardMetadata(specialist.specialistId)
+  const usesTierModel = !!behaviorMode || (!specialist.modelId && !!specialist.defaultTier)
 
   // Compact summary values (used in collapsed state)
   const modelDisplay = specialist.modelId
@@ -78,7 +84,14 @@ export function SpecialistCard({
           <div className="flex flex-col gap-1.5 min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <SpecialistBadge displayName={specialist.displayName} color={specialist.color} />
-              <span className="font-mono text-xs text-muted-foreground/70">{specialist.specialistId}.md</span>
+              <span className="font-mono text-xs text-muted-foreground/70">
+                {behaviorMode ? behaviorMode.mode : `${specialist.specialistId}.md`}
+              </span>
+              {behaviorMode && (
+                <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  Behavior mode
+                </span>
+              )}
               {specialist.builtin && (
                 <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                   Builtin
@@ -118,7 +131,11 @@ export function SpecialistCard({
               )}
             </div>
             {usesTierModel ? (
-              <p className="text-xs text-muted-foreground">Default tier: {specialist.defaultTier}</p>
+              <p className="text-xs text-muted-foreground">
+                {behaviorMode
+                  ? `Default policy: ${behaviorMode.defaultPolicy}`
+                  : `System compatibility tier: ${specialist.defaultTier ?? 'configured default'}`}
+              </p>
             ) : modelDisplay ? (
               <p className="text-xs text-muted-foreground">
                 <span>{modelDisplay}</span>

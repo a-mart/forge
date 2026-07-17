@@ -1,15 +1,37 @@
-# Specialists, Tiers, and Lenses
+# Worker Delegation
 
-Forge routes worker spawns through two concepts:
+Forge gives managers two task-level choices:
 
-- **Effort tiers** choose the model, provider, reasoning level, and fallback chain.
-- **Specialist lenses** choose the persona, prompt, color, and "when to use" guidance.
+- **Behavior mode** chooses the worker's role and output contract.
+- **Execution policy** chooses the configured model, reasoning level, and availability fallback.
 
-The manager sees a compact tier/lens roster and can spawn a worker with `tier`, `lens`, or both. Custom legacy specialists are still supported as direct worker spawn templates.
+The manager-facing `spawn_agent` tool accepts `mode`, `executionPolicy`, and a required concrete `initialMessage`. Saved custom specialists remain available through `customSpecialist`. The older tier/lens representation remains internal so existing workers, fallbacks, attribution, and stored configuration keep working.
+
+## Behavior Modes
+
+| Mode | Default policy | Purpose |
+|---|---|---|
+| `general` | `routine` | Implementation, debugging, and other outcome-focused work |
+| `plan` | `deep` | Task breakdown, sequencing, design analysis, and risks |
+| `correctness-review` | `deep` | Bugs, edge cases, invariants, and contract validation |
+| `design-review` | `deep` | Maintainability, API design, architecture fit, and consistency |
+| `research` | `support` | Fact-checking, documentation, and source-backed investigation |
+
+Mode defaults are guidance rather than capability floors. A manager may choose `support` for a bounded, low-risk plan or review and raise the policy when ambiguity or risk warrants it.
+
+## Execution Policies
+
+| Policy | Stored tier | Intended use |
+|---|---|---|
+| `support` | `fast` | Low-cost, low-latency scans, lookups, and simple work |
+| `routine` | `standard` | Ordinary well-specified implementation and balanced work |
+| `deep` | `deep` | Complex, ambiguous, or high-risk implementation, planning, and review |
+
+The model behind each policy is configurable in **Settings → Delegation → Execution Policies**. Forge still reads the legacy `light` and `max` tiers for persisted workers and compatibility, but they are not part of normal manager delegation.
 
 ## How It Works
 
-Each custom specialist or lens is a **markdown file with YAML frontmatter**. The filename (without `.md`) becomes the handle (kebab-case). Builtin lenses normally omit `modelId` because their model is supplied by the selected tier. Custom specialists can still include `modelId` and `provider` to behave like the older direct specialist templates.
+Each behavior-mode prompt or custom specialist is a **markdown file with YAML frontmatter**. The filename (without `.md`) becomes its internal handle (kebab-case). Shipped mode prompts normally omit `modelId` because their model comes from the selected execution policy. A custom specialist is a complete fixed execution template and may include `modelId`, `provider`, reasoning, and fallback to own model selection directly.
 
 ## File Locations
 
@@ -18,7 +40,7 @@ Each custom specialist or lens is a **markdown file with YAML frontmatter**. The
 - **Profile-specific specialists**: `~/.forge/profiles/<profileId>/specialists/<handle>.md`
 - **Collaboration channel-local specialists**: `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/<handle>.md`
 
-Profile specialists shadow global ones with the same filename. Forge ships with builtin lenses that are seeded to the global directory on startup. Builder and Collaboration share the same core lenses where `TargetSpace` allows it; each surface filters the roster by `TargetSpace`.
+Profile specialists shadow global ones with the same filename. Forge seeds the shipped behavior-mode prompts into the global directory on startup. Builder and Collaboration share the same modes where `TargetSpace` allows it; each surface filters the roster by `TargetSpace`.
 
 ## Frontmatter Fields
 
@@ -43,9 +65,9 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 
 `TargetSpace` is the canonical frontmatter key and is case-sensitive when Forge writes files. Use `builder` for normal Builder managers, `collaboration` for collaboration channel managers, or `[builder, collaboration]` for a shared definition available in both surfaces. Files without `TargetSpace` default to Builder-only for legacy compatibility. Collaboration channel-local specialist files are always treated as collaboration-scoped.
 
-`defaultTier` can be one of `light`, `fast`, `standard`, `deep`, or `max`. It only affects lens-only spawns. If both `tier` and `lens` are provided, the explicit tier wins unless the lens has an explicit `modelId` override.
+`defaultTier` can be one of `light`, `fast`, `standard`, `deep`, or `max`. It remains part of the persisted compatibility format and supplies a default for direct custom-specialist use when no model is stored.
 
-## Builtin Tiers
+## Stored Tier Compatibility
 
 | Tier | Default Model | Reasoning | Fallback |
 |---|---|---|---|
@@ -55,20 +77,20 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `deep` | `openai-codex/gpt-5.5` | high | `openai-codex/gpt-5.5` medium |
 | `max` | `openai-codex/gpt-5.5` | xhigh | `openai-codex/gpt-5.5` medium |
 
-Tier settings are global and editable in **Settings → Specialists → Tiers**. They are persisted at `~/.forge/shared/specialists/tier-configs.json`.
+Tier settings are global and persisted at `~/.forge/shared/specialists/tier-configs.json`. The Delegation settings page edits the `fast`, `standard`, and `deep` entries under their Support, Routine, and Deep policy names without discarding the other stored entries.
 
-## Builtin Lenses
+## Shipped Mode Prompts and Dedicated Capabilities
 
-Forge ships six builtin lenses:
+Forge uses four editable builtin prompts for non-general behavior modes:
 
-- `architect` (`defaultTier: max`, Builder and Collaboration)
 - `planner` (`defaultTier: deep`, Builder and Collaboration)
 - `code-reviewer` (`defaultTier: deep`, Builder and Collaboration)
 - `code-reviewer-2` (`defaultTier: deep`, Builder and Collaboration)
-- `researcher` (`defaultTier: standard`, Builder and Collaboration; includes Brave-backed web research guidance)
-- `codex-plugin` (`defaultTier: standard`, Builder-only; used for scoped `@Codex` plugin turns)
+- `researcher` (`defaultTier: standard`, Builder and Collaboration)
 
-Older builtin handles are rewritten for compatibility: `backend`, `frontend`, and `cursor-builder` become `fast`; `doc-writer` becomes `standard`; `scout` becomes `light`; `web-researcher` becomes `standard:researcher`; `planner`, `architect`, `code-reviewer`, `code-reviewer-2`, `researcher`, and `codex-plugin` map to their default tier plus lens. Legacy `collab-*` handles map to the shared lenses or bare tiers.
+General workers use the worker archetype prompt. The legacy `architect` prompt remains readable for existing descriptors, but new architecture work uses `mode: general` with `executionPolicy: deep`. Codex Plugin delegation is a dedicated contextual tool and server-owned authorization path, not a normal behavior mode or custom specialist.
+
+Older builtin handles and tier/lens inputs are still rewritten internally for compatibility. They are not exposed in the current manager tool schema.
 
 ## Available Models
 
@@ -104,16 +126,16 @@ Older builtin handles are rewritten for compatibility: `backend`, `frontend`, an
 - The visible `pi-fable` preset selects `anthropic/claude-fable-5` at `high` by default for manager and specialist selection. This is the Fable family default, not a builtin effort-tier default. Fable uses always-on adaptive thinking, so Forge exposes low, medium, high, xhigh, and max but not none.
 - Manager and specialist selectors expose dedicated presets: `pi-sonnet` for Anthropic Sonnet and `sdk-sonnet` for Claude SDK Sonnet. Choosing the preset selects Sonnet 5 by default; Sonnet 4.5 remains available as a variant.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
-- Cursor SDK models can appear in manager and specialist selectors when credentials and model visibility allow them. The default `fast` tier targets Composer 2.5 with a Codex fallback; Composer exposes only Cursor's `fast` toggle and stores reasoning as `none`. Cursor Grok 4.5 uses the SDK model id `grok-4.5` plus curated-from-live-discovery `effort` and `fast` params; Forge keeps `grok-4.5-fast` as a separate catalog id for attribution. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
+- Cursor SDK models can appear in manager and delegation policy selectors when credentials and model visibility allow them. The default stored `fast` tier (the Support policy) targets Composer 2.5 with a Codex fallback; Composer exposes only Cursor's `fast` toggle and stores reasoning as `none`. Cursor Grok 4.5 uses the SDK model id `grok-4.5` plus curated-from-live-discovery `effort` and `fast` params; Forge keeps `grok-4.5-fast` as a separate catalog id for attribution. Runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt
 
-The markdown body below the frontmatter is the specialist's **full standalone system prompt**. It is not layered on top of other prompts — each specialist owns its complete prompt. Use the worker base prompt as a starting template:
+The markdown body below the frontmatter is a custom specialist's **full standalone system prompt**. It is not layered on top of hidden role prompts. Keep it short and include only the rules the worker actually needs:
 
 ```
 You are a worker agent in a swarm.
-- Use coding tools (read/bash/edit/write) to execute implementation tasks.
+- Own the assigned outcome and verify it in proportion to risk.
 - Your final assistant response is returned to the manager automatically.
 - You are not user-facing.
 - End users see only manager-owned user-visible outputs: final web/session replies projected from plain assistant text as `assistant_output`, direct-web progress projected as `assistant_progress`, explicit routed `speak_to_user` deliveries for non-web or exceptional cases, and structured choice UI.
@@ -124,36 +146,33 @@ You are a worker agent in a swarm.
 - Follow the memory skill workflow before editing the memory file, and never store secrets in memory.
 ```
 
-Then add specialist-specific instructions below.
+Then add the custom specialist's role and output contract. Forge's shipped behavior-mode prompts are different: their editable markdown is a role delta layered after a small stable Forge worker contract. This keeps SYSTEM-message handling, memory safety, action boundaries, and manager-owned delivery consistent without repeating those rules in every mode file.
 
 ## Example
 
 ```markdown
 ---
-displayName: Planner
+displayName: Payments Expert
 color: "#7c3aed"
 enabled: true
-whenToUse: Architecture planning, design docs, implementation sequencing, risk analysis
-defaultTier: deep
+whenToUse: Payment provider integration analysis and implementation
+modelId: grok-4.5
+provider: cursor-sdk
 ---
-You are a worker agent in a swarm.
-[...base worker prompt...]
+You are the payments integration worker. Own the assigned payment-provider outcome, inspect the real code path, and verify changes with focused tests.
 
-Planning specialist focus:
-- You produce structured implementation plans with clear sequencing dependencies.
-- Identify risks, migration complexity, and breakage potential for each step.
-- Write for AI coding agents, not humans — skip timelines, focus on technical specifics.
+You are not user-facing. Return status, summary, changed files, verification, and remaining risks to the manager.
 ```
 
 ## Managing Specialists
 
 ### Settings UI
 
-Go to **Settings → Specialists** to manage your roster:
+Go to **Settings → Delegation** to manage worker delegation:
 
 - **Global scope**: View and edit shared specialists. Create new global specialists. Builtins are editable but cannot be deleted.
 - **Profile scope**: View inherited specialists and create profile-specific overrides or new profile-only specialists.
-- **Tiers**: Edit the five global effort-tier model and fallback settings.
+- **Execution Policies**: Edit the three manager-facing model and fallback policies.
 
 Click any specialist card to expand and edit it. Changes are saved per-file.
 
@@ -165,13 +184,13 @@ Click any specialist card to expand and edit it. Changes are saved per-file.
 
 ### Fallback Models
 
-Each tier, and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry.
+Each execution policy, and each direct custom specialist with its own model, can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry.
 
 Only exhausted fallback failures surface upward.
 
 **Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 
-`codex-plugin` is a contextual built-in specialist. It appears only when a user turn includes an active `@Codex` plugin selector, and Forge binds that worker to the server-stored selector scope. Normal scoped plugin tools return bounded preview/metadata only. Full connector exports, such as Fireflies transcripts or summaries, must use the scoped export artifact tool, which writes redacted JSON artifacts under the session and returns only path/metadata plus a bounded preview. If that scoped worker is stopped or fails, Forge can authorize retry only for an explicit retry/continuation turn that refers to the same Codex/plugin context; unrelated turns require a fresh selector tag.
+Codex Plugin delegation is contextual. It is available only when a user turn includes an active `@Codex` plugin selector, and Forge binds the dedicated worker to the server-stored selector scope. Normal scoped plugin tools return bounded preview/metadata only. Full connector exports, such as Fireflies transcripts or summaries, must use the scoped export artifact tool, which writes redacted JSON artifacts under the session and returns only path/metadata plus a bounded preview. If that scoped worker is stopped or fails, Forge can authorize retry only for an explicit retry/continuation turn that refers to the same Codex/plugin context; unrelated turns require a fresh selector tag.
 
 ### Resolution Order
 

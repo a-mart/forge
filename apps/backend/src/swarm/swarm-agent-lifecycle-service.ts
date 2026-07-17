@@ -49,6 +49,7 @@ import {
   normalizeEffortTier,
   resolveLegacySpecialistRewrite,
   resolveTierConfig,
+  resolveTierConfigs,
   DEFAULT_TIER_CONFIGS,
   EFFORT_TIER_ORDER,
 } from "./specialists/specialist-registry.js";
@@ -59,10 +60,18 @@ import {
   shouldPreserveExternalThreadWorkerOnSessionStop,
   shouldInterruptExternalThreadSidecar,
 } from "./external-thread-compatibility.js";
+import { isBuiltinModePromptId } from "./worker-mode-prompt.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
+
+function getDelegationTierDisplayName(tier: EffortTier, configuredName: string): string {
+  if (tier === "fast") return "Support";
+  if (tier === "standard") return "Routine";
+  if (tier === "deep") return "Deep";
+  return configuredName;
+}
 
 interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
@@ -591,7 +600,10 @@ export class SwarmAgentLifecycleService {
         if (!specialist.enabled) {
           throw new Error(`Lens "${lensId}" is disabled for this profile. Enable it before spawning.`);
         }
-        if (!specialist.available) {
+        if (
+          !specialist.available &&
+          !(input.policyControlledModel === true && isBuiltinModePromptId(lensId))
+        ) {
           const reason =
             specialist.availabilityMessage?.trim() ||
             (specialist.availabilityCode
@@ -606,16 +618,19 @@ export class SwarmAgentLifecycleService {
         }
       }
 
-      const modelConfig = specialist?.modelId
-        ? {
+      // New mode + policy delegation lets the policy exclusively own model,
+      // reasoning, and fallback. Legacy direct specialist/tier calls retain
+      // their saved model behavior for compatibility.
+      const modelConfig = input.policyControlledModel === true || !specialist?.modelId
+        ? tierConfig
+        : {
             provider: specialist.provider || inferProviderFromModelId(specialist.modelId),
             modelId: specialist.modelId,
             reasoningLevel: specialist.reasoningLevel,
             fallbackModelId: specialist.fallbackModelId,
             fallbackProvider: specialist.fallbackProvider,
             fallbackReasoningLevel: specialist.fallbackReasoningLevel,
-          }
-        : tierConfig;
+          };
       if (!modelConfig.provider) {
         throw new Error(`Tier "${tierSelection.tier}" has an unknown modelId provider mapping: ${modelConfig.modelId}`);
       }
@@ -646,7 +661,10 @@ export class SwarmAgentLifecycleService {
       }
 
       archetypeId = undefined;
-      explicitSystemPrompt = specialist?.promptBody;
+      // Resolve the prompt after descriptor attribution so shipped behavior
+      // modes receive the stable worker core while custom specialists remain
+      // standalone.
+      explicitSystemPrompt = undefined;
       if (specialist?.webSearch) {
         webSearch = true;
       }
@@ -771,14 +789,18 @@ export class SwarmAgentLifecycleService {
     };
 
     if (tierSelection) {
+      const tierDisplayName = getDelegationTierDisplayName(
+        tierSelection.tier,
+        selectedTierConfig?.displayName ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].displayName,
+      );
       descriptor.specialistTier = tierSelection.tier;
       if (tierSelection.lens) {
         descriptor.specialistLens = tierSelection.lens;
       }
       descriptor.specialistId = getTierAttributionId(tierSelection.tier, tierSelection.lens);
       descriptor.specialistDisplayName = specialist
-        ? `${selectedTierConfig?.displayName ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].displayName} — ${specialist.displayName}`
-        : selectedTierConfig?.displayName ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].displayName;
+        ? `${tierDisplayName} — ${specialist.displayName}`
+        : tierDisplayName;
       descriptor.specialistColor = specialist?.color ?? selectedTierConfig?.color ?? DEFAULT_TIER_CONFIGS[tierSelection.tier].color;
       if (specialist?.webSearch) {
         descriptor.webSearch = true;
@@ -1357,26 +1379,7 @@ export class SwarmAgentLifecycleService {
 
   async notifySpecialistRosterChanged(profileId: string, options?: { sessionAgentId?: string }): Promise<void> {
     try {
-      if (options?.sessionAgentId) {
-        const manager = this.options.descriptors.get(options.sessionAgentId);
-        const roster = manager && this.options.resolveSpecialistRosterForManager
-          ? await this.options.resolveSpecialistRosterForManager(manager, "collaboration")
-          : [];
-        await this.syncWorkerSpecialistMetadata(profileId, roster, options.sessionAgentId);
-      } else if (this.options.resolveSpecialistRosterForManager) {
-        const sessions = this.options.getSessionsForProfile(profileId);
-        await Promise.all(sessions.map(async (manager) => {
-          const targetSpace = isCollabSession(manager) ? "collaboration" : "builder";
-          const roster = await this.options.resolveSpecialistRosterForManager!(manager, targetSpace);
-          await this.syncWorkerSpecialistMetadata(profileId, roster, manager.agentId);
-        }));
-      } else {
-        const [builderRoster, collaborationRoster] = await Promise.all([
-          this.options.resolveSpecialistRosterForProfile(profileId, "builder"),
-          this.options.resolveSpecialistRosterForProfile(profileId, "collaboration"),
-        ]);
-        await this.syncWorkerSpecialistMetadata(profileId, [...builderRoster, ...collaborationRoster]);
-      }
+      await this.syncWorkerSpecialistMetadataForProfile(profileId, options?.sessionAgentId);
     } catch (error) {
       this.options.logDebug("specialist:roster_change:sync:error", {
         profileId,
@@ -1400,6 +1403,60 @@ export class SwarmAgentLifecycleService {
         });
       }
     });
+  }
+
+  async reconcileWorkerSpecialistMetadataForBoot(): Promise<void> {
+    const profileIds = new Set(this.options.profiles.keys());
+    for (const descriptor of this.options.descriptors.values()) {
+      if (descriptor.profileId) {
+        profileIds.add(descriptor.profileId);
+      }
+    }
+
+    for (const profileId of profileIds) {
+      try {
+        await this.syncWorkerSpecialistMetadataForProfile(profileId, undefined, {
+          persist: false,
+          publish: false,
+        });
+      } catch (error) {
+        this.options.logDebug("specialist:boot_metadata_sync:error", {
+          profileId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private async syncWorkerSpecialistMetadataForProfile(
+    profileId: string,
+    sessionAgentId?: string,
+    options?: { persist?: boolean; publish?: boolean },
+  ): Promise<void> {
+    if (sessionAgentId) {
+      const manager = this.options.descriptors.get(sessionAgentId);
+      const roster = manager && this.options.resolveSpecialistRosterForManager
+        ? await this.options.resolveSpecialistRosterForManager(manager, "collaboration")
+        : [];
+      await this.syncWorkerSpecialistMetadata(profileId, roster, sessionAgentId, options);
+      return;
+    }
+
+    if (this.options.resolveSpecialistRosterForManager) {
+      const sessions = this.options.getSessionsForProfile(profileId);
+      await Promise.all(sessions.map(async (manager) => {
+        const targetSpace = isCollabSession(manager) ? "collaboration" : "builder";
+        const roster = await this.options.resolveSpecialistRosterForManager!(manager, targetSpace);
+        await this.syncWorkerSpecialistMetadata(profileId, roster, manager.agentId, options);
+      }));
+      return;
+    }
+
+    const [builderRoster, collaborationRoster] = await Promise.all([
+      this.options.resolveSpecialistRosterForProfile(profileId, "builder"),
+      this.options.resolveSpecialistRosterForProfile(profileId, "collaboration"),
+    ]);
+    await this.syncWorkerSpecialistMetadata(profileId, [...builderRoster, ...collaborationRoster], undefined, options);
   }
 
   async notifyProjectAgentsChanged(profileId: string): Promise<void> {
@@ -1755,8 +1812,11 @@ export class SwarmAgentLifecycleService {
     profileId: string,
     roster: ResolvedSpecialistDefinitionLike[],
     managerId?: string,
+    options?: { persist?: boolean; publish?: boolean },
   ): Promise<void> {
     const rosterById = new Map(roster.map((entry) => [entry.specialistId, entry]));
+    const tierConfigs = await resolveTierConfigs(this.options.dataDir);
+    const tierConfigsById = new Map(tierConfigs.map((config) => [config.tier, config]));
     let changed = false;
 
     for (const descriptor of this.options.descriptors.values()) {
@@ -1769,6 +1829,38 @@ export class SwarmAgentLifecycleService {
       }
 
       if (managerId && descriptor.managerId !== managerId) {
+        continue;
+      }
+
+      if (descriptor.specialistTier) {
+        const tierConfig = tierConfigsById.get(descriptor.specialistTier) ?? DEFAULT_TIER_CONFIGS[descriptor.specialistTier];
+        const tierDisplayName = getDelegationTierDisplayName(descriptor.specialistTier, tierConfig.displayName);
+        const lensId = normalizeOptionalAgentId(
+          descriptor.specialistLens ?? descriptor.specialistId?.split(":")[1],
+        )?.toLowerCase();
+        const specialist = lensId ? rosterById.get(lensId) : undefined;
+        if (lensId && !specialist) {
+          continue;
+        }
+
+        const specialistId = getTierAttributionId(descriptor.specialistTier, lensId);
+        const specialistDisplayName = specialist
+          ? `${tierDisplayName} — ${specialist.displayName}`
+          : tierDisplayName;
+        const specialistColor = specialist?.color ?? tierConfig.color;
+        if (
+          descriptor.specialistId === specialistId &&
+          descriptor.specialistDisplayName === specialistDisplayName &&
+          descriptor.specialistColor === specialistColor
+        ) {
+          continue;
+        }
+
+        descriptor.specialistId = specialistId;
+        descriptor.specialistDisplayName = specialistDisplayName;
+        descriptor.specialistColor = specialistColor;
+        this.upsertDescriptor(descriptor);
+        changed = true;
         continue;
       }
 
@@ -1801,8 +1893,12 @@ export class SwarmAgentLifecycleService {
       return;
     }
 
-    await this.options.saveStore();
-    this.options.emitAgentsSnapshot();
+    if (options?.persist !== false) {
+      await this.options.saveStore();
+    }
+    if (options?.publish !== false) {
+      this.options.emitAgentsSnapshot();
+    }
   }
 
   private canRecycleManagerRuntimeImmediately(

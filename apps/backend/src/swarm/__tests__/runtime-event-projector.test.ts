@@ -476,6 +476,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
 
   it.each([
     "create_goal",
+    "delegate_codex_plugin",
     "kill_agent",
     "retry_codex_plugin_worker",
     "send_message_to_agent",

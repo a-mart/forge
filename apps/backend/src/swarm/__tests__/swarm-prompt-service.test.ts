@@ -148,9 +148,7 @@ function specialistRegistryStub() {
   return {
     resolveRoster: vi.fn(async () => []),
     resolveTierConfigs: vi.fn(async () => []),
-    generateRosterBlock: vi.fn(() => ""),
-    getSpecialistsEnabled: vi.fn(async () => false),
-    legacyModelRoutingGuidance: "Legacy routing guidance for tests."
+    generateRosterBlock: vi.fn(() => "Specialist roster for tests."),
   };
 }
 
@@ -166,7 +164,12 @@ function createPromptRegistry(config: SwarmConfig) {
 function createPromptServiceForDescriptor(
   config: SwarmConfig,
   descriptor: AgentDescriptor,
-  options?: { getKnowledgeV2Enabled?: () => boolean },
+  options?: {
+    getKnowledgeV2Enabled?: () => boolean;
+    specialistRoster?: Array<{ specialistId: string; promptBody: string }>;
+    specialistRegistryError?: Error;
+    logDebug?: (message: string, details?: unknown) => void;
+  },
 ): SwarmPromptService {
   const profileId = descriptor.profileId ?? descriptor.agentId;
   return new SwarmPromptService({
@@ -192,10 +195,18 @@ function createPromptServiceForDescriptor(
     refreshSessionMetaStats: async () => {},
     refreshSessionMetaStatsBySessionId: async () => {},
     getSessionsForProfile: () => [descriptor],
-    loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+    loadSpecialistRegistryModule: async () => {
+      if (options?.specialistRegistryError) {
+        throw options.specialistRegistryError;
+      }
+      return {
+        ...specialistRegistryStub(),
+        resolveRoster: vi.fn(async () => options?.specialistRoster ?? []),
+      };
+    },
     getKnowledgeV2Enabled: options?.getKnowledgeV2Enabled,
     getIntegrationContext: () => undefined,
-    logDebug: () => {}
+    logDebug: options?.logDebug ?? (() => {})
   });
 }
 
@@ -462,7 +473,8 @@ Custom project instruction: always mention the release train when summarizing de
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).not.toContain("# Model-Specific Instructions");
     expect(resolved).not.toContain("$" + "{MODEL_SPECIFIC_INSTRUCTIONS}");
-    expect(resolved).toContain("Legacy routing guidance for tests.");
+    expect(resolved).toContain("Specialist roster for tests.");
+    expect(resolved).not.toContain("Legacy routing guidance for tests.");
   });
 
   it("buildResolvedManagerPrompt resolves collaboration specialist roster for collab sessions", async () => {
@@ -489,7 +501,6 @@ Custom project instruction: always mention the release train when summarizing de
       generateRosterBlock: vi.fn((roster: Array<{ specialistId: string }>) =>
         roster.map((entry) => entry.specialistId).join("\n"),
       ),
-      getSpecialistsEnabled: vi.fn(async () => true),
     };
 
     const service = new SwarmPromptService({
@@ -567,6 +578,110 @@ Custom project instruction: always mention the release train when summarizing de
 
     await expect(service.resolveSystemPromptForDescriptor(worker)).resolves.toBe("Collaboration worker prompt");
     expect(specialistRegistry.resolveRoster).toHaveBeenCalledWith("manager", "collaboration");
+  });
+
+  it.each([
+    ["architect", "architecture role"],
+    ["planner", "planning role"],
+    ["code-reviewer", "correctness role"],
+    ["code-reviewer-2", "design role"],
+    ["researcher", "research role"],
+  ])("layers the stable worker contract into the final %s mode prompt", async (specialistId, rolePrompt) => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: `${specialistId}-worker`,
+        managerId: "manager",
+        profileId: "manager",
+      }),
+      role: "worker" as const,
+      specialistLens: specialistId,
+    } as AgentDescriptor;
+    const service = createPromptServiceForDescriptor(config, worker, {
+      specialistRoster: [{ specialistId, promptBody: rolePrompt }],
+    });
+
+    const prompt = await service.resolveSystemPromptForDescriptor(worker);
+
+    expect(prompt).toContain("# Forge Worker Contract");
+    expect(prompt).toContain("Messages prefixed with `SYSTEM:` are internal control");
+    expect(prompt).toContain("Write memory only when explicitly asked");
+    expect(prompt).toContain("Escalate before destructive actions");
+    expect(prompt).toContain("# Behavior Instructions");
+    expect(prompt).toContain(rolePrompt);
+  });
+
+  it("fails closed when a required behavior-mode prompt cannot be resolved", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: "review-worker",
+        managerId: "manager",
+        profileId: "manager",
+        archetypeId: undefined,
+      }),
+      role: "worker" as const,
+      specialistTier: "deep" as const,
+      specialistLens: "code-reviewer",
+      specialistId: "deep:code-reviewer",
+    } as AgentDescriptor;
+    const logDebug = vi.fn();
+    const service = createPromptServiceForDescriptor(config, worker, {
+      specialistRegistryError: new Error("temporary roster read failure"),
+      logDebug,
+    });
+
+    await expect(service.resolveSystemPromptForDescriptor(worker)).rejects.toThrow(
+      'Required worker behavior prompt "code-reviewer" could not be resolved: temporary roster read failure',
+    );
+    expect(logDebug).toHaveBeenCalledWith(
+      "specialist:resolve:error",
+      expect.objectContaining({ specialistId: "code-reviewer" }),
+    );
+  });
+
+  it("fails closed when a required behavior-mode prompt is missing", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: "plan-worker",
+        managerId: "manager",
+        profileId: "manager",
+        archetypeId: undefined,
+      }),
+      role: "worker" as const,
+      specialistTier: "deep" as const,
+      specialistLens: "planner",
+      specialistId: "deep:planner",
+    } as AgentDescriptor;
+    const service = createPromptServiceForDescriptor(config, worker);
+
+    await expect(service.resolveSystemPromptForDescriptor(worker)).rejects.toThrow(
+      'Required worker behavior prompt "planner" is missing or empty.',
+    );
+  });
+
+  it("does not resolve a tier attribution id as a custom specialist prompt", async () => {
+    const { config } = await makeConfig();
+    const worker = {
+      ...createManagerDescriptor(config, repoRoot, {
+        agentId: "routine-worker",
+        managerId: "manager",
+        profileId: "manager",
+        archetypeId: undefined,
+      }),
+      role: "worker" as const,
+      specialistTier: "standard" as const,
+      specialistId: "standard",
+    } as AgentDescriptor;
+    const service = createPromptServiceForDescriptor(config, worker, {
+      specialistRoster: [{ specialistId: "standard", promptBody: "Custom standard specialist prompt" }],
+    });
+
+    const prompt = await service.resolveSystemPromptForDescriptor(worker);
+
+    expect(prompt).toContain("End your turn with a concise result using this structure:");
+    expect(prompt).not.toContain("Custom standard specialist prompt");
   });
 
   it("does not append repository reference inventory to workers owned by collaboration managers", async () => {
@@ -728,8 +843,6 @@ Custom project instruction: always mention the release train when summarizing de
         resolveRoster: async () => [],
         resolveTierConfigs: async () => [],
         generateRosterBlock: () => "Specialist roster block",
-        getSpecialistsEnabled: async () => true,
-        legacyModelRoutingGuidance: "Legacy routing guidance for tests."
       }),
       getIntegrationContext: () => undefined,
       logDebug: () => {}

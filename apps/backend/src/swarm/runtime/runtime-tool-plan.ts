@@ -184,6 +184,8 @@ const BUILDER_COORDINATION_TOOL_NAMES = new Set([
   "create_goal",
   "get_goal",
   "update_goal",
+  "delegate_codex_plugin",
+  "retry_codex_plugin_worker",
 ]);
 const CORTEX_DISABLED_TOOL_NAMES = new Set([
   "list_agents",
@@ -193,5 +195,7 @@ const CORTEX_DISABLED_TOOL_NAMES = new Set([
   "get_goal",
   "update_goal",
   "save_learning",
+  "delegate_codex_plugin",
+  "retry_codex_plugin_worker",
 ]);
 const CAPTURE_CHECK_TOOL_NAMES = new Set(["knowledge", "save_learning"]);

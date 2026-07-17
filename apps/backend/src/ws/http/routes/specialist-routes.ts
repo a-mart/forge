@@ -15,10 +15,8 @@ import {
   resolveWorkspaceRoster,
   generateRosterBlock,
   getWorkerTemplate,
-  getSpecialistsEnabled,
   resolveTierConfigs,
   saveTierConfigs,
-  setSpecialistsEnabled,
   saveProfileSpecialist,
   saveSharedSpecialist,
   invalidateSpecialistCache,
@@ -41,7 +39,6 @@ import {
 import type { HttpRoute } from "../shared/http-route.js";
 
 const SPECIALISTS_ENDPOINT_PATH = "/api/settings/specialists";
-const SPECIALISTS_ENABLED_ENDPOINT_PATH = "/api/settings/specialists/enabled";
 const SPECIALIST_TIERS_ENDPOINT_PATH = "/api/settings/specialists/tiers";
 const SETTINGS_MODELS_ENDPOINT_PATH = "/api/settings/models";
 const ROSTER_PROMPT_SUFFIX = "/roster-prompt";
@@ -61,13 +58,6 @@ export function createSpecialistRoutes(options: {
       matches: (pathname) => pathname === SETTINGS_MODELS_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         await handleSettingsModelsRequest(swarmManager, request, response, requestUrl);
-      },
-    },
-    {
-      methods: ENABLED_METHODS,
-      matches: (pathname) => pathname === SPECIALISTS_ENABLED_ENDPOINT_PATH,
-      handle: async (request, response, requestUrl) => {
-        await handleSpecialistsEnabledRequest(swarmManager, broadcastEvent, request, response, requestUrl);
       },
     },
     {
@@ -155,75 +145,6 @@ function normalizeReasoningLevels(
   return supportsReasoning ? ["none", "low", "medium", "high"] : ["none"];
 }
 
-async function handleSpecialistsEnabledRequest(
-  swarmManager: SwarmManager,
-  broadcastEvent: (event: ServerEvent) => void,
-  request: IncomingMessage,
-  response: ServerResponse,
-  _requestUrl: URL,
-): Promise<void> {
-  if (request.method === "OPTIONS") {
-    applyCorsHeaders(request, response, ENABLED_METHODS);
-    response.statusCode = 204;
-    response.end();
-    return;
-  }
-
-  applyCorsHeaders(request, response, ENABLED_METHODS);
-
-  const dataDir = swarmManager.getConfig().paths.dataDir;
-
-  if (request.method === "GET") {
-    try {
-      const enabled = await getSpecialistsEnabled(dataDir);
-      sendJson(response, 200, { enabled });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendJson(response, 500, { error: message });
-    }
-    return;
-  }
-
-  if (request.method === "PUT") {
-    try {
-      const body = await readJsonBody(request);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        sendJson(response, 400, { error: "Request body must be a JSON object" });
-        return;
-      }
-
-      const obj = body as Record<string, unknown>;
-      if (typeof obj.enabled !== "boolean") {
-        sendJson(response, 400, { error: "enabled must be a boolean" });
-        return;
-      }
-
-      await setSpecialistsEnabled(dataDir, obj.enabled);
-      invalidateSpecialistCache();
-
-      // Broadcast change to all user profiles and recycle managers
-      const profiles = swarmManager.listUserProfiles();
-      for (const profile of profiles) {
-        await notifySpecialistRosterMutation({
-          swarmManager,
-          broadcastEvent,
-          dataDir,
-          profileId: profile.profileId,
-        });
-      }
-
-      sendJson(response, 200, { ok: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendJson(response, 500, { error: message });
-    }
-    return;
-  }
-
-  response.setHeader("Allow", ENABLED_METHODS);
-  sendJson(response, 405, { error: "Method Not Allowed" });
-}
-
 async function handleSpecialistTiersRequest(
   swarmManager: SwarmManager,
   broadcastEvent: (event: ServerEvent) => void,
@@ -298,6 +219,15 @@ async function handleSpecialistRequest(
     return;
   }
   const relativePath = requestUrl.pathname.slice(SPECIALISTS_ENDPOINT_PATH.length);
+
+  // Tombstone the removed toggle route so older clients cannot accidentally create
+  // a custom specialist named "enabled" through the generic handle route.
+  if (relativePath === "/enabled") {
+    sendJson(response, 410, {
+      error: "The specialist enable/disable toggle was removed; delegation is always available.",
+    });
+    return;
+  }
 
   // GET /api/settings/specialists/template — returns worker.md content (no profileId required)
   if (request.method === "GET" && relativePath === "/template") {

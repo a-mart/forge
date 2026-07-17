@@ -41,6 +41,7 @@ import type { MessageRouteDecision } from "../message-router.js";
 
 const USER_VISIBLE_MANAGER_TOOL_EFFECTS = new Set([
   "create_goal",
+  "delegate_codex_plugin",
   "kill_agent",
   "retry_codex_plugin_worker",
   "send_message_to_agent",

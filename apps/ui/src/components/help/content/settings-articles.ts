@@ -291,12 +291,15 @@ export const settingsArticles: HelpArticle[] = [
   },
   {
     id: 'settings-specialists',
-    title: 'Specialist Workers',
+    title: 'Delegation',
     category: 'settings',
-    summary: 'Create named worker personas with specific models, prompts, and fallback routing.',
+    summary: 'Configure behavior modes, execution policies, custom specialists, and fallback routing.',
     content: settingsSpecialistsContent,
     keywords: [
       'specialists',
+      'delegation',
+      'behavior mode',
+      'execution policy',
       'workers',
       'model',
       'reasoning',

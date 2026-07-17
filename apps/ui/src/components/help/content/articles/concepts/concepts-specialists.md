@@ -1,36 +1,25 @@
-Specialists are predefined worker types with their own name, model, and system prompt. Instead of the manager picking a generic worker for every task, it routes work to the right specialist.
+Forge delegates work by separating a worker's behavior from the model capability used to run it. This keeps the manager's decision small while allowing different providers and models behind the scenes.
 
-## TargetSpace
+## Behavior modes
 
-Specialists are TargetSpace-aware. **Builder** and **Collaboration** each keep their own visible roster, so channel-only specialists do not leak into the Builder picker and Builder-only definitions do not appear in Collab views. Collaboration also supports channel-local specialists that shadow any global handle with the same name for that channel session.
+The manager chooses the output contract that fits the task: General, Plan, Correctness Review, Design Review, or Research. General uses the normal worker prompt. The other modes use concise, editable builtin prompts.
 
-Channel selection state is separate from the file-backed specialist definitions. The active channel remembers which specialists are selected, but the specialist files themselves still live on disk and can be reused or overridden independently.
+## Execution policies
 
-## What a specialist includes
+Support, Routine, and Deep choose the configured model, reasoning level, and fallback chain. The manager reasons about task difficulty and risk instead of selecting provider-specific model IDs. Mode defaults guide normal routing, but a bounded low-risk plan or review may still use Support.
 
-Each specialist has:
+## Custom specialists
 
-- A **display name** and color for identification in the UI
-- A **model and reasoning level** tuned for its role
-- A **system prompt** with instructions specific to that specialty
-- A **"when to use"** description that tells the manager when to pick this specialist
-- An optional **fallback model** if the primary is unavailable
+A custom specialist is a complete saved domain-specific execution template with its own name, standalone prompt, model settings, fallback, and "when to use" guidance. It is an escape hatch for durable roles that do not fit the shared behavior modes. Managers select a custom specialist directly rather than combining it with a mode or policy.
 
-For example, a "Frontend" specialist might use Claude Opus with instructions focused on React, accessibility, and visual consistency. A "Backend" specialist might use GPT Codex with instructions about API design and database patterns.
+## TargetSpace and scope
 
-## How routing works
+Behavior-mode prompts and custom specialists are TargetSpace-aware. Builder and Collaboration each receive the appropriate roster. Collaboration also supports channel-local definitions that shadow a selected global handle only for that channel.
 
-When the manager needs to spawn a worker, it reads the specialist roster and their "when to use" descriptions. It picks the specialist whose description best matches the task. The worker then runs with that specialist's model and prompt — no manual selection needed.
+Global definitions are file-backed and can be overridden per profile. Channel selection state is stored separately from the markdown definitions so definitions can be reused without coupling them to one channel.
 
-If specialists are disabled or none match, the manager falls back to its default model routing logic.
+## Routing and fallback
 
-## Customization
+The manager receives a compact roster with available modes, the exact configured model behind each execution policy, and selectable custom specialists. Forge translates the request onto its existing tier/lens runtime, then handles availability fallback and worker-result attribution internally.
 
-Forge ships with builtin specialists that cover common roles. You can:
-
-- **Edit** a builtin specialist to adjust its model, prompt, or routing rules
-- **Create** new specialists for your specific workflow
-- **Disable** specialists you do not need
-- **Override per profile** — a specialist can behave differently for different projects
-
-Manage specialists in **Settings > Specialists**. Profile-level overrides take precedence over global definitions.
+Configure this under **Settings → Delegation**. Profile-level overrides take precedence over global definitions.

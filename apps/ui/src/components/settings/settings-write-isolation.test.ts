@@ -273,17 +273,6 @@ describe('specialist write isolation', () => {
     )
   })
 
-  it('setSpecialistsEnabledApi routes through collab', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ ok: true }))
-    const { setSpecialistsEnabledApi } = await import('./specialists-api')
-
-    await setSpecialistsEnabledApi(collabClient(), false)
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/specialists/enabled',
-      expect.objectContaining({ method: 'PUT', credentials: 'include' }),
-    )
-  })
 })
 
 /* ================================================================== */

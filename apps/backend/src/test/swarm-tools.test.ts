@@ -645,7 +645,7 @@ describe('buildSwarmTools', () => {
     expect(workerEntry?.activity).toHaveProperty('idleSec', 0)
   })
 
-  it('propagates spawn_agent model preset to host.spawnAgent', async () => {
+  it('translates spawn_agent behavior mode and execution policy for host.spawnAgent', async () => {
     let receivedInput: SpawnAgentInput | undefined
 
     const host = makeHost(async (_callerAgentId, input) => {
@@ -654,7 +654,7 @@ describe('buildSwarmTools', () => {
         ...makeWorkerDescriptor('worker-gpt54'),
         model: {
           provider: 'openai-codex',
-          modelId: 'gpt-5.4',
+          modelId: 'gpt-5.6-sol',
           thinkingLevel: 'xhigh',
         },
       }
@@ -667,26 +667,33 @@ describe('buildSwarmTools', () => {
     const result = await spawnTool!.execute(
       'tool-call',
       {
-        agentId: 'Worker GPT 5.4',
-        model: 'pi-5.4',
+        agentId: 'Review Worker',
+        initialMessage: 'Review the implementation for correctness.',
+        mode: 'correctness-review',
+        executionPolicy: 'deep',
       },
       undefined,
       undefined,
       undefined as any,
     )
 
-    expect(receivedInput?.model).toBe('pi-5.4')
+    expect(receivedInput).toMatchObject({
+      agentId: 'Review Worker',
+      initialMessage: 'Review the implementation for correctness.',
+      tier: 'deep',
+      lens: 'code-reviewer',
+    })
     expect(result.details).toMatchObject({
       agentId: 'worker-gpt54',
       model: {
         provider: 'openai-codex',
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.6-sol',
         thinkingLevel: 'xhigh',
       },
     })
   })
 
-  it('normalizes removed Cursor ACP spawn_agent preset aliases before host.spawnAgent', async () => {
+  it('defaults spawn_agent to general routine work', async () => {
     let receivedInput: SpawnAgentInput | undefined
 
     const host = makeHost(async (_callerAgentId, input) => {
@@ -709,17 +716,21 @@ describe('buildSwarmTools', () => {
       'tool-call',
       {
         agentId: 'Worker Cursor',
-        model: 'cursor-acp',
+        initialMessage: 'Implement the focused change.',
       },
       undefined,
       undefined,
       undefined as any,
     )
 
-    expect(receivedInput?.model).toBe('cursor-composer')
+    expect(receivedInput).toMatchObject({
+      tier: 'standard',
+      initialMessage: 'Implement the focused change.',
+    })
+    expect(receivedInput?.lens).toBeUndefined()
   })
 
-  it('propagates spawn_agent modelId and reasoningLevel overrides to host.spawnAgent', async () => {
+  it('routes custom specialists without mode or policy', async () => {
     let receivedInput: SpawnAgentInput | undefined
 
     const host = makeHost(async (_callerAgentId, input) => {
@@ -734,22 +745,23 @@ describe('buildSwarmTools', () => {
     await spawnTool!.execute(
       'tool-call',
       {
-        agentId: 'Worker Opus Override',
-        model: 'pi-opus',
-        modelId: 'claude-haiku-4-5-20251001',
-        reasoningLevel: 'low',
+        agentId: 'Payments Expert',
+        initialMessage: 'Inspect the payment workflow.',
+        customSpecialist: 'payments-expert',
       },
       undefined,
       undefined,
       undefined as any,
     )
 
-    expect(receivedInput?.model).toBe('pi-opus')
-    expect(receivedInput?.modelId).toBe('claude-haiku-4-5-20251001')
-    expect(receivedInput?.reasoningLevel).toBe('low')
+    expect(receivedInput).toMatchObject({
+      specialist: 'payments-expert',
+      initialMessage: 'Inspect the payment workflow.',
+    })
+    expect(receivedInput?.tier).toBeUndefined()
   })
 
-  it('rejects invalid spawn_agent model presets with a clear error', async () => {
+  it('rejects invalid spawn_agent behavior modes with a clear error', async () => {
     const host = makeHost(async () => makeWorkerDescriptor('worker'))
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())
@@ -761,36 +773,65 @@ describe('buildSwarmTools', () => {
         'tool-call',
         {
           agentId: 'Worker Invalid',
-          model: 'not-allowed-model',
+          initialMessage: 'Do the work.',
+          mode: 'not-a-mode',
         } as any,
         undefined,
         undefined,
         undefined as any,
       ),
-    ).rejects.toThrow(
-      'spawn_agent.model must be one of pi-5.5|pi-5.6|pi-codex-spark|pi-5.4|pi-opus|pi-sonnet|pi-fable|sdk-opus|sdk-sonnet|pi-grok|cursor-composer|cursor-grok-45',
-    )
+    ).rejects.toThrow('spawn_agent.mode must be one of general|plan|correctness-review|design-review|research')
   })
 
-  it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {
-    const host = makeHost(async () => makeWorkerDescriptor('worker'))
+  it('allows support for a bounded planning or review assignment', async () => {
+    let receivedInput: SpawnAgentInput | undefined
+    const host = makeHost(async (_callerAgentId, input) => {
+      receivedInput = input
+      return makeWorkerDescriptor('worker')
+    })
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())
     const spawnTool = tools.find((tool) => tool.name === 'spawn_agent')
     expect(spawnTool).toBeDefined()
 
-    await expect(
-      spawnTool!.execute(
-        'tool-call',
-        {
-          agentId: 'Worker Invalid Reasoning',
-          reasoningLevel: 'galaxy',
-        } as any,
-        undefined,
-        undefined,
-        undefined as any,
-      ),
-    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh|max|ultra')
+    await spawnTool!.execute(
+      'tool-call',
+      {
+        agentId: 'Bounded Review',
+        initialMessage: 'Review the small change.',
+        mode: 'design-review',
+        executionPolicy: 'support',
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(receivedInput).toMatchObject({ tier: 'fast', lens: 'code-reviewer-2' })
+  })
+
+  it('exposes a dedicated Codex Plugin delegation tool', async () => {
+    let receivedInput: SpawnAgentInput | undefined
+    const host = makeHost(async (_callerAgentId, input) => {
+      receivedInput = input
+      return makeWorkerDescriptor('codex-plugin-worker')
+    })
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const delegateTool = tools.find((tool) => tool.name === 'delegate_codex_plugin')
+
+    await delegateTool!.execute(
+      'tool-call',
+      { initialMessage: 'Inspect the selected Codex workspace.' },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(receivedInput).toMatchObject({
+      agentId: 'codex-plugin',
+      specialist: 'codex-plugin',
+      initialMessage: 'Inspect the selected Codex workspace.',
+    })
   })
 
   it('forwards speak_to_user target metadata and returns resolved target context', async () => {

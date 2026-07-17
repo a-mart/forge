@@ -181,6 +181,8 @@ export interface SpawnAgentInput {
   specialist?: string;
   tier?: EffortTier;
   lens?: string;
+  /** Internal marker set by the manager-facing mode/policy adapter. */
+  policyControlledModel?: boolean;
   archetypeId?: AgentArchetypeId;
   systemPrompt?: string;
   model?: SwarmModelPreset;

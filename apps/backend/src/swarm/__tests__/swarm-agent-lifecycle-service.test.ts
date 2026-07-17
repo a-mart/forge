@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createWorkerDescriptor, createCodexExternalThreadWorkerDescriptor } from "../../test-support/index.js";
 import {
@@ -2233,12 +2236,14 @@ describe("SwarmAgentLifecycleService", () => {
     const createRuntimeForDescriptor = vi.fn(async (d: AgentDescriptor, systemPrompt: string) =>
       makeRuntimeStub({ descriptor: d, getSystemPrompt: () => systemPrompt })
     );
+    const resolveSystemPromptForDescriptor = vi.fn(async () => "composed worker core + lens prompt");
 
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors,
         assertManager: () => manager,
         createRuntimeForDescriptor,
+        resolveSystemPromptForDescriptor,
         resolveSpecialistRosterForProfile: vi.fn(async () => [
           {
             specialistId: "planner",
@@ -2246,8 +2251,15 @@ describe("SwarmAgentLifecycleService", () => {
             color: "#7c3aed",
             enabled: true,
             whenToUse: "planning",
+            modelId: "removed-mode-model",
+            provider: "openai-codex",
+            reasoningLevel: "high",
+            fallbackModelId: "gpt-5.5",
+            fallbackProvider: "openai-codex",
             promptBody: "lens prompt",
-            available: true,
+            available: false,
+            availabilityCode: "invalid_model",
+            availabilityMessage: "Unknown modelId: removed-mode-model",
             defaultTier: "deep"
           }
         ])
@@ -2257,7 +2269,8 @@ describe("SwarmAgentLifecycleService", () => {
     const spawned = await svc.spawnAgent("m1", {
       agentId: "worker-a",
       tier: "fast",
-      lens: "planner"
+      lens: "planner",
+      policyControlledModel: true
     });
 
     expect(spawned.model).toMatchObject({
@@ -2268,8 +2281,59 @@ describe("SwarmAgentLifecycleService", () => {
     expect(spawned.specialistId).toBe("fast:planner");
     expect(spawned.specialistTier).toBe("fast");
     expect(spawned.specialistLens).toBe("planner");
-    expect(spawned.specialistDisplayName).toBe("Fast — Planner");
-    expect(createRuntimeForDescriptor).toHaveBeenCalledWith(expect.objectContaining({ agentId: "worker-a" }), "lens prompt");
+    expect(spawned.specialistDisplayName).toBe("Support — Planner");
+    expect(resolveSystemPromptForDescriptor).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "worker-a", specialistLens: "planner" }),
+    );
+    expect(createRuntimeForDescriptor).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "worker-a" }),
+      "composed worker core + lens prompt",
+    );
+  });
+
+  it("rolls back a mode worker when its required behavior prompt cannot be resolved", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle",
+      cwd: "/proj"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const createRuntimeForDescriptor = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        createRuntimeForDescriptor,
+        resolveSystemPromptForDescriptor: vi.fn(async () => {
+          throw new Error('Required worker behavior prompt "code-reviewer" could not be resolved');
+        }),
+        resolveSpecialistRosterForProfile: vi.fn(async () => [
+          {
+            specialistId: "code-reviewer",
+            displayName: "Correctness Review",
+            color: "#2563eb",
+            enabled: true,
+            whenToUse: "correctness review",
+            promptBody: "review prompt",
+            available: true,
+            defaultTier: "deep"
+          }
+        ])
+      })
+    );
+
+    await expect(svc.spawnAgent("m1", {
+      agentId: "review-worker",
+      tier: "deep",
+      lens: "code-reviewer",
+      policyControlledModel: true
+    })).rejects.toThrow('Required worker behavior prompt "code-reviewer" could not be resolved');
+
+    expect(descriptors.has("review-worker")).toBe(false);
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
   });
 
   it("spawnAgent rewrites deleted thin builtin specialists to bare tiers", async () => {
@@ -2302,6 +2366,71 @@ describe("SwarmAgentLifecycleService", () => {
       provider: "cursor-sdk",
       modelId: "composer-2.5"
     });
+  });
+
+  it("reconciles persisted tier attribution labels during boot without publishing early", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-specialist-metadata-"));
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "profile-1",
+      status: "idle",
+    });
+    const tierWorker = createWorkerDescriptor("/proj", "m1", {
+      agentId: "routine-worker",
+      profileId: "profile-1",
+      specialistTier: "standard",
+      specialistId: "standard",
+      specialistDisplayName: "Standard",
+      specialistColor: "#old",
+    });
+    const modeWorker = createWorkerDescriptor("/proj", "m1", {
+      agentId: "review-worker",
+      profileId: "profile-1",
+      specialistTier: "fast",
+      specialistLens: "code-reviewer",
+      specialistId: "fast:code-reviewer",
+      specialistDisplayName: "Fast — Code Reviewer",
+      specialistColor: "#old",
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [tierWorker.agentId, tierWorker],
+      [modeWorker.agentId, modeWorker],
+    ]);
+    const saveStore = vi.fn(async () => {});
+    const emitAgentsSnapshot = vi.fn();
+    const roster = [
+      {
+        specialistId: "code-reviewer",
+        displayName: "Correctness Review",
+        color: "#2563eb",
+        enabled: true,
+        whenToUse: "correctness review",
+        promptBody: "review prompt",
+        available: true,
+        defaultTier: "deep" as const,
+      },
+    ];
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({
+      dataDir,
+      descriptors,
+      saveStore,
+      emitAgentsSnapshot,
+      getSessionsForProfile: vi.fn(() => [
+        manager as AgentDescriptor & { role: "manager"; profileId: string },
+      ]),
+      resolveSpecialistRosterForManager: vi.fn(async () => roster),
+    }));
+
+    await svc.reconcileWorkerSpecialistMetadataForBoot();
+
+    expect(tierWorker.specialistDisplayName).toBe("Routine");
+    expect(modeWorker.specialistDisplayName).toBe("Support — Correctness Review");
+    expect(modeWorker.specialistColor).toBe("#2563eb");
+    expect(saveStore).not.toHaveBeenCalled();
+    expect(emitAgentsSnapshot).not.toHaveBeenCalled();
   });
 
   it("spawnAgent rejects unknown tiers before creating workers", async () => {

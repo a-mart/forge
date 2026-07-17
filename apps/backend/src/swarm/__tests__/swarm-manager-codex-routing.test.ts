@@ -679,7 +679,7 @@ describe("SwarmManager Codex mention routing", () => {
     expect(managerText).toContain("@Codex -fireflies list meetings");
     expect(managerText).toContain("[Codex Plugin selector context]");
     expect(managerText).toContain("Selected selector(s), bound server-side for this scoped Codex Plugin worker: fireflies");
-    expect(managerText).toContain('spawn_agent({ specialist: "codex-plugin"');
+    expect(managerText).toContain('delegate_codex_plugin({ initialMessage: "<task and context>" })');
     expect(managerText).not.toContain("list_codex_mcp_tools");
     expect(managerText).not.toContain("call_codex_mcp_tool");
 

@@ -1,5 +1,4 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { getSpawnPresetFamilies } from "@forge/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loadClaudeSdkMcpHelpers } = vi.hoisted(() => ({
@@ -196,6 +195,7 @@ describe("claude-mcp-tool-bridge", () => {
       "get_goal",
       "update_goal",
       "spawn_agent",
+      "delegate_codex_plugin",
       "retry_codex_plugin_worker",
       "kill_agent",
       "speak_to_user",
@@ -211,6 +211,7 @@ describe("claude-mcp-tool-bridge", () => {
       "mcp__forge-swarm__get_goal",
       "mcp__forge-swarm__update_goal",
       "mcp__forge-swarm__spawn_agent",
+      "mcp__forge-swarm__delegate_codex_plugin",
       "mcp__forge-swarm__retry_codex_plugin_worker",
       "mcp__forge-swarm__kill_agent",
       "mcp__forge-swarm__speak_to_user",
@@ -343,8 +344,6 @@ describe("claude-mcp-tool-bridge", () => {
     const host = createMockHost();
     const tools = [...buildSwarmTools(host, manager), buildCreateProjectAgentTool(host, manager)];
     const { registeredTools } = await buildBridge(tools);
-    const spawnPreset = getSpawnPresetFamilies()[0]?.familyId ?? "pi-codex";
-
     expect(getRegisteredTool(registeredTools, "list_agents").shape.safeParse({ verbose: true }).success).toBe(true);
     expect(
       getRegisteredTool(registeredTools, "send_message_to_agent").shape.safeParse({
@@ -357,8 +356,9 @@ describe("claude-mcp-tool-bridge", () => {
       getRegisteredTool(registeredTools, "spawn_agent").shape.safeParse({
         agentId: "worker-1",
         planStep: "Implement backend",
-        model: spawnPreset,
-        reasoningLevel: "high"
+        initialMessage: "Implement the backend change.",
+        mode: "general",
+        executionPolicy: "routine"
       }).success
     ).toBe(true);
     expect(
@@ -462,18 +462,17 @@ describe("claude-mcp-tool-bridge", () => {
     expect(result.content[1].text).toContain("[details]");
   });
 
-  it("dispatches spawn_agent with specialist, model, and reasoning level", async () => {
+  it("dispatches spawn_agent with behavior mode and execution policy", async () => {
     const manager = createMockDescriptor();
-    const spawnPreset = getSpawnPresetFamilies()[0]?.familyId ?? "pi-codex";
     const host = createMockHost();
     const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
 
     await invokeTool(registeredTools, "spawn_agent", {
       agentId: "backend-worker",
       planStep: "Implement backend",
-      specialist: "backend",
-      model: spawnPreset,
-      reasoningLevel: "high"
+      initialMessage: "Implement the backend change.",
+      mode: "general",
+      executionPolicy: "routine"
     });
 
     expect(host.spawnAgent).toHaveBeenCalledWith(
@@ -481,9 +480,8 @@ describe("claude-mcp-tool-bridge", () => {
       expect.objectContaining({
         agentId: "backend-worker",
         planStep: "Implement backend",
-        specialist: "backend",
-        model: spawnPreset,
-        reasoningLevel: "high"
+        initialMessage: "Implement the backend change.",
+        tier: "standard"
       })
     );
   });
@@ -492,20 +490,18 @@ describe("claude-mcp-tool-bridge", () => {
     const manager = createMockDescriptor();
     const host = createMockHost({
       spawnAgent: vi.fn(async () => {
-        throw new Error("specialist and model cannot be combined");
+        throw new Error("delegation unavailable");
       })
     });
-    const spawnPreset = getSpawnPresetFamilies()[0]?.familyId ?? "pi-codex";
     const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
 
     const result = await invokeTool(registeredTools, "spawn_agent", {
       agentId: "backend-worker",
-      specialist: "backend",
-      model: spawnPreset
+      initialMessage: "Implement the backend change."
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("specialist and model cannot be combined");
+    expect(result.content[0].text).toContain("delegation unavailable");
   });
 
   it("dispatches kill_agent", async () => {

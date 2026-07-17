@@ -21,8 +21,6 @@ const specialistsApiMock = vi.hoisted(() => ({
   fetchWorkerTemplate: vi.fn(),
   fetchTierConfigs: vi.fn(),
   saveTierConfigsApi: vi.fn(),
-  fetchSpecialistsEnabled: vi.fn(),
-  setSpecialistsEnabledApi: vi.fn(),
   saveSpecialist: vi.fn(),
   saveSharedSpecialist: vi.fn(),
   deleteSpecialist: vi.fn(),
@@ -47,8 +45,6 @@ vi.mock('./specialists-api', () => ({
   fetchWorkerTemplate: (...args: unknown[]) => specialistsApiMock.fetchWorkerTemplate(...args),
   fetchTierConfigs: (...args: unknown[]) => specialistsApiMock.fetchTierConfigs(...args),
   saveTierConfigsApi: (...args: unknown[]) => specialistsApiMock.saveTierConfigsApi(...args),
-  fetchSpecialistsEnabled: (...args: unknown[]) => specialistsApiMock.fetchSpecialistsEnabled(...args),
-  setSpecialistsEnabledApi: (...args: unknown[]) => specialistsApiMock.setSpecialistsEnabledApi(...args),
   saveSpecialist: (...args: unknown[]) => specialistsApiMock.saveSpecialist(...args),
   saveSharedSpecialist: (...args: unknown[]) => specialistsApiMock.saveSharedSpecialist(...args),
   deleteSpecialist: (...args: unknown[]) => specialistsApiMock.deleteSpecialist(...args),
@@ -201,8 +197,6 @@ beforeEach(() => {
   Element.prototype.releasePointerCapture ??= vi.fn()
   Element.prototype.scrollIntoView ??= vi.fn()
 
-  specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
-  specialistsApiMock.setSpecialistsEnabledApi.mockResolvedValue(undefined)
   specialistsApiMock.fetchTierConfigs.mockResolvedValue(TIER_CONFIGS)
   specialistsApiMock.saveTierConfigsApi.mockImplementation(async (_clientOrWsUrl, tiers) => tiers)
   specialistsApiMock.saveSharedSpecialist.mockResolvedValue(undefined)
@@ -286,7 +280,7 @@ describe('SettingsSpecialists', () => {
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('No global specialists found')
+      expect(container.textContent).toContain('No behavior modes or custom specialists found')
     })
 
     it('renders enabled toggle on each specialist card', async () => {
@@ -297,16 +291,20 @@ describe('SettingsSpecialists', () => {
       expect(container.textContent).toContain('Enabled')
     })
 
-    it('renders effort tier model controls', async () => {
+    it('renders the three execution policy model controls', async () => {
       renderSpecialists([makeSpecialist()])
       await flush()
       await flush()
 
       expect(specialistsApiMock.fetchTierConfigs).toHaveBeenCalledWith('ws://127.0.0.1:47187')
-      expect(container.textContent).toContain('Tiers')
-      expect(container.textContent).toContain('Fast')
+      expect(container.textContent).toContain('Execution Policies')
+      expect(container.textContent).toContain('Support')
+      expect(container.textContent).toContain('Routine')
+      expect(container.textContent).toContain('Deep')
+      expect(container.textContent).not.toContain('Lightlight')
+      expect(container.textContent).not.toContain('Maxmax')
       expect(container.textContent).toContain('composer-2.5')
-      expect(container.textContent).toContain('Save Tiers')
+      expect(container.textContent).toContain('Save Policies')
     })
   })
 
@@ -597,24 +595,40 @@ describe('SettingsSpecialists', () => {
     })
   })
 
-  /* ---- Global enabled toggle ---- */
-
-  describe('specialists enabled toggle', () => {
-    it('renders the global enable toggle', async () => {
-      renderSpecialists([])
+  describe('delegation surface', () => {
+    it('keeps system definitions in a collapsed compatibility section', async () => {
+      renderSpecialists([
+        makeSpecialist({
+          specialistId: 'architect',
+          displayName: 'Architect',
+          builtin: true,
+          modelId: undefined,
+          provider: undefined,
+          defaultTier: 'max',
+        }),
+        makeSpecialist({ specialistId: 'codex-plugin', displayName: 'Codex Plugin', builtin: true }),
+        makeSpecialist({
+          specialistId: 'planner',
+          displayName: 'Plan',
+          builtin: true,
+          modelId: undefined,
+          provider: undefined,
+          defaultTier: 'deep',
+        }),
+      ])
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('Enable specialist workers')
-    })
-
-    it('shows disabled message when specialists are disabled', async () => {
-      specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(false)
-      renderSpecialists([])
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Specialist workers are disabled')
+      expect(container.textContent).not.toContain('Enable specialist workers')
+      expect(container.textContent).toContain('System & Compatibility')
+      expect(container.textContent).toContain('Show 2 system definitions')
+      expect(container.textContent).toContain('Architect')
+      expect(container.textContent).toContain('Codex Plugin')
+      expect(container.textContent).toContain('Plan')
+      expect(container.textContent).toContain('Default policy: deep')
+      expect(container.textContent).toContain('System compatibility tier: max')
+      expect(container.textContent).not.toContain('Model selected by the manager execution policy')
+      expect(container.textContent).not.toContain('Default tier:')
     })
   })
 
@@ -755,7 +769,6 @@ describe('SettingsSpecialists (collab mode)', () => {
   it('renders collab settings banner when apiClient targets collab', async () => {
     const apiClient = makeCollabApiClient()
     specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
-    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
     specialistsApiMock.fetchCollabCategories.mockResolvedValue([])
     specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
 
@@ -783,7 +796,6 @@ describe('SettingsSpecialists (collab mode)', () => {
   it('shows Global Collaboration label in scope selector for collab mode', async () => {
     const apiClient = makeCollabApiClient()
     specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
-    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
     specialistsApiMock.fetchCollabCategories.mockResolvedValue([])
     specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
 
@@ -802,7 +814,7 @@ describe('SettingsSpecialists (collab mode)', () => {
     await flush()
     await flush()
 
-    expect(container.textContent).toContain('Global Collaboration Specialists')
+    expect(container.textContent).toContain('Collaboration Behavior Modes & Custom Specialists')
   })
 
   it('fetches specialists with collaboration targetSpace in collab mode', async () => {
@@ -813,7 +825,6 @@ describe('SettingsSpecialists (collab mode)', () => {
       targetSpace: ['collaboration'],
     })
     specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([collabSpec])
-    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
     specialistsApiMock.fetchCollabCategories.mockResolvedValue([])
     specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
 
@@ -861,7 +872,6 @@ describe('SettingsSpecialists (collab mode)', () => {
       selectedGlobalSpecialistHandles: [],
       missingSelectedSpecialistHandles: [],
     })
-    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
     specialistsApiMock.fetchCollabCategories.mockResolvedValue([{
       categoryId: 'cat-1',
       workspaceId: 'ws-1',
@@ -908,7 +918,6 @@ describe('SettingsSpecialists (collab mode)', () => {
   it('does not render skill defaults in category scope', async () => {
     const apiClient = makeCollabApiClient()
     specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
-    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
     specialistsApiMock.fetchCollabCategories.mockResolvedValue([{
       categoryId: 'cat-1',
       workspaceId: 'ws-1',

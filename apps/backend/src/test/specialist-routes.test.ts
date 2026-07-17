@@ -27,8 +27,6 @@ const specialistRegistryState = vi.hoisted(() => ({
   resolveWorkspaceRoster: vi.fn(async () => []),
   generateRosterBlock: vi.fn(() => ""),
   getWorkerTemplate: vi.fn(async () => "# Worker template\n"),
-  getSpecialistsEnabled: vi.fn(async () => true),
-  setSpecialistsEnabled: vi.fn(async () => undefined),
   saveProfileSpecialist: vi.fn(async () => undefined),
   saveSharedSpecialist: vi.fn(async () => undefined),
   invalidateSpecialistCache: vi.fn(),
@@ -42,8 +40,6 @@ vi.mock("../swarm/specialists/specialist-registry.js", () => ({
   resolveWorkspaceRoster: (...args: unknown[]) => specialistRegistryState.resolveWorkspaceRoster(...args),
   generateRosterBlock: (...args: unknown[]) => specialistRegistryState.generateRosterBlock(...args),
   getWorkerTemplate: (...args: unknown[]) => specialistRegistryState.getWorkerTemplate(...args),
-  getSpecialistsEnabled: (...args: unknown[]) => specialistRegistryState.getSpecialistsEnabled(...args),
-  setSpecialistsEnabled: (...args: unknown[]) => specialistRegistryState.setSpecialistsEnabled(...args),
   saveProfileSpecialist: (...args: unknown[]) => specialistRegistryState.saveProfileSpecialist(...args),
   saveSharedSpecialist: (...args: unknown[]) => specialistRegistryState.saveSharedSpecialist(...args),
   invalidateSpecialistCache: (...args: unknown[]) => specialistRegistryState.invalidateSpecialistCache(...args),
@@ -67,7 +63,6 @@ afterEach(async () => {
     }
   });
   specialistRegistryState.getWorkerTemplate.mockResolvedValue("# Worker template\n");
-  specialistRegistryState.getSpecialistsEnabled.mockResolvedValue(true);
   specialistRegistryState.generateRosterBlock.mockReturnValue("");
   specialistRegistryState.resolveRoster.mockResolvedValue([]);
   specialistRegistryState.resolveSharedRoster.mockResolvedValue([]);
@@ -537,56 +532,19 @@ describe("specialist routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Cannot modify system-managed profile" });
   });
 
-  it("returns the enabled flag for the current installation", async () => {
-    specialistRegistryState.getSpecialistsEnabled.mockResolvedValueOnce(false);
-
+  it("tombstones the removed enabled route without creating a custom specialist", async () => {
     const server = await createSpecialistRouteTestServer();
-    const response = await fetch(`${server.baseUrl}/api/settings/specialists/enabled`);
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ enabled: false });
-  });
-
-  it("validates enabled-route payloads", async () => {
-    const server = await createSpecialistRouteTestServer();
-    const response = await fetch(`${server.baseUrl}/api/settings/specialists/enabled`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: "yes" }),
-    });
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "enabled must be a boolean" });
-  });
-
-  it("updates the enabled flag, invalidates cache, and notifies all profiles", async () => {
-    specialistRegistryState.resolveRoster.mockImplementation(async (profileId: string) => [
-      { specialistId: `${profileId}-worker`, handle: "worker", sourcePath: `/tmp/${profileId}.md` },
-    ]);
-
-    const notifySpecialistRosterChanged = vi.fn(async () => undefined);
-    const broadcastEvent = vi.fn<(event: ServerEvent) => void>();
-    const server = await createSpecialistRouteTestServer({
-      profiles: [
-        { profileId: "alpha", displayName: "Alpha" },
-        { profileId: "beta", displayName: "Beta" },
-      ],
-      notifySpecialistRosterChanged,
-      broadcastEvent,
-    });
-
     const response = await fetch(`${server.baseUrl}/api/settings/specialists/enabled`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled: false }),
     });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true });
-    expect(specialistRegistryState.setSpecialistsEnabled).toHaveBeenCalledWith("/tmp/data", false);
-    expect(specialistRegistryState.invalidateSpecialistCache).toHaveBeenCalledTimes(1);
-    expect(notifySpecialistRosterChanged).toHaveBeenCalledTimes(2);
-    expect(broadcastEvent).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toEqual({
+      error: "The specialist enable/disable toggle was removed; delegation is always available.",
+    });
+    expect(specialistRegistryState.saveSharedSpecialist).not.toHaveBeenCalled();
   });
 
   it("maps builtin delete conflicts to 409 responses", async () => {

@@ -1,4 +1,4 @@
-Forge connects to multiple AI providers and models. Each model has different strengths — some are fast and cheap, others are slower but produce better results on hard problems. You pick a model for your manager session and for each specialist worker.
+Forge connects to multiple AI providers and models. Each model has different strengths — some are fast and cheap, others are slower but produce better results on hard problems. You pick a model for the manager session and configure models behind the worker execution policies.
 
 ## What matters when choosing a model
 
@@ -12,8 +12,8 @@ Three things affect the quality and speed of what you get back:
 
 - **Manager model:** Set when you create a session or change it in Settings. This controls the main orchestration agent.
 - **Manager selectors:** The create-session flow, change-default flow, and per-session override dialog can choose concrete models side by side. Family presets still work as a compatibility layer, but the selectors are model-aware first.
-- **Specialist models:** Each specialist worker has its own model and reasoning level. Configure these in Settings > Specialists. Specialists can use the Pi-proxied Anthropic provider, the native Claude SDK provider, or the native Cursor SDK provider independently.
-- **Fallback models:** Specialists can define a fallback model that kicks in if the primary is unavailable or rate-limited.
+- **Worker execution policies:** Support, Routine, and Deep each have a model and reasoning level under Settings > Delegation. Policies can use the Pi-proxied Anthropic provider, native Claude SDK provider, or native Cursor SDK provider independently.
+- **Fallback models:** Execution policies and direct custom specialists can define a fallback model that kicks in if the primary is unavailable or rate-limited.
 
 ## Model-specific instructions
 

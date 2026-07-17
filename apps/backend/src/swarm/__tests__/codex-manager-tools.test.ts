@@ -106,7 +106,7 @@ describe("codex manager tools", () => {
     });
 
     const managerTools = buildSwarmTools(host, createManager()).map((tool) => tool.name);
-    expect(managerTools).not.toContain("delegate_codex_plugin");
+    expect(managerTools).toContain("delegate_codex_plugin");
     expect(managerTools).not.toContain("list_codex_mcp_tools");
     expect(managerTools).not.toContain("call_codex_mcp_tool");
     expect(managerTools).toContain("spawn_agent");

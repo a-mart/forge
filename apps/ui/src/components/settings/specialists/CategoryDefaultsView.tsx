@@ -9,6 +9,7 @@ import {
   fetchSharedSpecialists,
   updateCategoryDefaultSpecialists,
 } from '../specialists-api'
+import { getBehaviorModeCardMetadata, isDelegationChoiceSpecialist } from './utils'
 
 interface CategoryDefaultsViewProps {
   clientOrWsUrl: SettingsApiClient | string
@@ -51,7 +52,10 @@ export function CategoryDefaultsView({
       .then((specs) => {
         if (!cancelled) {
           setGlobalSpecialists(
-            specs.filter((s) => s.targetSpace.includes('collaboration')),
+            specs.filter((s) =>
+              s.targetSpace.includes('collaboration') &&
+              isDelegationChoiceSpecialist(s.specialistId),
+            ),
           )
         }
       })
@@ -103,11 +107,14 @@ export function CategoryDefaultsView({
   }, [clientOrWsUrl, category.categoryId, selectedHandles, onCategoryUpdated])
 
   const missingHandles = category.missingDefaultSpecialistHandles ?? []
+  const hasVisibleSelection = globalSpecialists.some((specialist) =>
+    selectedHandles.has(specialist.specialistId),
+  )
 
   return (
     <SettingsSection
       label={`Category: ${category.name}`}
-      description="Default specialists for new channels in this category. Changes apply only to newly created channels."
+      description="Default behavior modes and custom specialists for new channels in this category. Existing system-managed selections are preserved but not offered here."
       cta={
         hasChanges ? (
           <Button
@@ -131,11 +138,13 @@ export function CategoryDefaultsView({
         </div>
       ) : globalSpecialists.length === 0 ? (
         <p className="py-3 text-sm text-muted-foreground/70 italic">
-          No global collaboration specialists available.
+          No shared behavior modes or custom specialists available.
         </p>
       ) : (
         <div className="space-y-2">
-          {globalSpecialists.map((spec) => (
+          {globalSpecialists.map((spec) => {
+            const behaviorMode = getBehaviorModeCardMetadata(spec.specialistId)
+            return (
             <label
               key={spec.specialistId}
               className="flex cursor-pointer items-center gap-3 rounded-md border border-border/50 px-3 py-2.5 transition-colors hover:bg-muted/30"
@@ -154,17 +163,18 @@ export function CategoryDefaultsView({
               <div className="min-w-0 flex-1">
                 <span className="text-sm font-medium">{spec.displayName}</span>
                 <span className="ml-2 text-xs text-muted-foreground">
-                  {spec.specialistId}
+                  {behaviorMode ? behaviorMode.mode : spec.specialistId}
                 </span>
               </div>
             </label>
-          ))}
+            )
+          })}
         </div>
       )}
 
-      {selectedHandles.size === 0 && !loading && (
+      {!hasVisibleSelection && !loading && (
         <p className="mt-2 text-xs text-muted-foreground/70 italic">
-          No global specialists selected for new channels. Channel-local specialists can still be added later.
+          No behavior modes or custom specialists selected for new channels. Channel-local custom specialists can still be added later.
         </p>
       )}
 
@@ -172,7 +182,7 @@ export function CategoryDefaultsView({
         <div className="mt-3 flex items-start gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-yellow-500" />
           <div className="text-xs text-yellow-400/90">
-            <p className="font-medium">Missing specialist handles</p>
+            <p className="font-medium">Missing saved delegation handles</p>
             <p className="mt-0.5">
               {missingHandles.join(', ')} — these handles are saved but do not
               resolve to existing specialists. They are ignored at runtime.

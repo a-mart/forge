@@ -79,7 +79,7 @@ const modelsRouting: HelpArticle = {
   id: 'models-routing',
   title: 'How Model Routing Works',
   category: 'models',
-  summary: 'How Forge picks which model runs each task through specialists and fallbacks.',
+  summary: 'How behavior modes and execution policies resolve worker models and fallbacks.',
   content: modelsRoutingContent,
   keywords: [
     'routing',

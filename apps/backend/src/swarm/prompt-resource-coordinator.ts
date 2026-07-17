@@ -10,8 +10,6 @@ import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-servi
 import { resolveCollaborationSkillRoster } from "./skills/collaboration-skill-resolver.js";
 import {
   generateRosterBlock,
-  getSpecialistsEnabled,
-  LEGACY_MODEL_ROUTING_GUIDANCE,
   normalizeSpecialistHandle,
   resolveCollaborationChannelRoster,
   resolveRoster,
@@ -66,8 +64,6 @@ export interface SpecialistRegistryModule {
   generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[], tierConfigs?: readonly TierConfig[]): string;
   resolveTierConfigs(): Promise<TierConfig[]>;
   normalizeSpecialistHandle(value: string): string;
-  getSpecialistsEnabled(): Promise<boolean>;
-  legacyModelRoutingGuidance: string;
 }
 
 export interface ModelCapacityBlock {
@@ -184,8 +180,6 @@ export class PromptResourceCoordinator {
         generateRosterBlock: generateRosterBlock as SpecialistRegistryModule["generateRosterBlock"],
         resolveTierConfigs: () => resolveTierConfigs(dataDir),
         normalizeSpecialistHandle,
-        getSpecialistsEnabled: () => getSpecialistsEnabled(dataDir),
-        legacyModelRoutingGuidance: LEGACY_MODEL_ROUTING_GUIDANCE,
       });
     }
     return this.specialistRegistryModulePromise;

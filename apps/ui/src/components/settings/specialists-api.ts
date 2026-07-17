@@ -207,29 +207,6 @@ export async function deleteSharedSpecialist(
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function fetchSpecialistsEnabled(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<boolean> {
-  const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, '/enabled')
-  const response = await client.fetch(path, { cache: 'no-store' })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { enabled?: unknown }
-  return typeof payload.enabled === 'boolean' ? payload.enabled : true
-}
-
-export async function setSpecialistsEnabledApi(
-  clientOrWsUrl: SettingsApiClient | string | undefined,
-  enabled: boolean,
-): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, '/enabled')
-  const response = await client.fetch(path, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-}
-
 export async function fetchTierConfigs(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<TierConfig[]> {
   const client = resolveClient(clientOrWsUrl)
   const path = buildSpecialistPath(undefined, '/tiers')

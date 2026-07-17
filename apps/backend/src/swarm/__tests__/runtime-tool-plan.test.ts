@@ -168,6 +168,7 @@ describe("runtime tool plan", () => {
       "get_goal",
       "update_goal",
       "spawn_agent",
+      "delegate_codex_plugin",
       "retry_codex_plugin_worker",
       "kill_agent",
       "speak_to_user",
@@ -225,6 +226,20 @@ describe("runtime tool plan", () => {
     expect(names).not.toContain("list_agents");
     expect(names).not.toContain("kill_agent");
     expect(names).not.toContain("task");
+    expect(names).not.toContain("delegate_codex_plugin");
+    expect(names).not.toContain("retry_codex_plugin_worker");
+    expect(names).toContain("spawn_agent");
+  });
+
+  it("does not advertise Codex Plugin delegation tools to Collaboration managers", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
+    const names = toolNames(createManagerDescriptor(rootDir, {
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace-1", channelId: "channel-1" },
+    }));
+
+    expect(names).not.toContain("delegate_codex_plugin");
+    expect(names).not.toContain("retry_codex_plugin_worker");
     expect(names).toContain("spawn_agent");
   });
 

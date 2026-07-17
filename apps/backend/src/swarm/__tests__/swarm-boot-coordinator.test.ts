@@ -50,6 +50,7 @@ describe("SwarmBootCoordinator", () => {
       "ensureLegacyProfileKnowledgeReferenceDocs",
       "restartRecovery",
       "recoverMissingWorkers",
+      "reconcileWorkerSpecialistMetadata",
       "reconcileProjectAgentMirror",
       "reconcileProjectAgentSharing",
       "ensureMemoryFiles",
@@ -229,6 +230,7 @@ function createHarness(
       order.push("normalizeCodexPluginWorkers");
       return false;
     },
+    reconcileWorkerSpecialistMetadata: mark("reconcileWorkerSpecialistMetadata"),
     ensureCortexProfile: mark("ensureCortexProfile"),
     loadOnboardingState: mark("loadOnboardingState"),
     ensureLegacyProfileKnowledgeReferenceDocs: mark("ensureLegacyProfileKnowledgeReferenceDocs"),

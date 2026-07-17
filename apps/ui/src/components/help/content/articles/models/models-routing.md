@@ -1,29 +1,29 @@
-Forge uses a specialist system to route different kinds of work to different models. The manager decides which specialist to use, and each specialist has its own model configuration.
+Forge separates manager orchestration from worker model selection. The manager understands the request, decides whether delegation helps, and describes the worker's behavior mode and execution policy. Forge then resolves the configured model, reasoning level, fallback, and saved prompt.
 
 ## Manager model
 
-The manager model handles orchestration: reading your messages, deciding what to do, breaking work into tasks, and coordinating specialist workers. The manager does not write code directly. Pick a capable model here — it affects the quality of task planning and delegation.
+The manager model owns routing, task framing, coordination, and acceptance. Pick a model capable of making good delegation decisions for the project. You can set a profile default, override one session, or return a session to the project default.
 
-You can set the profile default from the profile header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**. The session override dialog is one screen now, and choosing Use Project Default clears the session override back to the project default. New Project/Create Project uses the same model-aware reasoning selector, with unsupported options hidden and defaults applied when reasoning is omitted.
+## Worker behavior and capability
 
-## Specialist routing
+Behavior mode controls the output contract: General, Plan, Correctness Review, Design Review, or Research. Execution policy controls model capability and cost:
 
-When the manager spawns a worker, it picks a specialist based on the task. Each specialist has:
+- **Support** maps to the stored `fast` configuration.
+- **Routine** maps to the stored `standard` configuration.
+- **Deep** maps to the stored `deep` configuration.
 
-- A **primary model** and reasoning level — the default for that specialist's work.
-- An optional **fallback model** — used when the primary model is unavailable or rate-limited.
-- A **"when to use" description** — tells the manager which tasks to send to this specialist.
+This lets one project use a fast, inexpensive model for clear work and a stronger model for complex abstractions without teaching the manager provider-specific model IDs. The exact models remain visible and editable under **Settings → Delegation → Execution Policies**.
 
-For example, the builtin Backend Engineer uses GPT-5.5 at high reasoning. The builtin Code Reviewer also uses GPT-5.5 at high reasoning. The Frontend Engineer uses GPT-5.5 at medium reasoning. The Architect uses GPT-5.5 at medium reasoning. The Planner uses GPT-5.5 at medium reasoning. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
+Plan and review modes default to Deep and cannot use Support. Research defaults to Support. General work defaults to Routine. The manager may choose a different valid policy when task difficulty or risk warrants it.
+
+## Custom specialists
+
+A saved custom specialist is an escape hatch for a durable domain-specific prompt or model assignment. It is selected directly and is not combined with a behavior mode or execution policy.
 
 ## Fallback behavior
 
-If a specialist's primary model fails (rate limit, outage, credentials issue), Forge falls back to the specialist's fallback model if one is configured. If no fallback is set, the task fails and the manager reports the error.
+Each execution policy and direct custom specialist can define a fallback model. Recoverable availability failures are handled inside the runtime before an error reaches the manager. The resolved worker descriptor and usage telemetry retain the concrete model and specialist attribution.
 
-Set fallbacks for critical specialists to avoid interruptions during long-running work.
+## Compatibility
 
-## Customizing per profile
-
-Specialist model assignments can be overridden per profile. Open Settings > Specialists, pick a profile scope, and customize any specialist. Profile overrides take priority over global defaults without affecting other profiles.
-
-This is useful when different projects need different model routing — for example, a frontend-heavy project might upgrade the Frontend Engineer to max reasoning while keeping the global default at high.
+Existing worker descriptors and stored tier/lens configuration remain supported. The older Light and Max tiers are preserved on disk for compatibility, but new manager delegation uses Support, Routine, and Deep.

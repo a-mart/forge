@@ -935,10 +935,10 @@ export class SwarmManagerRuntimeComposition {
       },
       domains: {
         normalizeCodexPluginWorkers: () => services.codexPlugin.normalizeWorkersForBoot(),
+        reconcileWorkerSpecialistMetadata: () => lifecycle.reconcileWorkerSpecialistMetadataForBoot(),
         ensureCortexProfile: () => services.knowledge.ensureCortexProfileForBoot(),
         loadOnboardingState: () => loadOnboardingState(state.config.paths.dataDir).then(() => undefined),
-        ensureLegacyProfileKnowledgeReferenceDocs: () =>
-          services.knowledge.migrateLegacyProfileKnowledgeForBoot(),
+        ensureLegacyProfileKnowledgeReferenceDocs: () => services.knowledge.migrateLegacyProfileKnowledgeForBoot(),
         reconcileProjectAgentMirror: () => new ProjectAgentMirrorReconciler({
           dataDir: state.config.paths.dataDir,
           descriptors: state.descriptors,
