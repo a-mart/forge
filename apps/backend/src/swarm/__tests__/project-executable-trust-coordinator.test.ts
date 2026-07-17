@@ -295,9 +295,7 @@ describe("ProjectExecutableTrustCoordinator", () => {
     ).resolves.toBe("deferred");
     expect(harness.events).not.toContain(`terminate:${worker.agentId}`);
 
-    await expect(
-      coordinator.applyManagerRuntimeRecyclePolicy(manager.agentId, "idle_transition"),
-    ).resolves.toBe("recycled");
+    await coordinator.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(manager);
     await expect(
       coordinator.applyManagerRuntimeRecyclePolicy(manager.agentId, "idle_transition"),
     ).resolves.toBe("none");
@@ -318,6 +316,78 @@ describe("ProjectExecutableTrustCoordinator", () => {
     await coordinator.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(manager);
 
     expect(harness.events).toEqual(["save", "snapshot"]);
+  });
+
+  it("shares one pending recycle across concurrent runtime acquisitions", async () => {
+    const manager = makeManager("manager-a");
+    const harness = new CoordinatorHarness([manager]);
+    harness.recovery.setPendingManagerRuntimeRecycle(manager.agentId, "project_agent_directory_change");
+    let markRecycleStarted!: () => void;
+    let releaseRecycle!: () => void;
+    const recycleStarted = new Promise<void>((resolve) => {
+      markRecycleStarted = resolve;
+    });
+    const recycleGate = new Promise<void>((resolve) => {
+      releaseRecycle = resolve;
+    });
+    harness.recycleImplementation = async () => {
+      markRecycleStarted();
+      await recycleGate;
+      return "recycled";
+    };
+    const coordinator = harness.createCoordinator();
+
+    const first = coordinator.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(manager);
+    await recycleStarted;
+    const second = coordinator.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(manager);
+
+    expect(harness.recycleCalls).toBe(1);
+    releaseRecycle();
+    await Promise.all([first, second]);
+
+    expect(harness.recycleCalls).toBe(1);
+    expect(harness.events).toEqual(["save", "snapshot"]);
+  });
+
+  it("holds runtime acquisition behind a direct in-flight recycle", async () => {
+    const manager = makeManager("manager-a");
+    const harness = new CoordinatorHarness([manager]);
+    let markRecycleStarted!: () => void;
+    let releaseRecycle!: () => void;
+    const recycleStarted = new Promise<void>((resolve) => {
+      markRecycleStarted = resolve;
+    });
+    const recycleGate = new Promise<void>((resolve) => {
+      releaseRecycle = resolve;
+    });
+    harness.recycleImplementation = async () => {
+      markRecycleStarted();
+      await recycleGate;
+      return "recycled";
+    };
+    const coordinator = harness.createCoordinator();
+
+    const directRecycle = coordinator.applyManagerRuntimeRecyclePolicy(
+      manager.agentId,
+      "project_agent_directory_change",
+    );
+    await recycleStarted;
+    let runtimeAcquisitionResolved = false;
+    const runtimeAcquisition = coordinator
+      .applyPendingManagerRuntimeRecycleBeforeRuntimeUse(manager)
+      .then(() => {
+        runtimeAcquisitionResolved = true;
+      });
+    await Promise.resolve();
+
+    expect(harness.recycleCalls).toBe(1);
+    expect(runtimeAcquisitionResolved).toBe(false);
+
+    releaseRecycle();
+    await Promise.all([directRecycle, runtimeAcquisition]);
+
+    expect(harness.recycleCalls).toBe(1);
+    expect(runtimeAcquisitionResolved).toBe(true);
   });
 
   it("clears only the changed workspace's deferred activation", async () => {
@@ -371,6 +441,11 @@ class CoordinatorHarness {
   readonly runtimeCreations = new Map<string, Promise<unknown>>();
   readonly terminationFailures = new Map<string, Error>();
   readonly recycleDispositions: Array<"recycled" | "deferred" | "none"> = [];
+  recycleCalls = 0;
+  recycleImplementation:
+    | ((agentId: string, reason: import("../runtime/runtime-recovery-state.js").ManagerRuntimeRecycleReason) =>
+      Promise<"recycled" | "deferred" | "none">)
+    | undefined;
   readonly events: string[] = [];
   readonly logs: Array<{ event: string; data: Record<string, unknown> }> = [];
   choiceImplementation: (
@@ -404,8 +479,16 @@ class CoordinatorHarness {
         this.choiceRequests.push({ agentId, questions });
         return this.choiceImplementation(agentId, questions);
       },
-      applyBaseManagerRuntimeRecyclePolicy: async () =>
-        this.recycleDispositions.shift() ?? "none",
+      applyBaseManagerRuntimeRecyclePolicy: async (agentId, reason) => {
+        this.recycleCalls += 1;
+        const disposition = this.recycleImplementation
+          ? await this.recycleImplementation(agentId, reason)
+          : this.recycleDispositions.shift() ?? "none";
+        if (disposition !== "deferred") {
+          this.recovery.clearPendingManagerRuntimeRecycle(agentId);
+        }
+        return disposition;
+      },
       terminateDescriptor: async (descriptor) => {
         this.events.push(`terminate:${descriptor.agentId}`);
         const failure = this.terminationFailures.get(descriptor.agentId);

@@ -435,21 +435,17 @@ describe("UserMessageCoordinator", () => {
     expect(harness.options.codex.plugin.recordDispatchAccepted).not.toHaveBeenCalled();
   });
 
-  it("uses the shared manager runtime boundary before dispatch", async () => {
+  it("uses the shared manager runtime boundary within admission before dispatch", async () => {
     const harness = createHarness();
 
-    await harness.coordinator.dispatchRuntimeUserMessage({
-      targetAgentId: harness.manager.agentId,
-      text: "hello",
-      sourceContext: { channel: "web" },
-    });
+    await harness.coordinator.handleUserMessage("hello");
 
-    expect(harness.order.indexOf("runtime:get")).toBeLessThan(
-      harness.order.indexOf("runtime:send"),
-    );
-    expect(harness.order.indexOf("runtime:admission-acquire")).toBeLessThan(
-      harness.order.indexOf("runtime:get"),
-    );
+    const admissionIndex = harness.order.indexOf("runtime:admission-acquire");
+    const runtimeIndex = harness.order.indexOf("runtime:get");
+    const sendIndex = harness.order.indexOf("runtime:send");
+    expect(admissionIndex).toBeGreaterThanOrEqual(0);
+    expect(runtimeIndex).toBeGreaterThan(admissionIndex);
+    expect(sendIndex).toBeGreaterThan(runtimeIndex);
   });
 
   it("routes worker input through AgentMessageDispatcher and emits the accepted receipt", async () => {

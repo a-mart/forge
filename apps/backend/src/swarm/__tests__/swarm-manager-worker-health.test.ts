@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import {
   TestSwarmManager,
@@ -139,6 +139,115 @@ describe("SwarmManager worker results", () => {
     expect(String(replacementRuntime?.sendCalls.at(-1)?.message)).toContain(
       "Completed after the manager became idle.",
     );
+  });
+
+  it("shares deferred replacement across a concurrent worker result and user turn", async () => {
+    const config = await makeTempConfig();
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+    const worker = await spawnAssignedWorker(manager, "concurrent-recycle-worker");
+    const managerRuntime = manager.runtimeByAgentId.get("manager");
+    const managerDescriptor = manager.getAgent("manager");
+    const state = manager as unknown as {
+      runtimeController: { allocateRuntimeToken(agentId: string): number };
+      runtimeRecoveryState: {
+        setPendingManagerRuntimeRecycle(agentId: string, reason: "project_agent_directory_change"): void;
+      };
+      projectExecutableTrustCoordinator: {
+        applyPendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor: AgentDescriptor): Promise<void>;
+      };
+      handleRuntimeStatus(
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor["status"],
+        pendingCount: number,
+      ): Promise<void>;
+    };
+    if (!managerRuntime || !managerDescriptor) {
+      throw new Error("Missing manager runtime state");
+    }
+
+    await manager.handleRuntimeSessionEvent(worker.agentId, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: "Worker result delivered across the replacement barrier.",
+        stopReason: "stop",
+      },
+    });
+
+    const runtimeToken = manager.runtimeTokensByAgentId.get(managerDescriptor.agentId)
+      ?? state.runtimeController.allocateRuntimeToken(managerDescriptor.agentId);
+    managerDescriptor.status = "streaming";
+    managerRuntime.busy = false;
+    state.runtimeRecoveryState.setPendingManagerRuntimeRecycle(
+      managerDescriptor.agentId,
+      "project_agent_directory_change",
+    );
+    await state.handleRuntimeStatus(runtimeToken, managerDescriptor.agentId, "idle", 0);
+    managerRuntime.descriptor.status = "idle";
+    managerRuntime.sendCalls = [];
+
+    let markRecycleStarted!: () => void;
+    let releaseRecycle!: () => void;
+    const recycleStarted = new Promise<void>((resolve) => {
+      markRecycleStarted = resolve;
+    });
+    const recycleGate = new Promise<void>((resolve) => {
+      releaseRecycle = resolve;
+    });
+    const recycle = managerRuntime.recycle.bind(managerRuntime);
+    managerRuntime.recycle = async () => {
+      markRecycleStarted();
+      await recycleGate;
+      await recycle();
+    };
+
+    let boundaryCalls = 0;
+    let markConcurrentBoundaryEntered!: () => void;
+    const concurrentBoundaryEntered = new Promise<void>((resolve) => {
+      markConcurrentBoundaryEntered = resolve;
+    });
+    const applyPendingRecycle = state.projectExecutableTrustCoordinator
+      .applyPendingManagerRuntimeRecycleBeforeRuntimeUse
+      .bind(state.projectExecutableTrustCoordinator);
+    vi.spyOn(
+      state.projectExecutableTrustCoordinator,
+      "applyPendingManagerRuntimeRecycleBeforeRuntimeUse",
+    ).mockImplementation(async (descriptor) => {
+      boundaryCalls += 1;
+      if (boundaryCalls === 2) {
+        markConcurrentBoundaryEntered();
+      }
+      await applyPendingRecycle(descriptor);
+    });
+
+    const workerResult = manager.handleRuntimeAgentEnd(worker.agentId);
+    await recycleStarted;
+    let userTurnResolved = false;
+    const userTurn = manager.handleUserMessage(
+      "User input delivered across the same replacement barrier.",
+      { sourceContext: { channel: "web" } },
+    ).then(() => {
+      userTurnResolved = true;
+    });
+    await concurrentBoundaryEntered;
+
+    expect(userTurnResolved).toBe(false);
+    expect(managerRuntime.sendCalls).toHaveLength(0);
+
+    releaseRecycle();
+    await Promise.all([workerResult, userTurn]);
+
+    const replacementRuntime = manager.runtimeByAgentId.get(managerDescriptor.agentId);
+    const replacementMessages = replacementRuntime?.sendCalls.map((call) =>
+      typeof call.message === "string" ? call.message : call.message.text) ?? [];
+    expect(managerRuntime.recycleCalls).toBe(1);
+    expect(replacementRuntime).toBeDefined();
+    expect(replacementRuntime).not.toBe(managerRuntime);
+    expect(replacementMessages.some((message) => message.includes("[workerResult]"))).toBe(true);
+    expect(replacementMessages.some((message) =>
+      message.includes("User input delivered across the same replacement barrier."))).toBe(true);
   });
 
   it("keeps the manager available for a newer user message while the worker runs", async () => {

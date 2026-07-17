@@ -112,6 +112,10 @@ interface DeferredTrustActivation {
 
 export class ProjectExecutableTrustCoordinator {
   private readonly pendingPromptTrustKeys = new Set<string>();
+  private readonly pendingRuntimeRecycleApplicationsByManagerId = new Map<
+    string,
+    Promise<"recycled" | "deferred" | "none">
+  >();
   private readonly deferredActivationsByTrustKey = new Map<string, DeferredTrustActivation>();
   private readonly pendingActivationTrustKeyByManagerId = new Map<string, string>();
   private readonly pendingWorkerInvalidationTrustKeyByManagerId = new Map<string, string>();
@@ -225,13 +229,41 @@ export class ProjectExecutableTrustCoordinator {
     agentId: string,
     reason: ManagerRuntimeRecycleReason,
   ): Promise<"recycled" | "deferred" | "none"> {
-    const disposition = await this.options.host.applyBaseManagerRuntimeRecyclePolicy(agentId, reason);
-    if (disposition !== "deferred") {
-      const finalized = await this.finalizePendingActivationBoundary(agentId);
-      if (finalized) {
-        await this.options.host.saveStore();
-        this.options.host.emitAgentsSnapshot();
+    while (true) {
+      const inFlight = this.pendingRuntimeRecycleApplicationsByManagerId.get(agentId);
+      if (inFlight) {
+        const disposition = await inFlight;
+        if (reason === "idle_transition") {
+          if (disposition === "deferred") return disposition;
+          if (!this.options.runtimeRecovery.hasPendingManagerRuntimeRecycle(agentId)) return "none";
+        }
+        continue;
       }
+
+      const application = this.applyManagerRuntimeRecyclePolicyOnce(agentId, reason);
+      this.pendingRuntimeRecycleApplicationsByManagerId.set(agentId, application);
+      try {
+        return await application;
+      } finally {
+        if (this.pendingRuntimeRecycleApplicationsByManagerId.get(agentId) === application) {
+          this.pendingRuntimeRecycleApplicationsByManagerId.delete(agentId);
+        }
+      }
+    }
+  }
+
+  private async applyManagerRuntimeRecyclePolicyOnce(
+    agentId: string,
+    reason: ManagerRuntimeRecycleReason,
+  ): Promise<"recycled" | "deferred" | "none"> {
+    const disposition = await this.options.host.applyBaseManagerRuntimeRecyclePolicy(agentId, reason);
+    let finalized = false;
+    if (disposition !== "deferred") {
+      finalized = await this.finalizePendingActivationBoundary(agentId);
+    }
+    if (finalized || (reason === "idle_transition" && disposition === "recycled")) {
+      await this.options.host.saveStore();
+      this.options.host.emitAgentsSnapshot();
     }
     return disposition;
   }
@@ -239,12 +271,16 @@ export class ProjectExecutableTrustCoordinator {
   async applyPendingManagerRuntimeRecycleBeforeRuntimeUse(
     descriptor: ProjectExecutableTrustManager,
   ): Promise<void> {
-    if (!this.options.runtimeRecovery.hasPendingManagerRuntimeRecycle(descriptor.agentId)) return;
-    // This boundary runs outside the runtime's own event callback queue.
-    const disposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
-    if (disposition === "recycled") {
-      await this.options.host.saveStore();
-      this.options.host.emitAgentsSnapshot();
+    const agentId = descriptor.agentId;
+    while (
+      this.pendingRuntimeRecycleApplicationsByManagerId.has(agentId) ||
+      this.options.runtimeRecovery.hasPendingManagerRuntimeRecycle(agentId)
+    ) {
+      // This boundary runs outside the runtime's own event callback queue. The
+      // policy's single-flight holds every runtime acquisition until the old
+      // manager has been detached.
+      const disposition = await this.applyManagerRuntimeRecyclePolicy(agentId, "idle_transition");
+      if (disposition === "deferred") return;
     }
   }
 

@@ -39,7 +39,6 @@ export interface SessionGoalCoordinatorOptions {
   hasPendingChoices(sessionAgentId: string): boolean;
   hasIncompletePlanSteps(owner: SessionGoalOwner): Promise<boolean>;
   isRuntimeRecoveryActive(agentId: string): boolean;
-  hasPendingRuntimeRecycle(agentId: string): boolean;
   isRestartRecoveryDecisionPending(): boolean;
   getActiveExternalTurn(agentId: string):
     | { fromAgentId: string; fromDisplayName: string }
@@ -411,7 +410,6 @@ export class SessionGoalCoordinator {
         this.options.isArchived(descriptor) ||
         this.options.isRestartRecoveryDecisionPending() ||
         this.options.isRuntimeRecoveryActive(agentId) ||
-        this.options.hasPendingRuntimeRecycle(agentId) ||
         this.options.hasPendingChoices(agentId) ||
         this.options.getWorkers(agentId).some((worker) => worker.status === "streaming")
       ) return;

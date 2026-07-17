@@ -153,7 +153,6 @@ function createHarness(): {
     hasPendingChoices: () => false,
     hasIncompletePlanSteps: async () => false,
     isRuntimeRecoveryActive: () => false,
-    hasPendingRuntimeRecycle: () => false,
     isRestartRecoveryDecisionPending: () => false,
     getActiveExternalTurn: () => undefined,
     sendMessage: vi.fn(async () => ({ delivery: "sent" as const })),

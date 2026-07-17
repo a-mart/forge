@@ -42,8 +42,6 @@ export function createSwarmManagerCoordinationComposition(input: {
     hasIncompletePlanSteps: (owner) => plans.hasIncompleteSteps(owner),
     isRuntimeRecoveryActive: (agentId) =>
       input.getRuntimeLifecycle().isRuntimeRecoveryActive(agentId),
-    hasPendingRuntimeRecycle: (agentId) =>
-      state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(agentId),
     isRestartRecoveryDecisionPending: () => input.restartRecovery.isDecisionPending(),
     getActiveExternalTurn: (agentId) =>
       input.getTurnContext().getActiveExternalProjectAgentTurn(agentId),

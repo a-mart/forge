@@ -2588,6 +2588,46 @@ Never use plain assistant text for user communication.`
     expect(manager.runtimeByAgentId.get('manager')?.sendCalls).toHaveLength(callsBefore ?? 0)
   })
 
+  it('runs an active-goal continuation through a pending runtime replacement', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createGoal('manager', 'goal-recycle-continuation', {
+      objective: 'Continue after runtime replacement',
+    })
+    const previousRuntime = manager.runtimeByAgentId.get('manager')
+    const descriptor = manager.getAgent('manager')
+    const state = manager as unknown as {
+      runtimeRecoveryState: {
+        setPendingManagerRuntimeRecycle(
+          agentId: string,
+          reason: 'project_agent_directory_change',
+        ): void
+      }
+    }
+    if (!previousRuntime || !descriptor) {
+      throw new Error('Expected manager runtime state')
+    }
+    descriptor.status = 'idle'
+    previousRuntime.descriptor.status = 'idle'
+    previousRuntime.busy = false
+    previousRuntime.sendCalls = []
+    state.runtimeRecoveryState.setPendingManagerRuntimeRecycle(
+      descriptor.agentId,
+      'project_agent_directory_change',
+    )
+
+    await manager.runGoalContinuationForTest(descriptor.agentId)
+
+    const replacementRuntime = manager.runtimeByAgentId.get(descriptor.agentId)
+    expect(previousRuntime.recycleCalls).toBe(1)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime).not.toBe(previousRuntime)
+    expect(String(replacementRuntime?.sendCalls.at(-1)?.message)).toContain(
+      'Continue pursuing the active goal',
+    )
+  })
+
   it('finalizes a pending completed-plan usage receipt during backend restart recovery', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
