@@ -118,14 +118,10 @@ function createHarness() {
     emitConversationMessage: vi.fn(),
     emitSessionWorkersSnapshot: vi.fn(),
   };
-  const recoveryState = {
-    setPendingManagerRuntimeRecycle: vi.fn(),
-  };
   const coordinator = new SwarmRuntimeLifecycleCoordinator({
     dataDir: "/tmp/data",
     descriptors,
     controller,
-    recoveryState,
     workerHealth,
     turnContext,
     codexScopes,
@@ -152,7 +148,6 @@ function createHarness() {
     descriptorMutations,
     directory,
     events,
-    recoveryState,
     coordinator,
   };
 }

@@ -129,7 +129,6 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
   stripManagerAbortErrorFromEvent: ReturnType<typeof vi.fn>;
   finalizeWorkerIdleTurn: ReturnType<typeof vi.fn>;
   cortexHandleManagerStatus: ReturnType<typeof vi.fn>;
-  applyManagerRuntimeRecyclePolicy: ReturnType<typeof vi.fn>;
   maybeRecoverWorkerWithSpecialistFallback: ReturnType<typeof vi.fn>;
   deliverTerminalObligationBackstop: ReturnType<typeof vi.fn>;
 } {
@@ -141,7 +140,6 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
   const stripManagerAbortErrorFromEvent = vi.fn((event: RuntimeSessionEvent) => event);
   const finalizeWorkerIdleTurn = vi.fn();
   const cortexHandleManagerStatus = vi.fn();
-  const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "none" as const);
   const maybeRecoverWorkerWithSpecialistFallback = vi.fn(async () => false);
   const deliverTerminalObligationBackstop = vi.fn((_agentId: string, _reportText: string) => false);
   const forgeExtensionHost = new ForgeExtensionHost({ dataDir: config.paths.dataDir });
@@ -232,9 +230,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     }),
     emitConversationMessage,
     emitStatus,
-    emitAgentsSnapshot: vi.fn(),
     saveStore: vi.fn(),
-    applyManagerRuntimeRecyclePolicy,
     queueVersionedToolMutation: vi.fn(),
     logDebug: vi.fn(),
     markSessionActivity: vi.fn(),
@@ -263,7 +259,6 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     stripManagerAbortErrorFromEvent,
     finalizeWorkerIdleTurn,
     cortexHandleManagerStatus,
-    applyManagerRuntimeRecyclePolicy,
     maybeRecoverWorkerWithSpecialistFallback
   };
 }
@@ -390,10 +385,10 @@ describe("SwarmRuntimeController", () => {
     expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
   });
 
-  it("keeps manager idle status persistence before emit and emits a post-recycle snapshot", async () => {
+  it("keeps manager idle status projection independent from runtime replacement", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
-    const { host, descriptors, emitStatus, applyManagerRuntimeRecyclePolicy } = createRuntimeControllerHarness(config);
+    const { host, descriptors, emitStatus } = createRuntimeControllerHarness(config);
     const controller = new SwarmRuntimeController(host);
     const manager = baseDescriptor({
       agentId: "m-idle-recycle",
@@ -403,8 +398,6 @@ describe("SwarmRuntimeController", () => {
       status: "streaming"
     });
     descriptors.set(manager.agentId, manager);
-    applyManagerRuntimeRecyclePolicy.mockResolvedValue("recycled");
-
     const token = controller.allocateRuntimeToken(manager.agentId);
     await controller.handleRuntimeStatus(token, manager.agentId, "idle", 0);
 
@@ -415,25 +408,17 @@ describe("SwarmRuntimeController", () => {
     expect(vi.mocked(host.refreshSessionMetaStats).mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ agentId: manager.agentId })
     );
-    expect(host.saveStore).toHaveBeenCalledTimes(2);
+    expect(host.saveStore).toHaveBeenCalledTimes(1);
     expect(emitStatus).toHaveBeenCalledWith(manager.agentId, "idle", 0, undefined);
-    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(manager.agentId, "idle_transition");
-    expect(host.emitAgentsSnapshot).toHaveBeenCalledTimes(1);
 
     const patchOrder = vi.mocked(host.patchDescriptorFromRuntimeStatus).mock.invocationCallOrder[0];
     const statsOrder = vi.mocked(host.refreshSessionMetaStats).mock.invocationCallOrder[0];
     const firstSaveOrder = vi.mocked(host.saveStore).mock.invocationCallOrder[0];
     const emitStatusOrder = emitStatus.mock.invocationCallOrder[0];
-    const recycleOrder = applyManagerRuntimeRecyclePolicy.mock.invocationCallOrder[0];
-    const secondSaveOrder = vi.mocked(host.saveStore).mock.invocationCallOrder[1];
-    const snapshotOrder = vi.mocked(host.emitAgentsSnapshot).mock.invocationCallOrder[0];
 
     expect(patchOrder).toBeLessThan(statsOrder);
     expect(statsOrder).toBeLessThan(firstSaveOrder);
     expect(firstSaveOrder).toBeLessThan(emitStatusOrder);
-    expect(emitStatusOrder).toBeLessThan(recycleOrder);
-    expect(recycleOrder).toBeLessThan(secondSaveOrder);
-    expect(secondSaveOrder).toBeLessThan(snapshotOrder);
   });
 
   it("routes status updates through emitStatus and persists worker descriptor transitions", async () => {

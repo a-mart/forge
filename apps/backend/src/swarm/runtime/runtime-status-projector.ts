@@ -28,17 +28,12 @@ export interface RuntimeStatusProjectorDeps {
     pendingCount: number,
     contextUsage?: AgentContextUsage
   ): void;
-  emitAgentsSnapshot(): void;
   logDebug(message: string, details?: unknown): void;
   handleManagerStatusTransition(
     descriptor: AgentDescriptor,
     status: AgentStatus,
     pendingCount: number
   ): void | Promise<void>;
-  applyManagerRuntimeRecyclePolicy(
-    agentId: string,
-    reason: "idle_transition"
-  ): Promise<"recycled" | "deferred" | "none">;
 }
 
 export interface RuntimeStatusProjectionInput {
@@ -130,13 +125,8 @@ export class RuntimeStatusProjector {
 
     if (updatedDescriptor.role === "manager") {
       await this.deps.handleManagerStatusTransition(updatedDescriptor, nextStatus, pendingCount);
-      if (nextStatus === "idle" && pendingCount === 0) {
-        const recycleDisposition = await this.deps.applyManagerRuntimeRecyclePolicy(updatedDescriptor.agentId, "idle_transition");
-        if (recycleDisposition === "recycled") {
-          await this.deps.saveStore();
-          this.deps.emitAgentsSnapshot();
-        }
-      }
+      // Runtime callbacks may execute inside the runtime's serialized event queue.
+      // Deferred replacement is applied before the next runtime use, never here.
     }
   }
 }

@@ -9,7 +9,7 @@ import {
 
 export const MANAGER_TURN_NOTICE_MS = 30_000;
 export const MANAGER_TURN_ESCALATE_MS = 5 * 60_000;
-export const MANAGER_TURN_RECYCLE_OFFER_MS = 10 * 60_000;
+export const MANAGER_TURN_STUCK_MS = 10 * 60_000;
 export const MANAGER_TURN_RECOVERY_HOLD_MS = 2 * 60_000;
 
 export interface ManagerTurnWatchdogOptions {
@@ -21,7 +21,6 @@ export interface ManagerTurnWatchdogOptions {
   hasPendingChoicesForSession(sessionAgentId: string): boolean;
   isRuntimeRecoveryActive(agentId: string): boolean;
   emitConversationMessage(event: ConversationMessageEvent): void;
-  offerRuntimeRecycle(agentId: string): void;
   logDebug(message: string, details?: unknown): void;
 }
 
@@ -33,7 +32,6 @@ interface ManagerTurnState {
   tier: 0 | 1 | 2 | 3;
   openToolCalls: Set<string>;
   recoveryHoldUntil: number | null;
-  recycleOffered: boolean;
 }
 
 export class ManagerTurnWatchdog {
@@ -157,9 +155,9 @@ export class ManagerTurnWatchdog {
 
       if (state.openToolCalls.size > 0) {
         // Manager-run tools pause the ladder (long builds/tests are legitimate),
-        // but an indefinitely hung tool must still surface: past the recycle
-        // ceiling the ladder fires regardless of open tool calls.
-        if (nowMs - state.lastProgressAt < MANAGER_TURN_RECYCLE_OFFER_MS) {
+        // but an indefinitely hung tool must still surface: past the stuck
+        // threshold the ladder fires regardless of open tool calls.
+        if (nowMs - state.lastProgressAt < MANAGER_TURN_STUCK_MS) {
           continue;
         }
       }
@@ -176,7 +174,7 @@ export class ManagerTurnWatchdog {
       }
 
       const elapsed = nowMs - state.lastProgressAt;
-      if (elapsed >= MANAGER_TURN_RECYCLE_OFFER_MS && state.tier < 3) {
+      if (elapsed >= MANAGER_TURN_STUCK_MS && state.tier < 3) {
         state.tier = 3;
         this.emitStallNotice(agentId, state, 3);
       } else if (elapsed >= MANAGER_TURN_ESCALATE_MS && state.tier < 2) {
@@ -211,7 +209,6 @@ export class ManagerTurnWatchdog {
       tier: 0,
       openToolCalls: new Set(),
       recoveryHoldUntil: null,
-      recycleOffered: false,
     });
   }
 
@@ -235,11 +232,6 @@ export class ManagerTurnWatchdog {
       }).catch((error) => {
         this.options.logDebug("turn_ledger:stalled:error", { agentId, turnId: state.turnId, tier, error: String(error) });
       });
-    }
-
-    if (tier === 3 && !state.recycleOffered) {
-      state.recycleOffered = true;
-      this.options.offerRuntimeRecycle(agentId);
     }
 
     const text =

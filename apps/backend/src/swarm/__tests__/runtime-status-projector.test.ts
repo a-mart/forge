@@ -52,10 +52,8 @@ function createHarness(): {
     refreshSessionMetaStats: vi.fn(async () => undefined),
     saveStore: vi.fn(async () => undefined),
     emitStatus: vi.fn(),
-    emitAgentsSnapshot: vi.fn(),
     logDebug: vi.fn(),
-    handleManagerStatusTransition: vi.fn(async () => undefined),
-    applyManagerRuntimeRecyclePolicy: vi.fn(async () => "none")
+    handleManagerStatusTransition: vi.fn(async () => undefined)
   };
 
   return {
@@ -68,7 +66,7 @@ function createHarness(): {
 }
 
 describe("RuntimeStatusProjector", () => {
-  it("preserves manager streaming-to-idle ordering including recycle second save and snapshot", async () => {
+  it("projects manager idle without synchronously replacing its runtime", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({
       agentId: "manager-1",
@@ -78,8 +76,6 @@ describe("RuntimeStatusProjector", () => {
       status: "streaming"
     });
     descriptors.set(manager.agentId, manager);
-    vi.mocked(deps.applyManagerRuntimeRecyclePolicy).mockResolvedValue("recycled");
-
     await projector.projectStatus({ agentId: manager.agentId, status: "idle", pendingCount: 0 });
 
     expect(deps.patchDescriptorFromRuntimeStatus).toHaveBeenCalledWith(
@@ -87,32 +83,24 @@ describe("RuntimeStatusProjector", () => {
       expect.objectContaining({ status: "idle", updatedAt: "2026-05-06T00:00:01.000Z" })
     );
     expect(deps.refreshSessionMetaStats).toHaveBeenCalledWith(expect.objectContaining({ agentId: manager.agentId }));
-    expect(deps.saveStore).toHaveBeenCalledTimes(2);
+    expect(deps.saveStore).toHaveBeenCalledTimes(1);
     expect(deps.emitStatus).toHaveBeenCalledWith(manager.agentId, "idle", 0, undefined);
     expect(deps.handleManagerStatusTransition).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: manager.agentId }),
       "idle",
       0
     );
-    expect(deps.applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(manager.agentId, "idle_transition");
-    expect(deps.emitAgentsSnapshot).toHaveBeenCalledTimes(1);
 
     const patchOrder = vi.mocked(deps.patchDescriptorFromRuntimeStatus).mock.invocationCallOrder[0];
     const statsOrder = vi.mocked(deps.refreshSessionMetaStats).mock.invocationCallOrder[0];
     const firstSaveOrder = vi.mocked(deps.saveStore).mock.invocationCallOrder[0];
     const emitOrder = vi.mocked(deps.emitStatus).mock.invocationCallOrder[0];
     const cortexOrder = vi.mocked(deps.handleManagerStatusTransition).mock.invocationCallOrder[0];
-    const recycleOrder = vi.mocked(deps.applyManagerRuntimeRecyclePolicy).mock.invocationCallOrder[0];
-    const secondSaveOrder = vi.mocked(deps.saveStore).mock.invocationCallOrder[1];
-    const snapshotOrder = vi.mocked(deps.emitAgentsSnapshot).mock.invocationCallOrder[0];
 
     expect(patchOrder).toBeLessThan(statsOrder);
     expect(statsOrder).toBeLessThan(firstSaveOrder);
     expect(firstSaveOrder).toBeLessThan(emitOrder);
     expect(emitOrder).toBeLessThan(cortexOrder);
-    expect(cortexOrder).toBeLessThan(recycleOrder);
-    expect(recycleOrder).toBeLessThan(secondSaveOrder);
-    expect(secondSaveOrder).toBeLessThan(snapshotOrder);
   });
 
   it("projects worker idle-to-streaming with normalized context usage before meta/stats, save, and emit", async () => {

@@ -7,7 +7,7 @@ import { getSessionTurnLedgerPath } from "../data-paths.js";
 import {
   MANAGER_TURN_ESCALATE_MS,
   MANAGER_TURN_NOTICE_MS,
-  MANAGER_TURN_RECYCLE_OFFER_MS,
+  MANAGER_TURN_STUCK_MS,
   ManagerTurnWatchdog,
 } from "../manager-turn-watchdog.js";
 import type { AgentDescriptor, ConversationMessageEvent } from "../types.js";
@@ -25,7 +25,6 @@ async function setup(status: AgentDescriptor["status"] = "streaming") {
   });
   const descriptors = new Map<string, AgentDescriptor>([[manager.agentId, manager]]);
   const emitted: ConversationMessageEvent[] = [];
-  const recycleOffers: string[] = [];
   let hasPendingChoice = false;
   const watchdog = new ManagerTurnWatchdog({
     dataDir,
@@ -36,7 +35,6 @@ async function setup(status: AgentDescriptor["status"] = "streaming") {
     hasPendingChoicesForSession: () => hasPendingChoice,
     isRuntimeRecoveryActive: () => false,
     emitConversationMessage: (event) => emitted.push(event),
-    offerRuntimeRecycle: (agentId) => recycleOffers.push(agentId),
     logDebug: vi.fn(),
   });
   return {
@@ -44,7 +42,6 @@ async function setup(status: AgentDescriptor["status"] = "streaming") {
     descriptors,
     watchdog,
     emitted,
-    recycleOffers,
     setPendingChoice: (pending: boolean) => { hasPendingChoice = pending; },
   };
 }
@@ -54,8 +51,8 @@ afterEach(() => {
 });
 
 describe("ManagerTurnWatchdog", () => {
-  it("fires the ladder past the recycle ceiling even while a manager tool call hangs open", async () => {
-    const { watchdog, emitted, recycleOffers } = await setup();
+  it("fires the ladder past the stuck threshold even while a manager tool call hangs open", async () => {
+    const { watchdog, emitted } = await setup();
     watchdog.recordStatus("m1", 1, "streaming", 0);
     watchdog.recordEvent("m1", 1, { type: "tool_execution_start", toolCallId: "hung-tool", toolName: "bash", args: {} });
 
@@ -63,10 +60,9 @@ describe("ManagerTurnWatchdog", () => {
     watchdog.check();
     expect(emitted).toHaveLength(0); // paused while the tool runs
 
-    vi.advanceTimersByTime(MANAGER_TURN_RECYCLE_OFFER_MS);
+    vi.advanceTimersByTime(MANAGER_TURN_STUCK_MS);
     watchdog.check();
     expect(emitted.length).toBeGreaterThan(0); // hung tool cannot hide forever
-    expect(recycleOffers).toContain("m1");
   });
 
   it("arms on accepted manager streaming status and disarms on terminal", async () => {
@@ -166,15 +162,14 @@ describe("ManagerTurnWatchdog", () => {
   });
 
   it("does not treat time waiting for a user choice as a manager stall", async () => {
-    const { watchdog, emitted, recycleOffers, setPendingChoice } = await setup();
+    const { watchdog, emitted, setPendingChoice } = await setup();
     watchdog.recordStatus("m1", 1, "streaming", 0);
     setPendingChoice(true);
 
-    vi.advanceTimersByTime(MANAGER_TURN_RECYCLE_OFFER_MS + 1);
+    vi.advanceTimersByTime(MANAGER_TURN_STUCK_MS + 1);
     watchdog.check();
 
     expect(emitted).toHaveLength(0);
-    expect(recycleOffers).toHaveLength(0);
     expect(watchdog.getState("m1")?.tier).toBe(0);
 
     setPendingChoice(false);
@@ -189,14 +184,16 @@ describe("ManagerTurnWatchdog", () => {
     ]);
   });
 
-  it("offers recycle once at tier 3", async () => {
-    const { watchdog, recycleOffers } = await setup();
+  it("emits the diagnostic tier only once at the stuck threshold", async () => {
+    const { watchdog, emitted } = await setup();
     watchdog.recordStatus("m1", 1, "streaming", 0);
 
-    vi.advanceTimersByTime(MANAGER_TURN_RECYCLE_OFFER_MS + 1);
+    vi.advanceTimersByTime(MANAGER_TURN_STUCK_MS + 1);
     watchdog.check();
     watchdog.check();
 
-    expect(recycleOffers).toEqual(["m1"]);
+    expect(emitted.map((event) => event.text)).toEqual([
+      expect.stringContaining("appears stuck"),
+    ]);
   });
 });

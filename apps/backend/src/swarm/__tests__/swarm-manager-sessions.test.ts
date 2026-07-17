@@ -1510,7 +1510,7 @@ Never use plain assistant text for user communication.`
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
   })
 
-  it('defers model-change replacement shutdown for active manager sessions until they return to idle', async () => {
+  it('defers model-change replacement shutdown until the next runtime use after idle', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1557,11 +1557,11 @@ Never use plain assistant text for user communication.`
     sessionRuntime.busy = false
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
-    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(sessionRuntime.terminateCalls).toHaveLength(0)
-    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
-    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'anthropic',
@@ -1572,6 +1572,8 @@ Never use plain assistant text for user communication.`
     const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
     await manager.handleUserMessage('Recreate after idle', { targetAgentId: sessionAgent.agentId })
 
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
     expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
@@ -1795,7 +1797,7 @@ Never use plain assistant text for user communication.`
     expect(manager.runtimeByAgentId.get(sessionAgent.agentId)?.terminateCalls).toHaveLength(1)
   })
 
-  it('recycles only sessions using models whose specific instructions changed, deferring busy sessions until idle', async () => {
+  it('recycles only sessions using changed model instructions, deferring busy sessions until next use after idle', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const rootSession = await bootWithDefaultManager(manager, config)
@@ -1862,14 +1864,16 @@ Never use plain assistant text for user communication.`
     sessionRuntime.busy = false
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
-    expect(sessionRuntime.recycleCalls).toBe(1)
-    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
-    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
     expect(manager.runtimeByAgentId.get(otherManager.agentId)).toBe(otherRuntime)
 
     const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
     await manager.handleUserMessage('Use refreshed instructions', { targetAgentId: sessionAgent.agentId })
 
+    expect(sessionRuntime.recycleCalls).toBe(1)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
     expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
     expect(manager.runtimeByAgentId.get(otherManager.agentId)).toBe(otherRuntime)
@@ -2005,9 +2009,19 @@ Never use plain assistant text for user communication.`
     sessionRuntime.busy = false
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
+    expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+
+    await manager.sendMessage(rootSession.agentId, sessionAgent.agentId, 'internal delivery after idle')
+
     expect(sessionRuntime.recycleCalls).toBe(1)
     expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
-    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)?.sendCalls.at(-1)?.message).toContain(
+      'internal delivery after idle',
+    )
   })
 
   it('recycles only the target project agent when its system prompt changes without directory changes', async () => {
@@ -2097,7 +2111,7 @@ Never use plain assistant text for user communication.`
     expect(sessionRuntime?.recycleCalls).toBe(sessionCallsAfterWrite)
   })
 
-  it('defers target-only project-agent reference recycle while the target runtime is busy', async () => {
+  it('defers target-only project-agent reference recycle until the next runtime use after idle', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const rootSession = await bootWithDefaultManager(manager, config)
@@ -2150,6 +2164,11 @@ Never use plain assistant text for user communication.`
 
     sessionRuntime.busy = false
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
+
+    expect(sessionRuntime.recycleCalls).toBe(sessionCallsAfterAttach)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+
+    await manager.handleUserMessage('Use the updated reference', { targetAgentId: sessionAgent.agentId })
 
     expect(sessionRuntime.recycleCalls).toBe(sessionCallsAfterAttach + 1)
     expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
@@ -2911,7 +2930,7 @@ Never use plain assistant text for user communication.`
     expect(afterState.applied).toHaveLength(0)
   })
 
-  it('defers collab model-change recycle while the backing manager is streaming', async () => {
+  it('defers collab model-change recycle until the next runtime use after idle', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2952,13 +2971,15 @@ Never use plain assistant text for user communication.`
     sessionRuntime.busy = false
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgentId, 'idle', 0)
 
-    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
-    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgentId)).toBe(false)
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgentId)).toBe(true)
     expect(manager.getAgent(sessionAgentId)?.model).toEqual(resolveModelDescriptorFromPreset('cursor-composer'))
 
     appendSessionConversationMessage(created.sessionAgent.sessionFile, sessionAgentId, 'Deferred collab context.')
     await manager.handleUserMessage('Continue after deferred Cursor switch', { targetAgentId: sessionAgentId })
 
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgentId)).toBe(false)
     expect(manager.runtimeCreationOptionsByAgentId.get(sessionAgentId)?.startupRecoveryContext?.blockText).toContain(
       'Deferred collab context.',
     )

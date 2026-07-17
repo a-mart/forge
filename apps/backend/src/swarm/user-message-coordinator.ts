@@ -22,7 +22,6 @@ import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
 import type { ProjectExecutableTrustCoordinator } from "./project-executable-trust-coordinator.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "./runtime-contracts.js";
-import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type { SwarmEventCoordinator } from "./swarm-event-coordinator.js";
 import type { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
 import {
@@ -178,14 +177,12 @@ export interface UserMessageTargetingPort {
 }
 
 export interface UserMessageRuntimePort {
-  recovery: Pick<RuntimeRecoveryState, "hasPendingManagerRuntimeRecycle">;
   executableTrust: Pick<
     ProjectExecutableTrustCoordinator,
-    "applyManagerRuntimeRecyclePolicy" | "schedulePrompt"
+    "schedulePrompt"
   >;
   withRuntimeAdmission<T>(agentId: string, operation: () => Promise<T>): Promise<T>;
   getOrCreateRuntime(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime>;
-  persistRecycledRuntimeState(): Promise<void>;
 }
 
 export interface UserMessageCoordinatorOptions {
@@ -558,14 +555,6 @@ export class UserMessageCoordinator {
     input: RuntimeDispatchInput,
   ): Promise<void> {
     const managerContextId = target.agentId;
-    if (this.options.runtime.recovery.hasPendingManagerRuntimeRecycle(managerContextId)) {
-      const disposition = await this.options.runtime.executableTrust
-        .applyManagerRuntimeRecyclePolicy(managerContextId, "idle_transition");
-      if (disposition === "recycled") {
-        await this.options.runtime.persistRecycledRuntimeState();
-      }
-    }
-
     let runtime: SwarmAgentRuntime;
     try {
       runtime = await this.options.runtime.getOrCreateRuntime(target);

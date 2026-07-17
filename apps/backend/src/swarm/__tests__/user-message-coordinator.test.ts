@@ -61,7 +61,6 @@ function createHarness() {
   const runtimeAttachment = { ...textAttachment("runtime") };
   const rollback = vi.fn(() => order.push("turn:rollback"));
   let runtimeError: Error | undefined;
-  let pendingRecycle = false;
 
   const runtime = {
     descriptor: manager,
@@ -116,14 +115,7 @@ function createHarness() {
       getConversationHistory: vi.fn(() => history),
     },
     runtime: {
-      recovery: {
-        hasPendingManagerRuntimeRecycle: vi.fn(() => pendingRecycle),
-      },
       executableTrust: {
-        applyManagerRuntimeRecyclePolicy: vi.fn(async () => {
-          order.push("runtime:recycle");
-          return "recycled" as const;
-        }),
         schedulePrompt: vi.fn(() => order.push("trust:schedule")),
       },
       withRuntimeAdmission: vi.fn(async (_agentId, operation) => {
@@ -137,9 +129,6 @@ function createHarness() {
       getOrCreateRuntime: vi.fn(async () => {
         order.push("runtime:get");
         return runtime;
-      }),
-      persistRecycledRuntimeState: vi.fn(async () => {
-        order.push("runtime:persist-recycle");
       }),
     },
     attachments: attachmentService,
@@ -243,7 +232,6 @@ function createHarness() {
     emittedAgentMessages,
     rollback,
     setRuntimeError: (error: Error | undefined) => { runtimeError = error; },
-    setPendingRecycle: (value: boolean) => { pendingRecycle = value; },
   };
 }
 
@@ -447,9 +435,8 @@ describe("UserMessageCoordinator", () => {
     expect(harness.options.codex.plugin.recordDispatchAccepted).not.toHaveBeenCalled();
   });
 
-  it("recycles and persists manager runtime state before runtime creation", async () => {
+  it("uses the shared manager runtime boundary before dispatch", async () => {
     const harness = createHarness();
-    harness.setPendingRecycle(true);
 
     await harness.coordinator.dispatchRuntimeUserMessage({
       targetAgentId: harness.manager.agentId,
@@ -457,10 +444,10 @@ describe("UserMessageCoordinator", () => {
       sourceContext: { channel: "web" },
     });
 
-    expect(harness.order.indexOf("runtime:recycle")).toBeLessThan(
-      harness.order.indexOf("runtime:persist-recycle"),
+    expect(harness.order.indexOf("runtime:get")).toBeLessThan(
+      harness.order.indexOf("runtime:send"),
     );
-    expect(harness.order.indexOf("runtime:persist-recycle")).toBeLessThan(
+    expect(harness.order.indexOf("runtime:admission-acquire")).toBeLessThan(
       harness.order.indexOf("runtime:get"),
     );
   });

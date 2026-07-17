@@ -180,12 +180,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     pendingCount: number,
     contextUsage?: AgentContextUsage
   ): void;
-  emitAgentsSnapshot(): void;
   saveStore(): Promise<void>;
-  applyManagerRuntimeRecyclePolicy(
-    agentId: string,
-    reason: "model_change" | "cwd_change" | "idle_transition" | "prompt_mode_change" | "project_agent_directory_change" | "project_resource_trust_change" | "specialist_roster_change"
-  ): Promise<"recycled" | "deferred" | "none">;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
   isModelCacheVisualizationEnabled(): boolean;
@@ -650,12 +645,9 @@ export class SwarmRuntimeController {
         saveStore: () => this.host.saveStore(),
         emitStatus: (agentId, status, pendingCount, contextUsage) =>
           this.host.emitStatus(agentId, status, pendingCount, contextUsage),
-        emitAgentsSnapshot: () => this.host.emitAgentsSnapshot(),
         logDebug: (message, details) => this.logDebug(message, details),
         handleManagerStatusTransition: (descriptor, status, pendingCount) =>
-          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount),
-        applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
-          this.host.applyManagerRuntimeRecyclePolicy(agentId, reason)
+          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount)
       });
     }
 

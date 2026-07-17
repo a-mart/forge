@@ -1211,15 +1211,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         getConversationHistory: (agentId) => this.getConversationHistory(agentId),
       },
       runtime: {
-        recovery: this.runtimeRecoveryState,
         executableTrust: this.projectExecutableTrustCoordinator,
         withRuntimeAdmission: (agentId, operation) =>
           this.runtimeController.withRuntimeAdmission(agentId, operation),
         getOrCreateRuntime: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
-        persistRecycledRuntimeState: async () => {
-          await this.descriptorStoreAdapter.saveStore();
-          this.eventCoordinator.emitAgentsSnapshot();
-        },
       },
       attachments: this.conversationAttachmentService,
       inboundConversation: this.inboundConversationAppender,

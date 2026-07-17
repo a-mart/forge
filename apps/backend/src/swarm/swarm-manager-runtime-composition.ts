@@ -381,7 +381,6 @@ export class SwarmManagerRuntimeComposition {
       dataDir: this.options.state.config.paths.dataDir,
       descriptors: this.options.state.descriptors,
       controller: this.runtimeController,
-      recoveryState: this.options.state.runtimeRecoveryState,
       workerHealth: this.workerHealth,
       turnContext,
       codexScopes: services.codexPlugin,
@@ -500,10 +499,7 @@ export class SwarmManagerRuntimeComposition {
       emitConversationMessage: events.emitConversationMessage,
       markSessionActivity: events.markSessionActivity,
       emitStatus: events.emitStatus,
-      emitAgentsSnapshot: events.emitAgentsSnapshot,
       saveStore: events.saveStore,
-      applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
-        this.requireProjectExecutableTrust().applyManagerRuntimeRecyclePolicy(agentId, reason),
       queueVersionedToolMutation: events.queueVersionedToolMutation,
       logDebug: events.logDebug,
       isModelCacheVisualizationEnabled: () =>

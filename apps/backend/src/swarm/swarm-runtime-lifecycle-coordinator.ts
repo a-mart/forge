@@ -10,7 +10,6 @@ import type {
   RuntimeShutdownOptions,
   SwarmAgentRuntime,
 } from "./runtime-contracts.js";
-import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type { SwarmRuntimeControllerHost } from "./swarm-runtime-controller.js";
 import type {
   SwarmWorkerHealthService,
@@ -111,7 +110,6 @@ export interface SwarmRuntimeLifecycleCoordinatorOptions {
   dataDir: string;
   descriptors: Map<string, AgentDescriptor>;
   controller: RuntimeLifecycleController;
-  recoveryState: Pick<RuntimeRecoveryState, "setPendingManagerRuntimeRecycle">;
   workerHealth: SwarmWorkerHealthService;
   turnContext: RuntimeLifecycleTurnContext;
   codexScopes: RuntimeLifecycleCodexScopes;
@@ -210,7 +208,6 @@ export class SwarmRuntimeLifecycleCoordinator {
         options.choices.hasPendingChoicesForSession(sessionAgentId),
       isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
       emitConversationMessage: (event) => options.events.emitConversationMessage(event),
-      offerRuntimeRecycle: (agentId) => options.recoveryState.setPendingManagerRuntimeRecycle(agentId, "idle_transition"),
       logDebug: options.logDebug,
     });
   }

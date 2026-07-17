@@ -308,6 +308,18 @@ describe("ProjectExecutableTrustCoordinator", () => {
     expect(harness.deferredClear).toHaveBeenCalledWith(TRUST_KEY_A);
   });
 
+  it("persists a deferred recycle only at the before-runtime-use boundary", async () => {
+    const manager = makeManager("manager-a");
+    const harness = new CoordinatorHarness([manager]);
+    harness.recovery.setPendingManagerRuntimeRecycle(manager.agentId, "project_agent_directory_change");
+    harness.recycleDispositions.push("recycled");
+    const coordinator = harness.createCoordinator();
+
+    await coordinator.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(manager);
+
+    expect(harness.events).toEqual(["save", "snapshot"]);
+  });
+
   it("clears only the changed workspace's deferred activation", async () => {
     const managerA = makeManager("manager-a");
     const managerB = makeManager("manager-b", { cwd: "/repo-b" });

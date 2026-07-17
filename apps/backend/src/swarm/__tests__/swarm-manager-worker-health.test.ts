@@ -81,6 +81,66 @@ describe("SwarmManager worker results", () => {
     expect(internalWorker(manager, worker.agentId).workerParentContext).toBeUndefined();
   });
 
+  it("defers a pending manager recycle until a settled worker result reaches the runtime boundary", async () => {
+    const config = await makeTempConfig();
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+    const worker = await spawnAssignedWorker(manager, "recycle-boundary-worker");
+    const managerRuntime = manager.runtimeByAgentId.get("manager");
+    const managerDescriptor = manager.getAgent("manager");
+    const state = manager as unknown as {
+      runtimeController: { allocateRuntimeToken(agentId: string): number };
+      runtimeRecoveryState: {
+        setPendingManagerRuntimeRecycle(agentId: string, reason: "project_agent_directory_change"): void;
+        hasPendingManagerRuntimeRecycle(agentId: string): boolean;
+      };
+      handleRuntimeStatus(
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor["status"],
+        pendingCount: number,
+      ): Promise<void>;
+    };
+    if (!managerRuntime || !managerDescriptor) {
+      throw new Error("Missing manager runtime state");
+    }
+    const runtimeToken = manager.runtimeTokensByAgentId.get("manager")
+      ?? state.runtimeController.allocateRuntimeToken("manager");
+
+    managerRuntime.busy = false;
+    managerDescriptor.status = "streaming";
+    state.runtimeRecoveryState.setPendingManagerRuntimeRecycle(
+      managerDescriptor.agentId,
+      "project_agent_directory_change",
+    );
+
+    await state.handleRuntimeStatus(runtimeToken, managerDescriptor.agentId, "idle", 0);
+    managerRuntime.descriptor.status = "idle";
+
+    expect(managerRuntime.recycleCalls).toBe(0);
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerDescriptor.agentId)).toBe(true);
+
+    await manager.handleRuntimeSessionEvent(worker.agentId, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: "Completed after the manager became idle.",
+        stopReason: "stop",
+      },
+    });
+    await manager.handleRuntimeAgentEnd(worker.agentId);
+
+    const replacementRuntime = manager.runtimeByAgentId.get(managerDescriptor.agentId);
+    expect(managerRuntime.recycleCalls).toBe(1);
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerDescriptor.agentId)).toBe(false);
+    expect(replacementRuntime).toBeDefined();
+    expect(replacementRuntime).not.toBe(managerRuntime);
+    expect(String(replacementRuntime?.sendCalls.at(-1)?.message)).toContain("[workerResult]");
+    expect(String(replacementRuntime?.sendCalls.at(-1)?.message)).toContain(
+      "Completed after the manager became idle.",
+    );
+  });
+
   it("keeps the manager available for a newer user message while the worker runs", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);

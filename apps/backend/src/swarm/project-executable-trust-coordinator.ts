@@ -240,7 +240,12 @@ export class ProjectExecutableTrustCoordinator {
     descriptor: ProjectExecutableTrustManager,
   ): Promise<void> {
     if (!this.options.runtimeRecovery.hasPendingManagerRuntimeRecycle(descriptor.agentId)) return;
-    await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
+    // This boundary runs outside the runtime's own event callback queue.
+    const disposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
+    if (disposition === "recycled") {
+      await this.options.host.saveStore();
+      this.options.host.emitAgentsSnapshot();
+    }
   }
 
   forgetManager(agentId: string): void {
