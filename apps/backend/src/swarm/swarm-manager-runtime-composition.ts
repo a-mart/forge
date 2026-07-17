@@ -387,6 +387,7 @@ export class SwarmManagerRuntimeComposition {
       codexScopes: services.codexPlugin,
       plans: this.plans,
       goals: this.requireGoals(),
+      choices: services.choices,
       descriptorMutations: this.options.descriptors,
       directory: services.directory,
       events: services.eventCoordinator,

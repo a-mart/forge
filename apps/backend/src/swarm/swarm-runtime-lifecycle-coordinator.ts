@@ -87,6 +87,10 @@ export interface RuntimeLifecycleGoals {
   scheduleContinuation(owner: AgentDescriptor & { role: "manager"; profileId: string }): void;
 }
 
+export interface RuntimeLifecycleChoices {
+  hasPendingChoicesForSession(sessionAgentId: string): boolean;
+}
+
 export interface RuntimeLifecycleDescriptorMutations {
   patchDescriptor(
     agentId: string,
@@ -113,6 +117,7 @@ export interface SwarmRuntimeLifecycleCoordinatorOptions {
   codexScopes: RuntimeLifecycleCodexScopes;
   plans: RuntimeLifecyclePlans;
   goals: RuntimeLifecycleGoals;
+  choices: RuntimeLifecycleChoices;
   descriptorMutations: RuntimeLifecycleDescriptorMutations;
   directory: RuntimeLifecycleDirectory;
   events: RuntimeLifecycleEvents;
@@ -201,6 +206,8 @@ export class SwarmRuntimeLifecycleCoordinator {
       now: options.now,
       getSessionTarget: (agentId) => this.getTurnLedgerSessionTarget(agentId),
       getActiveTurnId: (agentId, runtimeToken) => options.turnContext.getActiveTurnId(agentId, runtimeToken),
+      hasPendingChoicesForSession: (sessionAgentId) =>
+        options.choices.hasPendingChoicesForSession(sessionAgentId),
       isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
       emitConversationMessage: (event) => options.events.emitConversationMessage(event),
       offerRuntimeRecycle: (agentId) => options.recoveryState.setPendingManagerRuntimeRecycle(agentId, "idle_transition"),

@@ -26,18 +26,27 @@ async function setup(status: AgentDescriptor["status"] = "streaming") {
   const descriptors = new Map<string, AgentDescriptor>([[manager.agentId, manager]]);
   const emitted: ConversationMessageEvent[] = [];
   const recycleOffers: string[] = [];
+  let hasPendingChoice = false;
   const watchdog = new ManagerTurnWatchdog({
     dataDir,
     descriptors,
     now: () => new Date(Date.now()).toISOString(),
     getSessionTarget: () => ({ dataDir, profileId: "p1", sessionAgentId: "m1" }),
     getActiveTurnId: (_agentId, runtimeToken) => (runtimeToken === 2 ? undefined : "m1:1"),
+    hasPendingChoicesForSession: () => hasPendingChoice,
     isRuntimeRecoveryActive: () => false,
     emitConversationMessage: (event) => emitted.push(event),
     offerRuntimeRecycle: (agentId) => recycleOffers.push(agentId),
     logDebug: vi.fn(),
   });
-  return { dataDir, descriptors, watchdog, emitted, recycleOffers };
+  return {
+    dataDir,
+    descriptors,
+    watchdog,
+    emitted,
+    recycleOffers,
+    setPendingChoice: (pending: boolean) => { hasPendingChoice = pending; },
+  };
 }
 
 afterEach(() => {
@@ -154,6 +163,30 @@ describe("ManagerTurnWatchdog", () => {
     vi.advanceTimersByTime(MANAGER_TURN_NOTICE_MS + 1);
     watchdog.check();
     expect(emitted).toHaveLength(1);
+  });
+
+  it("does not treat time waiting for a user choice as a manager stall", async () => {
+    const { watchdog, emitted, recycleOffers, setPendingChoice } = await setup();
+    watchdog.recordStatus("m1", 1, "streaming", 0);
+    setPendingChoice(true);
+
+    vi.advanceTimersByTime(MANAGER_TURN_RECYCLE_OFFER_MS + 1);
+    watchdog.check();
+
+    expect(emitted).toHaveLength(0);
+    expect(recycleOffers).toHaveLength(0);
+    expect(watchdog.getState("m1")?.tier).toBe(0);
+
+    setPendingChoice(false);
+    vi.advanceTimersByTime(MANAGER_TURN_NOTICE_MS - 1);
+    watchdog.check();
+    expect(emitted).toHaveLength(0);
+
+    vi.advanceTimersByTime(2);
+    watchdog.check();
+    expect(emitted.map((event) => event.text)).toEqual([
+      expect.stringContaining("Still working"),
+    ]);
   });
 
   it("offers recycle once at tier 3", async () => {

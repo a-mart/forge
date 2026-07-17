@@ -18,6 +18,7 @@ export interface ManagerTurnWatchdogOptions {
   descriptors: Map<string, AgentDescriptor>;
   getSessionTarget(agentId: string): TurnLedgerSessionTarget | null;
   getActiveTurnId(agentId: string, runtimeToken?: number): string | undefined;
+  hasPendingChoicesForSession(sessionAgentId: string): boolean;
   isRuntimeRecoveryActive(agentId: string): boolean;
   emitConversationMessage(event: ConversationMessageEvent): void;
   offerRuntimeRecycle(agentId: string): void;
@@ -142,6 +143,15 @@ export class ManagerTurnWatchdog {
       const descriptor = this.options.descriptors.get(agentId);
       if (!descriptor || descriptor.role !== "manager" || descriptor.status !== "streaming") {
         this.stateByAgentId.delete(agentId);
+        continue;
+      }
+
+      if (this.options.hasPendingChoicesForSession(agentId)) {
+        // Waiting for an explicit user choice is healthy, intentional inactivity.
+        // Exclude that time from the stall ladder so answering a long-lived
+        // choice cannot immediately produce a stale warning.
+        state.lastProgressAt = nowMs;
+        state.tier = 0;
         continue;
       }
 

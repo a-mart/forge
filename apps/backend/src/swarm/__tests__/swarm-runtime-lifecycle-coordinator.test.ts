@@ -96,6 +96,9 @@ function createHarness() {
   const goals = {
     scheduleContinuation: vi.fn(() => { calls.push("goals:schedule"); }),
   };
+  const choices = {
+    hasPendingChoicesForSession: vi.fn(() => false),
+  };
   const descriptorMutations = {
     patchDescriptor: vi.fn(async (agentId: string, patch: (value: AgentDescriptor) => AgentDescriptor) => {
       const current = descriptors.get(agentId);
@@ -128,6 +131,7 @@ function createHarness() {
     codexScopes,
     plans,
     goals,
+    choices,
     descriptorMutations,
     directory,
     events,
