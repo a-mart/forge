@@ -105,6 +105,12 @@ Treat messages beginning with [workerResult] as terminal worker results that req
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
 \${SPECIALIST_ROSTER}`;
+const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
+- Use a diagram only when it makes an important relationship materially easier to understand than prose or a short list.
+- Prefer the smallest diagram that answers the question. Keep one abstraction level, short labels, one dominant direction, and minimal cross-links.
+- As a default, keep one diagram to roughly 5-12 important nodes and no more than 3 subgraphs. If the subject needs substantially more detail, provide a high-level overview and separate focused diagrams.
+- Do not turn a request for a high-level view into an exhaustive implementation or dependency graph.
+- Before returning Mermaid, check whether long labels, distant cross-links, nested subgraphs, or excessive nodes will create a very wide or tall canvas. Simplify or split the diagram when labels would become unreadable at normal chat width.`;
 const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text unless a structured choice or explicit routed delivery is needed.
 - Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
@@ -359,6 +365,10 @@ export class SwarmPromptService {
       prompt = await this.appendCollabContextOverlays(descriptor, prompt);
     } else {
       prompt = await this.appendRepositoryReferenceInventory(prompt, descriptor);
+    }
+
+    if (projectAgentComposition || managerArchetypeId === MANAGER_ARCHETYPE_ID) {
+      prompt = `${prompt.trimEnd()}\n\n${USER_FACING_VISUALIZATION_GUIDANCE}`;
     }
 
     if (projectAgentComposition) {

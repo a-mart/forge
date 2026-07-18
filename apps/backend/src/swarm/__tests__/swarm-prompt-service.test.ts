@@ -229,6 +229,11 @@ Never use plain assistant text for user communication.`;
     const prompt = await service.buildResolvedManagerPrompt(descriptor);
 
     expect(prompt).toContain("Never use plain assistant text for user communication.");
+    expect(prompt).toContain("# User-Facing Visualizations");
+    expect(prompt).toContain("roughly 5-12 important nodes");
+    expect(prompt.indexOf("Never use plain assistant text for user communication.")).toBeLessThan(
+      prompt.indexOf("# User-Facing Visualizations")
+    );
     expect(prompt).toContain("# Non-Negotiable Forge Routing Contract");
     expect(prompt).toContain(
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
@@ -994,6 +999,10 @@ Custom project instruction: always mention the release train when summarizing de
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("Forge Project Agent Operating Contract");
+    expect(resolved).toContain("# User-Facing Visualizations");
+    expect(resolved.indexOf("# User-Facing Visualizations")).toBeLessThan(
+      resolved.indexOf("# Non-Negotiable Forge Routing Contract")
+    );
     expect(resolved).toContain("Final/standalone direct web end-user replies in this Project Agent session");
     expectCurrentProjectAgentRoutingFooter(resolved);
     expect(resolved.trimEnd()).toMatch(/A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content\.$/);

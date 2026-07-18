@@ -22,7 +22,6 @@ import {
 } from 'lucide-react'
 import { ContentZoomDialog } from '@/components/chat/ContentZoomDialog'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
@@ -95,7 +94,8 @@ function useIsDarkMode(): boolean {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_INLINE_HEIGHT = 220
-const DEFAULT_ZOOM_HEIGHT = 520
+const MAX_INLINE_HEIGHT = 420
+const DEFAULT_ZOOM_HEIGHT = 'min(82vh, 1200px)'
 const PREVIEW_READY_TIMEOUT_MS = 15_000
 
 function sanitizeHighlightedHtml(html: string): string {
@@ -151,6 +151,8 @@ interface MermaidPreviewEmbedProps {
   title: string
   instanceId: string
   minHeight: number
+  maxHeight?: number
+  fixedHeight?: string
   onFrameStateChange?: (state: MermaidPreviewFrameState) => void
 }
 
@@ -158,7 +160,7 @@ const MermaidPreviewEmbed = forwardRef<
   MermaidPreviewEmbedHandle,
   MermaidPreviewEmbedProps
 >(function MermaidPreviewEmbed(
-  { code, themeMode, title, instanceId, minHeight, onFrameStateChange },
+  { code, themeMode, title, instanceId, minHeight, maxHeight, fixedHeight, onFrameStateChange },
   ref,
 ) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -209,7 +211,6 @@ const MermaidPreviewEmbed = forwardRef<
     const requestId = nextMermaidRequestId('render')
     currentRenderRequestIdRef.current = requestId
     publishFrameState({ rendered: false, error: null })
-    setHeight((currentHeight) => Math.max(currentHeight, minHeight))
 
     const message: MermaidPreviewRenderMessage = {
       type: 'forge:mermaid-render',
@@ -229,7 +230,6 @@ const MermaidPreviewEmbed = forwardRef<
   }, [
     code,
     instanceId,
-    minHeight,
     postMessageToFrame,
     publishFrameState,
     ready,
@@ -255,8 +255,13 @@ const MermaidPreviewEmbed = forwardRef<
 
           publishFrameState({ rendered: true, error: null })
           const renderedHeight = message.size?.height ?? message.height
-          if (typeof renderedHeight === 'number' && Number.isFinite(renderedHeight)) {
-            setHeight(Math.max(Math.ceil(renderedHeight), minHeight))
+          if (!fixedHeight && typeof renderedHeight === 'number' && Number.isFinite(renderedHeight)) {
+            setHeight(
+              Math.min(
+                Math.max(Math.ceil(renderedHeight), minHeight),
+                maxHeight ?? Number.POSITIVE_INFINITY,
+              ),
+            )
           }
           return
         }
@@ -271,8 +276,13 @@ const MermaidPreviewEmbed = forwardRef<
           }
 
           const nextHeight = message.size?.height ?? message.height
-          if (typeof nextHeight === 'number' && Number.isFinite(nextHeight)) {
-            setHeight(Math.max(Math.ceil(nextHeight), minHeight))
+          if (!fixedHeight && typeof nextHeight === 'number' && Number.isFinite(nextHeight)) {
+            setHeight(
+              Math.min(
+                Math.max(Math.ceil(nextHeight), minHeight),
+                maxHeight ?? Number.POSITIVE_INFINITY,
+              ),
+            )
           }
           return
         }
@@ -305,7 +315,7 @@ const MermaidPreviewEmbed = forwardRef<
         }
       }
     },
-    [minHeight, publishFrameState],
+    [fixedHeight, maxHeight, minHeight, publishFrameState],
   )
 
   useEffect(() => {
@@ -415,11 +425,11 @@ const MermaidPreviewEmbed = forwardRef<
     [instanceId, postMessageToFrame, ready],
   )
 
-  const effectiveHeight = Math.max(height, minHeight)
+  const viewportHeight = fixedHeight ?? height
   const loadingText = iframeLoaded ? 'Rendering diagram…' : 'Loading preview…'
 
   return (
-    <div className="relative w-full" style={{ minHeight: effectiveHeight }}>
+    <div className="relative w-full" style={{ height: viewportHeight }}>
       {!rendered && !error ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -435,7 +445,7 @@ const MermaidPreviewEmbed = forwardRef<
         title={title}
         data-mermaid-preview-frame="true"
         className="w-full border-0 bg-transparent"
-        style={{ height: effectiveHeight }}
+        style={{ height: viewportHeight }}
         sandbox="allow-scripts allow-same-origin"
         onLoad={() => {
           setIframeLoaded(true)
@@ -623,17 +633,16 @@ export const MermaidBlock = memo(function MermaidBlock({
             )}
             aria-hidden={embedIsHidden}
           >
-            <ScrollArea className="max-h-[70vh] w-full">
-              <MermaidPreviewEmbed
-                ref={inlinePreviewRef}
-                code={code}
-                themeMode={themeMode}
-                title="Mermaid diagram preview"
-                instanceId={inlineInstanceId}
-                minHeight={DEFAULT_INLINE_HEIGHT}
-                onFrameStateChange={handleFrameStateChange}
-              />
-            </ScrollArea>
+            <MermaidPreviewEmbed
+              ref={inlinePreviewRef}
+              code={code}
+              themeMode={themeMode}
+              title="Mermaid diagram preview"
+              instanceId={inlineInstanceId}
+              minHeight={DEFAULT_INLINE_HEIGHT}
+              maxHeight={MAX_INLINE_HEIGHT}
+              onFrameStateChange={handleFrameStateChange}
+            />
           </div>
 
           {showCode ? (
@@ -683,7 +692,8 @@ export const MermaidBlock = memo(function MermaidBlock({
             themeMode={themeMode}
             title="Expanded Mermaid diagram preview"
             instanceId={zoomInstanceId}
-            minHeight={DEFAULT_ZOOM_HEIGHT}
+            minHeight={520}
+            fixedHeight={DEFAULT_ZOOM_HEIGHT}
           />
         ) : null}
       </ContentZoomDialog>

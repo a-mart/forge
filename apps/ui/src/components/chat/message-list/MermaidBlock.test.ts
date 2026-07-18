@@ -131,6 +131,32 @@ describe('MermaidBlock', () => {
     expect(container.querySelector('[aria-label="Expand diagram"]')).toBeTruthy()
   })
 
+  it('keeps the inline renderer in a bounded viewport instead of growing to the full SVG height', async () => {
+    renderMermaid('graph TD; A-->B')
+
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+    expect(iframe.style.height).toBe('220px')
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-rendered',
+      instanceId,
+      requestId: renderMessage.requestId as string,
+      size: { width: 8_000, height: 6_000 },
+    })
+    await flush()
+
+    expect(getInlineIframe().style.height).toBe('420px')
+  })
+
   it('ignores bridge messages from the wrong source or instance', async () => {
     renderMermaid('graph LR; A-->B')
 

@@ -6,7 +6,9 @@
 html,
 body {
   margin: 0;
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   background: transparent;
 }
 
@@ -16,10 +18,11 @@ body {
 
 .mermaid-preview-shell {
   box-sizing: border-box;
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   padding: 12px;
   background: #0f172a;
   color: #e2e8f0;
@@ -30,24 +33,86 @@ body {
   color: #0f172a;
 }
 
+.mermaid-preview-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .mermaid-preview-status {
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   line-height: 1.5;
   opacity: 0.8;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mermaid-preview-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.mermaid-preview-controls[hidden] {
+  display: none;
+}
+
+.mermaid-preview-controls button {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.78);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mermaid-preview-controls button:hover {
+  background: rgba(51, 65, 85, 0.92);
+}
+
+.mermaid-preview-controls button:focus-visible,
+.mermaid-preview-canvas:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.mermaid-preview-shell[data-theme-mode='light'] .mermaid-preview-controls button {
+  border-color: rgba(100, 116, 139, 0.3);
+  background: rgba(241, 245, 249, 0.96);
+}
+
+.mermaid-preview-shell[data-theme-mode='light'] .mermaid-preview-controls button:hover {
+  background: #e2e8f0;
 }
 
 .mermaid-preview-canvas {
   box-sizing: border-box;
   width: 100%;
-  min-height: 120px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: block;
   padding: 12px;
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: rgba(15, 23, 42, 0.72);
   overflow: auto;
+  cursor: grab;
+  touch-action: auto;
+  scrollbar-gutter: stable;
+}
+
+.mermaid-preview-canvas[data-panning='true'] {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .mermaid-preview-shell[data-theme-mode='light'] .mermaid-preview-canvas {
@@ -57,6 +122,7 @@ body {
 
 .mermaid-preview-canvas svg {
   display: block;
+  margin: 0 auto;
   max-width: none;
 }
 

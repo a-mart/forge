@@ -45,7 +45,7 @@ Child -> parent:
 
 The current checked-in assets include:
 
-- `assets/embed.js` — the iframe controller that listens for bridge messages, renders Mermaid inside the isolated document, reports size updates, and returns SVG exports.
+- `assets/embed.js` — the iframe controller that listens for bridge messages, renders Mermaid inside a bounded interactive viewport, owns readable-scale zoom/pan controls, reports size updates, and returns SVG exports.
 - `assets/embed.css` — shell styles for the isolated iframe document.
 - `assets/vendor/mermaid.min.js` — vendored browser runtime copied from the installed `mermaid` package so the iframe can render without reaching out to a CDN.
 

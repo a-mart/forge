@@ -95,6 +95,24 @@ describe('mermaid preview shipped asset pair', () => {
     const bootstrapMatch = source.match(/renderPlaceholder\([^)]+\)\s*\n\s*postReadyMessage\(\)/)
     expect(bootstrapMatch).toBeTruthy()
   })
+
+  it('ships readable-scale zoom, fit, reset, keyboard, wheel, and pointer-pan behavior', async () => {
+    const server = await createMermaidPreviewTestServer()
+
+    const response = await fetch(`${server.baseUrl}/mermaid-preview/assets/embed.js`)
+    expect(response.status).toBe(200)
+    const source = await response.text()
+
+    expect(source).toContain('MIN_READABLE_SCALE')
+    expect(source).toContain('resetReadableView()')
+    expect(source).toContain('fitDiagram()')
+    expect(source).toContain("addEventListener('wheel'")
+    expect(source).toContain("addEventListener('pointerdown'")
+    expect(source).toContain("addEventListener('keydown'")
+    expect(source).toContain('event.ctrlKey || event.metaKey || event.altKey')
+    expect(source).toContain("event.pointerType === 'touch'")
+    expect(source).toContain('Large diagram — opened at')
+  })
 })
 
 describe('mermaid preview routes', () => {
@@ -121,6 +139,12 @@ describe('mermaid preview routes', () => {
     expect(html).toContain('/mermaid-preview/assets/vendor/mermaid.min.js')
     expect(html).toContain('/mermaid-preview/assets/embed.js')
     expect(html).toContain('Waiting for Mermaid source…')
+    expect(html).toContain('data-view-action="zoom-out"')
+    expect(html).toContain('data-view-action="zoom-in"')
+    expect(html).toContain('data-view-action="fit"')
+    expect(html).toContain('data-view-action="actual-size"')
+    expect(html).toContain('data-view-action="reset"')
+    expect(html).toContain('tabindex="0"')
     expect(html).toContain('data-theme-mode="light"')
     expect(html).not.toContain('diagram-1')
   })

@@ -210,8 +210,17 @@ function buildEmbedDocumentHtml(options: { themeMode: "light" | "dark" }): strin
   </head>
   <body data-theme-mode="${options.themeMode}">
     <main id="app" class="mermaid-preview-shell" data-theme-mode="${options.themeMode}">
-      <div class="mermaid-preview-status" id="status">Waiting for Mermaid source…</div>
-      <div class="mermaid-preview-canvas" id="canvas" role="img" aria-label="Mermaid preview surface"></div>
+      <div class="mermaid-preview-header">
+        <div class="mermaid-preview-status" id="status">Waiting for Mermaid source…</div>
+        <div class="mermaid-preview-controls" id="controls" hidden>
+          <button type="button" data-view-action="zoom-out" aria-label="Zoom out" title="Zoom out (-)">−</button>
+          <button type="button" data-view-action="actual-size" id="zoom-level" aria-label="Use actual size" title="Actual size (0)">100%</button>
+          <button type="button" data-view-action="zoom-in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+          <button type="button" data-view-action="fit" aria-label="Fit diagram" title="Fit diagram (F)">Fit</button>
+          <button type="button" data-view-action="reset" aria-label="Reset view" title="Reset readable view">Reset</button>
+        </div>
+      </div>
+      <div class="mermaid-preview-canvas" id="canvas" role="img" aria-label="Mermaid preview surface" tabindex="0"></div>
     </main>
   </body>
 </html>`;

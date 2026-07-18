@@ -36,7 +36,7 @@ For diagnostics and runtime internals, use **Session Audit Log** from the chat h
 
 Builder web also supports Codex app-server sidecars. A plain leading @Codex or [@Codex] starts or continues a direct sidecar text turn. Selector forms like @Codex -<plugin>, @Codex:<plugin>, and [@Codex:<plugin>] scope the turn to a plugin and delegate it through the visible Codex Plugin specialist worker. Direct sidecars show as worker-like external-thread cards and persist by default; plugin-scoped turns stay read-only/safety-gated with bounded redacted previews and metadata. Full connector exports appear as session artifacts rather than long chat output. This is Builder web only, text-only for the direct sidecar path, excludes Collaboration, and allows one active direct Codex turn globally.
 
-Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
+Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, expand fullscreen, zoom, fit or reset the view, and drag to pan oversized diagrams.
 
 ## Replying
 
