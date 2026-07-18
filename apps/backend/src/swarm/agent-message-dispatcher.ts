@@ -810,9 +810,10 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       assignmentId,
       managerId: sender.agentId,
       assignedAt: this.options.now(),
-      outputTarget: activeParent
-        ? cloneAssistantOutputTarget(activeParent.outputTarget)
-        : { kind: "internal_only", reason: "no_active_parent" },
+      outputTarget: this.options.output.resolveWorkerParentOutputTarget(
+        sender.agentId,
+        activeParent?.outputTarget,
+      ),
       ...(activeParent?.rootTurnId ? { rootTurnId: activeParent.rootTurnId } : {}),
       ...(activeParent?.parentRootTurnId
         ? { parentRootTurnId: activeParent.parentRootTurnId }

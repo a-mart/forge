@@ -92,6 +92,9 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   private readonly activeTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly activeWebTurnByManagerId = new Map<string, SessionTranscriptAssistantOutputTarget>();
   private readonly activeRouteByManagerId = new Map<string, ActiveMessageRouteActivation>();
+  // Choice and compaction continuations can delegate after their queued route has ended.
+  // This is intentionally runtime-scoped; each worker assignment persists the resolved target.
+  private readonly lastRoutedTargetByManagerId = new Map<string, AssistantOutputTarget>();
   private readonly pendingChoiceByChoiceId = new Map<string, PendingChoiceContinuation>();
   private readonly messageRouter = new MessageRouter();
 
@@ -146,7 +149,10 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
   }
 
   prepareWorkerResult(input: WorkerResultOutputInput): PreparedAgentMessageOutput {
-    const target = cloneAssistantOutputTarget(input.parentContext.outputTarget);
+    const parentTarget = input.parentContext.outputTarget;
+    const target = isMissingWorkerParentTarget(parentTarget)
+      ? this.resolveWorkerParentOutputTarget(input.target.agentId)
+      : cloneAssistantOutputTarget(parentTarget);
     return {
       modelMessage: appendAssistantOutputTargetMetadata(input.modelMessage, target),
       inputTarget: target,
@@ -158,6 +164,36 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
   annotateText(text: string, target: AssistantOutputTarget): string {
     return appendAssistantOutputTargetMetadataToText(text, target);
+  }
+
+  resolveWorkerParentOutputTarget(
+    managerId: string,
+    activeTarget?: AssistantOutputTarget,
+  ): AssistantOutputTarget {
+    if (activeTarget) {
+      return cloneAssistantOutputTarget(activeTarget);
+    }
+
+    const routerTarget = this.activeTargetByManagerId.get(managerId);
+    if (routerTarget) {
+      return cloneAssistantOutputTarget(routerTarget);
+    }
+
+    const routedTarget = this.lastRoutedTargetByManagerId.get(managerId);
+    if (routedTarget) {
+      return cloneAssistantOutputTarget(routedTarget);
+    }
+
+    const manager = this.options.descriptors.get(managerId);
+    const missingTarget: AssistantOutputTarget = {
+      kind: "internal_only",
+      reason: "no_active_parent",
+    };
+    // Probe with the missing target so protected/project-agent sessions remain fail-closed.
+    return manager?.role === "manager" &&
+      this.canProjectFinalTextToWeb({ sender: manager, target: manager }, missingTarget)
+      ? webTarget()
+      : missingTarget;
   }
 
   rememberChoiceContinuation(choiceId: string, agentId: string): void {
@@ -224,6 +260,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
     const target = cloneAssistantOutputTarget(activation.target);
     this.activeTargetByManagerId.set(agentId, target);
+    this.lastRoutedTargetByManagerId.set(agentId, cloneAssistantOutputTarget(target));
     if (activation.routeContext) {
       this.activeRouteByManagerId.set(agentId, { ...activation.routeContext });
     } else {
@@ -268,6 +305,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
 
   clearForRuntimeReset(agentId: string): void {
     this.clearActiveManagerTurn(agentId);
+    this.lastRoutedTargetByManagerId.delete(agentId);
     this.clearChoiceContinuationsForAgent(agentId);
     this.options.projection.clearManagerAssistantOutputTurn(agentId);
   }
@@ -618,6 +656,10 @@ function sourceContext(target: AssistantOutputTarget): MessageSourceContext | un
   return target.kind === "session_transcript" || target.kind === "external_channel"
     ? target.sourceContext
     : undefined;
+}
+
+function isMissingWorkerParentTarget(target: AssistantOutputTarget): boolean {
+  return target.kind === "internal_only" && target.reason === "no_active_parent";
 }
 
 function appendAssistantOutputTargetMetadata(

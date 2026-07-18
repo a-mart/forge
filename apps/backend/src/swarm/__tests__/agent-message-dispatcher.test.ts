@@ -255,6 +255,25 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     expect(harness.ledgerPending[0]).toMatchObject({ turnId: "turn-1" });
   });
 
+  it("keeps a contextless Builder assignment on the web transcript", async () => {
+    const harness = createHarness();
+    harness.setActiveParent(undefined);
+
+    await harness.dispatcher.sendMessage("manager-1", "worker-1", "Do the work");
+
+    expect(harness.worker.workerParentContext).toEqual({
+      schemaVersion: 1,
+      assignmentId: "assignment:worker-1:nonce-1",
+      managerId: "manager-1",
+      assignedAt: "2026-07-16T01:00:00.000Z",
+      outputTarget: {
+        kind: "session_transcript",
+        channel: "web",
+        sourceContext: { channel: "web" },
+      },
+    });
+  });
+
   it("rolls back the durable parent context when worker dispatch fails", async () => {
     const harness = createHarness();
     harness.setRuntimeError(new Error("runtime rejected"));
@@ -340,6 +359,30 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     });
     expect(harness.ledgerPending[0]?.turnId).not.toBe("active-user-b");
     expect(harness.worker.workerParentContext).toBeUndefined();
+  });
+
+  it("makes a repaired legacy worker result eligible to activate the manager turn", async () => {
+    const harness = createHarness();
+    harness.worker.workerParentContext = {
+      ...parentContext(),
+      outputTarget: { kind: "internal_only", reason: "no_active_parent" },
+    };
+
+    await harness.dispatcher.sendWorkerResult(
+      "worker-1",
+      "status: done\nsummary: recovered",
+      "assignment-1",
+    );
+
+    expect(harness.queuedTurns[0]?.context).toMatchObject({
+      source: "worker_result",
+      activationEligible: true,
+      assistantOutputTarget: {
+        kind: "session_transcript",
+        channel: "web",
+        sourceContext: { channel: "web" },
+      },
+    });
   });
 
   it("coalesces concurrent delivery attempts for the same worker assignment", async () => {

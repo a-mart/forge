@@ -1797,6 +1797,38 @@ describe('SwarmManager', () => {
     ])
   })
 
+  it('shows worker closeouts when a synthetic continuation delegates after the direct turn ended', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('Run the post-compaction health check.')
+    await activateLastRuntimeUserMessage(manager, 'manager')
+    await manager.handleRuntimeSessionEvent('manager', { type: 'agent_end' })
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Continuation Health Worker' })
+    await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
+    expect(
+      manager.listAgentsForInternalUse().find((agent) => agent.agentId === worker.agentId)
+        ?.workerParentContext?.outputTarget,
+    ).toEqual({
+      kind: 'session_transcript',
+      channel: 'web',
+      sourceContext: { channel: 'web' },
+    })
+
+    await completeWorker(manager, worker.agentId, 'Completed the continuation health check.')
+    const workerResultRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
+    expect(workerResultRuntimeText).toContain('[assistantOutputTarget] {"kind":"session_transcript"}')
+
+    await emitCleanAssistantFinal(manager, 'manager', 'The continuation health-check report is ready.')
+    await manager.handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputTexts(manager, 'manager')).toContain(
+      'The continuation health-check report is ready.',
+    )
+  })
+
   it('preserves explicit routing for non-web worker-result closeouts', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1806,9 +1838,17 @@ describe('SwarmManager', () => {
       sourceContext: { channel: 'telegram', channelId: 'chat-1' },
     })
     await activateLastRuntimeUserMessage(manager, 'manager')
+    await manager.handleRuntimeSessionEvent('manager', { type: 'agent_end' })
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Telegram Health Worker' })
     await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
+    expect(
+      manager.listAgentsForInternalUse().find((agent) => agent.agentId === worker.agentId)
+        ?.workerParentContext?.outputTarget,
+    ).toEqual({
+      kind: 'external_channel',
+      sourceContext: { channel: 'telegram', channelId: 'chat-1' },
+    })
     await completeWorker(manager, worker.agentId, 'Completed the Telegram health check.')
 
     const workerResultRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')

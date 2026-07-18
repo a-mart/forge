@@ -68,7 +68,7 @@ function createHarness() {
     now: () => "2026-07-16T01:00:00.000Z",
     logDebug: () => undefined,
   });
-  return { router, manager, worker, activations, clears };
+  return { router, manager, worker, profile, activations, clears };
 }
 
 function workerParent(outputTarget: AssistantOutputTarget = webTarget): WorkerParentContext {
@@ -101,7 +101,7 @@ describe("AssistantOutputRouter", () => {
     });
   });
 
-  it("derives worker-result routing only from the persisted parent context", () => {
+  it("uses the persisted parent context when it names a concrete route", () => {
     const { router, manager, worker } = createHarness();
     const parentContext = workerParent();
 
@@ -122,6 +122,163 @@ describe("AssistantOutputRouter", () => {
 
     (parentContext.outputTarget as { sourceContext?: { messageId?: string } }).sourceContext!.messageId = "changed";
     expect(prepared.inputTarget).toEqual(webTarget);
+  });
+
+  it("carries the last direct web target into a worker assignment after a synthetic continuation", () => {
+    const { router } = createHarness();
+    router.activateManagerTurn("manager-1", {
+      target: webTarget,
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    router.completeAgentTurn("manager-1");
+
+    expect(router.resolveWorkerParentOutputTarget("manager-1")).toEqual(webTarget);
+  });
+
+  it("preserves a non-web direct target across a synthetic continuation", () => {
+    const { router } = createHarness();
+    const telegramTarget: AssistantOutputTarget = {
+      kind: "external_channel",
+      sourceContext: { channel: "telegram", channelId: "chat-1" },
+    };
+    router.activateManagerTurn("manager-1", {
+      target: telegramTarget,
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    router.completeAgentTurn("manager-1");
+
+    expect(router.resolveWorkerParentOutputTarget("manager-1")).toEqual(telegramTarget);
+  });
+
+  it("uses an active choice continuation target over an intervening routed target", () => {
+    const { router } = createHarness();
+    router.activateManagerTurn("manager-1", {
+      target: webTarget,
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    router.rememberChoiceContinuation("choice-1", "manager-1");
+
+    const telegramTarget: AssistantOutputTarget = {
+      kind: "external_channel",
+      sourceContext: { channel: "telegram", channelId: "chat-1" },
+    };
+    router.activateManagerTurn("manager-1", {
+      target: telegramTarget,
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    router.completeAgentTurn("manager-1");
+
+    expect(router.activateChoiceContinuation("choice-1", "manager-1")).toBe(true);
+    expect(router.resolveWorkerParentOutputTarget("manager-1")).toEqual(webTarget);
+  });
+
+  it("keeps an active internal parent authoritative over the last direct target", () => {
+    const { router } = createHarness();
+    router.activateManagerTurn("manager-1", {
+      target: webTarget,
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    const internalTarget: AssistantOutputTarget = {
+      kind: "internal_only",
+      reason: "background",
+    };
+
+    expect(router.resolveWorkerParentOutputTarget("manager-1", internalTarget)).toEqual(
+      internalTarget,
+    );
+  });
+
+  it("keeps an ended internal route internal across its synthetic continuation", () => {
+    const { router } = createHarness();
+    router.activateManagerTurn("manager-1", {
+      target: webTarget,
+      routeContext: { origin: "user", requiresVisibleResponse: true },
+      beginUserVisibleObligation: true,
+    });
+    const internalTarget: AssistantOutputTarget = {
+      kind: "internal_only",
+      reason: "worker_health",
+    };
+    router.activateManagerTurn("manager-1", {
+      target: internalTarget,
+      routeContext: { origin: "internal", requiresVisibleResponse: false },
+      beginUserVisibleObligation: false,
+    });
+    router.completeAgentTurn("manager-1");
+
+    expect(router.resolveWorkerParentOutputTarget("manager-1")).toEqual(internalTarget);
+  });
+
+  it("keeps an ended tool-gated internal route authoritative", () => {
+    const { router } = createHarness();
+    const toolGatedTarget: AssistantOutputTarget = {
+      kind: "explicit_tool_required",
+      reason: "agent_message",
+    };
+    router.activateManagerTurn("manager-1", {
+      target: toolGatedTarget,
+      routeContext: { origin: "internal", requiresVisibleResponse: false },
+      beginUserVisibleObligation: false,
+    });
+    router.completeAgentTurn("manager-1");
+
+    expect(router.resolveWorkerParentOutputTarget("manager-1")).toEqual(toolGatedTarget);
+  });
+
+  it("defaults a contextless ordinary Builder assignment to its web transcript", () => {
+    const { router } = createHarness();
+
+    expect(router.resolveWorkerParentOutputTarget("manager-1")).toEqual({
+      kind: "session_transcript",
+      channel: "web",
+      sourceContext: { channel: "web" },
+    });
+  });
+
+  it("does not apply the Builder fallback to protected managers", () => {
+    const expected: AssistantOutputTarget = {
+      kind: "internal_only",
+      reason: "no_active_parent",
+    };
+
+    const collab = createHarness();
+    collab.manager.collab = true;
+    expect(collab.router.resolveWorkerParentOutputTarget("manager-1")).toEqual(expected);
+
+    const projectAgent = createHarness();
+    projectAgent.manager.projectAgent = {
+      handle: "docs",
+      whenToUse: "Maintain project documentation.",
+    };
+    expect(projectAgent.router.resolveWorkerParentOutputTarget("manager-1")).toEqual(expected);
+
+    const system = createHarness();
+    system.profile.profileType = "system";
+    expect(system.router.resolveWorkerParentOutputTarget("manager-1")).toEqual(expected);
+  });
+
+  it("repairs an already-persisted missing parent before the worker result reaches the model", () => {
+    const { router, manager, worker } = createHarness();
+    const prepared = router.prepareWorkerResult({
+      worker,
+      target: manager as AgentDescriptor & { role: "manager" },
+      parentContext: workerParent({ kind: "internal_only", reason: "no_active_parent" }),
+      modelMessage: "[workerResult] result",
+    });
+
+    expect(prepared.inputTarget).toEqual({
+      kind: "session_transcript",
+      channel: "web",
+      sourceContext: { channel: "web" },
+    });
+    expect(String(prepared.modelMessage)).toContain(
+      '[assistantOutputTarget] {"kind":"session_transcript"}',
+    );
   });
 
   it("allows a substantive manager closeout after a web worker result without requiring one", () => {
