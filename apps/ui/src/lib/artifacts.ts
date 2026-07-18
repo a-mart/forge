@@ -171,8 +171,8 @@ function normalizeArtifactPath(path: string): string {
     return ''
   }
 
-  if (/^\/+[A-Za-z]:[\\/]/.test(trimmedPath)) {
-    return trimmedPath.replace(/^\/+/, '')
+  if (/^\/[A-Za-z]:[\\/]/.test(trimmedPath)) {
+    return trimmedPath.slice(1)
   }
 
   return trimmedPath

@@ -33,11 +33,22 @@ describe('artifacts helpers', () => {
     })
   })
 
-  it('normalizes Windows swarm-file and vscode artifact paths', () => {
+  it('normalizes exactly one leading slash from Windows artifact paths', () => {
     expect(parseArtifactReference('swarm-file:///C:/Users/example/project/README.md')).toEqual({
       path: 'C:/Users/example/project/README.md',
       fileName: 'README.md',
       href: 'swarm-file:///C:/Users/example/project/README.md',
+    })
+    expect(parseArtifactReference('/T:/repos/project/report.md')).toMatchObject({
+      path: 'T:/repos/project/report.md',
+      fileName: 'report.md',
+    })
+    expect(parseArtifactReference('T:/repos/project/report.md')).toMatchObject({
+      path: 'T:/repos/project/report.md',
+      fileName: 'report.md',
+    })
+    expect(parseArtifactReference('swarm-file:////T:/repos/project/report.md')).toMatchObject({
+      path: '//T:/repos/project/report.md',
     })
 
     expect(parseArtifactReference('vscode-insiders://file//C:/Users/example/project/README.md')).toEqual({

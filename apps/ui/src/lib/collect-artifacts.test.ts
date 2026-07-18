@@ -72,6 +72,24 @@ describe('collectArtifactsFromMessages', () => {
     ])
   })
 
+  it('normalizes one leading slash from common malformed Windows Markdown destinations', () => {
+    const artifacts = collectArtifactsFromMessages([
+      assistantMessage('[Report](/T:/repos/project/report.md)', 'windows-report'),
+    ], 'viewed-manager')
+
+    expect(artifacts).toEqual([
+      {
+        path: 'T:/repos/project/report.md',
+        fileName: 'report.md',
+        href: '/T:/repos/project/report.md',
+        title: 'Report',
+        sourceAgentId: 'manager',
+        transcriptAgentId: 'viewed-manager',
+        messageId: 'windows-report',
+      },
+    ])
+  })
+
   it('normalizes Windows artifact shortcodes and preserves source agent context', () => {
     const artifacts = collectArtifactsFromMessages([
       assistantMessage('[artifact:C:/Users/example/project/README.md]'),

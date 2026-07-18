@@ -14,6 +14,7 @@ import {
   canonicalizePresentedLinkHref,
   canonicalizePresentedLinkHrefForPlatform,
   extractPresentedArtifactPaths,
+  extractPresentedArtifactPathsForPlatform,
   findUniquePresentedConversationMessage,
   readPresentedChatArtifact,
   securelyReadPresentedArtifact,
@@ -30,7 +31,7 @@ async function fixture() {
   const dataDir = await mkdtemp(join(tempRoot, "forge-chat-artifact-")); roots.push(dataDir);
   const agentId = "manager"; const profileId = "profile"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId);
   await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true });
-  const manager: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile };
+  const manager: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile, cwd: dataDir };
   const profiles = [{ profileId }];
   const source: any = { getAgent: (id: string) => id === agentId ? manager : undefined, listProfiles: () => profiles, getConfig: () => ({ paths: { dataDir } }) };
   return { dataDir, agentId, profileId, sessionFile, manager, profiles, source };
@@ -163,8 +164,12 @@ describe("presented chat artifact authorization", () => {
 
   it("has platform-independent Windows URI and path canonicalization", () => {
     expect(canonicalizeChatArtifactPathForPlatform("c:\\tmp\\..\\Report.txt", "win32")).toBe("C:/Report.txt");
+    expect(canonicalizeChatArtifactPathForPlatform("/T:/repos/project/report.md", "win32")).toBe("T:/repos/project/report.md");
     expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///c:/tmp/a%252Fz", "win32")).toBe("C:/tmp/a%2Fz");
     expect(canonicalizePresentedLinkHrefForPlatform("C:%5Ctmp%5Ca", "win32")).toBe("C:/tmp/a");
+    expect(canonicalizePresentedLinkHrefForPlatform("/T:/repos/project/report.md", "win32")).toBe("T:/repos/project/report.md");
+    expect(extractPresentedArtifactPathsForPlatform("[report](/T:/repos/project/report.md)", "win32")).toEqual(["T:/repos/project/report.md"]);
+    expect(() => canonicalizeChatArtifactPathForPlatform("//T:/repos/project/report.md", "win32")).toThrow(ChatArtifactError);
     expect(() => canonicalizeChatArtifactPathForPlatform("//server/share", "win32")).toThrow(ChatArtifactError);
     expect(() => canonicalizeChatArtifactPathForPlatform("C:/tmp/a:stream", "win32")).toThrow(ChatArtifactError);
   });
@@ -187,10 +192,33 @@ describe("presented chat artifact authorization", () => {
     expect(await errorCode(() => securelyReadPresentedArtifact(target, { afterOpen: () => writeFile(target, "changed") }))).toBe("file_identity_changed");
   });
 
-  it("fails closed as unsupported and maps to 501 when Windows no-follow is unavailable", async () => {
+  it("uses identity-verified handle reads for in-workspace Windows artifacts", async () => {
     const f = await fixture(); const target = join(f.dataDir, "target"); await writeFile(target, "safe");
-    expect(await errorCode(() => securelyReadPresentedArtifact(target, { platform: "win32" }))).toBe("stable_identity_unsupported");
+    await writeFile(f.sessionFile, line(message("windows", `[x](swarm-file://${target})`)));
+    expect(await readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "windows",
+      path: target,
+    }, { securityPlatform: "win32" })).toMatchObject({ content: "safe", path: target });
     expect(chatArtifactStatus("stable_identity_unsupported")).toBe(501);
+  });
+
+  it("denies out-of-workspace and transcript-mismatched Windows artifact claims", async () => {
+    const f = await fixture();
+    const outsideRoot = await mkdtemp(join(process.platform === "darwin" ? `/private${tmpdir()}` : tmpdir(), "forge-chat-artifact-outside-")); roots.push(outsideRoot);
+    const outside = join(outsideRoot, "outside.txt"); await writeFile(outside, "outside");
+    await writeFile(f.sessionFile, line(message("outside", `[x](swarm-file://${outside})`)));
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "outside",
+      path: outside,
+    }, { securityPlatform: "win32" }))).toBe("path_outside_workspace");
+    expect(chatArtifactStatus("path_outside_workspace")).toBe(403);
+    expect(await errorCode(() => readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "outside",
+      path: join(f.dataDir, "not-presented.txt"),
+    }, { securityPlatform: "win32" }))).toBe("path_not_presented");
   });
 
   it("detects ordinary-file and parent-directory replacement before bytes are read", async () => {

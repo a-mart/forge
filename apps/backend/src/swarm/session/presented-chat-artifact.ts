@@ -10,7 +10,7 @@ import { CONVERSATION_ENTRY_TYPE } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { backfillConversationMessageEntryId } from "./conversation-entry-id.js";
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from "./session-file-guard.js";
-import { MAX_READ_FILE_CONTENT_BYTES } from "../../ws/ws-file-access.js";
+import { MAX_READ_FILE_CONTENT_BYTES, resolveAgentWorkspaceReadFilePath } from "../../ws/ws-file-access.js";
 import { resolveReadFileContentType } from "../../ws/http-utils.js";
 
 // Keep document reads aligned with the existing 2 MiB text/file-reader budget. Image previews get
@@ -18,7 +18,7 @@ import { resolveReadFileContentType } from "../../ws/http-utils.js";
 export const MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES = MAX_READ_FILE_CONTENT_BYTES;
 
-export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported";
+export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "path_outside_workspace" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported";
 export class ChatArtifactError extends Error { constructor(public readonly code: ChatArtifactErrorCode) { super(code); } }
 const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactError(code); };
 const hasControl = (value: string) => /[\0-\x1f\x7f]/.test(value);
@@ -53,9 +53,11 @@ export function canonicalizeChatArtifactPathForPlatform(value: string, platform:
   const input = value.trim();
   if (!input || hasControl(input) || /\$\{|\{\{/.test(input) || input === "…") fail("invalid_path");
   if (platform === "win32") {
-    if (/^(?:\\\\|\/\/|\\\\[?.]|\\\\\.)/.test(input) || /^[A-Za-z]:[^\\/]/.test(input) || input.slice(2).includes(":")) fail("invalid_path");
-    if (!/^[A-Za-z]:[\\/]/.test(input)) fail("invalid_path");
-    const normalized = path.win32.normalize(input).replace(/\\/g, "/");
+    if (/^(?:\\\\|\/\/|\\\\[?.]|\\\\\.)/.test(input)) fail("invalid_path");
+    const nativeInput = /^\/[A-Za-z]:[\\/]/.test(input) ? input.slice(1) : input;
+    if (/^[A-Za-z]:[^\\/]/.test(nativeInput) || nativeInput.slice(2).includes(":")) fail("invalid_path");
+    if (!/^[A-Za-z]:[\\/]/.test(nativeInput)) fail("invalid_path");
+    const normalized = path.win32.normalize(nativeInput).replace(/\\/g, "/");
     if (!/^[A-Za-z]:\//.test(normalized)) fail("invalid_path");
     return normalized[0]!.toUpperCase() + normalized.slice(1);
   }
@@ -90,7 +92,7 @@ export function canonicalizePresentedLinkHrefForPlatform(href: string, platform:
 export function canonicalizePresentedLinkHref(href: string): string | undefined { return canonicalizePresentedLinkHrefForPlatform(href); }
 
 /** Authority is derived from rendered links and supported prose shortcodes, never code or images. */
-export function extractPresentedArtifactPaths(markdownSource: string): string[] {
+export function extractPresentedArtifactPathsForPlatform(markdownSource: string, platform: NodeJS.Platform = process.platform): string[] {
   const values: string[] = [];
   for (const block of markdown.parse(markdownSource, {})) {
     const tokens = block.type === "inline" ? block.children ?? [] : [block];
@@ -98,12 +100,13 @@ export function extractPresentedArtifactPaths(markdownSource: string): string[] 
       if (token.type !== "link_open" || token.tag !== "a") continue;
       const href = token.attrGet("href");
       if (!href) continue;
-      const canonical = canonicalizePresentedLinkHref(href);
+      const canonical = canonicalizePresentedLinkHrefForPlatform(href, platform);
       if (canonical) values.push(canonical);
     }
   }
   return values;
 }
+export function extractPresentedArtifactPaths(markdownSource: string): string[] { return extractPresentedArtifactPathsForPlatform(markdownSource); }
 
 function samePath(a: string, b: string) { return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b; }
 type StableStat = { dev: number | bigint; ino: number | bigint; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean };
@@ -115,7 +118,8 @@ export function stableFileIdentity(stat: StableStat) {
 async function statBigint(target: string) { return lstat(target, { bigint: true }); }
 async function walkFile(target: string, stage: "initial" | "post"): Promise<{ ids: string[]; finalId: string; finalSize: bigint; real: string }> {
   const api = process.platform === "win32" ? path.win32 : path;
-  const parsed = api.parse(target); const relative = target.slice(parsed.root.length).split(api.sep).filter(Boolean);
+  const parsed = api.parse(target);
+  const relative = target.slice(parsed.root.length).split(process.platform === "win32" ? /[\\/]/ : "/").filter(Boolean);
   let current = parsed.root; const ids: string[] = []; let finalSize = 0n;
   for (let i = 0; i < relative.length; i++) {
     current = api.join(current, relative[i]!);
@@ -147,10 +151,13 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
     : MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES;
   const initial = await walkFile(target, "initial");
   await hooks?.afterInitialWalk?.();
-  // Node does not expose a no-follow open guarantee on Windows. Keep Windows explicitly unavailable rather than authorizing a race.
-  if ((hooks?.platform ?? process.platform) === "win32" || typeof fsConstants.O_NOFOLLOW !== "number" || fsConstants.O_NOFOLLOW === 0) fail("stable_identity_unsupported");
+  const platform = hooks?.platform ?? process.platform;
+  // POSIX retains the kernel no-follow guarantee. Windows lacks O_NOFOLLOW, so it opens a handle
+  // without reading and then proves that handle has the identity captured by the no-symlink walk.
+  if (platform !== "win32" && (typeof fsConstants.O_NOFOLLOW !== "number" || fsConstants.O_NOFOLLOW === 0)) fail("stable_identity_unsupported");
+  const openFlags = platform === "win32" ? fsConstants.O_RDONLY : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
   let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try { handle = await open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch (error: unknown) {
+  try { handle = await open(target, openFlags); } catch (error: unknown) {
     const code = (error as { code?: string })?.code;
     if (code === "ENOENT") fail("file_identity_changed");
     if (code === "ELOOP") fail("unsafe_file_identity");
@@ -240,7 +247,24 @@ export async function findUniquePresentedConversationMessage(sessionFile: string
   } finally { await openedHandle.close(); }
 }
 
-export async function readPresentedChatArtifact(source: PresentedArtifactOwnerSource, claim: { transcriptAgentId: unknown; messageId: unknown; path: unknown }) {
+async function authorizeWindowsWorkspaceArtifact(
+  source: PresentedArtifactOwnerSource,
+  descriptor: AgentDescriptor,
+  target: string,
+): Promise<string> {
+  try {
+    return await resolveAgentWorkspaceReadFilePath(target, source, descriptor.agentId);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Path is outside allowed roots.") fail("path_outside_workspace");
+    throw error;
+  }
+}
+
+export async function readPresentedChatArtifact(
+  source: PresentedArtifactOwnerSource,
+  claim: { transcriptAgentId: unknown; messageId: unknown; path: unknown },
+  options?: { securityPlatform?: NodeJS.Platform },
+) {
   const raw = claim as { transcriptAgentId?: unknown; messageId?: unknown; path?: unknown };
   if (typeof raw.transcriptAgentId !== "string" || typeof raw.messageId !== "string" || typeof raw.path !== "string") fail("invalid_request");
   const pathValue = raw.path as string; const transcriptAgentId = raw.transcriptAgentId as string; const messageId = raw.messageId as string;
@@ -248,7 +272,11 @@ export async function readPresentedChatArtifact(source: PresentedArtifactOwnerSo
   const message = await findUniquePresentedConversationMessage(descriptor.sessionFile, messageId.trim());
   if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
   if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
-  return securelyReadPresentedArtifact(target);
+  const securityPlatform = options?.securityPlatform ?? process.platform;
+  const authorizedTarget = securityPlatform === "win32"
+    ? await authorizeWindowsWorkspaceArtifact(source, descriptor, target)
+    : target;
+  return securelyReadPresentedArtifact(authorizedTarget, { platform: securityPlatform });
 }
 
-export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "ineligible_message", "unsafe_file_identity"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "stable_identity_unsupported") return 501; return 500; }
+export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "stable_identity_unsupported") return 501; return 500; }

@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoots, normalizeAllowlistRoots, resolveDirectoryPath } from "../swarm/cwd-policy.js";
-import type { SwarmManager } from "../swarm/swarm-manager.js";
+import type { AgentDescriptor } from "../swarm/types.js";
 import { resolveReadFileContentType } from "./http-utils.js";
 
 export const MAX_READ_FILE_CONTENT_BYTES = 2 * 1024 * 1024;
@@ -9,6 +9,17 @@ export const MAX_READ_FILE_CONTENT_BYTES = 2 * 1024 * 1024;
 export interface FileAccessContext {
   rootDir: string;
   allowedRoots: string[];
+}
+
+export interface AgentWorkspaceFileAccessSource {
+  getAgent(id: string): AgentDescriptor | undefined;
+}
+
+export interface FileAccessSource extends AgentWorkspaceFileAccessSource {
+  getConfig(): {
+    cwdAllowlistRoots: string[];
+    paths: { rootDir: string; dataDir: string; uploadsDir: string };
+  };
 }
 
 export interface ApiProxyReadFileResult {
@@ -23,15 +34,15 @@ function normalizeFileAccessPath(pathValue: string): string {
     return "";
   }
 
-  if (/^\/+[A-Za-z]:[\\/]/.test(trimmed)) {
-    return trimmed.replace(/^\/+/, "");
+  if (/^\/[A-Za-z]:[\\/]/.test(trimmed)) {
+    return trimmed.slice(1);
   }
 
   return trimmed;
 }
 
 function resolveReadFileAccessContext(
-  swarmManager: SwarmManager,
+  swarmManager: FileAccessSource,
   agentId?: string,
   options?: { includeCwdAllowlistRootsForAgent?: boolean },
 ): FileAccessContext {
@@ -75,7 +86,7 @@ function resolveReadFileAccessContext(
   };
 }
 
-function resolveLegacyWriteFileAccessContext(swarmManager: SwarmManager): FileAccessContext {
+function resolveLegacyWriteFileAccessContext(swarmManager: FileAccessSource): FileAccessContext {
   const config = swarmManager.getConfig();
   return {
     rootDir: config.paths.rootDir,
@@ -124,7 +135,7 @@ async function resolvePathWithinRoots(
 
 export function resolveReadFilePath(
   requestedPath: string,
-  swarmManager: SwarmManager,
+  swarmManager: FileAccessSource,
   agentId?: string,
   options?: { includeCwdAllowlistRootsForAgent?: boolean; enforceAllowedRoots?: boolean },
 ): Promise<string> {
@@ -138,7 +149,21 @@ export function resolveReadFilePath(
   );
 }
 
-export function resolveLegacyWriteFilePath(requestedPath: string, swarmManager: SwarmManager): Promise<string> {
+/** Resolve a read against only the named agent's project/worktree root. */
+export function resolveAgentWorkspaceReadFilePath(
+  requestedPath: string,
+  swarmManager: AgentWorkspaceFileAccessSource,
+  agentId: string,
+): Promise<string> {
+  const descriptor = swarmManager.getAgent(agentId.trim());
+  if (!descriptor) {
+    throw new Error(`Unknown agent: ${agentId.trim()}`);
+  }
+  const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
+  return resolvePathWithinRoots(normalizedRequestedPath, descriptor.cwd, [descriptor.cwd]);
+}
+
+export function resolveLegacyWriteFilePath(requestedPath: string, swarmManager: FileAccessSource): Promise<string> {
   const accessContext = resolveLegacyWriteFileAccessContext(swarmManager);
   const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
   return resolvePathWithinRoots(normalizedRequestedPath, accessContext.rootDir, accessContext.allowedRoots);
@@ -146,7 +171,7 @@ export function resolveLegacyWriteFilePath(requestedPath: string, swarmManager: 
 
 export async function readApiProxyFile(options: {
   requestedPath: string;
-  swarmManager: SwarmManager;
+  swarmManager: FileAccessSource;
   agentId?: string;
 }): Promise<ApiProxyReadFileResult> {
   const { requestedPath, swarmManager, agentId } = options;
