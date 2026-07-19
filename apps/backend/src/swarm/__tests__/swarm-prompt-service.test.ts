@@ -408,8 +408,10 @@ Custom project instruction: always mention the release train when summarizing de
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
-    expect(resolved).toContain("Use `update_plan` for substantial multi-step work")
-    expect(resolved).toContain("including parallel work")
+    expect(resolved).toContain("Choose exactly one coordination lane")
+    expect(resolved).toContain("**Checklist:** use `update_plan`")
+    expect(resolved).toContain("**Graph:** use `update_work_graph`")
+    expect(resolved).toContain("Fan-in count alone is not a reason to spend Deep")
     expect(resolved).toContain("pass that step's exact text as `planStep`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
     expect(resolved).toContain("Use `create_goal` only when the user explicitly asks")

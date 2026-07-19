@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { Check, ChevronDown, ClipboardList } from 'lucide-react'
+import { Check, ChevronDown, ClipboardList, GitBranch } from 'lucide-react'
 import type { PlanSummaryEvent, SessionPlanSnapshotEvent } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 import { PlanView } from './PlanView'
@@ -18,13 +18,14 @@ export function PlanSummaryRow({
     : summary
   const completed = snapshot.plan.filter((step) => step.status === 'completed').length
   const isComplete = summary.state !== 'active' || completed === snapshot.plan.length
+  const isGraph = snapshot.coordinationMode === 'graph' && Boolean(snapshot.workGraph)
   const active = snapshot.plan.filter((step) => step.status === 'in_progress')
   const currentLabel = active.length > 1
     ? `${active.length} steps in progress`
     : active[0]?.step
 
   return (
-    <section className="mx-auto w-full max-w-3xl px-4 py-1" aria-label={isComplete ? 'Completed plan' : 'Working plan'}>
+    <section className="mx-auto w-full max-w-3xl px-4 py-1" aria-label={isComplete ? (isGraph ? 'Completed graph' : 'Completed plan') : (isGraph ? 'Work graph' : 'Working plan')}>
       <div className={cn('overflow-hidden rounded-xl bg-card/60', isComplete ? 'border border-emerald-500/20' : 'border border-border/70')}>
         <button
           type="button"
@@ -34,12 +35,12 @@ export function PlanSummaryRow({
           onClick={() => setExpanded((current) => !current)}
         >
           <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', isComplete ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-500')}>
-            <ClipboardList className="size-4" />
+            {isGraph ? <GitBranch className="size-4" /> : <ClipboardList className="size-4" />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {isComplete ? 'Plan complete' : 'Working plan'}
+                {isComplete ? (isGraph ? 'Graph complete' : 'Plan complete') : (isGraph ? 'Work graph' : 'Working plan')}
               </span>
               <span className={cn('inline-flex items-center gap-1 text-[11px] tabular-nums', isComplete ? 'text-emerald-500' : 'text-muted-foreground')}>
                 {isComplete ? <Check className="size-3" /> : null}

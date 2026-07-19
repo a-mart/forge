@@ -1,6 +1,7 @@
 import { Check, Circle, LoaderCircle } from 'lucide-react'
 import type { SessionPlanSnapshot } from '@forge/protocol'
 import { cn } from '@/lib/utils'
+import { WorkGraphView } from './WorkGraphView'
 
 interface PlanViewProps {
   snapshot: SessionPlanSnapshot
@@ -9,6 +10,17 @@ interface PlanViewProps {
 
 export function PlanView({ snapshot, compact = false }: PlanViewProps) {
   const completed = snapshot.plan.filter((step) => step.status === 'completed').length
+
+  if (snapshot.coordinationMode === 'graph' && snapshot.workGraph) {
+    return (
+      <div className={cn('space-y-2', compact && 'space-y-1.5')}>
+        {snapshot.explanation ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">{snapshot.explanation}</p>
+        ) : null}
+        <WorkGraphView graph={snapshot.workGraph} compact={compact} />
+      </div>
+    )
+  }
 
   return (
     <div className={cn('space-y-2', compact && 'space-y-1.5')}>

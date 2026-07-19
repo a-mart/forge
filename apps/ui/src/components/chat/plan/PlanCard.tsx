@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { ChevronDown, ClipboardList } from 'lucide-react'
+import { ChevronDown, ClipboardList, GitBranch } from 'lucide-react'
 import type { SessionPlanSnapshotEvent } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 import { PlanView } from './PlanView'
@@ -16,13 +16,14 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
 
   const completed = snapshot.plan.filter((step) => step.status === 'completed').length
   const isComplete = completed === snapshot.plan.length
+  const isGraph = snapshot.coordinationMode === 'graph' && Boolean(snapshot.workGraph)
   const active = snapshot.plan.filter((step) => step.status === 'in_progress')
   const currentLabel = active.length > 1
     ? `${active.length} steps in progress`
     : active[0]?.step
 
   return (
-    <section className="mx-auto w-full max-w-3xl px-4 pt-3" aria-label="Working plan">
+    <section className="mx-auto w-full max-w-3xl px-4 pt-3" aria-label={isGraph ? 'Work graph' : 'Working plan'}>
       <div className="overflow-hidden rounded-xl border border-border/70 bg-card/80 shadow-sm backdrop-blur">
         <button
           type="button"
@@ -35,12 +36,12 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
             'flex size-8 shrink-0 items-center justify-center rounded-lg',
             isComplete ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-500',
           )}>
-            <ClipboardList className="size-4" />
+            {isGraph ? <GitBranch className="size-4" /> : <ClipboardList className="size-4" />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {isComplete ? 'Plan complete' : 'Working plan'}
+                {isComplete ? (isGraph ? 'Graph complete' : 'Plan complete') : (isGraph ? 'Work graph' : 'Working plan')}
               </span>
               <span className="text-[11px] tabular-nums text-muted-foreground">{completed}/{snapshot.plan.length}</span>
             </span>

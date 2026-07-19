@@ -185,6 +185,160 @@ describe('SessionPlanCoordinator', () => {
     ]))
     expect(rebooted.logDebug).not.toHaveBeenCalled()
   })
+
+  it('persists one graph-backed plan through dispatch, result review, acceptance, and fan-in release', async () => {
+    const harness = await createHarness()
+    const created = await harness.coordinator.updateWorkGraph(harness.owner, {
+      explanation: 'Parallel evidence before synthesis.',
+      maxConcurrency: 2,
+      nodes: [
+        {
+          id: 'research',
+          title: 'Research current behavior',
+          task: 'Inspect current behavior and return evidence.',
+          kind: 'research',
+          status: 'pending',
+          acceptanceCriteria: 'Evidence cites the inspected path.',
+        },
+        {
+          id: 'synthesize',
+          title: 'Synthesize the recommendation',
+          task: 'Synthesize the accepted evidence.',
+          kind: 'synthesis',
+          status: 'pending',
+          dependsOn: ['research'],
+        },
+      ],
+    })
+    expect(created.snapshot).toMatchObject({
+      coordinationMode: 'graph',
+      workGraph: { maxConcurrency: 2 },
+      plan: [
+        { step: 'Research current behavior', status: 'pending' },
+        { step: 'Synthesize the recommendation', status: 'pending' },
+      ],
+    })
+
+    const claims = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
+    expect(claims).toMatchObject([{
+      nodeId: 'research',
+      executionPolicy: 'support',
+    }])
+    await harness.coordinator.recordWorkGraphWorkerStarted(
+      harness.owner,
+      'research',
+      claims[0]!.attemptId,
+      'research-worker',
+    )
+    await expect(harness.coordinator.recordWorkGraphWorkerResult(
+      harness.owner,
+      'research-worker',
+      'status: done\nsummary: inspected evidence',
+    )).resolves.toBe('research')
+    await expect(harness.coordinator.getSnapshot(harness.owner)).resolves.toMatchObject({
+      workGraph: { nodes: [
+        { id: 'research', status: 'awaiting_review' },
+        { id: 'synthesize', status: 'pending' },
+      ] },
+    })
+    await expect(harness.coordinator.claimReadyWorkGraphNodes(harness.owner)).resolves.toEqual([])
+
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      explanation: 'Research accepted; synthesize next.',
+      maxConcurrency: 2,
+      nodes: [
+        {
+          id: 'research',
+          title: 'Research current behavior',
+          task: 'Inspect current behavior and return evidence.',
+          kind: 'research',
+          status: 'completed',
+          acceptanceCriteria: 'Evidence cites the inspected path.',
+        },
+        {
+          id: 'synthesize',
+          title: 'Synthesize the recommendation',
+          task: 'Synthesize the accepted evidence.',
+          kind: 'synthesis',
+          status: 'pending',
+          dependsOn: ['research'],
+        },
+      ],
+    })
+    const synthesis = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
+    expect(synthesis.map((claim) => claim.nodeId)).toEqual(['synthesize'])
+
+    harness.coordinator.forget(harness.owner.agentId)
+    await expect(harness.coordinator.getSnapshot(harness.owner)).resolves.toMatchObject({
+      coordinationMode: 'graph',
+      workGraph: { nodes: [
+        { id: 'research', status: 'completed', attempts: [{ workerId: 'research-worker' }] },
+        { id: 'synthesize', status: 'running' },
+      ] },
+    })
+  })
+
+  it('serializes concurrent graph lifecycle updates without losing a worker result', async () => {
+    const harness = await createHarness()
+    await harness.coordinator.updateWorkGraph(harness.owner, {
+      maxConcurrency: 2,
+      nodes: [
+        {
+          id: 'first',
+          title: 'Inspect first source',
+          task: 'Return the first evidence set.',
+          kind: 'research',
+          status: 'pending',
+        },
+        {
+          id: 'second',
+          title: 'Inspect second source',
+          task: 'Return the second evidence set.',
+          kind: 'research',
+          status: 'pending',
+        },
+      ],
+    })
+    const claims = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
+    await Promise.all(claims.map((claim, index) => (
+      harness.coordinator.recordWorkGraphWorkerStarted(
+        harness.owner,
+        claim.nodeId,
+        claim.attemptId,
+        `worker-${index + 1}`,
+      )
+    )))
+    await Promise.all(claims.map((_, index) => (
+      harness.coordinator.recordWorkGraphWorkerResult(
+        harness.owner,
+        `worker-${index + 1}`,
+        `status: done\nsummary: evidence ${index + 1}`,
+      )
+    )))
+
+    const snapshot = await harness.coordinator.getSnapshot(harness.owner)
+    expect(snapshot.workGraph?.nodes).toMatchObject([
+      { id: 'first', status: 'awaiting_review', attempts: [{ workerId: 'worker-1' }] },
+      { id: 'second', status: 'awaiting_review', attempts: [{ workerId: 'worker-2' }] },
+    ])
+  })
+
+  it('reloads a graph whose projection exceeds the light-plan step limit', async () => {
+    const harness = await createHarness()
+    const nodes = Array.from({ length: 21 }, (_, index) => ({
+      id: `node-${index + 1}`,
+      title: `Graph node ${index + 1}`,
+      task: `Complete graph node ${index + 1}.`,
+      status: 'pending' as const,
+    }))
+    await harness.coordinator.updateWorkGraph(harness.owner, { nodes })
+
+    harness.coordinator.forget(harness.owner.agentId)
+    const reloaded = await harness.coordinator.getSnapshot(harness.owner)
+    expect(reloaded.coordinationMode).toBe('graph')
+    expect(reloaded.workGraph?.nodes).toHaveLength(21)
+    expect(reloaded.plan).toHaveLength(21)
+  })
 })
 
 async function createHarness(existingDataDir?: string): Promise<{

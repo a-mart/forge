@@ -67,6 +67,7 @@ import type {
 } from "./knowledge-service.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
+import type { UpdateWorkGraphInput } from "./planning/work-graph-state.js";
 import type { ProjectAgentRecommendations } from "./project-agent-analysis.js";
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
 import type { ProjectExecutableTrustCoordinator } from "./project-executable-trust-coordinator.js";
@@ -224,7 +225,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
   ): Promise<SessionPlanSnapshotEvent> {
     return this.services.interactions.getSessionPlanSnapshot(sessionAgentId, requestId);
   }
-
   updatePlan(
     callerAgentId: string,
     toolCallId: string,
@@ -232,11 +232,12 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
   ): Promise<UpdatePlanResult> {
     return this.services.interactions.updatePlan(callerAgentId, toolCallId, input);
   }
-
+  updateWorkGraph(callerAgentId: string, toolCallId: string, input: UpdateWorkGraphInput) {
+    return this.services.interactions.updateWorkGraph(callerAgentId, toolCallId, input);
+  }
   requestUserChoice(agentId: string, questions: ChoiceQuestion[]): Promise<ChoiceAnswer[]> {
     return this.services.interactions.requestUserChoice(agentId, questions);
   }
-
   resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
     this.services.interactions.resolveChoiceRequest(choiceId, answers);
   }

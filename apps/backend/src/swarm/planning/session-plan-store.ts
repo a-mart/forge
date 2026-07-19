@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { readFile, rename } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import type { PlanStep } from '@forge/protocol'
 import { appendJsonl, writeJsonFileAtomic } from '../../utils/atomic-files.js'
 import { getSessionPlanHistoryPath, getSessionPlanPath } from '../storage/data-paths.js'
 import {
   createEmptySessionPlanState,
   normalizeSessionPlanState,
+  type SessionPlanWriteInput,
   type SessionPlanState,
 } from './session-plan-state.js'
 
@@ -48,12 +48,12 @@ export class SessionPlanStore {
     }
   }
 
-  async update(input: { explanation?: string; plan: PlanStep[] }): Promise<SessionPlanState> {
+  async update(input: SessionPlanWriteInput): Promise<SessionPlanState> {
     return (await this.updateWithOutgoingState(input)).snapshot
   }
 
   async updateWithOutgoingState(
-    input: { explanation?: string; plan: PlanStep[] },
+    input: SessionPlanWriteInput,
     onUpdated?: (transition: {
       outgoing: SessionPlanState
       snapshot: SessionPlanState
@@ -70,6 +70,17 @@ export class SessionPlanStore {
         updatedAt: (this.options.now ?? (() => new Date()))().toISOString(),
         ...(input.explanation ? { explanation: input.explanation } : {}),
         plan: input.plan.map((step) => ({ ...step })),
+        ...(input.coordinationMode ? { coordinationMode: input.coordinationMode } : {}),
+        ...(input.workGraph ? {
+          workGraph: {
+            maxConcurrency: input.workGraph.maxConcurrency,
+            nodes: input.workGraph.nodes.map((node) => ({
+              ...node,
+              dependsOn: [...node.dependsOn],
+              attempts: node.attempts.map((attempt) => ({ ...attempt })),
+            })),
+          },
+        } : {}),
       }
       await this.archiveCurrentState(current)
       await this.writeAtomically(next)

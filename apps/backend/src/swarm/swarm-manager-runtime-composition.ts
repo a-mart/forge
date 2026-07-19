@@ -58,7 +58,7 @@ import { getManagedModelProviderCredentialAvailability } from "./secrets-env-ser
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
 import { TurnContextCoordinator } from "./turn-context-coordinator.js";
-import { WorkerResultCoordinator } from "./worker-result-coordinator.js";
+import { createWorkGraphResultRecorder, WorkerResultCoordinator } from "./worker-result-coordinator.js";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -324,6 +324,10 @@ export class SwarmManagerRuntimeComposition {
     });
     this.workerResults = new WorkerResultCoordinator({
       getConversationHistory: messaging.getConversationHistory,
+      recordWorkGraphResult: createWorkGraphResultRecorder({
+        descriptors: state.descriptors,
+        getPlans: () => this.requirePlans(),
+      }),
       deliverWorkerResult: (workerAgentId, resultText, expectedAssignmentId) =>
         messaging.sendWorkerResult(workerAgentId, resultText, expectedAssignmentId),
       logDebug: options.events.logDebug,

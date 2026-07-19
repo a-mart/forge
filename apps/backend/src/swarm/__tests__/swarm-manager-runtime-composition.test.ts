@@ -66,6 +66,7 @@ function toolHost(): SwarmToolHost {
     publishToUser: noResult,
     requestUserChoice: noResult,
     updatePlan: noResult,
+    updateWorkGraph: noResult,
     createGoal: noResult,
     getGoal: noResult,
     updateGoal: noResult,

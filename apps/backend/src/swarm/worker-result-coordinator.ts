@@ -3,6 +3,7 @@ import type {
   ConversationEntryEvent,
   ConversationMessageEvent,
 } from "./types.js";
+import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import { previewForLog } from "./swarm-manager-utils.js";
 
 const MAX_WORKER_RESULT_CHARS = 16_000;
@@ -13,6 +14,10 @@ export interface WorkerResultCoordinatorOptions {
     workerAgentId: string,
     resultText: string,
     expectedAssignmentId: string,
+  ): Promise<unknown>;
+  recordWorkGraphResult?(
+    descriptor: AgentDescriptor & { role: "worker" },
+    resultText: string,
   ): Promise<unknown>;
   logDebug(message: string, details?: unknown): void;
 }
@@ -38,6 +43,16 @@ export class WorkerResultCoordinator {
       this.options.getConversationHistory(descriptor.agentId),
       parentContext.assignedAt,
     );
+    if (this.options.recordWorkGraphResult) {
+      await this.options.recordWorkGraphResult(descriptor, resultText).catch((error) => {
+        this.options.logDebug("worker_result:work_graph_error", {
+          workerAgentId: descriptor.agentId,
+          managerId: descriptor.managerId,
+          assignmentId: parentContext.assignmentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     try {
       await this.options.deliverWorkerResult(
         descriptor.agentId,
@@ -61,6 +76,26 @@ export class WorkerResultCoordinator {
       return "failed";
     }
   }
+}
+
+export function createWorkGraphResultRecorder(options: {
+  descriptors: ReadonlyMap<string, AgentDescriptor>;
+  getPlans(): Pick<SessionPlanCoordinator, "recordWorkGraphWorkerResult">;
+}): NonNullable<WorkerResultCoordinatorOptions["recordWorkGraphResult"]> {
+  return async (worker, resultText) => {
+    const manager = options.descriptors.get(worker.managerId);
+    if (
+      !manager
+      || manager.role !== "manager"
+      || !manager.profileId
+      || manager.sessionSurface === "collab"
+    ) return;
+    await options.getPlans().recordWorkGraphWorkerResult(
+      manager as AgentDescriptor & { role: "manager"; profileId: string },
+      worker.agentId,
+      resultText,
+    );
+  };
 }
 
 export function buildWorkerResult(

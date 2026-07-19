@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import type { PlanSummaryEvent, SessionPlanSnapshotEvent } from '@forge/protocol'
+import type {
+  PlanSummaryEvent,
+  SessionPlanSnapshotEvent,
+  WorkGraphSnapshot,
+} from '@forge/protocol'
 import type { AcceptedDeliveryMode } from '../types.js'
 import {
   appendSessionPlanCompactionInstructions,
@@ -12,10 +16,23 @@ import {
 import { shouldCreateCompletedPlanSummary } from './plan-summary.js'
 import {
   normalizeSessionPlanInput,
+  type SessionPlanWriteInput,
   type SessionPlanState,
 } from './session-plan-state.js'
 import { SessionPlanStore } from './session-plan-store.js'
 import type { UpdatePlanInput, UpdatePlanResult } from './update-plan-tool.js'
+import {
+  claimReadyWorkGraphNodes,
+  findRunningWorkersToCancel,
+  normalizeWorkGraphInput,
+  projectWorkGraphPlan,
+  recordWorkGraphDispatchFailure,
+  recordWorkGraphWorkerResult,
+  recordWorkGraphWorkerStarted,
+  recoverInterruptedWorkGraphDispatches,
+  type UpdateWorkGraphInput,
+  type WorkGraphDispatchClaim,
+} from './work-graph-state.js'
 
 export interface SessionPlanOwner {
   agentId: string
@@ -25,6 +42,12 @@ export interface SessionPlanOwner {
 export interface SessionPlanUpdateReceipt {
   input: UpdatePlanInput
   result: UpdatePlanResult
+}
+
+export interface WorkGraphUpdateReceipt {
+  input: UpdateWorkGraphInput
+  cancelledWorkerIds: string[]
+  snapshot: SessionPlanSnapshotEvent
 }
 
 export interface SessionPlanCoordinatorOptions {
@@ -39,6 +62,7 @@ export interface SessionPlanCoordinatorOptions {
 /** Owns live working-plan state and its persistence, accounting, and projections. */
 export class SessionPlanCoordinator {
   private readonly statesByAgentId = new Map<string, SessionPlanState>()
+  private readonly mutationLocksByAgentId = new Map<string, Promise<void>>()
 
   constructor(private readonly options: SessionPlanCoordinatorOptions) {}
 
@@ -54,46 +78,145 @@ export class SessionPlanCoordinator {
     owner: SessionPlanOwner,
     input: UpdatePlanInput,
   ): Promise<SessionPlanUpdateReceipt> {
-    const normalized = normalizeSessionPlanInput(input)
-    const tracker = this.createUsageTracker(owner)
-    const { snapshot } = await this.createStore(owner).updateWithOutgoingState(
-      normalized,
-      async ({ outgoing, snapshot: next }) => {
-        await tracker.recordPlanTransition(outgoing, next).catch((error) => {
-          this.logUsageError('plan_usage:transition:error', owner, error)
-        })
-        this.recordPlanCardTransition(owner, outgoing, next)
-      },
-    )
-
-    this.statesByAgentId.set(owner.agentId, snapshot)
-    const result = this.toUpdateResult(owner, snapshot)
-    this.options.emitSnapshot({
-      type: 'session_plan_snapshot',
-      profileId: owner.profileId,
-      ...result,
+    return this.withMutationLock(owner, async () => {
+      const normalized = normalizeSessionPlanInput(input)
+      const snapshot = await this.write(owner, normalized)
+      const result = this.toUpdateResult(owner, snapshot)
+      return { input: normalized, result }
     })
-    return { input: normalized, result }
+  }
+
+  async updateWorkGraph(
+    owner: SessionPlanOwner,
+    input: UpdateWorkGraphInput,
+  ): Promise<WorkGraphUpdateReceipt> {
+    return this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      const explanation = normalizeSessionPlanInput({
+        ...(input.explanation ? { explanation: input.explanation } : {}),
+        plan: [],
+      }).explanation
+      const workGraph = normalizeWorkGraphInput(input, current.workGraph)
+      const cancelledWorkerIds = findRunningWorkersToCancel(current.workGraph, workGraph)
+      const normalizedInput: UpdateWorkGraphInput = {
+        ...(explanation ? { explanation } : {}),
+        maxConcurrency: workGraph.maxConcurrency,
+        nodes: workGraph.nodes.map((node) => ({
+          id: node.id,
+          title: node.title,
+          task: node.task,
+          kind: node.kind,
+          status: node.status,
+          dependsOn: [...node.dependsOn],
+          ...(node.acceptanceCriteria ? { acceptanceCriteria: node.acceptanceCriteria } : {}),
+          effort: node.effort,
+        })),
+      }
+      const snapshot = await this.writeGraph(owner, explanation, workGraph)
+      return {
+        input: normalizedInput,
+        cancelledWorkerIds,
+        snapshot: this.toSnapshotEvent(owner, snapshot),
+      }
+    })
+  }
+
+  async claimReadyWorkGraphNodes(owner: SessionPlanOwner): Promise<WorkGraphDispatchClaim[]> {
+    return this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) return []
+      const claimed = claimReadyWorkGraphNodes(current.workGraph, { now: this.options.now })
+      if (claimed.claims.length === 0) return []
+      await this.writeGraph(owner, current.explanation, claimed.graph)
+      return claimed.claims
+    })
+  }
+
+  async recordWorkGraphWorkerStarted(
+    owner: SessionPlanOwner,
+    nodeId: string,
+    attemptId: string,
+    workerId: string,
+  ): Promise<void> {
+    await this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) throw new Error('The current working plan is not a work graph.')
+      await this.writeGraph(
+        owner,
+        current.explanation,
+        recordWorkGraphWorkerStarted(current.workGraph, nodeId, attemptId, workerId),
+      )
+    })
+  }
+
+  async recordWorkGraphDispatchFailure(
+    owner: SessionPlanOwner,
+    nodeId: string,
+    attemptId: string,
+    error: unknown,
+  ): Promise<void> {
+    await this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) return
+      await this.writeGraph(
+        owner,
+        current.explanation,
+        recordWorkGraphDispatchFailure(
+          current.workGraph,
+          nodeId,
+          attemptId,
+          error,
+          this.options.now,
+        ),
+      )
+    })
+  }
+
+  async recordWorkGraphWorkerResult(
+    owner: SessionPlanOwner,
+    workerId: string,
+    resultText: string,
+  ): Promise<string | undefined> {
+    return this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) return undefined
+      const settled = recordWorkGraphWorkerResult(
+        current.workGraph,
+        workerId,
+        resultText,
+        this.options.now,
+      )
+      if (!settled.nodeId) return undefined
+      await this.writeGraph(owner, current.explanation, settled.graph)
+      return settled.nodeId
+    })
   }
 
   async clear(owner: SessionPlanOwner): Promise<SessionPlanSnapshotEvent> {
-    const tracker = this.createUsageTracker(owner)
-    const { snapshot } = await this.createStore(owner).clearWithOutgoingState(
-      ({ outgoing, snapshot: next }) => tracker.recordPlanTransition(outgoing, next).catch((error) => {
-        this.logUsageError('plan_usage:clear:error', owner, error)
-      }),
-    )
+    return this.withMutationLock(owner, async () => {
+      const tracker = this.createUsageTracker(owner)
+      const { snapshot } = await this.createStore(owner).clearWithOutgoingState(
+        ({ outgoing, snapshot: next }) => tracker.recordPlanTransition(outgoing, next)
+          .catch((error) => this.logUsageError('plan_usage:clear:error', owner, error)),
+      )
 
-    this.statesByAgentId.set(owner.agentId, snapshot)
-    const event = this.toSnapshotEvent(owner, snapshot)
-    this.options.emitSnapshot(event)
-    return event
+      this.statesByAgentId.set(owner.agentId, snapshot)
+      const event = this.toSnapshotEvent(owner, snapshot)
+      this.options.emitSnapshot(event)
+      return event
+    })
   }
 
   async preload(owners: readonly SessionPlanOwner[]): Promise<void> {
     await Promise.all(owners.map(async (owner) => {
-      const state = await this.createStore(owner).load()
+      let state = await this.createStore(owner).load()
       this.statesByAgentId.set(owner.agentId, state)
+      if (state.workGraph) {
+        const recovered = recoverInterruptedWorkGraphDispatches(state.workGraph, this.options.now)
+        if (recovered.changed) {
+          state = await this.writeGraph(owner, state.explanation, recovered.graph)
+        }
+      }
       await this.finalizeUsage(owner, { recovered: true })
     }))
   }
@@ -205,6 +328,8 @@ export class SessionPlanCoordinator {
         updatedAt: snapshot.updatedAt!,
         ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
         plan: snapshot.plan.map((step) => ({ ...step })),
+        ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
+        ...(snapshot.workGraph ? { workGraph: cloneWorkGraph(snapshot.workGraph) } : {}),
       }
       this.options.emitPlanSummary(active)
     }
@@ -217,6 +342,8 @@ export class SessionPlanCoordinator {
         updatedAt: snapshot.updatedAt!,
         ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
         plan: snapshot.plan.map((step) => ({ ...step })),
+        ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
+        ...(snapshot.workGraph ? { workGraph: cloneWorkGraph(snapshot.workGraph) } : {}),
       })
     }
   }
@@ -251,6 +378,8 @@ export class SessionPlanCoordinator {
       updatedAt: state.updatedAt,
       ...(state.explanation ? { explanation: state.explanation } : {}),
       plan: state.plan,
+      ...(state.coordinationMode ? { coordinationMode: state.coordinationMode } : {}),
+      ...(state.workGraph ? { workGraph: cloneWorkGraph(state.workGraph) } : {}),
       ...(requestId !== undefined ? { requestId } : {}),
     }
   }
@@ -262,6 +391,60 @@ export class SessionPlanCoordinator {
       updatedAt: state.updatedAt,
       ...(state.explanation ? { explanation: state.explanation } : {}),
       plan: state.plan,
+      ...(state.coordinationMode ? { coordinationMode: state.coordinationMode } : {}),
+      ...(state.workGraph ? { workGraph: cloneWorkGraph(state.workGraph) } : {}),
+    }
+  }
+
+  private async writeGraph(
+    owner: SessionPlanOwner,
+    explanation: string | undefined,
+    workGraph: WorkGraphSnapshot,
+  ): Promise<SessionPlanState> {
+    return this.write(owner, {
+      ...(explanation ? { explanation } : {}),
+      coordinationMode: 'graph',
+      workGraph,
+      plan: projectWorkGraphPlan(workGraph),
+    })
+  }
+
+  private async write(
+    owner: SessionPlanOwner,
+    input: SessionPlanWriteInput,
+  ): Promise<SessionPlanState> {
+    const tracker = this.createUsageTracker(owner)
+    const { snapshot } = await this.createStore(owner).updateWithOutgoingState(
+      input,
+      async ({ outgoing, snapshot: next }) => {
+        await tracker.recordPlanTransition(outgoing, next).catch((error) => {
+          this.logUsageError('plan_usage:transition:error', owner, error)
+        })
+        this.recordPlanCardTransition(owner, outgoing, next)
+      },
+    )
+    this.statesByAgentId.set(owner.agentId, snapshot)
+    this.options.emitSnapshot(this.toSnapshotEvent(owner, snapshot))
+    return snapshot
+  }
+
+  private async withMutationLock<T>(
+    owner: SessionPlanOwner,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.mutationLocksByAgentId.get(owner.agentId) ?? Promise.resolve()
+    let release: (() => void) | undefined
+    const current = new Promise<void>((resolveCurrent) => { release = resolveCurrent })
+    const queued = previous.catch(() => {}).then(() => current)
+    this.mutationLocksByAgentId.set(owner.agentId, queued)
+    await previous.catch(() => {})
+    try {
+      return await operation()
+    } finally {
+      release?.()
+      if (this.mutationLocksByAgentId.get(owner.agentId) === queued) {
+        this.mutationLocksByAgentId.delete(owner.agentId)
+      }
     }
   }
 
@@ -270,6 +453,17 @@ export class SessionPlanCoordinator {
       agentId: owner.agentId,
       message: errorMessage(error),
     })
+  }
+}
+
+function cloneWorkGraph(graph: WorkGraphSnapshot): WorkGraphSnapshot {
+  return {
+    maxConcurrency: graph.maxConcurrency,
+    nodes: graph.nodes.map((node) => ({
+      ...node,
+      dependsOn: [...node.dependsOn],
+      attempts: node.attempts.map((attempt) => ({ ...attempt })),
+    })),
   }
 }
 

@@ -34,6 +34,87 @@ describe("SessionInteractionCoordinator", () => {
     );
   });
 
+  it("updates a graph, dispatches ready nodes with scheduler-selected policy, and records the result", async () => {
+    const harness = createHarness();
+    const input = {
+      maxConcurrency: 2,
+      nodes: [{
+        id: "research",
+        title: "Research current behavior",
+        task: "Inspect the current behavior.",
+        kind: "research" as const,
+        status: "pending" as const,
+      }],
+    };
+    vi.mocked(harness.options.plans.updateWorkGraph).mockResolvedValue({
+      input: { ...input, nodes: [{ ...input.nodes[0], dependsOn: [], effort: "auto" }] },
+      cancelledWorkerIds: [],
+      snapshot: {
+        type: "session_plan_snapshot",
+        sessionAgentId: "manager",
+        profileId: "profile-1",
+        revision: 1,
+        updatedAt: NOW,
+        coordinationMode: "graph",
+        plan: [{ step: "Research current behavior", status: "pending" }],
+        workGraph: { maxConcurrency: 2, nodes: [] },
+      },
+    });
+    vi.mocked(harness.options.plans.claimReadyWorkGraphNodes).mockResolvedValue([{
+      nodeId: "research",
+      attemptId: "attempt-1",
+      agentId: "graph-research-1",
+      title: "Research current behavior",
+      task: "Inspect the current behavior.",
+      dependencyContext: "[accepted-source: Accepted source]\nstatus: done\nsummary: Evidence.",
+      behaviorMode: "research",
+      executionPolicy: "support",
+    }]);
+    vi.mocked(harness.options.plans.getSnapshot).mockResolvedValue({
+      type: "session_plan_snapshot",
+      sessionAgentId: "manager",
+      profileId: "profile-1",
+      revision: 3,
+      updatedAt: NOW,
+      coordinationMode: "graph",
+      plan: [{ step: "Research current behavior", status: "in_progress" }],
+      workGraph: { maxConcurrency: 2, nodes: [] },
+    });
+
+    const result = await harness.coordinator.updateWorkGraph("manager", "graph-tool", input);
+
+    expect(harness.options.lifecycle.spawnAgent).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({
+        agentId: "graph-research-1",
+        tier: "fast",
+        lens: "researcher",
+        policyControlledModel: true,
+        planStep: "Research current behavior",
+        initialMessage: expect.stringContaining("Accepted dependency results"),
+      }),
+    );
+    expect(harness.options.plans.recordWorkGraphWorkerStarted).toHaveBeenCalledWith(
+      harness.descriptors.get("manager"),
+      "research",
+      "attempt-1",
+      "graph-research-1",
+    );
+    expect(result).toMatchObject({
+      revision: 3,
+      dispatched: [{
+        nodeId: "research",
+        workerId: "graph-research-1",
+        executionPolicy: "support",
+      }],
+      dispatchFailures: [],
+    });
+    expect(harness.options.recordToolSideEffect).toHaveBeenCalledWith(
+      "manager",
+      expect.objectContaining({ toolName: "update_work_graph", toolCallId: "graph-tool" }),
+    );
+  });
+
   it("rejects update_plan outside a running, non-Cortex Builder manager session", async () => {
     const harness = createHarness();
     const manager = harness.descriptors.get("manager")!;
@@ -315,6 +396,7 @@ function createHarness(): Harness {
       resolvePreferredManagerId: vi.fn(() => "manager"),
     },
     plans: {
+      claimReadyWorkGraphNodes: vi.fn(async () => []),
       getSnapshot: vi.fn(async (owner, requestId) => ({
         type: "session_plan_snapshot",
         sessionAgentId: owner.agentId,
@@ -325,6 +407,8 @@ function createHarness(): Harness {
       })),
       preload: vi.fn(async () => undefined),
       recordWorkerAssignment: vi.fn(async () => undefined),
+      recordWorkGraphDispatchFailure: vi.fn(async () => undefined),
+      recordWorkGraphWorkerStarted: vi.fn(async () => undefined),
       resolveAssignment: vi.fn(async (_owner, step) => ({
         revision: 2,
         stepIndex: 0,
@@ -332,6 +416,18 @@ function createHarness(): Harness {
         status: "in_progress",
       })),
       update: vi.fn(async () => ({ input: normalizedPlan, result: planResult })),
+      updateWorkGraph: vi.fn(async () => ({
+        input: { nodes: [] },
+        cancelledWorkerIds: [],
+        snapshot: {
+          type: "session_plan_snapshot",
+          sessionAgentId: "manager",
+          profileId: "profile-1",
+          revision: 0,
+          updatedAt: NOW,
+          plan: [],
+        },
+      })),
     },
     choices: {
       cancelAllPendingChoicesForAgent: vi.fn((agentId) =>

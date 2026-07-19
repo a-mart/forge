@@ -12,6 +12,39 @@ export function formatSessionPlanModelContext(snapshot: SessionPlanSnapshot): st
     revision: snapshot.revision,
     ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
     plan: snapshot.plan,
+    ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
+    ...(snapshot.workGraph ? {
+      workGraph: {
+        maxConcurrency: snapshot.workGraph.maxConcurrency,
+        nodes: snapshot.workGraph.nodes.map((node) => {
+          const latestAttempt = node.attempts[node.attempts.length - 1]
+          return {
+            id: node.id,
+            title: node.title,
+            task: truncateContextText(node.task, 800),
+            kind: node.kind,
+            status: node.status,
+            dependsOn: node.dependsOn,
+            ...(node.acceptanceCriteria
+              ? { acceptanceCriteria: truncateContextText(node.acceptanceCriteria, 300) }
+              : {}),
+            effort: node.effort,
+            ...(latestAttempt ? {
+              latestAttempt: {
+                number: latestAttempt.number,
+                status: latestAttempt.status,
+                ...(latestAttempt.workerId ? { workerId: latestAttempt.workerId } : {}),
+                behaviorMode: latestAttempt.behaviorMode,
+                executionPolicy: latestAttempt.executionPolicy,
+                ...(latestAttempt.summary
+                  ? { summary: truncateContextText(latestAttempt.summary, 600) }
+                  : {}),
+              },
+            } : {}),
+          }
+        }),
+      },
+    } : {}),
   })}`
 }
 
@@ -33,4 +66,9 @@ export function appendSessionPlanCompactionInstructions(
     formatSessionPlanModelContext(snapshot),
   ].join('\n')
   return existing ? `${existing}\n\n${planInstructions}` : planInstructions
+}
+
+function truncateContextText(value: string, maximum: number): string {
+  if (value.length <= maximum) return value
+  return `${value.slice(0, maximum - 1).trimEnd()}…`
 }

@@ -81,6 +81,25 @@ describe("WorkerResultCoordinator", () => {
     );
   });
 
+  it("records graph settlement before delivering the result to the manager", async () => {
+    const worker = assignedWorker();
+    const calls: string[] = [];
+    const coordinator = new WorkerResultCoordinator({
+      getConversationHistory: () => [message("Validated implementation complete.")],
+      recordWorkGraphResult: vi.fn(async (_descriptor, resultText) => {
+        expect(resultText).toContain("status: done");
+        calls.push("graph");
+      }),
+      deliverWorkerResult: vi.fn(async () => {
+        calls.push("delivery");
+      }),
+      logDebug: vi.fn(),
+    });
+
+    await expect(coordinator.deliverCompletedWorker(worker)).resolves.toBe("sent");
+    expect(calls).toEqual(["graph", "delivery"]);
+  });
+
   it("marks terminal system errors blocked", () => {
     expect(buildWorkerResult("worker-1", [
       message("Worker failed after a terminated process.", { role: "system" }),

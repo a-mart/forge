@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   PLAN_STEP_STATUSES,
+  WORK_GRAPH_NODE_STATUSES,
   type PlanSummaryEvent,
   type PlanStepStatus,
   type SessionPlanSnapshotEvent,
@@ -42,6 +43,42 @@ describe('plan protocol', () => {
     } satisfies PlanSummaryEvent
 
     expect(summary.plan[0]?.status).toBe('completed')
+  })
+
+  it('adds graph execution detail without widening the legacy plan-step vocabulary', () => {
+    const event = {
+      type: 'session_plan_snapshot',
+      sessionAgentId: 'session-1',
+      profileId: 'profile-1',
+      revision: 4,
+      updatedAt: '2026-07-18T00:00:00.000Z',
+      coordinationMode: 'graph',
+      plan: [{ step: 'Research behavior', status: 'in_progress' }],
+      workGraph: {
+        maxConcurrency: 4,
+        nodes: [{
+          id: 'research',
+          title: 'Research behavior',
+          task: 'Inspect behavior and return evidence.',
+          kind: 'research',
+          status: 'running',
+          dependsOn: [],
+          effort: 'auto',
+          attempts: [{
+            id: 'attempt-1',
+            number: 1,
+            status: 'running',
+            startedAt: '2026-07-18T00:00:00.000Z',
+            workerId: 'graph-research-1',
+            behaviorMode: 'research',
+            executionPolicy: 'support',
+          }],
+        }],
+      },
+    } satisfies SessionPlanSnapshotEvent
+
+    expect(WORK_GRAPH_NODE_STATUSES).toContain(event.workGraph.nodes[0]?.status)
+    expect(event.plan[0]?.status).toBe('in_progress')
   })
 
   it('represents an active inline plan anchor', () => {
