@@ -441,15 +441,20 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("do not use shell or browser actions as an indirect way");
   });
 
-  it("keeps the Other choice conditional instead of contradictory", async () => {
+  it("requires an Other choice unless the user explicitly intends a closed confirmation", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot);
     const service = createPromptServiceForDescriptor(config, descriptor);
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
-    expect(resolved).toContain('Include an "Other / Custom" option when reasonable answers may fall outside the listed choices');
-    expect(resolved).not.toContain("always give the user an 'other' option");
+    expect(resolved).toContain(
+      'Always include an "Other / Custom" response option so the user can provide an answer outside the listed choices.'
+    );
+    expect(resolved).toContain(
+      "Omit it only for a deliberately closed confirmation when the user's request clearly makes that constraint intentional."
+    );
+    expect(resolved).not.toContain('when reasonable answers may fall outside the listed choices');
   });
 
   it("buildResolvedManagerPrompt removes the model-specific placeholder when no user instructions exist", async () => {

@@ -214,7 +214,7 @@ Best practices:
 - Keep option labels concise (2-5 words)
 - Use `description` for helpful detail
 - Mark the recommended option with `recommended: true`
-- Include an "Other / Custom" option when reasonable answers may fall outside the listed choices; omit it for deliberately closed confirmations
+- Always include an "Other / Custom" response option so the user can provide an answer outside the listed choices. Omit it only for a deliberately closed confirmation when the user's request clearly makes that constraint intentional.
 - One question per call is typical
 - Use `multiSelect: true` when the user should pick multiple options (e.g., "pick 2-3 to kick off")
 - Set `minSelections` and `maxSelections` to constrain multi-select ranges
