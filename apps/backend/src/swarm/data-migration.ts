@@ -7,7 +7,6 @@ import {
   getLegacySecretsFilePath,
   getLegacySessionFilePath,
   getProfileDir,
-  getProfileIntegrationsDir,
   getProfileMemoryPath,
   getProfileScheduleFilePath,
   getSessionFilePath,
@@ -23,9 +22,6 @@ import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 const MIGRATION_SENTINEL_FILE = ".migration-v1-done";
 const DEFAULT_FALLBACK_PROFILE_ID = "default";
-const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
-const LEGACY_SHARED_INTEGRATIONS_DIR_NAME = "shared";
-const LEGACY_MANAGER_INTEGRATIONS_DIR_NAME = "managers";
 const LEGACY_SCHEDULES_DIR_NAME = "schedules";
 const LEGACY_SESSIONS_DIR_NAME = "sessions";
 const LEGACY_MEMORY_DIR_NAME = "memory";
@@ -121,7 +117,6 @@ export async function migrateDataDirectory(
 
   await migrateSchedules(config.dataDir, profileIds, managerProfileBySessionId, logger);
   await migrateAuthAndSecrets(config.dataDir, logger);
-  await migrateIntegrationConfigs(config.dataDir, profileIds, logger);
 
   const updatedAgents = rewriteAgentSessionPaths(
     config.dataDir,
@@ -164,7 +159,6 @@ async function ensureProfileDirectories(dataDir: string, profileId: string): Pro
   await fs.mkdir(profileDir, { recursive: true });
   await fs.mkdir(getSessionsDir(dataDir, profileId), { recursive: true });
   await fs.mkdir(dirname(getProfileScheduleFilePath(dataDir, profileId)), { recursive: true });
-  await fs.mkdir(getProfileIntegrationsDir(dataDir, profileId), { recursive: true });
 }
 
 function buildManagerProfileLookup(
@@ -503,33 +497,12 @@ async function migrateAuthAndSecrets(dataDir: string, _logger: DataMigrationLogg
   await copyFileIfMissing(getLegacySecretsFilePath(dataDir), legacySharedSecretsFilePath);
 }
 
-async function migrateIntegrationConfigs(
-  dataDir: string,
-  profileIds: Set<string>,
-  _logger: DataMigrationLogger
-): Promise<void> {
-  const legacyIntegrationsDir = join(dataDir, LEGACY_INTEGRATIONS_DIR_NAME);
-  const legacySharedIntegrationsDir = join(legacyIntegrationsDir, LEGACY_SHARED_INTEGRATIONS_DIR_NAME);
-  const legacyManagerIntegrationsDir = join(legacyIntegrationsDir, LEGACY_MANAGER_INTEGRATIONS_DIR_NAME);
-
-  const legacySharedIntegrationsDirPath = join(getSharedDir(dataDir), "integrations");
-
-  await copyDirectoryIfExists(legacySharedIntegrationsDir, legacySharedIntegrationsDirPath);
-
-  for (const profileId of profileIds) {
-    const sourceDir = join(legacyManagerIntegrationsDir, profileId);
-    const targetDir = getProfileIntegrationsDir(dataDir, profileId);
-    await copyDirectoryIfExists(sourceDir, targetDir);
-  }
-}
-
 async function cleanupLegacyFlatPaths(dataDir: string, logger: DataMigrationLogger): Promise<void> {
   const legacyDirectories = [
     join(dataDir, LEGACY_SESSIONS_DIR_NAME),
     join(dataDir, LEGACY_MEMORY_DIR_NAME),
     join(dataDir, LEGACY_SCHEDULES_DIR_NAME),
-    join(dataDir, LEGACY_AUTH_DIR_NAME),
-    join(dataDir, LEGACY_INTEGRATIONS_DIR_NAME)
+    join(dataDir, LEGACY_AUTH_DIR_NAME)
   ];
 
   for (const directoryPath of legacyDirectories) {
@@ -716,29 +689,6 @@ async function copyFileIfMissing(sourcePath: string, targetPath: string): Promis
     }
 
     throw error;
-  }
-}
-
-async function copyDirectoryIfExists(sourceDir: string, targetDir: string): Promise<void> {
-  if (!(await pathExists(sourceDir))) {
-    return;
-  }
-
-  await fs.mkdir(targetDir, { recursive: true });
-  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const sourcePath = join(sourceDir, entry.name);
-    const targetPath = join(targetDir, entry.name);
-
-    if (entry.isDirectory()) {
-      await copyDirectoryIfExists(sourcePath, targetPath);
-      continue;
-    }
-
-    if (entry.isFile()) {
-      await copyFileIfMissing(sourcePath, targetPath);
-    }
   }
 }
 

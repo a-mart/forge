@@ -159,6 +159,37 @@ async function waitForCliError(events: ServerEvent[], requestId: string): Promis
 }
 
 describe('SwarmWebSocketServer', () => {
+  it('returns 404 for every retired integration endpoint variant', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const paths = [
+        '/api/managers/manager/integrations/telegram',
+        '/api/managers/manager/integrations/telegram/test',
+        '/api/managers/__shared__/integrations/telegram',
+        '/api/managers/__shared__/integrations/telegram/test',
+      ]
+      for (const path of paths) {
+        for (const method of ['GET', 'PUT', 'DELETE', 'POST', 'OPTIONS']) {
+          const response = await fetch(`http://${config.host}:${config.port}${path}`, { method })
+          expect(response.status, `${method} ${path}`).toBe(404)
+        }
+      }
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('connect + subscribe + user_message yields manager feed events', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
@@ -281,7 +312,11 @@ describe('SwarmWebSocketServer', () => {
     })
 
     await once(managerClient, 'open')
-    managerClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    managerClient.send(JSON.stringify({
+      type: 'subscribe',
+      agentId: 'manager',
+      conversationPaging: true,
+    }))
     await waitForEvent(
       managerEvents,
       (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
@@ -2267,7 +2302,6 @@ describe('SwarmWebSocketServer', () => {
       'profiles_snapshot',
       'unread_counts_snapshot',
       'terminals_snapshot',
-      'telegram_status',
     ])
     expect(events.some((event) => forbiddenBootstrapEvents.has(event.type))).toBe(false)
 
@@ -3493,17 +3527,21 @@ describe('SwarmWebSocketServer', () => {
     const events: ServerEvent[] = []
     client.on('message', (raw) => events.push(JSON.parse(raw.toString()) as ServerEvent))
     await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe', agentId: sessionAgent.agentId }))
+    client.send(JSON.stringify({
+      type: 'subscribe',
+      agentId: sessionAgent.agentId,
+      conversationPaging: true,
+    }))
     await waitForEvent(
       events,
       (event) => event.type === 'session_plan_snapshot' && event.plan[0]?.step === 'Inspect lifecycle',
     )
 
+    const summaryBaseline = events.length
     await manager.updatePlan(sessionAgent.agentId, 'plan-lifecycle-complete', {
       explanation: 'Lifecycle inspection complete.',
       plan: [{ step: 'Inspect lifecycle', status: 'completed' }],
     })
-    const summaryBaseline = events.length
     await manager.updatePlan(sessionAgent.agentId, 'plan-lifecycle-next', {
       plan: [{ step: 'Start next plan', status: 'in_progress' }],
     })

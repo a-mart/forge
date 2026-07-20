@@ -9,7 +9,6 @@ import type {
   SessionPlanSnapshotEvent,
   SessionGoalSnapshotEvent,
   RestartRecoverySnapshot,
-  TelegramStatusEvent,
   TerminalDescriptor,
 } from '@forge/protocol'
 
@@ -59,7 +58,6 @@ export interface ManagerWsState {
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean; streamingStartedAt?: number }>
   lastError: string | null
   lastSuccess: string | null
-  telegramStatus: TelegramStatusEvent | null
   unreadCounts: Record<string, number>
   /** Latest local-instance order invalidation; the full preference is refetched over HTTP. */
   builderSidebarOrderRevision: number | null
@@ -108,7 +106,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     statuses: {},
     lastError: null,
     lastSuccess: null,
-    telegramStatus: null,
     unreadCounts: {},
     builderSidebarOrderRevision: null,
     projectPresence: {},

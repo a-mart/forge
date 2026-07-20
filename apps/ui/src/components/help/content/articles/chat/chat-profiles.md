@@ -8,7 +8,6 @@ A profile is the set of settings, memory, and resources that a manager uses. Whe
 - **Specialists** and their configuration.
 - **Skills** and environment variables.
 - **Reference documents** attached to the profile.
-- **Integrations** like Telegram.
 
 ## Sessions and profiles
 

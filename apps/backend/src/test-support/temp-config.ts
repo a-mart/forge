@@ -90,7 +90,6 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
   const sharedAuthDir = join(sharedConfigDir, 'auth')
   const sharedAuthFile = join(sharedAuthDir, 'auth.json')
   const sharedSecretsFile = join(sharedConfigDir, 'secrets.json')
-  const sharedIntegrationsDir = join(sharedConfigDir, 'integrations')
   const collaborationConfigDir = join(sharedConfigDir, 'collaboration')
   const collaborationAuthDbPath = join(collaborationConfigDir, 'auth.db')
   const collaborationAuthSecretPath = join(collaborationConfigDir, 'auth-secret.key')
@@ -113,7 +112,6 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
     mkdir(uploadsDir, { recursive: true }),
     mkdir(profilesDir, { recursive: true }),
     mkdir(sharedAuthDir, { recursive: true }),
-    mkdir(sharedIntegrationsDir, { recursive: true }),
     mkdir(sharedCacheDir, { recursive: true }),
     mkdir(sharedStateDir, { recursive: true }),
     mkdir(authDir, { recursive: true }),
@@ -186,7 +184,6 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sharedIntegrationsDir,
       collaborationConfigDir,
       collaborationAuthDbPath,
       collaborationAuthSecretPath,

@@ -178,10 +178,10 @@ describe("SessionInteractionCoordinator", () => {
         "manager",
         "Ready",
         "speak_to_user",
-        { channel: "telegram", channelId: "chat-1" },
+        { channel: "web" },
       ),
     ).resolves.toEqual({
-      targetContext: { channel: "telegram", channelId: "chat-1" },
+      targetContext: { channel: "web" },
       published: true,
     });
 
@@ -220,14 +220,14 @@ describe("SessionInteractionCoordinator", () => {
     expect(harness.options.choices.requestUserChoiceWithId).not.toHaveBeenCalled();
   });
 
-  it("requires a Telegram channel id and keeps system publication free of manager-only effects", async () => {
+  it("rejects a retired explicit channel and keeps system publication free of manager-only effects", async () => {
     const harness = createHarness();
 
     await expect(
       harness.coordinator.publishToUser("manager", "Ready", "speak_to_user", {
         channel: "telegram",
-      }),
-    ).rejects.toThrow("target.channelId is required");
+      } as never),
+    ).rejects.toThrow("only supports web delivery");
 
     await harness.coordinator.publishToUser("system-agent", "Maintenance", "system");
     expect(harness.events.at(-1)).toMatchObject({ role: "system", source: "system" });

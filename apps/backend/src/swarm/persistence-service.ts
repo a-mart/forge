@@ -58,7 +58,6 @@ export class PersistenceService {
       this.deps.config.paths.sharedDir,
       this.deps.config.paths.sharedConfigDir,
       this.deps.config.paths.sharedAuthDir,
-      this.deps.config.paths.sharedIntegrationsDir,
       this.deps.config.paths.sharedCacheDir,
       getSharedCacheGeneratedDir(this.deps.config.paths.dataDir),
       this.deps.config.paths.sharedStateDir,

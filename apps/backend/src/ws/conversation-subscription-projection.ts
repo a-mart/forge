@@ -1,3 +1,4 @@
+import { isRetiredMessageSource } from "@forge/protocol";
 import type { ConversationEntryEvent } from "../swarm/types.js";
 import { projectConversationEntryForBuilderWire } from "../swarm/session/conversation-wire-projection.js";
 
@@ -14,6 +15,9 @@ export function projectConversationEntryForSubscriptionWire(
   entry: ConversationEntryEvent,
   supportsConversationPaging: boolean,
 ): ConversationEntryEvent | undefined {
+  if (entry.type === "conversation_message" && isRetiredMessageSource(entry.sourceContext)) {
+    return undefined;
+  }
   const projected = projectConversationEntryForBuilderWire(entry);
   if (supportsConversationPaging) {
     return projected;

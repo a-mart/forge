@@ -81,6 +81,7 @@ interface JsonlLineRecord {
   byteOffset: number
   nextByteOffset: number
   lineNumber?: number
+  retiredSource?: boolean
 }
 
 interface ReadJsonlPageOptions {
@@ -127,7 +128,7 @@ export class SessionAuditService {
       expectedNextByteOffset,
       maxBytes: SESSION_AUDIT_DETAIL_MAX_BYTES,
     })
-    if (!line) {
+    if (!line || isRetiredSourceAuditRecord(line)) {
       throw new SessionAuditError('Audit row not found at the requested byte offset', 404)
     }
 
@@ -206,6 +207,20 @@ export class SessionAuditService {
     })
 
     const hasMore = !readResult.reachedEof
+    const physicalScanBytes = Math.abs(readResult.nextOffset - startOffset)
+    const redactedScanGap = readResult.scannedBytes < physicalScanBytes
+    const firstItem = readResult.items[0]
+    const lastItem = readResult.items[readResult.items.length - 1]
+    const publicStartOffset = redactedScanGap
+      ? order === 'asc'
+        ? firstItem?.byteOffset ?? 0
+        : firstItem?.nextByteOffset ?? 0
+      : startOffset
+    const publicEndOffset = redactedScanGap
+      ? order === 'asc'
+        ? lastItem?.nextByteOffset ?? publicStartOffset
+        : lastItem?.byteOffset ?? publicStartOffset
+      : readResult.nextOffset
     const nextCursor = hasMore
       ? encodeCursor({
           v: 1,
@@ -230,8 +245,8 @@ export class SessionAuditService {
       types: types ? [...types] : undefined,
       items: readResult.items,
       page: {
-        startOffset,
-        endOffset: readResult.nextOffset,
+        startOffset: publicStartOffset,
+        endOffset: publicEndOffset,
         sourceBytes: readResult.sourceBytes,
         scannedLines: readResult.scannedLines,
         scannedBytes: readResult.scannedBytes,
@@ -454,6 +469,7 @@ interface JsonlLineAtOffset {
   byteOffset: number
   nextByteOffset: number
   truncated: boolean
+  retiredSource?: boolean
 }
 
 interface ReadJsonlLineDetailOptions {
@@ -506,12 +522,16 @@ async function readJsonlLineDetail(options: ReadJsonlLineDetailOptions): Promise
       }
       const truncated = contentLength > options.maxBytes
       const lineBytes = stripTrailingCarriageReturn(buffer.subarray(0, result.bytesRead))
+      const retiredSource = truncated
+        ? await scanRetiredSourceRange(fileHandle, options.byteOffset, contentLength)
+        : undefined
       return {
         lineBytes,
         rawBytes: contentLength,
         byteOffset: options.byteOffset,
         nextByteOffset: truncated ? options.byteOffset + result.bytesRead : options.expectedNextByteOffset,
         truncated,
+        ...(retiredSource ? { retiredSource: true } : {}),
       }
     }
 
@@ -574,11 +594,13 @@ async function scanJsonlLineDetail(
   let lineBufferedBytes = 0
   let lineRawBytes = 0
   let truncated = false
+  const classifier = createRetiredSourceClassifier()
 
   const appendLineSegment = (segment: Buffer): void => {
-    if (segment.length === 0 || truncated) {
+    if (segment.length === 0) {
       return
     }
+    classifier.scan(segment)
     lineRawBytes += segment.length
     if (lineBufferedBytes >= maxBytes) {
       truncated = true
@@ -619,16 +641,7 @@ async function scanJsonlLineDetail(
         byteOffset,
         nextByteOffset,
         truncated,
-      }
-    }
-
-    if (truncated) {
-      return {
-        lineBytes: stripTrailingCarriageReturn(Buffer.concat(lineChunks, lineBufferedBytes)),
-        rawBytes: lineRawBytes,
-        byteOffset,
-        nextByteOffset: byteOffset + lineRawBytes,
-        truncated: true,
+        ...(classifier.isRetired() ? { retiredSource: true } : {}),
       }
     }
   }
@@ -642,7 +655,8 @@ async function scanJsonlLineDetail(
     rawBytes: lineRawBytes,
     byteOffset,
     nextByteOffset: sourceBytes,
-    truncated: false,
+    truncated,
+    ...(classifier.isRetired() ? { retiredSource: true } : {}),
   }
 }
 
@@ -694,6 +708,7 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
     let lineChunks: Buffer[] = []
     let lineBufferedBytes = 0
     let lineRawBytes = 0
+    let lineSourceClassifier = createRetiredSourceClassifier()
     let scannedLines = 0
     let scannedBytes = 0
     const items: SessionAuditEntry[] = []
@@ -702,6 +717,7 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
       if (segment.length === 0) {
         return
       }
+      lineSourceClassifier.scan(segment)
       lineRawBytes += segment.length
       if (lineBufferedBytes >= MAX_PARSE_LINE_BYTES) {
         return
@@ -719,17 +735,24 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
         byteOffset: lineStartOffset,
         nextByteOffset,
         lineNumber,
+        ...(lineSourceClassifier.isRetired() ? { retiredSource: true } : {}),
       }
-      scannedLines += 1
-      scannedBytes += nextByteOffset - lineStartOffset
-      const item = buildAuditEntry(record, options.source)
+      const retiredSource = isRetiredSourceAuditRecord(record)
+      if (!retiredSource) {
+        scannedLines += 1
+        scannedBytes += nextByteOffset - lineStartOffset
+      }
+      const item = retiredSource ? undefined : buildAuditEntry(record, options.source)
       lineStartOffset = nextByteOffset
-      lineNumber = lineNumber === undefined ? undefined : lineNumber + 1
+      if (!retiredSource) {
+        lineNumber = lineNumber === undefined ? undefined : lineNumber + 1
+      }
       lineChunks = []
       lineBufferedBytes = 0
       lineRawBytes = 0
+      lineSourceClassifier = createRetiredSourceClassifier()
 
-      if (matchesFilters(item, options.categories, options.types)) {
+      if (item && matchesFilters(item, options.categories, options.types)) {
         items.push(item)
       }
 
@@ -809,8 +832,8 @@ async function readJsonlPageDescending(
   options: ReadJsonlPageOptions,
   sourceBytes: number,
 ): Promise<ReadJsonlPageResult> {
-  const startOffset = Math.min(Math.max(options.startOffset, 0), sourceBytes)
-  if (startOffset <= 0 || sourceBytes === 0) {
+  let nextOffset = Math.min(Math.max(options.startOffset, 0), sourceBytes)
+  if (nextOffset <= 0 || sourceBytes === 0) {
     return {
       items: [],
       nextOffset: 0,
@@ -824,74 +847,25 @@ async function readJsonlPageDescending(
   }
 
   const maxScanLines = Math.min(MAX_SCAN_LINES, Math.max(options.limit, options.limit * DEFAULT_SCAN_LINE_MULTIPLIER))
-  const readLength = Math.min(MAX_SCAN_BYTES, startOffset)
-  const windowStart = startOffset - readLength
-  const buffer = Buffer.alloc(readLength)
-  const result = await fileHandle.read(buffer, 0, readLength, windowStart)
-  const chunk = buffer.subarray(0, result.bytesRead)
-  const records: JsonlLineRecord[] = []
-  let lineStart = windowStart
-  let segmentStart = 0
-
-  if (windowStart > 0) {
-    const firstNewlineIndex = chunk.indexOf(0x0a)
-    if (firstNewlineIndex < 0) {
-      return {
-        items: [],
-        nextOffset: windowStart,
-        nextLineNumber: undefined,
-        sourceBytes,
-        scannedLines: 0,
-        scannedBytes: result.bytesRead,
-        scanLimited: true,
-        reachedEof: false,
-      }
-    }
-    segmentStart = firstNewlineIndex + 1
-    lineStart = windowStart + segmentStart
-  }
-
-  while (segmentStart < chunk.length) {
-    const newlineIndex = chunk.indexOf(0x0a, segmentStart)
-    if (newlineIndex < 0) {
-      break
-    }
-
-    const lineBytes = stripTrailingCarriageReturn(Buffer.from(chunk.subarray(segmentStart, newlineIndex)))
-    const nextByteOffset = windowStart + newlineIndex + 1
-    records.push({
-      lineBytes,
-      rawBytes: newlineIndex - segmentStart,
-      byteOffset: lineStart,
-      nextByteOffset,
-    })
-
-    segmentStart = newlineIndex + 1
-    lineStart = windowStart + segmentStart
-  }
-
-  if (segmentStart < chunk.length) {
-    records.push({
-      lineBytes: stripTrailingCarriageReturn(Buffer.from(chunk.subarray(segmentStart))),
-      rawBytes: chunk.length - segmentStart,
-      byteOffset: lineStart,
-      nextByteOffset: startOffset,
-    })
-  }
-
   const items: SessionAuditEntry[] = []
   let scannedLines = 0
   let scannedBytes = 0
-  let nextOffset = startOffset
 
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const record = records[index]
+  while (nextOffset > 0) {
+    const record = await readPreviousJsonlRecord(fileHandle, nextOffset)
+    if (!record) {
+      nextOffset = 0
+      break
+    }
     nextOffset = record.byteOffset
-    scannedLines += 1
-    scannedBytes += record.nextByteOffset - record.byteOffset
-    const item = buildAuditEntry(record, options.source)
-    if (matchesFilters(item, options.categories, options.types)) {
-      items.push(item)
+    const retiredSource = isRetiredSourceAuditRecord(record)
+    if (!retiredSource) {
+      scannedLines += 1
+      scannedBytes += record.nextByteOffset - record.byteOffset
+      const item = buildAuditEntry(record, options.source)
+      if (matchesFilters(item, options.categories, options.types)) {
+        items.push(item)
+      }
     }
 
     if (items.length >= options.limit || scannedLines >= maxScanLines || scannedBytes >= MAX_SCAN_BYTES) {
@@ -910,13 +884,122 @@ async function readJsonlPageDescending(
 
   return {
     items,
-    nextOffset: records[0]?.byteOffset ?? windowStart,
+    nextOffset,
     nextLineNumber: undefined,
     sourceBytes,
     scannedLines,
     scannedBytes,
-    scanLimited: records.length === 0 && windowStart > 0,
-    reachedEof: (records[0]?.byteOffset ?? windowStart) <= 0,
+    scanLimited: false,
+    reachedEof: true,
+  }
+}
+
+async function readPreviousJsonlRecord(
+  fileHandle: Awaited<ReturnType<typeof open>>,
+  endOffset: number,
+): Promise<JsonlLineRecord | undefined> {
+  let contentEnd = endOffset
+  if (contentEnd > 0) {
+    const finalByte = Buffer.alloc(1)
+    const finalRead = await fileHandle.read(finalByte, 0, 1, contentEnd - 1)
+    if (finalRead.bytesRead === 1 && finalByte[0] === 0x0a) {
+      contentEnd -= 1
+    }
+  }
+  if (contentEnd <= 0 && endOffset <= 0) return undefined
+
+  const classifier = createRetiredSourceClassifier()
+  let prefix = Buffer.alloc(0)
+  let searchOffset = contentEnd
+  let rowStart = 0
+  while (searchOffset > 0) {
+    const readLength = Math.min(64 * 1024, searchOffset)
+    const chunkStart = searchOffset - readLength
+    const chunk = Buffer.allocUnsafe(readLength)
+    const result = await fileHandle.read(chunk, 0, readLength, chunkStart)
+    if (result.bytesRead <= 0) break
+    const readable = chunk.subarray(0, result.bytesRead)
+    const newlineIndex = readable.lastIndexOf(0x0a)
+    const segment = newlineIndex >= 0 ? readable.subarray(newlineIndex + 1) : readable
+    classifier.scanPreceding(segment)
+    prefix = Buffer.concat([segment, prefix]).subarray(0, MAX_PARSE_LINE_BYTES)
+    if (newlineIndex >= 0) {
+      rowStart = chunkStart + newlineIndex + 1
+      break
+    }
+    searchOffset = chunkStart
+  }
+
+  const rawBytes = contentEnd - rowStart
+  return {
+    lineBytes: stripTrailingCarriageReturn(prefix.subarray(0, Math.min(prefix.length, rawBytes))),
+    rawBytes,
+    byteOffset: rowStart,
+    nextByteOffset: endOffset,
+    ...(classifier.isRetired() ? { retiredSource: true } : {}),
+  }
+}
+
+function createRetiredSourceClassifier(): {
+  scan(segment: Buffer): void
+  scanPreceding(segment: Buffer): void
+  isRetired(): boolean
+} {
+  let sawConversationEntry = false
+  let sawRetiredChannel = false
+  let forwardTail = ''
+  let backwardHead = ''
+  const inspect = (raw: string): void => {
+    sawConversationEntry ||= /"type"\s*:\s*"conversation_message"/.test(raw)
+    sawRetiredChannel ||= /"channel"\s*:\s*"telegram"/.test(raw)
+  }
+  return {
+    scan(segment) {
+      const raw = forwardTail + segment.toString('utf8')
+      inspect(raw)
+      forwardTail = raw.slice(-256)
+    },
+    scanPreceding(segment) {
+      const raw = segment.toString('utf8') + backwardHead
+      inspect(raw)
+      backwardHead = raw.slice(0, 256)
+    },
+    isRetired: () => sawConversationEntry && sawRetiredChannel,
+  }
+}
+
+async function scanRetiredSourceRange(
+  fileHandle: Awaited<ReturnType<typeof open>>,
+  byteOffset: number,
+  contentLength: number,
+): Promise<boolean> {
+  const classifier = createRetiredSourceClassifier()
+  const buffer = Buffer.alloc(64 * 1024)
+  let scanned = 0
+  while (scanned < contentLength) {
+    const readLength = Math.min(buffer.length, contentLength - scanned)
+    const result = await fileHandle.read(buffer, 0, readLength, byteOffset + scanned)
+    if (result.bytesRead <= 0) break
+    classifier.scan(buffer.subarray(0, result.bytesRead))
+    scanned += result.bytesRead
+  }
+  return classifier.isRetired()
+}
+
+function isRetiredSourceAuditRecord(record: JsonlLineRecord): boolean {
+  if (record.retiredSource) return true
+  const raw = record.lineBytes.toString('utf8')
+  try {
+    const parsed = JSON.parse(raw) as {
+      type?: unknown
+      customType?: unknown
+      data?: { type?: unknown; sourceContext?: { channel?: unknown } }
+      sourceContext?: { channel?: unknown }
+    }
+    const entry = parsed.customType === CONVERSATION_ENTRY_TYPE ? parsed.data : parsed
+    return entry?.type === 'conversation_message' && entry.sourceContext?.channel === 'telegram'
+  } catch {
+    return false
   }
 }
 

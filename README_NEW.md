@@ -166,7 +166,6 @@ All state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows). Backup is 
 | **[Specialists](docs/SPECIALISTS.md)** | Named worker setup, model routing, fallback |
 | **[Forge Extensions](docs/FORGE_EXTENSIONS.md)** | Session lifecycle hooks, tool interception |
 | **[Pi Extensions](docs/PI_EXTENSIONS.md)** | Custom tools, packages, prompts, themes |
-| **[Integrations](docs/INTEGRATIONS.md)** | Telegram, mobile app, push notifications |
 | **[Windows Setup](docs/WINDOWS_SETUP.md)** | Platform-specific notes for Windows |
 
 ## Contributing

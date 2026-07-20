@@ -11,7 +11,7 @@ import {
   type ChoiceRequestEvent,
   type CollaborationAuthor,
   type ConversationReplyTarget,
-  type MessageChannel as ProtocolMessageChannel,
+  type PersistedMessageChannel as ProtocolPersistedMessageChannel,
   type ManagerProfile,
   type ExternalThreadInfo,
   type ExternalThreadMessageContext,
@@ -125,10 +125,9 @@ export type RequestedDeliveryMode = "auto" | "followUp" | "steer";
 
 export type AcceptedDeliveryMode = "prompt" | "followUp" | "steer";
 
-export type MessageChannel = ProtocolMessageChannel;
-
 export interface MessageSourceContext {
-  channel: MessageChannel;
+  /** Includes a retired value solely so old JSONL and worker metadata remain parseable. */
+  channel: ProtocolPersistedMessageChannel;
   channelId?: string;
   userId?: string;
   messageId?: string;
@@ -164,10 +163,13 @@ export interface WorkerParentContext {
   parentRootTurnId?: string;
 }
 
-export type MessageTargetContext = Pick<
-  MessageSourceContext,
-  "channel" | "channelId" | "userId" | "threadTs" | "integrationProfileId"
->;
+export interface MessageTargetContext {
+  channel: "web";
+  channelId?: string;
+  userId?: string;
+  threadTs?: string;
+  integrationProfileId?: string;
+}
 
 export interface SendMessageReceipt {
   targetAgentId: string;
@@ -210,7 +212,6 @@ export interface SwarmPaths {
   sharedAuthDir: string;
   sharedAuthFile: string;
   sharedSecretsFile: string;
-  sharedIntegrationsDir: string;
   collaborationConfigDir?: string;
   collaborationAuthDbPath?: string;
   collaborationAuthSecretPath?: string;

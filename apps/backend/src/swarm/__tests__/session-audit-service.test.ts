@@ -104,6 +104,75 @@ describe('SessionAuditService', () => {
     expect(secondPage.hasMore).toBe(false)
   })
 
+  it('fills pages across long retired-source runs without exposing hidden scan counts or offsets', async () => {
+    const fixture = await createFixture()
+    const visibleBefore = conversationRow('visible-before', {
+      type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'visible before', timestamp: now, source: 'user_input', sourceContext: { channel: 'web' },
+    })
+    const hiddenRows = Array.from({ length: 75 }, (_, index) => conversationRow(`retired-${index}`, {
+      type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: `retired-sensitive-${index}`, timestamp: now, source: 'user_input', sourceContext: { channel: 'telegram', channelId: `retired-chat-${index}` },
+    }))
+    const visibleAfter = conversationRow('visible-after', {
+      type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'visible after', timestamp: now, source: 'user_input', sourceContext: { channel: 'web' },
+    })
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader(), visibleBefore, ...hiddenRows, visibleAfter])
+
+    const service = new SessionAuditService(fixture.host)
+    const first = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 2 })
+    const second = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 2, cursor: first.nextCursor })
+
+    expect(first.items.map((item) => item.wrapperId)).toEqual(['session-header', 'visible-before'])
+    expect(second.items.map((item) => item.wrapperId)).toEqual(['visible-after'])
+    expect(second).toMatchObject({ hasMore: false, page: { scannedLines: 1, returnedItems: 1, scanLimited: false } })
+    expect(second.page.startOffset).toBe(second.items[0]?.byteOffset)
+    expect(second.page.endOffset).toBe(second.items[0]?.nextByteOffset)
+    expect(second.items[0]?.lineNumber).toBe(3)
+
+    const newest = await service.getSessionAuditPage(fixture.manager.agentId, { order: 'desc', limit: 1 })
+    const older = await service.getSessionAuditPage(fixture.manager.agentId, { order: 'desc', limit: 1, cursor: newest.nextCursor })
+    expect(newest.items.map((item) => item.wrapperId)).toEqual(['visible-after'])
+    expect(older.items.map((item) => item.wrapperId)).toEqual(['visible-before'])
+    expect(older.page).toMatchObject({ scannedLines: 1, returnedItems: 1, scanLimited: false })
+    expect(older.page.startOffset).toBe(older.items[0]?.nextByteOffset)
+    expect(older.page.endOffset).toBe(older.items[0]?.byteOffset)
+
+    const exposed = JSON.stringify({ second, older })
+    expect(exposed).not.toContain('retired-sensitive')
+    expect(exposed).not.toContain('retired-chat')
+    expect(exposed).not.toContain('telegram')
+    expect(exposed).not.toContain('retired-0')
+  })
+
+  it('omits oversized retired rows from pages and detail across bounded scans', async () => {
+    const fixture = await createFixture()
+    const visibleBefore = conversationRow('visible-before', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'visible before', timestamp: now, source: 'user_input' })
+    const oversized = conversationRow('retired-oversized', {
+      type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: `retired-sensitive-${'x'.repeat(4 * 1024 * 1024 + 256)}`, timestamp: now, source: 'user_input', sourceContext: { channel: 'telegram', channelId: 'retired-sensitive-chat' },
+    })
+    const visibleAfter = conversationRow('visible-after', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'visible after', timestamp: now, source: 'user_input' })
+    await writeSessionLines(fixture.dataDir, fixture.manager, [visibleBefore, oversized, visibleAfter])
+    const hiddenOffset = Buffer.byteLength(`${visibleBefore}\n`, 'utf8')
+
+    const service = new SessionAuditService(fixture.host)
+    const ascending = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const descending = await service.getSessionAuditPage(fixture.manager.agentId, { order: 'desc', limit: 10 })
+
+    expect(ascending.items.map((item) => item.wrapperId)).toEqual(['visible-before', 'visible-after'])
+    expect(descending.items.map((item) => item.wrapperId)).toEqual(['visible-after', 'visible-before'])
+    expect(ascending.page).toMatchObject({ scannedLines: 2, returnedItems: 2, scanLimited: false })
+    expect(descending.page).toMatchObject({ scannedLines: 2, returnedItems: 2, scanLimited: false })
+    for (const page of [ascending, descending]) {
+      const exposed = JSON.stringify(page)
+      expect(exposed).not.toContain('retired-oversized')
+      expect(exposed).not.toContain('retired-sensitive')
+      expect(exposed).not.toContain('payload_truncated')
+      expect(exposed).not.toContain('Oversized JSONL row')
+      expect(exposed).not.toContain('telegram')
+    }
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, { byteOffset: hiddenOffset }))
+      .rejects.toMatchObject({ statusCode: 404 })
+  })
+
   it('applies category and type filters while advancing bounded pagination', async () => {
     const fixture = await createFixture()
     await writeSessionLines(fixture.dataDir, fixture.manager, [

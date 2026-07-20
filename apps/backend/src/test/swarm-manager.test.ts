@@ -1808,7 +1808,7 @@ describe('SwarmManager', () => {
     expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual(['Duplicate direct final'])
   })
 
-  it('includes full sourceContext annotation when forwarding telegram user messages to manager runtime', async () => {
+  it('retains legacy source metadata internally while failing closed for output routing', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1826,7 +1826,7 @@ describe('SwarmManager', () => {
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"telegram","channelId":"123456","userId":"456789","threadTs":"173.456","channelType":"group","teamId":"T789"}\n[assistantOutputTarget] {"kind":"external_channel"}\n\nreply in telegram thread',
+      '[sourceContext] {"channel":"telegram","channelId":"123456","userId":"456789","threadTs":"173.456","channelType":"group","teamId":"T789"}\n[assistantOutputTarget] {"mode":"internal_only"}\n\nreply in telegram thread',
     )
   })
 
@@ -1857,7 +1857,7 @@ describe('SwarmManager', () => {
     }
   })
 
-  it('uses explicit speak_to_user targets without inferred fallback behavior', async () => {
+  it('uses explicit web speak_to_user targets without inferred fallback behavior', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1872,10 +1872,8 @@ describe('SwarmManager', () => {
     })
 
     await manager.publishToUser('manager', 'ack from manager', 'speak_to_user', {
-      channel: 'telegram',
-      channelId: '999000',
+      channel: 'web',
       userId: '000111',
-      threadTs: '999.000',
     })
 
     const history = manager.getConversationHistory('manager')
@@ -1886,15 +1884,19 @@ describe('SwarmManager', () => {
     expect(assistantEvent).toBeDefined()
     if (assistantEvent?.type === 'conversation_message') {
       expect(assistantEvent.sourceContext).toEqual({
-        channel: 'telegram',
-        channelId: '999000',
+        channel: 'web',
+        channelId: undefined,
         userId: '000111',
-        threadTs: '999.000',
+        messageId: undefined,
+        threadTs: undefined,
+        integrationProfileId: undefined,
+        channelType: undefined,
+        teamId: undefined,
       })
     }
   })
 
-  it('requires channelId for explicit telegram speak_to_user targets', async () => {
+  it('rejects explicit retired-channel speak_to_user targets', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1903,9 +1905,7 @@ describe('SwarmManager', () => {
       manager.publishToUser('manager', 'ack from manager', 'speak_to_user', {
         channel: 'telegram',
       }),
-    ).rejects.toThrow(
-      'speak_to_user target.channelId is required when target.channel is "telegram"',
-    )
+    ).rejects.toThrow('speak_to_user only supports web delivery')
   })
 
   it('falls back to web routing when no explicit target context exists', async () => {

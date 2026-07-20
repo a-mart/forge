@@ -146,10 +146,9 @@ describe("MessageRouter", () => {
         reasonCode: "route:peer_agent",
       },
       {
-        name: "telegram source routes to telegram",
+        name: "retired source fails closed",
         input: { sourceContext: { channel: "telegram", channelId: "t1" } },
-        reasonCode: "route:telegram",
-        channel: "telegram",
+        reasonCode: "route:retired_external_channel",
       },
       {
         name: "cli source routes to cli",

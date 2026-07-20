@@ -32,7 +32,6 @@ const BASE_CONFIG: SwarmConfig = {
     sharedAuthDir: "/repo/data/shared/config/auth",
     sharedAuthFile: "/repo/data/shared/config/auth/auth.json",
     sharedSecretsFile: "/repo/data/shared/config/secrets.json",
-    sharedIntegrationsDir: "/repo/data/shared/config/integrations",
     sessionsDir: "/repo/data/sessions",
     memoryDir: "/repo/data/memory",
     authDir: "/repo/data/auth",
@@ -175,7 +174,6 @@ async function loadRegisteredSignals(
       listAgents(): [] {
         return [];
       }
-      setIntegrationContextProvider(): void {}
     }
   }));
 
@@ -188,20 +186,6 @@ async function loadRegisteredSignals(
 
   vi.doMock("../scheduler/schedule-storage.js", () => ({
     getScheduleFilePath: () => "/repo/data/schedules/manager.json"
-  }));
-
-  vi.doMock("../integrations/registry.js", () => ({
-    IntegrationRegistryService: class {
-      async start(): Promise<void> {}
-      async stop(): Promise<void> {}
-      getIntegrationContext(): null {
-        return null;
-      }
-    }
-  }));
-
-  vi.doMock("../integrations/integration-context.js", () => ({
-    formatIntegrationContext: () => ""
   }));
 
   vi.doMock("../versioning/embedded-git-versioning-service.js", () => ({

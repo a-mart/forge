@@ -197,7 +197,7 @@ function parseSubmitFeedbackBody(
   value: FeedbackSubmitValue;
   reasonCodes: string[];
   comment: string;
-  channel: FeedbackEvent["channel"];
+  channel: "web";
   clearKind?: "vote" | "comment";
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -352,9 +352,9 @@ function parseClearKindValue(value: unknown, fieldName: string): "vote" | "comme
   return value;
 }
 
-function parseChannelValue(value: unknown, fieldName: string): FeedbackEvent["channel"] {
-  if (value !== "web" && value !== "telegram") {
-    throw new Error(`${fieldName} must be one of: web, telegram.`);
+function parseChannelValue(value: unknown, fieldName: string): "web" {
+  if (value !== "web") {
+    throw new Error(`${fieldName} must be web.`);
   }
 
   return value;

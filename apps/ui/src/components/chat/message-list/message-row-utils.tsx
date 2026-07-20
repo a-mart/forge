@@ -45,24 +45,8 @@ function formatSourceBadge(sourceContext?: MessageSourceContext): string | null 
     return 'CLI'
   }
 
-  // Telegram — channel-specific labels
-  const isDm = sourceContext.channelType === 'dm'
-
-  let label = 'Telegram'
-
-  if (isDm) {
-    label = sourceContext.userId
-      ? `Telegram DM ${sourceContext.userId}`
-      : 'Telegram DM'
-  } else if (sourceContext.channelId) {
-    label = `Telegram ${sourceContext.channelId}`
-  }
-
-  if (sourceContext.threadTs) {
-    return `${label} → thread`
-  }
-
-  return label
+  // Retired/unknown persisted sources are filtered before rendering.
+  return null
 }
 
 export function SourceBadge({
@@ -83,11 +67,9 @@ export function SourceBadge({
         'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none',
         isUser
           ? 'border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground/90'
-          : sourceContext.channel === 'telegram'
-            ? 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-            : sourceContext.channel === 'cli'
-              ? 'border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300'
-              : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+          : sourceContext.channel === 'cli'
+            ? 'border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+            : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
       )}
     >
       [{label}]

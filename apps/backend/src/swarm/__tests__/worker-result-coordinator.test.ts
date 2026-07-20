@@ -81,6 +81,28 @@ describe("WorkerResultCoordinator", () => {
     );
   });
 
+  it("does not read or log recovered retired-channel result content", async () => {
+    const worker = assignedWorker();
+    worker.workerParentContext!.outputTarget = {
+      kind: "external_channel",
+      sourceContext: { channel: "telegram", channelId: "retired-sensitive-chat" },
+    };
+    const getConversationHistory = vi.fn(() => [message("retired-sensitive-result-content")]);
+    const deliverWorkerResult = vi.fn(async () => ({}));
+    const logDebug = vi.fn();
+    const coordinator = new WorkerResultCoordinator({
+      getConversationHistory,
+      deliverWorkerResult,
+      logDebug,
+    });
+
+    await expect(coordinator.deliverCompletedWorker(worker)).resolves.toBe("sent");
+
+    expect(getConversationHistory).not.toHaveBeenCalled();
+    expect(deliverWorkerResult).toHaveBeenCalledWith("worker-1", "", "assignment-1");
+    expect(logDebug).not.toHaveBeenCalled();
+  });
+
   it("marks terminal system errors blocked", () => {
     expect(buildWorkerResult("worker-1", [
       message("Worker failed after a terminated process.", { role: "system" }),

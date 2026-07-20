@@ -45,7 +45,6 @@ import type {
   DirectoryPickedEvent,
   DirectoryValidatedEvent,
 } from './directory-events.js'
-import type { TelegramStatusEvent } from './integration-events.js'
 import type {
   ManagerCreatedEvent,
   ManagerCwdUpdatedEvent,
@@ -133,7 +132,6 @@ export * from './project-agent-events.js'
 export * from './profile-events.js'
 export * from './directory-events.js'
 export * from './notification-events.js'
-export * from './integration-events.js'
 export * from './config-events.js'
 export * from './plans.js'
 export * from './goals.js'
@@ -224,7 +222,6 @@ export type ServerEvent =
   | DirectoryValidatedEvent
   | DirectoryCreatedEvent
   | DirectoryPickedEvent
-  | TelegramStatusEvent
   | PromptChangedEvent
   | CortexPromptSurfaceChangedEvent
   | TerminalCreatedEvent

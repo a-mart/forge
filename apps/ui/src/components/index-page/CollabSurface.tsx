@@ -293,7 +293,6 @@ function CollabSettingsContent({
       wsUrl={wsUrl}
       managers={managers}
       profiles={profiles}
-      telegramStatus={null}
       promptChangeKey={0}
       specialistChangeKey={0}
       modelConfigChangeKey={0}

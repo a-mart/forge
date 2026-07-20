@@ -951,10 +951,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
 
   // Skill, authentication, broker, and credential settings.
 
-  setIntegrationContextProvider(provider?: (profileId: string) => string): void {
-    this.services.configuration.setIntegrationContextProvider(provider);
-  }
-
   listSettingsEnv(): Promise<SkillEnvRequirement[]> {
     return this.services.configuration.listSettingsEnv();
   }

@@ -20,7 +20,6 @@ export interface FeatureAdoptionData {
   terminalsActive: number
   pinnedMessagesUsed: number
   scheduledTasksCount: number
-  telegramConfigured: boolean
   forkedSessionsCount: number
   projectAgentsCount: number
   projectAgentsPersistedCount: number
@@ -44,7 +43,6 @@ export function emptyFeatureAdoption(): FeatureAdoptionData {
     terminalsActive: 0,
     pinnedMessagesUsed: 0,
     scheduledTasksCount: 0,
-    telegramConfigured: false,
     forkedSessionsCount: 0,
     projectAgentsCount: 0,
     projectAgentsPersistedCount: 0,
@@ -172,7 +170,8 @@ export function assembleFullPayload(
     terminals_active: features.terminalsActive,
     pinned_messages_used: features.pinnedMessagesUsed,
     scheduled_tasks_count: features.scheduledTasksCount,
-    telegram_configured: features.telegramConfigured,
+    // Deprecated schema-v1 compatibility field. The retired integration is never scanned.
+    telegram_configured: false,
     forked_sessions_count: features.forkedSessionsCount,
     project_agents_count: features.projectAgentsCount,
     project_agents_persisted_count: features.projectAgentsPersistedCount,

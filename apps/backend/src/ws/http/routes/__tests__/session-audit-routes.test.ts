@@ -118,6 +118,51 @@ describe('session audit routes', () => {
     }
   })
 
+  it('omits retired-source rows from audit pages and direct detail lookup', async () => {
+    const fixture = await createFixture()
+    const header = sessionHeader()
+    const hiddenText = 'historical content must stay hidden'
+    const hidden = conversationRow('retired-row', {
+      type: 'conversation_message',
+      agentId: fixture.manager.agentId,
+      role: 'user',
+      text: hiddenText,
+      timestamp: now,
+      source: 'user_input',
+      sourceContext: { channel: 'telegram', channelId: 'sensitive-chat' },
+    })
+    const visible = conversationRow('visible-row', {
+      type: 'conversation_message',
+      agentId: fixture.manager.agentId,
+      role: 'user',
+      text: 'visible web content',
+      timestamp: now,
+      source: 'user_input',
+      sourceContext: { channel: 'web' },
+    })
+    await writeSessionLines(fixture.dataDir, fixture.manager, [header, hidden, visible])
+    const server = await createRouteServer(createSessionAuditRoutes({ swarmManager: fixture.host }))
+
+    try {
+      const pageResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?limit=10`)
+      const pageText = await pageResponse.text()
+      expect(pageResponse.status).toBe(200)
+      expect(pageText).toContain('visible-row')
+      expect(pageText).not.toContain('retired-row')
+      expect(pageText).not.toContain(hiddenText)
+      expect(pageText).not.toContain('sensitive-chat')
+
+      const hiddenOffset = Buffer.byteLength(`${header}\n`, 'utf8')
+      const detailResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit/entry?byteOffset=${hiddenOffset}`)
+      expect(detailResponse.status).toBe(404)
+      const detailText = await detailResponse.text()
+      expect(detailText).not.toContain(hiddenText)
+      expect(detailText).not.toContain('sensitive-chat')
+    } finally {
+      await server.close()
+    }
+  })
+
   it('serves full audit entry detail by byte offset', async () => {
     const fixture = await createFixture()
     const payload = conversationRow('detail-row', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'full detail text', timestamp: now, source: 'user_input' })

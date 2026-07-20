@@ -195,9 +195,6 @@ export default tseslint.config(
       // lands warn-level without breaking `--max-warnings 0`; the migration
       // itself is the separate Group 3.3 follow-up. Remove an entry from this
       // list once its file adopts the shared helper.
-      'apps/backend/src/integrations/base-config-persistence.ts',
-      'apps/backend/src/integrations/telegram/telegram-config.ts',
-      'apps/backend/src/integrations/telegram/telegram-topic-store.ts',
       'apps/backend/src/observability/observability-settings.ts',
       'apps/backend/src/stats/provider-usage-history.ts',
       'apps/backend/src/swarm/agents/specialists/specialist-registry.ts',

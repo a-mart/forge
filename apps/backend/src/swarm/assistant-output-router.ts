@@ -121,7 +121,7 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
     }
 
     if (sourceContext.channel === "telegram") {
-      return { kind: "external_channel", sourceContext };
+      return { kind: "internal_only", reason: "retired_external_channel" };
     }
 
     return {
@@ -148,7 +148,27 @@ export class AssistantOutputRouter implements ManagerOutputTurnPort {
     };
   }
 
+  isRecoveredRetiredWorkerResult(parentContext: WorkerParentContext): boolean {
+    const target = parentContext.outputTarget;
+    return target.kind === "external_channel" && target.sourceContext.channel === "telegram";
+  }
+
+  emitRecoveredRetiredWorkerResultDiagnostic(targetAgentId: string): void {
+    this.options.emitConversationMessage({
+      type: "conversation_message",
+      agentId: targetAgentId,
+      role: "system",
+      text: "retired_external_channel",
+      timestamp: this.options.now(),
+      source: "worker_report",
+      excludeFromModelContext: true,
+    });
+  }
+
   prepareWorkerResult(input: WorkerResultOutputInput): PreparedAgentMessageOutput {
+    if (this.isRecoveredRetiredWorkerResult(input.parentContext)) {
+      throw new Error("Recovered retired-channel worker results must be discarded before runtime preparation.");
+    }
     const parentTarget = input.parentContext.outputTarget;
     const target = isMissingWorkerParentTarget(parentTarget)
       ? this.resolveWorkerParentOutputTarget(input.target.agentId)

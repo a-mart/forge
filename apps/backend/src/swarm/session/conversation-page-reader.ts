@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
-import type {
-  ConversationHistoryPageCompleteness,
+import {
+  isRetiredMessageSource,
+  type ConversationHistoryPageCompleteness,
   ConversationHistoryPageMetadata,
   ConversationHistoryPageSource,
 } from "@forge/protocol";
@@ -169,7 +170,7 @@ export function readConversationHistoryPage(
       source,
       sourceRevision,
       pageBytes: parsed.pageBytes,
-      scanBytes: parsed.scanBytes,
+      scanBytes: Math.min(parsed.scanBytes, MAX_CONVERSATION_PAGE_SCAN_BYTES),
     },
   };
 }
@@ -198,11 +199,17 @@ function readLinesBackward(options: {
   const activitySummaryIds = new Set<string>();
   let pageBytes = 0;
   let scanBytes = 0;
+  let boundedScanBytes = 0;
   let buffer = Buffer.alloc(0);
   let bufferStart = options.startOffset;
   let nextOffset = options.startOffset;
   let partialScan = false;
   let continuationRowEnd = options.continuationRowEnd;
+  let oversizedRowClassifier = createRetiredSourceClassifier();
+  // A first scan budget establishes the public continuation boundary. One
+  // additional bounded scan may classify fields at the opposite end of the
+  // row without changing visible oversized-row paging behavior.
+  let oversizedClassificationResumeOffset: number | undefined;
   let skipThroughTimelineEntryId = options.skipThroughTimelineEntryId;
   const fileDescriptor = openSync(options.file, "r");
 
@@ -218,6 +225,7 @@ function readLinesBackward(options: {
       buffer = Buffer.concat([actualChunk, buffer]);
       bufferStart = readStart;
       scanBytes += bytesRead;
+      boundedScanBytes += bytesRead;
 
       let right = buffer.length;
       if (right > 0 && buffer[right - 1] === 0x0a) right -= 1;
@@ -235,12 +243,34 @@ function readLinesBackward(options: {
         nextOffset = consumedOffset;
 
         if (line.length === 0) continue;
-        const entry = continuationRowEnd !== undefined
-          ? buildOversizedRowPlaceholder(options.agentId, lineStartOffset, continuationRowEnd)
+        const crossedOversizedRowEnd = continuationRowEnd;
+        if (crossedOversizedRowEnd !== undefined) {
+          oversizedRowClassifier.scanPreceding(line);
+        }
+        const retiredOversizedRow =
+          crossedOversizedRowEnd !== undefined && oversizedRowClassifier.isRetired();
+        const entry = crossedOversizedRowEnd !== undefined
+          ? retiredOversizedRow
+            ? undefined
+            : buildOversizedRowPlaceholder(options.agentId, lineStartOffset, crossedOversizedRowEnd)
           : parseSourceLine(line.toString("utf8"), options.source, lineStartOffset);
-        if (continuationRowEnd !== undefined) {
+        if (crossedOversizedRowEnd !== undefined) {
           continuationRowEnd = undefined;
+          oversizedRowClassifier = createRetiredSourceClassifier();
           partialScan = true;
+          if (oversizedClassificationResumeOffset !== undefined && !retiredOversizedRow) {
+            return {
+              messages,
+              nextOffset: oversizedClassificationResumeOffset,
+              pageBytes,
+              scanBytes,
+              partialScan,
+              continuationRowEnd: crossedOversizedRowEnd,
+              ...(skipThroughTimelineEntryId ? { skipThroughTimelineEntryId } : {}),
+              seamBoundaryMissing: false,
+            };
+          }
+          oversizedClassificationResumeOffset = undefined;
         }
         if (!entry) continue;
 
@@ -254,6 +284,11 @@ function readLinesBackward(options: {
         const projectedEntry = options.projectForWire === false
           ? entry
           : projectConversationEntryForBuilderWire(entry);
+        if (
+          options.projectForWire !== false &&
+          projectedEntry.type === "conversation_message" &&
+          isRetiredMessageSource(projectedEntry.sourceContext)
+        ) continue;
         if (options.isVisible && !options.isVisible(projectedEntry)) continue;
         if (
           projectedEntry.type === "activity_summary" &&
@@ -283,7 +318,7 @@ function readLinesBackward(options: {
       buffer = buffer.subarray(0, right);
       nextOffset = bufferStart + buffer.length;
 
-      if (scanBytes >= MAX_CONVERSATION_PAGE_SCAN_BYTES && messages.length < options.limit) {
+      if (boundedScanBytes >= MAX_CONVERSATION_PAGE_SCAN_BYTES && messages.length < options.limit) {
         if (buffer.length > 0) {
           const partialRowEnd = bufferStart + buffer.length;
           const completedRowProgress = options.startOffset - partialRowEnd;
@@ -294,11 +329,20 @@ function readLinesBackward(options: {
             // oversized history item.
             nextOffset = partialRowEnd;
           } else {
-            // No newline was crossed for a full scan budget. Move across the
-            // genuinely oversized row in bounded segments and emit one
-            // placeholder when its beginning is reached.
+            // No newline was crossed for a full scan budget. Discard the
+            // buffered payload and use one additional bounded scan to classify
+            // source fields that may precede it. A visible row still resumes at
+            // the original boundary and emits its placeholder on the next page.
             continuationRowEnd ??= partialRowEnd;
+            oversizedRowClassifier.scanPreceding(buffer);
             nextOffset = bufferStart;
+            if (oversizedClassificationResumeOffset === undefined) {
+              oversizedClassificationResumeOffset = bufferStart;
+              buffer = Buffer.alloc(0);
+              boundedScanBytes = 0;
+              continue;
+            }
+            nextOffset = oversizedClassificationResumeOffset;
           }
         } else {
           nextOffset = bufferStart;
@@ -310,8 +354,13 @@ function readLinesBackward(options: {
 
     if (bufferStart === 0 && buffer.length > 0 && messages.length < options.limit) {
       const oldestRowEndOffset = nextOffset;
+      if (continuationRowEnd !== undefined) {
+        oversizedRowClassifier.scanPreceding(buffer);
+      }
       const entry = continuationRowEnd !== undefined
-        ? buildOversizedRowPlaceholder(options.agentId, 0, continuationRowEnd)
+        ? oversizedRowClassifier.isRetired()
+          ? undefined
+          : buildOversizedRowPlaceholder(options.agentId, 0, continuationRowEnd)
         : parseSourceLine(buffer.toString("utf8"), options.source, 0);
       continuationRowEnd = undefined;
       if (entry) {
@@ -324,7 +373,11 @@ function readLinesBackward(options: {
         const projectedEntry = options.projectForWire === false
           ? entry
           : projectConversationEntryForBuilderWire(entry);
-        if (options.isVisible && !options.isVisible(projectedEntry)) {
+        const retiredSourceHidden =
+          options.projectForWire !== false &&
+          projectedEntry.type === "conversation_message" &&
+          isRetiredMessageSource(projectedEntry.sourceContext);
+        if (retiredSourceHidden || (options.isVisible && !options.isVisible(projectedEntry))) {
           nextOffset = 0;
           return {
             messages,
@@ -384,6 +437,26 @@ function readLinesBackward(options: {
   } finally {
     closeSync(fileDescriptor);
   }
+}
+
+function createRetiredSourceClassifier(): {
+  scanPreceding(segment: Buffer): void;
+  isRetired(): boolean;
+} {
+  let sawConversationEntry = false;
+  let sawRetiredSourceContext = false;
+  let followingHead = "";
+  return {
+    scanPreceding(segment) {
+      const raw = segment.toString("utf8") + followingHead;
+      sawConversationEntry ||=
+        /(?:^|[,{])\s*"type"\s*:\s*"conversation_message"/.test(raw);
+      sawRetiredSourceContext ||=
+        /(?:^|[,{])\s*"sourceContext"\s*:\s*\{[^{}]{0,2048}"channel"\s*:\s*"telegram"/.test(raw);
+      followingHead = raw.slice(0, 4096);
+    },
+    isRetired: () => sawConversationEntry && sawRetiredSourceContext,
+  };
 }
 
 function buildOversizedRowPlaceholder(

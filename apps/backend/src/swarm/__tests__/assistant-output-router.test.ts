@@ -52,6 +52,7 @@ function createHarness() {
     profileType: "user",
   };
   const activations: Array<Record<string, unknown>> = [];
+  const diagnostics: Array<Record<string, unknown>> = [];
   const clears: string[] = [];
   const router = new AssistantOutputRouter({
     descriptors,
@@ -63,12 +64,12 @@ function createHarness() {
       clearManagerAssistantOutputTurn: (agentId) => clears.push(agentId),
     },
     markTurnActivatedExternally: () => undefined,
-    emitConversationMessage: () => undefined,
+    emitConversationMessage: (event) => diagnostics.push(event),
     markSessionActivity: () => undefined,
     now: () => "2026-07-16T01:00:00.000Z",
     logDebug: () => undefined,
   });
-  return { router, manager, worker, profile, activations, clears };
+  return { router, manager, worker, profile, activations, diagnostics, clears };
 }
 
 function workerParent(outputTarget: AssistantOutputTarget = webTarget): WorkerParentContext {
@@ -92,13 +93,48 @@ describe("AssistantOutputRouter", () => {
       sourceContext: { channel: "web", messageId: "m1" },
     });
     expect(router.resolveTargetForUserInput(manager, { channel: "telegram", channelId: "t1" })).toEqual({
-      kind: "external_channel",
-      sourceContext: { channel: "telegram", channelId: "t1" },
+      kind: "internal_only",
+      reason: "retired_external_channel",
     });
     expect(router.resolveTargetForUserInput(manager, { channel: "cli" })).toEqual({
       kind: "explicit_tool_required",
       reason: "unsupported_direct_cli_source",
     });
+  });
+
+  it("fails closed for a recovered retired target and emits only a sanitized diagnostic", () => {
+    const { router, manager, worker, diagnostics } = createHarness();
+    const parentContext = workerParent({
+      kind: "external_channel",
+      sourceContext: {
+        channel: "telegram",
+        channelId: "sensitive-chat",
+        userId: "sensitive-user",
+        threadTs: "sensitive-thread",
+        integrationProfileId: "sensitive-profile",
+      },
+    });
+    expect(router.isRecoveredRetiredWorkerResult(parentContext)).toBe(true);
+    expect(() => router.prepareWorkerResult({
+      worker,
+      target: manager as AgentDescriptor & { role: "manager" },
+      parentContext,
+      modelMessage: "sensitive response text",
+    })).toThrow("must be discarded before runtime preparation");
+    router.emitRecoveredRetiredWorkerResultDiagnostic(manager.agentId);
+    expect(diagnostics).toEqual([{
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "system",
+      text: "retired_external_channel",
+      timestamp: "2026-07-16T01:00:00.000Z",
+      source: "worker_report",
+      excludeFromModelContext: true,
+    }]);
+    const serialized = JSON.stringify(diagnostics);
+    for (const sensitive of ["sensitive response text", "sensitive-chat", "sensitive-user", "sensitive-thread", "sensitive-profile", "telegram"]) {
+      expect(serialized).not.toContain(sensitive);
+    }
   });
 
   it("uses the persisted parent context when it names a concrete route", () => {

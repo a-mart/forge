@@ -1,4 +1,5 @@
 import type { ConversationEntry } from './conversation-events.js'
+import { isRetiredMessageSource } from './messaging.js'
 import {
   collectKnownWorkerIds,
   inferManagerAliasIds,
@@ -45,13 +46,16 @@ export function filterVisibleBuilderTimeline(
 export function createBuilderTimelineVisibilityPredicate(
   context: BuilderTimelineProjectionContext,
 ): (entry: ConversationEntry) => boolean {
+  const excludesRetiredSource = (entry: ConversationEntry): boolean =>
+    entry.type !== 'conversation_message' || !isRetiredMessageSource(entry.sourceContext)
+
   if (context.channelView === 'all') {
-    if (context.activeAgentRole !== 'manager' || !context.activeAgentId) return () => true
+    if (context.activeAgentRole !== 'manager' || !context.activeAgentId) return excludesRetiredSource
 
     const activeManagerId = context.activeAgentId
     const knownWorkerIds = collectKnownWorkerIds(context.agents, activeManagerId)
     const managerAliasIds = inferManagerAliasIds(context.history, activeManagerId, knownWorkerIds)
-    return (entry) => isVisibleInManagerAllView(entry, {
+    return (entry) => excludesRetiredSource(entry) && isVisibleInManagerAllView(entry, {
       activeManagerId,
       managerAliasIds,
       knownWorkerIds,
@@ -59,7 +63,7 @@ export function createBuilderTimelineVisibilityPredicate(
   }
 
   const agentsById = new Map(context.agents.map((agent) => [agent.agentId, agent]))
-  return (entry) => isVisibleInBuilderWebTimeline(entry, context, agentsById)
+  return (entry) => excludesRetiredSource(entry) && isVisibleInBuilderWebTimeline(entry, context, agentsById)
 }
 
 function isVisibleInBuilderWebTimeline(

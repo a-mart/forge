@@ -4,7 +4,6 @@
 
 import type {
   SettingsAuthOAuthFlowState,
-  TelegramSettingsConfig,
   SkillInfo,
 } from './settings-types'
 import type {
@@ -12,7 +11,6 @@ import type {
   ChromeCdpPreviewTab,
   ChromeCdpProfile,
   ChromeCdpStatus,
-  TelegramStatusEvent,
   SettingsAuthLoginAuthUrlEvent,
   SettingsAuthLoginCompleteEvent,
   SettingsAuthLoginDeviceCodeEvent,
@@ -37,7 +35,6 @@ import type {
   CredentialPoolStrategy,
   SkillInventoryResponse,
 } from '@forge/protocol'
-import { SHARED_INTEGRATION_MANAGER_ID } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
@@ -83,8 +80,6 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
 }
 
 export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai', 'openrouter', 'cursor-sdk']
-
-export { SHARED_INTEGRATION_MANAGER_ID }
 
 export const DEFAULT_SETTINGS_AUTH_OAUTH_FLOW_STATE: SettingsAuthOAuthFlowState = {
   status: 'idle',
@@ -158,19 +153,6 @@ function parseSettingsAuthProvider(value: unknown): SettingsAuthProvider | null 
     readOnly: typeof provider.readOnly === 'boolean' ? provider.readOnly : undefined,
     statusDetail: typeof provider.statusDetail === 'string' ? provider.statusDetail : undefined,
   }
-}
-
-function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConfig {
-  if (!value || typeof value !== 'object') return false
-  const config = value as Partial<TelegramSettingsConfig>
-  const hasValidAllowedUserIds = config.allowedUserIds === undefined ||
-    (Array.isArray(config.allowedUserIds) && config.allowedUserIds.every((e) => typeof e === 'string'))
-  return (
-    typeof config.profileId === 'string' && typeof config.enabled === 'boolean' &&
-    config.mode === 'polling' && typeof config.hasBotToken === 'boolean' &&
-    hasValidAllowedUserIds && Boolean(config.polling) &&
-    Boolean(config.delivery) && Boolean(config.attachments)
-  )
 }
 
 /* ------------------------------------------------------------------ */
@@ -465,57 +447,6 @@ export async function submitSettingsAuthOAuthPrompt(client: SettingsApiClient, p
     body: JSON.stringify({ value, ...(requestId ? { requestId } : {}) }),
   })
   if (!response.ok) throw new Error(await client.readApiError(response))
-}
-
-/* ------------------------------------------------------------------ */
-/*  Integrations API                                                  */
-/* ------------------------------------------------------------------ */
-
-function resolveManagerIntegrationPath(managerId: string, provider: 'telegram', suffix = ''): string {
-  const normalizedManagerId = managerId.trim()
-  if (!normalizedManagerId) {
-    throw new Error('managerId is required.')
-  }
-  return `/api/managers/${encodeURIComponent(normalizedManagerId)}/integrations/${provider}${suffix}`
-}
-
-/* ------------------------------------------------------------------ */
-/*  Telegram API                                                      */
-/* ------------------------------------------------------------------ */
-
-export async function fetchTelegramSettings(client: SettingsApiClient, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const path = resolveManagerIntegrationPath(managerId, 'telegram')
-  const response = await client.fetch(path)
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: TelegramStatusEvent }
-  if (!isTelegramSettingsConfig(payload.config)) throw new Error('Invalid Telegram settings response from backend.')
-  return { config: payload.config, status: payload.status ?? null }
-}
-
-export async function updateTelegramSettings(client: SettingsApiClient, managerId: string, patch: Record<string, unknown>): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const path = resolveManagerIntegrationPath(managerId, 'telegram')
-  const response = await client.fetch(path, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: TelegramStatusEvent }
-  if (!isTelegramSettingsConfig(payload.config)) throw new Error('Invalid Telegram settings response from backend.')
-  return { config: payload.config, status: payload.status ?? null }
-}
-
-export async function disableTelegramSettings(client: SettingsApiClient, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const path = resolveManagerIntegrationPath(managerId, 'telegram')
-  const response = await client.fetch(path, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: TelegramStatusEvent }
-  if (!isTelegramSettingsConfig(payload.config)) throw new Error('Invalid Telegram settings response from backend.')
-  return { config: payload.config, status: payload.status ?? null }
-}
-
-export async function testTelegramConnection(client: SettingsApiClient, managerId: string, patch?: Record<string, unknown>): Promise<{ botId?: string; botUsername?: string; botDisplayName?: string }> {
-  const path = resolveManagerIntegrationPath(managerId, 'telegram', '/test')
-  const response = await client.fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch ?? {}) })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { result?: { botId?: string; botUsername?: string; botDisplayName?: string } }
-  return payload.result ?? {}
 }
 
 /* ------------------------------------------------------------------ */

@@ -21,7 +21,7 @@ export type MessageRouteReasonCode =
   | "render:user_web"
   | "render:scheduled_web"
   | "render:worker_result_closeout"
-  | "route:telegram"
+  | "route:retired_external_channel"
   | "route:cli"
   | "route:collab"
   | "route:external_channel"
@@ -64,7 +64,7 @@ export interface MessageRouteProvenance {
 export interface MessageRouteDecision {
   visible: boolean;
   decision: "render" | "route" | "drop";
-  channel?: "web" | "telegram" | "cli" | "collab";
+  channel?: "web" | "cli" | "collab";
   reasonCode: MessageRouteReasonCode;
   targetKind: MessageRouteTargetKind;
 }
@@ -139,12 +139,14 @@ export class MessageRouter {
 
     if (targetKind === "external_channel") {
       const channel = input.sourceContext?.channel;
-      return route(targetKind, channel === "telegram" ? "route:telegram" : "route:external_channel", channel);
+      return channel === "telegram"
+        ? route(targetKind, "route:retired_external_channel")
+        : route(targetKind, "route:external_channel", channel);
     }
 
     const channel = input.sourceContext?.channel;
     if (channel === "telegram") {
-      return route(targetKind, "route:telegram", "telegram");
+      return route(targetKind, "route:retired_external_channel");
     }
 
     if (channel === "cli") {

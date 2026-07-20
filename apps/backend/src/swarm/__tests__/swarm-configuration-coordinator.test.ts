@@ -52,7 +52,6 @@ async function makeConfig(): Promise<SwarmConfig> {
       sharedAuthDir: join(dataDir, "shared", "config", "auth"),
       sharedAuthFile: join(dataDir, "shared", "config", "auth", "auth.json"),
       sharedSecretsFile: join(dataDir, "shared", "config", "secrets.json"),
-      sharedIntegrationsDir: join(dataDir, "shared", "config", "integrations"),
       sessionsDir: join(dataDir, "sessions"),
       memoryDir: join(dataDir, "memory"),
       authDir: join(dataDir, "auth"),

@@ -23,7 +23,6 @@ import { CollaborationChannelService } from "../collaboration/channel-service.js
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import type { CollaborationReadinessRequestService } from "../collaboration/readiness-service.js";
 import { CollaborationUserService } from "../collaboration/user-service.js";
-import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
@@ -75,7 +74,6 @@ export class WsHandler {
 
   constructor(options: {
     swarmManager: SwarmManager;
-    integrationRegistry: IntegrationRegistryService | null;
     mobilePushService: MobilePushService;
     allowNonManagerSubscriptions: boolean;
     terminalService?: TerminalService | null;
@@ -101,7 +99,6 @@ export class WsHandler {
 
     this.subscriptionManager = new WsSubscriptions({
       swarmManager: this.swarmManager,
-      integrationRegistry: options.integrationRegistry,
       allowNonManagerSubscriptions: this.allowNonManagerSubscriptions,
       terminalService,
       listTerminalsForSession: options.listTerminalsForSession,

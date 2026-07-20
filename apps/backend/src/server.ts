@@ -1,6 +1,3 @@
-import { formatIntegrationContext } from "./integrations/integration-context.js";
-import { IntegrationRegistryService } from "./integrations/registry.js";
-
 import { createConfig } from "./config.js";
 import { bootstrapCollaborationAdmin } from "./collaboration/auth/admin-bootstrap.js";
 import { clearCollaborationBetterAuthService, getOrCreateCollaborationBetterAuthService } from "./collaboration/auth/better-auth-service.js";
@@ -173,11 +170,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     });
   };
 
-  const integrationRegistry = new IntegrationRegistryService({
-    swarmManager,
-    dataDir: config.paths.dataDir,
-    defaultManagerId: config.managerId,
-  });
   let terminalService: TerminalService | null = null;
   const terminalSettingsService = new TerminalSettingsService({ dataDir: config.paths.dataDir });
   let handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void = () => undefined;
@@ -359,12 +351,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       throw error;
     }
 
-    await integrationRegistry.start();
-    swarmManager.setIntegrationContextProvider((profileId) => {
-      const integrationContext = integrationRegistry.getIntegrationContext(profileId);
-      return formatIntegrationContext(integrationContext);
-    });
-
     const feedbackService = new FeedbackService(config.paths.dataDir, { observability: observabilityService });
 
     const wsServer = new SwarmWebSocketServer({
@@ -372,7 +358,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       host: config.host,
       port: config.port,
       allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-      integrationRegistry,
       terminalService,
       terminalRuntimeConfig,
       terminalSettingsService,
@@ -392,7 +377,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       swarmManager,
       versioningService,
       observabilityService,
-      integrationRegistry,
       wsServer,
       queueSchedulerSync,
       handleAgentsSnapshot,
@@ -422,7 +406,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       }
       await Promise.allSettled([
         queueSchedulerSync(new Set<string>()),
-        integrationRegistry.stop(),
         terminalService?.shutdown(),
         observabilityService.shutdown({ timeoutMs: 3000 }),
         versioningService.stop(),
@@ -443,7 +426,6 @@ class BackendServer implements StartedServer {
   private readonly swarmManager: SwarmManager;
   private readonly versioningService: EmbeddedGitVersioningService;
   private readonly observabilityService: ObservabilityFacade;
-  private readonly integrationRegistry: IntegrationRegistryService;
   private readonly wsServer: SwarmWebSocketServer;
   private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
   private readonly handleAgentsSnapshot: (event: unknown) => void;
@@ -460,7 +442,6 @@ class BackendServer implements StartedServer {
     swarmManager: SwarmManager;
     versioningService: EmbeddedGitVersioningService;
     observabilityService: ObservabilityFacade;
-    integrationRegistry: IntegrationRegistryService;
     wsServer: SwarmWebSocketServer;
     queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
     handleAgentsSnapshot: (event: unknown) => void;
@@ -475,7 +456,6 @@ class BackendServer implements StartedServer {
     this.swarmManager = options.swarmManager;
     this.versioningService = options.versioningService;
     this.observabilityService = options.observabilityService;
-    this.integrationRegistry = options.integrationRegistry;
     this.wsServer = options.wsServer;
     this.queueSchedulerSync = options.queueSchedulerSync;
     this.handleAgentsSnapshot = options.handleAgentsSnapshot;
@@ -527,7 +507,6 @@ class BackendServer implements StartedServer {
 
     await Promise.allSettled([
       this.queueSchedulerSync(new Set<string>()),
-      this.integrationRegistry.stop(),
       this.terminalService?.shutdown(),
       this.observabilityService.shutdown({ timeoutMs: 3000 }),
       this.versioningService.stop(),

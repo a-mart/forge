@@ -221,7 +221,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/terminals/term-1/ticket", expect: { POST: "member" }, killSwitched: true, optional: true },
 
   // --- integrations / prompts (instance prompt registry — admin forever) -----
-  { sample: "/api/managers/mgr-1/integrations/telegram", expect: { GET: "admin", PUT: "admin" }, optional: true },
   { sample: "/api/prompts", expect: { GET: "admin" }, optional: true },
   { sample: "/api/prompts/preview", expect: { POST: "admin" }, optional: true },
   { sample: "/api/prompts/cortex-surfaces", expect: { GET: "admin" }, optional: true },

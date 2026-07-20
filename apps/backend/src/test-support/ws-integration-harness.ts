@@ -2,7 +2,6 @@ import { EventEmitter } from 'node:events'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { AuthStorage, SessionManager, type AuthCredential } from '@earendil-works/pi-coding-agent'
-import { vi } from 'vitest'
 import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { ensureCanonicalAuthFilePath } from '../swarm/auth-storage-paths.js'
 import { getGlobalForgeExtensionsDir } from '../swarm/data-paths.js'
@@ -341,15 +340,6 @@ export async function makeP0HttpRouteTempConfig(options?: { port?: number; manag
     return { ...config, managerId: undefined }
   }
   return config
-}
-
-export function createP0HttpRouteIntegrationRegistryMock() {
-  return Object.assign(new EventEmitter(), {
-    getTelegramSnapshot: vi.fn(async () => ({ config: { enabled: false }, status: { state: 'disabled' } })),
-    updateTelegramConfig: vi.fn(async () => ({ config: { enabled: true }, status: { state: 'connected' } })),
-    disableTelegram: vi.fn(async () => ({ config: { enabled: false }, status: { state: 'disabled' } })),
-    testTelegramConnection: vi.fn(async () => ({ ok: true })),
-  })
 }
 
 export async function parseP0HttpRouteJsonResponse(response: Response): Promise<{ status: number; json: Record<string, unknown> }> {

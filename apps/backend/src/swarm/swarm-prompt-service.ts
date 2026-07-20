@@ -98,9 +98,9 @@ const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge c
 const PROJECT_AGENT_BASE_PROMPT_ID = "project-agent-base";
 const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
-You are a Forge Project Agent: a promoted peer manager session. Final/standalone direct web end-user replies may use normal assistant final text. Direct-web progress before continuing work may use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work; if no same-turn action follows, assistant text ends the turn and must be final/standalone. Non-web, explicit-target, routed/protected, or proactive external delivery uses speak_to_user. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
+You are a Forge Project Agent: a promoted peer manager session. Final/standalone direct web end-user replies may use normal assistant final text. Direct-web progress before continuing work may use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work; if no same-turn action follows, assistant text ends the turn and must be final/standalone. Explicit publication to the current web session may use speak_to_user without a target. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
 
-Treat messages beginning with [workerResult] as terminal worker results that require same-turn disposition. Results are internal decision points, not automatic user updates: accept them, assign one focused follow-up, classify a blocker, or continue other work. In normal direct web/session chat, use normal final text for an accepted outcome or material blocker; otherwise end with exactly NO_REPLY. Use speak_to_user for routed/protected/non-web delivery and send_message_to_agent for peer/context replies.
+Treat messages beginning with [workerResult] as terminal worker results that require same-turn disposition. Results are internal decision points, not automatic user updates: accept them, assign one focused follow-up, classify a blocker, or continue other work. In normal direct web/session chat, use normal final text for an accepted outcome or material blocker; otherwise end with exactly NO_REPLY. Use send_message_to_agent for peer/context replies.
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
@@ -114,17 +114,17 @@ const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
 const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text unless a structured choice or explicit routed delivery is needed.
 - Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
-- Non-web, proactive external, or explicit-target user delivery: use \`speak_to_user\` with the appropriate target metadata.
+- Explicit publication to the current web session may use \`speak_to_user\` without a target.
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
-- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal direct web/session chat, use normal assistant final text for an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Use routed delivery (\`speak_to_user\` for protected/non-web/external delivery, \`send_message_to_agent\` for peer/context replies) when the surface requires it.
+- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal direct web/session chat, use normal assistant final text for an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Use \`send_message_to_agent\` for peer/context replies when the surface requires it.
 - After \`speak_to_user\` fully delivers a response, end the provider cycle with exactly \`NO_REPLY\` unless there is distinct new closeout content. Never use \`NO_REPLY\` to skip an unanswered direct user request.
 - Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply. A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content.`;
 const MANAGER_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Normal direct web/session-transcript final replies: just answer normally with final assistant text. Do not use \`speak_to_user\` for normal final web replies.
 - Direct web/session progress before continuing work: use brief assistant text only when immediately followed by same-turn tool, delegation, or coordination work. If no same-turn action follows, assistant text ends the turn and must be final/standalone.
-- Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn contains a worker result.
+- Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result.
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender unless explicitly reporting to the end user.
-- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal web/session chat, answer normally with an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Protected/non-web/peer contexts keep their routed delivery contract.
+- Worker results require same-turn disposition, but they are not automatic user update triggers. In normal web/session chat, answer normally with an accepted outcome or material blocker; otherwise end with exactly \`NO_REPLY\`. Peer contexts keep their \`send_message_to_agent\` reply contract.
 - After \`speak_to_user\` fully delivers a response, end the provider cycle with exactly \`NO_REPLY\` unless there is distinct new closeout content. Never use \`NO_REPLY\` to skip an unanswered direct user request.
 - Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply. A direct-web progress update and later final answer are allowed only when actual same-turn tool, delegation, or coordination work happens between them and the later final contains new closeout content.`;
 
@@ -180,7 +180,6 @@ export interface SwarmPromptServiceOptions {
   ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSkillRosterForDescriptor?: (descriptor: AgentDescriptor) => Promise<SkillMetadata[] | null | undefined>;
   getKnowledgeV2Enabled?: () => boolean;
-  getIntegrationContext: (profileId: string) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
 }
 
@@ -346,19 +345,6 @@ export class SwarmPromptService {
       for (const placeholder of modelSpecificInstructionsPlaceholders) {
         prompt = prompt.replaceAll(placeholder, modelSpecificInstructionsBlock);
       }
-    }
-
-    try {
-      const integrationContext = this.options.getIntegrationContext(profileId)?.trim();
-      if (integrationContext) {
-        prompt = `${prompt}\n\n${integrationContext}`;
-      }
-    } catch (error) {
-      this.options.logDebug("manager:integration_context:error", {
-        agentId: descriptor.agentId,
-        profileId,
-        message: error instanceof Error ? error.message : String(error),
-      });
     }
 
     if (isCollabSession(descriptor)) {

@@ -10,7 +10,6 @@ import {
 } from "./codex-app-server/codex-plugin-scope-service.js";
 import {
   type AgentDescriptor,
-  type MessageChannel,
   type RequestedDeliveryMode,
   type SpawnAgentInput
 } from "./types.js";
@@ -54,21 +53,8 @@ export const spawnReasoningLevelSchema = Type.Union(
   }
 );
 
-const messageChannelSchema = Type.Union([
-  Type.Literal("web"),
-  Type.Literal("telegram")
-]);
-
 const speakToUserTargetSchema = Type.Object({
-  channel: messageChannelSchema,
-  channelId: Type.Optional(
-    Type.String({ description: "Required when channel is 'telegram'." })
-  ),
-  userId: Type.Optional(Type.String()),
-  threadTs: Type.Optional(Type.String()),
-  integrationProfileId: Type.Optional(
-    Type.String({ description: "Optional integration profile id for provider-targeted delivery." })
-  )
+  channel: Type.Literal("web"),
 });
 
 const knowledgeScopeSchema = Type.Union([
@@ -642,7 +628,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "speak_to_user",
       label: "Speak To User",
       description:
-        "Publish a user-visible manager message with explicit routing. Use for non-web targets, routed/protected delivery, proactive external delivery, or cases where server metadata requires explicit target delivery. Do not use merely because a normal Builder turn contains a worker result; normal web/session closeouts use final assistant text. If target is omitted, delivery defaults to web. For Telegram delivery, set target.channel and target.channelId explicitly.",
+        "Publish a user-visible manager message to the current web session. Do not use merely because a normal Builder turn contains a worker result; normal web/session closeouts use final assistant text. The optional target may only explicitly select web delivery.",
       parameters: Type.Object({
         text: Type.String({ description: "Message content to show to the user." }),
         target: Type.Optional(speakToUserTargetSchema)
@@ -650,13 +636,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       async execute(_toolCallId, params) {
         const parsed = params as {
           text: string;
-          target?: {
-            channel: MessageChannel;
-            channelId?: string;
-            userId?: string;
-            threadTs?: string;
-            integrationProfileId?: string;
-          };
+          target?: { channel: "web" };
         };
 
         const published = await host.publishToUser(

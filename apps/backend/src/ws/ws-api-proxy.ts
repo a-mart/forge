@@ -561,15 +561,12 @@ export class WsApiProxy {
     const clearKind = maybe.clearKind === "vote" || maybe.clearKind === "comment" ? maybe.clearKind : undefined;
 
     const normalizedChannel = normalizeOptionalString(maybe.channel)?.toLowerCase();
-    const channel =
-      normalizedChannel === "telegram"
-        ? normalizedChannel
-        : normalizedChannel === "web" || normalizedChannel === "mobile" || !normalizedChannel
-          ? "web"
-          : undefined;
+    const channel = normalizedChannel === "web" || normalizedChannel === "mobile" || !normalizedChannel
+      ? "web" as const
+      : undefined;
 
     if (!channel) {
-      throw new Error("channel must be one of: web, telegram.");
+      throw new Error("channel must be web.");
     }
 
     return {

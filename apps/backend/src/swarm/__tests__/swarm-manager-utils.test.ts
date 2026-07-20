@@ -1036,7 +1036,7 @@ describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => 
     ).toBe("telegram");
   });
 
-  it("preserves cli source and target channels", () => {
+  it("preserves legacy cli sources but normalizes active delivery targets to web", () => {
     expect(normalizeMessageSourceContext({ channel: "cli", userId: "  cli-user  " })).toEqual({
       channel: "cli",
       channelId: undefined,
@@ -1049,7 +1049,7 @@ describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => 
     });
 
     expect(normalizeMessageTargetContext({ channel: "cli", userId: "  cli-user  " })).toEqual({
-      channel: "cli",
+      channel: "web",
       channelId: undefined,
       userId: "cli-user",
       threadTs: undefined,

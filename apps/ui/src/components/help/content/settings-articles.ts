@@ -7,7 +7,6 @@ import settingsCollaborationContent from './articles/settings/settings-collabora
 import settingsEditorContent from './articles/settings/settings-editor.md?raw'
 import settingsExtensionsContent from './articles/settings/settings-extensions.md?raw'
 import settingsGeneralContent from './articles/settings/settings-general.md?raw'
-import settingsIntegrationsContent from './articles/settings/settings-integrations.md?raw'
 import settingsNotificationsContent from './articles/settings/settings-notifications.md?raw'
 import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
 import settingsOauthContent from './articles/settings/settings-oauth.md?raw'
@@ -15,7 +14,6 @@ import settingsPromptsContent from './articles/settings/settings-prompts.md?raw'
 import settingsSkillsContent from './articles/settings/settings-skills.md?raw'
 import settingsSlashCommandsContent from './articles/settings/settings-slash-commands.md?raw'
 import settingsSpecialistsContent from './articles/settings/settings-specialists.md?raw'
-import settingsTelegramContent from './articles/settings/settings-telegram.md?raw'
 import settingsThemeContent from './articles/settings/settings-theme.md?raw'
 
 export const settingsArticles: HelpArticle[] = [
@@ -199,45 +197,6 @@ export const settingsArticles: HelpArticle[] = [
     ],
     relatedIds: ['settings-general'],
     contextKeys: ['settings.notifications'],
-  },
-  {
-    id: 'settings-integrations',
-    title: 'Integrations',
-    category: 'settings',
-    summary: 'Connect external services like Telegram to Forge.',
-    content: settingsIntegrationsContent,
-    keywords: [
-      'integrations',
-      'telegram',
-      'external',
-      'messaging',
-      'bot',
-      'scope',
-      'shared',
-      'profile',
-    ],
-    relatedIds: ['settings-telegram'],
-    contextKeys: ['settings.integrations'],
-  },
-  {
-    id: 'settings-telegram',
-    title: 'Telegram Bot Setup',
-    category: 'settings',
-    summary: 'Connect a Telegram bot to send and receive messages through Forge.',
-    content: settingsTelegramContent,
-    keywords: [
-      'telegram',
-      'bot',
-      'botfather',
-      'token',
-      'polling',
-      'attachments',
-      'messaging',
-      'integration',
-      'allowed users',
-    ],
-    relatedIds: ['settings-integrations'],
-    contextKeys: ['settings.integrations'],
   },
   {
     id: 'settings-skills',

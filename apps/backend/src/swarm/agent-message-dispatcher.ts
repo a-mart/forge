@@ -394,6 +394,22 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       );
     }
     const parentContext = persistedParent;
+    if (this.options.output.isRecoveredRetiredWorkerResult(parentContext)) {
+      delete worker.workerParentContext;
+      try {
+        await this.options.saveStore();
+      } catch (error) {
+        worker.workerParentContext = cloneWorkerParentContext(persistedParent);
+        throw error;
+      }
+      this.options.output.emitRecoveredRetiredWorkerResultDiagnostic(target.agentId);
+      return {
+        targetAgentId: target.agentId,
+        deliveryId: "retired-worker-result-discarded",
+        acceptedMode: "prompt",
+      };
+    }
+
     const message = formatWorkerResultMessage(worker.agentId, parentContext.assignmentId, resultText);
     const receipt = await this.sendRuntimeMessage({
       sender: worker,

@@ -134,10 +134,7 @@ export type {
 
 // AgentDescriptor now includes specialistId/specialistDisplayName/specialistColor directly.
 
-// Retain recent non-web activity while preserving the full user-facing web transcript.
-// Integration services add ~2 event listeners per profile (Telegram conversation_message,
-// Telegram session_lifecycle). Keep this limit above base listeners +
-// (2 × expected maximum profiles).
+// Keep the orchestration facade above its known internal listener fan-out.
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 
 export { ChoiceRequestCancelledError } from "./swarm-choice-service.js";

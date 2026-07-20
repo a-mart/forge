@@ -2,7 +2,7 @@
  * Target-scoped backend state provider for the Settings shell.
  *
  * Builder target reuses the existing BuilderSurface WebSocket state
- * (managers, profiles, telegram status, change keys) passed via props.
+ * (managers, profiles, and change keys) passed via props.
  *
  * Collab target opens a secondary Builder-protocol WebSocket only when
  * the current collab user is an admin and the Settings view is active.

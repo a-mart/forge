@@ -99,7 +99,6 @@ vi.mock('@/components/settings/SettingsAppearance', () => ({ SettingsAppearance:
 vi.mock('@/components/settings/SettingsNotifications', () => ({ SettingsNotifications: () => null }))
 vi.mock('@/components/settings/SettingsAuth', () => ({ SettingsAuth: () => null }))
 vi.mock('@/components/settings/SettingsModels', () => ({ SettingsModels: () => null }))
-vi.mock('@/components/settings/SettingsIntegrations', () => ({ SettingsIntegrations: () => null }))
 vi.mock('@/components/settings/SettingsSkills', () => ({ SettingsSkills: () => null }))
 vi.mock('@/components/settings/SettingsPrompts', () => ({ SettingsPrompts: () => null }))
 vi.mock('@/components/settings/SettingsSpecialists', () => ({ SettingsSpecialists: () => null }))

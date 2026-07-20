@@ -14,10 +14,6 @@ export function handleConfigEvent(
       })
       return true
 
-    case 'telegram_status':
-      context.updateState({ telegramStatus: event })
-      return true
-
     case 'prompt_changed':
     case 'cortex_prompt_surface_changed':
       context.updateState({ promptChangeKey: context.state.promptChangeKey + 1 })

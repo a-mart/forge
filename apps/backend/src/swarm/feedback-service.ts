@@ -254,7 +254,7 @@ function normalizeSubmitFeedbackInput(
   const targetId = requireNonEmptyString(event.targetId, "targetId");
   const scope = requireFeedbackScope(event.scope, "scope");
   const value = requireFeedbackSubmitValue(event.value, "value");
-  const channel = requireFeedbackChannel(event.channel, "channel");
+  const channel = requireActiveFeedbackChannel(event.channel, "channel");
 
   if (scope === "session" && targetId !== sessionId) {
     throw new Error("targetId must match sessionId when scope is session.");
@@ -434,9 +434,9 @@ function requireFeedbackSubmitValue(value: unknown, fieldName: string): Feedback
   return value;
 }
 
-function requireFeedbackChannel(value: unknown, fieldName: string): FeedbackEvent["channel"] {
-  if (!isFeedbackChannel(value)) {
-    throw new Error(`${fieldName} must be one of: web, telegram.`);
+function requireActiveFeedbackChannel(value: unknown, fieldName: string): "web" {
+  if (value !== "web") {
+    throw new Error(`${fieldName} must be web.`);
   }
 
   return value;

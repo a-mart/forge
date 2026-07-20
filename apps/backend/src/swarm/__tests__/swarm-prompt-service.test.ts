@@ -205,7 +205,6 @@ function createPromptServiceForDescriptor(
       };
     },
     getKnowledgeV2Enabled: options?.getKnowledgeV2Enabled,
-    getIntegrationContext: () => undefined,
     logDebug: options?.logDebug ?? (() => {})
   });
 }
@@ -239,8 +238,9 @@ Never use plain assistant text for user communication.`;
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn contains a worker result."
+      "Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result."
     );
+    expect(prompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i);
     expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
@@ -306,8 +306,9 @@ Custom project instruction: always mention the release train when summarizing de
       "Normal direct web/session-transcript final replies: just answer normally with final assistant text"
     );
     expect(prompt).toContain(
-      "Use speak_to_user only for explicit routed/protected, non-web, or proactive external delivery. Do not use it merely because a normal Builder turn contains a worker result."
+      "Use speak_to_user only when explicit publication to the current web session is required. Do not use it merely because a normal Builder turn contains a worker result."
     );
+    expect(prompt).not.toMatch(/Telegram|non-web|channelId|threadTs|proactive external|explicit-target/i);
     expect(prompt).toContain("Never use `NO_REPLY` to skip an unanswered direct user request.");
     expect(prompt).not.toContain("other routed user-facing delivery");
     expect(prompt.lastIndexOf("# Non-Negotiable Forge Routing Contract")).toBeGreaterThan(
@@ -381,7 +382,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: refreshStats,
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -471,7 +471,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -522,7 +521,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistry,
-      getIntegrationContext: () => undefined,
       logDebug: () => {},
     });
 
@@ -577,7 +575,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [manager],
       loadSpecialistRegistryModule: async () => specialistRegistry,
-      getIntegrationContext: () => undefined,
       logDebug: () => {},
     });
 
@@ -729,7 +726,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [manager],
       loadSpecialistRegistryModule: async () => specialistRegistry,
-      getIntegrationContext: () => undefined,
       logDebug: () => {},
     });
 
@@ -761,6 +757,40 @@ Custom project instruction: always mention the release train when summarizing de
     );
     expect(prompt).toContain("End your turn with a concise result using this structure:");
     expect(prompt).toContain("status: done | partial | blocked");
+  });
+
+  it("keeps built-in source and resolved prompts aligned with the web-only speak_to_user schema", async () => {
+    const { config } = await makeConfig();
+    const invalidSpeakTargetGuidance = /Telegram|non-web|channelId|threadTs|proactive external|explicit-target|target metadata/i;
+    const archetypes = ["manager", "collaboration-channel", "agent-architect"] as const;
+
+    for (const archetypeId of archetypes) {
+      const source = await readFile(join(BUILTIN_ARCHETYPES, `${archetypeId}.md`), "utf8");
+      expect(source, `${archetypeId} source prompt`).not.toMatch(invalidSpeakTargetGuidance);
+
+      const descriptor = createManagerDescriptor(config, repoRoot, {
+        agentId: `${archetypeId}-prompt-agent`,
+        archetypeId,
+        ...(archetypeId === "collaboration-channel"
+          ? {
+              sessionSurface: "collab" as const,
+              collab: { workspaceId: "workspace-1", channelId: "channel-1" },
+            }
+          : {}),
+      });
+      const resolved = await createPromptServiceForDescriptor(config, descriptor)
+        .resolveSystemPromptForDescriptor(descriptor);
+      const resolvedSpeakGuidance = resolved
+        .split("\n")
+        .filter((line) => line.includes("speak_to_user"))
+        .join("\n");
+      expect(resolvedSpeakGuidance, `${archetypeId} resolved prompt`).not.toMatch(invalidSpeakTargetGuidance);
+    }
+
+    const manager = createManagerDescriptor(config, repoRoot, { archetypeId: "manager" });
+    const managerPrompt = await createPromptServiceForDescriptor(config, manager)
+      .resolveSystemPromptForDescriptor(manager);
+    expect(managerPrompt).toContain("respond with `send_message_to_agent` to the source `fromAgentId`");
   });
 
   it("previewManagerSystemPromptForAgent uses the requested collab session and appends session context overlays", async () => {
@@ -849,7 +879,6 @@ Custom project instruction: always mention the release train when summarizing de
         resolveTierConfigs: async () => [],
         generateRosterBlock: () => "Specialist roster block",
       }),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -911,7 +940,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [collabDescriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -968,7 +996,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [collabDescriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1135,7 +1162,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1223,7 +1249,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1289,7 +1314,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1340,7 +1364,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1388,7 +1411,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1434,7 +1456,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 
@@ -1510,7 +1531,6 @@ Custom project instruction: always mention the release train when summarizing de
       refreshSessionMetaStatsBySessionId: async () => {},
       getSessionsForProfile: () => [descriptor],
       loadSpecialistRegistryModule: async () => specialistRegistryStub(),
-      getIntegrationContext: () => undefined,
       logDebug: () => {}
     });
 

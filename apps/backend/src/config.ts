@@ -18,7 +18,6 @@ import {
   getSharedCollaborationConfigDir,
   getSharedConfigDir,
   getSharedDir,
-  getSharedIntegrationsDir,
   getSharedSecretsFilePath,
   getSharedStateDir,
   getSwarmDir,
@@ -51,7 +50,6 @@ export function createConfig(): SwarmConfig {
   const sharedAuthDir = getSharedAuthDir(dataDir);
   const sharedAuthFile = getSharedAuthFilePath(dataDir);
   const sharedSecretsFile = getSharedSecretsFilePath(dataDir);
-  const sharedIntegrationsDir = getSharedIntegrationsDir(dataDir);
   const collaborationConfigDir = getSharedCollaborationConfigDir(dataDir);
   const collaborationAuthDbPath = getCollaborationAuthDbPath(dataDir);
   const collaborationAuthSecretPath = getCollaborationAuthSecretPath(dataDir);
@@ -150,7 +148,6 @@ export function createConfig(): SwarmConfig {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sharedIntegrationsDir,
       collaborationConfigDir,
       collaborationAuthDbPath,
       collaborationAuthSecretPath,

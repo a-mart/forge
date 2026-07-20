@@ -550,37 +550,6 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('stores telegram_status events from the backend', () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    emitServerEvent(socket, {
-      type: 'telegram_status',
-      state: 'connected',
-      enabled: true,
-      updatedAt: new Date().toISOString(),
-      message: 'Telegram connected',
-      botId: '123456789',
-      botUsername: 'swarm_bot',
-    })
-
-    expect(client.getState().telegramStatus?.state).toBe('connected')
-    expect(client.getState().telegramStatus?.enabled).toBe(true)
-
-    client.destroy()
-  })
-
   it('re-hydrates in place on reconnect — re-subscribes and never reloads the page', () => {
     // Guard: a reconnect must NOT trigger a full page reload. The redundant
     // window.location.reload() re-ran the entire bootstrap from scratch and,

@@ -602,10 +602,6 @@ Forge is designed for continuous operation. The daemon mode (`pnpm prod:daemon`)
 
 This enables an "always-on" workflow. Dump tasks before bed, wake up to completed work. Kick off a big feature during lunch and review results when you're back at your desk.
 
-### Telegram Bot Integration
-
-If you don't have the mobile app, Telegram works for remote access. Create a bot via [@BotFather](https://t.me/botfather), add the token in **Settings → Integrations → Telegram**, and you can chat with your manager directly from Telegram with full bidirectional messaging.
-
 ### Extensions
 
 Forge has two extension systems:

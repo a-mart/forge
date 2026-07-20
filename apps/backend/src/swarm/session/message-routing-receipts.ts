@@ -13,7 +13,7 @@ export interface MessageRoutingReceiptRecord {
   agentId: string;
   decision: "render" | "route" | "drop";
   reasonCode: MessageRouteReasonCode;
-  channel?: "web" | "telegram" | "cli" | "collab";
+  channel?: "web" | "cli" | "collab";
   targetKind: MessageRouteTargetKind;
   sourceWorkerId?: string;
 }

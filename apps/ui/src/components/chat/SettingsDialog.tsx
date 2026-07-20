@@ -8,7 +8,6 @@ import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
 import { SettingsAppearance } from '@/components/settings/SettingsAppearance'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
-import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
 import { SettingsModels } from '@/components/settings/SettingsModels'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
@@ -20,7 +19,7 @@ import { SettingsAbout } from '@/components/settings/SettingsAbout'
 import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
 import { SettingsObservability } from '@/components/settings/SettingsObservability'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
-import type { AgentDescriptor, ManagerProfile, TelegramStatusEvent } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
 function getSettingsContentWidthClassName(activeTab: SettingsTab): string | undefined {
   if (activeTab === 'appearance') return 'max-w-6xl'
@@ -32,7 +31,6 @@ interface SettingsPanelProps {
   wsUrl: string
   managers: AgentDescriptor[]
   profiles: ManagerProfile[]
-  telegramStatus?: TelegramStatusEvent | null
   promptChangeKey: number
   specialistChangeKey: number
   modelConfigChangeKey: number
@@ -74,7 +72,6 @@ export function SettingsPanel({
   wsUrl,
   managers,
   profiles,
-  telegramStatus,
   promptChangeKey,
   specialistChangeKey,
   modelConfigChangeKey,
@@ -153,14 +150,6 @@ export function SettingsPanel({
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}
-      {activeTab === 'integrations' && (
-        <SettingsIntegrations
-          wsUrl={wsUrl}
-          apiClient={apiClient}
-          managers={managers}
-          telegramStatus={telegramStatus}
-        />
-      )}
       {activeTab === 'skills' && (
         <SettingsSkills
           wsUrl={wsUrl}

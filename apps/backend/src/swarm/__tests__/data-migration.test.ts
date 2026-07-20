@@ -9,7 +9,6 @@ import {
   getLegacyAuthFilePath,
   getLegacySecretsFilePath,
   getLegacySessionFilePath,
-  getProfileIntegrationsDir,
   getProfileMemoryPath,
   getProfileScheduleFilePath,
   getSessionFilePath,
@@ -66,11 +65,16 @@ describe("data-migration", () => {
     await writeJson(getLegacyAuthFilePath(dataDir), { provider: "openai-codex" });
     await writeJson(getLegacySecretsFilePath(dataDir), { OPENAI_API_KEY: "secret" });
 
-    await writeJson(join(dataDir, "integrations", "shared", "shared.json"), { enabled: true });
-    await writeJson(join(dataDir, "integrations", "managers", profileId, "profile.json"), {
-      profileId,
-      enabled: true
-    });
+    const sharedRetiredMarker = join(dataDir, "integrations", "shared", "telegram.json");
+    const managerRetiredMarker = join(dataDir, "integrations", "managers", profileId, "telegram.json");
+    const managerTopicsRetiredMarker = join(dataDir, "integrations", "managers", profileId, "telegram-topics.json");
+    const profileConfigMarker = join(dataDir, "profiles", profileId, "integrations", "telegram.json");
+    const profileTopicsMarker = join(dataDir, "profiles", profileId, "integrations", "telegram-topics.json");
+    await writeText(sharedRetiredMarker, "shared-marker-bytes\n");
+    await writeText(managerRetiredMarker, "manager-marker-bytes\n");
+    await writeText(managerTopicsRetiredMarker, "manager-topics-marker-bytes\n");
+    await writeText(profileConfigMarker, "profile-config-marker-bytes\n");
+    await writeText(profileTopicsMarker, "profile-topics-marker-bytes\n");
 
     const result = await migrateDataDirectory(
       {
@@ -112,12 +116,11 @@ describe("data-migration", () => {
     await expect(readFile(join(getSharedDir(dataDir), "secrets.json"), "utf8")).resolves.toContain(
       "OPENAI_API_KEY"
     );
-    await expect(readFile(join(getSharedDir(dataDir), "integrations", "shared.json"), "utf8")).resolves.toContain(
-      "enabled"
-    );
-    await expect(
-      readFile(join(getProfileIntegrationsDir(dataDir, profileId), "profile.json"), "utf8")
-    ).resolves.toContain(profileId);
+    await expect(readFile(sharedRetiredMarker, "utf8")).resolves.toBe("shared-marker-bytes\n");
+    await expect(readFile(managerRetiredMarker, "utf8")).resolves.toBe("manager-marker-bytes\n");
+    await expect(readFile(managerTopicsRetiredMarker, "utf8")).resolves.toBe("manager-topics-marker-bytes\n");
+    await expect(readFile(profileConfigMarker, "utf8")).resolves.toBe("profile-config-marker-bytes\n");
+    await expect(readFile(profileTopicsMarker, "utf8")).resolves.toBe("profile-topics-marker-bytes\n");
 
     const migratedStore = JSON.parse(await readFile(agentsStoreFile, "utf8")) as {
       agents: AgentDescriptor[];
@@ -152,7 +155,7 @@ describe("data-migration", () => {
     await expect(stat(join(dataDir, "memory"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(dataDir, "schedules"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(dataDir, "auth"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(dataDir, "integrations"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(dataDir, "integrations"))).resolves.toMatchObject({});
     await expect(stat(join(dataDir, "secrets.json"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const sentinel = await readFile(join(dataDir, ".migration-v1-done"), "utf8");

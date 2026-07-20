@@ -15,7 +15,6 @@ import {
   getLegacySessionsDirPath,
   getProfileDir,
   getProfileForgeExtensionsDir,
-  getProfileIntegrationsDir,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfilePiDir,
@@ -67,7 +66,6 @@ import {
   getSharedCacheGeneratedDir,
   getSharedConfigDir,
   getSharedDir,
-  getSharedIntegrationsDir,
   getSharedKnowledgeDir,
   getSharedSecretsFilePath,
   getSharedStateDir,
@@ -175,9 +173,6 @@ describe("data-paths", () => {
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "workers", `${WORKER_ID}.jsonl`)
     );
 
-    expect(getProfileIntegrationsDir(DATA_DIR, PROFILE_ID)).toBe(
-      join(DATA_DIR, "profiles", PROFILE_ID, "integrations")
-    );
     expect(getProfileSchedulesDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "schedules"));
     expect(getProfileScheduleFilePath(DATA_DIR, PROFILE_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "schedules", "schedules.json")
@@ -185,7 +180,6 @@ describe("data-paths", () => {
 
     expect(getProjectResourceSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "project-resources.json"));
     expect(getBuilderSidebarOrderPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "builder-sidebar-order.json"));
-    expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "integrations"));
     expect(getSharedKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge"));
     expect(getProfileKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "profiles"));
     expect(getProfileKnowledgePath(DATA_DIR, PROFILE_ID)).toBe(

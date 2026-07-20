@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, rmdir, stat } from "node:fs/promises";
+import { readdir, rm, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { getProfilesDir, getSharedConfigDir, getSharedDir, getSharedStateDir } from "./data-paths.js";
@@ -24,8 +24,6 @@ const FILE_MIGRATIONS: Array<[oldRelative: string, newRelative: string]> = [
   [".compaction-count-backfill-v2-done", "state/.compaction-count-backfill-v2-done"],
 ];
 
-const DIR_MIGRATIONS: Array<[oldRelative: string, newRelative: string]> = [["integrations", "config/integrations"]];
-
 const VERIFIED_FILE_CLEANUPS: Array<[oldRelative: string, newRelative: string]> = [
   ["auth/auth.json", "config/auth/auth.json"],
   ["secrets.json", "config/secrets.json"],
@@ -41,7 +39,7 @@ const VERIFIED_FILE_CLEANUPS: Array<[oldRelative: string, newRelative: string]> 
   ["provider-usage-history.jsonl", "cache/provider-usage-history.jsonl"],
 ];
 
-const EMPTY_DIR_CLEANUPS = ["auth", "integrations", "generated"];
+const EMPTY_DIR_CLEANUPS = ["auth", "generated"];
 
 export async function migrateSharedConfigLayout(dataDir: string): Promise<void> {
   const sharedDir = getSharedDir(dataDir);
@@ -58,10 +56,6 @@ export async function migrateSharedConfigLayout(dataDir: string): Promise<void> 
 
   for (const [oldRelative, newRelative] of FILE_MIGRATIONS) {
     await copyFileIfMissing(join(sharedDir, oldRelative), join(sharedDir, newRelative));
-  }
-
-  for (const [oldRelative, newRelative] of DIR_MIGRATIONS) {
-    await copyDirectoryIfExists(join(sharedDir, oldRelative), join(sharedDir, newRelative));
   }
 
   await writeFileAtomic(sentinelPath, `${new Date().toISOString()}\n`);
@@ -87,7 +81,6 @@ export async function cleanupOldSharedConfigPaths(dataDir: string): Promise<void
     await deleteOldFileIfMigrated(join(sharedDir, oldRelative), join(sharedDir, newRelative));
   }
 
-  await cleanupMigratedDirectory(join(sharedDir, "integrations"), join(sharedDir, "config", "integrations"));
   await deletePathIfExists(join(sharedDir, "stats-cache.json"), "stale cache file");
   await deleteDirectoryRecursivelyIfExists(join(sharedDir, "generated"), "stale generated cache directory");
 
@@ -141,66 +134,6 @@ async function readDirectoryEntries(directory: string, label: string) {
     logCleanupWarning(`failed to scan retired planning ${label} at ${directory}`, error);
     return undefined;
   }
-}
-
-async function copyDirectoryIfExists(sourceDir: string, targetDir: string): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(sourceDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return;
-    }
-
-    throw error;
-  }
-
-  await mkdir(targetDir, { recursive: true });
-
-  for (const entry of entries) {
-    const sourcePath = join(sourceDir, entry.name);
-    const targetPath = join(targetDir, entry.name);
-
-    if (entry.isDirectory()) {
-      await copyDirectoryIfExists(sourcePath, targetPath);
-      continue;
-    }
-
-    if (entry.isFile()) {
-      await copyFileIfMissing(sourcePath, targetPath);
-    }
-  }
-}
-
-async function cleanupMigratedDirectory(oldDir: string, newDir: string): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(oldDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return;
-    }
-
-    logCleanupWarning(`failed to read old directory ${oldDir}`, error);
-    return;
-  }
-
-  for (const entry of entries) {
-    const oldPath = join(oldDir, entry.name);
-    const newPath = join(newDir, entry.name);
-
-    if (entry.isDirectory()) {
-      await cleanupMigratedDirectory(oldPath, newPath);
-      await removeDirectoryIfEmpty(oldPath);
-      continue;
-    }
-
-    if (entry.isFile()) {
-      await deleteOldFileIfMigrated(oldPath, newPath);
-    }
-  }
-
-  await removeDirectoryIfEmpty(oldDir);
 }
 
 async function deleteOldFileIfMigrated(oldPath: string, newPath: string): Promise<void> {

@@ -58,10 +58,10 @@ describe('SettingsLayout', () => {
   it('shows all tabs when availableTabs is omitted', () => {
     renderLayout({})
 
-    // Desktop nav should have 16 items (all tabs including Appearance, Repository Resources, CLI Access, and Observability)
+    // Desktop nav includes all maintained settings tabs.
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(16)
+    expect(buttons.length).toBe(15)
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).toContain('Appearance')
     expect(labels).toContain('Repository Resources')
@@ -71,10 +71,10 @@ describe('SettingsLayout', () => {
   it('filters tabs to only availableTabs when provided', () => {
     renderLayout({ availableTabs: COLLAB_TABS })
 
-    // Collab tabs include renderer-local Appearance but exclude repository resources and notifications — should have 12 items
+    // Collab tabs include renderer-local Appearance but exclude repository resources and notifications.
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(12)
+    expect(buttons.length).toBe(11)
 
     // Notifications should not be present
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())

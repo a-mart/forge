@@ -927,7 +927,6 @@ export function BuilderSurface({
                 wsUrl={localWsUrl}
                 managers={settingsManagers}
                 profiles={state.profiles}
-                telegramStatus={state.telegramStatus}
                 promptChangeKey={state.promptChangeKey}
                 specialistChangeKey={state.specialistChangeKey}
                 modelConfigChangeKey={state.modelConfigChangeKey}

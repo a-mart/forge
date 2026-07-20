@@ -277,19 +277,17 @@ describe("claude-mcp-tool-bridge", () => {
     expect(
       speakToUserTool.shape.safeParse({
         text: "hello",
-        target: {
-          channel: "telegram",
-          channelId: "C123",
-          threadTs: "123.456"
-        }
+        target: { channel: "web" }
       }).success
     ).toBe(true);
-    expect(
-      speakToUserTool.shape.safeParse({
-        text: "hello",
-        target: { channel: "email" }
-      }).success
-    ).toBe(false);
+    for (const channel of ["telegram", "email"]) {
+      expect(
+        speakToUserTool.shape.safeParse({
+          text: "hello",
+          target: { channel }
+        }).success
+      ).toBe(false);
+    }
   });
 
   it("converts array schemas for present_choices", async () => {

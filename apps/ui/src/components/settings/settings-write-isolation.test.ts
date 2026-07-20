@@ -318,68 +318,6 @@ describe('prompt write isolation', () => {
 })
 
 /* ================================================================== */
-/*  Telegram / integrations writes                                    */
-/* ================================================================== */
-
-describe('telegram write isolation', () => {
-  /** Minimal config shape that passes `isTelegramSettingsConfig` validation */
-  const validTelegramConfig = {
-    profileId: 'profile-1',
-    enabled: true,
-    mode: 'polling' as const,
-    hasBotToken: true,
-    polling: { intervalMs: 1000 },
-    delivery: { chatId: '' },
-    attachments: { enabled: false },
-  }
-
-  it('updateTelegramSettings routes through collab', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
-      config: validTelegramConfig,
-      status: null,
-    }))
-    const { updateTelegramSettings } = await import('./settings-api')
-
-    await updateTelegramSettings(collabClient(), 'manager-1', { botToken: 'tok' })
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/managers/manager-1/integrations/telegram',
-      expect.objectContaining({ method: 'PUT', credentials: 'include' }),
-    )
-  })
-
-  it('updateTelegramSettings routes through builder', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
-      config: validTelegramConfig,
-      status: null,
-    }))
-    const { updateTelegramSettings } = await import('./settings-api')
-
-    await updateTelegramSettings(builderClient(), 'manager-1', { botToken: 'tok' })
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/managers/manager-1/integrations/telegram',
-      expect.objectContaining({ method: 'PUT', credentials: 'same-origin' }),
-    )
-  })
-
-  it('fetchTelegramSettings routes through collab', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
-      config: { ...validTelegramConfig, enabled: false },
-      status: null,
-    }))
-    const { fetchTelegramSettings } = await import('./settings-api')
-
-    await fetchTelegramSettings(collabClient(), 'manager-1')
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/managers/manager-1/integrations/telegram',
-      expect.objectContaining({ credentials: 'include' }),
-    )
-  })
-})
-
-/* ================================================================== */
 /*  Extensions fetch isolation                                        */
 /* ================================================================== */
 

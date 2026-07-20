@@ -211,7 +211,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -266,7 +265,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const currentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -367,7 +365,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -412,7 +409,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -446,7 +442,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -476,7 +471,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -522,7 +516,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -550,7 +543,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -584,7 +576,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -648,7 +639,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -695,7 +685,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -742,7 +731,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -797,7 +785,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
       const subscriptions = new WsSubscriptions({
         swarmManager: manager as any,
-        integrationRegistry: null,
         allowNonManagerSubscriptions: true,
         terminalService: null,
         unreadTracker: null,
@@ -848,7 +835,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -899,7 +885,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -986,7 +971,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -1068,7 +1052,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     }
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -1119,7 +1102,6 @@ describe('WsSubscriptions choice_request delivery', () => {
     const otherSessionEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -1168,7 +1150,6 @@ describe('WsSubscriptions choice_request delivery', () => {
     const managerEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
-      integrationRegistry: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,

@@ -1,5 +1,3 @@
-export const SHARED_INTEGRATION_MANAGER_ID = '__shared__'
-
 export type SettingsAuthProviderId = 'anthropic' | 'openai-codex' | 'xai' | 'openrouter' | 'cursor-sdk'
 
 export type SettingsAuthProviderAuthType = 'api_key' | 'oauth' | 'unknown'

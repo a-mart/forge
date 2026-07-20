@@ -434,13 +434,11 @@ export class SessionInteractionCoordinator {
     explicitTargetContext?: MessageTargetContext,
   ): MessageSourceContext {
     if (!explicitTargetContext) return { channel: "web" };
+    if ((explicitTargetContext as { channel?: unknown }).channel !== "web") {
+      throw new Error("speak_to_user only supports web delivery");
+    }
 
     const normalized = normalizeMessageTargetContext(explicitTargetContext);
-    if (normalized.channel === "telegram" && !normalized.channelId) {
-      throw new Error(
-        'speak_to_user target.channelId is required when target.channel is "telegram"',
-      );
-    }
     return normalizeMessageSourceContext(normalized);
   }
 

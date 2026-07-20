@@ -103,7 +103,6 @@ export type SwarmConfigurationPromptHost = Omit<
   | "loadSpecialistRegistryModule"
   | "resolveSpecialistRosterForManager"
   | "resolveSkillRosterForDescriptor"
-  | "getIntegrationContext"
   | "logDebug"
 >;
 
@@ -145,7 +144,6 @@ export class SwarmConfigurationCoordinator {
 
   private modelCacheVisualizationEnabled = false;
   private piModelsJsonPath: string | null = null;
-  private integrationContextProvider: ((profileId: string) => string) | undefined;
 
   constructor(private readonly options: SwarmConfigurationCoordinatorOptions) {
     this.skills = options.skillMetadataService;
@@ -192,7 +190,6 @@ export class SwarmConfigurationCoordinator {
         this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) =>
         this.resolveSkillRosterForDescriptor(descriptor),
-      getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: options.logDebug,
     });
   }
@@ -334,10 +331,6 @@ export class SwarmConfigurationCoordinator {
   async reloadOpenRouterModelsAndProjection(): Promise<void> {
     await modelCatalogService.reloadOpenRouterModels();
     await this.refreshPiModelsJsonProjection();
-  }
-
-  setIntegrationContextProvider(provider?: (profileId: string) => string): void {
-    this.integrationContextProvider = provider;
   }
 
   listSettingsEnv(): Promise<SkillEnvRequirement[]> {

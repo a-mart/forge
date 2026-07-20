@@ -7,7 +7,6 @@ import {
   type TerminalDescriptor,
 } from "@forge/protocol";
 import { getCollaborationSocketAuthContext } from "../collaboration/auth/collaboration-auth-middleware.js";
-import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -58,7 +57,6 @@ export class WsSubscriptions {
   private readonly conversationPagingCapabilities = new Map<WebSocket, boolean>();
 
   private readonly swarmManager: SwarmManager;
-  private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly allowNonManagerSubscriptions: boolean;
   private readonly terminalService: TerminalService | null;
   private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -73,7 +71,6 @@ export class WsSubscriptions {
 
   constructor(options: {
     swarmManager: SwarmManager;
-    integrationRegistry: IntegrationRegistryService | null;
     allowNonManagerSubscriptions: boolean;
     terminalService: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -84,7 +81,6 @@ export class WsSubscriptions {
     getServer: () => WebSocketServer | null;
   }) {
     this.swarmManager = options.swarmManager;
-    this.integrationRegistry = options.integrationRegistry;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     this.terminalService = options.terminalService;
     this.listTerminalsForSession = options.listTerminalsForSession;
@@ -212,15 +208,6 @@ export class WsSubscriptions {
         }
         if (!this.isConversationEntryVisibleForSocket(client, subscribedAgent, outboundEvent)) {
           continue;
-        }
-      }
-
-      if (outboundEvent.type === "telegram_status") {
-        if (outboundEvent.managerId) {
-          const subscribedProfileId = this.resolveProfileIdForAgent(subscribedAgent);
-          if (subscribedProfileId !== outboundEvent.managerId) {
-            continue;
-          }
         }
       }
 
@@ -656,7 +643,6 @@ export class WsSubscriptions {
       supportsConversationPaging,
       conversationView,
       swarmManager: this.swarmManager,
-      integrationRegistry: this.integrationRegistry,
       terminalService: this.terminalService,
       listTerminalsForSession: this.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
@@ -664,7 +650,6 @@ export class WsSubscriptions {
       // Bootstrap-critical events flow-control (await drain) instead of dropping under backpressure.
       send: this.sendBootstrapCritical,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
-      resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
       includeAgentsSnapshot:
         deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion ||

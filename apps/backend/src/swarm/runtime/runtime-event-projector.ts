@@ -701,6 +701,14 @@ export class RuntimeEventProjector {
       return;
     }
 
+    const recoveredTarget = descriptor.workerParentContext?.outputTarget;
+    if (
+      recoveredTarget?.kind === "external_channel" &&
+      recoveredTarget.sourceContext.channel === "telegram"
+    ) {
+      return;
+    }
+
     const role = extractRole(effectiveEvent.message);
     if (role !== "assistant" && role !== "system") {
       return;

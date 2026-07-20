@@ -33,23 +33,30 @@ export class WorkerResultCoordinator {
       return "skipped";
     }
 
-    const resultText = buildWorkerResult(
-      descriptor.agentId,
-      this.options.getConversationHistory(descriptor.agentId),
-      parentContext.assignedAt,
-    );
+    const recoveredRetiredTarget =
+      parentContext.outputTarget.kind === "external_channel" &&
+      parentContext.outputTarget.sourceContext.channel === "telegram";
+    const resultText = recoveredRetiredTarget
+      ? ""
+      : buildWorkerResult(
+          descriptor.agentId,
+          this.options.getConversationHistory(descriptor.agentId),
+          parentContext.assignedAt,
+        );
     try {
       await this.options.deliverWorkerResult(
         descriptor.agentId,
         resultText,
         parentContext.assignmentId,
       );
-      this.options.logDebug("worker_result:sent", {
-        workerAgentId: descriptor.agentId,
-        managerId: descriptor.managerId,
-        assignmentId: parentContext.assignmentId,
-        textPreview: previewForLog(resultText),
-      });
+      if (!recoveredRetiredTarget) {
+        this.options.logDebug("worker_result:sent", {
+          workerAgentId: descriptor.agentId,
+          managerId: descriptor.managerId,
+          assignmentId: parentContext.assignmentId,
+          textPreview: previewForLog(resultText),
+        });
+      }
       return "sent";
     } catch (error) {
       this.options.logDebug("worker_result:error", {

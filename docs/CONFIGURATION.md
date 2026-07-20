@@ -241,6 +241,20 @@ Model availability and behavior are managed through **Settings → Models**, whi
 
 Appearance preferences are separate from server/shared configuration. They are stored in local renderer/browser state for the active UI only, so changes to Light/Dark/System mode, templates, colors, or fonts stay local to that client instead of syncing through shared profile config.
 
+## Retired Telegram data (operator cleanup only)
+
+Forge no longer reads, writes, migrates, copies, or deletes Telegram credential and topic files. Existing files remain untouched for rollback and must be removed manually by an operator, without displaying their contents. Depending on the Forge version that created them, inspect these locations under `<data-dir>`:
+
+- `shared/config/integrations/telegram.json`
+- `shared/integrations/telegram.json`
+- `profiles/<profileId>/integrations/telegram.json`
+- `profiles/<profileId>/integrations/telegram-topics.json`
+- `integrations/shared/telegram.json`
+- `integrations/managers/<managerId>/telegram.json`
+- `integrations/managers/<managerId>/telegram-topics.json`
+
+Historical Telegram conversation rows can remain in canonical session JSONL for retention and rollback. Supported Web, All, audit, HTTP, and WebSocket projections hide those original rows and their content. Use filesystem-level retention procedures if canonical history also needs removal; Forge has no UI cleanup action for it.
+
 ## Data Directory
 
 Key persistent and regenerable paths use this canonical layout (most files are created only when their feature is used):
@@ -257,7 +271,6 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   ├── collaboration/
 │   │   │   ├── auth.db                    # Collaboration auth + structured domain state
 │   │   │   └── auth-secret.key            # Generated collaboration auth secret
-│   │   ├── integrations/                  # Shared integration configs
 │   │   ├── secrets.json                   # Sensitive local JSON; plaintext at rest
 │   │   ├── builder-sidebar-order.json     # Local unified project order
 │   │   ├── compaction-settings.json       # Manager compaction settings
@@ -302,7 +315,6 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   ├── merge-audit.log
 │   ├── unread-state.json
 │   ├── extensions/                        # Profile Forge extensions
-│   ├── integrations/                      # Profile integration configs
 │   ├── knowledge/{entries,archive}/       # Profile Knowledge v2 entries/archive
 │   ├── knowledge/INDEX.md                 # Generated profile v2 index
 │   ├── pi/{extensions,skills,prompts,themes}/ # Profile Pi resources

@@ -1462,7 +1462,7 @@ export function parseCompactSlashCommand(text: string): { customInstructions?: s
 
 export function normalizeMessageTargetContext(input: MessageTargetContext): MessageTargetContext {
   return {
-    channel: normalizeMessageChannel(input.channel),
+    channel: "web",
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     threadTs: normalizeOptionalMetadataValue(input.threadTs),

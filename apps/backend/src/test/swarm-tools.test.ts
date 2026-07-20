@@ -835,7 +835,7 @@ describe('buildSwarmTools', () => {
   })
 
   it('forwards speak_to_user target metadata and returns resolved target context', async () => {
-    let receivedTarget: { channel: 'web' | 'telegram'; channelId?: string; userId?: string; threadTs?: string } | undefined
+    let receivedTarget: { channel: 'web' } | undefined
 
     const host: SwarmToolHost = {
       listAgents: () => [makeManagerDescriptor()],
@@ -874,30 +874,18 @@ describe('buildSwarmTools', () => {
     const result = await speakTool!.execute(
       'tool-call',
       {
-        text: 'Reply in Telegram thread',
-        target: {
-          channel: 'telegram',
-          channelId: '12345',
-          threadTs: '173.456',
-        },
+        text: 'Publish to web',
+        target: { channel: 'web' },
       },
       undefined,
       undefined,
       undefined as any,
     )
 
-    expect(receivedTarget).toEqual({
-      channel: 'telegram',
-      channelId: '12345',
-      threadTs: '173.456',
-    })
+    expect(receivedTarget).toEqual({ channel: 'web' })
     expect(result.details).toMatchObject({
       published: true,
-      targetContext: {
-        channel: 'telegram',
-        channelId: '12345',
-        threadTs: '173.456',
-      },
+      targetContext: { channel: 'web' },
     })
   })
 

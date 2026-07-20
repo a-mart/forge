@@ -68,7 +68,6 @@ function makeState(overrides: Partial<ManagerWsState> = {}): ManagerWsState {
     statuses: {},
     lastError: null,
     lastSuccess: null,
-    telegramStatus: null,
     unreadCounts: {},
     terminals: [],
     ...overrides,

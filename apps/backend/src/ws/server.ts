@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import {
+  isRetiredMessageSource,
   isTerminalAssistantConversationMessage,
   type CollaborationStatus,
   type ServerEvent,
@@ -11,7 +12,6 @@ import {
 } from "@forge/protocol";
 import { WebSocketServer } from "ws";
 
-import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { BUILDER_PROTOCOL_VERSION } from "@forge/protocol";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
 import { getForgeAppVersion } from "../utils/app-version.js";
@@ -83,7 +83,6 @@ import { createFileRoutes } from "./http/routes/file-routes.js";
 import { createGitDiffRoutes } from "./http/routes/git-diff-routes.js";
 import { createGitSourceControlRoutes } from "./http/routes/git-source-control-routes.js";
 import { createHealthRoutes } from "./http/routes/health-routes.js";
-import { createIntegrationRoutes } from "./http/routes/integration-routes.js";
 import { createKnowledgeV2SettingsRoutes } from "./http/routes/knowledge-v2-settings-routes.js";
 import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes.js";
 import { createMobileRoutes } from "./http/routes/mobile-routes.js";
@@ -129,7 +128,6 @@ export class SwarmWebSocketServer {
   private readonly host: string;
   private readonly port: number;
   private actualPort: number | null = null;
-  private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly cortexAutoReviewSettingsService: CortexAutoReviewSettingsService;
   private readonly builderSidebarOrderService: BuilderSidebarOrderService | null;
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService | null;
@@ -170,7 +168,7 @@ export class SwarmWebSocketServer {
   private ownsControlPidFile = false;
 
   private readonly onConversationMessage = (event: ServerEvent): void => {
-    if (event.type !== "conversation_message") return;
+    if (event.type !== "conversation_message" || isRetiredMessageSource(event.sourceContext)) return;
     this.wsHandler.broadcastToSubscribed(event);
     this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationConversationMessage(event);
@@ -306,11 +304,6 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
-  private readonly onTelegramStatus = (event: ServerEvent): void => {
-    if (event.type !== "telegram_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
   private readonly onTerminalCreated = (event: TerminalCreatedEvent): void => {
     this.wsHandler.broadcastToSession(event.sessionAgentId, event);
   };
@@ -434,7 +427,6 @@ export class SwarmWebSocketServer {
     host: string;
     port: number;
     allowNonManagerSubscriptions: boolean;
-    integrationRegistry?: IntegrationRegistryService;
     terminalService?: TerminalService | null;
     terminalRuntimeConfig?: TerminalRuntimeConfig | null;
     terminalSettingsService?: TerminalSettingsService;
@@ -456,7 +448,6 @@ export class SwarmWebSocketServer {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
-    this.integrationRegistry = options.integrationRegistry ?? null;
     const cortexEnabled = this.swarmManager.getConfig().cortexEnabled;
     this.cortexAutoReviewSettingsService = new CortexAutoReviewSettingsService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
@@ -537,7 +528,6 @@ export class SwarmWebSocketServer {
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
-      integrationRegistry: this.integrationRegistry,
       mobilePushService: this.mobilePushService,
       allowNonManagerSubscriptions: options.allowNonManagerSubscriptions,
       terminalService: this.terminalService,
@@ -711,10 +701,6 @@ export class SwarmWebSocketServer {
       ...createSkillRoutes({ swarmManager: this.swarmManager }),
       ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createMermaidPreviewRoutes(),
-      ...createIntegrationRoutes({
-        swarmManager: this.swarmManager,
-        integrationRegistry: this.integrationRegistry
-      }),
       ...(options.promptRegistry
         ? createPromptRoutes({
             promptRegistry: options.promptRegistry,
@@ -826,7 +812,6 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
-    this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
     this.terminalService?.on("terminal_created", this.onTerminalCreated);
     this.terminalService?.on("terminal_updated", this.onTerminalUpdated);
     this.terminalService?.on("terminal_closed", this.onTerminalClosed);
@@ -887,7 +872,6 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
-    this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
     this.terminalService?.off("terminal_created", this.onTerminalCreated);
     this.terminalService?.off("terminal_updated", this.onTerminalUpdated);
     this.terminalService?.off("terminal_closed", this.onTerminalClosed);

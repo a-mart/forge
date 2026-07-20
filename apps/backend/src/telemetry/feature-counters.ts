@@ -4,7 +4,6 @@ import {
   getAgentsStoreFilePath,
   getCortexAutoReviewSettingsPath,
   getGlobalSlashCommandsPath,
-  getProfileIntegrationsDir,
   getProfilePiExtensionsDir,
   getProfilePiSkillsDir,
   getProfileReferenceDir,
@@ -13,7 +12,6 @@ import {
   getSessionMetaPath,
   getSessionTerminalsDir,
   getSessionsDir,
-  getSharedIntegrationsDir,
   getSharedMobileDevicesPath,
 } from '../swarm/data-paths.js'
 import { PINNED_MESSAGES_FILE_NAME } from '../swarm/message-pins.js'
@@ -44,7 +42,6 @@ export async function collectFeatureAdoption(
     terminalsActive,
     pinnedMessagesUsed,
     scheduledTasksCount,
-    telegramConfigured,
     forkedSessionsCount,
     projectAgentsCount,
     extensionsLoaded,
@@ -60,7 +57,6 @@ export async function collectFeatureAdoption(
     countTerminals(dataDir, profileIds),
     countPinnedSessions(dataDir, profileIds),
     countScheduledTasks(dataDir, profileIds),
-    isTelegramConfigured(dataDir, profileIds),
     countForkedSessions(dataDir, profileIds),
     countProjectAgents(dataDir),
     countExtensions(dataDir, profileIds),
@@ -81,7 +77,6 @@ export async function collectFeatureAdoption(
     terminalsActive,
     pinnedMessagesUsed,
     scheduledTasksCount,
-    telegramConfigured,
     forkedSessionsCount,
     projectAgentsCount,
     projectAgentsPersistedCount: projectAgentsCount,
@@ -190,24 +185,6 @@ async function countScheduledTasks(dataDir: string, profileIds: string[]): Promi
     return count
   } catch {
     return 0
-  }
-}
-
-async function isTelegramConfigured(dataDir: string, profileIds: string[]): Promise<boolean> {
-  try {
-    if (await isTelegramEnabled(join(getSharedIntegrationsDir(dataDir), 'telegram.json'))) {
-      return true
-    }
-
-    for (const profileId of profileIds) {
-      if (await isTelegramEnabled(join(getProfileIntegrationsDir(dataDir, profileId), 'telegram.json'))) {
-        return true
-      }
-    }
-
-    return false
-  } catch {
-    return false
   }
 }
 
@@ -406,16 +383,6 @@ async function hasPinnedMessages(filePath: string): Promise<boolean> {
   }
 
   return Object.keys(parsed.pins).length > 0
-}
-
-async function isTelegramEnabled(filePath: string): Promise<boolean> {
-  const parsed = await readJsonFile(filePath)
-  return (
-    isRecord(parsed) &&
-    parsed.enabled === true &&
-    typeof parsed.botToken === 'string' &&
-    parsed.botToken.trim().length > 0
-  )
 }
 
 async function countArrayEntriesInFile(filePath: string, fieldName: string): Promise<number> {

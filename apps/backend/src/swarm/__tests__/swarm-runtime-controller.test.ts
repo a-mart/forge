@@ -29,7 +29,6 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
   const sharedAuthDir = join(sharedConfigDir, "auth");
   const sharedAuthFile = join(sharedAuthDir, "auth.json");
   const sharedSecretsFile = join(sharedConfigDir, "secrets.json");
-  const sharedIntegrationsDir = join(sharedConfigDir, "integrations");
   const authDir = join(dataDir, "auth");
   const agentDir = join(dataDir, "agent");
   const managerAgentDir = join(agentDir, "manager");
@@ -43,7 +42,6 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
   await mkdir(uploadsDir, { recursive: true });
   await mkdir(profilesDir, { recursive: true });
   await mkdir(sharedAuthDir, { recursive: true });
-  await mkdir(sharedIntegrationsDir, { recursive: true });
   await mkdir(sharedCacheDir, { recursive: true });
   await mkdir(sharedStateDir, { recursive: true });
   await mkdir(authDir, { recursive: true });
@@ -82,7 +80,6 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sharedIntegrationsDir,
       sessionsDir,
       memoryDir,
       authDir,

@@ -95,6 +95,10 @@ function createHarness() {
   }> = [];
   const ledgerPending: Array<Record<string, unknown>> = [];
   const ledgerAcked: Array<Record<string, unknown>> = [];
+  const diagnostics: Array<Record<string, unknown>> = [];
+  const agentMessages: Array<Record<string, unknown>> = [];
+  const observability: Array<Record<string, unknown>> = [];
+  const debugLogs: Array<{ message: string; details?: unknown }> = [];
   let turnCounter = 0;
   let nonce = 0;
   let saveError: Error | undefined;
@@ -117,7 +121,7 @@ function createHarness() {
       clearManagerAssistantOutputTurn: () => undefined,
     },
     markTurnActivatedExternally: () => undefined,
-    emitConversationMessage: () => undefined,
+    emitConversationMessage: (event) => diagnostics.push(event),
     markSessionActivity: () => undefined,
     now: () => "2026-07-16T01:00:00.000Z",
     logDebug: () => undefined,
@@ -162,11 +166,20 @@ function createHarness() {
     },
     observability: {
       getActiveRootTurnId: () => "root-user-a",
-      beginRuntimeInput: (input) => ({ rootTurnId: `root-${input.target.agentId}`, targetAgentId: input.target.agentId }),
-      completeRuntimeInput: () => undefined,
-      cancelRuntimeInput: () => undefined,
+      beginRuntimeInput: (input) => {
+        observability.push({ kind: "begin", ...input });
+        return { rootTurnId: `root-${input.target.agentId}`, targetAgentId: input.target.agentId };
+      },
+      completeRuntimeInput: (_handle, _receipt, metadata) => {
+        observability.push({ kind: "complete", metadata });
+      },
+      cancelRuntimeInput: (_handle, reason) => {
+        observability.push({ kind: "cancel", reason });
+      },
       resolveParentTool: (input) => input,
-      recordAgentDelivery: () => undefined,
+      recordAgentDelivery: (input) => {
+        observability.push({ kind: "delivery", ...input });
+      },
     },
     plans: {
       resolveAssignment: async () => ({ planRunId: "plan-1", stepKey: "step-1", step: "Step" }),
@@ -205,14 +218,14 @@ function createHarness() {
       } as unknown as SwarmAgentRuntime;
     },
     appendProjectAgentConversation: async () => undefined,
-    emitAgentMessage: () => undefined,
+    emitAgentMessage: (event) => agentMessages.push(event),
     saveStore: async () => {
       order.push("store:save");
       if (saveError) throw saveError;
     },
     now: () => "2026-07-16T01:00:00.000Z",
     createDeliveryNonce: () => `nonce-${++nonce}`,
-    logDebug: () => undefined,
+    logDebug: (message, details) => debugLogs.push({ message, details }),
   };
 
   return {
@@ -224,6 +237,10 @@ function createHarness() {
     queuedTurns,
     ledgerPending,
     ledgerAcked,
+    diagnostics,
+    agentMessages,
+    observability,
+    debugLogs,
     setActiveParent: (value: typeof activeParent) => { activeParent = value; },
     setRuntimeError: (value: Error | undefined) => { runtimeError = value; },
     setRuntimeSendGate: (value: Promise<void> | undefined) => { runtimeSendGate = value; },
@@ -359,6 +376,72 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     });
     expect(harness.ledgerPending[0]?.turnId).not.toBe("active-user-b");
     expect(harness.worker.workerParentContext).toBeUndefined();
+  });
+
+  it("settles recovered retired-channel results before runtime, ledger, observability, logs, or content projection", async () => {
+    const harness = createHarness();
+    harness.worker.workerParentContext = {
+      ...parentContext("assignment-retired"),
+      outputTarget: {
+        kind: "external_channel",
+        sourceContext: {
+          channel: "telegram",
+          channelId: "retired-sensitive-chat",
+          userId: "retired-sensitive-user",
+          threadTs: "retired-sensitive-thread",
+          integrationProfileId: "retired-sensitive-profile",
+        },
+      },
+    };
+
+    const receipt = await harness.dispatcher.sendWorkerResult(
+      "worker-1",
+      "retired-sensitive-result-content",
+      "assignment-retired",
+    );
+
+    expect(receipt).toEqual({
+      targetAgentId: "manager-1",
+      deliveryId: "retired-worker-result-discarded",
+      acceptedMode: "prompt",
+    });
+    expect(harness.worker.workerParentContext).toBeUndefined();
+    expect(harness.order).toEqual(["store:save"]);
+    expect(harness.runtimeInputs).toEqual([]);
+    expect(harness.queuedTurns).toEqual([]);
+    expect(harness.ledgerPending).toEqual([]);
+    expect(harness.ledgerAcked).toEqual([]);
+    expect(harness.observability).toEqual([]);
+    expect(harness.agentMessages).toEqual([]);
+    expect(harness.debugLogs).toEqual([]);
+    expect(harness.diagnostics).toEqual([{
+      type: "conversation_message",
+      agentId: "manager-1",
+      role: "system",
+      text: "retired_external_channel",
+      timestamp: "2026-07-16T01:00:00.000Z",
+      source: "worker_report",
+      excludeFromModelContext: true,
+    }]);
+    const exposed = JSON.stringify({
+      diagnostics: harness.diagnostics,
+      runtimeInputs: harness.runtimeInputs,
+      queuedTurns: harness.queuedTurns,
+      ledgerPending: harness.ledgerPending,
+      observability: harness.observability,
+      agentMessages: harness.agentMessages,
+      debugLogs: harness.debugLogs,
+    });
+    for (const sensitive of [
+      "retired-sensitive-result-content",
+      "retired-sensitive-chat",
+      "retired-sensitive-user",
+      "retired-sensitive-thread",
+      "retired-sensitive-profile",
+      "telegram",
+    ]) {
+      expect(exposed).not.toContain(sensitive);
+    }
   });
 
   it("makes a repaired legacy worker result eligible to activate the manager turn", async () => {

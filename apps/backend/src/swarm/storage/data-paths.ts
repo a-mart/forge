@@ -285,10 +285,6 @@ export function getWorkerSessionFilePath(
 
 // ── Profile-scoped config paths ────────────────────────────────────────────────
 
-export function getProfileIntegrationsDir(dataDir: string, profileId: string): string {
-  return join(getProfileDir(dataDir, profileId), "integrations");
-}
-
 export function getProfileSchedulesDir(dataDir: string, profileId: string): string {
   return join(getProfileDir(dataDir, profileId), "schedules");
 }
@@ -302,10 +298,6 @@ export function getProfileSlashCommandsPath(dataDir: string, profileId: string):
 }
 
 // ── Shared paths ────────────────────────────────────────────────────────────────
-
-export function getSharedIntegrationsDir(dataDir: string): string {
-  return join(getSharedConfigDir(dataDir), "integrations");
-}
 
 export function getSharedKnowledgeDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "knowledge");

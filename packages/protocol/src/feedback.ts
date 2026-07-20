@@ -19,8 +19,9 @@ export interface FeedbackEvent {
   actor: "user";
 }
 
-export interface FeedbackSubmitEvent extends Omit<FeedbackEvent, "value"> {
+export interface FeedbackSubmitEvent extends Omit<FeedbackEvent, "value" | "channel"> {
   value: FeedbackSubmitValue;
+  channel: "web";
   /** When value is "clear", specifies whether to clear the vote or comment entry. Defaults to "vote". */
   clearKind?: "vote" | "comment";
 }

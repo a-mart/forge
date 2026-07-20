@@ -1829,7 +1829,7 @@ describe('SwarmManager', () => {
     )
   })
 
-  it('preserves explicit routing for non-web worker-result closeouts', async () => {
+  it('fails closed for retired-channel worker-result closeouts', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1842,18 +1842,39 @@ describe('SwarmManager', () => {
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Telegram Health Worker' })
     await manager.sendMessage('manager', worker.agentId, 'Check all three hosts.', 'auto')
-    expect(
-      manager.listAgentsForInternalUse().find((agent) => agent.agentId === worker.agentId)
-        ?.workerParentContext?.outputTarget,
-    ).toEqual({
-      kind: 'external_channel',
-      sourceContext: { channel: 'telegram', channelId: 'chat-1' },
+    const liveWorker = (manager as unknown as { descriptors: Map<string, AgentDescriptor> })
+      .descriptors.get(worker.agentId)
+    expect(liveWorker?.workerParentContext?.outputTarget).toEqual({
+      kind: 'internal_only',
+      reason: 'retired_external_channel',
     })
-    await completeWorker(manager, worker.agentId, 'Completed the Telegram health check.')
+    // Simulate a pre-removal assignment recovered from disk.
+    liveWorker!.workerParentContext!.outputTarget = {
+      kind: 'external_channel',
+      sourceContext: {
+        channel: 'telegram',
+        channelId: 'retired-sensitive-chat',
+        userId: 'retired-sensitive-user',
+      },
+    }
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const managerSendCount = managerRuntime?.sendCalls.length ?? 0
+    const historyCount = manager.getConversationHistory('manager').length
+    await completeWorker(manager, worker.agentId, 'retired-sensitive-result-content')
 
-    const workerResultRuntimeText = await activateLastRuntimeUserMessage(manager, 'manager')
-    expect(workerResultRuntimeText).toContain('[workerResult]')
-    expect(workerResultRuntimeText).toContain('[assistantOutputTarget] {"kind":"external_channel"}')
+    expect(managerRuntime?.sendCalls.length ?? 0).toBe(managerSendCount)
+    expect(liveWorker?.workerParentContext).toBeUndefined()
+    expect(assistantOutputTexts(manager, 'manager')).toEqual([])
+    const managerHistory = JSON.stringify(manager.getConversationHistory('manager').slice(historyCount))
+    expect(managerHistory).toContain('retired_external_channel')
+    for (const sensitive of [
+      'retired-sensitive-result-content',
+      'retired-sensitive-chat',
+      'retired-sensitive-user',
+      'telegram',
+    ]) {
+      expect(managerHistory).not.toContain(sensitive)
+    }
   })
 
   it('keeps later internal same-manager project-agent self messages hidden after a direct-web turn completes', async () => {

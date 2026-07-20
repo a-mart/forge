@@ -20,7 +20,6 @@ Forge gives you one.
 - [Core Concepts](#core-concepts)
 - [Dashboard](#dashboard)
 - [Skills](#skills)
-- [Integrations](#integrations)
 - [Getting the Most Out of Forge](#getting-the-most-out-of-forge)
 - [Architecture](#architecture)
 - [Configuration](#configuration)
@@ -253,13 +252,6 @@ Beyond skills, Forge also exposes the full Pi extension and package system. Pi e
 Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all workers — no build step, no restart required. Repository-local executable extensions can also live under `.forge/extensions/`, `.forge/pi/extensions/`, or `.forge/pi/settings.json`, but they are gated by an explicit trust prompt. Passive repo resources like `.forge/skills/`, `.forge/specialists/`, and `.forge/reference/` remain available even if you deny trust. Extensions load per-session via [jiti](https://github.com/nicolo-ribaudo/jiti) with full TypeScript support.
 
 There's also a growing ecosystem of community Pi packages available from npm and git. Install them by adding a `settings.json` to your agent config directory. See the [Pi Extensions guide](docs/PI_EXTENSIONS.md) for the full reference.
-
-## Integrations
-
-- **Telegram** — create a bot via [@BotFather](https://t.me/botfather), add the token in Settings. Full bidirectional messaging with your manager, including code blocks and file attachments.
-- **Mobile app** — iOS and Android companion app with push notifications. Get notified when workers finish, reply to your manager from anywhere. Currently in TestFlight beta.
-
-See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for setup instructions.
 
 ## Getting the Most Out of Forge
 

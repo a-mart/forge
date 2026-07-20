@@ -5,7 +5,6 @@ import {
   type ServerEvent,
   type TerminalDescriptor,
 } from "@forge/protocol";
-import type { IntegrationRegistryService } from "../integrations/registry.js";
 import {
   SIDEBAR_BOOTSTRAP_METRIC,
   SIDEBAR_SNAPSHOT_BUILD_METRIC,
@@ -65,14 +64,12 @@ export async function sendSubscriptionBootstrap(options: {
   supportsConversationPaging?: boolean;
   conversationView?: BuilderTimelineChannelView;
   swarmManager: SwarmManager;
-  integrationRegistry: IntegrationRegistryService | null;
   terminalService: TerminalService | null;
   listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   unreadTracker: UnreadTracker | null;
   perf: SidebarPerfRecorder;
   send: (socket: WebSocket, event: ServerEvent) => number | null | Promise<number | null>;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
-  resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
   resolvePlanSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
@@ -85,14 +82,12 @@ export async function sendSubscriptionBootstrap(options: {
     supportsConversationPaging = false,
     conversationView = "all",
     swarmManager,
-    integrationRegistry,
     terminalService,
     listTerminalsForSession,
     unreadTracker,
     perf,
     send,
     resolveTerminalScopeAgentId,
-    resolveManagerContextAgentId,
     resolvePlanSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
@@ -360,13 +355,6 @@ export async function sendSubscriptionBootstrap(options: {
       counts: unreadTracker.getSnapshot(),
     });
     metricFields.unreadSnapshotMs = performance.now() - unreadSnapshotStartedAtMs;
-  }
-
-  const managerContextId = resolveManagerContextAgentId(targetAgentId);
-  if (integrationRegistry && managerContextId) {
-    const integrationStatusStartedAtMs = performance.now();
-    await sendMeasured("integrationStatus", integrationRegistry.getStatus(managerContextId, "telegram"));
-    metricFields.integrationStatusMs = performance.now() - integrationStatusStartedAtMs;
   }
 
   metricFields.payloadBytesTotal = payloadBytesTotal;

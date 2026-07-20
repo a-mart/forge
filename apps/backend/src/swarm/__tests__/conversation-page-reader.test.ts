@@ -42,6 +42,25 @@ function conversationRow(index: number): string {
 }
 
 describe("readConversationHistoryPage", () => {
+  it("fills wire pages across retired-source rows while retaining them for internal cold loads", () => {
+    const { sessionFile } = createFixture();
+    const rows = [0, 1, 2].map((index) => {
+      const row = JSON.parse(conversationRow(index)) as { data: { sourceContext?: { channel: string } } };
+      row.data.sourceContext = { channel: index === 1 ? "telegram" : "web" };
+      return JSON.stringify(row);
+    });
+    writeFileSync(sessionFile, `${rows.join("\n")}\n`);
+
+    const wirePage = readConversationHistoryPage({ sessionFile, limit: 2 });
+    expect(wirePage.messages.map((entry) => entry.type === "conversation_message" ? entry.id : "unexpected"))
+      .toEqual(["message-0", "message-2"]);
+    expect(JSON.stringify(wirePage)).not.toContain("message 1");
+
+    const internalPage = readConversationHistoryPage({ sessionFile, limit: 3, projectForWire: false });
+    expect(internalPage.messages.map((entry) => entry.type === "conversation_message" ? entry.id : "unexpected"))
+      .toEqual(["message-0", "message-1", "message-2"]);
+  });
+
   it("pages canonical custom entries newest-first without gaps or duplicates", () => {
     const { sessionFile } = createFixture();
     writeFileSync(sessionFile, `${Array.from({ length: 11 }, (_, index) => conversationRow(index)).join("\n")}\n`);
@@ -410,6 +429,99 @@ describe("readConversationHistoryPage", () => {
     });
     const placeholder = second.messages[0];
     expect(placeholder.type === "conversation_message" ? placeholder.text : "").toContain("too large to display inline");
+  });
+
+  it("drains a 4.7 MiB retired row whose source fields precede its payload", () => {
+    const { sessionFile } = createFixture();
+    const row = JSON.parse(conversationRow(1)) as { data: Record<string, unknown> };
+    const { text: _text, timestamp, source, ...prefix } = row.data;
+    row.data = {
+      ...prefix,
+      sourceContext: { channel: "telegram", channelId: "retired-prefix-chat" },
+      text: `retired-prefix-content-${"x".repeat(Math.floor(4.7 * 1024 * 1024))}`,
+      timestamp,
+      source,
+    };
+    writeFileSync(
+      sessionFile,
+      `${conversationRow(0)}\n${JSON.stringify(row)}\n${conversationRow(2)}\n`,
+    );
+
+    const page = readConversationHistoryPage({ sessionFile, agentId: "worker", limit: 10 });
+
+    expect(page.messages).toMatchObject([
+      { type: "conversation_message", id: "message-0" },
+      { type: "conversation_message", id: "message-2" },
+    ]);
+    expect(page.page).toMatchObject({ hasOlder: false, completeness: "complete" });
+    expect(page.page.nextCursor).toBeUndefined();
+    const exposed = JSON.stringify(page);
+    expect(exposed).not.toContain("oversized-history-entry");
+    expect(exposed).not.toContain("too large to display inline");
+    expect(exposed).not.toContain("retired-prefix-content");
+    expect(exposed).not.toContain("retired-prefix-chat");
+    expect(exposed).not.toContain("telegram");
+  });
+
+  it("hides an oversized retired-source row whose source fields follow its payload", () => {
+    const { sessionFile } = createFixture();
+    const row = JSON.parse(conversationRow(0)) as { data: Record<string, unknown> };
+    row.data.text = `retired-suffix-content-${"x".repeat(MAX_CONVERSATION_PAGE_SCAN_BYTES + 512 * 1024)}`;
+    row.data.sourceContext = { channel: "telegram", channelId: "retired-suffix-chat" };
+    writeFileSync(sessionFile, `${JSON.stringify(row)}\n`);
+
+    const page = readConversationHistoryPage({ sessionFile, agentId: "worker", limit: 10 });
+
+    expect(page.messages).toEqual([]);
+    expect(page.page).toMatchObject({ hasOlder: false, completeness: "complete" });
+    expect(page.page.nextCursor).toBeUndefined();
+    const exposed = JSON.stringify(page);
+    expect(exposed).not.toContain("oversized-history-entry");
+    expect(exposed).not.toContain("too large to display inline");
+    expect(exposed).not.toContain("retired-suffix-content");
+    expect(exposed).not.toContain("retired-suffix-chat");
+    expect(exposed).not.toContain("telegram");
+  });
+
+  it("preserves two-step placeholder paging for a visible oversized row with prefix source fields", () => {
+    const { sessionFile } = createFixture();
+    const row = JSON.parse(conversationRow(0)) as { data: Record<string, unknown> };
+    const { text: _text, timestamp, source, ...prefix } = row.data;
+    row.data = {
+      ...prefix,
+      sourceContext: { channel: "web" },
+      text: `visible-prefix-content-{"sourceContext":{"channel":"telegram"}}-${
+        "x".repeat(Math.floor(4.7 * 1024 * 1024))
+      }`,
+      timestamp,
+      source,
+    };
+    writeFileSync(sessionFile, `${JSON.stringify(row)}\n`);
+
+    const first = readConversationHistoryPage({ sessionFile, agentId: "worker", limit: 10 });
+    expect(first.messages).toEqual([]);
+    expect(first.page).toMatchObject({ hasOlder: true, completeness: "partial_scan" });
+    expect(first.page.nextCursor).toBeDefined();
+
+    const second = readConversationHistoryPage({
+      sessionFile,
+      agentId: "worker",
+      cursor: first.page.nextCursor,
+      limit: 10,
+    });
+    expect(second.page).toMatchObject({ hasOlder: false, completeness: "complete" });
+    expect(second.page.nextCursor).toBeUndefined();
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0]).toMatchObject({
+      type: "conversation_message",
+      agentId: "worker",
+      role: "system",
+      source: "system",
+    });
+    const placeholder = second.messages[0];
+    expect(placeholder.type === "conversation_message" ? placeholder.text : "")
+      .toContain("too large to display inline");
+    expect(JSON.stringify(second)).not.toContain("visible-prefix-content");
   });
 
   it("does not turn an ordinary row crossing a scan boundary into an oversized placeholder", () => {

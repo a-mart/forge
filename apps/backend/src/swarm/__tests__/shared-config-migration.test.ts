@@ -7,7 +7,6 @@ import {
   getGlobalSlashCommandsPath,
   getSharedAuthFilePath,
   getSharedDir,
-  getSharedIntegrationsDir,
   getSharedMobileDevicesPath,
   getSharedMobileNotificationPreferencesPath,
   getSharedModelOverridesPath,
@@ -80,9 +79,7 @@ describe("shared-config-migration", () => {
     await expect(readFile(getGlobalSlashCommandsPath(dataDir), "utf8")).resolves.toContain("commands");
     await expect(readFile(getSharedMobileDevicesPath(dataDir), "utf8")).resolves.toContain("devices");
     await expect(readFile(join(getSharedStateDir(dataDir), BACKFILL_SENTINEL), "utf8")).resolves.toContain("done");
-    await expect(readFile(join(getSharedIntegrationsDir(dataDir), "telegram.json"), "utf8")).resolves.toContain(
-      "enabled"
-    );
+    await expect(access(join(sharedDir, "config", "integrations", "telegram.json"))).rejects.toMatchObject({ code: "ENOENT" });
 
     await expect(readFile(join(sharedDir, "auth", "auth.json"), "utf8")).resolves.toContain("openai-codex");
     await expect(readFile(join(sharedDir, "secrets.json"), "utf8")).resolves.toContain("OPENAI_API_KEY");
@@ -99,14 +96,13 @@ describe("shared-config-migration", () => {
     await writeText(join(sharedDir, "secrets.json"), '{"OPENAI_API_KEY":"legacy"}\n');
     await writeText(getSharedSecretsFilePath(dataDir), '{"OPENAI_API_KEY":"canonical"}\n');
     await writeText(join(sharedDir, "integrations", "telegram.json"), '{"enabled":true,"source":"legacy"}\n');
-    await writeText(join(getSharedIntegrationsDir(dataDir), "telegram.json"), '{"enabled":false,"source":"canonical"}\n');
+    await writeText(join(sharedDir, "config", "integrations", "telegram.json"), '{"enabled":false,"source":"canonical"}\n');
 
     await migrateSharedConfigLayout(dataDir);
 
     await expect(readFile(getSharedSecretsFilePath(dataDir), "utf8")).resolves.toContain("canonical");
-    await expect(readFile(join(getSharedIntegrationsDir(dataDir), "telegram.json"), "utf8")).resolves.toContain(
-      "canonical"
-    );
+    await expect(readFile(join(sharedDir, "integrations", "telegram.json"), "utf8")).resolves.toContain("legacy");
+    await expect(readFile(join(sharedDir, "config", "integrations", "telegram.json"), "utf8")).resolves.toContain("canonical");
     await expect(access(join(getSharedStateDir(dataDir), MIGRATION_SENTINEL))).resolves.toBeUndefined();
   });
 
@@ -137,7 +133,7 @@ describe("shared-config-migration", () => {
 
     await writeText(getSharedAuthFilePath(dataDir), '{"provider":"canonical"}\n');
     await writeText(getSharedSecretsFilePath(dataDir), '{"OPENAI_API_KEY":"canonical"}\n');
-    await writeText(join(getSharedIntegrationsDir(dataDir), "telegram.json"), '{"enabled":false}\n');
+    await writeText(join(sharedDir, "config", "integrations", "telegram.json"), '{"enabled":false}\n');
     await writeText(join(sharedDir, "cache", "provider-usage-cache.json"), '{"cached":true}\n');
     await writeText(join(sharedDir, "cache", "provider-usage-history.jsonl"), '{"provider":"openai"}\n');
 
@@ -145,7 +141,7 @@ describe("shared-config-migration", () => {
 
     await expect(access(join(sharedDir, "auth", "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(sharedDir, "secrets.json"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(join(sharedDir, "integrations", "telegram.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(sharedDir, "integrations", "telegram.json"), "utf8")).resolves.toBe('{"enabled":true}\n');
     await expect(access(join(sharedDir, "provider-usage-cache.json"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(sharedDir, "provider-usage-history.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(join(sharedDir, "stats-cache.json"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -217,12 +213,12 @@ describe("shared-config-migration", () => {
     await writeText(join(sharedDir, "generated", "pi-models.json"), '{"models":[]}\n');
 
     await writeText(getSharedAuthFilePath(dataDir), '{"provider":"canonical"}\n');
-    await writeText(join(getSharedIntegrationsDir(dataDir), "nested", "telegram.json"), '{"enabled":false}\n');
+    await writeText(join(sharedDir, "config", "integrations", "nested", "telegram.json"), '{"enabled":false}\n');
 
     await cleanupOldSharedConfigPaths(dataDir);
 
     await expect(access(join(sharedDir, "auth"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(join(sharedDir, "integrations"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(sharedDir, "integrations", "nested", "telegram.json"), "utf8")).resolves.toBe('{"enabled":true}\n');
     await expect(access(join(sharedDir, "generated"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
