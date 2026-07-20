@@ -6,6 +6,7 @@ import { SpecialistBadge } from '../SpecialistBadge'
 import { cn } from '@/lib/utils'
 import { isCodexExternalThread } from '@/lib/external-threads'
 import { CodexExternalThreadIcon, HighlightedText } from './shared'
+import { WorkerHighlightOutline } from '../WorkGraphWorkerHighlight'
 import type { WorkerRowProps } from './types'
 
 export const WorkerRow = React.memo(function WorkerRow({
@@ -34,12 +35,13 @@ export const WorkerRow = React.memo(function WorkerRow({
         <div
           data-worker-row
           className={cn(
-            'flex w-full items-center gap-1 rounded-md py-1.5 pl-12 pr-1.5 transition-colors',
+            'relative flex w-full items-center gap-1 rounded-md py-1.5 pl-12 pr-1.5 transition-colors',
             isSelected
               ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
               : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
           )}
         >
+          <WorkerHighlightOutline workerId={agent.agentId} className="rounded-md" />
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>

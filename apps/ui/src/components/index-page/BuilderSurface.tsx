@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebarConnected } from '@/components/chat/AgentSidebarConnected'
+import { WorkGraphWorkerHighlightProvider } from '@/components/chat/WorkGraphWorkerHighlight'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
@@ -759,7 +760,7 @@ export function BuilderSurface({
   const feedbackProfileId = transcript.feedbackProfileId
 
   return (
-    <>
+    <WorkGraphWorkerHighlightProvider>
       <FileDirtyConfirmDialog state={panels.fileEditorCoordinator.dialogState} />
 
       <AgentSidebarConnected
@@ -1385,6 +1386,6 @@ export function BuilderSurface({
       />
 
       <CortexV2OnboardingModal source={localWsUrl} />
-    </>
+    </WorkGraphWorkerHighlightProvider>
   )
 }

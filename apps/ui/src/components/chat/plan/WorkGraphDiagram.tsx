@@ -15,6 +15,10 @@ import {
   WorkGraphNodeStatusIcon,
 } from './WorkGraphNodeMeta'
 import { workGraphNodeStatusLabel } from './work-graph-node-status'
+import {
+  getWorkGraphNodeWorkerId,
+  useWorkGraphWorkerHighlight,
+} from '../WorkGraphWorkerHighlight'
 
 interface PositionedNode {
   node: WorkGraphNode
@@ -37,6 +41,7 @@ export function WorkGraphDiagram({
   graph: WorkGraphSnapshot
   compact: boolean
 }) {
+  const { highlightWorker } = useWorkGraphWorkerHighlight()
   const stageRef = useRef<HTMLDivElement | null>(null)
   const nodeRefs = useRef(new Map<string, HTMLButtonElement>())
   const userSelectedRef = useRef(false)
@@ -210,6 +215,7 @@ export function WorkGraphDiagram({
                 onClick={() => {
                   userSelectedRef.current = true
                   setSelectedNodeId(node.id)
+                  highlightWorker(getWorkGraphNodeWorkerId(node))
                 }}
               >
                 <span className="flex min-w-0 items-center gap-1.5">

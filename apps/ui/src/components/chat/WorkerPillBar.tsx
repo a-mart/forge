@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import type { AgentDescriptor, AgentStatus } from '@forge/protocol'
 import { WorkerQuickLook } from './WorkerQuickLook'
+import { WorkerHighlightOutline } from './WorkGraphWorkerHighlight'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,14 +160,18 @@ const WorkerPill = memo(function WorkerPill({
           <PopoverTrigger asChild>
             <button
               type="button"
+              data-worker-pill={worker.agentId}
               className={cn(
-                'group inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-500',
+                'group relative inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-500',
                 'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
                 'hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
                 exiting && 'opacity-0',
               )}
             >
+              {status === 'streaming' && !exiting ? (
+                <WorkerHighlightOutline workerId={worker.agentId} className="rounded-full" />
+              ) : null}
               {/* Fix #4: Subtle pulse instead of aggressive ping */}
               <span className="relative inline-flex size-2 animate-pulse rounded-full bg-emerald-500" />
 

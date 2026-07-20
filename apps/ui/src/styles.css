@@ -139,6 +139,21 @@ body {
   animation: pin-nav-flash 1.5s ease-out;
 }
 
+/* Work graph: identify the matching visible worker without changing navigation. */
+@keyframes work-graph-worker-highlight {
+  0% { opacity: 0; box-shadow: 0 0 0 0 rgb(167 139 250 / 0.85); }
+  20% { opacity: 1; box-shadow: 0 0 0 3px rgb(167 139 250 / 0.7); }
+  100% { opacity: 0; box-shadow: 0 0 0 7px rgb(167 139 250 / 0); }
+}
+.work-graph-worker-highlight {
+  animation: work-graph-worker-highlight 800ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-graph-worker-highlight {
+    animation: none;
+  }
+}
+
 /* Find-in-chat: CSS Custom Highlight API styles */
 ::highlight(chat-search) {
   background-color: rgba(250, 204, 21, 0.4);
