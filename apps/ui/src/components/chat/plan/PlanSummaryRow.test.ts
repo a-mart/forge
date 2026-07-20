@@ -78,4 +78,56 @@ describe('PlanSummaryRow', () => {
     expect(container.textContent).toContain('2 steps in progress')
     expect(container.textContent).toContain('0/2')
   })
+
+  it('replays a completed graph in graph view with the compact list still available', () => {
+    act(() => root.render(createElement(PlanSummaryRow, {
+      summary: graphSummary(),
+    })))
+    act(() => container.querySelector('button')?.click())
+
+    expect(container.querySelector('[data-work-graph-view="graph"]')).not.toBeNull()
+    const listButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'List')
+    expect(listButton).not.toBeNull()
+
+    act(() => listButton?.click())
+    expect(container.querySelector('[data-work-graph-view="list"]')).not.toBeNull()
+    expect(container.textContent).toContain('After Inspect implementation')
+  })
 })
+
+function graphSummary(): PlanSummaryEvent {
+  return {
+    ...summary,
+    coordinationMode: 'graph',
+    plan: [
+      { step: 'Inspect implementation', status: 'completed' },
+      { step: 'Review result', status: 'completed' },
+    ],
+    workGraph: {
+      maxConcurrency: 1,
+      nodes: [
+        {
+          id: 'inspect',
+          title: 'Inspect implementation',
+          task: 'Inspect the implementation.',
+          kind: 'research',
+          status: 'completed',
+          dependsOn: [],
+          effort: 'support',
+          attempts: [],
+        },
+        {
+          id: 'review',
+          title: 'Review result',
+          task: 'Review the accepted result.',
+          kind: 'review',
+          status: 'completed',
+          dependsOn: ['inspect'],
+          effort: 'routine',
+          attempts: [],
+        },
+      ],
+    },
+  }
+}

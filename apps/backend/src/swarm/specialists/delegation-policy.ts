@@ -134,10 +134,6 @@ export function resolveManagerDelegation(input: ManagerDelegationInput): Resolve
   };
 }
 
-export function resolveExecutionPolicyTier(policy: WorkerExecutionPolicy): EffortTier {
-  return EXECUTION_POLICY_TIERS[policy];
-}
-
 export function translateManagerDelegationError(
   error: unknown,
   resolved: ResolvedManagerDelegation,

@@ -7,7 +7,10 @@ import { CODEX_PLUGIN_SPECIALIST_ID } from "./codex-app-server/codex-plugin-scop
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";
 import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-tool.js";
+import type { UpdateWorkGraphResult } from "./planning/update-work-graph-tool.js";
+import type { UpdateWorkGraphInput, WorkGraphDispatchClaim } from "./planning/work-graph-state.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
+import { resolveManagerDelegation } from "./specialists/delegation-policy.js";
 import { normalizeSpecialistHandle } from "./specialists/specialist-registry.js";
 import type { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import type { SwarmChoiceService } from "./swarm-choice-service.js";
@@ -78,7 +81,15 @@ export interface SessionInteractionCoordinatorOptions {
   >;
   plans: Pick<
     SessionPlanCoordinator,
-    "getSnapshot" | "preload" | "recordWorkerAssignment" | "resolveAssignment" | "update"
+    | "claimReadyWorkGraphNodes"
+    | "getSnapshot"
+    | "preload"
+    | "recordWorkerAssignment"
+    | "recordWorkGraphDispatchFailure"
+    | "recordWorkGraphWorkerStarted"
+    | "resolveAssignment"
+    | "update"
+    | "updateWorkGraph"
   >;
   choices: Pick<
     SwarmChoiceService,
@@ -160,6 +171,85 @@ export class SessionInteractionCoordinator {
       input: normalized,
       output: result,
       metadata: { revision: result.revision, stepCount: result.plan.length },
+    });
+    return result;
+  }
+
+  async updateWorkGraph(
+    callerAgentId: string,
+    toolCallId: string,
+    input: UpdateWorkGraphInput,
+  ): Promise<UpdateWorkGraphResult> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "update_work_graph");
+    const descriptor = this.getPlanOwner(callerAgentId, "update_work_graph");
+    const updated = await this.options.plans.updateWorkGraph(descriptor, input);
+
+    for (const workerId of updated.cancelledWorkerIds) {
+      const worker = this.options.descriptors.get(workerId);
+      if (!worker || isNonRunningAgentStatus(worker.status)) continue;
+      await this.options.lifecycle.killAgent(callerAgentId, workerId).catch((error) => {
+        this.options.logDebug("work_graph:cancel_worker:error", {
+          managerId: callerAgentId,
+          workerId,
+          message: errorMessage(error),
+        });
+      });
+    }
+
+    const claims = await this.options.plans.claimReadyWorkGraphNodes(descriptor);
+    const dispatched: UpdateWorkGraphResult["dispatched"] = [];
+    const dispatchFailures: UpdateWorkGraphResult["dispatchFailures"] = [];
+    for (const claim of claims) {
+      try {
+        const delegation = resolveGraphDispatch(claim, descriptor.cwd);
+        const spawned = await this.spawnAgent(callerAgentId, delegation);
+        await this.options.plans.recordWorkGraphWorkerStarted(
+          descriptor,
+          claim.nodeId,
+          claim.attemptId,
+          spawned.agentId,
+        );
+        dispatched.push({
+          nodeId: claim.nodeId,
+          workerId: spawned.agentId,
+          executionPolicy: claim.executionPolicy,
+        });
+      } catch (error) {
+        await this.options.plans.recordWorkGraphDispatchFailure(
+          descriptor,
+          claim.nodeId,
+          claim.attemptId,
+          error,
+        );
+        dispatchFailures.push({ nodeId: claim.nodeId, message: errorMessage(error) });
+      }
+    }
+
+    const snapshot = await this.options.plans.getSnapshot(descriptor);
+    const result: UpdateWorkGraphResult = {
+      sessionAgentId: descriptor.agentId,
+      revision: snapshot.revision,
+      updatedAt: snapshot.updatedAt,
+      ...(snapshot.explanation ? { explanation: snapshot.explanation } : {}),
+      plan: snapshot.plan,
+      ...(snapshot.coordinationMode ? { coordinationMode: snapshot.coordinationMode } : {}),
+      ...(snapshot.workGraph ? { workGraph: snapshot.workGraph } : {}),
+      dispatched,
+      dispatchFailures,
+      cancelledWorkerIds: updated.cancelledWorkerIds,
+    };
+    this.options.recordToolSideEffect(callerAgentId, {
+      toolName: "update_work_graph",
+      toolCallId,
+      phase: "side_effect",
+      input: updated.input,
+      output: result,
+      metadata: {
+        revision: result.revision,
+        nodeCount: result.workGraph?.nodes.length ?? 0,
+        dispatchedCount: dispatched.length,
+        dispatchFailureCount: dispatchFailures.length,
+      },
     });
     return result;
   }
@@ -382,7 +472,8 @@ export class SessionInteractionCoordinator {
       | "create_project_agent"
       | "speak_to_user"
       | "present_choices"
-      | "update_plan",
+      | "update_plan"
+      | "update_work_graph",
   ): void {
     const context = this.options.turns.getActiveExternalProjectAgentTurn(callerAgentId);
     if (!context) return;
@@ -392,17 +483,20 @@ export class SessionInteractionCoordinator {
     );
   }
 
-  private getPlanOwner(callerAgentId: string, operation: "update_plan" | "planStep"): SessionOwner {
+  private getPlanOwner(
+    callerAgentId: string,
+    operation: "update_plan" | "update_work_graph" | "planStep",
+  ): SessionOwner {
     const descriptor = this.options.descriptors.get(callerAgentId);
-    const operationLabel = operation === "update_plan" ? "update_plan" : "planStep";
+    const operationLabel = operation === "planStep" ? "planStep" : operation;
     if (
       !descriptor ||
       descriptor.role !== "manager" ||
       (operation === "planStep" && !this.options.directory.isSessionAgent(descriptor))
     ) {
       throw new Error(
-        operation === "update_plan"
-          ? "update_plan is only available to manager sessions."
+        operation !== "planStep"
+          ? `${operationLabel} is only available to manager sessions.`
           : "planStep is only available to manager sessions with a current working plan.",
       );
     }
@@ -410,18 +504,18 @@ export class SessionInteractionCoordinator {
       throw new Error(`${operationLabel} is not available for Collaboration sessions.`);
     }
     if (
-      operation === "update_plan" &&
+      operation !== "planStep" &&
       normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID
     ) {
-      throw new Error("update_plan is not available for Cortex sessions.");
+      throw new Error(`${operationLabel} is not available for Cortex sessions.`);
     }
     if (!this.options.directory.isSessionAgent(descriptor)) {
       throw new Error(
-        "update_plan requires a manager session with profile context.",
+        `${operationLabel} requires a manager session with profile context.`,
       );
     }
 
-    if (operation === "update_plan") {
+    if (operation !== "planStep") {
       this.options.directory.assertDescriptorNotEffectivelyArchived(descriptor);
       if (isNonRunningAgentStatus(descriptor.status)) {
         throw new Error(`Manager is not running: ${callerAgentId}`);
@@ -455,4 +549,34 @@ export class SessionInteractionCoordinator {
     }
     return { managerId: managerIdOrReason, reason: maybeReason ?? "api_reset" };
   }
+}
+
+function resolveGraphDispatch(claim: WorkGraphDispatchClaim, cwd: string): SpawnAgentInput {
+  const acceptance = claim.acceptanceCriteria
+    ? `\n\nAcceptance criteria for the manager: ${claim.acceptanceCriteria}`
+    : "";
+  const dependencies = claim.dependencyContext
+    ? [
+        "Accepted dependency results (upstream evidence; verify it when this node's acceptance criteria require independent checking):",
+        claim.dependencyContext,
+      ].join("\n\n")
+    : "";
+  return resolveManagerDelegation({
+    agentId: claim.agentId,
+    initialMessage: [
+      `Work graph node ${claim.nodeId}: ${claim.title}`,
+      "Own this bounded node only. Return a concise status: done, partial, or blocked result with evidence and any follow-up needed.",
+      claim.task,
+      dependencies,
+      acceptance,
+    ].filter(Boolean).join("\n\n"),
+    mode: claim.behaviorMode,
+    executionPolicy: claim.executionPolicy,
+    planStep: claim.title,
+    cwd,
+  }).spawnInput;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

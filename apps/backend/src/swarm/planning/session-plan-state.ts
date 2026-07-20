@@ -1,4 +1,14 @@
-import { PLAN_STEP_STATUSES, type PlanStep, type SessionPlanSnapshot } from '@forge/protocol'
+import {
+  PLAN_STEP_STATUSES,
+  type PlanStep,
+  type SessionPlanSnapshot,
+  type WorkGraphSnapshot,
+} from '@forge/protocol'
+import {
+  normalizePersistedWorkGraphSnapshot,
+  projectWorkGraphPlan,
+  WorkGraphValidationError,
+} from './work-graph-state.js'
 
 export const SESSION_PLAN_SCHEMA_VERSION = 1
 export const MAX_PLAN_STEPS = 20
@@ -7,6 +17,13 @@ export const MAX_PLAN_EXPLANATION_LENGTH = 2_000
 
 export interface SessionPlanState extends SessionPlanSnapshot {
   schemaVersion: typeof SESSION_PLAN_SCHEMA_VERSION
+}
+
+export interface SessionPlanWriteInput {
+  explanation?: string
+  plan: PlanStep[]
+  coordinationMode?: 'plan' | 'graph'
+  workGraph?: WorkGraphSnapshot
 }
 
 export class SessionPlanValidationError extends Error {
@@ -73,15 +90,40 @@ export function normalizeSessionPlanState(value: unknown): SessionPlanState {
     throw new SessionPlanValidationError('updatedAt must be an ISO timestamp.')
   }
 
+  const coordinationMode = state.coordinationMode
+  if (coordinationMode !== undefined && coordinationMode !== 'plan' && coordinationMode !== 'graph') {
+    throw new SessionPlanValidationError('coordinationMode must be plan or graph when provided.')
+  }
+  let workGraph: WorkGraphSnapshot | undefined
+  try {
+    workGraph = state.workGraph === undefined
+      ? undefined
+      : normalizePersistedWorkGraphSnapshot(state.workGraph)
+  } catch (error) {
+    if (error instanceof WorkGraphValidationError) {
+      throw new SessionPlanValidationError(`Invalid persisted work graph: ${error.message}`)
+    }
+    throw error
+  }
+  if (coordinationMode === 'graph' && !workGraph) {
+    throw new SessionPlanValidationError('coordinationMode=graph requires workGraph.')
+  }
+  if (workGraph && coordinationMode !== 'graph') {
+    throw new SessionPlanValidationError('workGraph requires coordinationMode=graph.')
+  }
   const normalized = normalizeSessionPlanInput({
     explanation: state.explanation,
-    plan: state.plan,
+    // Graph-backed plans are a projection and may contain more than the light-plan limit.
+    // Rebuild that projection from the validated graph instead of trusting persisted plan rows.
+    plan: workGraph ? [] : state.plan,
   })
   return {
     schemaVersion: SESSION_PLAN_SCHEMA_VERSION,
     revision: revision as number,
     updatedAt: state.updatedAt,
     ...normalized,
+    ...(coordinationMode ? { coordinationMode } : {}),
+    ...(workGraph ? { workGraph, plan: projectWorkGraphPlan(workGraph) } : {}),
   }
 }
 

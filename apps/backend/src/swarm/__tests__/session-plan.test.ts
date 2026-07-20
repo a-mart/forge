@@ -114,6 +114,24 @@ describe('Codex-style session plans', () => {
     await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('backs up a structurally invalid persisted work graph', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-session-plan-corrupt-graph-'))
+    const path = getSessionPlanPath(dataDir, 'profile-1', 'session-1')
+    const store = new SessionPlanStore({ dataDir, profileId: 'profile-1', sessionAgentId: 'session-1' })
+    await store.update({ plan: [] })
+    await writeFile(path, JSON.stringify({
+      schemaVersion: 1,
+      revision: 1,
+      updatedAt: '2026-07-18T12:00:00.000Z',
+      coordinationMode: 'graph',
+      plan: [],
+      workGraph: { maxConcurrency: 4, nodes: [] },
+    }), 'utf8')
+
+    await expect(store.load()).resolves.toMatchObject({ revision: 0, plan: [] })
+    await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('serializes clear after an in-flight update and preserves monotonic revisions', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'forge-session-plan-clear-'))
     const store = new SessionPlanStore({

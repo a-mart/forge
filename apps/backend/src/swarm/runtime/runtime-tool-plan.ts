@@ -181,6 +181,7 @@ function previewForLog(text: string, maxLength = 160): string {
 const CORTEX_ARCHETYPE_ID = "cortex";
 const BUILDER_COORDINATION_TOOL_NAMES = new Set([
   "update_plan",
+  "update_work_graph",
   "create_goal",
   "get_goal",
   "update_goal",
@@ -191,6 +192,7 @@ const CORTEX_DISABLED_TOOL_NAMES = new Set([
   "list_agents",
   "kill_agent",
   "update_plan",
+  "update_work_graph",
   "create_goal",
   "get_goal",
   "update_goal",

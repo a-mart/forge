@@ -7,6 +7,8 @@ Forge gives managers two task-level choices:
 
 The manager-facing `spawn_agent` tool accepts `mode`, `executionPolicy`, and a required concrete `initialMessage`. Saved custom specialists remain available through `customSpecialist`. The older tier/lens representation remains internal so existing workers, fallbacks, attribution, and stored configuration keep working.
 
+For explicit one-worker delegation, the manager chooses mode and policy. For an executable work graph created through `update_work_graph`, Forge normally derives both from the node instead: research leaves use `research` + `support`; ordinary task, implementation, review, and synthesis nodes use `routine`; and a retry after a blocked attempt escalates to `deep`. Fan-in count alone does not escalate a node. A manager may request `effort=deep` for genuinely high-risk or cross-cutting reasoning. This routing deliberately avoids making planning, review, or graph size an automatic reason to spend the Deep policy.
+
 ## Behavior Modes
 
 | Mode | Default policy | Purpose |

@@ -408,8 +408,16 @@ Custom project instruction: always mention the release train when summarizing de
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
-    expect(resolved).toContain("Use `update_plan` for substantial multi-step work")
-    expect(resolved).toContain("including parallel work")
+    expect(resolved).toContain("Keep one active coordination lane for the current phase")
+    expect(resolved).toContain("**Checklist:** use `update_plan`")
+    expect(resolved).toContain("**Graph:** use `update_work_graph`")
+    expect(resolved).toContain("all three conditions hold")
+    expect(resolved).toContain("smallest DAG that exposes useful concurrency")
+    expect(resolved).toContain("Task size, step count, thoroughness, planning, review")
+    expect(resolved).toContain("one bounded planning or discovery investigation")
+    expect(resolved).toContain("never owns scheduler state or graph mutation")
+    expect(resolved).toContain("Do not impose a mandatory planner, implementer, reviewer, or synthesis chain")
+    expect(resolved).toContain("Fan-in count alone is not a reason to spend Deep")
     expect(resolved).toContain("pass that step's exact text as `planStep`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
     expect(resolved).toContain("Use `create_goal` only when the user explicitly asks")

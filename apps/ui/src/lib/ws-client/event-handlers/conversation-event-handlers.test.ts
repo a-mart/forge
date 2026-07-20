@@ -303,6 +303,60 @@ describe('handleConversationEvent plan snapshots', () => {
     expect(next.planSnapshots.manager.revision).toBe(3)
     expect(next.planSnapshots.manager.plan[0]?.step).toBe('Current live step')
   })
+
+  it('preserves work-graph detail on both live snapshots and replayed summary cards', () => {
+    const workGraph = {
+      maxConcurrency: 2,
+      nodes: [{
+        id: 'research',
+        title: 'Research behavior',
+        task: 'Inspect behavior.',
+        kind: 'research' as const,
+        status: 'running' as const,
+        dependsOn: [],
+        effort: 'auto' as const,
+        attempts: [{
+          id: 'attempt-1',
+          number: 1,
+          status: 'running' as const,
+          startedAt: '2026-07-18T12:00:00.000Z',
+          workerId: 'graph-research-1',
+          behaviorMode: 'research' as const,
+          executionPolicy: 'support' as const,
+        }],
+      }],
+    }
+    const live = runHandler(createInitialManagerWsState('manager'), {
+      type: 'session_plan_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      revision: 4,
+      updatedAt: '2026-07-18T12:00:00.000Z',
+      coordinationMode: 'graph',
+      plan: [{ step: 'Research behavior', status: 'in_progress' }],
+      workGraph,
+    })
+    expect(live.planSnapshots.manager.workGraph?.nodes[0]?.attempts[0])
+      .toMatchObject({ workerId: 'graph-research-1', executionPolicy: 'support' })
+
+    const replayed = runHandler(live, {
+      type: 'plan_summary',
+      id: 'graph-summary',
+      agentId: 'manager',
+      timestamp: '2026-07-18T12:00:00.000Z',
+      revision: 4,
+      updatedAt: '2026-07-18T12:00:00.000Z',
+      state: 'active',
+      coordinationMode: 'graph',
+      plan: [{ step: 'Research behavior', status: 'in_progress' }],
+      workGraph,
+    })
+    expect(replayed.messages.at(-1)).toMatchObject({
+      type: 'plan_summary',
+      coordinationMode: 'graph',
+      workGraph: { maxConcurrency: 2 },
+    })
+  })
 })
 
 describe('handleConversationEvent goal snapshots', () => {

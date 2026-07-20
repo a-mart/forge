@@ -14,6 +14,7 @@ import {
   type SpawnAgentInput
 } from "./types.js";
 import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
+import { buildUpdateWorkGraphTool } from "./planning/update-work-graph-tool.js";
 import { buildGoalTools } from "./goals/goal-tools.js";
 import {
   resolveManagerDelegation,
@@ -440,6 +441,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
   }
 
   const managerOnly: ToolDefinition[] = [
+    buildUpdateWorkGraphTool(host, descriptor),
     buildUpdatePlanTool(host, descriptor),
     ...buildGoalTools(host, descriptor),
     {

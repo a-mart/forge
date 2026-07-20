@@ -162,6 +162,7 @@ describe("runtime tool plan", () => {
       "list_agents",
       "send_message_to_agent",
       "knowledge",
+      "update_work_graph",
       "update_plan",
       "create_goal",
       "get_goal",

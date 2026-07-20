@@ -48,7 +48,7 @@ export function buildUpdatePlanTool(host: SwarmToolHost, descriptor: AgentDescri
     name: UPDATE_PLAN_TOOL_NAME,
     label: 'Update Plan',
     description:
-      'Create or replace the current working plan for this session. Use it for substantial multi-step work, not simple requests. Keep steps concise and verifiable, mark every concurrently active step in_progress, and mark steps completed only after the work is actually done. The plan records coordination state; it does not perform the work.',
+      'Create or replace a visible checklist for substantial work the manager is coordinating directly. Skip it for simple requests. Do not use it when Forge should dispatch two or more workers according to dependencies, parallel readiness, a gate, retry, or fan-in; use update_work_graph for that executable coordination. Keep steps concise and verifiable, mark every concurrently active step in_progress, and mark steps completed only after the work is actually done. The plan records state but does not perform work.',
     parameters: updatePlanToolSchema,
     async execute(toolCallId, params) {
       const result = await host.updatePlan(descriptor.agentId, toolCallId, params as UpdatePlanInput)

@@ -73,4 +73,54 @@ describe('PlanCard', () => {
 
     expect(container.textContent).toContain('2 steps in progress')
   })
+
+  it('opens a live work graph in graph view by default', () => {
+    act(() => root.render(createElement(PlanCard, {
+      snapshot: graphSnapshot(),
+      expanded: true,
+      onExpandedChange: () => {},
+    })))
+
+    expect(container.textContent).toContain('Dynamic work graph')
+    expect(container.querySelector('[data-work-graph-view="graph"]')).not.toBeNull()
+    const graphButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Graph')
+    expect(graphButton?.getAttribute('aria-pressed')).toBe('true')
+  })
 })
+
+function graphSnapshot(): SessionPlanSnapshotEvent {
+  return {
+    ...snapshot,
+    coordinationMode: 'graph',
+    plan: [
+      { step: 'Inspect existing behavior', status: 'completed' },
+      { step: 'Run focused verification', status: 'in_progress' },
+    ],
+    workGraph: {
+      maxConcurrency: 2,
+      nodes: [
+        {
+          id: 'inspect',
+          title: 'Inspect existing behavior',
+          task: 'Inspect the current implementation.',
+          kind: 'research',
+          status: 'completed',
+          dependsOn: [],
+          effort: 'support',
+          attempts: [],
+        },
+        {
+          id: 'verify',
+          title: 'Run focused verification',
+          task: 'Verify the accepted implementation.',
+          kind: 'review',
+          status: 'running',
+          dependsOn: ['inspect'],
+          effort: 'routine',
+          attempts: [],
+        },
+      ],
+    },
+  }
+}

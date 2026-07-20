@@ -3552,7 +3552,6 @@ describe('SwarmWebSocketServer', () => {
         && event.agentId === sessionAgent.agentId
         && event.plan[0]?.step === 'Inspect lifecycle',
     )
-
     const baseline = events.length
     client.send(JSON.stringify({ type: 'clear_session', agentId: sessionAgent.agentId, requestId: 'clear-plan' }))
     await waitForEventAfter(

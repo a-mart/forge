@@ -7,11 +7,81 @@ export interface PlanStep {
   status: PlanStepStatus
 }
 
+export const WORK_GRAPH_NODE_KINDS = [
+  'task',
+  'research',
+  'implementation',
+  'review',
+  'synthesis',
+  'decision',
+] as const
+
+export type WorkGraphNodeKind = (typeof WORK_GRAPH_NODE_KINDS)[number]
+
+export const WORK_GRAPH_NODE_STATUSES = [
+  'pending',
+  'running',
+  'awaiting_review',
+  'waiting',
+  'blocked',
+  'completed',
+  'cancelled',
+] as const
+
+export type WorkGraphNodeStatus = (typeof WORK_GRAPH_NODE_STATUSES)[number]
+
+export const WORK_GRAPH_EFFORTS = ['auto', 'support', 'routine', 'deep'] as const
+
+export type WorkGraphEffort = (typeof WORK_GRAPH_EFFORTS)[number]
+
+export const WORK_GRAPH_ATTEMPT_STATUSES = [
+  'dispatching',
+  'running',
+  'succeeded',
+  'blocked',
+  'cancelled',
+] as const
+
+export type WorkGraphAttemptStatus = (typeof WORK_GRAPH_ATTEMPT_STATUSES)[number]
+
+export interface WorkGraphAttempt {
+  id: string
+  number: number
+  status: WorkGraphAttemptStatus
+  startedAt: string
+  completedAt?: string
+  workerId?: string
+  behaviorMode: 'general' | 'correctness-review' | 'research'
+  executionPolicy: 'support' | 'routine' | 'deep'
+  summary?: string
+}
+
+export interface WorkGraphNode {
+  id: string
+  title: string
+  task: string
+  kind: WorkGraphNodeKind
+  status: WorkGraphNodeStatus
+  dependsOn: string[]
+  acceptanceCriteria?: string
+  effort: WorkGraphEffort
+  attempts: WorkGraphAttempt[]
+}
+
+export interface WorkGraphSnapshot {
+  maxConcurrency: number
+  nodes: WorkGraphNode[]
+}
+
 export interface SessionPlanSnapshot {
   revision: number
   updatedAt: string | null
   explanation?: string
   plan: PlanStep[]
+  /** Missing on legacy snapshots and light plans. */
+  coordinationMode?: 'plan' | 'graph'
+  /** Present only when the working plan has been promoted into an executable graph. */
+  workGraph?: WorkGraphSnapshot
 }
 
 export interface SessionPlanSnapshotEvent extends SessionPlanSnapshot {

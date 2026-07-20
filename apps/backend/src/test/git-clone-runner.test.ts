@@ -195,8 +195,9 @@ describe('git-clone-runner remediation', () => {
       await terminateGate
     })
 
+    const spawnImpl = vi.fn((_cmd, _args, _opts) => fakeChild(5252))
     const runner = new GitCloneRunner({
-      spawnImpl: ((_cmd, _args, _opts) => fakeChild(5252)) as typeof import('node:child_process').spawn,
+      spawnImpl: spawnImpl as typeof import('node:child_process').spawn,
       terminateImpl,
     })
 
@@ -212,6 +213,7 @@ describe('git-clone-runner remediation', () => {
       const entries = await import('node:fs/promises').then((fs) => fs.readdir(root))
       expect(entries.some((e) => e.startsWith(GIT_CLONE_STAGING_PREFIX))).toBe(true)
     })
+    await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledTimes(1))
 
     controller.abort()
     await vi.waitFor(() => expect(terminateImpl).toHaveBeenCalledTimes(1))

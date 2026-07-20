@@ -57,6 +57,9 @@ function createHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
     updatePlan: async () => {
       throw new Error("not needed");
     },
+    updateWorkGraph: async () => {
+      throw new Error("not needed");
+    },
     ...overrides,
   };
 }

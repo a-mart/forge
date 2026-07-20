@@ -18,6 +18,7 @@ import { loadOnboardingState } from "./onboarding-state.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import type { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
+import { blockDismissedWorkGraphWorkers } from "./planning/work-graph-restart-recovery.js";
 import { ProjectExecutableTrustCoordinator } from "./project-executable-trust-coordinator.js";
 import { RestartRecoveryCoordinator } from "./restart-recovery-coordinator.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
@@ -58,7 +59,7 @@ import { getManagedModelProviderCredentialAvailability } from "./secrets-env-ser
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
 import { TurnContextCoordinator } from "./turn-context-coordinator.js";
-import { WorkerResultCoordinator } from "./worker-result-coordinator.js";
+import { createWorkGraphResultRecorder, WorkerResultCoordinator } from "./worker-result-coordinator.js";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -295,9 +296,9 @@ export class SwarmManagerRuntimeComposition {
         options.messaging.sendWorkerResult(workerAgentId, resultText, expectedAssignmentId),
       now: state.now,
       onDecisionResolved: () => this.requireGoals().scheduleContinuationsAfterBoot(),
+      onInterruptedWorkersDismissed: (workerIds) => blockDismissedWorkGraphWorkers({ descriptors: state.descriptors, plans: this.requirePlans(), workerIds }),
       logDebug: options.events.logDebug,
     });
-
     this.runtimeController = new SwarmRuntimeController(this.createRuntimeControllerHost());
     this.assistantOutput = new AssistantOutputRouter({
       descriptors: state.descriptors,
@@ -324,6 +325,10 @@ export class SwarmManagerRuntimeComposition {
     });
     this.workerResults = new WorkerResultCoordinator({
       getConversationHistory: messaging.getConversationHistory,
+      recordWorkGraphResult: createWorkGraphResultRecorder({
+        descriptors: state.descriptors,
+        getPlans: () => this.requirePlans(),
+      }),
       deliverWorkerResult: (workerAgentId, resultText, expectedAssignmentId) =>
         messaging.sendWorkerResult(workerAgentId, resultText, expectedAssignmentId),
       logDebug: options.events.logDebug,
