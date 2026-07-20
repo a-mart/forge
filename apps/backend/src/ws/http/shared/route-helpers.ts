@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { AgentDescriptor, GitRepoKind, GitRepoTarget } from "@forge/protocol";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { resolveWorktreeContextPath } from "../../../versioning/git-source-control-helpers.js";
+import { resolveEffectiveAgentWorkspaceCwd } from "../../ws-file-access.js";
 
 export interface GitRepoContext {
   cwd: string;
@@ -73,13 +74,7 @@ export async function resolveGitSourceControlContext(
 }
 
 export function resolveCwdFromAgent(swarmManager: SwarmManager, agentId: string): string {
-  const effectiveDescriptor = resolveEffectiveAgentDescriptor(swarmManager, agentId);
-
-  if (!effectiveDescriptor.cwd || effectiveDescriptor.cwd.trim().length === 0) {
-    throw new Error("No CWD configured for this agent");
-  }
-
-  return effectiveDescriptor.cwd;
+  return resolveEffectiveAgentWorkspaceCwd(swarmManager, agentId);
 }
 
 export function isCortexSession(swarmManager: SwarmManager, agentId: string): boolean {
@@ -121,14 +116,6 @@ function requireAgentDescriptor(swarmManager: SwarmManager, agentId: string): Ag
   }
 
   return descriptor;
-}
-
-function resolveEffectiveAgentDescriptor(swarmManager: SwarmManager, agentId: string): AgentDescriptor {
-  const descriptor = requireAgentDescriptor(swarmManager, agentId);
-
-  return descriptor.profileId
-    ? swarmManager.getAgent(descriptor.profileId) ?? descriptor
-    : descriptor;
 }
 
 function resolveSessionDescriptor(swarmManager: SwarmManager, agentId: string): AgentDescriptor {

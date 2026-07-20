@@ -10,8 +10,10 @@ import { CONVERSATION_ENTRY_TYPE } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { backfillConversationMessageEntryId } from "./conversation-entry-id.js";
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from "./session-file-guard.js";
-import { MAX_READ_FILE_CONTENT_BYTES, resolveAgentWorkspaceReadFilePath } from "../../ws/ws-file-access.js";
+import { MAX_READ_FILE_CONTENT_BYTES, resolveEffectiveAgentWorkspaceCwd } from "../../ws/ws-file-access.js";
 import { resolveReadFileContentType } from "../../ws/http-utils.js";
+import { GitCli } from "../../versioning/git-cli.js";
+import { parseWorktreeListPorcelain, resolveGitCommonDirectory } from "../../versioning/git-source-control-helpers.js";
 
 // Keep document reads aligned with the existing 2 MiB text/file-reader budget. Image previews get
 // a separate 4 MiB raw-byte budget; their base64 JSON representation is therefore bounded to ~5.34 MiB.
@@ -108,7 +110,88 @@ export function extractPresentedArtifactPathsForPlatform(markdownSource: string,
 }
 export function extractPresentedArtifactPaths(markdownSource: string): string[] { return extractPresentedArtifactPathsForPlatform(markdownSource); }
 
-function samePath(a: string, b: string) { return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b; }
+function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform) { return platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b; }
+
+export interface PresentedArtifactTargetResolutionHooks {
+  /** Test-only path-semantics seam; production always uses the host platform. */
+  platform?: NodeJS.Platform;
+  realpath?: (target: string) => Promise<string>;
+  listRegisteredWorktrees?: (cwd: string) => Promise<Array<{ path: string; isPrunable: boolean; isBare?: boolean }>>;
+  resolveGitRepositoryIdentity?: (canonicalCwd: string) => Promise<string | undefined>;
+}
+
+export interface PresentedArtifactWorkspaceSnapshot {
+  transcriptCwd: string;
+  effectiveProjectCwd: string;
+}
+
+async function listRegisteredWorktrees(cwd: string) {
+  const result = await new GitCli({ cwd }).run(["worktree", "list", "--porcelain", "-z"], { allowFailure: true });
+  return result.exitCode === 0 ? parseWorktreeListPorcelain(result.stdout) : [];
+}
+
+async function resolveGitRepositoryIdentity(canonicalCwd: string): Promise<string | undefined> {
+  return (await resolveGitCommonDirectory(new GitCli({ cwd: canonicalCwd }), canonicalCwd)) ?? undefined;
+}
+
+function isCanonicalPathWithinRoot(target: string, root: string, platform: NodeJS.Platform): boolean {
+  const api = platform === "win32" ? path.win32 : path.posix;
+  const relative = api.relative(root, target);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${api.sep}`) && !api.isAbsolute(relative));
+}
+
+/**
+ * Resolve a transcript-presented target against server-derived file-browser project context.
+ * The request cannot select a source owner or worktree: Git registration is discovered from the
+ * effective CWD, and every root and the target are canonicalized before containment is checked.
+ */
+export async function resolveCanonicalPresentedArtifactTarget(
+  workspace: PresentedArtifactWorkspaceSnapshot,
+  target: string,
+  hooks: PresentedArtifactTargetResolutionHooks = {},
+): Promise<string> {
+  const platform = hooks.platform ?? process.platform;
+  const resolveRealpath = hooks.realpath ?? (async (value: string) => realpath(value));
+  const resolveRepositoryIdentity = hooks.resolveGitRepositoryIdentity ?? resolveGitRepositoryIdentity;
+
+  const canonicalTarget = await (async () => {
+    try { return canonicalizeChatArtifactPathForPlatform(await resolveRealpath(target), platform); }
+    catch (error: unknown) {
+      if ((error as { code?: string })?.code === "ENOENT") fail("file_not_found");
+      if (error instanceof ChatArtifactError) throw error;
+      return fail("transcript_read_failed");
+    }
+  })();
+
+  const roots: string[] = [];
+  const resolveAccessibleRoot = async (candidate: string): Promise<string | undefined> => {
+    try { return canonicalizeChatArtifactPathForPlatform(await resolveRealpath(candidate), platform); }
+    catch { return undefined; }
+  };
+  const addRoot = (canonicalRoot: string | undefined) => {
+    if (canonicalRoot && !roots.some(root => samePath(root, canonicalRoot, platform))) roots.push(canonicalRoot);
+  };
+  const canonicalTranscriptCwd = await resolveAccessibleRoot(workspace.transcriptCwd);
+  const canonicalEffectiveCwd = await resolveAccessibleRoot(workspace.effectiveProjectCwd);
+  addRoot(canonicalTranscriptCwd);
+  addRoot(canonicalEffectiveCwd);
+
+  if (canonicalEffectiveCwd) {
+    const expectedRepositoryIdentity = await resolveRepositoryIdentity(canonicalEffectiveCwd).catch(() => undefined);
+    const worktrees = await (hooks.listRegisteredWorktrees ?? listRegisteredWorktrees)(canonicalEffectiveCwd).catch(() => []);
+    for (const worktree of worktrees) {
+      if (!expectedRepositoryIdentity || worktree.isPrunable || worktree.isBare) continue;
+      const canonicalRoot = await resolveAccessibleRoot(worktree.path);
+      if (!canonicalRoot) continue;
+      const candidateRepositoryIdentity = await resolveRepositoryIdentity(canonicalRoot).catch(() => undefined);
+      if (!candidateRepositoryIdentity || !samePath(candidateRepositoryIdentity, expectedRepositoryIdentity, platform)) continue;
+      addRoot(canonicalRoot);
+    }
+  }
+
+  if (!roots.some(root => isCanonicalPathWithinRoot(canonicalTarget, root, platform))) fail("path_outside_workspace");
+  return canonicalTarget;
+}
 type StableStat = { dev: number | bigint; ino: number | bigint; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean };
 export function stableFileIdentity(stat: StableStat) {
   const usable = (v: number | bigint) => typeof v === "bigint" ? v > 0n : Number.isSafeInteger(v) && v > 0;
@@ -216,12 +299,17 @@ export function resolveActiveBuilderTranscriptDescriptor(source: PresentedArtifa
   return worker;
 }
 
-export async function findUniquePresentedConversationMessage(sessionFile: string, messageId: string) {
+export async function findUniquePresentedConversationMessage(
+  sessionFile: string,
+  messageId: string,
+  hooks?: { afterOpen?: () => Promise<void> | void },
+) {
   if (!messageId.trim()) fail("invalid_request"); let handle: Awaited<ReturnType<typeof open>> | undefined;
   try { handle = await open(sessionFile, fsConstants.O_RDONLY); } catch (error: unknown) { if ((error as { code?: string })?.code === "ENOENT") fail("transcript_not_found"); fail("transcript_read_failed"); }
   const openedHandle = handle!;
   try {
     const s = await openedHandle.stat().catch(() => fail("transcript_read_failed"));
+    await hooks?.afterOpen?.();
     if (s.size > MAX_SESSION_FILE_BYTES_FOR_OPEN) fail("transcript_too_large");
     let carry = "", total = 0; const found: any[] = []; const buf = Buffer.alloc(64 * 1024); const decoder = new StringDecoder("utf8");
     const processLine = (line: string) => {
@@ -247,36 +335,38 @@ export async function findUniquePresentedConversationMessage(sessionFile: string
   } finally { await openedHandle.close(); }
 }
 
-async function authorizeWindowsWorkspaceArtifact(
-  source: PresentedArtifactOwnerSource,
-  descriptor: AgentDescriptor,
-  target: string,
-): Promise<string> {
-  try {
-    return await resolveAgentWorkspaceReadFilePath(target, source, descriptor.agentId);
-  } catch (error) {
-    if (error instanceof Error && error.message === "Path is outside allowed roots.") fail("path_outside_workspace");
-    throw error;
-  }
-}
-
 export async function readPresentedChatArtifact(
   source: PresentedArtifactOwnerSource,
   claim: { transcriptAgentId: unknown; messageId: unknown; path: unknown },
-  options?: { securityPlatform?: NodeJS.Platform },
+  options?: {
+    securityPlatform?: NodeJS.Platform;
+    targetResolution?: PresentedArtifactTargetResolutionHooks;
+    transcriptRead?: { afterOpen?: () => Promise<void> | void };
+  },
 ) {
   const raw = claim as { transcriptAgentId?: unknown; messageId?: unknown; path?: unknown };
-  if (typeof raw.transcriptAgentId !== "string" || typeof raw.messageId !== "string" || typeof raw.path !== "string") fail("invalid_request");
+  if (
+    Object.keys(raw).some(key => key !== "transcriptAgentId" && key !== "messageId" && key !== "path") ||
+    typeof raw.transcriptAgentId !== "string" ||
+    typeof raw.messageId !== "string" ||
+    typeof raw.path !== "string"
+  ) fail("invalid_request");
   const pathValue = raw.path as string; const transcriptAgentId = raw.transcriptAgentId as string; const messageId = raw.messageId as string;
   const target = canonicalizeChatArtifactPath(pathValue); const descriptor = resolveActiveBuilderTranscriptDescriptor(source, transcriptAgentId.trim());
-  const message = await findUniquePresentedConversationMessage(descriptor.sessionFile, messageId.trim());
+  const workspace: PresentedArtifactWorkspaceSnapshot = {
+    transcriptCwd: descriptor.cwd,
+    effectiveProjectCwd: (() => {
+      try { return resolveEffectiveAgentWorkspaceCwd(source, descriptor.agentId); }
+      catch { return fail("path_outside_workspace"); }
+    })(),
+  };
+  const sessionFile = descriptor.sessionFile;
+  const message = await findUniquePresentedConversationMessage(sessionFile, messageId.trim(), options?.transcriptRead);
   if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
   if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
-  const securityPlatform = options?.securityPlatform ?? process.platform;
-  const authorizedTarget = securityPlatform === "win32"
-    ? await authorizeWindowsWorkspaceArtifact(source, descriptor, target)
-    : target;
-  return securelyReadPresentedArtifact(authorizedTarget, { platform: securityPlatform });
+  const authorizedTarget = await resolveCanonicalPresentedArtifactTarget(workspace, target, options?.targetResolution);
+  const result = await securelyReadPresentedArtifact(authorizedTarget, { platform: options?.securityPlatform ?? process.platform });
+  return { ...result, path: pathValue };
 }
 
 export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "stable_identity_unsupported") return 501; return 500; }

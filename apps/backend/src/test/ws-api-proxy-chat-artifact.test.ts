@@ -30,13 +30,15 @@ describe("WS chat artifact API proxy", () => {
     const tempRoot = process.platform === "darwin" ? `/private${tmpdir()}` : tmpdir(); const dataDir = await mkdtemp(join(tempRoot, "artifact-ws-")); roots.push(dataDir);
     const profileId = "profile"; const agentId = "manager"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId); await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true }); const file = join(dataDir, "outside.txt"); await writeFile(file, "ok");
     await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[x](swarm-file://${file})`, timestamp: new Date().toISOString() } }) + "\n");
-    const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile };
+    const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile, cwd: dataDir };
     const swarmManager: any = { getAgent: (id: string) => id === agentId ? descriptor : undefined, listProfiles: () => [{ profileId }], getConfig: () => ({ paths: { dataDir } }) };
     const proxy = new WsApiProxy({ swarmManager, mobilePushService: {}, feedbackService: {}, terminalService: null, unreadTracker: null } as any);
     const response = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r", method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: file }) } as any, agentId);
-    expect(response.status).toBe(200); expect(JSON.parse(response.body)).toMatchObject({ content: "ok" });
-    const injected = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r2", method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: file, transcriptAgentId: "other" }) } as any, agentId);
-    expect(injected.status).toBe(400); expect(JSON.parse(injected.body)).toMatchObject({ code: "invalid_request" });
+    expect(response.status).toBe(200); expect(JSON.parse(response.body)).toMatchObject({ path: file, content: "ok" });
+    for (const extra of [{ transcriptAgentId: "other" }, { worktreeId: "caller-selected" }, { sourceOwnerAgentId: "other" }]) {
+      const injected = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r2", method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: file, ...extra }) } as any, agentId);
+      expect(injected.status).toBe(400); expect(JSON.parse(injected.body)).toMatchObject({ code: "invalid_request" });
+    }
     const method = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r3", method: "GET", path: "/api/chat-artifacts/read", body: undefined } as any, agentId);
     expect(method.status).toBe(405);
     const mismatch = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId: "r4", method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: `${file}x` }) } as any, agentId);
@@ -50,7 +52,7 @@ describe("WS chat artifact API proxy", () => {
     await writeFile(image, Buffer.alloc(760 * 1024, 0x89));
     await writeFile(escapableText, `"\\`.repeat(160_000));
     await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[image](swarm-file://${image}) [text](swarm-file://${escapableText})`, timestamp: new Date().toISOString() } }) + "\n");
-    const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile };
+    const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile, cwd: dataDir };
     const swarmManager: any = { getAgent: (id: string) => id === agentId ? descriptor : undefined, listProfiles: () => [{ profileId }], getConfig: () => ({ paths: { dataDir } }) };
     const proxy = new WsApiProxy({ swarmManager, mobilePushService: {}, feedbackService: {}, terminalService: null, unreadTracker: null } as any);
     const requestId = "r".repeat(MAX_API_PROXY_REQUEST_ID_LENGTH);

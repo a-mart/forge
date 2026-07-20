@@ -15,6 +15,27 @@ export interface AgentWorkspaceFileAccessSource {
   getAgent(id: string): AgentDescriptor | undefined;
 }
 
+/** Keep project context resolution identical across file-browser-backed surfaces. */
+export function resolveEffectiveAgentWorkspaceCwd(
+  source: AgentWorkspaceFileAccessSource,
+  agentId: string,
+): string {
+  const normalizedAgentId = agentId.trim();
+  const descriptor = source.getAgent(normalizedAgentId);
+  if (!descriptor) {
+    throw new Error(`Unknown agent: ${normalizedAgentId}`);
+  }
+
+  const effectiveDescriptor = descriptor.profileId
+    ? source.getAgent(descriptor.profileId) ?? descriptor
+    : descriptor;
+  if (!effectiveDescriptor.cwd || effectiveDescriptor.cwd.trim().length === 0) {
+    throw new Error("No CWD configured for this agent");
+  }
+
+  return effectiveDescriptor.cwd;
+}
+
 export interface FileAccessSource extends AgentWorkspaceFileAccessSource {
   getConfig(): {
     cwdAllowlistRoots: string[];
@@ -147,20 +168,6 @@ export function resolveReadFilePath(
     requestedPathContext.allowedRoots,
     { enforceAllowedRoots: options?.enforceAllowedRoots },
   );
-}
-
-/** Resolve a read against only the named agent's project/worktree root. */
-export function resolveAgentWorkspaceReadFilePath(
-  requestedPath: string,
-  swarmManager: AgentWorkspaceFileAccessSource,
-  agentId: string,
-): Promise<string> {
-  const descriptor = swarmManager.getAgent(agentId.trim());
-  if (!descriptor) {
-    throw new Error(`Unknown agent: ${agentId.trim()}`);
-  }
-  const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
-  return resolvePathWithinRoots(normalizedRequestedPath, descriptor.cwd, [descriptor.cwd]);
 }
 
 export function resolveLegacyWriteFilePath(requestedPath: string, swarmManager: FileAccessSource): Promise<string> {

@@ -349,6 +349,25 @@ export async function resolveGitDirectory(git: GitCli, cwd: string): Promise<str
   return isAbsolute(gitDir) ? gitDir : resolve(cwd, gitDir);
 }
 
+/** Resolve the canonical common Git directory shared by every worktree in one repository. */
+export async function resolveGitCommonDirectory(git: GitCli, cwd: string): Promise<string | null> {
+  const result = await git.run(["rev-parse", "--git-common-dir"], { allowFailure: true });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+
+  const commonDir = result.stdout.trim();
+  if (commonDir.length === 0) {
+    return null;
+  }
+
+  try {
+    return await realpath(isAbsolute(commonDir) ? commonDir : resolve(cwd, commonDir));
+  } catch {
+    return null;
+  }
+}
+
 export function detectInProgressGitOperation(
   gitDir: string
 ): { inProgress: true; kind: GitInProgressOperationKind } | { inProgress: false } {
