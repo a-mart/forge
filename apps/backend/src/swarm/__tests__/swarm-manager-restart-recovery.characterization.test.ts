@@ -7,6 +7,7 @@ import {
   type FakeRuntime,
 } from '../../test-support/index.js'
 import type { AgentDescriptor, SwarmConfig } from '../types.js'
+import { SessionPlanStore } from '../planning/session-plan-store.js'
 import {
   appendTurnLedgerRecord,
   replayTurnLedger,
@@ -24,7 +25,7 @@ interface RecoveryFixture {
   workerId: string
 }
 
-async function createRecoveryFixture(): Promise<RecoveryFixture> {
+async function createRecoveryFixture(options?: { withRunningGraph?: boolean }): Promise<RecoveryFixture> {
   const handle = await createTempConfig({
     prefix: 'swarm-manager-restart-recovery-',
     omitSharedAuthFile: true,
@@ -40,6 +41,38 @@ async function createRecoveryFixture(): Promise<RecoveryFixture> {
     [worker.agentId, 'streaming'],
   ]))
   await persistWorkerParentContext(handle.config, worker.agentId)
+  if (options?.withRunningGraph) {
+    const planStore = new SessionPlanStore({
+      dataDir: handle.config.paths.dataDir,
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+    })
+    await planStore.update({
+      coordinationMode: 'graph',
+      plan: [{ step: 'Resume interrupted validation', status: 'in_progress' }],
+      workGraph: {
+        maxConcurrency: 1,
+        nodes: [{
+          id: 'validate',
+          title: 'Resume interrupted validation',
+          task: 'Finish the interrupted validation run.',
+          kind: 'review',
+          status: 'running',
+          dependsOn: [],
+          effort: 'routine',
+          attempts: [{
+            id: 'attempt-before-restart',
+            number: 1,
+            status: 'running',
+            startedAt: NOW,
+            behaviorMode: 'correctness-review',
+            executionPolicy: 'routine',
+            workerId: worker.agentId,
+          }],
+        }],
+      },
+    })
+  }
 
   const target: TurnLedgerSessionTarget = {
     dataDir: handle.config.paths.dataDir,
@@ -181,8 +214,8 @@ describe('SwarmManager restart recovery characterization', () => {
     }
   })
 
-  it('reconciles open turns without resuming actors persisted as idle', async () => {
-    const fixture = await createRecoveryFixture()
+  it('reconciles open turns and blocks their running graph attempts when actors persisted as idle', async () => {
+    const fixture = await createRecoveryFixture({ withRunningGraph: true })
     try {
       await persistAgentStatuses(fixture.config, new Map([
         ['manager', 'idle'],
@@ -205,23 +238,45 @@ describe('SwarmManager restart recovery characterization', () => {
         expect.objectContaining({ turnId: 'manager-turn-before-restart', outcome: 'reconciled' }),
         expect.objectContaining({ turnId: 'worker-turn-before-restart', outcome: 'reconciled' }),
       ]))
+      await expect(recovered.getSessionPlanSnapshot('manager')).resolves.toMatchObject({
+        plan: [{ step: 'Resume interrupted validation', status: 'pending' }],
+        workGraph: { nodes: [{
+          id: 'validate',
+          status: 'blocked',
+          attempts: [{
+            status: 'blocked',
+            summary: expect.stringContaining('worker stopped'),
+          }],
+        }] },
+      })
     } finally {
       await fixture.cleanup()
     }
   })
 
   it('keeps dismissal non-delivering across repeated dismiss and resume requests', async () => {
-    const fixture = await createRecoveryFixture()
+    const fixture = await createRecoveryFixture({ withRunningGraph: true })
     try {
       const recovered = new TestSwarmManager(fixture.config, { now: () => NOW })
       await recovered.boot()
 
-      expect(recovered.dismissRestartRecovery()).toMatchObject({ dismissedAt: NOW })
-      expect(recovered.dismissRestartRecovery()).toMatchObject({ dismissedAt: NOW })
+      await expect(recovered.dismissRestartRecovery()).resolves.toMatchObject({ dismissedAt: NOW })
+      await expect(recovered.dismissRestartRecovery()).resolves.toMatchObject({ dismissedAt: NOW })
       const resumeAfterDismiss = await recovered.resumeRestartRecovery()
       expect(resumeAfterDismiss).toMatchObject({ dismissedAt: NOW })
       expect(resumeAfterDismiss).not.toHaveProperty('resumedAt')
       expect(recovered.runtimeByAgentId.size).toBe(0)
+      await expect(recovered.getSessionPlanSnapshot('manager')).resolves.toMatchObject({
+        plan: [{ step: 'Resume interrupted validation', status: 'pending' }],
+        workGraph: { nodes: [{
+          id: 'validate',
+          status: 'blocked',
+          attempts: [{
+            status: 'blocked',
+            summary: expect.stringContaining('recovery was dismissed'),
+          }],
+        }] },
+      })
     } finally {
       await fixture.cleanup()
     }

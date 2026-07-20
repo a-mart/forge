@@ -34,6 +34,7 @@ import { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator
 import { createSwarmManagerSessionComposition } from "./swarm-manager-session-composition.js";
 import { createSwarmManagerRuntimeComposition } from "./swarm-manager-runtime-composition.js";
 import { SessionInteractionCoordinator } from "./session-interaction-coordinator.js";
+import { isWorkGraphWorkerActive } from "./planning/work-graph-restart-recovery.js";
 import { SwarmManagerFacade } from "./swarm-manager-facade.js";
 import type { SwarmManagerFacadeServices } from "./swarm-manager-facade-services.js";
 import { ManagerBootstrapCoordinator } from "./manager-bootstrap-coordinator.js";
@@ -352,6 +353,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         .filter((entry) => entry.type === "plan_summary"),
       emitPlanSummary: (event) => this.conversationProjector.emitPlanSummary(event),
       emitSnapshot: (event) => this.emit("session_plan_snapshot", event),
+      isWorkerActive: (workerId) => isWorkGraphWorkerActive(this.descriptors, workerId),
       logDebug: (message, details) => this.logDebug(message, details),
     });
     this.compactionCoordinator = runtimeComposition.attachPlanning(this.sessionPlanCoordinator);

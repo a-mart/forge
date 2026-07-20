@@ -551,7 +551,7 @@ export abstract class SwarmManagerFacade extends SwarmManagerGoalFacade {
     return this.services.recovery.getSnapshot();
   }
 
-  dismissRestartRecovery(): RestartRecoverySnapshot | null {
+  dismissRestartRecovery(): Promise<RestartRecoverySnapshot | null> {
     return this.services.recovery.dismiss();
   }
 

@@ -1,6 +1,7 @@
 import type { WorkGraphNode, WorkGraphSnapshot } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import {
+  blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
   isWorkGraphComplete,
@@ -292,6 +293,41 @@ describe('progressive work graph scenarios', () => {
     expect(recovered.graph.nodes.find((entry) => entry.id === 'confirmed')?.status).toBe('running')
     expect(recovered.graph.nodes.find((entry) => entry.id === 'interrupted')?.status).toBe('blocked')
     expect(claim(recovered.graph).claims).toEqual([])
+  })
+
+  it('blocks a persisted running attempt when its worker is no longer active', () => {
+    const first = claim(graphOf([node('validate', 'Run final validation')]))
+    const running = recordWorkGraphWorkerStarted(
+      first.graph,
+      'validate',
+      first.claims[0]!.attemptId,
+      'validation-worker',
+    )
+
+    const recovered = recoverInterruptedWorkGraphDispatches(running, now, {
+      isWorkerActive: () => false,
+    })
+    expect(recovered.changed).toBe(true)
+    expect(recovered.graph.nodes[0]).toMatchObject({
+      status: 'blocked',
+      attempts: [{
+        status: 'blocked',
+        workerId: 'validation-worker',
+        completedAt: now(),
+        summary: expect.stringContaining('worker stopped'),
+      }],
+    })
+
+    const dismissed = blockInterruptedWorkGraphWorkers(
+      running,
+      new Set(['validation-worker']),
+      now,
+    )
+    expect(dismissed.changedNodeIds).toEqual(['validate'])
+    expect(dismissed.graph.nodes[0]).toMatchObject({
+      status: 'blocked',
+      attempts: [{ summary: expect.stringContaining('recovery was dismissed') }],
+    })
   })
 
   it('13. models the conversation-derived logic-app review as cheap breadth plus one synthesis', () => {

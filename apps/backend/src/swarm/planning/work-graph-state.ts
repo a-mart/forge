@@ -349,12 +349,22 @@ export function recordWorkGraphWorkerResult(
 export function recoverInterruptedWorkGraphDispatches(
   graph: WorkGraphSnapshot,
   now: () => string,
+  options?: {
+    isWorkerActive?: (workerId: string) => boolean
+  },
 ): { graph: WorkGraphSnapshot; changed: boolean } {
   let changed = false
   const nodes = graph.nodes.map((node) => {
     if (node.status !== 'running') return node
     const attempt = currentAttempt(node)
-    if (!attempt || attempt.status !== 'dispatching' || attempt.workerId) return node
+    if (!attempt) return node
+    const workerId = attempt.workerId
+    const interruptedBeforeDispatch = attempt.status === 'dispatching' && !attempt.workerId
+    const interruptedAfterDispatch = attempt.status === 'running'
+      && workerId !== undefined
+      && options?.isWorkerActive !== undefined
+      && !options.isWorkerActive(workerId)
+    if (!interruptedBeforeDispatch && !interruptedAfterDispatch) return node
     changed = true
     return {
       ...node,
@@ -363,11 +373,45 @@ export function recoverInterruptedWorkGraphDispatches(
         ...attempt,
         status: 'blocked',
         completedAt: now(),
-        summary: 'Forge restarted before worker dispatch was durably confirmed.',
+        summary: interruptedBeforeDispatch
+          ? 'Forge restarted before worker dispatch was durably confirmed.'
+          : 'Forge restarted after the worker stopped before its graph result was recorded. Retry this node.',
       }),
     }
   })
   return { graph: changed ? { ...graph, nodes } : graph, changed }
+}
+
+export function blockInterruptedWorkGraphWorkers(
+  graph: WorkGraphSnapshot,
+  workerIds: ReadonlySet<string>,
+  now: () => string,
+): { graph: WorkGraphSnapshot; changedNodeIds: string[] } {
+  const changedNodeIds: string[] = []
+  const nodes = graph.nodes.map((node) => {
+    if (node.status !== 'running') return node
+    const attempt = currentAttempt(node)
+    if (
+      !attempt?.workerId
+      || attempt.status !== 'running'
+      || !workerIds.has(attempt.workerId)
+    ) return node
+    changedNodeIds.push(node.id)
+    return {
+      ...node,
+      status: 'blocked' as const,
+      attempts: replaceAttempt(node.attempts, attempt.id, {
+        ...attempt,
+        status: 'blocked',
+        completedAt: now(),
+        summary: 'Restart recovery was dismissed before this interrupted worker resumed. Retry this node.',
+      }),
+    }
+  })
+  return {
+    graph: changedNodeIds.length > 0 ? { ...graph, nodes } : graph,
+    changedNodeIds,
+  }
 }
 
 export function resolveWorkGraphRoute(node: WorkGraphNode): {

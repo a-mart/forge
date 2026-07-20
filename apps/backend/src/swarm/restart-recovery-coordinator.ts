@@ -32,6 +32,7 @@ export interface RestartRecoveryCoordinatorOptions {
   ) => Promise<SendMessageReceipt>;
   now: () => string;
   onDecisionResolved?: () => void;
+  onInterruptedWorkersDismissed?: (workerIds: readonly string[]) => Promise<void>;
   logDebug: (message: string, details?: unknown) => void;
 }
 
@@ -166,8 +167,10 @@ export class RestartRecoveryCoordinator {
     );
   }
 
-  dismiss(): RestartRecoverySnapshot | null {
+  async dismiss(): Promise<RestartRecoverySnapshot | null> {
     if (!this.snapshot) return null;
+    if (this.snapshot.dismissedAt || this.snapshot.resumedAt) return this.getSnapshot();
+    await this.options.onInterruptedWorkersDismissed?.(this.snapshot.interruptedWorkers);
     this.snapshot = { ...this.snapshot, dismissedAt: this.options.now() };
     this.options.onDecisionResolved?.();
     return this.getSnapshot();

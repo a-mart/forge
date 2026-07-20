@@ -65,9 +65,13 @@ describe('WorkGraphView', () => {
     expect(container.textContent).toContain('Dynamic work graph')
     expect(container.textContent).toContain('up to 4 parallel')
     expect(container.textContent).toContain('Review support')
-    expect(container.textContent).toContain('After Research current behavior')
     expect(container.textContent).toContain('Accept when: Evidence cites the inspected path.')
     expect(container.textContent).toContain('0 of 2 accepted')
+    expect(container.querySelector('[data-work-graph-view="graph"]')).not.toBeNull()
+    expect(buttonNamed('Graph').getAttribute('aria-pressed')).toBe('true')
+
+    act(() => buttonNamed('Synthesize recommendation').click())
+    expect(container.textContent).toContain('After: Research current behavior')
   })
 
   it('keeps compact dock rendering useful without long acceptance copy', () => {
@@ -75,4 +79,35 @@ describe('WorkGraphView', () => {
     expect(container.textContent).toContain('Research current behavior')
     expect(container.textContent).not.toContain('Accept when:')
   })
+
+  it('keeps an explicit list choice across graph revisions while graph is active', () => {
+    act(() => root.render(createElement(WorkGraphView, { graph })))
+    act(() => buttonNamed('List').click())
+
+    expect(container.querySelector('[data-work-graph-view="list"]')).not.toBeNull()
+    expect(buttonNamed('List').getAttribute('aria-pressed')).toBe('true')
+    expect(container.textContent).toContain('After Research current behavior')
+
+    act(() => root.render(createElement(WorkGraphView, {
+      graph: {
+        ...graph,
+        nodes: graph.nodes.map((node) => node.id === 'research'
+          ? { ...node, status: 'completed' as const }
+          : node),
+      },
+    })))
+
+    expect(container.querySelector('[data-work-graph-view="list"]')).not.toBeNull()
+    expect(buttonNamed('List').getAttribute('aria-pressed')).toBe('true')
+  })
 })
+
+function buttonNamed(name: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll('button')]
+    .find((candidate) => (
+      candidate.textContent?.trim() === name
+      || candidate.getAttribute('aria-label')?.startsWith(`${name},`)
+    ))
+  if (!(button instanceof HTMLButtonElement)) throw new Error(`Missing button: ${name}`)
+  return button
+}

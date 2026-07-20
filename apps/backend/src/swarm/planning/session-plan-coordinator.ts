@@ -22,6 +22,7 @@ import {
 import { SessionPlanStore } from './session-plan-store.js'
 import type { UpdatePlanInput, UpdatePlanResult } from './update-plan-tool.js'
 import {
+  blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
   normalizeWorkGraphInput,
@@ -56,6 +57,7 @@ export interface SessionPlanCoordinatorOptions {
   getPlanSummaries: (sessionAgentId: string) => readonly PlanSummaryEvent[]
   emitPlanSummary: (event: PlanSummaryEvent) => void
   emitSnapshot: (event: SessionPlanSnapshotEvent) => void
+  isWorkerActive?: (workerId: string) => boolean
   logDebug: (message: string, details?: unknown) => void
 }
 
@@ -212,13 +214,34 @@ export class SessionPlanCoordinator {
       let state = await this.createStore(owner).load()
       this.statesByAgentId.set(owner.agentId, state)
       if (state.workGraph) {
-        const recovered = recoverInterruptedWorkGraphDispatches(state.workGraph, this.options.now)
+        const recovered = recoverInterruptedWorkGraphDispatches(state.workGraph, this.options.now, {
+          isWorkerActive: this.options.isWorkerActive,
+        })
         if (recovered.changed) {
           state = await this.writeGraph(owner, state.explanation, recovered.graph)
         }
       }
       await this.finalizeUsage(owner, { recovered: true })
     }))
+  }
+
+  async blockInterruptedWorkGraphWorkers(
+    owner: SessionPlanOwner,
+    workerIds: readonly string[],
+  ): Promise<string[]> {
+    if (workerIds.length === 0) return []
+    return this.withMutationLock(owner, async () => {
+      const current = await this.getState(owner)
+      if (!current.workGraph) return []
+      const blocked = blockInterruptedWorkGraphWorkers(
+        current.workGraph,
+        new Set(workerIds),
+        this.options.now,
+      )
+      if (blocked.changedNodeIds.length === 0) return []
+      await this.writeGraph(owner, current.explanation, blocked.graph)
+      return blocked.changedNodeIds
+    })
   }
 
   forget(sessionAgentId: string): void {

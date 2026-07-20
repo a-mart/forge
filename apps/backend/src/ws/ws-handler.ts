@@ -455,12 +455,21 @@ export class WsHandler {
     }
 
     if (command.type === "dismiss_restart_recovery") {
-      const snapshot = this.swarmManager.dismissRestartRecovery();
-      this.broadcastToSubscribed({
-        type: "restart_recovery_snapshot",
-        snapshot,
-        requestId: command.requestId,
-      });
+      try {
+        const snapshot = await this.swarmManager.dismissRestartRecovery();
+        this.broadcastToSubscribed({
+          type: "restart_recovery_snapshot",
+          snapshot,
+          requestId: command.requestId,
+        });
+      } catch (error) {
+        this.send(socket, {
+          type: "error",
+          code: "DISMISS_RESTART_RECOVERY_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+          requestId: command.requestId,
+        });
+      }
       return;
     }
 

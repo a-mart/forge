@@ -186,6 +186,43 @@ describe('SessionPlanCoordinator', () => {
     expect(rebooted.logDebug).not.toHaveBeenCalled()
   })
 
+  it('blocks a persisted running graph when its assigned worker is no longer active', async () => {
+    const first = await createHarness()
+    await first.coordinator.updateWorkGraph(first.owner, {
+      nodes: [{
+        id: 'validate',
+        title: 'Run final validation',
+        task: 'Run the final validation suite.',
+        kind: 'review',
+        status: 'pending',
+      }],
+    })
+    const claims = await first.coordinator.claimReadyWorkGraphNodes(first.owner)
+    await first.coordinator.recordWorkGraphWorkerStarted(
+      first.owner,
+      'validate',
+      claims[0]!.attemptId,
+      'validation-worker',
+    )
+
+    const rebooted = await createHarness(first.dataDir, () => false)
+    await rebooted.coordinator.preload([rebooted.owner])
+
+    await expect(rebooted.coordinator.getSnapshot(rebooted.owner)).resolves.toMatchObject({
+      revision: 4,
+      plan: [{ step: 'Run final validation', status: 'pending' }],
+      workGraph: { nodes: [{
+        id: 'validate',
+        status: 'blocked',
+        attempts: [{
+          status: 'blocked',
+          workerId: 'validation-worker',
+          summary: expect.stringContaining('worker stopped'),
+        }],
+      }] },
+    })
+  })
+
   it('persists one graph-backed plan through dispatch, result review, acceptance, and fan-in release', async () => {
     const harness = await createHarness()
     const created = await harness.coordinator.updateWorkGraph(harness.owner, {
@@ -341,7 +378,10 @@ describe('SessionPlanCoordinator', () => {
   })
 })
 
-async function createHarness(existingDataDir?: string): Promise<{
+async function createHarness(
+  existingDataDir?: string,
+  isWorkerActive?: (workerId: string) => boolean,
+): Promise<{
   coordinator: SessionPlanCoordinator
   dataDir: string
   owner: SessionPlanOwner
@@ -368,6 +408,7 @@ async function createHarness(existingDataDir?: string): Promise<{
       }
     },
     emitSnapshot: (event) => snapshots.push(event),
+    isWorkerActive,
     logDebug,
   })
   return { coordinator, dataDir, owner, timelineSummaries, snapshots, logDebug }

@@ -33,9 +33,24 @@ export interface UpdateWorkGraphResult extends SessionPlanSnapshot {
   cancelledWorkerIds: string[]
 }
 
-const nodeStatusSchema = Type.Union(WORK_GRAPH_NODE_STATUSES.map((status) => Type.Literal(status)))
-const nodeKindSchema = Type.Union(WORK_GRAPH_NODE_KINDS.map((kind) => Type.Literal(kind)))
-const effortSchema = Type.Union(WORK_GRAPH_EFFORTS.map((effort) => Type.Literal(effort)))
+const nodeStatusSchema = Type.Union(
+  WORK_GRAPH_NODE_STATUSES.map((status) => Type.Literal(status)),
+  {
+    description: 'Desired lifecycle state. New executable work is pending; the runtime owns running, awaiting_review, and blocked transitions; real user gates use waiting; only the manager marks accepted evidence completed.',
+  },
+)
+const nodeKindSchema = Type.Union(
+  WORK_GRAPH_NODE_KINDS.map((kind) => Type.Literal(kind)),
+  {
+    description: 'Semantic outcome kind used for economical routing. Use decision only for a real user gate.',
+  },
+)
+const effortSchema = Type.Union(
+  WORK_GRAPH_EFFORTS.map((effort) => Type.Literal(effort)),
+  {
+    description: 'Risk override for this outcome. Prefer auto; graph size and fan-in do not justify deep.',
+  },
+)
 
 export const updateWorkGraphToolSchema = Type.Object({
   explanation: Type.Optional(Type.String({
@@ -64,24 +79,27 @@ export const updateWorkGraphToolSchema = Type.Object({
     task: Type.String({
       minLength: 1,
       maxLength: MAX_WORK_GRAPH_TASK_LENGTH,
-      description: 'Concrete worker instruction and expected deliverable.',
+      description: 'Independently executable worker instruction with bounded context and a concrete deliverable. Do not encode manager narration or trivial actions.',
     }),
     kind: Type.Optional(nodeKindSchema),
     status: nodeStatusSchema,
     dependsOn: Type.Optional(Type.Array(Type.String({
       minLength: 1,
       maxLength: MAX_WORK_GRAPH_ID_LENGTH,
-    }), { uniqueItems: true })),
+    }), {
+      uniqueItems: true,
+      description: 'Node ids whose manager-accepted results are true readiness prerequisites. Related work does not automatically require an edge.',
+    })),
     acceptanceCriteria: Type.Optional(Type.String({
       minLength: 1,
       maxLength: MAX_WORK_GRAPH_ACCEPTANCE_LENGTH,
-      description: 'Smallest check the manager must perform before marking the node completed.',
+      description: 'Smallest manager-verifiable check that proves this independently acceptable outcome before marking it completed.',
     })),
     effort: Type.Optional(effortSchema),
   }, { additionalProperties: false }), {
     minItems: 1,
     maxItems: MAX_WORK_GRAPH_NODES,
-    description: 'Complete desired graph. Dependencies must form a DAG.',
+    description: 'Complete desired graph. Use the smallest DAG that preserves real parallel readiness and dependencies; avoid ceremonial nodes and overlapping ownership.',
   }),
 }, { additionalProperties: false })
 
@@ -93,9 +111,12 @@ export function buildUpdateWorkGraphTool(
     name: UPDATE_WORK_GRAPH_TOOL_NAME,
     label: 'Update Work Graph',
     description: [
-      'Create or revise the executable coordination state when Forge should dispatch two or more worker attempts according to parallel readiness, dependencies, a gate, retry, or fan-in.',
-      'A two-node implement-then-review handoff is graph-shaped even though it is small; encode it here instead of combining update_plan with manual spawn_agent calls.',
+      'Create or revise executable coordination only when all three eligibility conditions hold: at least two independently dispatchable and verifiable outcomes, a real scheduling relationship, and expected benefit beyond coordination cost.',
+      'A good graph is the smallest dependency graph that preserves meaningful parallelism, accepted-result dependencies, fan-in, retry, or a real user gate.',
+      'Task size, step count, planning, review, thoroughness, or worker count alone is not a reason to call this tool.',
+      'When risk warrants a distinct implement-then-independent-review handoff, encode that dependency here instead of combining update_plan with manual spawn_agent calls.',
       'For simple requests use no coordination tool; for a short visible checklist use update_plan.',
+      'If one bounded planning investigation must happen before the graph is knowable, run and accept that delegation first; do not create speculative downstream nodes.',
       'Forge automatically dispatches ready non-decision nodes and chooses economical models from node kind, explicit risk overrides, and blocked-attempt history.',
       'Use effort=auto unless a concrete risk requires an override.',
       'Worker success moves a node to awaiting_review; personally accept its result, then submit the complete graph with that node completed to release dependents.',

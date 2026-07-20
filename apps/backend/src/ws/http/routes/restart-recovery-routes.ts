@@ -43,7 +43,7 @@ export function createRestartRecoveryRoutes(options: {
         }
 
         if (requestUrl.pathname === RESTART_RECOVERY_DISMISS_ENDPOINT_PATH && request.method === "POST") {
-          const snapshot = swarmManager.dismissRestartRecovery();
+          const snapshot = await swarmManager.dismissRestartRecovery();
           broadcastEvent({ type: "restart_recovery_snapshot", snapshot });
           sendJson(response, 200, { ok: true, snapshot });
           return;
