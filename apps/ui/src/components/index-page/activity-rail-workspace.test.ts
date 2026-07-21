@@ -1,7 +1,16 @@
 /** @vitest-environment jsdom */
 
-import { describe, expect, it } from 'vitest'
-import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from './activity-rail-workspace'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  isActivityRailViewportAvailable,
+  isActivityRailWorkspaceAvailable,
+  resolveChatRailTargetAgentId,
+  resolveSourceControlDeepLinkPresentation,
+} from './activity-rail-workspace'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('isActivityRailWorkspaceAvailable', () => {
   it('returns false when only fallback manager id would be available', () => {
@@ -14,6 +23,35 @@ describe('isActivityRailWorkspaceAvailable', () => {
     expect(
       isActivityRailWorkspaceAvailable('session-1', { agentId: 'manager-1' }),
     ).toBe(true)
+  })
+})
+
+describe('isActivityRailViewportAvailable', () => {
+  it('uses inline Source Control only at the activity-rail breakpoint', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    expect(isActivityRailViewportAvailable()).toBe(true)
+    expect(window.matchMedia).toHaveBeenCalledWith('(min-width: 768px)')
+
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
+    expect(isActivityRailViewportAvailable()).toBe(false)
+  })
+})
+
+describe('resolveSourceControlDeepLinkPresentation', () => {
+  it('routes an available desktop workspace to inline Source Control', () => {
+    expect(resolveSourceControlDeepLinkPresentation(
+      'session-1',
+      { agentId: 'manager-1' },
+      true,
+    )).toBe('inline')
+  })
+
+  it.each([
+    ['mobile viewport', 'session-1', { agentId: 'manager-1' }, false],
+    ['missing active session', null, { agentId: 'manager-1' }, true],
+    ['missing manager workspace', 'session-1', null, true],
+  ] as const)('uses the modal fallback for a %s', (_label, activeAgentId, manager, viewport) => {
+    expect(resolveSourceControlDeepLinkPresentation(activeAgentId, manager, viewport)).toBe('modal')
   })
 })
 

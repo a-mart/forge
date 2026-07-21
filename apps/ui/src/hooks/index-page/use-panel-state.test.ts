@@ -234,6 +234,61 @@ describe('usePanelState', () => {
     })
   })
 
+  describe('Source Control deep links', () => {
+    it('issues a new request identity without toggling an already-open viewer closed', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.openDiffViewerDeepLink({
+          initialRepoTarget: 'workspace',
+          initialTab: 'incoming',
+        })
+      })
+      const firstRequest = capturedRef.current!.panelState.diffViewerNavigationRequest
+      expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(true)
+      expect(firstRequest).toMatchObject({
+        requestId: 1,
+        initialRepoTarget: 'workspace',
+        initialTab: 'incoming',
+      })
+
+      act(() => {
+        capturedRef.current!.panelState.openDiffViewerDeepLink({
+          initialRepoTarget: 'workspace',
+          initialTab: 'incoming',
+        })
+      })
+      expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(true)
+      expect(capturedRef.current!.panelState.diffViewerNavigationRequest?.requestId).toBe(2)
+
+      act(() => {
+        capturedRef.current!.panelState.openDiffViewer({ initialTab: 'changes' })
+      })
+      expect(capturedRef.current!.panelState.diffViewerNavigationRequest).toBeNull()
+    })
+
+    it('scopes Incoming navigation state to the active agent context', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.openDiffViewerDeepLink({
+          initialRepoTarget: 'workspace',
+          initialTab: 'incoming',
+        })
+      })
+      expect(capturedRef.current!.panelState.diffViewerInitialState?.initialTab).toBe('incoming')
+
+      act(() => {
+        capturedRef.current!.setAgentId('cortex-agent')
+        capturedRef.current!.setArchetypeId('cortex')
+      })
+
+      expect(capturedRef.current!.panelState.diffViewerInitialState).toBeNull()
+      expect(capturedRef.current!.panelState.diffViewerNavigationRequest).toBeNull()
+      expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(true)
+    })
+  })
+
   describe('keyboard shortcuts ignore form fields where applicable', () => {
     it('Ctrl+Shift+D toggles diff viewer', () => {
       render()

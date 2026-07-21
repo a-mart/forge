@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DashboardTab as CortexDashboardTab } from '@/components/chat/cortex/CortexDashboardPanel'
-import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
+import type {
+  DiffViewerInitialState,
+  DiffViewerNavigationRequest,
+} from '@/components/diff-viewer/DiffViewerDialog'
 import { useFileBrowserWorkspaceState } from '@/components/file-browser/use-file-browser-workspace-state'
 import { invalidateFileBrowserCaches } from '@/components/file-browser/use-file-browser-queries'
 import type { ArtifactReference } from '@/lib/artifacts'
@@ -36,12 +39,15 @@ export interface FileBrowserWorktreeSelection {
 interface UsePanelStateOptions {
   activeAgentId: string | null
   activeAgentArchetypeId?: string | null
+  /** Distinguishes agent/session contexts that may reuse the same agent id across origins or projects. */
+  activeContextKey?: string
   enableKeyboardShortcuts?: boolean
 }
 
 export function usePanelState({
   activeAgentId,
   activeAgentArchetypeId,
+  activeContextKey = `${activeAgentId ?? 'none'}:${activeAgentArchetypeId ?? 'default'}`,
   enableKeyboardShortcuts = true,
 }: UsePanelStateOptions) {
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
@@ -57,6 +63,15 @@ export function usePanelState({
   const [isDiffViewerOpen, setIsDiffViewerOpen] = useState(false)
   const [diffViewerInitialState, setDiffViewerInitialState] =
     useState<DiffViewerInitialState | null>(null)
+  const [diffViewerNavigationRequest, setDiffViewerNavigationRequest] =
+    useState<DiffViewerNavigationRequest | null>(null)
+  const diffViewerInitialStateContextRef = useRef(activeContextKey)
+  const diffViewerNavigationContextRef = useRef(activeContextKey)
+  const diffViewerNavigationRequestIdRef = useRef(0)
+  const scopedDiffViewerInitialState =
+    diffViewerInitialStateContextRef.current === activeContextKey ? diffViewerInitialState : null
+  const scopedDiffViewerNavigationRequest =
+    diffViewerNavigationContextRef.current === activeContextKey ? diffViewerNavigationRequest : null
   const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false)
   const [fileBrowserWorktreeContext, setFileBrowserWorktreeContext] =
     useState<FileBrowserWorktreeSelection | null>(null)
@@ -74,6 +89,17 @@ export function usePanelState({
     setIsFileBrowserOpen(false)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
+
+  useEffect(() => {
+    if (diffViewerInitialStateContextRef.current !== activeContextKey) {
+      diffViewerInitialStateContextRef.current = activeContextKey
+      setDiffViewerInitialState(null)
+    }
+    if (diffViewerNavigationContextRef.current !== activeContextKey) {
+      diffViewerNavigationContextRef.current = activeContextKey
+      setDiffViewerNavigationRequest(null)
+    }
+  }, [activeContextKey])
 
   const closeFileBrowserForWorkspacePanel = useCallback(() => {
     setIsFileBrowserOpen(false)
@@ -207,9 +233,22 @@ export function usePanelState({
   )
 
   const openDiffViewer = useCallback((initialState: DiffViewerInitialState | null = null) => {
+    diffViewerInitialStateContextRef.current = activeContextKey
+    diffViewerNavigationContextRef.current = activeContextKey
     setDiffViewerInitialState(initialState)
+    setDiffViewerNavigationRequest(null)
     setIsDiffViewerOpen(true)
-  }, [])
+  }, [activeContextKey])
+
+  const openDiffViewerDeepLink = useCallback((initialState: DiffViewerInitialState) => {
+    const requestId = diffViewerNavigationRequestIdRef.current + 1
+    diffViewerNavigationRequestIdRef.current = requestId
+    diffViewerInitialStateContextRef.current = activeContextKey
+    diffViewerNavigationContextRef.current = activeContextKey
+    setDiffViewerInitialState(initialState)
+    setDiffViewerNavigationRequest({ requestId, ...initialState })
+    setIsDiffViewerOpen(true)
+  }, [activeContextKey])
 
   const selectFileBrowserFile = useCallback((path: string) => {
     fileBrowserWorkspace.openPreviewFile(path)
@@ -255,8 +294,10 @@ export function usePanelState({
     setIsMobileSidebarOpen,
     isDiffViewerOpen,
     setIsDiffViewerOpen,
-    diffViewerInitialState,
+    diffViewerInitialState: scopedDiffViewerInitialState,
+    diffViewerNavigationRequest: scopedDiffViewerNavigationRequest,
     openDiffViewer,
+    openDiffViewerDeepLink,
     isFileBrowserOpen,
     openFileBrowser,
     toggleFileBrowser,

@@ -31,7 +31,11 @@ import type { AgentDescriptor, GitWorktreeSummary } from '@forge/protocol'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import type { ManagerWsClient } from '@/lib/ws-client'
 import type { MessageInputHandle } from '@/components/chat/MessageInput'
-import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from '@/components/index-page/activity-rail-workspace'
+import {
+  isActivityRailWorkspaceAvailable,
+  resolveChatRailTargetAgentId,
+  resolveSourceControlDeepLinkPresentation,
+} from '@/components/index-page/activity-rail-workspace'
 import { requestGuardedArtifactsPanelToggle } from '@/components/index-page/builder-file-editor-guard-actions'
 import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/file-editor-feature-gates'
 import { useFileEditSessions } from '@/components/file-browser/use-file-edit-sessions'
@@ -67,6 +71,7 @@ export interface UseWorkspacePanelsOptions {
   terminalPanel: TerminalPanel
   terminalCount: number
   isCortexSession: boolean
+  activeContextKey?: string
   clientRef: MutableRefObject<ManagerWsClient | null>
   messageInputRef: MutableRefObject<MessageInputHandle | null>
   navigateToRoute: (nextRouteState: BuilderNavigationState, replace?: boolean) => void
@@ -81,6 +86,7 @@ export function useWorkspacePanels({
   terminalPanel,
   terminalCount,
   isCortexSession,
+  activeContextKey,
   clientRef,
   messageInputRef,
   navigateToRoute,
@@ -108,7 +114,9 @@ export function useWorkspacePanels({
     isDiffViewerOpen,
     setIsDiffViewerOpen,
     diffViewerInitialState,
+    diffViewerNavigationRequest,
     openDiffViewer,
+    openDiffViewerDeepLink,
     isFileBrowserOpen,
     openFileBrowser: handleOpenFileBrowser,
     toggleFileBrowser: handleToggleFileBrowser,
@@ -135,6 +143,7 @@ export function useWorkspacePanels({
   } = usePanelState({
     activeAgentId,
     activeAgentArchetypeId: activeAgent?.archetypeId,
+    activeContextKey,
     enableKeyboardShortcuts: false,
   })
 
@@ -416,6 +425,29 @@ export function useWorkspacePanels({
     })
   }, [fileEditorCoordinator, openDiffViewer])
 
+  const handleOpenDiffViewerDeepLink = useCallback((initialState: DiffViewerInitialState) => {
+    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-source-control-inline' }, () => {
+      const presentation = resolveSourceControlDeepLinkPresentation(
+        activeAgentId,
+        activeManagerAgent,
+      )
+
+      if (presentation === 'inline') {
+        handleCloseWorkspacePanels()
+        setDiffViewerPresentation('inline')
+      } else {
+        setDiffViewerPresentation('modal')
+      }
+      openDiffViewerDeepLink(initialState)
+    })
+  }, [
+    activeAgentId,
+    activeManagerAgent,
+    fileEditorCoordinator,
+    handleCloseWorkspacePanels,
+    openDiffViewerDeepLink,
+  ])
+
   const handleReturnToChatWorkspace = useCallback(() => {
     fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'chat' }, () => {
       const chatTargetAgentId = resolveChatRailTargetAgentId(
@@ -687,6 +719,7 @@ export function useWorkspacePanels({
     diffViewerPresentation,
     isInlineDiffViewerOpen,
     diffViewerInitialState,
+    diffViewerNavigationRequest,
     isFileBrowserOpen,
     selectedFileBrowserFile,
     fileBrowserTabs,
@@ -725,6 +758,7 @@ export function useWorkspacePanels({
     handleGuardedDiffViewerOpenChange,
     handleGuardedToggleFileBrowser,
     handleOpenDiffViewerModal,
+    handleOpenDiffViewerDeepLink,
     handleReturnToChatWorkspace,
     handleToggleFileBrowserFromRail,
     handleOpenDiffViewerInline,

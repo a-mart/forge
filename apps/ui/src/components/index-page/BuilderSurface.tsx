@@ -25,6 +25,10 @@ import { FileDirtyConfirmDialog } from '@/components/file-browser/FileDirtyConfi
 import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/file-editor-feature-gates'
 import type { useFileEditorCoordinator } from '@/components/file-browser/use-file-editor-coordinator'
 import { DiffViewerContent } from '@/components/diff-viewer/DiffViewerDialog'
+import {
+  remoteUpdateSnapshotMatchesTarget,
+  type RemoteUpdateAwarenessMutationTarget,
+} from '@/components/diff-viewer/remote-update-awareness-mutation'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { CortexV2OnboardingModal } from '@/components/settings/CortexV2OnboardingModal'
 import { StatsPage } from '@/components/index-page/StatsPage'
@@ -76,6 +80,7 @@ import { useTerminalPanel } from '@/hooks/useTerminalPanel'
 import type {
   AgentDescriptor,
   ProjectAgentExternalDirectoryEntry,
+  RemoteUpdateAwarenessProjectSnapshot,
 } from '@forge/protocol'
 
 type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
@@ -336,12 +341,32 @@ export function BuilderSurface({
   )
   const activeAgentProfileType = activeAgentProfile?.profileType ?? null
   const activeProjectId = activeAgent?.profileId ?? activeManagerAgent?.profileId ?? null
+  const activeAgentIsCortex = isCortexDiffViewerSession(activeAgent)
   const remoteUpdateSnapshot = getActiveLocalRemoteUpdateSnapshot(
     state.remoteUpdateAwarenessSnapshot,
     activeProjectId,
     isRemoteOriginActive,
-    isCortexDiffViewerSession(activeAgent),
+    activeAgentIsCortex,
   )
+  const handleRemoteUpdateSnapshotChange = useCallback((
+    snapshot: RemoteUpdateAwarenessProjectSnapshot,
+    expectedTarget?: RemoteUpdateAwarenessMutationTarget,
+  ) => {
+    setState((current) => {
+      if (expectedTarget) {
+        const currentProjection = getActiveLocalRemoteUpdateSnapshot(
+          current.remoteUpdateAwarenessSnapshot,
+          activeProjectId,
+          isRemoteOriginActive,
+          activeAgentIsCortex,
+        )
+        if (!remoteUpdateSnapshotMatchesTarget(currentProjection, expectedTarget)) {
+          return current
+        }
+      }
+      return { ...current, remoteUpdateAwarenessSnapshot: snapshot }
+    })
+  }, [activeAgentIsCortex, activeProjectId, isRemoteOriginActive, setState])
 
   useEffect(() => {
     if (isRemoteOriginActive || !state.connected || !activeProjectId) return
@@ -431,6 +456,7 @@ export function BuilderSurface({
     terminalPanel,
     terminalCount: state.terminals.length,
     isCortexSession,
+    activeContextKey: `${activeOriginId}:${activeProjectId ?? 'none'}:${activeAgentId ?? 'none'}:${isDiffViewerCortexSession ? 'cortex' : 'workspace'}`,
     clientRef,
     messageInputRef,
     navigateToRoute,
@@ -931,7 +957,8 @@ export function BuilderSurface({
                   onSourceControlMutationComplete={panels.handleSourceControlMutationComplete}
                   externalRefreshNonce={panels.sourceControlRefreshNonce}
                   remoteUpdateSnapshot={remoteUpdateSnapshot}
-                  onRemoteUpdateSnapshotChange={(snapshot) => setState((current) => ({ ...current, remoteUpdateAwarenessSnapshot: snapshot }))}
+                  onRemoteUpdateSnapshotChange={handleRemoteUpdateSnapshotChange}
+                  navigationRequest={panels.diffViewerNavigationRequest}
                   initialRepoTarget={panels.diffViewerInitialState?.initialRepoTarget}
                   initialTab={panels.diffViewerInitialState?.initialTab}
                   initialSha={panels.diffViewerInitialState?.initialSha}
@@ -1058,8 +1085,8 @@ export function BuilderSurface({
                   isFeedbackSubmitting: feedback.isSubmitting,
                 }}
                 remoteUpdateSnapshot={remoteUpdateSnapshot}
-                onRemoteUpdateSnapshotChange={(snapshot) => setState((current) => ({ ...current, remoteUpdateAwarenessSnapshot: snapshot }))}
-                onOpenRemoteUpdateIncoming={() => panels.handleOpenDiffViewerModal({
+                onRemoteUpdateSnapshotChange={handleRemoteUpdateSnapshotChange}
+                onOpenRemoteUpdateIncoming={() => panels.handleOpenDiffViewerDeepLink({
                   initialRepoTarget: 'workspace',
                   initialTab: 'incoming',
                 })}
@@ -1403,6 +1430,9 @@ export function BuilderSurface({
           onRequestSourceControlMutation: panels.handleRequestSourceControlMutation,
           onSourceControlMutationComplete: panels.handleSourceControlMutationComplete,
           externalRefreshNonce: panels.sourceControlRefreshNonce,
+          remoteUpdateSnapshot,
+          onRemoteUpdateSnapshotChange: handleRemoteUpdateSnapshotChange,
+          navigationRequest: panels.diffViewerNavigationRequest,
           initialRepoTarget: panels.diffViewerInitialState?.initialRepoTarget,
           initialTab: panels.diffViewerInitialState?.initialTab,
           initialSha: panels.diffViewerInitialState?.initialSha,

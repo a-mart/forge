@@ -13,6 +13,7 @@ import type { KnowledgeQuickFilterId } from './knowledge-surface'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
 import { RemoteUpdateAwarenessBanner, RemoteUpdateAwarenessIncoming } from './RemoteUpdateAwarenessIncoming'
 import { RemoteUpdateAwarenessProjectControl } from './RemoteUpdateAwarenessProjectControl'
+import type { RemoteUpdateAwarenessSnapshotChange } from './remote-update-awareness-mutation'
 import {
   useGitBranches,
   useGitPullRequests,
@@ -27,6 +28,11 @@ export interface DiffViewerInitialState {
   initialSha?: string | null
   initialFile?: string | null
   initialQuickFilter?: KnowledgeQuickFilterId
+}
+
+/** A non-toggle navigation request that remains distinct even when its target is unchanged. */
+export interface DiffViewerNavigationRequest extends DiffViewerInitialState {
+  requestId: number
 }
 
 type SourceControlMutationGuard = (
@@ -46,7 +52,8 @@ interface DiffViewerDialogProps extends DiffViewerInitialState {
   onSourceControlMutationComplete?: () => void
   externalRefreshNonce?: number
   remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
-  onRemoteUpdateSnapshotChange?: (snapshot: RemoteUpdateAwarenessProjectSnapshot) => void
+  onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
+  navigationRequest?: DiffViewerNavigationRequest | null
 }
 
 interface DiffViewerContentProps extends DiffViewerInitialState {
@@ -60,7 +67,8 @@ interface DiffViewerContentProps extends DiffViewerInitialState {
   onSourceControlMutationComplete?: () => void
   externalRefreshNonce?: number
   remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
-  onRemoteUpdateSnapshotChange?: (snapshot: RemoteUpdateAwarenessProjectSnapshot) => void
+  onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
+  navigationRequest?: DiffViewerNavigationRequest | null
 }
 
 function getDefaultRepoTarget(isCortex: boolean): GitRepoTarget {
@@ -88,6 +96,7 @@ export function DiffViewerContent({
   externalRefreshNonce = 0,
   remoteUpdateSnapshot = null,
   onRemoteUpdateSnapshotChange,
+  navigationRequest = null,
 }: DiffViewerContentProps) {
   const defaultTab = useMemo(() => initialTab ?? getDefaultTab(isCortex), [initialTab, isCortex])
   const defaultRepoTarget = useMemo(
@@ -104,6 +113,7 @@ export function DiffViewerContent({
   const lastExternalRefreshNonceRef = useRef(externalRefreshNonce)
   const prevActiveRef = useRef(active)
   const prevContextKeyRef = useRef(`${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`)
+  const lastNavigationRequestIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     const contextKey = `${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`
@@ -122,6 +132,24 @@ export function DiffViewerContent({
     prevActiveRef.current = active
     prevContextKeyRef.current = contextKey
   }, [active, agentId, defaultRepoTarget, defaultTab, isCortex])
+
+  useEffect(() => {
+    if (
+      !active ||
+      !navigationRequest ||
+      navigationRequest.requestId === lastNavigationRequestIdRef.current
+    ) {
+      return
+    }
+
+    lastNavigationRequestIdRef.current = navigationRequest.requestId
+    setRepoTarget(navigationRequest.initialRepoTarget ?? defaultRepoTarget)
+    setActiveTab(navigationRequest.initialTab ?? defaultTab)
+    setSelectedWorktreeId(null)
+    setSelectedWorktreeSummary(null)
+    setHistoryStatus(null)
+    setHasVisitedPullRequests(navigationRequest.initialTab === 'pull-requests')
+  }, [active, defaultRepoTarget, defaultTab, navigationRequest])
 
   useEffect(() => {
     setHistoryStatus(null)
@@ -194,6 +222,7 @@ export function DiffViewerContent({
   const pullRequestCountTruncated = pullRequestsQuery.data?.openCountTruncated === true
   const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:changes`
   const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:history`
+  const activeRemoteUpdateSnapshot = repoTarget === 'workspace' ? remoteUpdateSnapshot : null
 
   const handleSelectWorktreeContext = useCallback((worktree: GitWorktreeSummary) => {
     setSelectedWorktreeId(worktree.id)
@@ -236,7 +265,7 @@ export function DiffViewerContent({
         }
         onRefresh={handleRefresh}
         onClose={onClose}
-        remoteUpdateSnapshot={repoTarget === 'workspace' ? remoteUpdateSnapshot : null}
+        remoteUpdateSnapshot={activeRemoteUpdateSnapshot}
         branchActions={
           repoTarget === 'workspace' ? (
             <>
@@ -262,15 +291,35 @@ export function DiffViewerContent({
 
       <RemoteUpdateAwarenessBanner
         wsUrl={wsUrl}
-        snapshot={repoTarget === 'workspace' ? remoteUpdateSnapshot : null}
+        snapshot={activeRemoteUpdateSnapshot}
         onInspect={() => setActiveTab('incoming')}
         onSnapshotChange={onRemoteUpdateSnapshotChange ?? (() => undefined)}
       />
 
       {/* Content */}
       <div className="min-h-0 flex-1">
-        {activeTab === 'incoming' && remoteUpdateSnapshot ? (
-          <RemoteUpdateAwarenessIncoming wsUrl={wsUrl} projectId={remoteUpdateSnapshot.projectId} />
+        {activeTab === 'incoming' ? (
+          activeRemoteUpdateSnapshot ? (
+            <RemoteUpdateAwarenessIncoming
+              wsUrl={wsUrl}
+              projectId={activeRemoteUpdateSnapshot.projectId}
+              generation={activeRemoteUpdateSnapshot.dismissalTarget?.generation ?? null}
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center" role="status">
+              <p className="text-sm font-medium text-foreground">Incoming changes are unavailable.</p>
+              <p className="max-w-md text-xs text-muted-foreground">
+                Remote update evidence is not available for this project. Return to Changes and check again later.
+              </p>
+              <button
+                type="button"
+                className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+                onClick={() => setActiveTab('changes')}
+              >
+                Return to Changes
+              </button>
+            </div>
+          )
         ) : activeTab === 'changes' ? (
           <ChangesView
             key={changesViewKey}
@@ -308,7 +357,7 @@ export function DiffViewerContent({
             onSelectWorktreeContext={handleSelectWorktreeContext}
             onBrowseWorktree={handleBrowseWorktree}
           />
-        ) : (
+        ) : activeTab === 'pull-requests' ? (
           <PullRequestsTab
             wsUrl={wsUrl}
             agentId={active ? agentId : null}
@@ -321,7 +370,7 @@ export function DiffViewerContent({
               branchesQuery.refetch()
             }}
           />
-        )}
+        ) : null}
       </div>
 
       {/* Status bar */}
@@ -367,7 +416,7 @@ export function DiffViewerContent({
             </>
           )}
         </div>
-      ) : historyStatus ? (
+      ) : activeTab === 'history' && historyStatus ? (
         <div
           className="flex h-7 shrink-0 items-center border-t border-border/60 bg-card/80 px-3 text-xs text-muted-foreground"
           aria-live="polite"
@@ -386,9 +435,9 @@ export function DiffViewerContent({
             <span className="ml-1 text-red-500">-{historyStatus.deletions}</span>
           ) : null}
         </div>
-      ) : (
+      ) : activeTab === 'history' ? (
         <DiffStatusBar filesChanged={0} insertions={0} deletions={0} />
-      )}
+      ) : null}
     </>
   )
 }
@@ -410,6 +459,7 @@ export function DiffViewerDialog({
   externalRefreshNonce,
   remoteUpdateSnapshot,
   onRemoteUpdateSnapshotChange,
+  navigationRequest,
 }: DiffViewerDialogProps) {
   const handleClose = useCallback(() => {
     onOpenChange(false)
@@ -452,6 +502,7 @@ export function DiffViewerDialog({
             externalRefreshNonce={externalRefreshNonce}
             remoteUpdateSnapshot={remoteUpdateSnapshot}
             onRemoteUpdateSnapshotChange={onRemoteUpdateSnapshotChange}
+            navigationRequest={navigationRequest}
             initialRepoTarget={initialRepoTarget}
             initialTab={initialTab}
             initialSha={initialSha}

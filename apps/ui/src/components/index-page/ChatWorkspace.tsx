@@ -10,6 +10,7 @@ import { SessionAuditDrawer } from '@/components/chat/SessionAuditDrawer'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { RemoteUpdateAwarenessBanner } from '@/components/diff-viewer/RemoteUpdateAwarenessIncoming'
+import type { RemoteUpdateAwarenessSnapshotChange } from '@/components/diff-viewer/remote-update-awareness-mutation'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { cn } from '@/lib/utils'
 import type {
@@ -24,7 +25,7 @@ interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
   /** Already filtered to the active local project by the Builder shell. */
   remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
-  onRemoteUpdateSnapshotChange?: (snapshot: RemoteUpdateAwarenessProjectSnapshot) => void
+  onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
   onOpenRemoteUpdateIncoming?: () => void
   lastError: string | null
   lastSuccess: string | null

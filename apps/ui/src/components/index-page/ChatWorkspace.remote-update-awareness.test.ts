@@ -6,6 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
+import { createRemoteUpdateAwarenessMutationTarget } from '@/components/diff-viewer/remote-update-awareness-mutation'
 import { ChatWorkspace } from './ChatWorkspace'
 
 const api = vi.hoisted(() => ({
@@ -99,11 +100,20 @@ describe('ChatWorkspace remote update awareness', () => {
 
     fireEvent.click(getByRole(container, 'button', { name: 'Check now' }))
     await waitFor(() => expect(api.refreshRemoteUpdateAwarenessProject).toHaveBeenCalledWith('ws://localhost:47188', 'project-a'))
-    expect(onSnapshotChange).toHaveBeenCalledWith(snapshot)
+    expect(onSnapshotChange).toHaveBeenCalledWith(
+      snapshot,
+      createRemoteUpdateAwarenessMutationTarget(snapshot, 1),
+    )
 
-    fireEvent.click(getByRole(container, 'button', { name: 'Dismiss this exact remote tip' }))
+    const dismiss = getByRole(container, 'button', { name: 'Dismiss' })
+    expect(dismiss.textContent).toBe('Dismiss')
+    await waitFor(() => expect(dismiss.hasAttribute('disabled')).toBe(false))
+    fireEvent.click(dismiss)
     await waitFor(() => expect(api.dismissRemoteUpdateAwarenessProjectUpdate).toHaveBeenCalledWith('ws://localhost:47188', 'project-a', 12))
-    expect(onSnapshotChange).toHaveBeenCalledWith({ ...snapshot, attentionRequired: false })
+    expect(onSnapshotChange).toHaveBeenCalledWith(
+      { ...snapshot, attentionRequired: false },
+      createRemoteUpdateAwarenessMutationTarget(snapshot, 2),
+    )
   })
 
   it.each([

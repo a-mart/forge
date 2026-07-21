@@ -1,11 +1,13 @@
 /** @vitest-environment jsdom */
 
 import { fireEvent, getAllByRole, getByRole, getByText, queryByRole, queryByText, waitFor, within } from '@testing-library/dom'
-import { createElement } from 'react'
+import { act, createElement, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { usePanelState } from '@/hooks/index-page/use-panel-state'
 import { DiffViewerContent, DiffViewerDialog } from './DiffViewerDialog'
+import { createRemoteUpdateAwarenessMutationTarget } from './remote-update-awareness-mutation'
 
 const {
   invalidateGitCachesMock,
@@ -18,6 +20,7 @@ const {
   WORKTREE_NOT_INITIALIZED_BY_TARGET,
   BRANCHES_BY_TARGET,
   PULL_REQUESTS_QUERY_STATE,
+  remoteApi,
 } = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
   hookCalls: {
@@ -193,6 +196,12 @@ const {
       listError?: string
     },
     error: null as string | null,
+  },
+  remoteApi: {
+    dismissRemoteUpdateAwarenessProjectUpdate: vi.fn(),
+    fetchRemoteUpdateAwarenessIncoming: vi.fn(),
+    refreshRemoteUpdateAwarenessProject: vi.fn(),
+    updateRemoteUpdateAwarenessProjectOverride: vi.fn(),
   },
   BRANCHES_BY_TARGET: {
     workspace: {
@@ -469,6 +478,8 @@ vi.mock('./use-diff-queries', () => ({
   pullGitFfOnly: vi.fn(),
 }))
 
+vi.mock('@/components/settings/remote-update-awareness-api', () => remoteApi)
+
 vi.mock('./DiffPane', () => ({
   DiffPane: ({ fileName }: { fileName: string | null }) =>
     createElement('div', { 'data-testid': 'diff-pane' }, fileName ?? 'no-file'),
@@ -491,6 +502,7 @@ beforeEach(() => {
   WORKTREE_NOT_INITIALIZED_BY_TARGET.versioning = false
   PULL_REQUESTS_QUERY_STATE.data = null
   PULL_REQUESTS_QUERY_STATE.error = null
+  Object.values(remoteApi).forEach((mock) => mock.mockReset())
   WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length,
     {
       id: 'workspace-main',
@@ -565,6 +577,11 @@ function renderInlineContent(
     isCortex: boolean
     agentId?: string | null
     externalRefreshNonce?: number
+    remoteUpdateSnapshot?: import('@forge/protocol').RemoteUpdateAwarenessProjectSnapshot | null
+    onRemoteUpdateSnapshotChange?: (snapshot: import('@forge/protocol').RemoteUpdateAwarenessProjectSnapshot) => void
+    initialRepoTarget?: 'workspace' | 'versioning'
+    initialTab?: 'changes' | 'history' | 'incoming' | 'worktrees' | 'pull-requests'
+    navigationRequest?: import('./DiffViewerDialog').DiffViewerNavigationRequest | null
     onRequestSourceControlMutation?: (
       mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
       target: { agentId: string; worktreeId: string | null },
@@ -585,6 +602,11 @@ function renderInlineContent(
           onClose: vi.fn(),
           onRequestSourceControlMutation: props.onRequestSourceControlMutation,
           externalRefreshNonce: props.externalRefreshNonce,
+          remoteUpdateSnapshot: props.remoteUpdateSnapshot,
+          onRemoteUpdateSnapshotChange: props.onRemoteUpdateSnapshotChange,
+          initialRepoTarget: props.initialRepoTarget,
+          initialTab: props.initialTab,
+          navigationRequest: props.navigationRequest,
         }),
       ),
     )
@@ -623,11 +645,14 @@ function renderDialog(
     agentId?: string | null
     open?: boolean
     initialRepoTarget?: 'workspace' | 'versioning'
-    initialTab?: 'changes' | 'history' | 'worktrees' | 'pull-requests'
+    initialTab?: 'changes' | 'history' | 'incoming' | 'worktrees' | 'pull-requests'
     initialSha?: string | null
     initialFile?: string | null
     initialQuickFilter?: 'all' | 'shared-knowledge' | 'profile-memory' | 'reference-docs' | 'prompt-overrides'
     onBrowseWorktreeFiles?: ReturnType<typeof vi.fn>
+    remoteUpdateSnapshot?: import('@forge/protocol').RemoteUpdateAwarenessProjectSnapshot | null
+    onRemoteUpdateSnapshotChange?: (snapshot: import('@forge/protocol').RemoteUpdateAwarenessProjectSnapshot) => void
+    navigationRequest?: import('./DiffViewerDialog').DiffViewerNavigationRequest | null
   },
 ) {
   root = createRoot(container)
@@ -646,9 +671,77 @@ function renderDialog(
         initialSha: props.initialSha,
         initialFile: props.initialFile,
         initialQuickFilter: props.initialQuickFilter,
+        remoteUpdateSnapshot: props.remoteUpdateSnapshot,
+        onRemoteUpdateSnapshotChange: props.onRemoteUpdateSnapshotChange,
+        navigationRequest: props.navigationRequest,
       }),
     )
   })
+}
+
+const remoteUpdateSnapshot = {
+  projectId: 'project-1',
+  override: 'inherit' as const,
+  globalEnabled: true,
+  effectiveEnabled: true,
+  state: 'update_available' as const,
+  lastObservedAt: null,
+  failureCode: null,
+  attentionRequired: true,
+  dismissalTarget: { generation: 7 },
+}
+
+const incomingInspection = {
+  projectId: 'project-1',
+  remoteDisplayName: 'origin',
+  defaultBranchDisplay: 'main',
+  observedTipOid: null,
+  generation: 7,
+  observedAt: null,
+  freshnessCheckedAt: null,
+  staleAfter: null,
+  state: 'update_available' as const,
+  failureCode: null,
+  attentionRequired: true,
+  commits: { commitCount: 0, commitLimit: 20, hasMore: false, commits: [] },
+  fileChanges: null,
+}
+
+function ContextSwitchHarness() {
+  const [context, setContext] = useState({ agentId: 'workspace-agent', isCortex: false })
+  const panelState = usePanelState({
+    activeAgentId: context.agentId,
+    activeAgentArchetypeId: context.isCortex ? 'cortex' : null,
+    activeContextKey: `local:${context.agentId}:${context.isCortex ? 'cortex' : 'workspace'}`,
+    enableKeyboardShortcuts: false,
+  })
+
+  return createElement(
+    'div',
+    null,
+    createElement('button', {
+      type: 'button',
+      onClick: () => panelState.openDiffViewerDeepLink({
+        initialRepoTarget: 'workspace',
+        initialTab: 'incoming',
+      }),
+    }, 'Open Incoming'),
+    createElement('button', {
+      type: 'button',
+      onClick: () => setContext({ agentId: 'cortex-agent', isCortex: true }),
+    }, 'Switch to Cortex'),
+    createElement(DiffViewerContent, {
+      active: true,
+      wsUrl: 'ws://127.0.0.1:47187',
+      agentId: context.agentId,
+      isCortex: context.isCortex,
+      onClose: vi.fn(),
+      remoteUpdateSnapshot: context.isCortex ? null : remoteUpdateSnapshot,
+      initialRepoTarget: panelState.diffViewerInitialState?.initialRepoTarget,
+      initialTab: panelState.diffViewerInitialState?.initialTab,
+      navigationRequest: panelState.diffViewerNavigationRequest,
+    }),
+  )
 }
 
 async function flushEffects(): Promise<void> {
@@ -695,9 +788,116 @@ describe('DiffViewerContent', () => {
     expect(hookCalls.refetches).toContain('status:workspace:session')
     expect(hookCalls.refetches).toContain('branches:workspace:session')
   })
+
+  it('honors a later, uniquely identified Incoming deep link while already open', async () => {
+    remoteApi.fetchRemoteUpdateAwarenessIncoming.mockResolvedValue({ incoming: incomingInspection })
+    renderInlineContent({
+      isCortex: true,
+      remoteUpdateSnapshot,
+      navigationRequest: null,
+    })
+    await flushEffects()
+    expect(hookCalls.status.at(-1)?.repoTarget).toBe('versioning')
+
+    renderInlineContent({
+      isCortex: true,
+      remoteUpdateSnapshot,
+      navigationRequest: {
+        requestId: 1,
+        initialRepoTarget: 'workspace',
+        initialTab: 'incoming',
+      },
+    })
+
+    await waitFor(() => expect(getByRole(document.body, 'heading', { name: 'Incoming' })).toBeTruthy())
+    expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
+    expect(getByRole(document.body, 'button', { name: 'Incoming' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('does not retain the History footer after switching to Incoming', async () => {
+    remoteApi.fetchRemoteUpdateAwarenessIncoming.mockResolvedValue({ incoming: incomingInspection })
+    renderInlineContent({
+      isCortex: false,
+      initialTab: 'history',
+      remoteUpdateSnapshot,
+    })
+    await flushEffects()
+    await waitFor(() => {
+      const historyFooter = document.body.querySelector('[aria-live="polite"]')
+      expect(historyFooter?.textContent).toContain('worksp1')
+      expect(historyFooter?.textContent).toContain('Dev')
+    })
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Incoming' }))
+    await waitFor(() => expect(getByRole(document.body, 'heading', { name: 'Incoming' })).toBeTruthy())
+
+    expect(queryByText(document.body, 'worksp1')).toBeNull()
+    expect(queryByText(document.body, 'Dev')).toBeNull()
+    expect(document.body.querySelector('[aria-live="polite"]')).toBeNull()
+  })
+
+  it('uses Cortex defaults after an open Incoming deep link crosses agent context', async () => {
+    remoteApi.fetchRemoteUpdateAwarenessIncoming.mockResolvedValue({ incoming: incomingInspection })
+    root = createRoot(container)
+    act(() => root?.render(createElement(ContextSwitchHarness)))
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Open Incoming' }))
+    await waitFor(() => expect(getByRole(document.body, 'heading', { name: 'Incoming' })).toBeTruthy())
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Switch to Cortex' }))
+    await waitFor(() => {
+      expect(getByRole(document.body, 'button', { name: 'History' }).getAttribute('aria-pressed')).toBe('true')
+      expect(getByRole(document.body, 'button', { name: 'Cortex Knowledge' }).getAttribute('aria-pressed')).toBe('true')
+    })
+    expect(queryByRole(document.body, 'heading', { name: 'Incoming' })).toBeNull()
+    expect(document.body.textContent).not.toContain('Incoming changes are unavailable')
+  })
+
+  it('shows an explicit unavailable state instead of falling through to Pull Requests without a snapshot', async () => {
+    renderInlineContent({ isCortex: false, initialTab: 'incoming', remoteUpdateSnapshot: null })
+    await flushEffects()
+
+    expect(getByRole(document.body, 'status').textContent).toContain('Incoming changes are unavailable')
+    expect(document.body.textContent).not.toContain('Pull request list unavailable')
+    expect(hookCalls.pullRequests.every((call) => call.enabled === false)).toBe(true)
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Return to Changes' }))
+    await waitFor(() => expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy())
+  })
 })
 
 describe('DiffViewerDialog', () => {
+  it('passes remote snapshot data and mutations through the modal fallback', async () => {
+    remoteApi.fetchRemoteUpdateAwarenessIncoming.mockResolvedValue({ incoming: incomingInspection })
+    remoteApi.dismissRemoteUpdateAwarenessProjectUpdate.mockResolvedValue({
+      snapshot: { ...remoteUpdateSnapshot, attentionRequired: false },
+    })
+    const onSnapshotChange = vi.fn()
+
+    renderDialog({
+      isCortex: false,
+      initialRepoTarget: 'workspace',
+      initialTab: 'incoming',
+      remoteUpdateSnapshot,
+      onRemoteUpdateSnapshotChange: onSnapshotChange,
+      navigationRequest: {
+        requestId: 1,
+        initialRepoTarget: 'workspace',
+        initialTab: 'incoming',
+      },
+    })
+    await waitFor(() => expect(getByRole(document.body, 'heading', { name: 'Incoming' })).toBeTruthy())
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Dismiss' }))
+    await waitFor(() => expect(onSnapshotChange).toHaveBeenCalledWith(
+      {
+        ...remoteUpdateSnapshot,
+        attentionRequired: false,
+      },
+      createRemoteUpdateAwarenessMutationTarget(remoteUpdateSnapshot, 1),
+    ))
+  })
+
   it('defaults Cortex sessions to History + versioning and renders enhanced summaries with badges', async () => {
     renderDialog({ isCortex: true })
     await flushEffects()
