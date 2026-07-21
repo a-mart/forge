@@ -1,10 +1,11 @@
-import type { ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
+import type { CodexElicitationDecision, CodexElicitationPersistScope, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
 import {
   assertConnectedSocket,
   assertReconnectableSocket,
   buildChoiceCancelCommand,
   buildChoiceResponseCommand,
+  buildCodexElicitationResponseCommand,
   buildClearAllPinsCommand,
   buildCreateManagerCommand,
   buildCreateDirectoryCommand,
@@ -358,6 +359,7 @@ export class ManagerWsClient {
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
+      codexElicitations: [],
       planSnapshotLoadingSessionId: trimmed,
       goalSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
@@ -487,6 +489,16 @@ export class ManagerWsClient {
 
   sendChoiceCancel(agentId: string, choiceId: string): void {
     this.send(buildChoiceCancelCommand(agentId, choiceId))
+  }
+
+  sendCodexElicitationResponse(
+    agentId: string,
+    elicitationId: string,
+    decision: CodexElicitationDecision,
+    values?: Record<string, unknown>,
+    persistScope?: CodexElicitationPersistScope,
+  ): void {
+    this.send(buildCodexElicitationResponseCommand(agentId, elicitationId, decision, values, persistScope))
   }
 
   pinMessage(agentId: string, messageId: string, pinned: boolean): void {
@@ -958,6 +970,7 @@ export class ManagerWsClient {
       conversationHistoryMutation: null,
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
+      codexElicitations: [],
       lastError: null,
     })
     this.bootstrapBuffer.begin(agentId)
@@ -1000,6 +1013,7 @@ export class ManagerWsClient {
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
       remoteUpdateAwarenessSnapshot: null,
+      codexElicitations: [],
       lastError: null,
     })
 
@@ -1025,6 +1039,7 @@ export class ManagerWsClient {
       hasReceivedProfilesSnapshot: false,
       subscribedAgentId: null,
       remoteUpdateAwarenessSnapshot: null,
+      codexElicitations: [],
     })
 
     this.sessionWorkerCache.clearQueuedRefetches()

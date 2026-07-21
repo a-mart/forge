@@ -20,6 +20,7 @@ import {
   CodexSidecarBusyError,
   type CodexAppServerServiceOptions,
 } from "./types.js";
+import type { CodexLiveElicitation, CodexElicitationDecision, CodexElicitationPersistScope } from "./codex-elicitation-broker.js";
 
 export type CodexDirectSidecarManager = AgentDescriptor & {
   role: "manager";
@@ -32,6 +33,8 @@ export interface CodexDirectSidecarCoordinatorHost
   scheduleProjectExecutableTrustPrompt(manager: AgentDescriptor & { role: "manager" }): void;
   markSessionActivity(agentId: string, timestamp: string): void;
   markSessionUserMessageActivity(agentId: string, timestamp: string): void;
+  emitCodexElicitation?(event: CodexLiveElicitation): void;
+  dismissCodexElicitation?(elicitationId: string, managerAgentId: string): void;
 }
 
 export interface CodexDirectSidecarCoordinatorOptions {
@@ -83,6 +86,8 @@ export class CodexDirectSidecarCoordinator {
           emitAgentsSnapshot: host.emitAgentsSnapshot,
           emitProfilesSnapshot: host.emitProfilesSnapshot,
           listWorkersForSession: host.listWorkersForSession,
+          emitCodexElicitation: host.emitCodexElicitation,
+          dismissCodexElicitation: host.dismissCodexElicitation,
         }),
         {
           dataDir: options.dataDir,
@@ -101,6 +106,20 @@ export class CodexDirectSidecarCoordinator {
 
   cleanupTurnStateForTermination(agentId: string): Promise<void> {
     return this.appServerService.cleanupSidecarTurnStateForTermination(agentId);
+  }
+
+  respondToElicitation(input: {
+    elicitationId: string;
+    managerAgentId: string;
+    decision: CodexElicitationDecision;
+    values?: Record<string, unknown>;
+    persistScope?: CodexElicitationPersistScope;
+  }): boolean {
+    return this.appServerService.respondToElicitation(input);
+  }
+
+  getPendingElicitationsForManager(managerAgentId: string) {
+    return this.appServerService.getPendingElicitationsForManager(managerAgentId);
   }
 
   assertMentionRoutingAvailable(manager: CodexDirectSidecarManager): void {

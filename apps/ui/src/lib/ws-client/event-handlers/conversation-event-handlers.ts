@@ -254,6 +254,19 @@ export function handleConversationEvent(
       return true
     }
 
+    case 'codex_elicitation_request': {
+      if (event.agentId !== context.state.targetAgentId) return true
+      const existing = context.state.codexElicitations.filter((item) => item.elicitationId !== event.elicitationId)
+      context.updateState({ codexElicitations: [...existing, event] })
+      return true
+    }
+
+    case 'codex_elicitation_dismissed': {
+      if (event.agentId !== context.state.targetAgentId) return true
+      context.updateState({ codexElicitations: context.state.codexElicitations.filter((item) => item.elicitationId !== event.elicitationId) })
+      return true
+    }
+
     case 'choice_request': {
       if (!isChoiceEventForTarget(event, context.state.targetAgentId)) {
         return true

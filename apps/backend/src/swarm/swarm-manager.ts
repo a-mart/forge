@@ -714,6 +714,20 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
     });
   }
+  respondToCodexElicitation(input: {
+    elicitationId: string;
+    managerAgentId: string;
+    decision: "allow" | "deny" | "cancel";
+    values?: Record<string, unknown>;
+    persistScope?: "session" | "always";
+  }): boolean {
+    return this.codexDirectSidecarCoordinator.respondToElicitation(input);
+  }
+
+  getPendingCodexElicitationsForManager(managerAgentId: string) {
+    return this.codexDirectSidecarCoordinator.getPendingElicitationsForManager(managerAgentId);
+  }
+
   private createCodexDirectSidecarCoordinator(
     options?: SwarmManagerOptions,
   ): CodexDirectSidecarCoordinator {
@@ -746,6 +760,24 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           this.eventCoordinator.markSessionActivity(agentId, timestamp),
         markSessionUserMessageActivity: (agentId, timestamp) =>
           this.eventCoordinator.markSessionUserMessageActivity(agentId, timestamp),
+        emitCodexElicitation: (event) => this.eventCoordinator.emitCodexElicitation({
+          type: "codex_elicitation_request",
+          elicitationId: event.elicitationId,
+          agentId: event.managerAgentId,
+          sidecarAgentId: event.sidecarAgentId,
+          mode: event.mode,
+          ...(event.title ? { title: event.title } : {}),
+          message: event.message,
+          ...(event.fields ? { fields: event.fields } : {}),
+          ...(event.url ? { url: event.url, ...(event.urlOrigin ? { urlOrigin: event.urlOrigin } : {}) } : event.urlOrigin ? { urlOrigin: event.urlOrigin } : {}),
+          persistScopes: event.persistScopes,
+        }),
+        dismissCodexElicitation: (elicitationId, managerAgentId) =>
+          this.eventCoordinator.dismissCodexElicitation({
+            type: "codex_elicitation_dismissed",
+            elicitationId,
+            agentId: managerAgentId,
+          }),
       },
     });
   }

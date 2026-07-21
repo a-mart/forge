@@ -9,6 +9,7 @@ import type {
   MessageSourceContext,
 } from "../types.js";
 import type { CodexDetailCounters, CodexTrackedDetailItem } from "./codex-app-server-event-normalizer.js";
+import type { CodexLiveElicitation } from "./codex-elicitation-broker.js";
 
 export const CODEX_SIDECAR_AGENT_ID_SUFFIX = "--codex";
 export const CODEX_THREAD_STATE_CUSTOM_TYPE = "swarm_codex_app_server_thread_state";
@@ -37,6 +38,9 @@ export interface CodexSidecarHost {
   emitAgentsSnapshot(): void;
   emitProfilesSnapshot(): void;
   listWorkersForSession(sessionAgentId: string): AgentDescriptor[];
+  /** Ephemeral only: never persist MCP elicitation request metadata or form values. */
+  emitCodexElicitation?(event: CodexLiveElicitation): void;
+  dismissCodexElicitation?(elicitationId: string, managerAgentId: string): void;
   readSidecarThreadStateFallback?(sessionFile: string): CodexSidecarPersistedThreadState | undefined;
   writeSidecarThreadStateAudit?(
     sessionFile: string,
@@ -164,6 +168,8 @@ export interface CodexAppServerServiceOptions {
   defaultRequestTimeoutMs?: number;
   /** Grace period after turn/completed before clearing active turn without item/completed. */
   turnCompletionGraceMs?: number;
+  /** Fail-closed expiry for an unanswered MCP elicitation. */
+  elicitationTimeoutMs?: number;
 }
 
 export interface CodexSendTextTurnOptions {

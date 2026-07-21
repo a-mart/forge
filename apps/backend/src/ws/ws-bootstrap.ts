@@ -306,6 +306,23 @@ export async function sendSubscriptionBootstrap(options: {
   );
   metricFields.pendingChoiceDetailsReturned = pendingChoicesSnapshot.choices?.length ?? 0;
   await sendMeasured("pendingChoicesSnapshot", pendingChoicesSnapshot);
+  // Elicitations are deliberately ephemeral (never conversation history), but a reconnecting
+  // owner must be able to answer the still-live app-server request.
+  for (const elicitation of swarmManager.getPendingCodexElicitationsForManager?.(targetAgentId) ?? []) {
+    await sendMeasured("codexElicitation", {
+      type: "codex_elicitation_request",
+      elicitationId: elicitation.elicitationId,
+      agentId: elicitation.managerAgentId,
+      sidecarAgentId: elicitation.sidecarAgentId,
+      mode: elicitation.mode,
+      ...(elicitation.title ? { title: elicitation.title } : {}),
+      message: elicitation.message,
+      ...(elicitation.fields ? { fields: elicitation.fields } : {}),
+      // The full (often tokenized) URL is only sent in the initial live event.
+      ...(elicitation.urlOrigin ? { urlOrigin: elicitation.urlOrigin } : {}),
+      persistScopes: elicitation.persistScopes,
+    });
+  }
   metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
 
   await sendMeasured("restartRecoverySnapshot", {

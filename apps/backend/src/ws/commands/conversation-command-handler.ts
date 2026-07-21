@@ -37,6 +37,25 @@ export async function handleConversationCommand(context: ConversationCommandRout
     dispatchCollaborationUserMessage,
   } = context;
 
+  if (command.type === "codex_elicitation_response") {
+    if (subscribedAgentId !== command.agentId) {
+      send(socket, { type: "error", code: "CODEX_ELICITATION_SUBSCRIPTION_MISMATCH", message: "Codex elicitation response rejected: not subscribed to that session" });
+      return true;
+    }
+    // Do not log values: elicitation forms can contain secrets.
+    const accepted = swarmManager.respondToCodexElicitation({
+      elicitationId: command.elicitationId,
+      managerAgentId: command.agentId,
+      decision: command.decision,
+      values: command.values,
+      persistScope: command.persistScope,
+    });
+    if (!accepted) {
+      send(socket, { type: "error", code: "CODEX_ELICITATION_NOT_PENDING", message: "Codex elicitation is no longer pending or the response is invalid" });
+    }
+    return true;
+  }
+
   if (command.type === "choice_response" || command.type === "choice_cancel") {
     const responseTargetAgentId = command.agentId;
     const { choiceId } = command;

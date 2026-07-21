@@ -49,6 +49,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   user_message: "write",
   choice_response: "write",
   choice_cancel: "write",
+  codex_elicitation_response: "write",
   kill_agent: "write",
   stop_all_agents: "write",
   create_manager: "write",

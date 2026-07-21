@@ -24,6 +24,11 @@ import {
   type CodexMcpToolCallResult,
 } from "./codex-mcp-catalog.js";
 import { CodexOperationLock } from "./codex-operation-lock.js";
+import {
+  CodexElicitationBroker,
+  type CodexElicitationDecision,
+  type CodexElicitationPersistScope,
+} from "./codex-elicitation-broker.js";
 import { truncateCodexPreview } from "./codex-sidecar-parent-cards.js";
 import type {
   CodexAppServerClientPort,
@@ -52,6 +57,7 @@ export class CodexAppServerService {
   private readonly turnCompletionGraceMs: number;
   private readonly mcpCatalog = new CodexMcpCatalog(() => this.ensureSharedClient());
   private readonly operationLock = new CodexOperationLock();
+  private readonly elicitationBroker: CodexElicitationBroker;
 
   constructor(
     private readonly host: CodexSidecarHost,
@@ -60,6 +66,13 @@ export class CodexAppServerService {
     this.developerInstructions =
       options.developerInstructions ?? DEFAULT_CODEX_SIDE_CAR_DEVELOPER_INSTRUCTIONS;
     this.turnCompletionGraceMs = options.turnCompletionGraceMs ?? DEFAULT_TURN_COMPLETION_GRACE_MS;
+    this.elicitationBroker = new CodexElicitationBroker({
+      timeoutMs: options.elicitationTimeoutMs,
+      emit: (event) => this.host.emitCodexElicitation?.(event),
+      dismiss: (elicitationId, managerAgentId) =>
+        this.host.dismissCodexElicitation?.(elicitationId, managerAgentId),
+      logDebug: (message, details) => this.host.logDebug(message, details),
+    });
   }
 
   async probe(timeoutMs = 5_000): Promise<CodexAppServerProbeResult> {
@@ -439,7 +452,22 @@ export class CodexAppServerService {
   }
 
   async cleanupSidecarTurnStateForTermination(sidecarAgentId: string): Promise<void> {
+    this.elicitationBroker.cancelForSidecar(sidecarAgentId);
     this.clearActiveTurnForTerminationCleanup(sidecarAgentId);
+  }
+
+  respondToElicitation(input: {
+    elicitationId: string;
+    managerAgentId: string;
+    decision: CodexElicitationDecision;
+    values?: Record<string, unknown>;
+    persistScope?: CodexElicitationPersistScope;
+  }): boolean {
+    return this.elicitationBroker.respond(input);
+  }
+
+  getPendingElicitationsForManager(managerAgentId: string) {
+    return this.elicitationBroker.getPendingForManager(managerAgentId);
   }
 
   async interruptTurn(sidecarAgentId: string): Promise<void> {
@@ -462,6 +490,7 @@ export class CodexAppServerService {
 
     activeTurn.interruptInProgress = true;
     activeTurn.suppressed = true;
+    this.elicitationBroker.cancelForSidecar(sidecarAgentId);
     activeTurn.graceItemAcceptOpen = false;
     activeTurn.completionGraceToken = undefined;
     this.cancelCompletionGrace(activeTurn);
@@ -500,6 +529,7 @@ export class CodexAppServerService {
   }
 
   dispose(): void {
+    this.elicitationBroker.cancelAll();
     for (const runtime of this.sidecarRuntimeByAgentId.values()) {
       if (runtime.activeTurn) {
         this.cancelCompletionGrace(runtime.activeTurn);
@@ -534,6 +564,7 @@ export class CodexAppServerService {
   }
 
   private clearActiveTurnForTerminationCleanup(sidecarAgentId: string): void {
+    this.elicitationBroker.cancelForSidecar(sidecarAgentId);
     const descriptor = this.host.getDescriptor(sidecarAgentId);
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
     const activeTurn = runtime?.activeTurn;
@@ -620,6 +651,7 @@ export class CodexAppServerService {
     const factory = this.options.createClient ?? createCodexAppServerClient;
     const client = factory({
       onNotification: (method, params) => this.handleSharedNotification(method, params),
+      onRequest: (method, params) => this.handleSharedRequest(method, params),
       onExit: (error) => this.handleSharedClientExit(error),
       onStderr: (line) => {
         this.host.logDebug("Codex app-server stderr", { line });
@@ -673,6 +705,22 @@ export class CodexAppServerService {
 
     const message = error instanceof Error ? error.message : String(error);
     void this.clearActiveTurn(sidecarAgentId, `Codex turn failed: ${message}`, "error", undefined, true);
+  }
+
+  private async handleSharedRequest(method: string, params?: unknown): Promise<unknown> {
+    if (method !== "mcpServer/elicitation/request") return { action: "decline" };
+    const sidecarAgentId = this.getGlobalActiveSidecarAgentId();
+    const runtime = sidecarAgentId ? this.sidecarRuntimeByAgentId.get(sidecarAgentId) : undefined;
+    const activeTurn = runtime?.activeTurn;
+    const descriptor = sidecarAgentId ? this.host.getDescriptor(sidecarAgentId) : undefined;
+    if (!sidecarAgentId || !activeTurn || activeTurn.suppressed || !descriptor || !isExternalThreadDescriptor(descriptor)) {
+      this.host.logDebug("codex_elicitation:declined:no_active_direct_turn");
+      return { action: "decline" };
+    }
+    return this.elicitationBroker.request({
+      params,
+      active: { managerAgentId: descriptor.managerId, sidecarAgentId, threadId: descriptor.externalThread?.threadId, turnId: activeTurn.turnId },
+    });
   }
 
   private async handleSharedNotification(method: string, params?: unknown): Promise<void> {
@@ -824,6 +872,7 @@ export class CodexAppServerService {
   }
 
   private handleSharedClientExit(error: Error): void {
+    this.elicitationBroker.cancelAll();
     this.host.logDebug("Codex app-server process exited", {
       error: error.message,
     });
@@ -969,6 +1018,7 @@ export class CodexAppServerService {
     parentStatusOverride?: "completed" | "stopped" | "error",
     forcePriorTurnlessInvalidation = false,
   ): Promise<void> {
+    this.elicitationBroker.cancelForSidecar(sidecarAgentId);
     const descriptor = this.host.getDescriptor(sidecarAgentId);
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
     const activeTurn = runtime?.activeTurn;

@@ -16,11 +16,12 @@ import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import type { ConversationHistoryMutation } from '@/lib/ws-state'
 import { cn } from '@/lib/utils'
-import { isProjectAgentExchange, type AgentDescriptor, type AgentStatus, type ChoiceAnswer, type ConversationEntry, type ConversationReplyTargetInput, type ProjectAgentInfo, type SessionPlanSnapshotEvent } from '@forge/protocol'
+import { isProjectAgentExchange, type AgentDescriptor, type AgentStatus, type ChoiceAnswer, type CodexElicitationPersistScope, type CodexElicitationRequestEvent, type ConversationEntry, type ConversationReplyTargetInput, type ProjectAgentInfo, type SessionPlanSnapshotEvent } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
 import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
+import { CodexElicitationCard } from './message-list/CodexElicitationCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
 import { MissingChoiceDetailsFallback } from './message-list/MissingChoiceDetailsFallback'
 import {
@@ -87,6 +88,8 @@ interface MessageListProps {
   onChoiceSubmit?: (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => void
   onChoiceCancel?: (agentId: string, choiceId: string) => void
   pendingChoiceIds: Set<string>
+  codexElicitations?: CodexElicitationRequestEvent[]
+  onCodexElicitationResponse?: (agentId: string, elicitationId: string, decision: 'allow' | 'deny' | 'cancel', values?: Record<string, unknown>, persistScope?: CodexElicitationPersistScope) => void
   missingPendingChoiceIds?: string[]
   streamingStartedAt?: number
   planSnapshot?: SessionPlanSnapshotEvent | null
@@ -433,6 +436,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onChoiceSubmit,
   onChoiceCancel,
   pendingChoiceIds,
+  codexElicitations = [],
+  onCodexElicitationResponse,
   missingPendingChoiceIds = [],
   streamingStartedAt,
   planSnapshot,
@@ -1240,6 +1245,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   return (
     <div className="relative min-h-0 flex flex-1 flex-col overflow-hidden">
+      {codexElicitations.length ? <div className="shrink-0 space-y-2 overflow-auto p-2 md:p-3">{codexElicitations.map((request) => <CodexElicitationCard key={request.elicitationId} request={request} onRespond={(decision, values, persistScope) => onCodexElicitationResponse?.(request.agentId, request.elicitationId, decision, values, persistScope)} />)}</div> : null}
       <div
         ref={(el) => {
           scrollElRef.current = el

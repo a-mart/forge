@@ -2,6 +2,7 @@ import type { ConversationAttachment } from './attachments.js'
 import type { ConversationReplyTargetInput } from './conversation-events.js'
 import type { BuilderTimelineChannelView } from './builder-timeline-visibility.js'
 import type { ProjectAgentCapability } from './agents.js'
+import type { CodexElicitationDecision, CodexElicitationPersistScope } from './codex-elicitation.js'
 import type { SessionGoalControlAction } from './goals.js'
 import type {
   CollaborationBootstrapCommand,
@@ -197,6 +198,7 @@ export type ClientCommand =
   | { type: 'reorder_profiles'; profileIds: string[]; requestId?: string }
   | { type: 'choice_response'; agentId: string; choiceId: string; answers: ChoiceAnswer[] }
   | { type: 'choice_cancel'; agentId: string; choiceId: string }
+  | { type: 'codex_elicitation_response'; agentId: string; elicitationId: string; decision: CodexElicitationDecision; values?: Record<string, unknown>; persistScope?: CodexElicitationPersistScope }
   | { type: 'mark_unread'; agentId: string; requestId?: string }
   | { type: 'mark_all_read'; profileId: string; requestId?: string }
   | { type: 'ping' }
