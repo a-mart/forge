@@ -238,12 +238,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     subscriptions.broadcastToSubscribed(activity)
     expect(sentEvents).toEqual([])
 
-    await subscriptions.handleSubscribe(socket, 'manager', undefined, true, 'all')
-    sentEvents.length = 0
-    subscriptions.broadcastToSubscribed(activity)
-    expect(sentEvents).toEqual([activity])
-
-    sentEvents.length = 0
     subscriptions.broadcastToSubscribed({
       type: 'agent_tool_call',
       agentId: 'manager',
@@ -254,7 +248,18 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       toolCallId: 'worker-tool',
       text: 'private worker detail',
     })
-    expect(sentEvents).toEqual([])
+    expect(sentEvents).toMatchObject([{
+      type: 'activity_summary',
+      itemId: 'tool:manager:worker-tool',
+      agentId: 'manager',
+      actorAgentId: 'worker-1',
+      displaySummary: 'Read file',
+    }])
+
+    await subscriptions.handleSubscribe(socket, 'manager', undefined, true, 'all')
+    sentEvents.length = 0
+    subscriptions.broadcastToSubscribed(activity)
+    expect(sentEvents).toEqual([activity])
   })
 
   it('uses the bootstrap capability policy for live new-only entries without changing ordinary messages', async () => {

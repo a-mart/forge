@@ -371,13 +371,28 @@ describe('ConversationProjector session tree continuity', () => {
     expect(seen).toContain('row-1')
   })
 
-  it('applies the central Manager All policy to an active memory page', async () => {
+  it('retains worker quick-look activity outside the visible manager timeline', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-manager-all-'))
     const sessionFile = join(root, 'manager.jsonl')
     const descriptor = makeDescriptor(sessionFile, root)
-    const projector = makeProjector({
-      descriptor,
+    const workerDescriptor: AgentDescriptor = {
+      ...makeDescriptor(join(root, 'worker.jsonl'), root),
+      agentId: 'worker-1',
+      displayName: 'Worker 1',
+      role: 'worker',
+      managerId: descriptor.agentId,
+      sessionFile: join(root, 'worker.jsonl'),
+    }
+    const projector = new ConversationProjector({
+      descriptors: new Map([
+        [descriptor.agentId, descriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
       runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: () => {},
+      logDebug: () => {},
     })
 
     projector.emitAgentToolCall({
@@ -401,13 +416,26 @@ describe('ConversationProjector session tree continuity', () => {
       text: 'manager detail',
     })
 
-    const page = projector.getConversationHistoryPage(descriptor.agentId, { view: 'all' })
-    expect(page.messages).toHaveLength(1)
-    expect(page.messages[0]).toMatchObject({
+    const allPage = projector.getConversationHistoryPage(descriptor.agentId, { view: 'all' })
+    expect(allPage.messages).toMatchObject([
+      {
+        type: 'activity_summary',
+        itemId: `tool:${descriptor.agentId}:worker-tool`,
+        actorAgentId: workerDescriptor.agentId,
+      },
+      {
+        type: 'activity_summary',
+        itemId: `tool:${descriptor.agentId}:manager-tool`,
+        actorAgentId: descriptor.agentId,
+      },
+    ])
+
+    const webPage = projector.getConversationHistoryPage(descriptor.agentId, { view: 'web' })
+    expect(webPage.messages).toMatchObject([{
       type: 'activity_summary',
-      itemId: `tool:${descriptor.agentId}:manager-tool`,
-      actorAgentId: descriptor.agentId,
-    })
+      itemId: `tool:${descriptor.agentId}:worker-tool`,
+      actorAgentId: workerDescriptor.agentId,
+    }])
   })
 
   it('writes routing receipts to the session sidecar at the conversation entry choke point', async () => {

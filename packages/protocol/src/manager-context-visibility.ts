@@ -24,6 +24,32 @@ export function collectKnownWorkerIds(
   return workerIds
 }
 
+/**
+ * Activity retained for a manager's worker quick-look surface even when the
+ * same entry is intentionally hidden from the manager's Web/All transcript.
+ */
+export function isWorkerQuickLookActivity(
+  entry: ConversationEntry,
+  activeManagerId: string,
+  knownWorkerIds: ReadonlySet<string>,
+): boolean {
+  if (entry.agentId.trim() !== activeManagerId) return false
+
+  if (entry.type === 'agent_tool_call' || entry.type === 'activity_summary') {
+    return knownWorkerIds.has(entry.actorAgentId.trim())
+  }
+
+  if (entry.type === 'agent_message') {
+    const fromAgentId = entry.fromAgentId?.trim()
+    return (
+      (fromAgentId !== undefined && knownWorkerIds.has(fromAgentId)) ||
+      knownWorkerIds.has(entry.toAgentId.trim())
+    )
+  }
+
+  return false
+}
+
 function isUserVisibleManagerTranscriptEntry(entry: ConversationEntry): boolean {
   if (entry.type !== 'conversation_message') {
     return false

@@ -4,6 +4,7 @@ import {
   collectKnownWorkerIds,
   inferManagerAliasIds,
   isVisibleInManagerAllView,
+  isWorkerQuickLookActivity,
 } from '../manager-context-visibility.js'
 import { isVisibleInBuilderTimeline } from '../builder-timeline-visibility.js'
 import type { PendingChoicesSnapshotEvent } from '../transport-events.js'
@@ -34,6 +35,52 @@ function choiceRequest(overrides: Partial<ChoiceRequestEvent> = {}): ChoiceReque
     ...overrides,
   }
 }
+
+describe('worker quick-look activity retention', () => {
+  it('recognizes manager-projected worker summaries and messages without broadening transcript visibility', () => {
+    const summary: ConversationEntry = {
+      type: 'activity_summary',
+      schemaVersion: 1,
+      itemId: 'tool:manager-1:tool-1',
+      agentId: activeManagerId,
+      actorAgentId: workerId,
+      timestamp: '2026-06-21T00:00:00.000Z',
+      kind: 'tool_activity',
+      status: 'completed',
+      displaySummary: 'Read file',
+    }
+    const message: ConversationEntry = {
+      type: 'agent_message',
+      agentId: activeManagerId,
+      timestamp: '2026-06-21T00:00:01.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: workerId,
+      toAgentId: activeManagerId,
+      text: 'Still investigating',
+    }
+
+    expect(isWorkerQuickLookActivity(summary, activeManagerId, knownWorkerIds)).toBe(true)
+    expect(isWorkerQuickLookActivity(message, activeManagerId, knownWorkerIds)).toBe(true)
+    expect(isVisibleInManagerAllView(summary, visibilityOptions())).toBe(false)
+  })
+
+  it('rejects activity from another manager or a non-worker actor', () => {
+    const summary: ConversationEntry = {
+      type: 'activity_summary',
+      schemaVersion: 1,
+      itemId: 'tool:manager-2:tool-1',
+      agentId: 'manager-2',
+      actorAgentId: workerId,
+      timestamp: '2026-06-21T00:00:00.000Z',
+      kind: 'tool_activity',
+      status: 'completed',
+      displaySummary: 'Read file',
+    }
+
+    expect(isWorkerQuickLookActivity(summary, activeManagerId, knownWorkerIds)).toBe(false)
+    expect(isWorkerQuickLookActivity({ ...summary, agentId: activeManagerId, actorAgentId: 'manager-2' }, activeManagerId, knownWorkerIds)).toBe(false)
+  })
+})
 
 describe('manager All view choice_request visibility', () => {
   it('shows manager-originated choice requests when agentId is a manager alias', () => {

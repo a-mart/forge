@@ -1,5 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useLatestRef } from '@/hooks/useLatestRef'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Popover,
   PopoverContent,
@@ -66,7 +65,7 @@ function buildActivityByWorker(
   }
 
   for (const entry of activityMessages) {
-    if (entry.type === 'agent_tool_call') {
+    if (entry.type === 'agent_tool_call' || entry.type === 'activity_summary') {
       push(entry.actorAgentId, entry)
     } else if (entry.type === 'agent_message') {
       if (entry.fromAgentId) {
@@ -90,15 +89,16 @@ const REMOVE_DELAY_MS = 500
 const WorkerPill = memo(function WorkerPill({
   entry,
   tick,
-  activityByWorkerRef,
+  workerActivity,
   onNavigateToWorker,
 }: {
   entry: PillEntry
   tick: number
-  activityByWorkerRef: RefObject<Map<string, AgentActivityEntry[]>>
+  workerActivity: AgentActivityEntry[]
   onNavigateToWorker: (agentId: string) => void
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
+  const [tooltipOpen, setTooltipOpen] = useState(false)
   const { worker, status, frozenElapsedMs, exiting } = entry
 
   // Fix #8: Close popover gracefully when pill enters exit state
@@ -116,9 +116,6 @@ const WorkerPill = memo(function WorkerPill({
   }, [frozenElapsedMs, entry.streamingStartedAt, tick])
 
   const elapsedLabel = formatElapsed(elapsedMs)
-
-  // Read activity from ref (avoids new array refs destabilising memo)
-  const workerActivity = activityByWorkerRef.current?.get(worker.agentId) ?? EMPTY_ACTIVITY
 
   // Take last 30 entries for quick-look
   const recentActivity = workerActivity.slice(-30)
@@ -141,6 +138,15 @@ const WorkerPill = memo(function WorkerPill({
       : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
 
+  const handlePopoverOpenChange = useCallback((open: boolean) => {
+    setPopoverOpen(open)
+    if (open) setTooltipOpen(false)
+  }, [])
+
+  const handleTooltipOpenChange = useCallback((open: boolean) => {
+    setTooltipOpen(popoverOpen ? false : open)
+  }, [popoverOpen])
+
   const handleViewConversation = useCallback(() => {
     setPopoverOpen(false)
     onNavigateToWorker(worker.agentId)
@@ -153,9 +159,9 @@ const WorkerPill = memo(function WorkerPill({
     : worker.agentId.slice(0, 20)
 
   return (
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+    <Popover open={popoverOpen} onOpenChange={handlePopoverOpenChange}>
       {/* Fix #3: Suppress tooltip while popover is open */}
-      <Tooltip open={popoverOpen ? false : undefined}>
+      <Tooltip open={tooltipOpen} onOpenChange={handleTooltipOpenChange}>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <button
@@ -198,14 +204,14 @@ const WorkerPill = memo(function WorkerPill({
         </TooltipContent>
       </Tooltip>
 
-      {/* Fix #1: Larger popover for desktop */}
+      {/* Fixed responsive frame: live rows scroll inside instead of resizing the popover. */}
       <PopoverContent
+        data-worker-quick-look-popover
         side="top"
         sideOffset={8}
         align="start"
         avoidCollisions={false}
-        className="flex w-[min(62rem,_85vw)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
-        style={{ maxHeight: 'min(80vh, calc(100vh - 6rem))' }}
+        className="flex h-[min(42rem,_calc(100vh-6rem))] w-[min(62rem,_85vw)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
       >
         <WorkerQuickLook
           worker={worker}
@@ -263,13 +269,12 @@ export const WorkerPillBar = memo(function WorkerPillBar({
     return map
   }, [workers])
 
-  // Fix #7: Pre-filter activity messages by worker ID (O(M) once, not O(N×M) per tick)
-  // Store in a ref so pill components can read it without a prop change triggering re-render
+  // Fix #7: Pre-filter activity messages by worker ID (O(M) once, not O(N×M) per tick).
+  // Pass each slice as render data so an open quick-look updates immediately as live events arrive.
   const activityByWorker = useMemo(
     () => buildActivityByWorker(activityMessages),
     [activityMessages],
   )
-  const activityByWorkerRef = useLatestRef(activityByWorker)
 
   // Reconcile pill entries: add new streaming workers, mark exiting ones.
   // Note: This mutates pillEntriesRef.current (a Map in a ref) then snapshots into state.
@@ -406,7 +411,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
                 key={entry.worker.agentId}
                 entry={entry}
                 tick={tick}
-                activityByWorkerRef={activityByWorkerRef}
+                workerActivity={activityByWorker.get(entry.worker.agentId) ?? EMPTY_ACTIVITY}
                 onNavigateToWorker={onNavigateToWorker}
               />
             ))}

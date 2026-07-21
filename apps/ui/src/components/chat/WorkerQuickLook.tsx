@@ -32,6 +32,65 @@ type QuickLookEntry =
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function getActivityIdentity(entry: AgentActivityEntry): string {
+  if (entry.type === 'activity_summary') {
+    return `summary:${entry.itemId}`
+  }
+
+  if (entry.type === 'agent_tool_call') {
+    const callId = entry.toolCallId?.trim()
+    if (callId) {
+      // A tool can emit many streaming updates. Keep only the latest event for
+      // each phase; the display layer already reconciles phases by call id.
+      return `tool:${entry.actorAgentId}:${callId}:${entry.kind}`
+    }
+
+    return [
+      'tool',
+      entry.timelineEntryId,
+      entry.actorAgentId,
+      entry.kind,
+      entry.timestamp,
+      entry.text,
+    ].join(':')
+  }
+
+  return [
+    'message',
+    entry.timelineEntryId,
+    entry.agentId,
+    entry.fromAgentId,
+    entry.toAgentId,
+    entry.timestamp,
+    entry.text,
+  ].join(':')
+}
+
+function mergeOpenSessionActivity(
+  current: AgentActivityEntry[],
+  incoming: AgentActivityEntry[],
+): AgentActivityEntry[] {
+  const indexByIdentity = new Map(
+    current.map((entry, index) => [getActivityIdentity(entry), index]),
+  )
+  let next = current
+
+  for (const entry of incoming) {
+    const identity = getActivityIdentity(entry)
+    const existingIndex = indexByIdentity.get(identity)
+    if (existingIndex === undefined) {
+      if (next === current) next = [...current]
+      indexByIdentity.set(identity, next.length)
+      next.push(entry)
+    } else if (next[existingIndex] !== entry) {
+      if (next === current) next = [...current]
+      next[existingIndex] = entry
+    }
+  }
+
+  return next
+}
+
 function buildQuickLookEntries(activities: AgentActivityEntry[]): QuickLookEntry[] {
   const entries: QuickLookEntry[] = []
   const toolByCallId = new Map<string, ToolExecutionDisplayEntry>()
@@ -43,6 +102,35 @@ function buildQuickLookEntries(activities: AgentActivityEntry[]): QuickLookEntry
         id: `ql-msg-${msg.timestamp}-${index}`,
         message: msg as AgentMessageEntry,
       })
+      continue
+    }
+
+    if (msg.type === 'activity_summary') {
+      const callId = msg.correlationId ?? msg.itemId
+      const groupKey = `${msg.actorAgentId}:${callId}`
+      let display = toolByCallId.get(groupKey)
+      if (!display) {
+        display = {
+          id: `ql-tool-${groupKey}`,
+          actorAgentId: msg.actorAgentId,
+          toolName: msg.toolName,
+          toolCallId: callId,
+          displaySummary: msg.displaySummary,
+          timestamp: msg.timestamp,
+          latestKind: 'tool_execution_end',
+          isError: msg.isError,
+        }
+        toolByCallId.set(groupKey, display)
+        entries.push({ type: 'tool_execution', id: display.id, entry: display })
+      } else {
+        display.timestamp = msg.timestamp
+        display.latestKind = 'tool_execution_end'
+        display.isError = msg.isError
+        display.toolName = msg.toolName ?? display.toolName
+        if (!display.inputPayload && !display.latestPayload && !display.outputPayload) {
+          display.displaySummary = msg.displaySummary
+        }
+      }
       continue
     }
 
@@ -111,10 +199,18 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
 }: WorkerQuickLookProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
+  // Popover content unmounts on close, so this state is scoped to one open
+  // session. Keep the initial slice and accumulate live rows without allowing
+  // upstream rolling-window eviction to remove anything the user already saw.
+  const [openSessionActivity, setOpenSessionActivity] = useState(recentActivity)
+
+  useEffect(() => {
+    setOpenSessionActivity((current) => mergeOpenSessionActivity(current, recentActivity))
+  }, [recentActivity])
 
   const displayEntries = useMemo(
-    () => buildQuickLookEntries(recentActivity),
-    [recentActivity],
+    () => buildQuickLookEntries(openSessionActivity),
+    [openSessionActivity],
   )
 
   // Check if user has scrolled away from the bottom
@@ -181,7 +277,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
             : status
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* Header */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
         <StatusDot status={status} />
@@ -200,13 +296,18 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
       </div>
 
       {/* Activity feed */}
-      <div ref={scrollRef} onScroll={handleScroll} className="max-h-[min(36rem,_70vh)] overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]">
+      <div
+        ref={scrollRef}
+        data-worker-quick-look-scroll
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]"
+      >
         {displayEntries.length === 0 ? (
           <p className="py-4 text-center text-xs italic text-muted-foreground">
             No recent activity
           </p>
         ) : (
-          <div className="space-y-0.5">
+          <div data-worker-quick-look-entries className="space-y-0.5">
             {displayEntries.map((entry) => {
               if (entry.type === 'agent_message') {
                 return (

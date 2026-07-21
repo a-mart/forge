@@ -1,6 +1,8 @@
 import {
+  collectKnownWorkerIds,
   isSystemProfile,
   isVisibleInBuilderTimeline,
+  isWorkerQuickLookActivity,
   type BuilderTimelineChannelView,
   type ProjectPresenceViewer,
   type ServerEvent,
@@ -832,15 +834,23 @@ export class WsSubscriptions {
 
     const descriptor = this.swarmManager.getAgent(subscribedAgentId);
     if (view === "all" && descriptor?.role !== "manager") return true;
-    return isVisibleInBuilderTimeline(event, {
+    const agents = this.swarmManager.listAgents();
+    const visibleInTimeline = isVisibleInBuilderTimeline(event, {
       activeAgentId: subscribedAgentId,
       activeAgentRole: descriptor?.role ?? null,
       channelView: view,
-      agents: this.swarmManager.listAgents(),
+      agents,
       history: descriptor?.role === "manager"
         ? this.swarmManager.getConversationHistory(subscribedAgentId)
         : [],
     });
+    if (visibleInTimeline || descriptor?.role !== "manager") return visibleInTimeline;
+
+    return isWorkerQuickLookActivity(
+      event,
+      subscribedAgentId,
+      collectKnownWorkerIds(agents, subscribedAgentId),
+    );
   }
 
   private filterBuilderSnapshotEvent(event: ServerEvent): ServerEvent {

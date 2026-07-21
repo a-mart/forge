@@ -5,7 +5,9 @@ import {
   ConversationTimeline,
 } from "./conversation-timeline.js";
 import {
+  collectKnownWorkerIds,
   createBuilderTimelineVisibilityPredicate,
+  isWorkerQuickLookActivity,
   type BuilderTimelineChannelView,
   type ModelCacheObservationEvent,
   type PlanSummaryEvent,
@@ -954,13 +956,19 @@ function buildBuilderPageVisibilityPredicate(
   // active history supplies its alias context; cold canonical paging leaves
   // that final product-policy pass to the same shared predicate in the UI.
   if (view === "all" && (descriptor.role !== "manager" || history.length === 0)) return undefined;
-  return createBuilderTimelineVisibilityPredicate({
+  const isVisibleInTimeline = createBuilderTimelineVisibilityPredicate({
     activeAgentId: descriptor.agentId,
     activeAgentRole: descriptor.role,
     channelView: view,
     agents,
     history,
   });
+  if (descriptor.role !== "manager") return isVisibleInTimeline;
+
+  const knownWorkerIds = collectKnownWorkerIds(agents, descriptor.agentId);
+  return (entry) =>
+    isVisibleInTimeline(entry) ||
+    isWorkerQuickLookActivity(entry, descriptor.agentId, knownWorkerIds);
 }
 
 function hasCompleteTimelineMetadata(history: readonly ConversationEntryEvent[]): boolean {
