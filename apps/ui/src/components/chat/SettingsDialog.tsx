@@ -5,6 +5,7 @@ import type { SettingsBackendTarget } from '@/components/settings/settings-targe
 import { createBuilderSettingsTarget } from '@/components/settings/settings-target'
 import { createSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
+import { SettingsGitMonitoring } from '@/components/settings/SettingsGitMonitoring'
 import { SettingsAppearance } from '@/components/settings/SettingsAppearance'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
@@ -145,6 +146,9 @@ export function SettingsPanel({
           apiClient={apiClient}
           repositoryCloneAvailable={resolvedRepositoryCloneAvailable}
         />
+      )}
+      {activeTab === 'git-monitoring' && target.kind === 'builder' && (
+        <SettingsGitMonitoring wsUrl={wsUrl} profiles={profiles} />
       )}
       {activeTab === 'appearance' && <SettingsAppearance />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}

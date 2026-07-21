@@ -73,6 +73,7 @@ export async function sendSubscriptionBootstrap(options: {
   resolvePlanSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
+  remoteUpdateAwarenessEvent?: Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
   shouldContinue?: () => boolean;
 }): Promise<SubscriptionBootstrapSendResult> {
   const {
@@ -91,6 +92,7 @@ export async function sendSubscriptionBootstrap(options: {
     resolvePlanSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
+    remoteUpdateAwarenessEvent,
     shouldContinue,
   } = options;
 
@@ -195,6 +197,10 @@ export async function sendSubscriptionBootstrap(options: {
     metricFields.profilesSnapshotSendMs = 0;
     metricFields.profilesSnapshotPayloadBytes = 0;
     metricFields.profilesReturned = 0;
+  }
+
+  if (remoteUpdateAwarenessEvent) {
+    await sendMeasured("remoteUpdateAwareness", remoteUpdateAwarenessEvent);
   }
 
   const historyMessageCount = requestedMessageCount !== undefined

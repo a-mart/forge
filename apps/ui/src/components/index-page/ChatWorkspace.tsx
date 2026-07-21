@@ -9,9 +9,11 @@ import { GoalBar } from '@/components/chat/goal'
 import { SessionAuditDrawer } from '@/components/chat/SessionAuditDrawer'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
+import { RemoteUpdateAwarenessBanner } from '@/components/diff-viewer/RemoteUpdateAwarenessIncoming'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { cn } from '@/lib/utils'
 import type {
+  RemoteUpdateAwarenessProjectSnapshot,
   RestartRecoverySnapshot,
   SessionGoalControlAction,
   SessionGoalSnapshotEvent,
@@ -20,6 +22,10 @@ import type {
 
 interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
+  /** Already filtered to the active local project by the Builder shell. */
+  remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
+  onRemoteUpdateSnapshotChange?: (snapshot: RemoteUpdateAwarenessProjectSnapshot) => void
+  onOpenRemoteUpdateIncoming?: () => void
   lastError: string | null
   lastSuccess: string | null
   restartRecovery: RestartRecoverySnapshot | null
@@ -45,6 +51,9 @@ interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
   headerProps,
+  remoteUpdateSnapshot = null,
+  onRemoteUpdateSnapshotChange,
+  onOpenRemoteUpdateIncoming,
   lastError,
   lastSuccess,
   restartRecovery,
@@ -69,6 +78,12 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps) {
   const [sessionAuditOpen, setSessionAuditOpen] = useState(false)
   const showSessionAudit = headerProps.activeAgentRole === 'manager' && Boolean(headerProps.activeAgentId)
+  const chatRemoteUpdateSnapshot =
+    remoteUpdateSnapshot?.effectiveEnabled === true &&
+    remoteUpdateSnapshot.state === 'update_available' &&
+    remoteUpdateSnapshot.attentionRequired === true
+      ? remoteUpdateSnapshot
+      : null
 
   useEffect(() => {
     if (!showSessionAudit && sessionAuditOpen) {
@@ -82,6 +97,12 @@ export function ChatWorkspace({
         {...headerProps}
         showSessionAudit={showSessionAudit}
         onOpenSessionAudit={showSessionAudit ? () => setSessionAuditOpen(true) : undefined}
+      />
+      <RemoteUpdateAwarenessBanner
+        wsUrl={headerProps.wsUrl ?? ''}
+        snapshot={chatRemoteUpdateSnapshot}
+        onInspect={onOpenRemoteUpdateIncoming ?? (() => undefined)}
+        onSnapshotChange={onRemoteUpdateSnapshotChange ?? (() => undefined)}
       />
       <SessionAuditDrawer
         open={sessionAuditOpen}

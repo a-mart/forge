@@ -84,6 +84,9 @@ export class WsHandler {
     feedbackService?: FeedbackService;
     isRemoteBuildEnabled?: () => boolean;
     areRemoteTerminalsEnabled?: () => boolean;
+    getRemoteUpdateAwarenessBootstrapEvent?: (
+      projectId: string
+    ) => Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
@@ -107,6 +110,7 @@ export class WsHandler {
       send: (socket, event) => this.send(socket, event),
       sendBootstrapCritical: (socket, event) => this.sendWithBackpressure(socket, event),
       getServer: () => this.wss,
+      getRemoteUpdateAwarenessBootstrapEvent: options.getRemoteUpdateAwarenessBootstrapEvent,
     });
 
     this.apiProxy = new WsApiProxy({
@@ -167,6 +171,10 @@ export class WsHandler {
 
   broadcastToSubscribed(event: ServerEvent): void {
     this.subscriptionManager.broadcastToSubscribed(event);
+  }
+
+  broadcastToProfile(profileId: string, event: ServerEvent): void {
+    this.subscriptionManager.broadcastToProfile(profileId, event);
   }
 
   broadcastToSession(sessionAgentId: string, event: ServerEvent): void {

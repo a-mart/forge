@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import type { GitRepoTarget, GitWorktreeSummary } from '@forge/protocol'
+import type { GitRepoTarget, GitWorktreeSummary, RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { DiffDialogHeader, type DiffTab } from './DiffDialogHeader'
@@ -11,6 +11,8 @@ import { WorktreesView } from './WorktreesView'
 import { PullRequestsTab } from './PullRequestsTab'
 import type { KnowledgeQuickFilterId } from './knowledge-surface'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
+import { RemoteUpdateAwarenessBanner, RemoteUpdateAwarenessIncoming } from './RemoteUpdateAwarenessIncoming'
+import { RemoteUpdateAwarenessProjectControl } from './RemoteUpdateAwarenessProjectControl'
 import {
   useGitBranches,
   useGitPullRequests,
@@ -43,6 +45,8 @@ interface DiffViewerDialogProps extends DiffViewerInitialState {
   onRequestSourceControlMutation?: SourceControlMutationGuard
   onSourceControlMutationComplete?: () => void
   externalRefreshNonce?: number
+  remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
+  onRemoteUpdateSnapshotChange?: (snapshot: RemoteUpdateAwarenessProjectSnapshot) => void
 }
 
 interface DiffViewerContentProps extends DiffViewerInitialState {
@@ -55,6 +59,8 @@ interface DiffViewerContentProps extends DiffViewerInitialState {
   onRequestSourceControlMutation?: SourceControlMutationGuard
   onSourceControlMutationComplete?: () => void
   externalRefreshNonce?: number
+  remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
+  onRemoteUpdateSnapshotChange?: (snapshot: RemoteUpdateAwarenessProjectSnapshot) => void
 }
 
 function getDefaultRepoTarget(isCortex: boolean): GitRepoTarget {
@@ -80,6 +86,8 @@ export function DiffViewerContent({
   onRequestSourceControlMutation,
   onSourceControlMutationComplete,
   externalRefreshNonce = 0,
+  remoteUpdateSnapshot = null,
+  onRemoteUpdateSnapshotChange,
 }: DiffViewerContentProps) {
   const defaultTab = useMemo(() => initialTab ?? getDefaultTab(isCortex), [initialTab, isCortex])
   const defaultRepoTarget = useMemo(
@@ -228,9 +236,14 @@ export function DiffViewerContent({
         }
         onRefresh={handleRefresh}
         onClose={onClose}
+        remoteUpdateSnapshot={repoTarget === 'workspace' ? remoteUpdateSnapshot : null}
         branchActions={
           repoTarget === 'workspace' ? (
-            <SourceControlBranchActions
+            <>
+              {remoteUpdateSnapshot && onRemoteUpdateSnapshotChange ? (
+                <RemoteUpdateAwarenessProjectControl wsUrl={wsUrl} snapshot={remoteUpdateSnapshot} onSnapshotChange={onRemoteUpdateSnapshotChange} />
+              ) : null}
+              <SourceControlBranchActions
               wsUrl={wsUrl}
               agentId={agentId}
               repoTarget={repoTarget}
@@ -241,14 +254,24 @@ export function DiffViewerContent({
               sourceControlActive={active}
               onMutationComplete={handleSourceControlMutationComplete}
               onRequestMutation={onRequestSourceControlMutation}
-            />
+              />
+            </>
           ) : null
         }
       />
 
+      <RemoteUpdateAwarenessBanner
+        wsUrl={wsUrl}
+        snapshot={repoTarget === 'workspace' ? remoteUpdateSnapshot : null}
+        onInspect={() => setActiveTab('incoming')}
+        onSnapshotChange={onRemoteUpdateSnapshotChange ?? (() => undefined)}
+      />
+
       {/* Content */}
       <div className="min-h-0 flex-1">
-        {activeTab === 'changes' ? (
+        {activeTab === 'incoming' && remoteUpdateSnapshot ? (
+          <RemoteUpdateAwarenessIncoming wsUrl={wsUrl} projectId={remoteUpdateSnapshot.projectId} />
+        ) : activeTab === 'changes' ? (
           <ChangesView
             key={changesViewKey}
             wsUrl={wsUrl}
@@ -385,6 +408,8 @@ export function DiffViewerDialog({
   onRequestSourceControlMutation,
   onSourceControlMutationComplete,
   externalRefreshNonce,
+  remoteUpdateSnapshot,
+  onRemoteUpdateSnapshotChange,
 }: DiffViewerDialogProps) {
   const handleClose = useCallback(() => {
     onOpenChange(false)
@@ -425,6 +450,8 @@ export function DiffViewerDialog({
             onRequestSourceControlMutation={onRequestSourceControlMutation}
             onSourceControlMutationComplete={onSourceControlMutationComplete}
             externalRefreshNonce={externalRefreshNonce}
+            remoteUpdateSnapshot={remoteUpdateSnapshot}
+            onRemoteUpdateSnapshotChange={onRemoteUpdateSnapshotChange}
             initialRepoTarget={initialRepoTarget}
             initialTab={initialTab}
             initialSha={initialSha}

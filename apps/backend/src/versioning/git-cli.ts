@@ -4,18 +4,22 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 
-interface GitCliResult {
+export interface GitCliResult {
   stdout: string;
   stderr: string;
   exitCode: number;
 }
 
-interface GitCliRunOptions {
+export interface GitCliRunOptions {
   allowFailure?: boolean;
   timeoutMs?: number;
+  maxBufferBytes?: number;
+  signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
+  nonInteractive?: boolean;
 }
 
-interface GitCliOptions {
+export interface GitCliOptions {
   cwd: string;
   gitBinary?: string;
   maxBufferBytes?: number;
@@ -23,6 +27,7 @@ interface GitCliOptions {
 
 export type GitCommandErrorClassification =
   | "success"
+  | "aborted"
   | "not_a_repository"
   | "auth"
   | "network"
@@ -52,13 +57,18 @@ export class GitCli {
   }
 
   async run(args: string[], options?: GitCliRunOptions): Promise<GitCliResult> {
+    const maxBufferBytes = options?.maxBufferBytes ?? this.maxBufferBytes;
+    const env = buildGitEnvironment(options);
+
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         const result = await execFileAsync(this.gitBinary, args, {
           cwd: this.cwd,
-          maxBuffer: this.maxBufferBytes,
+          maxBuffer: maxBufferBytes,
           encoding: "utf8",
-          timeout: options?.timeoutMs
+          timeout: options?.timeoutMs,
+          signal: options?.signal,
+          env
         });
 
         return {
@@ -67,17 +77,21 @@ export class GitCli {
           exitCode: 0
         };
       } catch (error) {
-        const normalized = normalizeExecError(error);
+        const normalized = boundResultOutput(normalizeExecError(error), maxBufferBytes);
         if (options?.allowFailure) {
           return normalized;
+        }
+
+        if (isExecAbort(error, options?.signal)) {
+          throw new Error("git command aborted");
         }
 
         if (isExecTimeout(error, normalized)) {
           throw new Error(`git ${args.join(" ")} timed out`);
         }
 
-        if (attempt < 3 && isTransientGitFailure(normalized)) {
-          await delay(attempt * 100);
+        if (attempt < 3 && isTransientGitFailure(normalized) && !options?.signal?.aborted) {
+          await delay(attempt * 100, options?.signal);
           continue;
         }
 
@@ -104,6 +118,8 @@ export function normalizeGitCommandError(
   let classification: GitCommandErrorClassification = "unknown";
   if (result.exitCode === 0) {
     classification = "success";
+  } else if (haystack.includes("git command aborted") || haystack.includes("aborterror")) {
+    classification = "aborted";
   } else if (isTimeoutResult(haystack, result.exitCode)) {
     classification = "timeout";
   } else if (
@@ -114,7 +130,10 @@ export function normalizeGitCommandError(
   } else if (
     haystack.includes("authentication failed") ||
     haystack.includes("permission denied (publickey)") ||
-    haystack.includes("could not read from remote")
+    haystack.includes("could not read from remote") ||
+    haystack.includes("could not read username") ||
+    haystack.includes("terminal prompts disabled") ||
+    haystack.includes("invalid username or password")
   ) {
     classification = "auth";
   } else if (
@@ -132,7 +151,9 @@ export function normalizeGitCommandError(
   } else if (
     haystack.includes("unknown revision") ||
     haystack.includes("bad object") ||
-    haystack.includes("did not match any file")
+    haystack.includes("did not match any file") ||
+    haystack.includes("couldn't find remote ref") ||
+    haystack.includes("remote ref does not exist")
   ) {
     classification = "ref_not_found";
   }
@@ -159,9 +180,11 @@ function normalizeExecError(error: unknown): GitCliResult {
 
     const stderr = typed.stderr?.trim().length
       ? typed.stderr
-      : isExecTimeout(error, { stdout: "", stderr: "", exitCode: 1 })
-        ? "git command timed out"
-        : String(error);
+      : isExecAbort(error)
+        ? "git command aborted"
+        : isExecTimeout(error, { stdout: "", stderr: "", exitCode: 1 })
+          ? "git command timed out"
+          : String(error);
 
     return {
       stdout: typed.stdout ?? "",
@@ -175,6 +198,19 @@ function normalizeExecError(error: unknown): GitCliResult {
     stderr: String(error),
     exitCode: 1
   };
+}
+
+function isExecAbort(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) {
+    return true;
+  }
+
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const typed = error as { name?: string; code?: string };
+  return typed.name === "AbortError" || typed.code === "ABORT_ERR";
 }
 
 function isExecTimeout(error: unknown, normalized: GitCliResult): boolean {
@@ -228,6 +264,43 @@ function excerpt(value: string, maxLength = 400): string {
   return `${trimmed.slice(0, maxLength)}…`;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function buildGitEnvironment(options?: GitCliRunOptions): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...options?.env };
+  if (!options?.nonInteractive) {
+    return env;
+  }
+
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "Never",
+    SSH_ASKPASS_REQUIRE: "never"
+  };
+}
+
+function boundResultOutput(result: GitCliResult, maxBytes: number): GitCliResult {
+  return {
+    ...result,
+    stdout: boundUtf8(result.stdout, maxBytes),
+    stderr: boundUtf8(result.stderr, maxBytes)
+  };
+}
+
+function boundUtf8(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  return buffer.byteLength <= maxBytes ? value : buffer.subarray(0, maxBytes).toString("utf8");
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new Error("git command aborted"));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new Error("git command aborted"));
+    }, { once: true });
+  });
 }

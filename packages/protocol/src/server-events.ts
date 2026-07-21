@@ -119,6 +119,10 @@ import type {
 } from './transport-events.js'
 import type { ProjectPresenceEvent } from './presence.js'
 import type { RestartRecoverySnapshotEvent } from './restart-recovery.js'
+import type {
+  RemoteUpdateAwarenessProjectChangedEvent,
+  RemoteUpdateAwarenessProjectClearedEvent,
+} from './remote-update-awareness.js'
 
 // Compatibility re-exports from leaf modules
 export * from './builder-sidebar-order.js'
@@ -137,6 +141,7 @@ export * from './plans.js'
 export * from './goals.js'
 export * from './transport-events.js'
 export * from './restart-recovery.js'
+export * from './remote-update-awareness.js'
 
 export type ServerEvent =
   | BuilderSidebarOrderUpdatedEvent
@@ -168,6 +173,8 @@ export type ServerEvent =
   | ConversationPageEvent
   | PendingChoicesSnapshotEvent
   | RestartRecoverySnapshotEvent
+  | RemoteUpdateAwarenessProjectChangedEvent
+  | RemoteUpdateAwarenessProjectClearedEvent
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
   | SessionGoalSnapshotEvent

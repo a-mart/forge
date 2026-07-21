@@ -999,6 +999,7 @@ export class ManagerWsClient {
       builderSidebarOrderRevision: null,
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
+      remoteUpdateAwarenessSnapshot: null,
       lastError: null,
     })
 
@@ -1023,6 +1024,7 @@ export class ManagerWsClient {
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
       subscribedAgentId: null,
+      remoteUpdateAwarenessSnapshot: null,
     })
 
     this.sessionWorkerCache.clearQueuedRefetches()

@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
-import type { GitRepoTarget } from '@forge/protocol'
+import type { GitRepoTarget, RemoteUpdateAwarenessProjectSnapshot } from '@forge/protocol'
 import { GitBranch, GitPullRequest, HardDrive, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-export type DiffTab = 'changes' | 'history' | 'worktrees' | 'pull-requests'
+export type DiffTab = 'changes' | 'history' | 'incoming' | 'worktrees' | 'pull-requests'
 
 function formatPathLabel(path: string): string {
   const normalized = path.replace(/\/+$/, '')
@@ -31,6 +31,7 @@ interface DiffDialogHeaderProps {
   onRefresh: () => void
   onClose: () => void
   branchActions?: ReactNode
+  remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
 }
 
 export function DiffDialogHeader({
@@ -51,6 +52,7 @@ export function DiffDialogHeader({
   onRefresh,
   onClose,
   branchActions,
+  remoteUpdateSnapshot,
 }: DiffDialogHeaderProps) {
   const workspaceLabel = repoTarget === 'workspace' ? (repoLabel ?? 'Workspace') : 'Workspace'
   const versioningLabel = repoTarget === 'versioning' ? (repoLabel ?? 'Cortex Knowledge') : 'Cortex Knowledge'
@@ -69,7 +71,7 @@ export function DiffDialogHeader({
         Source Control
       </div>
 
-      {activeTab === 'worktrees' || activeTab === 'pull-requests' ? (
+      {activeTab === 'worktrees' || activeTab === 'pull-requests' || activeTab === 'incoming' ? (
         <>
           <div
             className="inline-flex h-7 shrink-0 items-center rounded-md border border-border/60 bg-muted/30 p-0.5"
@@ -95,6 +97,15 @@ export function DiffDialogHeader({
         className="inline-flex h-7 shrink-0 items-center gap-1"
         aria-label="Source Control shortcuts"
       >
+        {remoteUpdateSnapshot?.state === 'update_available' ? (
+          <SourceControlShortcutButton
+            label="Incoming"
+            icon={<GitBranch className="size-3" />}
+            count={remoteUpdateSnapshot.attentionRequired ? 1 : null}
+            active={activeTab === 'incoming'}
+            onClick={() => onTabChange('incoming')}
+          />
+        ) : null}
         <SourceControlShortcutButton
           label="Worktrees"
           icon={<HardDrive className="size-3" />}

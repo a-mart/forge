@@ -61,9 +61,10 @@ describe('SettingsLayout', () => {
     // Desktop nav includes all maintained settings tabs.
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(15)
+    expect(buttons.length).toBe(16)
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).toContain('Appearance')
+    expect(labels).toContain('Git monitoring')
     expect(labels).toContain('Repository Resources')
     expect(labels).toContain('Observability')
   })

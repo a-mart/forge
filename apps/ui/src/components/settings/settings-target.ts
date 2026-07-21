@@ -16,6 +16,7 @@ export type SettingsBackendKind = 'builder' | 'collab'
 
 export type SettingsTab =
   | 'general'
+  | 'git-monitoring'
   | 'appearance'
   | 'notifications'
   | 'auth'
@@ -48,6 +49,7 @@ export interface SettingsBackendTarget {
 
 const BUILDER_TABS: SettingsTab[] = [
   'general',
+  'git-monitoring',
   'appearance',
   'notifications',
   'auth',

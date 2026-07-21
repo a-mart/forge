@@ -215,6 +215,7 @@ export interface SwarmPaths {
   collaborationConfigDir?: string;
   collaborationAuthDbPath?: string;
   collaborationAuthSecretPath?: string;
+  remoteUpdateAwarenessDbPath?: string;
 
   // Legacy compatibility fields (flat layout)
   /** @deprecated Use profilesDir-based paths instead. */
@@ -242,8 +243,14 @@ export type {
   SettingsEnvVariable as SkillEnvRequirement,
 } from "@forge/protocol";
 
-export interface CollaborationDatabaseConstructor {
+export interface SqliteDatabaseConstructor {
   new (path: string, options?: Database.Options): Database.Database;
+}
+
+export type CollaborationDatabaseConstructor = SqliteDatabaseConstructor;
+
+export interface RemoteUpdateAwarenessModuleLoaders {
+  loadDatabaseModule: () => Promise<SqliteDatabaseConstructor>;
 }
 
 export interface CollaborationModuleLoaders {
@@ -265,6 +272,8 @@ export interface SwarmConfig {
   collaborationBaseUrl?: string;
   collaborationTrustedOrigins?: string[];
   collaborationModules?: CollaborationModuleLoaders;
+  /** Feature-owned SQLite loader available in every runtime target. */
+  remoteUpdateAwarenessModules?: RemoteUpdateAwarenessModuleLoaders;
   /**
    * Collaboration-server startup overlay for Remote Projects policy.
    * Absent on Builder. Parsed once from FORGE_REMOTE_PROJECTS_* env vars.

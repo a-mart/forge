@@ -74,6 +74,8 @@ interface ChatHeaderProps {
   onToggleTerminalPanel?: () => void
   onOpenDiffViewer?: () => void
   diffViewerAvailable?: boolean
+  /** An exact remote default-branch update for the current local project. */
+  remoteUpdateAttentionRequired?: boolean
   isFileBrowserOpen?: boolean
   onToggleFileBrowser?: () => void
   fileBrowserAvailable?: boolean
@@ -189,6 +191,7 @@ export function ChatHeader({
   onToggleTerminalPanel,
   onOpenDiffViewer,
   diffViewerAvailable = true,
+  remoteUpdateAttentionRequired = false,
   isFileBrowserOpen = false,
   onToggleFileBrowser,
   fileBrowserAvailable = true,
@@ -655,11 +658,12 @@ export function ChatHeader({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                    className="relative size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
                     onClick={onOpenDiffViewer}
                     aria-label="Source Control (⌘⇧D)"
                   >
                     <GitBranch className="size-3.5" />
+                    {remoteUpdateAttentionRequired ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500 ring-2 ring-background" aria-label="Remote update available" /> : null}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>

@@ -82,6 +82,7 @@ import { createFileBrowserRoutes } from "./http/routes/file-browser-routes.js";
 import { createFileRoutes } from "./http/routes/file-routes.js";
 import { createGitDiffRoutes } from "./http/routes/git-diff-routes.js";
 import { createGitSourceControlRoutes } from "./http/routes/git-source-control-routes.js";
+import { createRemoteUpdateAwarenessRoutes } from "./http/routes/remote-update-awareness-routes.js";
 import { createHealthRoutes } from "./http/routes/health-routes.js";
 import { createKnowledgeV2SettingsRoutes } from "./http/routes/knowledge-v2-settings-routes.js";
 import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes.js";
@@ -113,6 +114,7 @@ import type { PromptRegistryForRoutes } from "../swarm/prompt-contracts.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
 import type { TelemetryService } from "../telemetry/telemetry-service.js";
+import { LocalRemoteUpdateAwarenessService } from "./http/services/remote-update-awareness-service.js";
 
 export const MAX_WS_INCOMING_PAYLOAD_BYTES = 8 * 1024 * 1024;
 import type { TerminalRuntimeConfig } from "../terminal/terminal-config.js";
@@ -141,6 +143,7 @@ export class SwarmWebSocketServer {
   private readonly unreadTracker: UnreadTracker;
   private readonly notificationSettingsService: NotificationSettingsService;
   private readonly remoteBuildSettingsService: RemoteBuildSettingsService;
+  private readonly remoteUpdateAwarenessService: LocalRemoteUpdateAwarenessService | null;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -301,6 +304,9 @@ export class SwarmWebSocketServer {
 
   private readonly onProfilesSnapshot = (event: ServerEvent): void => {
     if (event.type !== "profiles_snapshot") return;
+    void this.remoteUpdateAwarenessService?.reconcileProjects().catch((error) => {
+      console.warn("[remote-update-awareness] Project reconciliation failed", error);
+    });
     this.wsHandler.broadcastToSubscribed(event);
   };
 
@@ -444,10 +450,12 @@ export class SwarmWebSocketServer {
     compactionSettingsService?: CompactionSettingsService;
     observabilityService?: ObservabilityFacade;
     feedbackService?: FeedbackService;
+    remoteUpdateAwarenessService?: LocalRemoteUpdateAwarenessService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
+    const isBuilder = isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget);
     const cortexEnabled = this.swarmManager.getConfig().cortexEnabled;
     this.cortexAutoReviewSettingsService = new CortexAutoReviewSettingsService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
@@ -513,6 +521,17 @@ export class SwarmWebSocketServer {
 
     let wsHandlerRef: WsHandler | null = null;
 
+    const remoteUpdateConfig = this.swarmManager.getConfig();
+    this.remoteUpdateAwarenessService = isBuilder && (
+      options.remoteUpdateAwarenessService ||
+      (remoteUpdateConfig.paths.remoteUpdateAwarenessDbPath && remoteUpdateConfig.remoteUpdateAwarenessModules)
+    )
+      ? options.remoteUpdateAwarenessService ?? new LocalRemoteUpdateAwarenessService({
+          swarmManager: this.swarmManager,
+          broadcastProjectEvent: (projectId, event) => this.wsHandler.broadcastToProfile(projectId, event),
+        })
+      : null;
+
     this.mobilePushService = new MobilePushService({
       swarmManager: this.swarmManager,
       dataDir: this.swarmManager.getConfig().paths.dataDir,
@@ -540,11 +559,22 @@ export class SwarmWebSocketServer {
       feedbackService: this.feedbackService,
       isRemoteBuildEnabled: () => this.remoteBuildSettingsService.isRemoteBuildEnabled(),
       areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
+      getRemoteUpdateAwarenessBootstrapEvent: this.remoteUpdateAwarenessService
+        ? (projectId) => {
+            try {
+              return {
+                type: "remote_update_awareness_project_changed" as const,
+                snapshot: this.remoteUpdateAwarenessService!.getProjectSnapshot(projectId),
+              };
+            } catch {
+              return { type: "remote_update_awareness_project_cleared" as const, projectId };
+            }
+          }
+        : undefined,
     });
     this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;
 
-    const isBuilder = isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget);
     this.repositorySettingsService = isBuilder
       ? new RepositorySettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir })
       : null;
@@ -626,6 +656,9 @@ export class SwarmWebSocketServer {
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),
+      ...(this.remoteUpdateAwarenessService
+        ? createRemoteUpdateAwarenessRoutes({ service: this.remoteUpdateAwarenessService })
+        : []),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager, feedbackService: this.feedbackService }),
       ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
         ? createPhoenixObservabilityRoutes({
@@ -752,6 +785,7 @@ export class SwarmWebSocketServer {
     await this.remoteBuildSettingsService.load();
     await this.unreadTracker.load();
     await this.swarmManager.loadModelCacheVisualizationSettings?.();
+    await this.remoteUpdateAwarenessService?.start();
 
     const httpServer = createServer((request, response) => {
       void this.handleHttpRequest(request, response);
@@ -885,6 +919,8 @@ export class SwarmWebSocketServer {
     this.httpServer = null;
     this.actualPort = null;
 
+    // Stop local Git observations before transport teardown and before closing feature storage.
+    await this.remoteUpdateAwarenessService?.stop();
     // Abort in-flight clones and await termination/cleanup before tearing down transport.
     await this.repositoryProjectCreationService?.shutdown()
 

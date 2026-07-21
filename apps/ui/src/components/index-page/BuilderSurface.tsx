@@ -40,6 +40,8 @@ import {
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
+import { activateRemoteUpdateAwarenessProject } from '@/components/settings/remote-update-awareness-api'
+import { getActiveLocalRemoteUpdateSnapshot } from '@/components/index-page/remote-update-awareness'
 import { createLocalBuilderSidebarOrderApi } from '@/lib/builder-sidebar-order-api'
 import { hydrateSessionWorkers } from './worker-hydration'
 import {
@@ -333,6 +335,18 @@ export function BuilderSurface({
     [activeAgentProfileId, state.profiles],
   )
   const activeAgentProfileType = activeAgentProfile?.profileType ?? null
+  const activeProjectId = activeAgent?.profileId ?? activeManagerAgent?.profileId ?? null
+  const remoteUpdateSnapshot = getActiveLocalRemoteUpdateSnapshot(
+    state.remoteUpdateAwarenessSnapshot,
+    activeProjectId,
+    isRemoteOriginActive,
+    isCortexDiffViewerSession(activeAgent),
+  )
+
+  useEffect(() => {
+    if (isRemoteOriginActive || !state.connected || !activeProjectId) return
+    void activateRemoteUpdateAwarenessProject(localWsUrl, activeProjectId).catch(() => undefined)
+  }, [activeProjectId, isRemoteOriginActive, localWsUrl, state.connected])
 
   useEffect(() => {
     if (!state.connected || !shouldLoadExternalProjectAgentDirectory({
@@ -916,6 +930,8 @@ export function BuilderSurface({
                   onRequestSourceControlMutation={panels.handleRequestSourceControlMutation}
                   onSourceControlMutationComplete={panels.handleSourceControlMutationComplete}
                   externalRefreshNonce={panels.sourceControlRefreshNonce}
+                  remoteUpdateSnapshot={remoteUpdateSnapshot}
+                  onRemoteUpdateSnapshotChange={(snapshot) => setState((current) => ({ ...current, remoteUpdateAwarenessSnapshot: snapshot }))}
                   initialRepoTarget={panels.diffViewerInitialState?.initialRepoTarget}
                   initialTab={panels.diffViewerInitialState?.initialTab}
                   initialSha={panels.diffViewerInitialState?.initialSha}
@@ -1022,6 +1038,10 @@ export function BuilderSurface({
                   terminalCount: state.terminals.length,
                   onToggleTerminalPanel: terminalSessionAgentId ? terminalPanel.togglePanel : undefined,
                   onOpenDiffViewer: panels.handleOpenDiffViewerModal,
+                  remoteUpdateAttentionRequired:
+                    remoteUpdateSnapshot?.effectiveEnabled === true &&
+                    remoteUpdateSnapshot.state === 'update_available' &&
+                    remoteUpdateSnapshot.attentionRequired === true,
                   isFileBrowserOpen: panels.isFileBrowserOpen,
                   onToggleFileBrowser: panels.handleGuardedToggleFileBrowser,
                   onToggleMobileSidebar: () =>
@@ -1037,6 +1057,12 @@ export function BuilderSurface({
                     isActiveManager && feedbackProfileId ? feedback.clearComment : undefined,
                   isFeedbackSubmitting: feedback.isSubmitting,
                 }}
+                remoteUpdateSnapshot={remoteUpdateSnapshot}
+                onRemoteUpdateSnapshotChange={(snapshot) => setState((current) => ({ ...current, remoteUpdateAwarenessSnapshot: snapshot }))}
+                onOpenRemoteUpdateIncoming={() => panels.handleOpenDiffViewerModal({
+                  initialRepoTarget: 'workspace',
+                  initialTab: 'incoming',
+                })}
                 lastError={state.lastError}
                 lastSuccess={state.lastSuccess}
                 restartRecovery={state.restartRecovery}

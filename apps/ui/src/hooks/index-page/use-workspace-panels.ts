@@ -28,6 +28,7 @@ import {
 } from 'react'
 import { Clock3, FolderOpen, GitBranch, MessageSquare, Package, SquareTerminal } from 'lucide-react'
 import type { AgentDescriptor, GitWorktreeSummary } from '@forge/protocol'
+import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import type { ManagerWsClient } from '@/lib/ws-client'
 import type { MessageInputHandle } from '@/components/chat/MessageInput'
 import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from '@/components/index-page/activity-rail-workspace'
@@ -408,10 +409,10 @@ export function useWorkspacePanels({
     )
   }, [fileEditorCoordinator, handleToggleFileBrowser, isFileBrowserOpen])
 
-  const handleOpenDiffViewerModal = useCallback(() => {
+  const handleOpenDiffViewerModal = useCallback((initialState: DiffViewerInitialState | null = null) => {
     fileEditorCoordinator.requestFileEditorTransition({ type: 'open-source-control-inline' }, () => {
       setDiffViewerPresentation('modal')
-      openDiffViewer()
+      openDiffViewer(initialState)
     })
   }, [fileEditorCoordinator, openDiffViewer])
 

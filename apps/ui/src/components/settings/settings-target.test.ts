@@ -36,6 +36,7 @@ describe('createBuilderSettingsTarget', () => {
     const target = createBuilderSettingsTarget('ws://127.0.0.1:47187')
 
     expect(target.availableTabs).toContain('general')
+    expect(target.availableTabs).toContain('git-monitoring')
     expect(target.availableTabs).toContain('notifications')
     expect(target.availableTabs).toContain('auth')
     expect(target.availableTabs).toContain('models')
@@ -67,6 +68,7 @@ describe('createCollabSettingsTarget', () => {
     const target = createCollabSettingsTarget('wss://collab.example.com')
 
     expect(target.availableTabs).not.toContain('notifications')
+    expect(target.availableTabs).not.toContain('git-monitoring')
     expect(target.availableTabs).not.toContain('observability')
   })
 

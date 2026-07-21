@@ -68,6 +68,9 @@ export class WsSubscriptions {
     event: ServerEvent,
   ) => Promise<number | null>;
   private readonly getServer: () => WebSocketServer | null;
+  private readonly getRemoteUpdateAwarenessBootstrapEvent?: (
+    projectId: string
+  ) => Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
 
   constructor(options: {
     swarmManager: SwarmManager;
@@ -79,6 +82,9 @@ export class WsSubscriptions {
     send: (socket: WebSocket, event: ServerEvent) => number | null;
     sendBootstrapCritical?: (socket: WebSocket, event: ServerEvent) => Promise<number | null>;
     getServer: () => WebSocketServer | null;
+    getRemoteUpdateAwarenessBootstrapEvent?: (
+      projectId: string
+    ) => Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
@@ -91,6 +97,7 @@ export class WsSubscriptions {
     this.sendBootstrapCritical =
       options.sendBootstrapCritical ?? ((socket, event) => Promise.resolve(options.send(socket, event)));
     this.getServer = options.getServer;
+    this.getRemoteUpdateAwarenessBootstrapEvent = options.getRemoteUpdateAwarenessBootstrapEvent;
   }
 
   clear(): void {
@@ -226,6 +233,17 @@ export class WsSubscriptions {
       if (payloadBytes !== null) {
         this.recordDeliveredSnapshotForEvent(client, outboundEvent);
       }
+    }
+  }
+
+  broadcastToProfile(profileId: string, event: ServerEvent): void {
+    const wss = this.getServer();
+    if (!wss) return;
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      const subscribedAgentId = this.subscriptions.get(client);
+      if (!subscribedAgentId || this.resolveProfileIdForAgent(subscribedAgentId) !== profileId) continue;
+      this.send(client, event);
     }
   }
 
@@ -366,6 +384,17 @@ export class WsSubscriptions {
     }
 
     const previousAgentId = this.subscriptions.get(socket);
+    const previousProjectId = previousAgentId ? this.resolveProfileIdForAgent(previousAgentId) : undefined;
+    const nextProjectId = this.resolveProfileIdForAgent(targetAgentId) ?? targetAgentId;
+    if (
+      previousProjectId && previousProjectId !== nextProjectId &&
+      this.getRemoteUpdateAwarenessBootstrapEvent
+    ) {
+      this.send(socket, {
+        type: "remote_update_awareness_project_cleared",
+        projectId: previousProjectId,
+      });
+    }
     this.subscriptions.set(socket, targetAgentId);
     this.conversationViews.set(socket, conversationView);
     this.conversationPagingCapabilities.set(socket, supportsConversationPaging);
@@ -655,6 +684,9 @@ export class WsSubscriptions {
         deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion ||
         selectedWorkerSnapshotMissing,
       includeProfilesSnapshot: deliveredVersions?.profilesSnapshotVersion !== currentProfilesSnapshotVersion,
+      remoteUpdateAwarenessEvent: this.getRemoteUpdateAwarenessBootstrapEvent?.(
+        this.resolveProfileIdForAgent(targetAgentId) ?? targetAgentId
+      ),
       shouldContinue,
     });
 

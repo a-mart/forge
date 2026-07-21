@@ -5,6 +5,7 @@ import type {
   ConversationEntry,
   ConversationHistoryPageMetadata,
   ManagerProfile,
+  RemoteUpdateAwarenessProjectSnapshot,
   ProjectPresenceViewer,
   SessionPlanSnapshotEvent,
   SessionGoalSnapshotEvent,
@@ -82,6 +83,8 @@ export interface ManagerWsState {
   modelConfigChangeKey: number
   /** Prompt/model cache visualization toggle; defaults to off. */
   modelCacheVisualizationEnabled: boolean
+  /** Local Builder projection for the currently subscribed project only. */
+  remoteUpdateAwarenessSnapshot: RemoteUpdateAwarenessProjectSnapshot | null
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -122,5 +125,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
     modelCacheVisualizationEnabled: false,
+    remoteUpdateAwarenessSnapshot: null,
   }
 }

@@ -12,6 +12,7 @@ import {
   getLegacySecretsFilePath,
   getLegacySessionsDirPath,
   getProfilesDir,
+  getRemoteUpdateAwarenessDbPath,
   getSharedAuthDir,
   getSharedAuthFilePath,
   getSharedCacheDir,
@@ -53,6 +54,7 @@ export function createConfig(): SwarmConfig {
   const collaborationConfigDir = getSharedCollaborationConfigDir(dataDir);
   const collaborationAuthDbPath = getCollaborationAuthDbPath(dataDir);
   const collaborationAuthSecretPath = getCollaborationAuthSecretPath(dataDir);
+  const remoteUpdateAwarenessDbPath = getRemoteUpdateAwarenessDbPath(dataDir);
   // Legacy flat-layout paths retained for backward compatibility.
   const sessionsDir = getLegacySessionsDirPath(dataDir);
   const authDir = getLegacyAuthDirPath(dataDir);
@@ -122,6 +124,9 @@ export function createConfig(): SwarmConfig {
     collaborationBaseUrl,
     collaborationTrustedOrigins,
     collaborationModules,
+    remoteUpdateAwarenessModules: {
+      loadDatabaseModule: async () => (await import("better-sqlite3")).default,
+    },
     remoteProjectsEnv,
     allowNonManagerSubscriptions: true,
     managerId,
@@ -151,6 +156,7 @@ export function createConfig(): SwarmConfig {
       collaborationConfigDir,
       collaborationAuthDbPath,
       collaborationAuthSecretPath,
+      remoteUpdateAwarenessDbPath,
       sessionsDir,
       memoryDir,
       authDir,
