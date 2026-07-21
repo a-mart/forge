@@ -65,7 +65,7 @@ import {
   consumeForgePiCompactionFailure,
 } from "../compaction/forge-pi-compaction-extension.js";
 import { runtimeInputAssistantOutputPolicyFacts, type AssistantOutputPolicyFacts } from "./manager-assistant-output-target-metadata.js";
-import { isIntentionalNoReplyText } from "./manager-assistant-final-message.js";
+import { hasNoReplySentinelLine } from "./manager-assistant-final-message.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -2278,7 +2278,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
     const unhandledKind =
       classifiedUnhandledKind === "hidden_text" &&
-      isIntentionalNoReplyText(extractTextFromMessageRecord(assistantMessage))
+      hasNoReplySentinelLine(extractTextFromMessageRecord(assistantMessage))
         ? "empty"
         : classifiedUnhandledKind;
 

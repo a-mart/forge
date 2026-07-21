@@ -9,7 +9,7 @@ import { extractMessageText, extractRole } from "../message-utils.js";
 import type { MessageRouteDecision } from "../message-router.js";
 import {
   getToolLikeMessageBlocks,
-  isIntentionalNoReplyText,
+  hasNoReplySentinelLine,
   messageHasIneligibleStopOrError,
 } from "./manager-assistant-final-message.js";
 
@@ -164,7 +164,7 @@ export class ManagerAssistantOutputTracker {
     }
 
     const text = extractMessageText(event.message)?.trim();
-    if (!text || isIntentionalNoReplyText(text)) {
+    if (!text || hasNoReplySentinelLine(text)) {
       return;
     }
 

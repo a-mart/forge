@@ -86,7 +86,7 @@ describe("ManagerTurnWatchdog", () => {
     expect(emitted).toHaveLength(0);
   });
 
-  it("emits 30s and 5m notices with ledger receipts", async () => {
+  it("records the 30s tier silently and emits the actionable 5m notice with ledger receipts", async () => {
     const { dataDir, watchdog, emitted } = await setup();
     watchdog.recordStatus("m1", 1, "streaming", 0);
 
@@ -96,7 +96,6 @@ describe("ManagerTurnWatchdog", () => {
     watchdog.check();
 
     expect(emitted.map((event) => event.text)).toEqual([
-      expect.stringContaining("Still working"),
       expect.stringContaining("may be stuck"),
     ]);
     let ledger = "";
@@ -141,7 +140,6 @@ describe("ManagerTurnWatchdog", () => {
     watchdog.check();
 
     expect(emitted.map((event) => event.text)).toEqual([
-      expect.stringContaining("Still working"),
       expect.stringContaining("may be stuck"),
     ]);
   });
@@ -158,7 +156,13 @@ describe("ManagerTurnWatchdog", () => {
     watchdog.recordEvent("m1", 1, { type: "tool_execution_end", toolCallId: "tool-1", toolName: "bash", result: "ok", isError: false });
     vi.advanceTimersByTime(MANAGER_TURN_NOTICE_MS + 1);
     watchdog.check();
+    expect(emitted).toHaveLength(0);
+    expect(watchdog.getState("m1")?.tier).toBe(1);
+
+    vi.advanceTimersByTime(MANAGER_TURN_ESCALATE_MS - MANAGER_TURN_NOTICE_MS);
+    watchdog.check();
     expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.text).toContain("may be stuck");
   });
 
   it("does not treat time waiting for a user choice as a manager stall", async () => {
@@ -179,9 +183,8 @@ describe("ManagerTurnWatchdog", () => {
 
     vi.advanceTimersByTime(2);
     watchdog.check();
-    expect(emitted.map((event) => event.text)).toEqual([
-      expect.stringContaining("Still working"),
-    ]);
+    expect(emitted).toHaveLength(0);
+    expect(watchdog.getState("m1")?.tier).toBe(1);
   });
 
   it("emits the diagnostic tier only once at the stuck threshold", async () => {
