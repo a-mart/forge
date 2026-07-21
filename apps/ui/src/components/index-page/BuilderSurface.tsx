@@ -1142,6 +1142,9 @@ export function BuilderSurface({
                   onChoiceSubmit: session.handleChoiceSubmit,
                   onChoiceCancel: session.handleChoiceCancel,
                   pendingChoiceIds: state.pendingChoiceIds,
+                  codexElicitations: state.codexElicitations,
+                  onCodexElicitationResponse: (agentId, elicitationId, decision, values, persistScope) =>
+                    clientRef.current?.sendCodexElicitationResponse(agentId, elicitationId, decision, values, persistScope),
                   missingPendingChoiceIds,
                   planSnapshot,
                   planExpanded,

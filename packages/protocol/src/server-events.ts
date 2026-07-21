@@ -5,6 +5,7 @@ import type {
 } from './agent-events.js'
 import type { BuilderSidebarOrderUpdatedEvent } from './builder-sidebar-order.js'
 import type { CliServerEvent } from './cli.js'
+import type { CodexElicitationDismissedEvent, CodexElicitationRequestEvent } from './codex-elicitation.js'
 import type {
   ConversationEntry,
   MessagePinnedEvent,
@@ -146,6 +147,8 @@ export * from './remote-update-awareness.js'
 export type ServerEvent =
   | BuilderSidebarOrderUpdatedEvent
   | CliServerEvent
+  | CodexElicitationRequestEvent
+  | CodexElicitationDismissedEvent
   | ReadyEvent
   | CollaborationBootstrapEvent
   | CollaborationChannelReadyEvent

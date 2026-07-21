@@ -11,6 +11,7 @@ import type {
   SessionGoalSnapshotEvent,
   RestartRecoverySnapshot,
   TerminalDescriptor,
+  CodexElicitationRequestEvent,
 } from '@forge/protocol'
 
 export type ConversationHistoryEntry = Extract<
@@ -53,6 +54,8 @@ export interface ManagerWsState {
   modelCacheVisualizationSettingLoaded: boolean
   /** Choice IDs with pending status for the current session */
   pendingChoiceIds: Set<string>
+  /** Ephemeral only: never reconstructed from conversation history. */
+  codexElicitations: CodexElicitationRequestEvent[]
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
   profiles: ManagerProfile[]
@@ -103,6 +106,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     pendingModelCacheObservations: [],
     modelCacheVisualizationSettingLoaded: false,
     pendingChoiceIds: new Set(),
+    codexElicitations: [],
     agents: [],
     loadedSessionIds: new Set(),
     profiles: [],

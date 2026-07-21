@@ -1,4 +1,6 @@
 import type {
+  CodexElicitationDismissedEvent,
+  CodexElicitationRequestEvent,
   ModelCacheObservationEvent,
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
@@ -75,6 +77,14 @@ export class SwarmEventCoordinator {
   emitChoiceRequest(event: ChoiceRequestEvent): void {
     const historyAgentId = event.sessionAgentId?.trim() || event.agentId;
     this.options.conversationProjector.emitChoiceRequest(event, { historyAgentId });
+  }
+
+  emitCodexElicitation(event: CodexElicitationRequestEvent): void {
+    this.options.host.emit("codex_elicitation_request", event);
+  }
+
+  dismissCodexElicitation(event: CodexElicitationDismissedEvent): void {
+    this.options.host.emit("codex_elicitation_dismissed", event);
   }
 
   emitModelCacheObservation(event: ModelCacheObservationEvent): void {

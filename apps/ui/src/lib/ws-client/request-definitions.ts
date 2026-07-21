@@ -4,6 +4,8 @@ import {
   type AgentSessionPurpose,
   type BuilderTimelineChannelView,
   type ChoiceAnswer,
+  type CodexElicitationDecision,
+  type CodexElicitationPersistScope,
   type ClientCommand,
   type ConversationAttachment,
   type ConversationReplyTargetInput,
@@ -121,6 +123,16 @@ export function buildChoiceCancelCommand(agentId: string, choiceId: string): Cli
     agentId,
     choiceId,
   }
+}
+
+export function buildCodexElicitationResponseCommand(
+  agentId: string,
+  elicitationId: string,
+  decision: CodexElicitationDecision,
+  values?: Record<string, unknown>,
+  persistScope?: CodexElicitationPersistScope,
+): ClientCommand {
+  return { type: 'codex_elicitation_response', agentId, elicitationId, decision, values, persistScope }
 }
 
 export function buildPinMessageCommand(

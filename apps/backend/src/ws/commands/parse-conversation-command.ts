@@ -81,6 +81,21 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
     });
   }
 
+  if (maybe.type === "codex_elicitation_response") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const elicitationId = (maybe as { elicitationId?: unknown }).elicitationId;
+    const decision = (maybe as { decision?: unknown }).decision;
+    const values = (maybe as { values?: unknown }).values;
+    const persistScope = (maybe as { persistScope?: unknown }).persistScope;
+    if (typeof agentId !== "string" || !agentId.trim() || typeof elicitationId !== "string" || !elicitationId.trim()) {
+      return fail("codex_elicitation_response.agentId and elicitationId must be non-empty strings");
+    }
+    if (decision !== "allow" && decision !== "deny" && decision !== "cancel") return fail("codex_elicitation_response.decision must be allow|deny|cancel");
+    if (values !== undefined && (typeof values !== "object" || values === null || Array.isArray(values))) return fail("codex_elicitation_response.values must be an object");
+    if (persistScope !== undefined && persistScope !== "session" && persistScope !== "always") return fail("codex_elicitation_response.persistScope must be session|always");
+    return ok({ type: "codex_elicitation_response", agentId: agentId.trim(), elicitationId: elicitationId.trim(), decision, ...(values !== undefined ? { values: values as Record<string, unknown> } : {}), ...(persistScope ? { persistScope } : {}) });
+  }
+
   if (maybe.type === "choice_cancel") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const choiceId = (maybe as { choiceId?: unknown }).choiceId;

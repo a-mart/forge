@@ -1,10 +1,11 @@
-import type { ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
+import type { CodexElicitationDecision, CodexElicitationPersistScope, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
 import {
   assertConnectedSocket,
   assertReconnectableSocket,
   buildChoiceCancelCommand,
   buildChoiceResponseCommand,
+  buildCodexElicitationResponseCommand,
   buildClearAllPinsCommand,
   buildCreateManagerCommand,
   buildCreateDirectoryCommand,
@@ -487,6 +488,16 @@ export class ManagerWsClient {
 
   sendChoiceCancel(agentId: string, choiceId: string): void {
     this.send(buildChoiceCancelCommand(agentId, choiceId))
+  }
+
+  sendCodexElicitationResponse(
+    agentId: string,
+    elicitationId: string,
+    decision: CodexElicitationDecision,
+    values?: Record<string, unknown>,
+    persistScope?: CodexElicitationPersistScope,
+  ): void {
+    this.send(buildCodexElicitationResponseCommand(agentId, elicitationId, decision, values, persistScope))
   }
 
   pinMessage(agentId: string, messageId: string, pinned: boolean): void {

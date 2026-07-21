@@ -107,6 +107,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "kill_agent":
     case "choice_response":
     case "choice_cancel":
+    case "codex_elicitation_response":
     case "ping":
       return undefined;
   }
