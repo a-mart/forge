@@ -521,6 +521,50 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('clears ephemeral Codex elicitations across session, refresh, and reconnect bootstraps', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager-a')
+    client.start()
+    vi.advanceTimersByTime(60)
+    const socket = FakeWebSocket.instances[0]!
+    socket.emit('open')
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager-a',
+    })
+
+    const elicitation = (agentId: string, elicitationId: string) => ({
+      type: 'codex_elicitation_request' as const,
+      elicitationId,
+      agentId,
+      sidecarAgentId: `${agentId}--codex`,
+      mode: 'form' as const,
+      message: 'Codex needs input',
+      persistScopes: [],
+    })
+    emitServerEvent(socket, elicitation('manager-a', 'a-1'))
+    expect(client.getState().codexElicitations.map((item) => item.elicitationId)).toEqual(['a-1'])
+
+    client.subscribeToAgent('manager-b')
+    expect(client.getState().codexElicitations).toEqual([])
+    emitServerEvent(socket, elicitation('manager-b', 'b-1'))
+    expect(client.getState().codexElicitations.map((item) => item.elicitationId)).toEqual(['b-1'])
+
+    expect(client.refreshConversationHistory()).toBe(true)
+    expect(client.getState().codexElicitations).toEqual([])
+    emitServerEvent(socket, elicitation('manager-b', 'b-2'))
+    expect(client.getState().codexElicitations.map((item) => item.elicitationId)).toEqual(['b-2'])
+
+    socket.close()
+    expect(client.getState().codexElicitations).toEqual([])
+    vi.advanceTimersByTime(1200)
+    const reconnectedSocket = FakeWebSocket.instances[1]!
+    reconnectedSocket.emit('open')
+    expect(client.getState().codexElicitations).toEqual([])
+
+    client.destroy()
+  })
+
   it('subscribes without forcing manager id when no initial target is provided', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787')
 

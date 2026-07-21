@@ -15,7 +15,7 @@ import {
   truncateCodexPreview,
 } from "./codex-sidecar-parent-cards.js";
 import type { CodexSidecarHost, CodexSidecarPersistedThreadState, CodexSidecarParentTurnNotification } from "./types.js";
-import type { CodexPendingElicitation } from "./codex-elicitation-broker.js";
+import type { CodexLiveElicitation } from "./codex-elicitation-broker.js";
 import { CODEX_THREAD_STATE_CUSTOM_TYPE } from "./types.js";
 
 export interface CodexSidecarHostAdapterDeps {
@@ -34,7 +34,7 @@ export interface CodexSidecarHostAdapterDeps {
   emitAgentsSnapshot: () => void;
   emitProfilesSnapshot: () => void;
   listWorkersForSession: (sessionAgentId: string) => AgentDescriptor[];
-  emitCodexElicitation?: (event: CodexPendingElicitation) => void;
+  emitCodexElicitation?: (event: CodexLiveElicitation) => void;
   dismissCodexElicitation?: (elicitationId: string, managerAgentId: string) => void;
 }
 

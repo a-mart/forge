@@ -21,8 +21,13 @@ export interface CodexElicitationRequestEvent {
   title?: string
   message: string
   fields?: CodexElicitationField[]
-  /** Display-only, query/fragment-redacted URL. Forge never opens it automatically. */
+  /**
+   * Full URL delivered only with the initial live WebSocket request. It is never
+   * included in bootstrap/replay data and Forge never opens it automatically.
+   */
   url?: string
+  /** Safe normalized origin retained for bootstrap status messaging only. */
+  urlOrigin?: string
   /** Only scopes explicitly advertised upstream; absence means per-request only. */
   persistScopes: CodexElicitationPersistScope[]
 }

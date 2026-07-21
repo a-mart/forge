@@ -769,7 +769,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           ...(event.title ? { title: event.title } : {}),
           message: event.message,
           ...(event.fields ? { fields: event.fields } : {}),
-          ...(event.url ? { url: event.url } : {}),
+          ...(event.url ? { url: event.url, ...(event.urlOrigin ? { urlOrigin: event.urlOrigin } : {}) } : event.urlOrigin ? { urlOrigin: event.urlOrigin } : {}),
           persistScopes: event.persistScopes,
         }),
         dismissCodexElicitation: (elicitationId, managerAgentId) =>

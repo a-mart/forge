@@ -359,6 +359,7 @@ export class ManagerWsClient {
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
       pendingChoiceIds: new Set(),
+      codexElicitations: [],
       planSnapshotLoadingSessionId: trimmed,
       goalSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
@@ -969,6 +970,7 @@ export class ManagerWsClient {
       conversationHistoryMutation: null,
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
+      codexElicitations: [],
       lastError: null,
     })
     this.bootstrapBuffer.begin(agentId)
@@ -1011,6 +1013,7 @@ export class ManagerWsClient {
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
       remoteUpdateAwarenessSnapshot: null,
+      codexElicitations: [],
       lastError: null,
     })
 
@@ -1036,6 +1039,7 @@ export class ManagerWsClient {
       hasReceivedProfilesSnapshot: false,
       subscribedAgentId: null,
       remoteUpdateAwarenessSnapshot: null,
+      codexElicitations: [],
     })
 
     this.sessionWorkerCache.clearQueuedRefetches()

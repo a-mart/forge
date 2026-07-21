@@ -20,7 +20,7 @@ import {
   CodexSidecarBusyError,
   type CodexAppServerServiceOptions,
 } from "./types.js";
-import type { CodexPendingElicitation, CodexElicitationDecision, CodexElicitationPersistScope } from "./codex-elicitation-broker.js";
+import type { CodexLiveElicitation, CodexElicitationDecision, CodexElicitationPersistScope } from "./codex-elicitation-broker.js";
 
 export type CodexDirectSidecarManager = AgentDescriptor & {
   role: "manager";
@@ -33,7 +33,7 @@ export interface CodexDirectSidecarCoordinatorHost
   scheduleProjectExecutableTrustPrompt(manager: AgentDescriptor & { role: "manager" }): void;
   markSessionActivity(agentId: string, timestamp: string): void;
   markSessionUserMessageActivity(agentId: string, timestamp: string): void;
-  emitCodexElicitation?(event: CodexPendingElicitation): void;
+  emitCodexElicitation?(event: CodexLiveElicitation): void;
   dismissCodexElicitation?(elicitationId: string, managerAgentId: string): void;
 }
 

@@ -318,7 +318,8 @@ export async function sendSubscriptionBootstrap(options: {
       ...(elicitation.title ? { title: elicitation.title } : {}),
       message: elicitation.message,
       ...(elicitation.fields ? { fields: elicitation.fields } : {}),
-      ...(elicitation.url ? { url: elicitation.url } : {}),
+      // The full (often tokenized) URL is only sent in the initial live event.
+      ...(elicitation.urlOrigin ? { urlOrigin: elicitation.urlOrigin } : {}),
       persistScopes: elicitation.persistScopes,
     });
   }

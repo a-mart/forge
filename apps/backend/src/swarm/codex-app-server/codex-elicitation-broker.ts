@@ -23,12 +23,17 @@ export interface CodexPendingElicitation {
   title?: string;
   message: string;
   fields?: CodexElicitationField[];
-  /** Display-only URL: query and fragment are deliberately removed. */
-  url?: string;
+  /** Safe normalized origin shown when a live URL is no longer available. */
+  urlOrigin?: string;
   persistScopes: CodexElicitationPersistScope[];
 }
 
-interface Pending extends CodexPendingElicitation {
+/** Full URL is only carried on the initial live event; never bootstrap it. */
+export interface CodexLiveElicitation extends CodexPendingElicitation {
+  url?: string;
+}
+
+interface Pending extends CodexLiveElicitation {
   resolve: (response: Record<string, unknown>) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
@@ -36,7 +41,7 @@ interface Pending extends CodexPendingElicitation {
 export interface CodexElicitationBrokerOptions {
   now?: () => number;
   timeoutMs?: number;
-  emit: (request: CodexPendingElicitation) => void;
+  emit: (request: CodexLiveElicitation) => void;
   dismiss: (elicitationId: string, managerAgentId: string) => void;
   logDebug: (message: string, details?: unknown) => void;
 }
@@ -73,7 +78,7 @@ export class CodexElicitationBroker {
       const timeout = setTimeout(() => this.finish(elicitationId, { action: "cancel" }), this.timeoutMs);
       const pending: Pending = { ...parsed, elicitationId, managerAgentId: active.managerAgentId, sidecarAgentId: active.sidecarAgentId, resolve, timeout };
       this.pending.set(elicitationId, pending);
-      this.options.emit(publicRequest(pending));
+      this.options.emit(liveRequest(pending));
     });
   }
 
@@ -123,10 +128,10 @@ export class CodexElicitationBroker {
   }
 }
 
-function parseElicitation(params: unknown): Omit<CodexPendingElicitation, "elicitationId" | "managerAgentId" | "sidecarAgentId"> | undefined {
+function parseElicitation(params: unknown): Omit<CodexLiveElicitation, "elicitationId" | "managerAgentId" | "sidecarAgentId"> | undefined {
   if (!isRecord(params) || typeof params.threadId !== "string" || typeof params.turnId !== "string" || typeof params.message !== "string") return undefined;
   const mode = params.mode === "url" || typeof params.url === "string" ? "url" : "form";
-  const url = mode === "url" ? redactUrl(params.url) : undefined;
+  const url = mode === "url" ? parseUrl(params.url) : undefined;
   if (mode === "url" && !url) return undefined;
   const fields = mode === "form" ? parseFields(params.requestedSchema ?? params.schema) : undefined;
   if (mode === "form" && !fields) return undefined;
@@ -137,7 +142,7 @@ function parseElicitation(params: unknown): Omit<CodexPendingElicitation, "elici
     message: bounded(params.message, 4_000),
     ...(typeof params.title === "string" ? { title: bounded(params.title, 300) } : {}),
     ...(fields ? { fields } : {}),
-    ...(url ? { url } : {}),
+    ...(url ? { url: url.href, urlOrigin: url.origin } : {}),
     persistScopes: parsePersistScopes(params._meta),
   };
 }
@@ -177,10 +182,14 @@ function parsePersistScopes(meta: unknown): CodexElicitationPersistScope[] {
   const values = Array.isArray(value) ? value : [value];
   return values.filter((item): item is CodexElicitationPersistScope => item === "session" || item === "always");
 }
-function publicRequest(pending: Pending | CodexPendingElicitation): CodexPendingElicitation {
-  const { elicitationId, managerAgentId, sidecarAgentId, threadId, turnId, mode, title, message, fields, url, persistScopes } = pending;
-  return { elicitationId, managerAgentId, sidecarAgentId, threadId, turnId, mode, ...(title ? { title } : {}), message, ...(fields ? { fields } : {}), ...(url ? { url } : {}), persistScopes };
+function liveRequest(pending: Pending): CodexLiveElicitation {
+  const { elicitationId, managerAgentId, sidecarAgentId, threadId, turnId, mode, title, message, fields, url, urlOrigin, persistScopes } = pending;
+  return { elicitationId, managerAgentId, sidecarAgentId, threadId, turnId, mode, ...(title ? { title } : {}), message, ...(fields ? { fields } : {}), ...(url ? { url } : {}), ...(urlOrigin ? { urlOrigin } : {}), persistScopes };
 }
-function redactUrl(value: unknown): string | undefined { try { const url = new URL(typeof value === "string" ? value : ""); return `${url.protocol}//${url.host}${url.pathname}`; } catch { return undefined; } }
+function publicRequest(pending: Pending | CodexPendingElicitation): CodexPendingElicitation {
+  const { elicitationId, managerAgentId, sidecarAgentId, threadId, turnId, mode, title, message, fields, urlOrigin, persistScopes } = pending;
+  return { elicitationId, managerAgentId, sidecarAgentId, threadId, turnId, mode, ...(title ? { title } : {}), message, ...(fields ? { fields } : {}), ...(urlOrigin ? { urlOrigin } : {}), persistScopes };
+}
+function parseUrl(value: unknown): { href: string; origin: string } | undefined { try { const href = typeof value === "string" ? value : ""; const url = new URL(href); return url.protocol === "https:" || url.protocol === "http:" ? { href, origin: url.origin } : undefined; } catch { return undefined; } }
 function bounded(value: string, max: number): string { return value.replace(/[\u0000-\u001F]/g, " ").trim().slice(0, max); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

@@ -16,6 +16,23 @@ describe("CodexElicitationBroker", () => {
     await expect(pending).resolves.toEqual({ action: "accept", content: { token: "secret" }, _meta: { persist: "session" } });
   });
 
+  it("delivers a URL only in the initial live event and keeps tokenized URLs out of bootstrap snapshots", async () => {
+    const emit = vi.fn();
+    const broker = new CodexElicitationBroker({ emit, dismiss: vi.fn(), logDebug: vi.fn() });
+    const url = "https://AUTH.Example.test:443/authorize?token=secret-token#callback";
+    const pending = broker.request({ params: { threadId: "thread", turnId: "turn", message: "Sign in", mode: "url", url }, active });
+
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ url, urlOrigin: "https://auth.example.test" }));
+    expect(JSON.stringify(broker.getPendingForManager("manager"))).not.toContain("secret-token");
+    expect(broker.getPendingForManager("manager")).toEqual([
+      expect.objectContaining({ urlOrigin: "https://auth.example.test" }),
+    ]);
+
+    const id = emit.mock.calls[0]?.[0].elicitationId as string;
+    expect(broker.respond({ elicitationId: id, managerAgentId: "manager", decision: "cancel" })).toBe(true);
+    await expect(pending).resolves.toEqual({ action: "cancel" });
+  });
+
   it("fails closed for stale requests and rejects unavailable persistence", async () => {
     const emit = vi.fn();
     const broker = new CodexElicitationBroker({ emit, dismiss: vi.fn(), logDebug: vi.fn() });
