@@ -45,6 +45,11 @@ interface StdioJsonRpcClientOptions {
   onRequest?: (request: JsonRpcRequestMessage) => Promise<unknown>;
   onExit?: (error: Error) => void;
   onStderr?: (line: string) => void;
+  /**
+   * Returns safe, user-displayable stderr context to attach to a process-exit
+   * error. Raw stderr is never retained for this purpose.
+   */
+  stderrContext?: (line: string) => string;
 }
 
 export class StdioJsonRpcClient {
@@ -56,6 +61,7 @@ export class StdioJsonRpcClient {
   private disposed = false;
   private nextRequestId = 0;
   private readonly pendingById = new Map<string, PendingRequest>();
+  private readonly stderrContextLines: string[] = [];
 
   constructor(options: StdioJsonRpcClientOptions) {
     this.options = options;
@@ -80,6 +86,7 @@ export class StdioJsonRpcClient {
     });
 
     this.stderrReader.on("line", (line) => {
+      this.recordStderrContext(line);
       this.options.onStderr?.(line);
     });
 
@@ -93,7 +100,12 @@ export class StdioJsonRpcClient {
       }
 
       const processLabel = this.options.processLabel ?? "JSON-RPC subprocess";
-      const error = new Error(`${processLabel} exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+      const stderrContext = this.stderrContextLines.join("\n");
+      const error = new Error(
+        `${processLabel} exited (code=${code ?? "null"}, signal=${signal ?? "null"})${
+          stderrContext ? `: ${stderrContext}` : ""
+        }`,
+      );
       this.handleProcessExit(error);
     });
   }
@@ -176,6 +188,18 @@ export class StdioJsonRpcClient {
   private writeMessage(message: unknown): void {
     const payload = `${JSON.stringify(message)}\n`;
     this.child.stdin.write(payload, "utf8");
+  }
+
+  private recordStderrContext(line: string): void {
+    const context = this.options.stderrContext?.(line).trim();
+    if (!context) {
+      return;
+    }
+
+    this.stderrContextLines.push(context);
+    if (this.stderrContextLines.length > 3) {
+      this.stderrContextLines.shift();
+    }
   }
 
   private async handleStdoutLine(line: string): Promise<void> {

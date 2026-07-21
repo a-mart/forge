@@ -32,6 +32,10 @@ function codexCatalogFailureMessage(errorMessage: string | undefined): string {
     return 'Could not load Codex plugins: Codex rejected ~/.codex/config.toml. Check the Codex config and try again.'
   }
 
+  if (/(?:spawn|enoent).*(?:codex|vendor)|(?:codex|vendor).*(?:spawn|enoent)/i.test(errorMessage)) {
+    return 'Could not load Codex plugins: Forge could not start Codex. Reinstall Codex and try again.'
+  }
+
   return 'Could not load Codex plugins. Try again in a moment.'
 }
 

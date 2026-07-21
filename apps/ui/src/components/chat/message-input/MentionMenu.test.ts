@@ -69,6 +69,19 @@ describe('MentionMenu', () => {
     expect(container.textContent).toContain('Could not load Codex plugins')
   })
 
+  it('identifies a missing Codex executable without exposing its raw stderr', () => {
+    renderMenu({
+      status: 'error',
+      mentions: [],
+      codexToolPicker: true,
+      codexCatalogErrorMessage:
+        'Codex app-server exited (code=1, signal=null): Error: spawn /opt/homebrew/lib/node_modules/@openai/codex/vendor/codex ENOENT',
+    })
+
+    expect(container.textContent).toContain('Forge could not start Codex. Reinstall Codex')
+    expect(container.textContent).not.toContain('/opt/homebrew')
+  })
+
   it('shows empty-catalog message when no tools are available', () => {
     renderMenu({ status: 'empty-catalog', mentions: [], codexToolPicker: true })
 

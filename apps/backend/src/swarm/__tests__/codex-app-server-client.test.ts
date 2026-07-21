@@ -147,6 +147,28 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     await expect(client.request("plugin/list")).rejects.toThrow(/disposed/i);
   });
 
+  it("includes sanitized stderr context when Codex exits during initialization", async () => {
+    const client = trackClient(
+      createCodexAppServerClient(
+        {},
+        {
+          command: process.execPath,
+          args: [
+            "-e",
+            String.raw`
+process.stderr.write('Codex vendor executable spawn failed: Bearer sk-testsecret1234567890\\n');
+process.exit(1);
+`,
+          ],
+        },
+      ),
+    );
+
+    const error = await client.connect().catch((error: unknown) => error as Error);
+    expect(error.message).toContain("Codex vendor executable spawn failed: Bearer [redacted-api-key]");
+    expect(error.message).not.toContain("sk-testsecret");
+  });
+
   it("forwards sanitized stderr lines to handler", async () => {
     const onStderr = vi.fn();
     const client = trackClient(

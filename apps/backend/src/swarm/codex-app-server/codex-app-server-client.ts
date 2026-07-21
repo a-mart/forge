@@ -52,6 +52,7 @@ export function createCodexAppServerClient(
       throw new Error(`Unsupported Codex app-server server request: ${request.method}`);
     },
     onExit: handlers.onExit,
+    stderrContext: sanitizeCodexStderrLine,
     onStderr: (line) => {
       const sanitized = sanitizeCodexStderrLine(line);
       if (sanitized) {
