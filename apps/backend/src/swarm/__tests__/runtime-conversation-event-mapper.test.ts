@@ -439,6 +439,84 @@ describe("RuntimeConversationEventMapper", () => {
     }
   });
 
+  it("sanitizes browser input and result audit projections without mutating immediate provider data", () => {
+    const descriptor = makeDescriptor();
+    const input = { tabId: "tab-1", expression: "document.body.innerText", awaitPromise: true };
+    const start = mapRuntimeEvent({
+      descriptor,
+      event: {
+        type: "tool_execution_start",
+        toolName: "browser_evaluate",
+        toolCallId: "browser-1",
+        args: input,
+      },
+    });
+    expect(input.expression).toBe("document.body.innerText");
+    for (const projection of start) {
+      expect(projection.text).not.toContain("document.body.innerText");
+      expect(projection.text).toContain("utf8Bytes");
+    }
+
+    const screenshotData = "SCREENSHOT_BASE64_SECRET";
+    const result = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            ok: true,
+            result: {
+              tabId: "tab-1",
+              visibleText: "PAGE_TEXT_SECRET",
+              accessibility: { name: "A11Y_SECRET" },
+              consoleEntries: [{ text: "CONSOLE_SECRET" }],
+              networkEntries: [{ url: "https://secret.test/body" }],
+              screenshot: { data: screenshotData, mimeType: "image/png", width: 800, height: 600 },
+            },
+          }),
+        },
+        { type: "image", data: screenshotData, mimeType: "image/png" },
+      ],
+      details: {
+        value: "EVALUATE_RESULT_SECRET",
+        remoteObject: { description: "REMOTE_SECRET" },
+        serializedBytes: 22,
+        screenshot: { data: screenshotData, mimeType: "image/png", width: 800, height: 600 },
+      },
+    };
+    const end = mapRuntimeEvent({
+      descriptor,
+      event: {
+        type: "tool_execution_end",
+        toolName: "browser_evaluate",
+        toolCallId: "browser-1",
+        result,
+        isError: false,
+      },
+    });
+    expect(JSON.stringify(result)).toContain(screenshotData);
+    for (const projection of end) {
+      expect(projection.text).toContain("serializedBytes");
+      expect(projection.text).toContain("image/png");
+      expect(projection.text).not.toMatch(/SECRET|visibleText|accessibility|consoleEntries|networkEntries|remoteObject/);
+    }
+  });
+
+  it("sanitizes typed browser text input to shape metadata", () => {
+    const projections = mapRuntimeEvent({
+      descriptor: makeDescriptor(),
+      event: {
+        type: "tool_execution_start",
+        toolName: "browser_type",
+        toolCallId: "browser-2",
+        args: { text: "PASSWORD_SECRET", clear: true },
+      },
+    });
+    for (const projection of projections) {
+      expect(projection.text).not.toContain("PASSWORD_SECRET");
+      expect(JSON.parse(projection.text)).toMatchObject({ text: { characters: 15, utf8Bytes: 15 }, clear: true });
+    }
+  });
+
   it("preserves missing descriptor behavior for tool events", () => {
     expect(
       mapRuntimeEvent({

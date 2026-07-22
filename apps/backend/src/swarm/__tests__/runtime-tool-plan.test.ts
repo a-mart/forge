@@ -174,6 +174,19 @@ describe("runtime tool plan", () => {
       "speak_to_user",
       "present_choices",
       "save_learning",
+      "browser_status",
+      "browser_open",
+      "browser_navigate",
+      "browser_resize",
+      "browser_snapshot",
+      "browser_click",
+      "browser_type",
+      "browser_press",
+      "browser_scroll",
+      "browser_evaluate",
+      "browser_wait_for",
+      "browser_recording_start",
+      "browser_recording_stop",
     ]);
   });
 
@@ -240,6 +253,7 @@ describe("runtime tool plan", () => {
 
     expect(names).not.toContain("delegate_codex_plugin");
     expect(names).not.toContain("retry_codex_plugin_worker");
+    expect(names).not.toContain("browser_snapshot");
     expect(names).toContain("spawn_agent");
   });
 

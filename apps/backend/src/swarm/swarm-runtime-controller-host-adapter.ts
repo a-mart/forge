@@ -93,6 +93,7 @@ export function createSwarmRuntimeControllerHost(
     createAndPromoteProjectAgent: toolHost.createAndPromoteProjectAgent?.bind(toolHost),
     publishToUser: toolHost.publishToUser.bind(toolHost),
     requestUserChoice: toolHost.requestUserChoice.bind(toolHost),
+    invokeBrowserAutomation: toolHost.invokeBrowserAutomation.bind(toolHost),
     updatePlan: toolHost.updatePlan.bind(toolHost),
     updateWorkGraph: toolHost.updateWorkGraph.bind(toolHost),
     createGoal: toolHost.createGoal.bind(toolHost),

@@ -4,6 +4,7 @@ import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-se
 import { createConfiguredForgePiCompactionAuthResolver } from "../compaction/forge-pi-compaction-auth.js";
 import { createForgePiCompactionExtensionFactory } from "../compaction/forge-pi-compaction-extension.js";
 import { buildCreateProjectAgentTool } from "../agent-creator-tool.js";
+import { buildBrowserAutomationTools } from "../browser-automation/browser-automation-tools.js";
 import { buildCreateSessionTool } from "../agents/create-session-tool.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
@@ -71,6 +72,10 @@ export function buildBaseRuntimeTools(host: SwarmToolHost, descriptor: AgentDesc
 
   if (descriptor.role !== "manager") {
     return swarmTools;
+  }
+
+  if (isBrowserAutomationEligible(descriptor)) {
+    swarmTools.push(...buildBrowserAutomationTools(host, descriptor));
   }
 
   if (descriptor.projectAgent?.capabilities?.includes("create_session")) {
@@ -176,6 +181,17 @@ function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+export function isBrowserAutomationEligible(descriptor: AgentDescriptor): boolean {
+  return descriptor.role === "manager"
+    && typeof descriptor.profileId === "string"
+    && descriptor.profileId.length > 0
+    && descriptor.sessionSurface !== "collab"
+    && descriptor.sessionPurpose === undefined
+    && descriptor.cli === undefined
+    && descriptor.externalThread === undefined
+    && normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID;
 }
 
 const CORTEX_ARCHETYPE_ID = "cortex";

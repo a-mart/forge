@@ -91,6 +91,7 @@ import type {
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
+import { BrowserAutomationService, createBrowserAutomationManagerInvoker } from "./browser-automation/index.js";
 import type {
   AgentDescriptor,
   AgentModelDescriptor,
@@ -153,13 +154,12 @@ type SwarmManagerOptions = {
   compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
   knowledgeV2SettingsService?: KnowledgeV2SettingsService;
   knowledgeService?: KnowledgeService;
+  browserAutomationService?: BrowserAutomationService;
 };
-
 export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
   private readonly defaultModelPreset: SwarmModelPreset;
-
   private readonly descriptors = new Map<string, AgentDescriptor>();
   private readonly profiles = new Map<string, ManagerProfile>();
   private readonly agentDirectory: AgentDirectory;
@@ -222,7 +222,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   readonly promptRegistry: PromptRegistry;
   private readonly codexDirectSidecarCoordinator: CodexDirectSidecarCoordinator;
   private readonly codexPluginDelegationCoordinator: CodexPluginDelegationCoordinator;
-
   private terminalArchiveHooks: {
     suspendProfileTerminals: (profileId: string) => Promise<unknown>;
     restoreProfileTerminals: (profileId: string) => Promise<unknown>;
@@ -232,7 +231,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly knowledgeV2SettingsService: KnowledgeV2SettingsService;
   private readonly knowledgeService: KnowledgeService;
   private readonly captureCascadeCoordinator: CaptureCascadeCoordinator;
-
+  private readonly browserAutomationService: BrowserAutomationService;
+  readonly invokeBrowserAutomation = createBrowserAutomationManagerInvoker({ getDescriptor: (id) => this.descriptors.get(id), getService: () => this.browserAutomationService });
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
     this.now = options?.now ?? nowIso;
@@ -288,7 +288,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.skillMetadataService = foundation.skillMetadataService;
     this.skillFileService = foundation.skillFileService;
     this.secretsEnvService = foundation.secretsEnvService;
-    this.observabilityCoordinator = foundation.observabilityCoordinator;
+    this.observabilityCoordinator = foundation.observabilityCoordinator; this.browserAutomationService = options?.browserAutomationService ?? new BrowserAutomationService({ dataDir: this.config.paths.dataDir, now: this.now });
     this.agentDirectory = this.createAgentDirectory();
     const { compactionRuntimeSettingsProvider, liveCompactionRuntimeSettingsProvider } = foundation;
     const runtimeComposition = this.createRuntimeComposition();

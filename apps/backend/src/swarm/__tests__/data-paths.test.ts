@@ -44,6 +44,8 @@ import {
   getProfilesDir,
   getRootSessionMemoryPath,
   getSessionDir,
+  getSessionBrowserArtifactsDir,
+  getSessionBrowserStatePath,
   getSessionFilePath,
   getSessionFeedbackPath,
   getSessionMemoryPath,
@@ -139,6 +141,12 @@ describe("data-paths", () => {
     );
     expect(getSessionMetaPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "meta.json")
+    );
+    expect(getSessionBrowserStatePath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "browser.json")
+    );
+    expect(getSessionBrowserArtifactsDir(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "artifacts", "browser")
     );
     expect(getSessionPlanPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "plan.json")
