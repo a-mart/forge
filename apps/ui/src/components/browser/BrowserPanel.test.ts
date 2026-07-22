@@ -5,7 +5,19 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserSessionSnapshot, BrowserTabSnapshot } from '@forge/protocol'
 import type { BrowserAutomationHostHandle } from './BrowserAutomationHost'
-import { BrowserPanel } from './BrowserPanel'
+import { getArticlesForContext, initializeHelpContent } from '@/components/help/help-registry'
+
+vi.mock('@/components/help/HelpTrigger', () => ({
+  HelpTrigger: ({ contextKey }: { contextKey: string }) =>
+    createElement('button', {
+      type: 'button',
+      'aria-label': 'Help',
+      'data-testid': 'browser-help-trigger',
+      'data-context-key': contextKey,
+    }),
+}))
+
+const { BrowserPanel } = await import('./BrowserPanel')
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -26,6 +38,34 @@ describe('BrowserPanel', () => {
     expect(container.textContent).toContain('available in the Forge desktop app')
     expect(container.querySelector('button[aria-label="Back"]')).not.toBeNull()
     expect(container.querySelector('input[aria-label="Viewport width"]')).not.toBeNull()
+  })
+
+  it('renders a HelpTrigger that routes to the Managed Browser article', () => {
+    initializeHelpContent()
+    act(() => {
+      root = createRoot(container)
+      root.render(createElement(BrowserPanel, {
+        client: null,
+        sessionAgentId: 'session-1',
+        profileId: 'profile-1',
+        snapshot,
+        host: disconnectedHost,
+        hostRef: createRef<BrowserAutomationHostHandle>(),
+      }))
+    })
+
+    const help = container.querySelector('[data-testid="browser-help-trigger"]')
+    expect(help).not.toBeNull()
+    expect(help?.getAttribute('data-context-key')).toBe('chat.browser')
+
+    const recording = container.querySelector('button[aria-label="Start recording"]')
+    expect(recording).not.toBeNull()
+    expect(
+      Boolean(recording && help && Boolean(recording.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING)),
+    ).toBe(true)
+
+    const routed = getArticlesForContext('chat.browser')
+    expect(routed.map((article) => article.id)).toContain('chat-browser')
   })
 
   it('wires tab, history, reload, zoom, viewport, screenshot, and recording controls', async () => {

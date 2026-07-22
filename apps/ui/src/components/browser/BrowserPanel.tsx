@@ -22,6 +22,7 @@ import {
   type BrowserViewportSetting,
 } from '@forge/protocol'
 import type { BrowserAutomationHostHandle } from './BrowserAutomationHost'
+import { HelpTrigger } from '@/components/help/HelpTrigger'
 import type { ManagerWsClient } from '@/lib/ws-client'
 import { isElectron } from '@/lib/electron-bridge'
 import { cn } from '@/lib/utils'
@@ -115,6 +116,7 @@ export function BrowserPanel({ client, sessionAgentId, profileId, snapshot, host
             : client.startBrowserRecording(sessionAgentId, activeTab.tabId))}>
             <Circle className={cn(activeTab?.recording && 'fill-red-500 text-red-500')} />
           </IconButton>
+          <HelpTrigger contextKey="chat.browser" size="sm" className="size-8" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t px-2 py-1.5 text-xs">
