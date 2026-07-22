@@ -6,9 +6,12 @@ This workspace packages Forge as a standalone desktop application for macOS, Win
 
 The Electron app is a thin wrapper around Forge's existing backend and UI:
 
-- **Main process** (`src/main.ts`) — launches the packaged backend, manages the application window, and handles auto-updates
-- **Preload script** (`src/preload.ts`) — bridges the renderer and main process, exposing a minimal IPC API
-- **Renderer process** — loads the staged UI bundle from `ui/index.html`
+- **Main process** (`src/main.ts`) — launches the packaged backend, manages the application window and auto-updates, owns Managed Browser sessions, and installs the trusted browser IPC handlers
+- **Trusted preload** (`src/preload.ts`) — bridges the Forge renderer to a narrow IPC API, including the Managed Browser host bridge; browser IPC rejects callers other than the trusted Forge renderer
+- **Renderer process** — loads the staged UI bundle from `ui/index.html`, registers the connected Desktop browser host with the Builder backend, and mounts Forge-owned `<webview>` guests for local manager sessions
+- **Guest preload** (`src/browser/guest-preload.ts`) — runs inside sandboxed webviews and reports only real pointer/key input so human control can interrupt an agent action
+
+Managed Browser partitions are persistent and profile-scoped. Webviews enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected-partition registration. The main-process `BrowserAutomationManager` serializes typed operations and uses Chromium's debugger protocol. Semantic locator work uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
 
 ### Packaged layout
 
@@ -21,6 +24,7 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 - **Claude SDK runtime assets** — staged when available for native Claude Agent SDK support; if they are not present in the packaged build, the desktop app falls back to the Pi-proxied Anthropic path
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
 - **SQLite runtime** — `better-sqlite3` remains external to the backend bundle so its Electron-specific native binding can be staged and exercised with Electron-as-Node before packaging
+- **Managed Browser runtime** — main/trusted-preload/guest-preload bundles in `app.asar`, plus `.stage/browser-runtime/playwright-core/` and an exact staged copy of root `THIRD_PARTY_NOTICES.md` under packaged `resources/browser-runtime/`
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
@@ -29,7 +33,11 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 | File | Purpose |
 |------|---------|
 | `src/main.ts` | Main process entry point. Window management, backend lifecycle, IPC handlers |
-| `src/preload.ts` | Renderer bridge. Exposes minimal API for platform detection and window controls |
+| `src/preload.ts` | Trusted renderer bridge, including the narrow Managed Browser IPC facade |
+| `src/browser/browser-automation-manager.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
+| `src/browser/browser-ipc.ts` | Trusted renderer/guest validation and main-process browser IPC handlers |
+| `src/browser/guest-preload.ts` | Sandboxed guest input-only preload |
+| `src/browser/playwright-injected-runtime.ts` | Pinned, fail-closed Playwright semantic-locator runtime extraction |
 | `src/auto-updater.ts` | Auto-update logic using `electron-updater` and GitHub Releases |
 | `src/window-state.ts` | Persists window position, size, maximized state, and fullscreen state across restarts |
 | `src/fix-path.ts` | Ensures PATH is set correctly on macOS when launched from GUI (not terminal) |
@@ -60,6 +68,24 @@ If no matching prebuilt binary is available, preparation falls back to a local s
 
 Changes to UI code hot-reload. Changes to Electron main process code (`src/main.ts`, etc.) require restarting the app.
 
+Focused Managed Browser validation commands:
+
+```bash
+# A fresh worktree needs the shared protocol output used by the Electron bundle
+pnpm --filter @forge/protocol build
+
+# Electron host fixture: launches real Electron/webviews against a local HTTP fixture
+pnpm --dir apps/electron test:browser-fixture
+
+# Builds a minimal unpacked app and verifies app.asar, Playwright runtime, and notices
+pnpm --dir apps/electron test:browser-package
+
+# Verifies maintained third-party attribution and adapted-file mappings
+pnpm exec vitest run scripts/__tests__/browser-third-party-notices.test.mjs
+```
+
+The real fixture requires a graphical Electron environment supported by the current platform. Run the package-content smoke on each release platform when practical; a result on one OS does not validate another platform's packaged layout or media capabilities.
+
 If you only want to run the Electron app without starting the UI dev server separately:
 
 ```bash
@@ -88,9 +114,10 @@ The packaging pipeline:
 5. Stages renderer assets into `apps/electron/.stage/ui/`, then validates that every asset referenced by the staged `index.html` actually exists in the staged `assets/` directory before packaging continues
 6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
-8. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
-9. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
-10. Runs `electron-builder --publish never`
+8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
+9. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
+10. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
+11. Runs `electron-builder --publish never`
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
 

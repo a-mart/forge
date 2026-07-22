@@ -133,7 +133,7 @@ You can pin important messages to preserve them through compaction. Hover over a
 
 ### Workspace Rail and File Browser
 
-On desktop, Forge uses a left activity rail for Chat, Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Chat returns to the current manager/session conversation, including from a selected worker route back to its parent manager thread. Files opens as a left split pane beside the rail with a resizable file tree and file surface pane for editable text files or previews. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions. Files, Source Control, Artifacts/Dashboard, and Schedules switch mutually exclusively so panes do not stack or hide behind each other, while Terminal stays independent and persistent.
+On desktop, Forge uses a left activity rail for Chat, Browser, Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Chat returns to the current manager/session conversation, including from a selected worker route back to its parent manager thread. Browser opens Forge-owned webviews for the selected local manager. Files opens as a left split pane beside the rail with a resizable file tree and file surface pane for editable text files or previews. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions. Browser, Files, Source Control, Artifacts/Dashboard, and Schedules switch mutually exclusively so panes do not stack or hide behind each other, while Terminal stays independent and persistent.
 
 Files uses tabs. Single-click a file to open or activate one replaceable italic preview tab; opening another file by single click replaces that preview if it is clean. Double-click to make a tab sticky. A preview also becomes sticky on its first edit, and newly created files open as sticky tabs. Sticky tabs coexist, so you can keep several files open while still using a separate preview tab.
 
@@ -148,6 +148,16 @@ While the Files surface remains mounted, Forge remembers tabs, the active tab, p
 When Source Control has a linked worktree selected, that worktree scopes Files browsing and operations without changing the chat session's working directory. Successful create, rename, save, and delete operations refresh Files metadata/tree state and Source Control; create opens the new file as sticky, rename remaps affected open-tab paths, and delete removes affected tabs. Mobile content editing remains read-only, and desktop item context-menu actions may not have the same discoverability on mobile. In the desktop app, you can still open files in your external editor or use **Show in folder** to reveal a file in Finder or File Explorer. The Files panel also has a separate scaffold action that can add a starter `.forge/` tree and README without overwriting existing files. Use the Chat rail item to return to the current manager/session chat, including from a worker route to the parent manager thread.
 
 > **Editor preference:** By default, external editor links open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
+
+### Managed Browser
+
+Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron webviews for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
+
+Select **Browser** in the desktop rail, then open a tab or enter an HTTP(S) address. The toolbar provides tab switching, back/forward, reload/hard reload, zoom, transient screenshot preview, visible-tab recording, and fill/freeform/device viewport sizes. Normal Builder managers can operate the same tabs with typed status, navigation, snapshot, interaction, evaluation, wait, and recording tools. If you click or type in the page during an agent action, Forge gives you control and interrupts that action instead of racing your input.
+
+A connected Forge Desktop host is required. In an ordinary web browser, the Browser workspace reports **Browser host unavailable** and does not attempt local browser IPC. A normal Builder manager reached through Remote Projects may still receive the tools, but calls return `unavailable-host` because the viewing machine's Desktop bridge is not forwarded to the remote backend. Collaboration channels do not receive Managed Browser access. There is no Managed Browser environment variable or Settings → Skills toggle.
+
+Tab metadata persists with the session; stopped recordings become session artifacts under `artifacts/browser/`, while screenshots remain transient. Cookies and site storage use a persistent profile-scoped Electron partition shared by sessions in that Forge profile, and can outlive session deletion. See [Managed Browser](BROWSER_AUTOMATION.md) for security, lifecycle, and comparison details.
 
 ### Source Control Workspace
 
@@ -523,12 +533,15 @@ You can upload custom notification sounds if you want to distinguish between ses
 
 ### Skills
 
-Go to **Settings → Skills** to configure agent capabilities:
+Go to **Settings → Skills** to configure optional skill-backed agent capabilities:
 
 - **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
+- **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is not the Forge Desktop Managed Browser.
 - **Chrome CDP** — If you're running Chrome 146+, you can enable Chrome DevTools Protocol access. This lets agents connect to tabs you have open in your browser, with access to your authenticated sessions.
 - **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills, profile/project skills, or repository `.forge/skills` skills as needed.
 - **Skill sharing** — Share a user-created global or project skill to generate a temporary bearer link from the skill share service. Recipients can open the link or a `forge://skill-import` deep link, but Forge always shows a preview first and never auto-installs. Conflicts default to reject; replacing an existing directory or installing an override requires explicit confirmation. Built-in and repository skills are not shareable in v1.
+
+Managed Browser is not configured here: it has no Skills toggle or environment variable and requires a connected Forge Desktop host.
 
 > **Chrome CDP tip:** Always set an allowlist of URLs. Without it, agents see every open tab (all 168 of them) and things get slow. And they will comment on your tab count.
 

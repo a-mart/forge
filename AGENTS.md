@@ -43,6 +43,7 @@ package manager version.
 | Local validation tiers and reports | [`docs/QUALITY.md`](docs/QUALITY.md) |
 | Collaboration | [`docs/collaboration/`](docs/collaboration/) |
 | Remote Projects | [`docs/collaboration/REMOTE_PROJECTS.md`](docs/collaboration/REMOTE_PROJECTS.md) |
+| Managed Browser | [`docs/BROWSER_AUTOMATION.md`](docs/BROWSER_AUTOMATION.md) |
 | Model catalog and model additions | [`docs/MODEL_CATALOG.md`](docs/MODEL_CATALOG.md) and [`docs/ADDING_MODELS.md`](docs/ADDING_MODELS.md) |
 | Specialists | [`docs/SPECIALISTS.md`](docs/SPECIALISTS.md) |
 | Project resources | [`docs/PROJECT_RESOURCES.md`](docs/PROJECT_RESOURCES.md) |

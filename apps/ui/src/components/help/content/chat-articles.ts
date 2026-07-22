@@ -2,6 +2,7 @@ import type { HelpArticle } from '../help-types'
 
 import chatArtifactsContent from './articles/chat/chat-artifacts.md?raw'
 import chatAttachmentsContent from './articles/chat/chat-attachments.md?raw'
+import chatBrowserContent from './articles/chat/chat-browser.md?raw'
 import chatCompactionContent from './articles/chat/chat-compaction.md?raw'
 import chatFeedbackContent from './articles/chat/chat-feedback.md?raw'
 import chatFilesContent from './articles/chat/chat-files.md?raw'
@@ -22,7 +23,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-overview',
     title: 'Chat Interface',
     category: 'chat',
-    summary: 'How the chat interface works, including streaming responses, workspace rail surfaces, and stopping agents.',
+    summary: 'How chat works, including streaming responses, Managed Browser, workspace rail surfaces, and stopping agents.',
     content: chatOverviewContent,
     keywords: [
       'chat',
@@ -49,6 +50,8 @@ export const chatArticles: HelpArticle[] = [
       'resume all',
       'remote projects',
       'active origin',
+      'managed browser',
+      'browser rail',
       'author chip',
       'viewer presence',
     ],
@@ -57,11 +60,38 @@ export const chatArticles: HelpArticle[] = [
       'chat-sending',
       'chat-sidebar',
       'chat-compaction',
+      'chat-browser',
       'chat-files',
       'chat-source-control',
       'chat-restart-recovery',
     ],
     contextKeys: ['chat.main'],
+  },
+  {
+    id: 'chat-browser',
+    title: 'Managed Browser',
+    category: 'chat',
+    summary: 'How to use Forge Desktop managed tabs with shared human and agent control.',
+    content: chatBrowserContent,
+    keywords: [
+      'browser',
+      'managed browser',
+      'desktop',
+      'webview',
+      'tabs',
+      'screenshot',
+      'recording',
+      'viewport',
+      'agent control',
+      'human control',
+      'unavailable host',
+      'agent-browser',
+      'Chrome CDP',
+      'remote projects',
+      'collaboration',
+    ],
+    relatedIds: ['chat-overview', 'settings-collaboration', 'settings-skills'],
+    contextKeys: ['chat.browser', 'chat.main'],
   },
   {
     id: 'chat-sending',

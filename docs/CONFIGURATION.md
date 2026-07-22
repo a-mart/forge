@@ -33,6 +33,10 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 
 Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
 
+### Managed Browser
+
+Managed Browser has no environment variable and no Settings → Skills toggle. It is a Forge Desktop host capability for normal local Builder managers, not a Skill. Ordinary web clients have no local browser IPC host, and that IPC is not forwarded to Remote Projects or Collaboration channels. See [Managed Browser](BROWSER_AUTOMATION.md).
+
 ### Skill Sharing
 
 | Variable | Default | Description |
@@ -337,12 +341,14 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │       ├── meta.json
 │       ├── feedback.jsonl
 │       ├── pinned-messages.json
+│       ├── browser.json                    # Managed Browser tabs/action metadata
 │       ├── plan.json
 │       ├── plan-history.ndjson
 │       ├── plan-usage.ndjson
 │       ├── goal.json
 │       ├── goal-history.ndjson
 │       ├── artifacts/                     # Session non-repo artifacts/exports
+│       │   └── browser/                    # Completed Managed Browser recordings
 │       ├── context/prompt.md               # Collaboration additional instructions
 │       ├── cursor-sdk-state/<sessionId>/   # Manager Cursor SDK state root
 │       ├── reference/                     # Collaboration reference docs
@@ -366,6 +372,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 ├── skills/<skillName>/SKILL.md             # User-created global Forge skills
 └── uploads/                                # Uploaded attachments
 ```
+
+`browser.json` is per session, while successfully stopped recordings live under that session's `artifacts/browser/`. Screenshots are transient and are not written there. Cookies and site storage instead live in a persistent, profile-scoped Electron partition shared by sessions in that Forge profile; it is not represented in the server data tree above and can outlive session deletion. There is currently no shipped **Clear managed browser data** control.
 
 `shared/config/secrets.json` stores sensitive values as ordinary JSON; Forge does not application-encrypt that file at rest. Protect the data directory and every backup with appropriate operating-system or storage access controls, and handle copied `secrets.json` files as secrets.
 

@@ -1,4 +1,6 @@
-Skills give agents extra capabilities like web search, image generation, and browser automation. The Skills page lets you browse installed skills, inspect their files, configure API keys and settings, and share or import user-created skills from links.
+Skills give agents reusable instructions and optional capabilities such as web search, image generation, the separate `agent-browser` CLI workflow, and Chrome CDP. The Skills page lets you browse installed skills, inspect their files, configure API keys and settings, and share or import user-created skills from links.
+
+Managed Browser is different: it is a Forge Desktop host capability for normal local Builder managers, not a Skill. It has no Skills toggle or environment variable, controls Forge-owned Electron webviews, and never attaches to your everyday Chrome profile.
 
 ## Scope and skill browser
 
@@ -16,7 +18,7 @@ To configure a variable, paste the value into the input field and click **Save**
 
 ## Dedicated skill panels
 
-Skills like Chrome CDP have dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls.
+Skills like Chrome CDP have dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls. The `agent-browser` Skill instead documents its external CLI prerequisites and browser lifecycle. Neither is an alias or configuration surface for Managed Browser.
 
 ## How skills load
 
