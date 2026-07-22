@@ -20,7 +20,7 @@ function tab(tabId: string, sessionAgentId: string, profileId: string): BrowserT
 }
 function session(sessionAgentId: string, profileId: string, hostedTab: BrowserTabSnapshot): BrowserSessionSnapshot {
   const now = new Date(0).toISOString()
-  return { schemaVersion: 1, sessionAgentId, profileId, tabs: [hostedTab], activeTabId: hostedTab.tabId, defaultTabId: hostedTab.tabId, panelVisible: false, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
+  return { schemaVersion: 1, sessionAgentId, profileId, hostingState: 'hosted', tabs: [hostedTab], activeTabId: hostedTab.tabId, defaultTabId: hostedTab.tabId, panelVisible: false, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
 }
 
 describe('BrowserAutomationHost', () => {
@@ -74,5 +74,104 @@ describe('BrowserAutomationHost', () => {
     const state = createInitialManagerWsState('session-1')
     act(() => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client: null, state, selectedSessionAgentId: 'session-1', panelVisible: true })) })
     expect(container.innerHTML).toBe('')
+  })
+
+  it('unhosts webviews when hostingState becomes unhosted and remounts after restore', async () => {
+    const unregisterWebview = vi.fn(async () => undefined)
+    window.electronBridge = {
+      backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
+      browserAutomation: {
+        capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
+        getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
+        registerWebview: vi.fn(), unregisterWebview, setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        invoke: vi.fn(), onStateChanged: vi.fn(() => vi.fn()),
+      },
+    }
+    const hosted = session('session-1', 'profile-1', tab('tab-1', 'session-1', 'profile-1'))
+    const state = { ...createInitialManagerWsState('session-1'), browserSessions: { 'session-1': hosted } }
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', panelVisible: false }))
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(container.querySelectorAll('webview')).toHaveLength(1)
+
+    const unhostedState = {
+      ...state,
+      browserSessions: { 'session-1': { ...hosted, hostingState: 'unhosted' as const } },
+    }
+    await act(async () => {
+      root!.render(createElement(BrowserAutomationHost, { client, state: unhostedState, selectedSessionAgentId: 'session-1', panelVisible: false }))
+      await Promise.resolve()
+    })
+    expect(container.querySelectorAll('webview')).toHaveLength(0)
+
+    const restoredState = {
+      ...state,
+      browserSessions: { 'session-1': { ...hosted, hostingState: 'hosted' as const, tabs: [{ ...hosted.tabs[0]!, lifecycle: 'restoring' as const }] } },
+    }
+    await act(async () => {
+      root!.render(createElement(BrowserAutomationHost, { client, state: restoredState, selectedSessionAgentId: 'session-1', panelVisible: false }))
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(container.querySelectorAll('webview')).toHaveLength(1)
+  })
+
+  it('reports runtime tab updates with baseRevision against the latest acknowledged session', async () => {
+    const reportBrowserHostState = vi.fn()
+    let stateChanged: ((tab: BrowserTabSnapshot) => void) | null = null
+    window.electronBridge = {
+      backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
+      browserAutomation: {
+        capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
+        getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
+        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        invoke: vi.fn(), onStateChanged: vi.fn((listener) => { stateChanged = listener; return () => undefined }),
+      },
+    }
+    const hosted = session('session-1', 'profile-1', tab('tab-1', 'session-1', 'profile-1'))
+    const state = {
+      ...createInitialManagerWsState('session-1'),
+      browserSessions: { 'session-1': hosted },
+      browserHost: {
+        connected: true,
+        hostId: 'host-test',
+        hostGeneration: 1,
+        focused: false,
+        capabilities: null,
+        connectedAt: new Date(0).toISOString(),
+      },
+    }
+    const client = {
+      registerBrowserAutomationHost: vi.fn((registration: BrowserHostRegistration) => {
+        state.browserHost.hostId = registration.hostId
+        return vi.fn()
+      }),
+      reportBrowserHostState,
+      setBrowserHostFocused: vi.fn(),
+      getState: () => state,
+    } as never
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', panelVisible: false }))
+      await Promise.resolve(); await Promise.resolve()
+    })
+
+    const updated = { ...hosted.tabs[0]!, title: 'Updated', loading: true }
+    await act(async () => {
+      stateChanged?.(updated)
+      await Promise.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(reportBrowserHostState).toHaveBeenCalledWith([{
+      sessionAgentId: 'session-1',
+      profileId: 'profile-1',
+      baseRevision: 1,
+      tabs: [updated],
+    }])
   })
 })

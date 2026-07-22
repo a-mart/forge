@@ -16,7 +16,7 @@ afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.r
 
 const now = new Date(0).toISOString()
 const tab: BrowserTabSnapshot = { tabId: 'tab-1', sessionAgentId: 'session-1', profileId: 'profile-1', url: 'https://example.com', title: 'Example', lifecycle: 'ready', loading: false, live: true, canGoBack: true, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: { x: 20, y: 30, phase: 'move', sequence: 1, createdAt: now }, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, error: null, createdAt: now, updatedAt: now }
-const snapshot: BrowserSessionSnapshot = { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', tabs: [tab], activeTabId: 'tab-1', defaultTabId: 'tab-1', panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
+const snapshot: BrowserSessionSnapshot = { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [tab], activeTabId: 'tab-1', defaultTabId: 'tab-1', panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
 const disconnectedHost = { connected: false, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }
 
 describe('BrowserPanel', () => {

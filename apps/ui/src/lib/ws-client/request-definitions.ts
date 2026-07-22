@@ -73,7 +73,16 @@ export function buildBrowserHostResponseCommand(response: Extract<ClientCommand,
   return { type: 'browser_host_response', response }
 }
 
-export function buildBrowserHostStateReportCommand(hostId: string, hostGeneration: number, sessions: BrowserSessionSnapshot[]): ClientCommand {
+export function buildBrowserHostStateReportCommand(
+  hostId: string,
+  hostGeneration: number,
+  sessions: Array<{
+    sessionAgentId: string
+    profileId: string
+    baseRevision: number
+    tabs: BrowserSessionSnapshot['tabs']
+  }>,
+): ClientCommand {
   return { type: 'browser_host_state_report', hostId, hostGeneration, sessions }
 }
 

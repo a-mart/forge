@@ -312,6 +312,33 @@ describe('BrowserAutomationManager', () => {
     expect(webview.debugger.isAttached()).toBe(false)
   })
 
+  it('returns created:true on the first open and leaves host fields unset for status', async () => {
+    const { manager, webview } = await setup()
+    manager.setTabPresentation('tab-1', true)
+    const first = await manager.execute(request('open', { show: true, reuseExistingTab: true }))
+    expect(first).toMatchObject({ ok: true, result: { created: true, panelRevealRequested: true } })
+    const second = await manager.execute(request('open', { show: false, reuseExistingTab: true }))
+    expect(second).toMatchObject({ ok: true, result: { created: false, panelRevealRequested: false } })
+    const status = await manager.execute(request('status', {}, 'tab-1'))
+    expect(status).toMatchObject({
+      ok: true,
+      result: {
+        available: true,
+        host: {
+          connected: false,
+          hostId: null,
+          hostGeneration: null,
+          focused: false,
+          capabilities: null,
+          connectedAt: null,
+        },
+        panelVisible: true,
+        selectedTab: expect.objectContaining({ tabId: 'tab-1', live: true }),
+      },
+    })
+    expect(webview.debugger.isAttached()).toBe(true)
+  })
+
   it('coordinates recording capture and constrains the final artifact', async () => {
     const { manager, root } = await setup()
     const artifactDirectory = path.join(root, 'profiles', 'profile-1', 'artifacts', 'browser')

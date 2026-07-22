@@ -9,6 +9,7 @@ import {
   type BrowserAutomationResultByOperation,
   type BrowserHostConnectionSnapshot,
   type BrowserHostRegistration,
+  type BrowserHostSessionStateReport,
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
@@ -193,6 +194,12 @@ export class BrowserAutomationService {
     }
 
     this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation]);
+    if (operation === "status" && response.ok) {
+      const statusResult = response.result as BrowserAutomationResultByOperation["status"];
+      statusResult.host = this.broker.getConnectionSnapshot();
+      statusResult.available = statusResult.host.connected;
+      statusResult.panelVisible = snapshot.panelVisible;
+    }
     const completedMetadata = extractSafeCompletionMetadata(response.result);
     await this.completeAction(snapshot, actionId, "succeeded", {
       ...completedMetadata,
@@ -238,35 +245,96 @@ export class BrowserAutomationService {
     connectionId: string,
     hostId: string,
     hostGeneration: number,
-    reportedSessions: BrowserSessionSnapshot[],
+    reportedSessions: BrowserHostSessionStateReport[],
   ): Promise<boolean> {
     if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration)) return false;
     for (const reported of reportedSessions) {
-      let normalized: BrowserSessionSnapshot;
+      if (typeof reported.sessionAgentId !== "string" || typeof reported.profileId !== "string") return false;
+      if (!Number.isInteger(reported.baseRevision) || reported.baseRevision < 0) return false;
+      if (!Array.isArray(reported.tabs)) return false;
+
+      let normalizedTabs: BrowserTabSnapshot[];
       try {
-        normalized = this.store.normalize(reported);
+        const envelope = this.store.normalize({
+          ...this.store.createEmpty(reported.profileId, reported.sessionAgentId),
+          tabs: reported.tabs,
+          revision: reported.baseRevision,
+        });
+        normalizedTabs = envelope.tabs;
       } catch (error) {
         this.logDebug("browser-automation:invalid-host-state-report", {
           error: error instanceof Error ? error.message : String(error),
         });
         return false;
       }
-      if (normalized.tabs.some((tab) => {
+      if (normalizedTabs.some((tab) => {
         const owner = this.tabOwners.get(tab.tabId);
-        return owner !== undefined && owner !== normalized.sessionAgentId;
+        return owner !== undefined && owner !== reported.sessionAgentId;
       })) return false;
-      const canonical = await this.getSessionSnapshot(normalized.profileId, normalized.sessionAgentId);
-      for (const tab of canonical.tabs) {
-        if (this.tabOwners.get(tab.tabId) === canonical.sessionAgentId) this.tabOwners.delete(tab.tabId);
+
+      const canonical = await this.getSessionSnapshot(reported.profileId, reported.sessionAgentId);
+      if (canonical.hostingState === "removed") return false;
+      if (reported.baseRevision !== canonical.revision) {
+        this.logDebug("browser-automation:stale-host-state-report", {
+          sessionAgentId: reported.sessionAgentId,
+          baseRevision: reported.baseRevision,
+          revision: canonical.revision,
+        });
+        return false;
       }
-      canonical.tabs = normalized.tabs.map((tab) => ({ ...tab }));
-      canonical.activeTabId = normalized.activeTabId;
-      canonical.defaultTabId = normalized.defaultTabId;
-      canonical.panelVisible = normalized.panelVisible;
-      this.indexTabs(canonical);
-      await this.persistChanged(canonical, "host-report");
+
+      let changed = false;
+      for (const reportedTab of normalizedTabs) {
+        const index = canonical.tabs.findIndex((tab) => tab.tabId === reportedTab.tabId);
+        if (index < 0) continue;
+        const merged = mergeHostOwnedTabFields(canonical.tabs[index]!, reportedTab);
+        if (merged !== canonical.tabs[index]) {
+          canonical.tabs[index] = merged;
+          changed = true;
+        }
+      }
+      if (changed) await this.persistChanged(canonical, "host-report");
     }
     return true;
+  }
+
+  async activateTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+    const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    const tab = snapshot.tabs.find((candidate) => candidate.tabId === tabId && candidate.lifecycle !== "closed");
+    if (!tab) throw new Error("Browser tab was not found in the selected Forge session.");
+    snapshot.activeTabId = tabId;
+    snapshot.defaultTabId = tabId;
+    snapshot.panelVisible = true;
+    await this.persistChanged(snapshot, "human-command");
+    return cloneSnapshot(snapshot);
+  }
+
+  async closeTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+    const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    const existing = snapshot.tabs.find((candidate) => candidate.tabId === tabId);
+    if (!existing || existing.lifecycle === "closed") throw new Error("Browser tab was not found in the selected Forge session.");
+    snapshot.tabs = snapshot.tabs.filter((candidate) => candidate.tabId !== tabId);
+    this.tabOwners.delete(tabId);
+    if (snapshot.activeTabId === tabId) snapshot.activeTabId = snapshot.tabs[0]?.tabId ?? null;
+    if (snapshot.defaultTabId === tabId) snapshot.defaultTabId = snapshot.activeTabId;
+    await this.persistChanged(snapshot, "human-command");
+    return cloneSnapshot(snapshot);
+  }
+
+  async setTabSelection(
+    profileId: string,
+    sessionAgentId: string,
+    activeTabId: string | null,
+    defaultTabId: string | null,
+  ): Promise<BrowserSessionSnapshot> {
+    const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    const tabIds = new Set(snapshot.tabs.map((tab) => tab.tabId));
+    if (activeTabId !== null && !tabIds.has(activeTabId)) throw new Error("Active browser tab is missing");
+    if (defaultTabId !== null && !tabIds.has(defaultTabId)) throw new Error("Default browser tab is missing");
+    snapshot.activeTabId = activeTabId;
+    snapshot.defaultTabId = defaultTabId;
+    await this.persistChanged(snapshot, "human-command");
+    return cloneSnapshot(snapshot);
   }
 
   cancelSession(sessionAgentId: string): number {
@@ -276,6 +344,7 @@ export class BrowserAutomationService {
   async archiveSession(profileId: string, sessionAgentId: string): Promise<BrowserSessionSnapshot> {
     this.broker.cancelSession(sessionAgentId, "request-cancelled", "Browser session was archived.");
     const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    snapshot.hostingState = "unhosted";
     snapshot.panelVisible = false;
     snapshot.tabs = snapshot.tabs.map((tab) => ({
       ...tab,
@@ -290,6 +359,7 @@ export class BrowserAutomationService {
 
   async restoreSession(profileId: string, sessionAgentId: string): Promise<BrowserSessionSnapshot> {
     const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    snapshot.hostingState = "hosted";
     snapshot.tabs = snapshot.tabs.map((tab) => ({
       ...tab,
       live: false,
@@ -304,9 +374,32 @@ export class BrowserAutomationService {
   async deleteSession(profileId: string, sessionAgentId: string): Promise<void> {
     this.broker.cancelSession(sessionAgentId, "request-cancelled", "Browser session was deleted.");
     const key = sessionKey(profileId, sessionAgentId);
-    const snapshot = this.sessions.get(key);
+    let snapshot = this.sessions.get(key);
+    if (!snapshot) {
+      try {
+        snapshot = await this.store.load(profileId, sessionAgentId);
+      } catch {
+        snapshot = undefined;
+      }
+    }
     if (snapshot) {
       for (const tab of snapshot.tabs) this.tabOwners.delete(tab.tabId);
+      const hadState = snapshot.tabs.length > 0 || snapshot.revision > 0 || snapshot.recentActions.length > 0;
+      if (hadState) {
+        snapshot.hostingState = "removed";
+        snapshot.panelVisible = false;
+        snapshot.tabs = snapshot.tabs.map((tab) => ({
+          ...tab,
+          live: false,
+          lifecycle: "closed" as const,
+          controller: "none" as const,
+          recording: null,
+          updatedAt: this.now(),
+        }));
+        snapshot.revision += 1;
+        snapshot.updatedAt = this.now();
+        this.onSessionChanged(cloneSnapshot(snapshot), "lifecycle");
+      }
     }
     this.sessions.delete(key);
     this.sessionLoadPromises.delete(key);
@@ -343,12 +436,18 @@ export class BrowserAutomationService {
     snapshot: BrowserSessionSnapshot,
     operation: BrowserAutomationOperation,
     result: BrowserAutomationResultByOperation[BrowserAutomationOperation],
+    options: { activate?: boolean } = {},
   ): void {
     if (operation === "open") {
       const tab = (result as BrowserAutomationResultByOperation["open"]).tab;
       this.upsertTab(snapshot, tab);
-      snapshot.activeTabId = tab.tabId;
-      snapshot.defaultTabId = tab.tabId;
+      if (options.activate !== false) {
+        snapshot.activeTabId = tab.tabId;
+        snapshot.defaultTabId = tab.tabId;
+      } else {
+        snapshot.defaultTabId ??= tab.tabId;
+        snapshot.activeTabId ??= tab.tabId;
+      }
       return;
     }
     if (operation === "navigate") this.upsertTab(snapshot, (result as BrowserAutomationResultByOperation["navigate"]).tab);
@@ -552,4 +651,34 @@ function sessionKey(profileId: string, sessionAgentId: string): string {
 
 function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
   return structuredClone(snapshot);
+}
+
+/** Host-owned physical runtime fields only; identity/membership stay backend-owned. */
+function mergeHostOwnedTabFields(canonical: BrowserTabSnapshot, reported: BrowserTabSnapshot): BrowserTabSnapshot {
+  if (
+    reported.tabId !== canonical.tabId
+    || reported.sessionAgentId !== canonical.sessionAgentId
+    || reported.profileId !== canonical.profileId
+  ) {
+    return canonical;
+  }
+  const merged: BrowserTabSnapshot = {
+    ...canonical,
+    url: reported.url,
+    title: reported.title,
+    lifecycle: reported.lifecycle,
+    loading: reported.loading,
+    live: reported.live,
+    canGoBack: reported.canGoBack,
+    canGoForward: reported.canGoForward,
+    zoomFactor: reported.zoomFactor,
+    controller: reported.controller,
+    agentCursor: reported.agentCursor,
+    recording: reported.recording,
+    viewportSetting: reported.viewportSetting,
+    renderedViewport: reported.renderedViewport,
+    error: reported.error,
+    updatedAt: reported.updatedAt,
+  };
+  return JSON.stringify(merged) === JSON.stringify(canonical) ? canonical : merged;
 }

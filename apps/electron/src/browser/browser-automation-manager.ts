@@ -31,7 +31,7 @@ import {
 } from '@forge/protocol'
 import { BrowserHostError, asBrowserHostError } from './browser-errors.js'
 import { makeBrowserKeySequence } from './browser-keyboard.js'
-import { playwrightInjectedRuntimeInstallExpression, PLAYWRIGHT_CORE_VERSION } from './playwright-injected-runtime.js'
+import { playwrightInjectedRuntimeInstallExpression } from './playwright-injected-runtime.js'
 import { BROWSER_GUEST_HUMAN_INPUT_CHANNEL, BROWSER_IPC } from './browser-bridge-contract.js'
 
 export const BROWSER_RECORDING_FRAME_CHANNEL = 'forge:browser-recording-frame'
@@ -121,6 +121,7 @@ interface TabRuntime {
   humanInputListener: (event: unknown, signal?: unknown) => void
   navigationWait: { interrupt(error: BrowserHostError): void } | null
   destroyed: boolean
+  openedOnce: boolean
 }
 
 interface ActiveRecording {
@@ -235,6 +236,7 @@ export class BrowserAutomationManager {
       humanInputListener: (_event, signal) => this.handleGuestInput(registration.tab.tabId, signal),
       navigationWait: null,
       destroyed: false,
+      openedOnce: false,
     }
     this.tabs.set(runtime.snapshot.tabId, runtime)
     this.attachTabListeners(runtime)
@@ -401,23 +403,15 @@ export class BrowserAutomationManager {
   private status(request: BrowserAutomationRequest & { operation: 'status' }): BrowserAutomationResultByOperation['status'] {
     const selected = request.tabId ? this.tabs.get(request.tabId) : undefined
     return {
+      // Host connection fields are broker-authoritative; Electron only reports physical tab/panel data.
       available: !this.destroyed,
       host: {
-        connected: !this.destroyed,
-        hostId: request.hostId,
-        hostGeneration: request.hostGeneration,
-        focused: true,
-        capabilities: {
-          supportedOperations: [...BROWSER_AUTOMATION_OPERATIONS],
-          electronVersion: process.versions.electron ?? 'unknown',
-          chromiumVersion: process.versions.chrome ?? 'unknown',
-          playwrightVersion: PLAYWRIGHT_CORE_VERSION,
-          maxResponseBytes: 8 * 1_024 * 1_024,
-          supportsSandboxedWebviews: true,
-          supportsCapturePage: true,
-          supportsRecording: typeof process.versions.electron === 'string',
-        },
-        connectedAt: new Date(this.now()).toISOString(),
+        connected: false,
+        hostId: null,
+        hostGeneration: null,
+        focused: false,
+        capabilities: null,
+        connectedAt: null,
       },
       panelVisible: selected?.visible ?? false,
       selectedTab: selected ? this.syncSnapshot(selected) : null,
@@ -425,8 +419,10 @@ export class BrowserAutomationManager {
   }
 
   private async open(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'open' }>['input']): Promise<BrowserAutomationResultByOperation['open']> {
+    const created = !tab.openedOnce
+    tab.openedOnce = true
     if (input.url) await this.loadAndWait(tab, normalizeBrowserUrl(input.url), 'load', 15_000)
-    return { tab: this.syncSnapshot(tab), created: false, panelRevealRequested: input.show }
+    return { tab: this.syncSnapshot(tab), created, panelRevealRequested: input.show }
   }
 
   private async navigate(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'navigate' }>['input']): Promise<BrowserAutomationResultByOperation['navigate']> {

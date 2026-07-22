@@ -149,18 +149,32 @@ async function handleTabCommand(
 
   try {
     if (command.type === "browser_tab_open") {
+      const before = await service.getSessionSnapshot(profileId, command.sessionAgentId);
+      const previousActive = before.activeTabId;
+      const previousDefault = before.defaultTabId;
       const result = await service.invoke(command.sessionAgentId, profileId, "open", {
         ...(command.url ? { url: command.url } : {}),
         show: false,
         reuseExistingTab: false,
       });
       if (!result.ok) throw new BrowserCommandFailure(result.error.code, result.error.message);
-      const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
       if (command.activate === false) {
-        // The host reports the true active tab on its next state update. The
-        // create response still contains the complete canonical tab inventory.
+        await service.setTabSelection(profileId, command.sessionAgentId, previousActive, previousDefault);
       }
+      const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
       sendSuccess(options, command, snapshot);
+      return;
+    }
+
+    if (command.type === "browser_tab_activate") {
+      const next = await service.activateTab(profileId, command.sessionAgentId, command.tabId);
+      sendSuccess(options, command, next);
+      return;
+    }
+
+    if (command.type === "browser_tab_close") {
+      const next = await service.closeTab(profileId, command.sessionAgentId, command.tabId);
+      sendSuccess(options, command, next);
       return;
     }
 
@@ -174,23 +188,7 @@ async function handleTabCommand(
       if (!result.ok) throw new BrowserCommandFailure(result.error.code, result.error.message);
       const next = await service.getSessionSnapshot(profileId, command.sessionAgentId);
       sendSuccess(options, command, next);
-      return;
     }
-
-    const reported = cloneSnapshot(snapshot);
-    if (command.type === "browser_tab_activate") {
-      reported.activeTabId = command.tabId;
-      reported.defaultTabId = command.tabId;
-      reported.panelVisible = true;
-    } else {
-      reported.tabs = reported.tabs.filter((candidate) => candidate.tabId !== command.tabId);
-      if (reported.activeTabId === command.tabId) reported.activeTabId = reported.tabs[0]?.tabId ?? null;
-      if (reported.defaultTabId === command.tabId) reported.defaultTabId = reported.activeTabId;
-    }
-    const accepted = await service.reportHostState(connectionId, host.hostId, host.hostGeneration, [reported]);
-    if (!accepted) throw new BrowserCommandFailure("STALE_HOST_GENERATION", "Browser host generation changed before the command completed.");
-    const next = await service.getSessionSnapshot(profileId, command.sessionAgentId);
-    sendSuccess(options, command, next);
   } catch (error) {
     const code = error instanceof BrowserCommandFailure ? error.code : "FAILED";
     sendFailure(options, command, code, error instanceof Error ? error.message : String(error));

@@ -6,7 +6,7 @@ import {
   BROWSER_VIEWPORT_PRESETS,
   type BrowserAutomationResponse,
   type BrowserHostCapabilities,
-  type BrowserSessionSnapshot,
+  type BrowserHostStateReportCommand,
   type BrowserViewportSetting,
 } from "@forge/protocol";
 import type { ClientCommandCandidate, ParsedClientCommand } from "./command-parse-helpers.js";
@@ -53,13 +53,23 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
       case "browser_host_response":
         return ok({ type: command.type, response: parseResponseEnvelope(value.response) });
       case "browser_host_state_report": {
-        const sessions = array(value.sessions, "sessions", 500) as BrowserSessionSnapshot[];
-        sessions.forEach((session, index) => record(session, `sessions[${index}]`));
+        const sessions = array(value.sessions, "sessions", 500);
+        const parsed = sessions.map((entry, index) => {
+          const session = record(entry, `sessions[${index}]`);
+          const tabs = array(session.tabs, `sessions[${index}].tabs`, 100);
+          tabs.forEach((tab, tabIndex) => record(tab, `sessions[${index}].tabs[${tabIndex}]`));
+          return {
+            sessionAgentId: identifier(session.sessionAgentId, `sessions[${index}].sessionAgentId`),
+            profileId: identifier(session.profileId, `sessions[${index}].profileId`),
+            baseRevision: integer(session.baseRevision, `sessions[${index}].baseRevision`, 0, Number.MAX_SAFE_INTEGER),
+            tabs: tabs as BrowserHostStateReportCommand["sessions"][number]["tabs"],
+          };
+        });
         return ok({
           type: command.type,
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
-          sessions,
+          sessions: parsed,
         });
       }
       case "browser_tab_open": {

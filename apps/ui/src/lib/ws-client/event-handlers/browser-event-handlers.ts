@@ -48,6 +48,12 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
       return true
     }
     case 'browser_session_changed': {
+      if (event.snapshot.hostingState === 'removed') {
+        const next = { ...context.state.browserSessions }
+        delete next[event.snapshot.sessionAgentId]
+        context.updateState({ browserSessions: next, browserMetadataStale: false })
+        return true
+      }
       const previous = context.state.browserSessions[event.snapshot.sessionAgentId]
       if (previous && event.snapshot.revision <= previous.revision) return true
       context.updateState({

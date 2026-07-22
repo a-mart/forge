@@ -314,7 +314,12 @@ export class ManagerWsClient {
     }
   }
 
-  reportBrowserHostState(sessions: BrowserSessionSnapshot[]): void {
+  reportBrowserHostState(sessions: Array<{
+    sessionAgentId: string
+    profileId: string
+    baseRevision: number
+    tabs: BrowserSessionSnapshot['tabs']
+  }>): void {
     const registration = this.browserHostRegistration
     const generation = this.state.browserHost.hostGeneration
     if (!registration || generation === null || !isSocketOpen(this.socket)) return

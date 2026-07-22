@@ -221,6 +221,7 @@ describe("BrowserAutomationService", () => {
     state.tabs = [tab()];
     state.defaultTabId = "tab-1";
     state.activeTabId = "tab-1";
+    state.revision = 3;
     state.recentActions = [{
       id: "action-1",
       operation: "evaluate",
@@ -235,14 +236,83 @@ describe("BrowserAutomationService", () => {
       registration: registration(),
       sendRequest: () => undefined,
     });
-    const reported = structuredClone(state);
-    reported.tabs[0] = { ...reported.tabs[0]!, title: "Renderer title", loading: true };
-    reported.recentActions = [];
+    const reportedTab = { ...tab(), title: "Renderer title", loading: true };
 
-    await expect(service.reportHostState("socket-1", "host-1", 1, [reported])).resolves.toBe(true);
+    await expect(service.reportHostState("socket-1", "host-1", 1, [{
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      baseRevision: 3,
+      tabs: [reportedTab],
+    }])).resolves.toBe(true);
     await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      activeTabId: "tab-1",
+      defaultTabId: "tab-1",
+      panelVisible: false,
       tabs: [expect.objectContaining({ title: "Renderer title", loading: true })],
       recentActions: [expect.objectContaining({ id: "action-1", status: "succeeded" })],
+    });
+  });
+
+  it("rejects stale host reports and ignores backend-owned membership and selection fields", async () => {
+    const { service } = await createService();
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.defaultTabId = "tab-1";
+    state.activeTabId = "tab-1";
+    state.panelVisible = true;
+    state.revision = 5;
+    await service.store.save(state);
+    service.registerHost({
+      connectionId: "socket-1",
+      registration: registration(),
+      sendRequest: () => undefined,
+    });
+
+    await expect(service.reportHostState("socket-1", "host-1", 1, [{
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      baseRevision: 4,
+      tabs: [{ ...tab(), title: "stale" }],
+    }])).resolves.toBe(false);
+
+    await expect(service.reportHostState("socket-1", "host-1", 1, [{
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      baseRevision: 5,
+      tabs: [
+        { ...tab(), title: "runtime" },
+        { ...tab("manager-1", "profile-1", "tab-2"), title: "ghost" },
+      ],
+    }])).resolves.toBe(true);
+
+    const snapshot = await service.getSessionSnapshot("profile-1", "manager-1");
+    expect(snapshot).toMatchObject({
+      activeTabId: "tab-1",
+      defaultTabId: "tab-1",
+      panelVisible: true,
+      tabs: [expect.objectContaining({ tabId: "tab-1", title: "runtime" })],
+    });
+    expect(snapshot.tabs).toHaveLength(1);
+  });
+
+  it("uses broker host connection fields for status results", async () => {
+    const { service } = await createService();
+    const requests: BrowserAutomationRequest[] = [];
+    connect(service, requests);
+    service.setHostFocused("socket-1", "host-1", 1, true);
+    const outcome = await service.invoke("manager-1", "profile-1", "status", {});
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        available: true,
+        host: {
+          connected: true,
+          hostId: "host-1",
+          hostGeneration: 1,
+          focused: true,
+          capabilities: registration().capabilities,
+        },
+      },
     });
   });
 
@@ -300,21 +370,36 @@ describe("BrowserAutomationService", () => {
   });
 
   it("archives, restores, and deletes state and artifacts explicitly", async () => {
-    const { service } = await createService();
+    const changes: Array<{ reason: string; hostingState: string; revision: number }> = [];
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-service-"));
+    roots.push(dataDir);
+    const service = new BrowserAutomationService({
+      dataDir,
+      now: () => timestamp,
+      onSessionChanged: (snapshot, reason) => changes.push({
+        reason,
+        hostingState: snapshot.hostingState,
+        revision: snapshot.revision,
+      }),
+    });
     const state = service.store.createEmpty("profile-1", "manager-1");
     state.tabs = [tab()];
     state.defaultTabId = "tab-1";
     state.activeTabId = "tab-1";
     await service.store.save(state);
+    await service.getSessionSnapshot("profile-1", "manager-1");
 
     await expect(service.archiveSession("profile-1", "manager-1")).resolves.toMatchObject({
+      hostingState: "unhosted",
       panelVisible: false,
       tabs: [{ live: false, controller: "none" }],
     });
     await expect(service.restoreSession("profile-1", "manager-1")).resolves.toMatchObject({
+      hostingState: "hosted",
       tabs: [{ live: false, lifecycle: "restoring" }],
     });
     await service.deleteSession("profile-1", "manager-1");
+    expect(changes.at(-1)).toMatchObject({ reason: "lifecycle", hostingState: "removed" });
     await expect(service.store.load("profile-1", "manager-1")).resolves.toMatchObject({ tabs: [], revision: 0 });
   });
 });

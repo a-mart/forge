@@ -13,6 +13,8 @@ import type {
   BrowserAutomationRequest,
   BrowserAutomationResponse,
   BrowserHostRegistration,
+  BrowserHostSessionStateReport,
+  BrowserSessionSnapshot,
   BrowserTabSnapshot,
   BrowserViewportSetting,
 } from '@forge/protocol'
@@ -61,13 +63,32 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const visibleTabIds = useRef(new Set<string>())
     const sessionsRef = useRef(state.browserSessions)
     const bridgeRef = useRef(bridge)
+    const clientRef = useRef(client)
     const hostIdRef = useRef(`forge-browser-${randomId()}`)
+    const pendingTabUpdates = useRef(new Map<string, BrowserTabSnapshot>())
+    const reportTimerRef = useRef<number | null>(null)
+    const reportInFlightRef = useRef(false)
+    const acknowledgedRef = useRef(new Map<string, { revision: number; session: BrowserSessionSnapshot }>())
 
-    useEffect(() => { sessionsRef.current = state.browserSessions }, [state.browserSessions])
+    useEffect(() => {
+      sessionsRef.current = state.browserSessions
+      for (const [sessionAgentId, session] of Object.entries(state.browserSessions)) {
+        const previous = acknowledgedRef.current.get(sessionAgentId)
+        if (!previous || session.revision >= previous.revision) {
+          acknowledgedRef.current.set(sessionAgentId, { revision: session.revision, session })
+        }
+      }
+      for (const sessionAgentId of [...acknowledgedRef.current.keys()]) {
+        if (!state.browserSessions[sessionAgentId]) acknowledgedRef.current.delete(sessionAgentId)
+      }
+    }, [state.browserSessions])
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
+    useEffect(() => { clientRef.current = client }, [client])
 
     const tabs = useMemo(() => {
-      const canonical = Object.values(state.browserSessions).flatMap((session) => session.tabs)
+      const canonical = Object.values(state.browserSessions)
+        .filter((session) => session.hostingState === 'hosted')
+        .flatMap((session) => session.tabs)
       const canonicalIds = new Set(canonical.map((tab) => tab.tabId))
       return [...canonical, ...Object.values(provisionalTabs).filter((tab) => !canonicalIds.has(tab.tabId))]
         .filter((tab) => tab.lifecycle !== 'closed')
@@ -91,20 +112,79 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       }
     }, [bridge, configs, tabs])
 
+    const flushStateReports = useCallback(() => {
+      const currentClient = clientRef.current
+      if (!currentClient || reportInFlightRef.current) return
+      if (pendingTabUpdates.current.size === 0) return
+      const updates = [...pendingTabUpdates.current.values()]
+      pendingTabUpdates.current.clear()
+
+      const reportsBySession = new Map<string, BrowserHostSessionStateReport>()
+      for (const updatedTab of updates) {
+        const acknowledged = acknowledgedRef.current.get(updatedTab.sessionAgentId)
+        const latest = sessionsRef.current[updatedTab.sessionAgentId] ?? acknowledged?.session
+        if (!latest || latest.hostingState !== 'hosted') continue
+        const baseRevision = acknowledged?.revision ?? latest.revision
+        if (baseRevision !== latest.revision) continue
+        if (!latest.tabs.some((tab) => tab.tabId === updatedTab.tabId)) continue
+        const existing = reportsBySession.get(updatedTab.sessionAgentId)
+        const tabs = existing?.tabs.filter((tab) => tab.tabId !== updatedTab.tabId) ?? []
+        reportsBySession.set(updatedTab.sessionAgentId, {
+          sessionAgentId: latest.sessionAgentId,
+          profileId: latest.profileId,
+          baseRevision,
+          tabs: [...tabs, updatedTab],
+        })
+      }
+      if (reportsBySession.size === 0) return
+      reportInFlightRef.current = true
+      try {
+        currentClient.reportBrowserHostState([...reportsBySession.values()])
+      } finally {
+        reportInFlightRef.current = false
+        if (pendingTabUpdates.current.size > 0) {
+          reportTimerRef.current = window.setTimeout(() => {
+            reportTimerRef.current = null
+            flushStateReports()
+          }, 0)
+        }
+      }
+    }, [])
+
+    const scheduleStateReport = useCallback(() => {
+      if (reportTimerRef.current !== null) return
+      reportTimerRef.current = window.setTimeout(() => {
+        reportTimerRef.current = null
+        flushStateReports()
+      }, 0)
+    }, [flushStateReports])
+
+    useEffect(() => () => {
+      if (reportTimerRef.current !== null) window.clearTimeout(reportTimerRef.current)
+    }, [])
+
     const executeRequest = useCallback(async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
       const currentBridge = bridgeRef.current
       if (!currentBridge) throw new Error('Electron browser host is unavailable')
       let invokedRequest = request
+      let provisionalCreated = false
       if (request.operation === 'open' && request.tabId === null) {
         const tab = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
         setProvisionalTabs((current) => ({ ...current, [tab.tabId]: tab }))
+        provisionalCreated = true
         if (!webviews.current.has(tab.tabId)) await waitUntilReady(tab.tabId, readyPromises.current, readyResolvers.current)
         invokedRequest = { ...request, tabId: tab.tabId, input: { ...request.input, tabId: tab.tabId } } as BrowserAutomationRequest
       } else if (request.tabId && !webviews.current.has(request.tabId)) {
         await waitUntilReady(request.tabId, readyPromises.current, readyResolvers.current)
       }
       const response = await currentBridge.invoke(invokedRequest)
-      return invokedRequest === request ? response : { ...response, tabId: request.tabId }
+      if (!provisionalCreated) return invokedRequest === request ? response : { ...response, tabId: request.tabId }
+      if (!response.ok || response.operation !== 'open') return { ...response, tabId: request.tabId }
+      return {
+        ...response,
+        tabId: request.tabId,
+        result: { ...response.result, created: true },
+      }
     }, [])
 
     useEffect(() => {
@@ -131,16 +211,13 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     useEffect(() => {
       if (!bridge || !client) return
       return bridge.onStateChanged((updatedTab) => {
-        const sessions = sessionsRef.current
-        const session = sessions[updatedTab.sessionAgentId]
-        if (!session) return
-        const nextSession = {
-          ...session,
-          tabs: session.tabs.map((tab) => tab.tabId === updatedTab.tabId ? updatedTab : tab),
-        }
-        client.reportBrowserHostState(Object.values({ ...sessions, [updatedTab.sessionAgentId]: nextSession }))
+        const session = sessionsRef.current[updatedTab.sessionAgentId]
+        if (!session || session.hostingState !== 'hosted') return
+        if (!session.tabs.some((tab) => tab.tabId === updatedTab.tabId)) return
+        pendingTabUpdates.current.set(updatedTab.tabId, updatedTab)
+        scheduleStateReport()
       })
-    }, [bridge, client])
+    }, [bridge, client, scheduleStateReport])
 
     useEffect(() => {
       if (!bridge || !client || state.browserHost.hostId !== hostIdRef.current || state.browserHost.hostGeneration === null) return

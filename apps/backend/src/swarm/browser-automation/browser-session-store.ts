@@ -49,6 +49,7 @@ export class BrowserSessionStore {
       schemaVersion: 1,
       sessionAgentId,
       profileId,
+      hostingState: "hosted",
       tabs: [],
       activeTabId: null,
       defaultTabId: null,
@@ -169,6 +170,7 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     schemaVersion: 1,
     profileId,
     sessionAgentId,
+    hostingState: normalizeHostingState(record.hostingState),
     tabs,
     activeTabId,
     defaultTabId,
@@ -180,6 +182,12 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     createdAt: requiredString(record.createdAt, "createdAt", 128),
     updatedAt: requiredString(record.updatedAt, "updatedAt", 128),
   };
+}
+
+function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingState"] {
+  if (value === undefined || value === null) return "hosted";
+  if (value === "hosted" || value === "unhosted" || value === "removed") return value;
+  throw new Error("Invalid browser session hosting state");
 }
 
 function normalizeTab(value: unknown, profileId: string, sessionAgentId: string): BrowserTabSnapshot {

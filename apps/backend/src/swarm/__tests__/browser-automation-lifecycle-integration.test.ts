@@ -133,6 +133,7 @@ describe("browser automation production session lifecycle", () => {
     });
     const archived = await service.getSessionSnapshot(profileId, agentId);
     expect(archived).toMatchObject({
+      hostingState: "unhosted",
       panelVisible: false,
       tabs: [{ tabId: "tab-lifecycle", live: false, controller: "none", recording: null }],
     });
@@ -143,9 +144,10 @@ describe("browser automation production session lifecycle", () => {
     expect(restored.tabs).toEqual([
       expect.objectContaining({ tabId: "tab-lifecycle", live: false, lifecycle: "restoring" }),
     ]);
+    expect(restored.hostingState).toBe("hosted");
     expect(changes.at(-1)).toMatchObject({
       reason: "recovery",
-      snapshot: { sessionAgentId: agentId, profileId },
+      snapshot: { sessionAgentId: agentId, profileId, hostingState: "hosted" },
     });
 
     const events: ServerEvent[] = [];

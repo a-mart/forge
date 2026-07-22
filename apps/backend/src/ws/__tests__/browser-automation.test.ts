@@ -186,6 +186,57 @@ describe('browser websocket transport', () => {
     expect(service.unregisterHost('connection-1')).toBe(false)
     expect(service.broker.getConnectionSnapshot().hostId).toBe('host-2')
   })
+
+  it('preserves active and default selection when browser_tab_open sets activate:false', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-activate-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'connection-1',
+      subscribedAgentId: 'session-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+
+    const firstOpen = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_tab_open', requestId: 'open-1', sessionAgentId: 'session-1', profileId: 'profile-1', activate: true },
+    })
+    const firstRequest = await nextAutomationRequest(sent, 'open')
+    const firstTab = tabFor(firstRequest, 'tab-1')
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(firstRequest), operation: 'open', ok: true, result: { tab: firstTab, created: true, panelRevealRequested: false }, elapsedMs: 1, updatedTab: firstTab,
+    } } })
+    await firstOpen
+
+    sent.length = 0
+    const secondOpen = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_tab_open', requestId: 'open-2', sessionAgentId: 'session-1', profileId: 'profile-1', activate: false },
+    })
+    const secondRequest = await nextAutomationRequest(sent, 'open')
+    const secondTab = tabFor(secondRequest, 'tab-2')
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(secondRequest), operation: 'open', ok: true, result: { tab: secondTab, created: true, panelRevealRequested: false }, elapsedMs: 1, updatedTab: secondTab,
+    } } })
+    await secondOpen
+
+    const succeeded = sent.find((event): event is Extract<ServerEvent, { type: 'browser_tab_command_succeeded' }> =>
+      event.type === 'browser_tab_command_succeeded' && event.requestId === 'open-2')
+    expect(succeeded?.snapshot).toMatchObject({
+      activeTabId: 'tab-1',
+      defaultTabId: 'tab-1',
+      tabs: [expect.objectContaining({ tabId: 'tab-1' }), expect.objectContaining({ tabId: 'tab-2' })],
+    })
+  })
 })
 
 function routing(request: BrowserAutomationRequest) {

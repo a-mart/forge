@@ -77,6 +77,8 @@ export interface BrowserRenderedViewport {
 
 export type BrowserController = 'human' | 'agent' | 'none'
 export type BrowserTabLifecycle = 'restoring' | 'loading' | 'ready' | 'failed' | 'closed'
+/** Physical host mounting for a Forge browser session. Metadata may remain while unhosted. */
+export type BrowserSessionHostingState = 'hosted' | 'unhosted' | 'removed'
 
 export interface BrowserTabSnapshot {
   tabId: string
@@ -129,6 +131,8 @@ export interface BrowserSessionSnapshot {
   schemaVersion: 1
   sessionAgentId: string
   profileId: string
+  /** Controls whether the desktop host may mount physical webviews for this session. */
+  hostingState: BrowserSessionHostingState
   tabs: BrowserTabSnapshot[]
   activeTabId: string | null
   defaultTabId: string | null
@@ -137,6 +141,18 @@ export interface BrowserSessionSnapshot {
   revision: number
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Renderer → backend physical-tab report. Membership, selection, panel, and
+ * action history remain backend-owned; only matched tab runtime fields merge.
+ */
+export interface BrowserHostSessionStateReport {
+  sessionAgentId: string
+  profileId: string
+  /** Canonical revision the host based this report on. Mismatches are rejected. */
+  baseRevision: number
+  tabs: BrowserTabSnapshot[]
 }
 
 export interface BrowserHostCapabilities {
@@ -541,7 +557,7 @@ export interface BrowserHostStateReportCommand {
   type: 'browser_host_state_report'
   hostId: string
   hostGeneration: number
-  sessions: BrowserSessionSnapshot[]
+  sessions: BrowserHostSessionStateReport[]
 }
 
 export interface BrowserTabOpenCommand {

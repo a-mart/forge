@@ -10,7 +10,7 @@ const registration: BrowserHostRegistration = {
   },
 }
 function snapshot(revision: number): BrowserSessionSnapshot {
-  return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, recentActions: [], revision, createdAt: new Date(0).toISOString(), updatedAt: new Date(revision).toISOString() }
+  return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, recentActions: [], revision, createdAt: new Date(0).toISOString(), updatedAt: new Date(revision).toISOString() }
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -30,6 +30,9 @@ describe('ManagerWsClient browser automation state', () => {
     ingest({ type: 'browser_session_changed', snapshot: snapshot(6), reason: 'automation' })
     ingest({ type: 'browser_session_changed', snapshot: snapshot(5), reason: 'host-report' })
     expect(client.getState().browserSessions['session-1']?.revision).toBe(6)
+
+    ingest({ type: 'browser_session_changed', snapshot: { ...snapshot(7), hostingState: 'removed' }, reason: 'lifecycle' })
+    expect(client.getState().browserSessions['session-1']).toBeUndefined()
 
     ingest({ type: 'browser_session_snapshot', snapshot: snapshot(3) })
     expect(client.getState().browserSessions['session-1']?.revision).toBe(3)
