@@ -1,6 +1,7 @@
 import type { WsRequestTracker } from '../ws-request-tracker'
 import type {
   AgentDescriptor,
+  BrowserSessionSnapshot,
   PersistedProjectAgentConfig,
   ProjectAgentConfigSourceSnapshot,
   ProjectAgentExternalDirectoryEntry,
@@ -141,6 +142,10 @@ export type WsRequestResultMap = {
   validate_directory: DirectoryValidationResult
   create_directory: DirectoryCreatedResult
   pick_directory: string | null
+  browser_tab_open: BrowserSessionSnapshot
+  browser_tab_activate: BrowserSessionSnapshot
+  browser_tab_close: BrowserSessionSnapshot
+  browser_tab_resize: BrowserSessionSnapshot
 }
 
 export type WsRequestType = Extract<keyof WsRequestResultMap, string>

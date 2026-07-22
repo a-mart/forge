@@ -86,6 +86,10 @@ describe('ws command parser session commands', () => {
 
   it('parses request contracts while preserving optional wire requestId', () => {
     const payloadByType = {
+      browser_tab_open: { type: 'browser_tab_open', sessionAgentId: 'session-a', profileId: 'profile-a' },
+      browser_tab_activate: { type: 'browser_tab_activate', sessionAgentId: 'session-a', tabId: 'tab-1' },
+      browser_tab_close: { type: 'browser_tab_close', sessionAgentId: 'session-a', tabId: 'tab-1' },
+      browser_tab_resize: { type: 'browser_tab_resize', sessionAgentId: 'session-a', tabId: 'tab-1', viewport: { mode: 'fill' } },
       list_directories: { type: 'list_directories', path: '/tmp/project' },
       validate_directory: { type: 'validate_directory', path: '/tmp/project' },
       create_directory: { type: 'create_directory', parentPath: '/tmp/project', name: 'new-folder' },

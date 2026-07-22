@@ -3,6 +3,14 @@ import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from
 import {
   assertConnectedSocket,
   assertReconnectableSocket,
+  buildBrowserHostFocusCommand,
+  buildBrowserHostRegisterCommand,
+  buildBrowserHostResponseCommand,
+  buildBrowserHostStateReportCommand,
+  buildBrowserTabActivateCommand,
+  buildBrowserTabCloseCommand,
+  buildBrowserTabOpenCommand,
+  buildBrowserTabResizeCommand,
   buildChoiceCancelCommand,
   buildChoiceResponseCommand,
   buildCodexElicitationResponseCommand,
@@ -126,9 +134,15 @@ import { handleProjectAgentEvent } from './ws-client/event-handlers/project-agen
 import { handleConfigEvent } from './ws-client/event-handlers/config-event-handlers'
 import { handleDirectoryEvent } from './ws-client/event-handlers/directory-event-handlers'
 import { handleSystemEvent } from './ws-client/event-handlers/system-event-handlers'
+import { handleBrowserEvent } from './ws-client/event-handlers/browser-event-handlers'
 import type {
   AgentDescriptor,
   AgentSessionPurpose,
+  BrowserAutomationRequest,
+  BrowserAutomationResponse,
+  BrowserHostRegistration,
+  BrowserSessionSnapshot,
+  BrowserViewportSetting,
   BuilderTimelineChannelView,
   ChoiceAnswer,
   ClientCommand,
@@ -177,6 +191,8 @@ export class ManagerWsClient {
   private readonly requestDispatcher: RequestDispatcher
   private readonly bootstrapBuffer: BootstrapBuffer
   private readonly sessionWorkerCache: SessionWorkerCache
+  private browserHostRegistration: BrowserHostRegistration | null = null
+  private browserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
   private readonly repositoryProjectProgressListeners = new Map<
     string,
     (event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>) => void
@@ -279,6 +295,59 @@ export class ManagerWsClient {
 
   dismissRestartRecovery(): void {
     this.send(buildRestartRecoveryActionCommand('dismiss_restart_recovery'))
+  }
+
+  registerBrowserAutomationHost(
+    registration: BrowserHostRegistration,
+    handleRequest: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>,
+  ): () => void {
+    this.browserHostRegistration = registration
+    this.browserAutomationRequestHandler = handleRequest
+    if (isSocketOpen(this.socket)) this.send(buildBrowserHostRegisterCommand(registration))
+    return () => {
+      if (this.browserHostRegistration?.hostId === registration.hostId) {
+        this.browserHostRegistration = null
+        this.browserAutomationRequestHandler = null
+      }
+    }
+  }
+
+  reportBrowserHostState(sessions: BrowserSessionSnapshot[]): void {
+    const registration = this.browserHostRegistration
+    const generation = this.state.browserHost.hostGeneration
+    if (!registration || generation === null || !isSocketOpen(this.socket)) return
+    this.send(buildBrowserHostStateReportCommand(registration.hostId, generation, sessions))
+  }
+
+  setBrowserHostFocused(focused: boolean): void {
+    const registration = this.browserHostRegistration
+    const generation = this.state.browserHost.hostGeneration
+    if (!registration || generation === null || !isSocketOpen(this.socket)) return
+    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused))
+  }
+
+  openBrowserTab(sessionAgentId: string, profileId: string, options?: { url?: string; activate?: boolean }): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_tab_open', (requestId) =>
+      buildBrowserTabOpenCommand(sessionAgentId, profileId, requestId, options))
+  }
+
+  activateBrowserTab(sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_tab_activate', (requestId) =>
+      buildBrowserTabActivateCommand(sessionAgentId, tabId, requestId))
+  }
+
+  closeBrowserTab(sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_tab_close', (requestId) =>
+      buildBrowserTabCloseCommand(sessionAgentId, tabId, requestId))
+  }
+
+  resizeBrowserTab(sessionAgentId: string, tabId: string, viewport: BrowserViewportSetting): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_tab_resize', (requestId) =>
+      buildBrowserTabResizeCommand(sessionAgentId, tabId, viewport, requestId))
   }
 
   hasExplicitSelection(): boolean {
@@ -1021,6 +1090,17 @@ export class ManagerWsClient {
       hasReceivedProfilesSnapshot: false,
       remoteUpdateAwarenessSnapshot: null,
       codexElicitations: [],
+      browserHost: {
+        connected: false,
+        hostId: null,
+        hostGeneration: null,
+        focused: false,
+        capabilities: null,
+        connectedAt: null,
+      },
+      browserHostHydrated: false,
+      browserPanelRevealRequest: null,
+      browserMetadataStale: Object.keys(this.state.browserSessions).length > 0,
       lastError: null,
     })
 
@@ -1030,6 +1110,12 @@ export class ManagerWsClient {
     this.sessionWorkerCache.retryFailedFetchesAfterReconnect()
 
     this.send(buildSubscribeCommand(this.desiredAgentId, this.conversationView))
+    if (this.browserHostRegistration) {
+      this.send(buildBrowserHostRegisterCommand({
+        ...this.browserHostRegistration,
+        registeredAt: new Date().toISOString(),
+      }))
+    }
   }
 
   private handleTransportClose(event?: CloseEvent): void {
@@ -1047,6 +1133,17 @@ export class ManagerWsClient {
       subscribedAgentId: null,
       remoteUpdateAwarenessSnapshot: null,
       codexElicitations: [],
+      browserHost: {
+        connected: false,
+        hostId: null,
+        hostGeneration: null,
+        focused: false,
+        capabilities: null,
+        connectedAt: null,
+      },
+      browserHostHydrated: false,
+      browserPanelRevealRequest: null,
+      browserMetadataStale: Object.keys(this.state.browserSessions).length > 0,
     })
 
     this.sessionWorkerCache.clearQueuedRefetches()
@@ -1101,6 +1198,17 @@ export class ManagerWsClient {
     if (this.bootstrapBuffer.active) {
       const consumed = this.bootstrapBuffer.handleEvent(event)
       if (consumed) return
+    }
+
+    if (handleBrowserEvent(event, {
+      state: this.state,
+      updateState: (patch) => this.updateState(patch),
+      requestTracker: this.requestDispatcher.tracker,
+      registration: this.browserHostRegistration,
+      handleAutomationRequest: this.browserAutomationRequestHandler,
+      sendHostResponse: (response) => this.send(buildBrowserHostResponseCommand(response)),
+    })) {
+      return
     }
 
     if (

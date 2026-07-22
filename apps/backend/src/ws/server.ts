@@ -4,6 +4,8 @@ import type { Duplex } from "node:stream";
 import {
   isRetiredMessageSource,
   isTerminalAssistantConversationMessage,
+  type BrowserHostConnectionSnapshot,
+  type BrowserSessionSnapshot,
   type CollaborationStatus,
   type ServerEvent,
   type TerminalClosedEvent,
@@ -51,6 +53,7 @@ import {
 } from "../swarm/notification-settings-service.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import type { BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
@@ -418,6 +421,31 @@ export class SwarmWebSocketServer {
     return this.resolveChoiceSessionAgentId(event.agentId);
   }
 
+  broadcastBrowserSessionChanged(
+    snapshot: BrowserSessionSnapshot,
+    reason: "host-report" | "automation" | "human-command" | "lifecycle" | "recovery",
+  ): void {
+    this.wsHandler.broadcastToSession(snapshot.sessionAgentId, {
+      type: "browser_session_changed",
+      snapshot,
+      reason,
+    });
+  }
+
+  broadcastBrowserPanelReveal(snapshot: BrowserSessionSnapshot, tabId: string, hostGeneration: number): void {
+    this.wsHandler.broadcastToSession(snapshot.sessionAgentId, {
+      type: "browser_panel_reveal_requested",
+      sessionAgentId: snapshot.sessionAgentId,
+      tabId,
+      hostGeneration,
+      revision: snapshot.revision,
+    });
+  }
+
+  broadcastBrowserHostChanged(host: BrowserHostConnectionSnapshot): void {
+    this.wsHandler.broadcastToSubscribed({ type: "browser_host_connected", host });
+  }
+
   private resolveChoiceSessionAgentId(agentId: string): string | undefined {
     const descriptor = this.swarmManager.getAgent(agentId);
     if (!descriptor) {
@@ -456,6 +484,7 @@ export class SwarmWebSocketServer {
     observabilityService?: ObservabilityFacade;
     feedbackService?: FeedbackService;
     remoteUpdateAwarenessService?: LocalRemoteUpdateAwarenessService;
+    browserAutomationService?: BrowserAutomationService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -564,6 +593,7 @@ export class SwarmWebSocketServer {
       feedbackService: this.feedbackService,
       isRemoteBuildEnabled: () => this.remoteBuildSettingsService.isRemoteBuildEnabled(),
       areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
+      browserAutomationService: options.browserAutomationService,
       getRemoteUpdateAwarenessBootstrapEvent: this.remoteUpdateAwarenessService
         ? (projectId) => {
             try {

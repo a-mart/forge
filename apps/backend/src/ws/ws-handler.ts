@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import type {
   AgentMessageEvent,
   AgentStatusEvent,
   AgentToolCallEvent,
   ApiProxyCommand,
+  BrowserClientCommand,
   BuilderTimelineChannelView,
   ChoiceRequestEvent,
   CollaborationServerEvent,
@@ -32,12 +34,14 @@ import {
   resolveSharedRoster,
 } from "../swarm/specialists/specialist-registry.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import { BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
 import { evaluateApiProxyMemberAccess, evaluateBuilderCommandAccess } from "./builder-command-access.js";
 import { handleAgentCommand } from "./commands/agent-command-handler.js";
+import { handleBrowserCommand } from "./commands/browser-command-handler.js";
 import {
   CollabCommandHandler,
   isCollaborationClientCommand,
@@ -62,7 +66,9 @@ export class WsHandler {
   private readonly isRemoteBuildEnabled: () => boolean;
   private readonly areRemoteTerminalsEnabled: () => boolean;
   private readonly unreadTracker: UnreadTracker | null;
+  private readonly browserAutomationService: BrowserAutomationService;
   private readonly subscriptionManager: WsSubscriptions;
+  private readonly browserConnectionIds = new WeakMap<WebSocket, string>();
   private readonly apiProxy: WsApiProxy;
   private readonly collabSubscriptionManager: CollabSubscriptionManager;
   private readonly collabCommandHandler: CollabCommandHandler;
@@ -84,6 +90,7 @@ export class WsHandler {
     feedbackService?: FeedbackService;
     isRemoteBuildEnabled?: () => boolean;
     areRemoteTerminalsEnabled?: () => boolean;
+    browserAutomationService?: BrowserAutomationService;
     getRemoteUpdateAwarenessBootstrapEvent?: (
       projectId: string
     ) => Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
@@ -95,6 +102,9 @@ export class WsHandler {
     this.isRemoteBuildEnabled = options.isRemoteBuildEnabled ?? (() => false);
     this.areRemoteTerminalsEnabled = options.areRemoteTerminalsEnabled ?? (() => true);
     this.unreadTracker = options.unreadTracker ?? null;
+    this.browserAutomationService = options.browserAutomationService ?? new BrowserAutomationService({
+      dataDir: this.swarmManager.getConfig().paths.dataDir,
+    });
 
     const feedbackService = options.feedbackService ?? new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
     const terminalService = options.terminalService ?? null;
@@ -106,6 +116,7 @@ export class WsHandler {
       terminalService,
       listTerminalsForSession: options.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
+      browserAutomationService: this.browserAutomationService,
       perf,
       send: (socket, event) => this.send(socket, event),
       sendBootstrapCritical: (socket, event) => this.sendWithBackpressure(socket, event),
@@ -147,16 +158,19 @@ export class WsHandler {
     this.collabSubscriptionManager.attach(server);
 
     server.on("connection", (socket) => {
+      this.browserConnectionIds.set(socket, randomUUID());
       socket.on("message", (raw) => {
         void this.handleSocketMessage(socket, raw);
       });
 
       socket.on("close", () => {
+        this.unregisterBrowserHost(socket);
         this.subscriptionManager.remove(socket);
         this.collabSubscriptionManager.remove(socket);
       });
 
       socket.on("error", () => {
+        this.unregisterBrowserHost(socket);
         this.subscriptionManager.remove(socket);
         this.collabSubscriptionManager.remove(socket);
       });
@@ -325,6 +339,24 @@ export class WsHandler {
         ));
         return;
       }
+    }
+
+    if (isBrowserClientCommand(command)) {
+      const subscribedAgentId = this.subscriptionManager.getSubscribedAgentId(socket);
+      await handleBrowserCommand({
+        command,
+        socket,
+        connectionId: this.getBrowserConnectionId(socket),
+        subscribedAgentId,
+        browserAutomationService: this.browserAutomationService,
+        resolveManagerContextAgentId: (agentId) => this.subscriptionManager.resolveManagerContextAgentId(agentId),
+        resolveProfileIdForAgent: (agentId) => this.subscriptionManager.resolveProfileIdForAgent(agentId),
+        send: (targetSocket, event) => this.send(targetSocket, event),
+        broadcastToSession: (sessionAgentId, event) => this.broadcastToSession(sessionAgentId, event),
+        hydrateHostSessions: () => this.hydrateBrowserHostSessions(),
+        logDebug: (message, details) => this.logDebug(message, details),
+      });
+      return;
     }
 
     if (command.type === "subscribe") {
@@ -711,6 +743,31 @@ export class WsHandler {
     return new CollaborationChannelMessageService(this.swarmManager, channelService, dbHelpers, userService);
   }
 
+  private getBrowserConnectionId(socket: WebSocket): string {
+    const existing = this.browserConnectionIds.get(socket);
+    if (existing) return existing;
+    const connectionId = randomUUID();
+    this.browserConnectionIds.set(socket, connectionId);
+    return connectionId;
+  }
+
+  private unregisterBrowserHost(socket: WebSocket): void {
+    const connectionId = this.browserConnectionIds.get(socket);
+    if (connectionId) this.browserAutomationService.unregisterHost(connectionId);
+  }
+
+  private async hydrateBrowserHostSessions() {
+    const sessions = new Map<string, Awaited<ReturnType<BrowserAutomationService["getSessionSnapshot"]>>>();
+    await Promise.all(this.swarmManager.listAgents()
+      .filter((descriptor) => descriptor.role === "manager")
+      .map(async (descriptor) => {
+        const profileId = descriptor.profileId ?? descriptor.agentId;
+        const snapshot = await this.browserAutomationService.getSessionSnapshot(profileId, descriptor.agentId);
+        sessions.set(`${profileId}:${descriptor.agentId}`, snapshot);
+      }));
+    return [...sessions.values()];
+  }
+
   private logDebug(message: string, details?: unknown): void {
     if (!this.swarmManager.getConfig().debug) {
       return;
@@ -761,6 +818,7 @@ export class WsHandler {
   }
 
   private dropSocket(socket: WebSocket): void {
+    this.unregisterBrowserHost(socket);
     this.subscriptionManager.remove(socket);
     this.collabSubscriptionManager.remove(socket);
 
@@ -770,6 +828,10 @@ export class WsHandler {
       // best effort
     }
   }
+}
+
+function isBrowserClientCommand(command: { type: string }): command is BrowserClientCommand {
+  return command.type.startsWith("browser_");
 }
 
 function resolveApiProxyPathname(path: string): string {
