@@ -10,6 +10,8 @@ import {
   type BrowserHostConnectionSnapshot,
   type BrowserHostRegistration,
   type BrowserHostSessionStateReport,
+  type BrowserHostSessionStateReportResult,
+  type BrowserHostStateReportResult,
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
@@ -305,15 +307,33 @@ export class BrowserAutomationService {
     hostId: string,
     hostGeneration: number,
     reportedSessions: BrowserHostSessionStateReport[],
-  ): Promise<boolean> {
-    if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration)) return false;
+  ): Promise<BrowserHostStateReportResult> {
+    if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration)) {
+      return { hostId, hostGeneration, status: "stale-host-generation", sessions: [] };
+    }
+
+    const results: BrowserHostSessionStateReportResult[] = [];
     for (const reported of reportedSessions) {
-      if (typeof reported.sessionAgentId !== "string" || typeof reported.profileId !== "string") return false;
-      if (!Number.isInteger(reported.baseRevision) || reported.baseRevision < 0) return false;
-      if (!Array.isArray(reported.tabs)) return false;
+      const resultBase = {
+        sessionAgentId: reported.sessionAgentId,
+        profileId: reported.profileId,
+      };
+      if (
+        typeof reported.sessionAgentId !== "string"
+        || typeof reported.profileId !== "string"
+        || !Number.isInteger(reported.baseRevision)
+        || reported.baseRevision < 0
+        || !Array.isArray(reported.tabs)
+      ) {
+        results.push({ ...resultBase, status: "rejected", reason: "invalid-report" });
+        continue;
+      }
 
       const reportKey = sessionKey(reported.profileId, reported.sessionAgentId);
-      if (this.sessionTombs.has(reportKey)) return false;
+      if (this.sessionTombs.has(reportKey)) {
+        results.push({ ...resultBase, status: "rejected", reason: "session-unavailable" });
+        continue;
+      }
 
       let normalizedTabs: BrowserTabSnapshot[];
       try {
@@ -327,44 +347,89 @@ export class BrowserAutomationService {
         this.logDebug("browser-automation:invalid-host-state-report", {
           error: error instanceof Error ? error.message : String(error),
         });
-        return false;
+        results.push({ ...resultBase, status: "rejected", reason: "invalid-report" });
+        continue;
       }
       if (normalizedTabs.some((tab) => {
         const owner = this.tabOwners.get(tab.tabId);
         return owner !== undefined && owner !== reported.sessionAgentId;
-      })) return false;
+      })) {
+        results.push({ ...resultBase, status: "rejected", reason: "invalid-report" });
+        continue;
+      }
 
       const generation = this.getGeneration(reportKey);
-      const canonical = await this.getSessionSnapshot(reported.profileId, reported.sessionAgentId);
-      if (!this.isGenerationCurrent(reportKey, generation) || this.sessionTombs.has(reportKey)) return false;
-      if (canonical.hostingState === "removed") return false;
+      let canonical: BrowserSessionSnapshot;
+      try {
+        canonical = await this.getSessionSnapshot(reported.profileId, reported.sessionAgentId);
+      } catch {
+        results.push({ ...resultBase, status: "rejected", reason: "session-unavailable" });
+        continue;
+      }
+      if (
+        !this.isGenerationCurrent(reportKey, generation)
+        || this.sessionTombs.has(reportKey)
+        || canonical.hostingState !== "hosted"
+      ) {
+        results.push({
+          ...resultBase,
+          status: "rejected",
+          reason: "session-unavailable",
+          snapshot: cloneSnapshot(canonical),
+        });
+        continue;
+      }
       if (reported.baseRevision !== canonical.revision) {
         this.logDebug("browser-automation:stale-host-state-report", {
           sessionAgentId: reported.sessionAgentId,
           baseRevision: reported.baseRevision,
           revision: canonical.revision,
         });
-        return false;
+        results.push({
+          ...resultBase,
+          status: "revision-conflict",
+          snapshot: cloneSnapshot(canonical),
+        });
+        continue;
+      }
+      if (normalizedTabs.some((reportedTab) => !canonical.tabs.some((tab) => tab.tabId === reportedTab.tabId))) {
+        results.push({
+          ...resultBase,
+          status: "rejected",
+          reason: "tab-unavailable",
+          snapshot: cloneSnapshot(canonical),
+        });
+        continue;
       }
 
       let changed = false;
       for (const reportedTab of normalizedTabs) {
         const index = canonical.tabs.findIndex((tab) => tab.tabId === reportedTab.tabId);
-        if (index < 0) continue;
         const merged = mergeHostOwnedTabFields(canonical.tabs[index]!, reportedTab);
         if (merged !== canonical.tabs[index]) {
           canonical.tabs[index] = merged;
           changed = true;
         }
       }
+      let accepted = !changed;
       if (changed) {
         await this.withSessionMutation(reportKey, async () => {
           if (!this.isGenerationCurrent(reportKey, generation)) return;
           await this.persistChanged(canonical, "host-report", generation);
+          accepted = true;
         });
       }
+      if (!accepted || !this.isGenerationCurrent(reportKey, generation) || this.sessionTombs.has(reportKey)) {
+        results.push({ ...resultBase, status: "rejected", reason: "session-unavailable" });
+        continue;
+      }
+      results.push({
+        ...resultBase,
+        status: "accepted",
+        snapshot: cloneSnapshot(canonical),
+      });
     }
-    return true;
+    return { hostId, hostGeneration, status: "processed", sessions: results };
   }
 
   async activateTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {

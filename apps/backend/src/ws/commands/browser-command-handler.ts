@@ -52,8 +52,15 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       return true;
     }
     case "browser_host_state_report": {
-      const accepted = await service.reportHostState(connectionId, command.hostId, command.hostGeneration, command.sessions);
-      if (!accepted) options.logDebug?.("browser-state-report-ignored", { hostId: command.hostId, hostGeneration: command.hostGeneration });
+      const result = await service.reportHostState(connectionId, command.hostId, command.hostGeneration, command.sessions);
+      options.send(socket, {
+        type: "browser_host_state_report_result",
+        requestId: command.requestId,
+        result,
+      } satisfies BrowserServerEvent);
+      if (result.status === "stale-host-generation") {
+        options.logDebug?.("browser-state-report-ignored", { hostId: command.hostId, hostGeneration: command.hostGeneration });
+      }
       return true;
     }
     case "browser_recording_start":

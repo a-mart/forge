@@ -68,20 +68,27 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const pendingTabUpdates = useRef(new Map<string, BrowserTabSnapshot>())
     const reportTimerRef = useRef<number | null>(null)
     const reportInFlightRef = useRef(false)
-    const acknowledgedRef = useRef(new Map<string, { revision: number; session: BrowserSessionSnapshot }>())
+    const updateSequenceRef = useRef(0)
+    const retryStateRef = useRef({ generation: null as number | null, conflicts: 0 })
+    const canonicalRef = useRef(new Map<string, BrowserSessionSnapshot>())
+    const disposedRef = useRef(false)
 
     useEffect(() => {
       sessionsRef.current = state.browserSessions
       for (const [sessionAgentId, session] of Object.entries(state.browserSessions)) {
-        const previous = acknowledgedRef.current.get(sessionAgentId)
-        if (!previous || session.revision >= previous.revision) {
-          acknowledgedRef.current.set(sessionAgentId, { revision: session.revision, session })
+        const previous = canonicalRef.current.get(sessionAgentId)
+        if (!previous || session.revision >= previous.revision) canonicalRef.current.set(sessionAgentId, session)
+        if (session.hostingState !== 'hosted') dropPendingSession(pendingTabUpdates.current, sessionAgentId)
+      }
+      if (state.browserHostHydrated) {
+        for (const sessionAgentId of [...canonicalRef.current.keys()]) {
+          if (!state.browserSessions[sessionAgentId]) {
+            canonicalRef.current.delete(sessionAgentId)
+            dropPendingSession(pendingTabUpdates.current, sessionAgentId)
+          }
         }
       }
-      for (const sessionAgentId of [...acknowledgedRef.current.keys()]) {
-        if (!state.browserSessions[sessionAgentId]) acknowledgedRef.current.delete(sessionAgentId)
-      }
-    }, [state.browserSessions])
+    }, [state.browserHostHydrated, state.browserSessions])
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
     useEffect(() => { clientRef.current = client }, [client])
 
@@ -112,55 +119,112 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       }
     }, [bridge, configs, tabs])
 
-    const flushStateReports = useCallback(() => {
+    const flushStateReports = useCallback(async () => {
       const currentClient = clientRef.current
-      if (!currentClient || reportInFlightRef.current) return
-      if (pendingTabUpdates.current.size === 0) return
-      const updates = [...pendingTabUpdates.current.values()]
-      pendingTabUpdates.current.clear()
+      if (!currentClient || reportInFlightRef.current || pendingTabUpdates.current.size === 0) return
+      const host = currentClient.getState().browserHost
+      if (!host.connected || host.hostId !== hostIdRef.current || host.hostGeneration === null) return
 
       const reportsBySession = new Map<string, BrowserHostSessionStateReport>()
-      for (const updatedTab of updates) {
-        const acknowledged = acknowledgedRef.current.get(updatedTab.sessionAgentId)
-        const latest = sessionsRef.current[updatedTab.sessionAgentId] ?? acknowledged?.session
-        if (!latest || latest.hostingState !== 'hosted') continue
-        const baseRevision = acknowledged?.revision ?? latest.revision
-        if (baseRevision !== latest.revision) continue
-        if (!latest.tabs.some((tab) => tab.tabId === updatedTab.tabId)) continue
+      const sentTabs = new Map<string, BrowserTabSnapshot>()
+      for (const updatedTab of pendingTabUpdates.current.values()) {
+        const latest = canonicalRef.current.get(updatedTab.sessionAgentId) ?? sessionsRef.current[updatedTab.sessionAgentId]
+        if (!latest || latest.hostingState !== 'hosted') {
+          pendingTabUpdates.current.delete(updatedTab.tabId)
+          continue
+        }
+        const canonicalTab = latest.tabs.find((tab) => tab.tabId === updatedTab.tabId)
+        if (!canonicalTab) {
+          pendingTabUpdates.current.delete(updatedTab.tabId)
+          continue
+        }
+        const rebased = rebaseHostOwnedTabFields(canonicalTab, updatedTab)
+        if (pendingTabUpdates.current.get(updatedTab.tabId) === updatedTab) pendingTabUpdates.current.set(updatedTab.tabId, rebased)
+        sentTabs.set(updatedTab.tabId, rebased)
         const existing = reportsBySession.get(updatedTab.sessionAgentId)
-        const tabs = existing?.tabs.filter((tab) => tab.tabId !== updatedTab.tabId) ?? []
         reportsBySession.set(updatedTab.sessionAgentId, {
           sessionAgentId: latest.sessionAgentId,
           profileId: latest.profileId,
-          baseRevision,
-          tabs: [...tabs, updatedTab],
+          baseRevision: latest.revision,
+          tabs: [...(existing?.tabs ?? []), rebased],
         })
       }
       if (reportsBySession.size === 0) return
+
+      const generation = host.hostGeneration
+      const sequence = updateSequenceRef.current
+      let retryConflict = false
       reportInFlightRef.current = true
       try {
-        currentClient.reportBrowserHostState([...reportsBySession.values()])
+        const result = await currentClient.reportBrowserHostState([...reportsBySession.values()])
+        if (
+          disposedRef.current
+          || clientRef.current !== currentClient
+          || result.hostId !== hostIdRef.current
+          || result.hostGeneration !== generation
+          || result.status === 'stale-host-generation'
+        ) return
+
+        for (const report of reportsBySession.values()) {
+          const reportResult = result.sessions.find((candidate) =>
+            candidate.sessionAgentId === report.sessionAgentId && candidate.profileId === report.profileId)
+          if (!reportResult) continue
+          if (reportResult.snapshot) {
+            const previous = canonicalRef.current.get(report.sessionAgentId)
+            if (!previous || reportResult.snapshot.revision >= previous.revision) {
+              canonicalRef.current.set(report.sessionAgentId, reportResult.snapshot)
+            }
+          }
+          if (reportResult.status === 'accepted') {
+            for (const sentTab of report.tabs) {
+              if (pendingTabUpdates.current.get(sentTab.tabId) === sentTabs.get(sentTab.tabId)) {
+                pendingTabUpdates.current.delete(sentTab.tabId)
+              }
+            }
+            rebasePendingSession(pendingTabUpdates.current, reportResult.snapshot)
+          } else if (reportResult.status === 'revision-conflict') {
+            rebasePendingSession(pendingTabUpdates.current, reportResult.snapshot)
+            retryConflict = true
+          } else if (reportResult.status === 'rejected' && reportResult.reason !== 'invalid-report') {
+            dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
+          }
+        }
+      } catch {
+        // Disconnects and timeouts retain pending updates. A fresh host generation
+        // or runtime update will schedule another bounded attempt.
       } finally {
         reportInFlightRef.current = false
-        if (pendingTabUpdates.current.size > 0) {
-          reportTimerRef.current = window.setTimeout(() => {
-            reportTimerRef.current = null
-            flushStateReports()
-          }, 0)
+        if (disposedRef.current) return
+        if (updateSequenceRef.current !== sequence) {
+          retryStateRef.current.conflicts = 0
+          scheduleReportTimer(flushStateReports, reportTimerRef)
+        } else if (retryConflict && retryStateRef.current.conflicts < MAX_CONFLICT_RETRIES) {
+          retryStateRef.current.conflicts += 1
+          scheduleReportTimer(flushStateReports, reportTimerRef)
+        } else if (!retryConflict) {
+          retryStateRef.current.conflicts = 0
         }
       }
     }, [])
 
     const scheduleStateReport = useCallback(() => {
-      if (reportTimerRef.current !== null) return
-      reportTimerRef.current = window.setTimeout(() => {
-        reportTimerRef.current = null
-        flushStateReports()
-      }, 0)
+      scheduleReportTimer(flushStateReports, reportTimerRef)
     }, [flushStateReports])
 
-    useEffect(() => () => {
-      if (reportTimerRef.current !== null) window.clearTimeout(reportTimerRef.current)
+    useEffect(() => {
+      const generation = state.browserHost.hostId === hostIdRef.current ? state.browserHost.hostGeneration : null
+      if (retryStateRef.current.generation !== generation) {
+        retryStateRef.current = { generation, conflicts: 0 }
+      }
+      if (generation !== null && state.browserHostHydrated && pendingTabUpdates.current.size > 0) scheduleStateReport()
+    }, [scheduleStateReport, state.browserHost.hostGeneration, state.browserHost.hostId, state.browserHostHydrated, state.browserSessions])
+
+    useEffect(() => {
+      disposedRef.current = false
+      return () => {
+        disposedRef.current = true
+        clearReportTimer(reportTimerRef)
+      }
     }, [])
 
     const executeRequest = useCallback(async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
@@ -215,6 +279,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         if (!session || session.hostingState !== 'hosted') return
         if (!session.tabs.some((tab) => tab.tabId === updatedTab.tabId)) return
         pendingTabUpdates.current.set(updatedTab.tabId, updatedTab)
+        updateSequenceRef.current += 1
+        retryStateRef.current.conflicts = 0
         scheduleStateReport()
       })
     }, [bridge, client, scheduleStateReport])
@@ -324,6 +390,66 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     )
   },
 )
+
+const MAX_CONFLICT_RETRIES = 3
+
+function scheduleReportTimer(
+  flush: () => void | Promise<void>,
+  timerRef: { current: number | null },
+): void {
+  if (timerRef.current !== null) return
+  timerRef.current = window.setTimeout(() => {
+    timerRef.current = null
+    void flush()
+  }, 0)
+}
+
+function clearReportTimer(timerRef: { current: number | null }): void {
+  if (timerRef.current === null) return
+  window.clearTimeout(timerRef.current)
+  timerRef.current = null
+}
+
+function dropPendingSession(pending: Map<string, BrowserTabSnapshot>, sessionAgentId: string): void {
+  for (const [tabId, tab] of pending) {
+    if (tab.sessionAgentId === sessionAgentId) pending.delete(tabId)
+  }
+}
+
+function rebasePendingSession(pending: Map<string, BrowserTabSnapshot>, canonical: BrowserSessionSnapshot): void {
+  if (canonical.hostingState !== 'hosted') {
+    dropPendingSession(pending, canonical.sessionAgentId)
+    return
+  }
+  for (const [tabId, updatedTab] of pending) {
+    if (updatedTab.sessionAgentId !== canonical.sessionAgentId) continue
+    const canonicalTab = canonical.tabs.find((tab) => tab.tabId === tabId)
+    if (!canonicalTab) pending.delete(tabId)
+    else pending.set(tabId, rebaseHostOwnedTabFields(canonicalTab, updatedTab))
+  }
+}
+
+/** Preserve backend-owned identity/membership while replaying physical runtime state. */
+function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: BrowserTabSnapshot): BrowserTabSnapshot {
+  return {
+    ...canonical,
+    url: updated.url,
+    title: updated.title,
+    lifecycle: updated.lifecycle,
+    loading: updated.loading,
+    live: updated.live,
+    canGoBack: updated.canGoBack,
+    canGoForward: updated.canGoForward,
+    zoomFactor: updated.zoomFactor,
+    controller: updated.controller,
+    agentCursor: updated.agentCursor,
+    recording: updated.recording,
+    viewportSetting: updated.viewportSetting,
+    renderedViewport: updated.renderedViewport,
+    error: updated.error,
+    updatedAt: updated.updatedAt,
+  }
+}
 
 function HostedWebview({ tab, config, visible, style, bridge, onReady, onUnmount }: {
   tab: BrowserTabSnapshot

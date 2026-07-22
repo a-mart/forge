@@ -34,6 +34,10 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
       })
       return true
     }
+    case 'browser_host_state_report_result': {
+      context.requestTracker.resolve('browser_host_state_report', event.requestId, event.result)
+      return true
+    }
     case 'browser_session_snapshot': {
       if (!isSelectedSession(context.state, event.snapshot.sessionAgentId)) return true
       // Bootstrap is authoritative for the new subscription/connection even

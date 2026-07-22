@@ -38,6 +38,32 @@ describe('ManagerWsClient browser automation state', () => {
     expect(client.getState().browserSessions['session-1']?.revision).toBe(3)
   })
 
+  it('sends host state as a typed request and resolves its acknowledgment', async () => {
+    vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    client.registerBrowserAutomationHost(registration, vi.fn())
+    const send = vi.fn()
+    ;(client as unknown as { transport: { socket: { readyState: number; send: (payload: string) => void } } }).transport.socket = { readyState: 1, send }
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+    ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 2, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
+
+    const reportPromise = client.reportBrowserHostState([{
+      sessionAgentId: 'session-1', profileId: 'profile-1', baseRevision: 4, tabs: [],
+    }])
+    const command = JSON.parse(send.mock.calls[0]![0] as string)
+    expect(command).toMatchObject({
+      type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 2,
+      sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', baseRevision: 4 }],
+    })
+    expect(command.requestId).toEqual(expect.any(String))
+    const result = {
+      hostId: 'host-1', hostGeneration: 2, status: 'processed' as const,
+      sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'revision-conflict' as const, snapshot: snapshot(5) }],
+    }
+    ingest({ type: 'browser_host_state_report_result', requestId: command.requestId, result })
+    await expect(reportPromise).resolves.toEqual(result)
+  })
+
   it('resolves typed recording start and stop results without a client artifact path', async () => {
     vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
     const client = new ManagerWsClient('ws://example.test', 'session-1')

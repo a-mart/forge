@@ -259,7 +259,7 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_host_register', registration: host },
       { type: 'browser_host_focus', hostId: host.hostId, hostGeneration: 4, focused: true },
       { type: 'browser_host_response', response: routedResponse },
-      { type: 'browser_host_state_report', hostId: host.hostId, hostGeneration: 4, sessions: [{
+      { type: 'browser_host_state_report', requestId: 'state-1', hostId: host.hostId, hostGeneration: 4, sessions: [{
         sessionAgentId: session.sessionAgentId,
         profileId: session.profileId,
         baseRevision: session.revision,
@@ -275,6 +275,7 @@ describe('browser host, session, and routing wire contract', () => {
     const events = [
       { type: 'browser_host_connected', host: { connected: true, hostId: host.hostId, hostGeneration: 4, focused: true, capabilities: host.capabilities, connectedAt: host.registeredAt } },
       { type: 'browser_host_state_snapshot', hostId: host.hostId, hostGeneration: 4, sessions: [session] },
+      { type: 'browser_host_state_report_result', requestId: 'state-1', result: { hostId: host.hostId, hostGeneration: 4, status: 'processed', sessions: [{ sessionAgentId: session.sessionAgentId, profileId: session.profileId, status: 'accepted', snapshot: session }] } },
       { type: 'browser_automation_request', request: routedRequest },
       { type: 'browser_session_snapshot', snapshot: session },
       { type: 'browser_session_changed', snapshot: session, reason: 'recovery' },
@@ -283,15 +284,19 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_recording_command_succeeded', requestId: '5', commandType: 'browser_recording_start', result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: host.registeredAt, mimeType: 'video/webm', width: 1000, height: 700 }, snapshot: session },
     ] satisfies ServerEvent[]
     expect(commands).toHaveLength(10)
-    expect(events).toHaveLength(8)
+    expect(events).toHaveLength(9)
   })
 
-  it('makes every human tab mutation a required wire request', () => {
-    for (const commandType of ['browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
+  it('makes browser state reports and human tab mutations required wire requests', () => {
+    for (const commandType of ['browser_host_state_report', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
       expect(getWsRequestContract(commandType)).toMatchObject({
         commandType,
         requestId: { ui: 'required', wire: 'required' },
-        successEvents: [commandType.startsWith('browser_recording_') ? 'browser_recording_command_succeeded' : 'browser_tab_command_succeeded'],
+        successEvents: [commandType === 'browser_host_state_report'
+          ? 'browser_host_state_report_result'
+          : commandType.startsWith('browser_recording_')
+            ? 'browser_recording_command_succeeded'
+            : 'browser_tab_command_succeeded'],
       })
     }
   })

@@ -32,6 +32,7 @@ describe('browser websocket transport', () => {
       error: 'registration.capabilities must be an object',
     })
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_response', response: { requestId: 1 } }))).ok).toBe(false)
+    expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] }))).ok).toBe(false)
     for (const type of [
       'browser_host_register', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
       'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
@@ -237,6 +238,68 @@ describe('browser websocket transport', () => {
       tabs: [expect.objectContaining({ tabId: 'tab-1' }), expect.objectContaining({ tabId: 'tab-2' })],
     })
   })
+
+  it('acknowledges accepted reports and returns canonical state for conflicts and stale generations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-report-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'connection-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    const canonical = service.store.createEmpty('profile-1', 'session-1')
+    canonical.tabs = [tabFor({ sessionAgentId: 'session-1', profileId: 'profile-1' }, 'tab-1')]
+    canonical.activeTabId = 'tab-1'
+    canonical.defaultTabId = 'tab-1'
+    canonical.panelVisible = true
+    canonical.revision = 2
+    canonical.recentActions = [{ id: 'action-1', operation: 'status', tabId: 'tab-1', status: 'succeeded', startedAt: new Date(0).toISOString() }]
+    await service.store.save(canonical)
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    sent.length = 0
+
+    const runtimeTab = { ...canonical.tabs[0]!, title: 'Runtime title', controller: 'agent' as const }
+    await handleBrowserCommand({ ...common, command: {
+      type: 'browser_host_state_report', requestId: 'report-conflict', hostId: 'host-1', hostGeneration: 1,
+      sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', baseRevision: 1, tabs: [runtimeTab] }],
+    } })
+    expect(sent.at(-1)).toMatchObject({
+      type: 'browser_host_state_report_result', requestId: 'report-conflict',
+      result: { status: 'processed', sessions: [{ status: 'revision-conflict', snapshot: {
+        revision: 2, activeTabId: 'tab-1', panelVisible: true, recentActions: [{ id: 'action-1' }],
+      } }] },
+    })
+
+    await handleBrowserCommand({ ...common, command: {
+      type: 'browser_host_state_report', requestId: 'report-accepted', hostId: 'host-1', hostGeneration: 1,
+      sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', baseRevision: 2, tabs: [runtimeTab] }],
+    } })
+    expect(sent.at(-1)).toMatchObject({
+      type: 'browser_host_state_report_result', requestId: 'report-accepted',
+      result: { status: 'processed', sessions: [{ status: 'accepted', snapshot: {
+        revision: 3, activeTabId: 'tab-1', defaultTabId: 'tab-1', panelVisible: true,
+        tabs: [{ title: 'Runtime title', controller: 'agent' }], recentActions: [{ id: 'action-1' }],
+      } }] },
+    })
+
+    await handleBrowserCommand({ ...common, connectionId: 'connection-2', command: { type: 'browser_host_register', registration: registration('host-2') } })
+    await handleBrowserCommand({ ...common, command: {
+      type: 'browser_host_state_report', requestId: 'report-stale', hostId: 'host-1', hostGeneration: 1,
+      sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', baseRevision: 3, tabs: [runtimeTab] }],
+    } })
+    expect(sent.at(-1)).toEqual({
+      type: 'browser_host_state_report_result', requestId: 'report-stale',
+      result: { hostId: 'host-1', hostGeneration: 1, status: 'stale-host-generation', sessions: [] },
+    })
+  })
 })
 
 function routing(request: BrowserAutomationRequest) {
@@ -249,7 +312,7 @@ function routing(request: BrowserAutomationRequest) {
     hostGeneration: request.hostGeneration,
   }
 }
-function tabFor(request: BrowserAutomationRequest, tabId: string) {
+function tabFor(request: Pick<BrowserAutomationRequest, 'sessionAgentId' | 'profileId'>, tabId: string) {
   const now = new Date().toISOString()
   return {
     tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, url: 'https://example.com/', title: 'Example',

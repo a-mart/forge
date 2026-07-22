@@ -119,6 +119,7 @@ type RequestIdCommand = Extract<ClientCommand, { requestId?: string } | { reques
 type RequestIdCommandType = RequestIdCommand['type']
 
 const REQUEST_ID_COMMAND_TYPES = [
+  'browser_host_state_report',
   'browser_tab_open',
   'browser_tab_activate',
   'browser_tab_close',
@@ -454,6 +455,7 @@ const serverEventsByLeafModule = [
 ] as const satisfies readonly ServerEvent[]
 
 const requestIdCommands = [
+  { type: 'browser_host_state_report', requestId: 'browser-state-request-1', hostId: 'host-1', hostGeneration: 1, sessions: [] },
   { type: 'browser_tab_open', requestId: 'browser-request-1', sessionAgentId: agent.agentId, profileId: profile.profileId },
   { type: 'browser_tab_activate', requestId: 'browser-request-2', sessionAgentId: agent.agentId, tabId: 'tab-1' },
   { type: 'browser_tab_close', requestId: 'browser-request-3', sessionAgentId: agent.agentId, tabId: 'tab-1' },
@@ -543,6 +545,7 @@ describe('protocol root barrel contract', () => {
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
+      'browser_host_state_report',
       'browser_recording_start',
       'browser_recording_stop',
       'browser_tab_open',
@@ -859,7 +862,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(49)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(50)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)

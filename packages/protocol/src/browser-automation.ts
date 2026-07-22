@@ -155,6 +155,36 @@ export interface BrowserHostSessionStateReport {
   tabs: BrowserTabSnapshot[]
 }
 
+export type BrowserHostSessionStateReportResult =
+  | {
+      sessionAgentId: string
+      profileId: string
+      status: 'accepted' | 'revision-conflict'
+      /** Canonical state after acceptance, or the state the host must rebase onto. */
+      snapshot: BrowserSessionSnapshot
+    }
+  | {
+      sessionAgentId: string
+      profileId: string
+      status: 'rejected'
+      reason: 'invalid-report' | 'session-unavailable' | 'tab-unavailable'
+      snapshot?: BrowserSessionSnapshot
+    }
+
+export type BrowserHostStateReportResult =
+  | {
+      hostId: string
+      hostGeneration: number
+      status: 'processed'
+      sessions: BrowserHostSessionStateReportResult[]
+    }
+  | {
+      hostId: string
+      hostGeneration: number
+      status: 'stale-host-generation'
+      sessions: []
+    }
+
 export interface BrowserHostCapabilities {
   supportedOperations: BrowserAutomationOperation[]
   electronVersion: string
@@ -555,6 +585,7 @@ export interface BrowserHostResponseCommand {
 
 export interface BrowserHostStateReportCommand {
   type: 'browser_host_state_report'
+  requestId: string
   hostId: string
   hostGeneration: number
   sessions: BrowserHostSessionStateReport[]
@@ -630,6 +661,12 @@ export interface BrowserHostStateSnapshotEvent {
   sessions: BrowserSessionSnapshot[]
 }
 
+export interface BrowserHostStateReportResultEvent {
+  type: 'browser_host_state_report_result'
+  requestId: string
+  result: BrowserHostStateReportResult
+}
+
 export interface BrowserAutomationRequestEvent {
   type: 'browser_automation_request'
   request: BrowserAutomationRequest
@@ -680,6 +717,7 @@ export type BrowserRecordingCommandSucceededEvent =
 export type BrowserServerEvent =
   | BrowserHostConnectedEvent
   | BrowserHostStateSnapshotEvent
+  | BrowserHostStateReportResultEvent
   | BrowserAutomationRequestEvent
   | BrowserSessionSnapshotEvent
   | BrowserSessionChangedEvent

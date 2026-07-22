@@ -3,7 +3,7 @@ import {
   MANAGER_REASONING_LEVELS,
   type AgentSessionPurpose,
   type BrowserHostRegistration,
-  type BrowserSessionSnapshot,
+  type BrowserHostSessionStateReport,
   type BrowserViewportSetting,
   type BuilderTimelineChannelView,
   type ChoiceAnswer,
@@ -74,16 +74,12 @@ export function buildBrowserHostResponseCommand(response: Extract<ClientCommand,
 }
 
 export function buildBrowserHostStateReportCommand(
+  requestId: string,
   hostId: string,
   hostGeneration: number,
-  sessions: Array<{
-    sessionAgentId: string
-    profileId: string
-    baseRevision: number
-    tabs: BrowserSessionSnapshot['tabs']
-  }>,
+  sessions: BrowserHostSessionStateReport[],
 ): ClientCommand {
-  return { type: 'browser_host_state_report', hostId, hostGeneration, sessions }
+  return { type: 'browser_host_state_report', requestId, hostId, hostGeneration, sessions }
 }
 
 export function buildBrowserTabOpenCommand(

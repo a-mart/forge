@@ -142,6 +142,7 @@ export type WsRequestResultMap = {
   validate_directory: DirectoryValidationResult
   create_directory: DirectoryCreatedResult
   pick_directory: string | null
+  browser_host_state_report: import('@forge/protocol').BrowserHostStateReportResult
   browser_tab_open: BrowserSessionSnapshot
   browser_tab_activate: BrowserSessionSnapshot
   browser_tab_close: BrowserSessionSnapshot

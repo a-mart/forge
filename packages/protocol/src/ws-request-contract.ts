@@ -59,6 +59,7 @@ type ContractCommandType = Extract<
   | 'get_project_agent_sharing'
   | 'set_project_agent_sharing'
   | 'get_project_agent_external_directory'
+  | 'browser_host_state_report'
   | 'browser_tab_open'
   | 'browser_tab_activate'
   | 'browser_tab_close'
@@ -109,11 +110,19 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_sharing'
   | 'project_agent_sharing_updated'
   | 'project_agent_external_directory'
+  | 'browser_host_state_report_result'
   | 'browser_tab_command_succeeded'
   | 'browser_recording_command_succeeded'
 >
 
 export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'browser_host_state_report',
+    resultFamily: 'browser_host_state_report',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_host_state_report_result'],
+    errorCodeFragments: ['browser_host_state_report'],
+  },
   {
     commandType: 'browser_recording_start',
     resultFamily: 'browser_recording_start',

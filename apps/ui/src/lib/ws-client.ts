@@ -143,6 +143,8 @@ import type {
   BrowserAutomationRequest,
   BrowserAutomationResponse,
   BrowserHostRegistration,
+  BrowserHostSessionStateReport,
+  BrowserHostStateReportResult,
   BrowserSessionSnapshot,
   BrowserViewportSetting,
   BuilderTimelineChannelView,
@@ -314,16 +316,17 @@ export class ManagerWsClient {
     }
   }
 
-  reportBrowserHostState(sessions: Array<{
-    sessionAgentId: string
-    profileId: string
-    baseRevision: number
-    tabs: BrowserSessionSnapshot['tabs']
-  }>): void {
+  reportBrowserHostState(sessions: BrowserHostSessionStateReport[]): Promise<BrowserHostStateReportResult> {
     const registration = this.browserHostRegistration
     const generation = this.state.browserHost.hostGeneration
-    if (!registration || generation === null || !isSocketOpen(this.socket)) return
-    this.send(buildBrowserHostStateReportCommand(registration.hostId, generation, sessions))
+    if (!registration || generation === null || !isSocketOpen(this.socket)) {
+      return Promise.reject(new Error(RECONNECTING_SOCKET_ERROR))
+    }
+    return this.requestDispatcher.enqueueRequest(
+      'browser_host_state_report',
+      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions),
+      { timeoutMs: 15_000 },
+    )
   }
 
   setBrowserHostFocused(focused: boolean): void {

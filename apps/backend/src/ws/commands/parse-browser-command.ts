@@ -67,6 +67,7 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         });
         return ok({
           type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           sessions: parsed,

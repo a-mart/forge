@@ -243,7 +243,10 @@ describe("BrowserAutomationService", () => {
       profileId: "profile-1",
       baseRevision: 3,
       tabs: [reportedTab],
-    }])).resolves.toBe(true);
+    }])).resolves.toMatchObject({
+      status: "processed",
+      sessions: [{ status: "accepted", snapshot: { revision: 4 } }],
+    });
     await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
       activeTabId: "tab-1",
       defaultTabId: "tab-1",
@@ -273,7 +276,10 @@ describe("BrowserAutomationService", () => {
       profileId: "profile-1",
       baseRevision: 4,
       tabs: [{ ...tab(), title: "stale" }],
-    }])).resolves.toBe(false);
+    }])).resolves.toMatchObject({
+      status: "processed",
+      sessions: [{ status: "revision-conflict", snapshot: { revision: 5, panelVisible: true } }],
+    });
 
     await expect(service.reportHostState("socket-1", "host-1", 1, [{
       sessionAgentId: "manager-1",
@@ -283,7 +289,20 @@ describe("BrowserAutomationService", () => {
         { ...tab(), title: "runtime" },
         { ...tab("manager-1", "profile-1", "tab-2"), title: "ghost" },
       ],
-    }])).resolves.toBe(true);
+    }])).resolves.toMatchObject({
+      status: "processed",
+      sessions: [{ status: "rejected", reason: "tab-unavailable", snapshot: { revision: 5 } }],
+    });
+
+    await expect(service.reportHostState("socket-1", "host-1", 1, [{
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      baseRevision: 5,
+      tabs: [{ ...tab(), title: "runtime" }],
+    }])).resolves.toMatchObject({
+      status: "processed",
+      sessions: [{ status: "accepted", snapshot: { revision: 6 } }],
+    });
 
     const snapshot = await service.getSessionSnapshot("profile-1", "manager-1");
     expect(snapshot).toMatchObject({
