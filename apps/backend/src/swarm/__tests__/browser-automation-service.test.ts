@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type {
   BrowserAutomationRequest,
@@ -401,5 +401,176 @@ describe("BrowserAutomationService", () => {
     await service.deleteSession("profile-1", "manager-1");
     expect(changes.at(-1)).toMatchObject({ reason: "lifecycle", hostingState: "removed" });
     await expect(service.store.load("profile-1", "manager-1")).resolves.toMatchObject({ tabs: [], revision: 0 });
+  });
+
+  it("does not resurrect browser-state.json when delete races a pending evaluate", async () => {
+    const changes: Array<{ reason: string; hostingState: string }> = [];
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-service-"));
+    roots.push(dataDir);
+    const service = new BrowserAutomationService({
+      dataDir,
+      now: () => timestamp,
+      onSessionChanged: (snapshot, reason) => {
+        changes.push({ reason, hostingState: snapshot.hostingState });
+      },
+    });
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.defaultTabId = "tab-1";
+    state.activeTabId = "tab-1";
+    await service.store.save(state);
+    await service.getSessionSnapshot("profile-1", "manager-1");
+
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "socket-1",
+      registration: registration(),
+      sendRequest(request) {
+        requests.push(request);
+      },
+    });
+
+    const pending = service.invoke("manager-1", "profile-1", "evaluate", {
+      expression: "1",
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (service.broker.getPendingCount() > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(service.broker.getPendingCount()).toBe(1);
+    expect(requests).toHaveLength(1);
+
+    const changeCountBeforeDelete = changes.length;
+    await service.deleteSession("profile-1", "manager-1");
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "request-cancelled" },
+    });
+
+    const statePath = service.store.getStatePath("profile-1", "manager-1");
+    await expect(access(statePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(service.getLoadedSessionSnapshots()).toEqual([]);
+    expect(changes.slice(changeCountBeforeDelete)).toEqual([
+      { reason: "lifecycle", hostingState: "removed" },
+    ]);
+
+    // Intentional recreation after delete must still persist.
+    const recreateRequests: BrowserAutomationRequest[] = [];
+    service.unregisterHost("socket-1", "host-1", 1);
+    connect(service, recreateRequests);
+    await expect(service.invoke("manager-1", "profile-1", "open", {
+      show: false,
+      reuseExistingTab: true,
+    })).resolves.toMatchObject({ ok: true });
+    await expect(access(statePath)).resolves.toBeUndefined();
+    await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      tabs: [expect.objectContaining({ tabId: "tab-1" })],
+      hostingState: "hosted",
+    });
+  });
+
+  it("suppresses completion persistence for cancelled and successful broker races after delete", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-service-"));
+    roots.push(dataDir);
+    const changes: string[] = [];
+    const service = new BrowserAutomationService({
+      dataDir,
+      now: () => timestamp,
+      onSessionChanged: (_snapshot, reason) => changes.push(reason),
+    });
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.defaultTabId = "tab-1";
+    state.activeTabId = "tab-1";
+    await service.store.save(state);
+
+    let pendingRequest: BrowserAutomationRequest | undefined;
+    service.registerHost({
+      connectionId: "socket-1",
+      registration: registration(),
+      sendRequest(request) {
+        pendingRequest = request;
+      },
+    });
+
+    const pending = service.invoke("manager-1", "profile-1", "evaluate", {
+      expression: "1",
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (pendingRequest) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(pendingRequest).toBeDefined();
+
+    // Delete first, then deliver a late success response against the cancelled request id.
+    const deletePromise = service.deleteSession("profile-1", "manager-1");
+    service.acceptHostResponse("socket-1", {
+      requestId: pendingRequest!.requestId,
+      sessionAgentId: "manager-1",
+      profileId: "profile-1",
+      tabId: "tab-1",
+      hostId: "host-1",
+      hostGeneration: 1,
+      operation: "evaluate",
+      ok: true,
+      elapsedMs: 1,
+      result: { tabId: "tab-1", value: 1, serializedBytes: 1 },
+    });
+    await deletePromise;
+    await pending;
+
+    await expect(access(service.store.getStatePath("profile-1", "manager-1"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(changes.filter((reason) => reason === "automation").length).toBeGreaterThanOrEqual(1);
+    expect(changes.at(-1)).toBe("lifecycle");
+    const lifecycleIndex = changes.lastIndexOf("lifecycle");
+    expect(changes.slice(lifecycleIndex + 1)).toEqual([]);
+  });
+
+  it("does not cache loads that finish after a concurrent delete", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-service-"));
+    roots.push(dataDir);
+    const service = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.defaultTabId = "tab-1";
+    state.activeTabId = "tab-1";
+    state.revision = 4;
+    const statePath = service.store.getStatePath("profile-1", "manager-1");
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify(state), "utf8");
+
+    let releaseLoad!: () => void;
+    const loadBarrier = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    const originalLoad = service.store.load.bind(service.store);
+    let loadCalls = 0;
+    service.store.load = async (profileId, sessionAgentId) => {
+      loadCalls += 1;
+      if (loadCalls === 1) await loadBarrier;
+      return originalLoad(profileId, sessionAgentId);
+    };
+
+    const loading = service.getSessionSnapshot("profile-1", "manager-1");
+    await service.deleteSession("profile-1", "manager-1");
+    releaseLoad();
+    await loading;
+
+    expect(service.getLoadedSessionSnapshots()).toEqual([]);
+    await expect(access(statePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // A later intentional load may recreate empty canonical state without resurrecting tabs.
+    service.store.load = originalLoad;
+    await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      tabs: [],
+      revision: 0,
+      hostingState: "hosted",
+    });
   });
 });
