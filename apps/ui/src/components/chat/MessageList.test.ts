@@ -381,9 +381,9 @@ describe('MessageList paged activity', () => {
     expect(container.textContent).not.toContain('Completed provider activity')
   })
 
-  it('offers older history through one explicit callback', () => {
+  it('offers a manual fallback when automatic observation is unavailable', () => {
     const onLoadOlder = vi.fn()
-    render([], { hasOlder: true, onLoadOlder })
+    render([], { hasOlder: true, olderCursor: 'cursor-1', onLoadOlder })
 
     const button = container.querySelector<HTMLButtonElement>('button[aria-label="Load older conversation items"]')
     expect(button).toBeTruthy()
@@ -399,7 +399,7 @@ describe('MessageList paged activity', () => {
       onLoadOlder,
     })
 
-    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Load older conversation items"]')
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh changed conversation timeline"]')
     expect(button?.disabled).toBe(false)
     expect(button?.textContent).toContain('refresh')
     flushSync(() => button?.click())

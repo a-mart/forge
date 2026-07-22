@@ -36,6 +36,7 @@ import {
   resolveToolExecutionEventActorAgentId,
 } from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
+import { useOlderHistoryAutoLoad } from './message-list/useOlderHistoryAutoLoad'
 import type {
   ChoiceRequestDisplayEntry,
   ConversationLogEntry,
@@ -97,10 +98,11 @@ interface MessageListProps {
   onPlanExpandedChange?: (expanded: boolean) => void
   statuses?: Record<string, { status: AgentStatus }>
   hasOlder?: boolean
+  olderCursor?: string
   isLoadingOlder?: boolean
   historyCompleteness?: 'complete' | 'partial_scan' | 'source_changed'
   historyMutation?: ConversationHistoryMutation | null
-  onLoadOlder?: () => void
+  onLoadOlder?: () => unknown | Promise<unknown>
 }
 
 export interface MessageListHandle {
@@ -445,6 +447,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onPlanExpandedChange,
   statuses = {},
   hasOlder = false,
+  olderCursor,
   isLoadingOlder = false,
   historyCompleteness = 'complete',
   historyMutation = null,
@@ -903,6 +906,17 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     captureViewportAnchor()
   }, [captureViewportAnchor, updateIsAtBottom])
 
+  const olderHistoryLoader = useOlderHistoryAutoLoad({
+    activeAgentId,
+    cursor: olderCursor,
+    hasOlder,
+    isLoading: isLoadingOlder,
+    historyCompleteness,
+    scrollRoot: scrollEl,
+    onBeforeLoad: captureViewportAnchor,
+    onLoad: onLoadOlder,
+  })
+
   // Re-scroll to bottom when the scroll container resizes (e.g. WorkerPillBar
   // appearing/disappearing changes flex layout) and the user was already at the bottom.
   useEffect(() => {
@@ -1033,34 +1047,61 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     scrollToBottom('smooth')
   }
 
-  const handleLoadOlder = () => {
-    // Row measurements can settle after the last scroll event. Capture the
-    // current content row at action time so a prepend never restores an older,
-    // stale viewport anchor. The load control itself is deliberately excluded
-    // above because it remains at index zero across pages.
+  const handleRefreshChangedHistory = () => {
+    // A source-changed page requires a fresh bootstrap, not another cursor
+    // request. Keep that disruptive action explicit rather than triggering it
+    // merely because the user reached the top of the transcript.
     captureViewportAnchor()
-    onLoadOlder?.()
+    void Promise.resolve(onLoadOlder?.()).catch(() => undefined)
   }
 
   const renderRow = (row: VirtualRow) => {
     if (row.kind === 'older') {
       const sourceChanged = historyCompleteness === 'source_changed'
       return (
-        <div className="flex justify-center py-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={isLoadingOlder || (!sourceChanged && !hasOlder)}
-            onClick={handleLoadOlder}
-            aria-label="Load older conversation items"
-          >
-            {isLoadingOlder
-              ? 'Loading older items…'
-              : sourceChanged
-                ? 'Timeline changed — refresh'
-                : 'Load older items'}
-          </Button>
+        <div
+          ref={olderHistoryLoader.sentinelRef}
+          className="flex min-h-8 items-center justify-center py-1"
+          data-testid="older-history-sentinel"
+        >
+          {sourceChanged ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isLoadingOlder}
+              onClick={handleRefreshChangedHistory}
+              aria-label="Refresh changed conversation timeline"
+            >
+              Timeline changed — refresh
+            </Button>
+          ) : isLoadingOlder ? (
+            <span role="status" aria-live="polite" className="text-xs text-muted-foreground">
+              Loading older items…
+            </span>
+          ) : olderHistoryLoader.loadFailed ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={olderHistoryLoader.loadManually}
+              aria-label="Retry loading older conversation items"
+            >
+              Retry loading older items
+            </Button>
+          ) : !olderHistoryLoader.observerSupported ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={olderHistoryLoader.loadManually}
+              aria-label="Load older conversation items"
+            >
+              Load older items
+            </Button>
+          ) : (
+            <span className="sr-only">Older conversation items load automatically near the top.</span>
+          )}
         </div>
       )
     }

@@ -1131,6 +1131,85 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('does not let a stale page rejection clear a newer session page request', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      mode: 'replace',
+      messages: [],
+      page: {
+        hasOlder: true,
+        nextCursor: 'cursor-a',
+        completeness: 'complete',
+        source: 'legacy_cache',
+      },
+    })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+    const pendingPageA = client.loadOlderConversation()
+    const requestA = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    client.subscribeToAgent('session-b')
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'session-b',
+      mode: 'replace',
+      messages: [],
+      page: {
+        hasOlder: true,
+        nextCursor: 'cursor-b',
+        completeness: 'complete',
+        source: 'legacy_cache',
+      },
+    })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+    const pendingPageB = client.loadOlderConversation()
+    const requestB = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(requestB.requestId).not.toBe(requestA.requestId)
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'GET_CONVERSATION_PAGE_FAILED',
+      message: 'Session A page failed.',
+      requestId: requestA.requestId,
+    })
+    await expect(pendingPageA).rejects.toThrow(
+      'GET_CONVERSATION_PAGE_FAILED: Session A page failed.',
+    )
+    expect(client.getState()).toMatchObject({
+      targetAgentId: 'session-b',
+      conversationPageLoading: true,
+      conversationPageRequestId: requestB.requestId,
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_page',
+      agentId: 'session-b',
+      requestId: requestB.requestId,
+      messages: [],
+      page: {
+        hasOlder: false,
+        completeness: 'complete',
+        source: 'legacy_cache',
+      },
+    })
+    await expect(pendingPageB).resolves.toMatchObject({ agentId: 'session-b' })
+    expect(client.getState().conversationPageLoading).toBe(false)
+    expect(client.getState().conversationPageRequestId).toBeNull()
+    client.destroy()
+  })
+
   it('starts a fresh cursor-bound bootstrap when the Builder conversation view changes', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
     client.start()

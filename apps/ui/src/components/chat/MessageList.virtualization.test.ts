@@ -32,6 +32,7 @@ let container: HTMLDivElement
 let virt: VirtualizationHarness | null
 const now = '2026-05-30T00:00:00.000Z'
 const originalResizeObserver = globalThis.ResizeObserver
+const originalIntersectionObserver = globalThis.IntersectionObserver
 const originalRequestAnimationFrame = globalThis.requestAnimationFrame
 const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
 
@@ -72,6 +73,7 @@ afterEach(() => {
   container.remove()
   virt?.restore()
   globalThis.ResizeObserver = originalResizeObserver
+  globalThis.IntersectionObserver = originalIntersectionObserver
   globalThis.requestAnimationFrame = originalRequestAnimationFrame
   globalThis.cancelAnimationFrame = originalCancelAnimationFrame
   vi.restoreAllMocks()
@@ -446,11 +448,22 @@ describe('MessageList virtualization — stick-to-bottom', () => {
     expect(mountedMessageIds()).not.toContain('msg-50')
   })
 
-  it('preserves the visible anchor when an older page is prepended', async () => {
+  it('preserves the visible anchor when an automatic older page is prepended', async () => {
     virt = installVirtualizationHarness({ viewportHeight: 500, rowHeight: ROW_HEIGHT })
+    let intersectionCallback: IntersectionObserverCallback | null = null
+    class IntersectionObserverStub {
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallback = callback
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    globalThis.IntersectionObserver = IntersectionObserverStub as unknown as typeof IntersectionObserver
+
     const messages = makeMessages(50)
     const onLoadOlder = vi.fn()
-    render(messages, { hasOlder: true, onLoadOlder })
+    render(messages, { hasOlder: true, olderCursor: 'cursor-1', onLoadOlder })
     await flushFrames()
 
     await act(async () => {
@@ -458,12 +471,16 @@ describe('MessageList virtualization — stick-to-bottom', () => {
     })
     const before = scrollContainer().scrollTop
     const beforeIds = mountedMessageIds()
+    const sentinel = container.querySelector('[data-testid="older-history-sentinel"]')
+    if (!sentinel || !intersectionCallback) throw new Error('older history sentinel was not observed')
 
-    const loadOlder = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Load older conversation items"]',
-    )
-    if (!loadOlder) throw new Error('load older button not mounted')
-    await act(async () => loadOlder.click())
+    await act(async () => {
+      const notify: IntersectionObserverCallback = intersectionCallback!
+      notify(
+        [{ isIntersecting: true, target: sentinel } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      )
+    })
     expect(onLoadOlder).toHaveBeenCalledOnce()
 
     const older: ConversationEntry[] = Array.from({ length: 10 }, (_, index) => ({
@@ -477,6 +494,7 @@ describe('MessageList virtualization — stick-to-bottom', () => {
     }))
     render([...older, ...messages], {
       hasOlder: true,
+      olderCursor: 'cursor-2',
       onLoadOlder,
       historyMutation: { revision: 1, kind: 'prepend' },
     })
