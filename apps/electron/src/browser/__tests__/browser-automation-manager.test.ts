@@ -27,6 +27,8 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
   activeInput = 0
   maximumActiveInput = 0
   waitMatches = true
+  hangLocator = false
+  locatorResolvers: Array<(value: unknown) => void> = []
   onMousePressed: ((params: Record<string, unknown>) => void) | null = null
   commands: string[] = []
   attach(): void { this.attached = true }
@@ -47,6 +49,9 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
     if (method === 'Accessibility.getFullAXTree') return { nodes: Array.from({ length: 250 }, (_, index) => ({ nodeId: String(index), role: { value: 'button' }, name: { value: `Button ${index}` } })) }
     if (method !== 'Runtime.evaluate') return {}
     const expression = String(params.expression ?? '')
+    if (this.hangLocator && (expression.includes('rect.left+rect.width/2') || expression.includes('notEditable'))) {
+      return new Promise((resolve) => this.locatorResolvers.push(resolve))
+    }
     const value = (() => {
       if (expression === 'document.readyState') return 'complete'
       if (expression.includes('window.innerWidth')) return { width: 800, height: 600, deviceScaleFactor: 2 }
@@ -69,7 +74,15 @@ class FakeDebugger extends EventEmitter implements BrowserDebuggerLike {
 class FakeWebContents extends EventEmitter implements BrowserWebContentsLike {
   readonly debugger = new FakeDebugger()
   readonly ipc = new EventEmitter()
-  readonly navigationHistory = { canGoBack: () => false, canGoForward: () => false }
+  canGoBack = false
+  canGoForward = false
+  historyActions: string[] = []
+  readonly navigationHistory = {
+    canGoBack: () => this.canGoBack,
+    canGoForward: () => this.canGoForward,
+    goBack: () => { this.historyActions.push('back') },
+    goForward: () => { this.historyActions.push('forward') },
+  }
   destroyed = false
   loading = false
   url = 'about:blank'
@@ -93,7 +106,11 @@ class FakeWebContents extends EventEmitter implements BrowserWebContentsLike {
     this.emit('did-finish-load')
     this.emit('did-stop-loading')
   }
+  reloads: string[] = []
   async capturePage(): Promise<BrowserImageLike> { return new FakeImage() }
+  reload(): void { this.reloads.push('normal') }
+  reloadIgnoringCache(): void { this.reloads.push('hard') }
+  setZoomFactor(factor: number): void { this.zoom = factor }
   focus(): void {}
   close(): void { this.destroyed = true; this.emit('destroyed') }
   setWindowOpenHandler(): void {}
@@ -111,11 +128,11 @@ function tabSnapshot(tabId = 'tab-1', sessionAgentId = 'session-1', profileId = 
   }
 }
 
-async function setup(): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
+async function setup(created = false): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-manager-'))
   const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: 1, sendToRenderer: vi.fn() })
   const webview = new FakeWebContents(101)
-  manager.registerWebview({ tab: tabSnapshot(), webContentsId: webview.id, visible: true }, webview)
+  manager.registerWebview({ tab: tabSnapshot(), webContentsId: webview.id, visible: true, created }, webview)
   managers.push(manager)
   return { manager, webview, root }
 }
@@ -282,13 +299,45 @@ describe('BrowserAutomationManager', () => {
     expect(webview.debugger.maximumActiveInput).toBe(1)
 
     const second = new FakeWebContents(102)
-    manager.registerWebview({ tab: tabSnapshot('tab-2'), webContentsId: second.id, visible: true }, second)
+    manager.registerWebview({ tab: tabSnapshot('tab-2'), webContentsId: second.id, visible: true, created: false }, second)
     await Promise.all([
       manager.execute(request('click', { x: 10, y: 10, timeoutMs: 2_000 })),
       manager.execute(request('click', { x: 10, y: 10, timeoutMs: 2_000 }, 'tab-2')),
     ])
     expect(webview.debugger.maximumActiveInput).toBe(1)
     expect(second.debugger.maximumActiveInput).toBe(1)
+  })
+
+  it('expires queued requests before they can produce a late input side effect', async () => {
+    const { manager, webview } = await setup()
+    const first = manager.execute(request('click', { x: 10, y: 10, timeoutMs: 2_000 }))
+    const expired = manager.execute(request('click', { x: 20, y: 20, timeoutMs: 2_000 }, 'tab-1', {
+      deadlineAt: new Date(Date.now() + 1).toISOString(),
+    }))
+
+    await expect(first).resolves.toMatchObject({ ok: true })
+    await expect(expired).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } })
+    expect(webview.debugger.commands.filter((command) => command === 'Input.dispatchMouseEvent')).toHaveLength(3)
+  })
+
+  it('times out and cancels locator work before click or type can continue', async () => {
+    for (const operation of ['click', 'type'] as const) {
+      const { manager, webview } = await setup()
+      webview.debugger.hangLocator = true
+      const input = operation === 'click'
+        ? { locator: "role=button[name='Never']", timeoutMs: 10 }
+        : { locator: "role=textbox[name='Never']", text: 'late', clear: true, timeoutMs: 10 }
+      const pending = manager.execute(request(operation, input))
+
+      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } })
+      expect(webview.debugger.commands).toContain('Runtime.terminateExecution')
+      expect(webview.debugger.commands).not.toContain('Input.dispatchMouseEvent')
+      for (const resolve of webview.debugger.locatorResolvers.splice(0)) {
+        resolve({ result: { type: 'object', value: operation === 'click' ? { x: 10, y: 10 } : { ok: true } } })
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(webview.debugger.commands).not.toContain('Input.dispatchMouseEvent')
+    }
   })
 
   it('interrupts stale agent work on unmatched human input', async () => {
@@ -298,6 +347,27 @@ describe('BrowserAutomationManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     webview.ipc.emit(BROWSER_GUEST_HUMAN_INPUT_CHANNEL, {}, { kind: 'key', key: 'x', code: 'KeyX' })
     await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'control-interrupted' } })
+  })
+
+  it('routes every toolbar action through human control and interrupts agent work', async () => {
+    const fixtures = await Promise.all([setup(), setup(), setup(), setup()])
+    const actions = [
+      async ({ manager }: Awaited<ReturnType<typeof setup>>) => manager.humanNavigate('tab-1', 'https://example.com'),
+      async ({ manager, webview }: Awaited<ReturnType<typeof setup>>) => { webview.canGoBack = true; manager.humanHistory('tab-1', 'back') },
+      async ({ manager }: Awaited<ReturnType<typeof setup>>) => { manager.humanReload('tab-1', true) },
+      async ({ manager }: Awaited<ReturnType<typeof setup>>) => { manager.humanSetZoom('tab-1', 1.5) },
+    ]
+
+    for (const [index, fixture] of fixtures.entries()) {
+      fixture.webview.debugger.waitMatches = false
+      const pending = fixture.manager.execute(request('waitFor', { text: 'never', timeoutMs: 2_000 }))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await actions[index]!(fixture)
+      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'control-interrupted' } })
+    }
+    expect(fixtures[1]!.webview.historyActions).toEqual(['back'])
+    expect(fixtures[2]!.webview.reloads).toEqual(['hard'])
+    expect(fixtures[3]!.webview.zoom).toBe(1.5)
   })
 
   it('bounds diagnostics and detaches the debugger during teardown', async () => {
@@ -312,13 +382,18 @@ describe('BrowserAutomationManager', () => {
     expect(webview.debugger.isAttached()).toBe(false)
   })
 
-  it('returns created:true on the first open and leaves host fields unset for status', async () => {
-    const { manager, webview } = await setup()
+  it('returns created only for an explicitly provisional tab and false after canonical reconnect', async () => {
+    const { manager, webview } = await setup(true)
     manager.setTabPresentation('tab-1', true)
     const first = await manager.execute(request('open', { show: true, reuseExistingTab: true }))
     expect(first).toMatchObject({ ok: true, result: { created: true, panelRevealRequested: true } })
     const second = await manager.execute(request('open', { show: false, reuseExistingTab: true }))
     expect(second).toMatchObject({ ok: true, result: { created: false, panelRevealRequested: false } })
+    manager.unregisterWebview('tab-1', webview.id)
+    const reconnected = new FakeWebContents(104)
+    manager.registerWebview({ tab: tabSnapshot(), webContentsId: reconnected.id, visible: true, created: false }, reconnected)
+    const afterReconnect = await manager.execute(request('open', { show: false, reuseExistingTab: true }))
+    expect(afterReconnect).toMatchObject({ ok: true, result: { created: false } })
     const status = await manager.execute(request('status', {}, 'tab-1'))
     expect(status).toMatchObject({
       ok: true,
@@ -336,7 +411,7 @@ describe('BrowserAutomationManager', () => {
         selectedTab: expect.objectContaining({ tabId: 'tab-1', live: true }),
       },
     })
-    expect(webview.debugger.isAttached()).toBe(true)
+    expect(reconnected.debugger.isAttached()).toBe(true)
   })
 
   it('coordinates recording capture and constrains the final artifact', async () => {
@@ -361,7 +436,7 @@ describe('BrowserAutomationManager', () => {
     expect(mismatch).toMatchObject({ ok: false, error: { code: 'tab-session-mismatch' } })
     await manager.execute(request('snapshot', {}))
     const replacement = new FakeWebContents(103)
-    manager.registerWebview({ tab: tabSnapshot(), webContentsId: replacement.id, visible: true }, replacement)
+    manager.registerWebview({ tab: tabSnapshot(), webContentsId: replacement.id, visible: true, created: false }, replacement)
     expect(webview.debugger.isAttached()).toBe(false)
   })
 })

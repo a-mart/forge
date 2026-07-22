@@ -69,6 +69,8 @@ export interface BrowserWebContentsLike {
   readonly navigationHistory: {
     canGoBack(): boolean
     canGoForward(): boolean
+    goBack(): void
+    goForward(): void
   }
   readonly ipc: {
     on(channel: string, listener: (event: unknown, signal?: unknown) => void): void
@@ -80,6 +82,9 @@ export interface BrowserWebContentsLike {
   getTitle(): string
   getZoomFactor(): number
   loadURL(url: string): Promise<void>
+  reload(): void
+  reloadIgnoringCache(): void
+  setZoomFactor(factor: number): void
   capturePage(): Promise<BrowserImageLike>
   focus(): void
   close(options?: { waitForBeforeUnload?: boolean }): void
@@ -92,6 +97,8 @@ export interface BrowserWebviewRegistration {
   tab: BrowserTabSnapshot
   webContentsId: number
   visible: boolean
+  /** True only for a renderer-created provisional tab awaiting its first open. */
+  created: boolean
 }
 
 interface ExpectedInput {
@@ -121,7 +128,7 @@ interface TabRuntime {
   humanInputListener: (event: unknown, signal?: unknown) => void
   navigationWait: { interrupt(error: BrowserHostError): void } | null
   destroyed: boolean
-  openedOnce: boolean
+  createdForOpen: boolean
 }
 
 interface ActiveRecording {
@@ -236,7 +243,7 @@ export class BrowserAutomationManager {
       humanInputListener: (_event, signal) => this.handleGuestInput(registration.tab.tabId, signal),
       navigationWait: null,
       destroyed: false,
-      openedOnce: false,
+      createdForOpen: registration.created,
     }
     this.tabs.set(runtime.snapshot.tabId, runtime)
     this.attachTabListeners(runtime)
@@ -248,6 +255,36 @@ export class BrowserAutomationManager {
     const tab = this.requireTab(tabId)
     tab.visible = visible
     if (viewportSetting) tab.snapshot = { ...tab.snapshot, viewportSetting }
+    return this.syncSnapshot(tab)
+  }
+
+  async humanNavigate(tabId: string, rawUrl: string): Promise<BrowserTabSnapshot> {
+    const tab = this.requireTab(tabId)
+    this.takeHumanControl(tab, 'navigate')
+    await tab.webContents.loadURL(normalizeBrowserUrl(rawUrl))
+    return this.syncSnapshot(tab)
+  }
+
+  humanHistory(tabId: string, direction: 'back' | 'forward'): BrowserTabSnapshot {
+    const tab = this.requireTab(tabId)
+    this.takeHumanControl(tab, `history.${direction}`)
+    if (direction === 'back' && tab.webContents.navigationHistory.canGoBack()) tab.webContents.navigationHistory.goBack()
+    if (direction === 'forward' && tab.webContents.navigationHistory.canGoForward()) tab.webContents.navigationHistory.goForward()
+    return this.syncSnapshot(tab)
+  }
+
+  humanReload(tabId: string, hard: boolean): BrowserTabSnapshot {
+    const tab = this.requireTab(tabId)
+    this.takeHumanControl(tab, hard ? 'reload.hard' : 'reload')
+    if (hard) tab.webContents.reloadIgnoringCache()
+    else tab.webContents.reload()
+    return this.syncSnapshot(tab)
+  }
+
+  humanSetZoom(tabId: string, factor: number): BrowserTabSnapshot {
+    const tab = this.requireTab(tabId)
+    this.takeHumanControl(tab, 'zoom')
+    tab.webContents.setZoomFactor(Math.max(0.25, Math.min(3, factor)))
     return this.syncSnapshot(tab)
   }
 
@@ -314,7 +351,7 @@ export class BrowserAutomationManager {
     await this.serialize(tab, 'recording.stop', async (send) => {
       if (recording.phase === 'recording') await send('Page.stopScreencast')
       recording.phase = 'stopping'
-    })
+    }, new Date(request.deadlineAt).getTime())
     return { ...recording }
   }
 
@@ -384,18 +421,19 @@ export class BrowserAutomationManager {
   private async executeOperation(request: BrowserAutomationRequest): Promise<unknown> {
     if (request.operation === 'status') return this.status(request)
     const tab = this.requestTab(request)
+    const deadline = new Date(request.deadlineAt).getTime()
     switch (request.operation) {
-      case 'open': return this.open(tab, request.input)
-      case 'navigate': return this.navigate(tab, request.input)
-      case 'resize': return this.resize(tab, request.input)
-      case 'snapshot': return this.serialize(tab, 'snapshot', (send) => this.snapshot(tab, send))
-      case 'click': return this.serialize(tab, 'click', (send) => this.click(tab, request.input, send))
-      case 'type': return this.serialize(tab, 'type', (send) => this.type(tab, request.input, send))
-      case 'press': return this.serialize(tab, 'press', (send, cleanup) => this.press(tab, request.input, send, cleanup))
-      case 'scroll': return this.serialize(tab, 'scroll', (send) => this.scroll(tab, request.input, send))
-      case 'evaluate': return this.serialize(tab, 'evaluate', (send) => this.evaluate(tab, request.input, send))
-      case 'waitFor': return this.serialize(tab, 'waitFor', (send) => this.waitFor(tab, request.input, send))
-      case 'recordingStart': return this.startPreparedRecording(tab, request)
+      case 'open': return this.open(tab, request.input, deadline)
+      case 'navigate': return this.navigate(tab, request.input, deadline)
+      case 'resize': return this.serialize(tab, 'resize', (send) => this.resize(tab, request.input, send), deadline)
+      case 'snapshot': return this.serialize(tab, 'snapshot', (send) => this.snapshot(tab, send), deadline)
+      case 'click': return this.serialize(tab, 'click', (send) => this.click(tab, request.input, send), deadline)
+      case 'type': return this.serialize(tab, 'type', (send) => this.type(tab, request.input, send), deadline)
+      case 'press': return this.serialize(tab, 'press', (send, cleanup) => this.press(tab, request.input, send, cleanup), deadline)
+      case 'scroll': return this.serialize(tab, 'scroll', (send) => this.scroll(tab, request.input, send), deadline)
+      case 'evaluate': return this.serialize(tab, 'evaluate', (send) => this.evaluate(tab, request.input, send), deadline)
+      case 'waitFor': return this.serialize(tab, 'waitFor', (send) => this.waitFor(tab, request.input, send), deadline)
+      case 'recordingStart': return this.startPreparedRecording(tab, request, deadline)
       case 'recordingStop': throw new BrowserHostError('recording-conflict', 'Recording stop must be completed by the trusted preload recorder')
     }
   }
@@ -418,21 +456,21 @@ export class BrowserAutomationManager {
     }
   }
 
-  private async open(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'open' }>['input']): Promise<BrowserAutomationResultByOperation['open']> {
-    const created = !tab.openedOnce
-    tab.openedOnce = true
-    if (input.url) await this.loadAndWait(tab, normalizeBrowserUrl(input.url), 'load', 15_000)
+  private async open(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'open' }>['input'], requestDeadline: number): Promise<BrowserAutomationResultByOperation['open']> {
+    const created = tab.createdForOpen
+    tab.createdForOpen = false
+    if (input.url) await this.loadAndWait(tab, normalizeBrowserUrl(input.url), 'load', 15_000, requestDeadline)
     return { tab: this.syncSnapshot(tab), created, panelRevealRequested: input.show }
   }
 
-  private async navigate(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'navigate' }>['input']): Promise<BrowserAutomationResultByOperation['navigate']> {
+  private async navigate(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'navigate' }>['input'], requestDeadline: number): Promise<BrowserAutomationResultByOperation['navigate']> {
     const raw = input.url ?? `${input.environmentProtocol ?? 'http'}://127.0.0.1:${input.environmentPort}${input.path ?? ''}`
-    await this.loadAndWait(tab, normalizeBrowserUrl(raw), input.readiness, input.timeoutMs)
+    await this.loadAndWait(tab, normalizeBrowserUrl(raw), input.readiness, input.timeoutMs, requestDeadline)
     return { tab: this.syncSnapshot(tab), readiness: input.readiness }
   }
 
-  private async loadAndWait(tab: TabRuntime, url: string, readiness: 'load' | 'domContentLoaded' | 'none', timeoutMs: number): Promise<void> {
-    const deadline = this.now() + timeoutMs
+  private async loadAndWait(tab: TabRuntime, url: string, readiness: 'load' | 'domContentLoaded' | 'none', timeoutMs: number, requestDeadline: number): Promise<void> {
+    const deadline = Math.min(this.now() + timeoutMs, requestDeadline)
     await this.serialize(tab, 'navigate', async () => {
       tab.snapshot = { ...tab.snapshot, lifecycle: 'loading', loading: true, url, error: null }
       try {
@@ -451,7 +489,7 @@ export class BrowserAutomationManager {
         tab.snapshot = { ...tab.snapshot, lifecycle: 'failed', loading: false, error: { code: failure.code, message: failure.message } }
         throw failure
       }
-    })
+    }, requestDeadline)
   }
 
   private waitForNavigationReadiness(tab: TabRuntime, url: string, readiness: 'load' | 'domContentLoaded', deadline: number): Promise<void> {
@@ -507,8 +545,7 @@ export class BrowserAutomationManager {
     this.emitTabState(tab)
   }
 
-  private async resize(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'resize' }>['input']): Promise<BrowserAutomationResultByOperation['resize']> {
-    return this.serialize(tab, 'resize', async (send) => {
+  private async resize(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'resize' }>['input'], send: SendCommand): Promise<BrowserAutomationResultByOperation['resize']> {
       let setting: BrowserViewportSetting
       if (input.mode === 'fill') {
         setting = { mode: 'fill' }
@@ -525,7 +562,6 @@ export class BrowserAutomationManager {
       const viewport = await this.measureViewport(tab, send)
       tab.snapshot = { ...tab.snapshot, viewportSetting: setting, renderedViewport: viewport }
       return { tabId: tab.snapshot.tabId, setting, viewport }
-    })
   }
 
   private async snapshot(tab: TabRuntime, send: SendCommand): Promise<BrowserAutomationResultByOperation['snapshot']> {
@@ -589,7 +625,10 @@ export class BrowserAutomationManager {
 
   private async click(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'click' }>['input'], send: SendCommand): Promise<BrowserAutomationResultByOperation['click']> {
     await this.prepareInput(send, true)
-    const point = 'x' in input ? { x: input.x, y: input.y } : await this.locatorPoint(tab, send, 'locator' in input ? input.locator : `css=${input.selector}`)
+    const point = 'x' in input
+      ? { x: input.x, y: input.y }
+      : await this.boundLocatorWork(tab, input.timeoutMs, 'Click target resolution timed out', () =>
+        this.locatorPoint(tab, send, 'locator' in input ? input.locator : `css=${input.selector}`))
     const viewport = await this.measureViewport(tab, send)
     if (point.x < 0 || point.y < 0 || point.x > viewport.width || point.y > viewport.height) {
       throw new BrowserHostError('coordinates-outside-viewport', 'Click coordinates are outside the rendered viewport', false, { x: point.x, y: point.y, viewportWidth: viewport.width, viewportHeight: viewport.height })
@@ -607,8 +646,9 @@ export class BrowserAutomationManager {
 
   private async type(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'type' }>['input'], send: SendCommand): Promise<BrowserAutomationResultByOperation['type']> {
     const locator = input.locator ?? (input.selector ? `css=${input.selector}` : null)
-    if (locator) await this.ensurePlaywright(tab, send)
-    const result = await this.evaluateValue<{ ok?: true; notFound?: true; notEditable?: true; invalidSelector?: true; message?: string }>(tab, send, `(() => {
+    const run = async () => {
+      if (locator) await this.ensurePlaywright(tab, send)
+      return this.evaluateValue<{ ok?: true; notFound?: true; notEditable?: true; invalidSelector?: true; message?: string }>(tab, send, `(() => {
       try {
         const element = ${locator ? `globalThis.__forgePlaywrightInjected.querySelector(globalThis.__forgePlaywrightInjected.parseSelector(${JSON.stringify(locator)}), document, true)` : 'document.activeElement'};
         if (!element) return { notFound: true };
@@ -624,6 +664,10 @@ export class BrowserAutomationManager {
         if (!inserted) return { notEditable: true }; element.dispatchEvent(new Event('change',{bubbles:true})); return { ok: true };
       } catch (error) { return { invalidSelector: true, message: String(error) }; }
     })()`, true, true)
+    }
+    const result = locator
+      ? await this.boundLocatorWork(tab, input.timeoutMs, 'Type target resolution timed out', run)
+      : await run()
     if (result.invalidSelector) throw new BrowserHostError('invalid-selector', result.message ?? 'Invalid selector')
     if (result.notFound) throw new BrowserHostError('target-not-found', 'Type target was not found', true)
     if (result.notEditable) throw new BrowserHostError('target-not-editable', 'Type target is not editable')
@@ -704,7 +748,7 @@ export class BrowserAutomationManager {
     throw new BrowserHostError('timeout', 'Wait conditions did not match before timeout', true)
   }
 
-  private async startPreparedRecording(tab: TabRuntime, request: BrowserAutomationRequest & { operation: 'recordingStart' }): Promise<BrowserAutomationResultByOperation['recordingStart']> {
+  private async startPreparedRecording(tab: TabRuntime, request: BrowserAutomationRequest & { operation: 'recordingStart' }, deadline: number): Promise<BrowserAutomationResultByOperation['recordingStart']> {
     const active = this.activeRecording ?? await this.prepareRecording(request)
     if (active.tabId !== tab.snapshot.tabId) throw new BrowserHostError('recording-conflict', 'Another tab is being recorded')
     const recording = this.activeRecording
@@ -713,7 +757,7 @@ export class BrowserAutomationManager {
       await this.serialize(tab, 'recording.start', async (send) => {
         await send('Page.enable')
         await send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 1_600, maxHeight: 1_200, everyNthFrame: 1 })
-      })
+      }, deadline)
       recording.phase = 'recording'
       tab.snapshot = { ...tab.snapshot, recording: { recordingId: recording.recordingId, startedAt: recording.startedAt, mimeType: recording.mimeType || 'video/webm' } }
       this.emitTabState(tab)
@@ -747,12 +791,13 @@ export class BrowserAutomationManager {
     }
   }
 
-  private async serialize<T>(tab: TabRuntime, action: string, use: (send: SendCommand, cleanup: SendCommand) => Promise<T>): Promise<T> {
+  private async serialize<T>(tab: TabRuntime, action: string, use: (send: SendCommand, cleanup: SendCommand) => Promise<T>, deadline = Number.POSITIVE_INFINITY): Promise<T> {
     const previous = tab.queue.catch(() => undefined)
     let release: () => void = () => undefined
     tab.queue = new Promise<void>((resolve) => { release = resolve })
     await previous
     if (tab.destroyed || tab.webContents.isDestroyed()) { release(); throw new BrowserHostError('tab-not-found', 'Browser tab was destroyed') }
+    if (this.now() >= deadline) { release(); throw new BrowserHostError('timeout', 'Browser request deadline has elapsed', true) }
     const epoch = tab.controlEpoch
     const startedAt = new Date(this.now()).toISOString()
     const event: BrowserActionTimelineEntry = { id: `browser-action-${this.now().toString(36)}-${(++this.sequence).toString(36)}`, action, status: 'running', startedAt }
@@ -792,6 +837,27 @@ export class BrowserAutomationManager {
       if (tab.destroyed || tab.webContents.isDestroyed()) throw new BrowserHostError('tab-not-found', 'Browser tab was destroyed')
       try { return await tab.webContents.debugger.sendCommand(method, params) }
       catch (error) { throw new BrowserHostError('execution-failed', error instanceof Error ? error.message : `CDP command ${method} failed`, true) }
+    }
+  }
+
+  private async boundLocatorWork<T>(tab: TabRuntime, timeoutMs: number, message: string, work: () => Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true
+        reject(new BrowserHostError('timeout', message, true))
+      }, timeoutMs)
+    })
+    try {
+      return await Promise.race([work(), timeout])
+    } catch (error) {
+      if (timedOut && !tab.destroyed && !tab.webContents.isDestroyed()) {
+        void this.rawSend(tab)('Runtime.terminateExecution').catch(() => undefined)
+      }
+      throw error
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 
@@ -892,8 +958,13 @@ export class BrowserAutomationManager {
     tab.expectedInputs = tab.expectedInputs.filter((expected) => expected.expiresAt > now)
     const match = tab.expectedInputs.findIndex((expected) => this.inputsMatch(expected.signal, value))
     if (match >= 0) { tab.expectedInputs.splice(match, 1); return }
+    this.takeHumanControl(tab, 'input')
+  }
+
+  private takeHumanControl(tab: TabRuntime, action: string): void {
+    const now = this.now()
     tab.controlEpoch += 1
-    tab.navigationWait?.interrupt(new BrowserHostError('control-interrupted', 'Human input interrupted navigate', true))
+    tab.navigationWait?.interrupt(new BrowserHostError('control-interrupted', `Human ${action} interrupted agent work`, true))
     tab.snapshot = { ...tab.snapshot, controller: 'human', updatedAt: new Date(now).toISOString() }
     this.emitTabState(tab)
     setTimeout(() => {

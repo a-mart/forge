@@ -56,6 +56,26 @@ export function installBrowserIpc(options: {
     const value = input as { tabId: string; visible: boolean; viewportSetting?: BrowserViewportSetting }
     return manager.setTabPresentation(value.tabId, value.visible, value.viewportSetting)
   })
+  handle(BROWSER_IPC.humanNavigate, (event, input) => {
+    trusted(event)
+    const value = input as { tabId: string; url: string }
+    return manager.humanNavigate(value.tabId, value.url)
+  })
+  handle(BROWSER_IPC.humanHistory, (event, input) => {
+    trusted(event)
+    const value = input as { tabId: string; direction: 'back' | 'forward' }
+    return manager.humanHistory(value.tabId, value.direction)
+  })
+  handle(BROWSER_IPC.humanReload, (event, input) => {
+    trusted(event)
+    const value = input as { tabId: string; hard?: boolean }
+    return manager.humanReload(value.tabId, value.hard === true)
+  })
+  handle(BROWSER_IPC.humanZoom, (event, input) => {
+    trusted(event)
+    const value = input as { tabId: string; factor: number }
+    return manager.humanSetZoom(value.tabId, value.factor)
+  })
   handle(BROWSER_IPC.execute, async (event, request) => {
     trusted(event)
     const value = request as BrowserAutomationRequest & { recordingMimeType?: string }

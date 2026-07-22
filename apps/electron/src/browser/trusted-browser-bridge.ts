@@ -116,6 +116,10 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
     registerWebview: (registration: BrowserWebviewRegistration): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.register, registration),
     unregisterWebview: (tabId: string, webContentsId?: number): Promise<void> => ipcRenderer.invoke(BROWSER_IPC.unregister, { tabId, webContentsId }),
     setTabPresentation: (tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.presentation, { tabId, visible, viewportSetting }),
+    navigate: (tabId: string, url: string): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanNavigate, { tabId, url }),
+    history: (tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanHistory, { tabId, direction }),
+    reload: (tabId: string, hard = false): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanReload, { tabId, hard }),
+    setZoom: (tabId: string, factor: number): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanZoom, { tabId, factor }),
     invoke,
     onStateChanged: (listener: (tab: BrowserTabSnapshot) => void): (() => void) => {
       const handler = (_event: IpcRendererEvent, tab: BrowserTabSnapshot): void => listener(tab)

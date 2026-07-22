@@ -5,7 +5,8 @@ export const BROWSER_GUEST_HUMAN_INPUT_CHANNEL = 'forge:browser-guest-human-inpu
 
 export const BROWSER_IPC = {
   config: 'forge:browser-config', register: 'forge:browser-register-webview', unregister: 'forge:browser-unregister-webview',
-  presentation: 'forge:browser-presentation', execute: 'forge:browser-execute', prepareRecording: 'forge:browser-recording-prepare',
+  presentation: 'forge:browser-presentation', humanNavigate: 'forge:browser-human-navigate', humanHistory: 'forge:browser-human-history',
+  humanReload: 'forge:browser-human-reload', humanZoom: 'forge:browser-human-zoom', execute: 'forge:browser-execute', prepareRecording: 'forge:browser-recording-prepare',
   stopRecordingCapture: 'forge:browser-recording-stop-capture', saveRecording: 'forge:browser-recording-save',
   cancelRecording: 'forge:browser-recording-cancel', recordingFrame: 'forge:browser-recording-frame', stateChanged: 'forge:browser-state-changed',
 } as const
@@ -17,6 +18,10 @@ export interface BrowserAutomationBridge {
   registerWebview(registration: BrowserWebviewRegistration): Promise<BrowserTabSnapshot>
   unregisterWebview(tabId: string, webContentsId?: number): Promise<void>
   setTabPresentation(tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): Promise<BrowserTabSnapshot>
+  navigate(tabId: string, url: string): Promise<BrowserTabSnapshot>
+  history(tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot>
+  reload(tabId: string, hard?: boolean): Promise<BrowserTabSnapshot>
+  setZoom(tabId: string, factor: number): Promise<BrowserTabSnapshot>
   invoke(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse>
   onStateChanged(listener: (tab: BrowserTabSnapshot) => void): () => void
 }

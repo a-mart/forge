@@ -60,9 +60,13 @@ export interface BrowserAutomationBridge {
     supportsRecording: boolean
   }
   getWebviewConfig(profileId: string): Promise<BrowserBridgeConfig>
-  registerWebview(registration: { tab: BrowserTabSnapshot; webContentsId: number; visible: boolean }): Promise<BrowserTabSnapshot>
+  registerWebview(registration: { tab: BrowserTabSnapshot; webContentsId: number; visible: boolean; created: boolean }): Promise<BrowserTabSnapshot>
   unregisterWebview(tabId: string, webContentsId?: number): Promise<void>
   setTabPresentation(tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): Promise<BrowserTabSnapshot>
+  navigate(tabId: string, url: string): Promise<BrowserTabSnapshot>
+  history(tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot>
+  reload(tabId: string, hard?: boolean): Promise<BrowserTabSnapshot>
+  setZoom(tabId: string, factor: number): Promise<BrowserTabSnapshot>
   invoke(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse>
   onStateChanged(listener: (tab: BrowserTabSnapshot) => void): () => void
 }

@@ -24,15 +24,6 @@ import type { ManagerWsState } from '@/lib/ws-state'
 
 interface ElectronWebviewElement extends HTMLElement {
   getWebContentsId(): number
-  loadURL(url: string): Promise<void>
-  canGoBack(): boolean
-  canGoForward(): boolean
-  goBack(): void
-  goForward(): void
-  reload(): void
-  reloadIgnoringCache(): void
-  getZoomFactor(): number
-  setZoomFactor(factor: number): void
   capturePage(): Promise<{ toDataURL(): string }>
 }
 
@@ -60,6 +51,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const webviews = useRef(new Map<string, ElectronWebviewElement>())
     const readyPromises = useRef(new Map<string, Promise<void>>())
     const readyResolvers = useRef(new Map<string, () => void>())
+    const readyCancellers = useRef(new Map<string, (reason: Error) => void>())
     const visibleTabIds = useRef(new Set<string>())
     const sessionsRef = useRef(state.browserSessions)
     const bridgeRef = useRef(bridge)
@@ -115,9 +107,14 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         if (configs[profileId]) continue
         void bridge.getWebviewConfig(profileId).then((config) => {
           setConfigs((current) => current[profileId] ? current : { ...current, [profileId]: config })
+        }).catch((error) => {
+          const failure = error instanceof Error ? error : new Error('Browser webview configuration failed')
+          for (const tab of tabs) {
+            if (tab.profileId === profileId && provisionalTabs[tab.tabId]) readyCancellers.current.get(tab.tabId)?.(failure)
+          }
         })
       }
-    }, [bridge, configs, tabs])
+    }, [bridge, configs, provisionalTabs, tabs])
 
     const flushStateReports = useCallback(async () => {
       const currentClient = clientRef.current
@@ -231,23 +228,45 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       const currentBridge = bridgeRef.current
       if (!currentBridge) throw new Error('Electron browser host is unavailable')
       let invokedRequest = request
-      let provisionalCreated = false
-      if (request.operation === 'open' && request.tabId === null) {
-        const tab = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
-        setProvisionalTabs((current) => ({ ...current, [tab.tabId]: tab }))
-        provisionalCreated = true
-        if (!webviews.current.has(tab.tabId)) await waitUntilReady(tab.tabId, readyPromises.current, readyResolvers.current)
-        invokedRequest = { ...request, tabId: tab.tabId, input: { ...request.input, tabId: tab.tabId } } as BrowserAutomationRequest
-      } else if (request.tabId && !webviews.current.has(request.tabId)) {
-        await waitUntilReady(request.tabId, readyPromises.current, readyResolvers.current)
+      let provisionalTabId: string | null = null
+      const cleanupProvisional = async (reason: Error) => {
+        if (!provisionalTabId) return
+        const tabId = provisionalTabId
+        readyCancellers.current.get(tabId)?.(reason)
+        readyPromises.current.delete(tabId)
+        readyResolvers.current.delete(tabId)
+        readyCancellers.current.delete(tabId)
+        visibleTabIds.current.delete(tabId)
+        pendingTabUpdates.current.delete(tabId)
+        const element = webviews.current.get(tabId)
+        webviews.current.delete(tabId)
+        await currentBridge.unregisterWebview(tabId, element ? safeWebContentsId(element) : undefined).catch(() => undefined)
+        setProvisionalTabs((current) => {
+          if (!current[tabId]) return current
+          const { [tabId]: _removed, ...remaining } = current
+          return remaining
+        })
       }
-      const response = await currentBridge.invoke(invokedRequest)
-      if (!provisionalCreated) return invokedRequest === request ? response : { ...response, tabId: request.tabId }
-      if (!response.ok || response.operation !== 'open') return { ...response, tabId: request.tabId }
-      return {
-        ...response,
-        tabId: request.tabId,
-        result: { ...response.result, created: true },
+      try {
+        if (request.operation === 'open' && request.tabId === null) {
+          const tab = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
+          provisionalTabId = tab.tabId
+          setProvisionalTabs((current) => ({ ...current, [tab.tabId]: tab }))
+          if (!webviews.current.has(tab.tabId)) {
+            await waitUntilReady(tab.tabId, readyPromises.current, readyResolvers.current, readyCancellers.current)
+          }
+          invokedRequest = { ...request, tabId: tab.tabId, input: { ...request.input, tabId: tab.tabId } } as BrowserAutomationRequest
+        } else if (request.tabId && !webviews.current.has(request.tabId)) {
+          await waitUntilReady(request.tabId, readyPromises.current, readyResolvers.current, readyCancellers.current)
+        }
+        const response = await currentBridge.invoke(invokedRequest)
+        if (provisionalTabId && (!response.ok || response.operation !== 'open')) {
+          await cleanupProvisional(new Error(response.ok ? 'Unexpected browser open response' : response.error.message))
+        }
+        return invokedRequest === request ? response : { ...response, tabId: request.tabId }
+      } catch (error) {
+        await cleanupProvisional(error instanceof Error ? error : new Error('Browser open failed'))
+        throw error
       }
     }, [])
 
@@ -329,26 +348,24 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
 
     useImperativeHandle(ref, () => ({
       async navigate(tabId, rawUrl) {
-        const webview = requireWebview(webviews.current, tabId)
-        await webview.loadURL(normalizeUrl(rawUrl))
+        const currentBridge = bridgeRef.current
+        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
+        await currentBridge.navigate(tabId, normalizeUrl(rawUrl))
       },
       history(tabId, direction) {
-        const webview = requireWebview(webviews.current, tabId)
-        if (direction === 'back' && webview.canGoBack()) webview.goBack()
-        if (direction === 'forward' && webview.canGoForward()) webview.goForward()
+        const currentBridge = bridgeRef.current
+        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
+        void currentBridge.history(tabId, direction).catch(() => undefined)
       },
       reload(tabId, hard = false) {
-        const webview = requireWebview(webviews.current, tabId)
-        if (hard) webview.reloadIgnoringCache()
-        else webview.reload()
+        const currentBridge = bridgeRef.current
+        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
+        void currentBridge.reload(tabId, hard).catch(() => undefined)
       },
       setZoom(tabId, factor) {
-        requireWebview(webviews.current, tabId).setZoomFactor(Math.max(0.25, Math.min(3, factor)))
-        const tab = Object.values(sessionsRef.current).flatMap((session) => session.tabs).find((candidate) => candidate.tabId === tabId)
         const currentBridge = bridgeRef.current
-        if (tab && currentBridge) {
-          void currentBridge.setTabPresentation(tabId, visibleTabIds.current.has(tabId), tab.viewportSetting).catch(() => undefined)
-        }
+        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
+        void currentBridge.setZoom(tabId, Math.max(0.25, Math.min(3, factor))).catch(() => undefined)
       },
       async captureScreenshot(tabId) {
         return (await requireWebview(webviews.current, tabId).capturePage()).toDataURL()
@@ -361,6 +378,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [])
     const handleWebviewUnmount = useCallback((tabId: string) => {
       webviews.current.delete(tabId)
+    }, [])
+    const handleWebviewError = useCallback((tabId: string, error: unknown) => {
+      readyCancellers.current.get(tabId)?.(error instanceof Error ? error : new Error('Browser webview registration failed'))
     }, [])
 
     if (!bridge) return null
@@ -381,7 +401,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
               visible={visible}
               style={style}
               bridge={bridge}
+              created={Boolean(provisionalTabs[tab.tabId])}
               onReady={handleWebviewReady}
+              onError={handleWebviewError}
               onUnmount={handleWebviewUnmount}
             />
           )
@@ -451,22 +473,26 @@ function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: Browse
   }
 }
 
-function HostedWebview({ tab, config, visible, style, bridge, onReady, onUnmount }: {
+function HostedWebview({ tab, config, visible, style, bridge, created, onReady, onError, onUnmount }: {
   tab: BrowserTabSnapshot
   config: BrowserBridgeConfig
   visible: boolean
   style: CSSProperties
   bridge: BrowserAutomationBridge
+  created: boolean
   onReady: (tabId: string, element: ElectronWebviewElement) => void
+  onError: (tabId: string, error: unknown) => void
   onUnmount: (tabId: string) => void
 }) {
   const [element, setElement] = useState<ElectronWebviewElement | null>(null)
   const initialTab = useRef(tab)
+  const initiallyCreated = useRef(created)
   useEffect(() => {
     if (!element) return
     const register = () => {
-      void bridge.registerWebview({ tab: initialTab.current, webContentsId: element.getWebContentsId(), visible: false })
+      void bridge.registerWebview({ tab: initialTab.current, webContentsId: element.getWebContentsId(), visible: false, created: initiallyCreated.current })
         .then(() => onReady(tab.tabId, element))
+        .catch((error) => onError(tab.tabId, error))
     }
     element.addEventListener('dom-ready', register)
     return () => {
@@ -474,7 +500,7 @@ function HostedWebview({ tab, config, visible, style, bridge, onReady, onUnmount
       onUnmount(tab.tabId)
       void bridge.unregisterWebview(tab.tabId, safeWebContentsId(element))
     }
-  }, [bridge, element, onReady, onUnmount, tab.tabId])
+  }, [bridge, element, onError, onReady, onUnmount, tab.tabId])
 
   return createElement('webview', {
     ref: setElement,
@@ -511,12 +537,27 @@ function requireWebview(map: Map<string, ElectronWebviewElement>, tabId: string)
   if (!webview) throw new Error('Browser tab is not live')
   return webview
 }
-function waitUntilReady(tabId: string, promises: Map<string, Promise<void>>, resolvers: Map<string, () => void>): Promise<void> {
+function waitUntilReady(
+  tabId: string,
+  promises: Map<string, Promise<void>>,
+  resolvers: Map<string, () => void>,
+  cancellers: Map<string, (reason: Error) => void>,
+): Promise<void> {
   const existing = promises.get(tabId)
   if (existing) return existing
   const promise = new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(() => { reject(new Error('Browser tab did not become ready')) }, 15_000)
-    resolvers.set(tabId, () => { window.clearTimeout(timer); promises.delete(tabId); resolvers.delete(tabId); resolve() })
+    const clear = () => {
+      window.clearTimeout(timer)
+      promises.delete(tabId)
+      resolvers.delete(tabId)
+      cancellers.delete(tabId)
+    }
+    const timer = window.setTimeout(() => {
+      clear()
+      reject(new Error('Browser tab did not become ready'))
+    }, 15_000)
+    resolvers.set(tabId, () => { clear(); resolve() })
+    cancellers.set(tabId, (reason) => { clear(); reject(reason) })
   })
   promises.set(tabId, promise)
   return promise
