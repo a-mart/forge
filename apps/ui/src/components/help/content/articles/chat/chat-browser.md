@@ -32,4 +32,4 @@ Tab metadata and recent safe action summaries persist with the Forge session. Co
 
 Screenshot previews are transient. Successfully stopped recordings persist under the session's `artifacts/browser/` directory. Archiving unhosts tabs but preserves their metadata and completed recordings for restore; clearing the conversation does not clear browser data, and a fork starts with independent browser state.
 
-See the repository's **Managed Browser** guide for the complete operation, security, persistence, and comparison reference.
+See the repository's [Managed Browser guide](https://github.com/a-mart/forge/blob/main/docs/BROWSER_AUTOMATION.md) for the complete operation, security, persistence, and comparison reference.

@@ -84,7 +84,7 @@ pnpm --dir apps/electron test:browser-package
 pnpm exec vitest run scripts/__tests__/browser-third-party-notices.test.mjs
 ```
 
-The real fixture requires a graphical Electron environment supported by the current platform. Run the package-content smoke on each release platform when practical; a result on one OS does not validate another platform's packaged layout or media capabilities.
+The real fixture requires a graphical Electron environment supported by the current platform. The fixture and package-content smoke have currently been exercised natively only on macOS. Native Windows and Linux execution, recording/media, and packaged-layout validation remain outstanding release gates. Run both smoke commands on each target platform; passing on one operating system does not validate another.
 
 If you only want to run the Electron app without starting the UI dev server separately:
 

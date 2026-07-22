@@ -10,6 +10,8 @@ Managed Browser requires all of the following:
 - a selected local, normal Builder manager session; and
 - a live connection between the renderer and that session's Builder backend.
 
+Native Managed Browser fixture, recording, and package-content validation has currently been exercised only on macOS. Windows and Linux validation remains outstanding; passing on one operating system does not validate another.
+
 The Browser rail item is still visible in an ordinary web client, but the workspace reports **Browser host unavailable** and does not attempt local browser IPC. Normal Builder managers receive the typed browser tools independently of whether a host is connected, so a normal manager reached through Remote Projects may still have those tools in its runtime; calls fail with `unavailable-host` because the remote backend cannot use the viewing machine's Desktop host. Collaboration channels, workers, Cortex, CLI sessions, special-purpose sessions, and external threads do not receive these tools.
 
 There is no Managed Browser environment variable or Settings → Skills toggle. Installing or enabling a browser Skill is not a prerequisite.
@@ -72,7 +74,7 @@ Persisted conversation/audit projections retain operation status and bounded saf
 
 Forge stores per-session tab metadata, selection, panel state, and bounded recent-action summaries in `profiles/<profileId>/sessions/<sessionId>/browser.json`. Live webviews are reconstructed from that metadata when the Desktop host reconnects.
 
-Cookies, local storage, IndexedDB, service workers, cache, and other site state belong to the persistent Electron partition for the profile. Sessions in the same Forge profile therefore share browser identity, and that partition can outlive deletion of an individual session or its project. **Clear managed browser data** is a non-blocking product follow-up, not a shipped control; use operating-system/application-data procedures when deliberate removal is required.
+Cookies, local storage, IndexedDB, service workers, cache, and other site state belong to the persistent Electron partition for the profile. Sessions in the same Forge profile therefore share browser identity, and that partition can outlive deletion of an individual session or its project. There is currently no shipped **Clear managed browser data** control. Removing profile partition data requires manual operating-system/application-data cleanup outside Forge; Forge does not provide a verified in-app cleanup workflow.
 
 Screenshots are transient: the workspace keeps its preview in renderer memory, and an agent snapshot returns image content to the active tool turn without creating a session artifact. A successfully stopped recording persists under `profiles/<profileId>/sessions/<sessionId>/artifacts/browser/` and appears as session artifact metadata. Only one recording can be active in the Desktop host, and an interrupted or abandoned in-progress recording is not a completed artifact.
 
