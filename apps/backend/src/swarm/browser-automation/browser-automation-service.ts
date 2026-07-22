@@ -148,6 +148,7 @@ export class BrowserAutomationService {
       await this.completeAction(snapshot, actionId, failure.code === "control-interrupted" ? "interrupted" : "failed", {
         errorCode: failure.code,
       });
+      await this.persistChanged(snapshot, "automation");
       return { ok: false, operation, error: failure };
     }
 
@@ -262,12 +263,6 @@ export class BrowserAutomationService {
       canonical.activeTabId = normalized.activeTabId;
       canonical.defaultTabId = normalized.defaultTabId;
       canonical.panelVisible = normalized.panelVisible;
-      const artifactDirectory = this.store.getArtifactsDirectory(normalized.profileId, normalized.sessionAgentId);
-      canonical.recentActions = normalized.recentActions.slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS).map((action) => {
-        if (!action.artifactPath || isPathBelow(artifactDirectory, action.artifactPath)) return action;
-        const { artifactPath: _omitted, ...safeAction } = action;
-        return safeAction;
-      });
       this.indexTabs(canonical);
       await this.persistChanged(canonical, "host-report");
     }

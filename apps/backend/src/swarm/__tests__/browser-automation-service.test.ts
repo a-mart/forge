@@ -174,6 +174,78 @@ describe("BrowserAutomationService", () => {
     })).resolves.toMatchObject({ ok: false, error: { code: "tab-session-mismatch" } });
   });
 
+  it("persists and publishes a terminal action when the broker rejects a request", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-browser-service-"));
+    roots.push(dataDir);
+    const changes: Array<{ reason: string; status: string | undefined }> = [];
+    const service = new BrowserAutomationService({
+      dataDir,
+      now: () => timestamp,
+      onSessionChanged: (snapshot, reason) => {
+        changes.push({ reason, status: snapshot.recentActions.at(-1)?.status });
+      },
+    });
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.defaultTabId = "tab-1";
+    state.activeTabId = "tab-1";
+    await service.store.save(state);
+
+    await expect(service.invoke("manager-1", "profile-1", "evaluate", {
+      expression: "document.title",
+      awaitPromise: true,
+      returnByValue: true,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unavailable-host" },
+    });
+
+    expect(changes).toEqual([
+      { reason: "automation", status: "running" },
+      { reason: "automation", status: "failed" },
+    ]);
+    const restarted = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    await expect(restarted.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      recentActions: [expect.objectContaining({
+        operation: "evaluate",
+        status: "failed",
+        errorCode: "unavailable-host",
+        completedAt: timestamp,
+      })],
+    });
+  });
+
+  it("keeps backend action history authoritative when the host reports physical tab state", async () => {
+    const { service } = await createService();
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.defaultTabId = "tab-1";
+    state.activeTabId = "tab-1";
+    state.recentActions = [{
+      id: "action-1",
+      operation: "evaluate",
+      tabId: "tab-1",
+      status: "succeeded",
+      startedAt: timestamp,
+      completedAt: timestamp,
+    }];
+    await service.store.save(state);
+    service.registerHost({
+      connectionId: "socket-1",
+      registration: registration(),
+      sendRequest: () => undefined,
+    });
+    const reported = structuredClone(state);
+    reported.tabs[0] = { ...reported.tabs[0]!, title: "Renderer title", loading: true };
+    reported.recentActions = [];
+
+    await expect(service.reportHostState("socket-1", "host-1", 1, [reported])).resolves.toBe(true);
+    await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      tabs: [expect.objectContaining({ title: "Renderer title", loading: true })],
+      recentActions: [expect.objectContaining({ id: "action-1", status: "succeeded" })],
+    });
+  });
+
   it("converts malformed results and escaped recording artifacts to typed failures", async () => {
     const { service } = await createService();
     const state = service.store.createEmpty("profile-1", "manager-1");

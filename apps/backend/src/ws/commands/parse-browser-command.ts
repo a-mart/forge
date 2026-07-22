@@ -5,7 +5,6 @@ import {
   BROWSER_VIEWPORT_MIN_DIMENSION,
   BROWSER_VIEWPORT_PRESETS,
   type BrowserAutomationResponse,
-  type BrowserClientCommand,
   type BrowserHostCapabilities,
   type BrowserSessionSnapshot,
   type BrowserViewportSetting,
@@ -201,5 +200,3 @@ function isoDate(value: unknown, field: string): string {
   if (!Number.isFinite(Date.parse(text))) throw new Error(`${field} must be an ISO date`);
   return text;
 }
-
-export type ParsedBrowserCommand = BrowserClientCommand;

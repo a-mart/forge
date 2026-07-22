@@ -161,8 +161,6 @@ const descriptions: Record<BrowserAutomationOperation, string> = {
   recordingStop: "Stop an explicit or active browser recording and return its canonical local artifact metadata.",
 };
 
-export const BROWSER_AUTOMATION_TOOL_NAMES = BROWSER_AUTOMATION_OPERATIONS.map((operation) => `browser_${toolSuffix(operation)}`);
-
 export function buildBrowserAutomationTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
   return BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({
     name: `browser_${toolSuffix(operation)}`,

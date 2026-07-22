@@ -572,7 +572,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
     });
   }
-
   private createRuntimeComposition(): ReturnType<typeof createSwarmManagerRuntimeComposition> {
     return createSwarmManagerRuntimeComposition({
       state: {
@@ -590,6 +589,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         versioningService: this.versioningService,
       },
       toolHost: this,
+      browserAutomation: this.browserAutomationService,
       descriptors: {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
