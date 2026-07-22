@@ -234,12 +234,17 @@ export class ManagerTurnWatchdog {
       });
     }
 
+    // A short gap in observable runtime events is useful liveness telemetry,
+    // but normal model deliberation frequently crosses this threshold. Keep
+    // the tier-one ledger record without adding misleading transcript noise.
+    if (tier === 1) {
+      return;
+    }
+
     const text =
-      tier === 1
-        ? "Still working, but the manager has not produced a runtime update for this turn yet."
-        : tier === 2
-          ? "The manager still has not produced a runtime update for this turn. It may be stuck; you can wait or recycle the runtime if needed."
-          : "The manager appears stuck. Use ⋮ → Stop All, then retry the request.";
+      tier === 2
+        ? "The manager still has not produced a runtime update for this turn. It may be stuck; you can wait or recycle the runtime if needed."
+        : "The manager appears stuck. Use ⋮ → Stop All, then retry the request.";
 
     this.options.emitConversationMessage({
       type: "conversation_message",

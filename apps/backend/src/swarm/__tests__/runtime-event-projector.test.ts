@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtime/runtime-event-projector.js";
 import {
   extractCleanManagerAssistantFinalMessage,
+  hasNoReplySentinelLineManagerAssistantFinalMessage,
   isIntentionalNoReplyManagerAssistantFinalMessage,
   isCleanManagerAssistantFinalMessage,
 } from "../runtime/manager-assistant-final-message.js";
@@ -163,16 +164,25 @@ describe("clean manager assistant final message detection", () => {
     })?.text).toBe("Visible final.");
   });
 
-  it("recognizes exact NO_REPLY as intentional silence instead of a clean final", () => {
+  it("recognizes a NO_REPLY sentinel line as silence instead of a clean final", () => {
     const event = assistantEnd("  NO_REPLY  ", { stopReason: "stop" });
+    const malformedSentinel = assistantEnd("NO_REPLY\n\nResume from summary.", { stopReason: "stop" });
 
     expect(isIntentionalNoReplyManagerAssistantFinalMessage(event)).toBe(true);
     expect(isCleanManagerAssistantFinalMessage(event)).toBe(false);
     expect(extractCleanManagerAssistantFinalMessage(event)).toBeUndefined();
 
+    expect(isIntentionalNoReplyManagerAssistantFinalMessage(malformedSentinel)).toBe(false);
+    expect(hasNoReplySentinelLineManagerAssistantFinalMessage(malformedSentinel)).toBe(true);
+    expect(isCleanManagerAssistantFinalMessage(malformedSentinel)).toBe(false);
+    expect(extractCleanManagerAssistantFinalMessage(malformedSentinel)).toBeUndefined();
+
     expect(isIntentionalNoReplyManagerAssistantFinalMessage(
       assistantEnd("NO_REPLY because this is internal", { stopReason: "stop" }),
     )).toBe(false);
+    expect(extractCleanManagerAssistantFinalMessage(
+      assistantEnd("NO_REPLY because this is internal", { stopReason: "stop" }),
+    )?.text).toBe("NO_REPLY because this is internal");
   });
 
   it("rejects empty, error, aborted, tool-call, and tool-result finals", () => {
@@ -568,7 +578,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     );
   });
 
-  it("accepts exact NO_REPLY for an internal callback without rendering text or a silent-turn notice", async () => {
+  it("suppresses a malformed NO_REPLY sentinel line for an internal callback", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
     descriptors.set(manager.agentId, manager);
@@ -589,7 +599,10 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
       reason: "worker_report_callback",
     });
 
-    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("NO_REPLY", { stopReason: "stop" }) });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: assistantEnd("NO_REPLY\n\nResume from summary.", { stopReason: "stop" }),
+    });
     await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
     await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
 
@@ -713,7 +726,7 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     }));
   });
 
-  it("treats exact NO_REPLY on an unanswered direct user turn as a missing response", async () => {
+  it("treats a malformed NO_REPLY sentinel line on an unanswered direct user turn as a missing response", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
     descriptors.set(manager.agentId, manager);
@@ -730,7 +743,10 @@ describe("RuntimeEventProjector message routing receipts and backstops", () => {
     }));
     projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
 
-    await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("NO_REPLY", { stopReason: "stop" }) });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: assistantEnd("NO_REPLY\n\nResume from summary.", { stopReason: "stop" }),
+    });
     await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
     await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end" } });
 

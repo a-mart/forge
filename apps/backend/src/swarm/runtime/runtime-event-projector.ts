@@ -30,7 +30,7 @@ import {
 } from "./manager-assistant-output-tracker.js";
 import {
   extractCleanManagerAssistantFinalMessage,
-  isIntentionalNoReplyManagerAssistantFinalMessage,
+  hasNoReplySentinelLineManagerAssistantFinalMessage,
 } from "./manager-assistant-final-message.js";
 import {
   appendMessageRoutingReceipt,
@@ -145,7 +145,7 @@ export class RuntimeEventProjector {
    * armed notice.  Reset at `agent_end`.
    */
   private readonly visibleManagerOutputAgentIds = new Set<string>();
-  /** Managers that deliberately ended the current internal run with exact `NO_REPLY`. */
+  /** Managers that deliberately ended the current internal run with a `NO_REPLY` sentinel. */
   private readonly intentionalSilenceManagerAgentIds = new Set<string>();
   /**
    * Monotonic watermark: epoch-ms of the last user-facing manager output this
@@ -462,7 +462,7 @@ export class RuntimeEventProjector {
   ): void {
     if (
       descriptor?.role !== "manager" ||
-      !isIntentionalNoReplyManagerAssistantFinalMessage(effectiveEvent)
+      !hasNoReplySentinelLineManagerAssistantFinalMessage(effectiveEvent)
     ) {
       return;
     }
@@ -479,7 +479,7 @@ export class RuntimeEventProjector {
       this.intentionalSilenceManagerAgentIds.add(agentId);
       this.pendingSilentManagerNotices.delete(agentId);
     } else {
-      // An exact sentinel on a newly visible, unanswered obligation must not
+      // A silent sentinel on a newly visible, unanswered obligation must not
       // inherit permission from an earlier callback in the same provider run.
       this.intentionalSilenceManagerAgentIds.delete(agentId);
     }

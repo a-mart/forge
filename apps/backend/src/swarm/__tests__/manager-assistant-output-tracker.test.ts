@@ -60,11 +60,11 @@ describe("ManagerAssistantOutputTracker", () => {
     expect(emitted).toEqual([]);
   });
 
-  it("never turns exact NO_REPLY into progress when tool work follows", () => {
+  it("never turns a NO_REPLY sentinel line into progress when tool work follows", () => {
     const { tracker, emitted } = createTracker();
     tracker.activateTurn("manager-1", WEB_TARGET);
 
-    tracker.handleRuntimeEvent("manager-1", assistantMessageUpdate("NO_REPLY"));
+    tracker.handleRuntimeEvent("manager-1", assistantMessageUpdate("NO_REPLY\nResume from summary."));
     tracker.handleRuntimeEvent("manager-1", {
       type: "tool_execution_start",
       toolName: "shell",

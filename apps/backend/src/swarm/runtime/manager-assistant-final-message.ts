@@ -18,8 +18,24 @@ export function isIntentionalNoReplyText(text: string | null | undefined): boole
   return text?.trim() === INTENTIONAL_NO_REPLY_TEXT;
 }
 
+/**
+ * A manager's silent closeout is a standalone first line, not prose that
+ * happens to mention the sentinel. Providers can occasionally append their
+ * private continuation rationale after that line; keep that malformed output
+ * out of the user transcript while retaining the raw provider event in the
+ * canonical session history.
+ */
+export function hasNoReplySentinelLine(text: string | null | undefined): boolean {
+  const trimmed = text?.trim();
+  return Boolean(trimmed && /^NO_REPLY[ \t]*(?:\r?\n|$)/.test(trimmed));
+}
+
 export function isIntentionalNoReplyManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {
   return isIntentionalNoReplyText(extractEligibleManagerAssistantFinalText(event));
+}
+
+export function hasNoReplySentinelLineManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {
+  return hasNoReplySentinelLine(extractEligibleManagerAssistantFinalText(event));
 }
 
 export function isCleanManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {
@@ -30,7 +46,7 @@ export function extractCleanManagerAssistantFinalMessage(
   event: RuntimeSessionEvent,
 ): CleanManagerAssistantFinalMessage | undefined {
   const text = extractEligibleManagerAssistantFinalText(event);
-  if (!text || isIntentionalNoReplyText(text)) {
+  if (!text || hasNoReplySentinelLine(text)) {
     return undefined;
   }
 
