@@ -13,7 +13,7 @@ describe('model-catalog-audit helpers', () => {
     expect(isPendingPiUpstreamDivergence(null)).toBe(false)
   })
 
-  it('classifies missing upstream models as pending only when explicitly marked', () => {
+  it('classifies missing upstream models by documented divergence policy', () => {
     expect(
       classifyMissingUpstreamModel({
         piUpstreamId: 'claude-opus-4-8',
@@ -21,6 +21,13 @@ describe('model-catalog-audit helpers', () => {
           'Pending Pi upstream; projected via Forge catalog allowlist until Pi ships claude-opus-4-8.',
       }),
     ).toBe('pending')
+
+    expect(
+      classifyMissingUpstreamModel({
+        piUpstreamId: 'grok-4',
+        intentionalDivergenceNotes: 'Pi 0.80.6 removed grok-4; Forge retains its supported adapter.',
+      }),
+    ).toBe('intentional')
 
     expect(
       classifyMissingUpstreamModel({

@@ -10,5 +10,11 @@ export function classifyMissingUpstreamModel(model) {
     return 'fail'
   }
 
-  return isPendingPiUpstreamDivergence(model.intentionalDivergenceNotes) ? 'pending' : 'fail'
+  if (isPendingPiUpstreamDivergence(model.intentionalDivergenceNotes)) {
+    return 'pending'
+  }
+
+  return typeof model.intentionalDivergenceNotes === 'string' && model.intentionalDivergenceNotes.trim()
+    ? 'intentional'
+    : 'fail'
 }

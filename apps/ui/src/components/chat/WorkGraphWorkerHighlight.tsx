@@ -1,40 +1,19 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
-import type { WorkGraphNode } from '@forge/protocol'
 import { cn } from '@/lib/utils'
+import {
+  WorkGraphWorkerHighlightContext,
+  type WorkerHighlightSignal,
+  useWorkGraphWorkerHighlight,
+} from './work-graph-worker-highlight-context'
 
 const HIGHLIGHT_DURATION_MS = 900
-
-export interface WorkerHighlightSignal {
-  workerId: string
-  nonce: number
-}
-
-interface WorkGraphWorkerHighlightContextValue {
-  signal: WorkerHighlightSignal | null
-  highlightWorker: (workerId: string | undefined) => void
-}
-
-const WorkGraphWorkerHighlightContext = createContext<WorkGraphWorkerHighlightContextValue>({
-  signal: null,
-  highlightWorker: () => undefined,
-})
-
-/**
- * Finds the worker for the node's current attempt. Attempts are append-only, so
- * the final entry is the same attempt the graph coordinator treats as current.
- */
-export function getWorkGraphNodeWorkerId(node: WorkGraphNode): string | undefined {
-  return node.attempts.at(-1)?.workerId
-}
 
 /** Shares a short-lived visual-only worker highlight across the Builder surface. */
 export function WorkGraphWorkerHighlightProvider({ children }: { children: ReactNode }) {
@@ -64,10 +43,6 @@ export function WorkGraphWorkerHighlightProvider({ children }: { children: React
       {children}
     </WorkGraphWorkerHighlightContext.Provider>
   )
-}
-
-export function useWorkGraphWorkerHighlight(): WorkGraphWorkerHighlightContextValue {
-  return useContext(WorkGraphWorkerHighlightContext)
 }
 
 /**

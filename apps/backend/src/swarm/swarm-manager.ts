@@ -418,7 +418,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       runSessionMemoryLLMMerge: (descriptor, profileMemoryContent, sessionMemoryContent) =>
         this.executeSessionMemoryLLMMerge(descriptor, profileMemoryContent, sessionMemoryContent),
-      getPiModelsJsonPath: () => this.getPiModelsJsonPathOrThrow()
+      getPiModelsJsonPath: () => this.configurationCoordinator.getPiModelsJsonPathOrThrow()
     });
     this.knowledgeMemoryCoordinator = this.createKnowledgeMemoryCoordinator(
       compactionRuntimeSettingsProvider,
@@ -649,15 +649,15 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         resolveAndValidateCwd: (cwd, cwdOptions) =>
           this.configurationCoordinator.resolveAndValidateCwd(cwd, cwdOptions),
         ensureSessionFileParentDirectory: (sessionFile) =>
-          this.ensureSessionFileParentDirectory(sessionFile),
-        ensureDirectories: () => this.ensureDirectories(),
+          this.persistenceService.ensureSessionFileParentDirectory(sessionFile),
+        ensureDirectories: () => this.persistenceService.ensureDirectories(),
         loadStore: () => this.descriptorStoreAdapter.loadStore(),
         loadSecrets: () => this.configurationCoordinator.loadSecretsStore(),
         reloadSkillMetadata: () => this.configurationCoordinator.reloadSkillMetadata(),
         reloadModelCatalog: () =>
           this.configurationCoordinator.reloadModelCatalogOverridesAndProjection(),
         preloadSessionPlanStates: () => this.sessionInteractionCoordinator.preloadSessionPlanStates(),
-        deleteManagerSchedulesFile: (profileId) => this.deleteManagerSchedulesFile(profileId),
+        deleteManagerSchedulesFile: (profileId) => this.persistenceService.deleteManagerSchedulesFile(profileId),
         getOrCreateRuntimeForDescriptor: (descriptor) =>
           this.getOrCreateRuntimeForDescriptor(descriptor),
       },
@@ -917,15 +917,15 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
         upsertProfile: (profile) => this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile),
-        ensureProfileDirectories: (profileId) => this.ensureProfilePiDirectories(profileId),
+        ensureProfileDirectories: (profileId) => this.persistenceService.ensureProfilePiDirectories(profileId),
         ensureSessionFileParent: (sessionFile) =>
-          this.ensureSessionFileParentDirectory(sessionFile),
+          this.persistenceService.ensureSessionFileParentDirectory(sessionFile),
         getAgentMemoryPath: (agentId) =>
           this.knowledgeMemoryCoordinator.getAgentMemoryPath(agentId),
         resolvePromptWithFallback: (category, promptId, profileId, fallback) =>
           this.managerBootstrapCoordinator.resolvePromptWithFallback(category, promptId, profileId, fallback),
       },
-      getPiModelsJsonPath: () => this.getPiModelsJsonPathOrThrow(),
+      getPiModelsJsonPath: () => this.configurationCoordinator.getPiModelsJsonPathOrThrow(),
       versioning: this.versioningService,
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
@@ -940,8 +940,8 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       getProfile: (profileId) => this.profiles.get(profileId),
       upsertDescriptor: (descriptor) => this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
       upsertProfile: (profile) => this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile),
-      ensureProfileDirectories: (profileId) => this.ensureProfilePiDirectories(profileId),
-      ensureSessionFileParent: (sessionFile) => this.ensureSessionFileParentDirectory(sessionFile),
+      ensureProfileDirectories: (profileId) => this.persistenceService.ensureProfilePiDirectories(profileId),
+      ensureSessionFileParent: (sessionFile) => this.persistenceService.ensureSessionFileParentDirectory(sessionFile),
       ensureMemoryFile: (path, profileId) =>
         this.knowledgeMemoryCoordinator.ensureAgentMemoryFile(path, profileId),
       getAgentMemoryPath: (agentId) => this.knowledgeMemoryCoordinator.getAgentMemoryPath(agentId),
@@ -980,9 +980,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           deleteProfile: (profileId) =>
             this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId),
         },
-        ensureProfilePiDirectories: (profileId) => this.ensureProfilePiDirectories(profileId),
+        ensureProfilePiDirectories: (profileId) => this.persistenceService.ensureProfilePiDirectories(profileId),
         ensureSessionFileParentDirectory: (sessionFile) =>
-          this.ensureSessionFileParentDirectory(sessionFile),
+          this.persistenceService.ensureSessionFileParentDirectory(sessionFile),
         ensureAgentMemoryFile: (memoryFilePath, profileId) =>
           this.knowledgeMemoryCoordinator.ensureAgentMemoryFile(memoryFilePath, profileId),
         getAgentMemoryPath: (agentId) =>
@@ -995,7 +995,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
           this.runtimeLifecycleCoordinator.detachRuntime(agentId, runtimeToken),
         clearAgentTurnState: (agentId) =>
           this.runtimeLifecycleCoordinator.clearAgentState(agentId),
-        deleteManagerSessionFile: (sessionFile) => this.deleteManagerSessionFile(sessionFile),
+        deleteManagerSessionFile: (sessionFile) => this.persistenceService.deleteManagerSessionFile(sessionFile),
         logDebug: (message, details) => this.logDebug(message, details),
       },
       sessions: {
@@ -1380,19 +1380,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       });
     });
   }
-
-  private async ensureDirectories(): Promise<void> {
-    await this.persistenceService.ensureDirectories();
-  }
-
-  private getPiModelsJsonPathOrThrow(): string {
-    return this.configurationCoordinator.getPiModelsJsonPathOrThrow();
-  }
-
-  private async ensureSessionFileParentDirectory(sessionFile: string): Promise<void> {
-    await mkdir(dirname(sessionFile), { recursive: true });
-  }
-
   protected async executeSessionMemoryLLMMerge(
     descriptor: AgentDescriptor,
     profileMemoryContent: string,
@@ -1404,19 +1391,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       sessionMemoryContent
     );
   }
-
-  private async ensureProfilePiDirectories(profileId: string): Promise<void> {
-    await this.persistenceService.ensureProfilePiDirectories(profileId);
-  }
-
-  private async deleteManagerSessionFile(sessionFile: string): Promise<void> {
-    await this.persistenceService.deleteManagerSessionFile(sessionFile);
-  }
-
-  private async deleteManagerSchedulesFile(profileId: string): Promise<void> {
-    await this.persistenceService.deleteManagerSchedulesFile(profileId);
-  }
-
   async patchDescriptorFromRuntimeStatus(
     agentId: string,
     patch: Partial<AgentDescriptor>

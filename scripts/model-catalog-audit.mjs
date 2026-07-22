@@ -88,6 +88,11 @@ for (const provider of curatedProviders) {
           ...entry,
           kind: 'pending-upstream',
         })
+      } else if (classification === 'intentional') {
+        intentionalDivergences.push({
+          ...entry,
+          kind: 'missing-upstream',
+        })
       } else {
         missingUpstream.push(entry)
       }

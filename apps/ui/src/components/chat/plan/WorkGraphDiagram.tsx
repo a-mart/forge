@@ -15,10 +15,8 @@ import {
   WorkGraphNodeStatusIcon,
 } from './WorkGraphNodeMeta'
 import { workGraphNodeStatusLabel } from './work-graph-node-status'
-import {
-  getWorkGraphNodeWorkerId,
-  useWorkGraphWorkerHighlight,
-} from '../WorkGraphWorkerHighlight'
+import { getWorkGraphNodeWorkerId } from '../work-graph-node-worker'
+import { useWorkGraphWorkerHighlight } from '../work-graph-worker-highlight-context'
 
 interface PositionedNode {
   node: WorkGraphNode

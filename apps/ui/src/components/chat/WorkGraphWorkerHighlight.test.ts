@@ -5,11 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentDescriptor, WorkGraphSnapshot } from '@forge/protocol'
 import { WorkerPillBar } from './WorkerPillBar'
-import {
-  WorkGraphWorkerHighlightProvider,
-  getWorkGraphNodeWorkerId,
-  useWorkGraphWorkerHighlight,
-} from './WorkGraphWorkerHighlight'
+import { WorkGraphWorkerHighlightProvider } from './WorkGraphWorkerHighlight'
+import { getWorkGraphNodeWorkerId } from './work-graph-node-worker'
+import { useWorkGraphWorkerHighlight } from './work-graph-worker-highlight-context'
 import { WorkerRow } from './agent-sidebar/WorkerRow'
 import { SessionRowItem } from './agent-sidebar/SessionRowItem'
 import { WorkGraphDiagram } from './plan/WorkGraphDiagram'

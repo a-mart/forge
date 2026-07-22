@@ -147,6 +147,10 @@ export class PersistenceService {
     await writeFile(memoryFilePath, memoryTemplateContent, "utf8");
   }
 
+  async ensureSessionFileParentDirectory(sessionFile: string): Promise<void> {
+    await mkdir(dirname(sessionFile), { recursive: true });
+  }
+
   async deleteManagerSessionFile(sessionFile: string): Promise<void> {
     await Promise.all([
       deleteFileIfPresent(sessionFile),
