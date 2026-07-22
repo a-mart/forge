@@ -22,6 +22,8 @@ const TYPES = new Set([
   "browser_tab_activate",
   "browser_tab_close",
   "browser_tab_resize",
+  "browser_recording_start",
+  "browser_recording_stop",
 ]);
 
 export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClientCommand | undefined {
@@ -75,11 +77,20 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
       }
       case "browser_tab_activate":
       case "browser_tab_close":
+      case "browser_recording_start":
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
           sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
           tabId: identifier(value.tabId, "tabId"),
+        });
+      case "browser_recording_stop":
+        return ok({
+          type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
+          sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
+          tabId: identifier(value.tabId, "tabId"),
+          recordingId: identifier(value.recordingId, "recordingId"),
         });
       case "browser_tab_resize":
         return ok({

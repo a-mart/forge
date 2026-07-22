@@ -103,6 +103,14 @@ export function buildBrowserTabResizeCommand(
   return { type: 'browser_tab_resize', requestId, sessionAgentId, tabId, viewport }
 }
 
+export function buildBrowserRecordingStartCommand(sessionAgentId: string, tabId: string, requestId: string): ClientCommand {
+  return { type: 'browser_recording_start', requestId, sessionAgentId, tabId }
+}
+
+export function buildBrowserRecordingStopCommand(sessionAgentId: string, tabId: string, recordingId: string, requestId: string): ClientCommand {
+  return { type: 'browser_recording_stop', requestId, sessionAgentId, tabId, recordingId }
+}
+
 export function buildRestartRecoveryActionCommand(
   type: 'resume_restart_recovery' | 'dismiss_restart_recovery',
 ): ClientCommand {

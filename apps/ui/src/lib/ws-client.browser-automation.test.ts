@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserHostRegistration, BrowserSessionSnapshot } from '@forge/protocol'
 import { ManagerWsClient } from './ws-client'
 
@@ -12,6 +12,8 @@ const registration: BrowserHostRegistration = {
 function snapshot(revision: number): BrowserSessionSnapshot {
   return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, recentActions: [], revision, createdAt: new Date(0).toISOString(), updatedAt: new Date(revision).toISOString() }
 }
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('ManagerWsClient browser automation state', () => {
   it('hydrates a host generation, ignores stale revisions, and applies reconnect bootstrap authoritatively', () => {
@@ -31,6 +33,30 @@ describe('ManagerWsClient browser automation state', () => {
 
     ingest({ type: 'browser_session_snapshot', snapshot: snapshot(3) })
     expect(client.getState().browserSessions['session-1']?.revision).toBe(3)
+  })
+
+  it('resolves typed recording start and stop results without a client artifact path', async () => {
+    vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    const send = vi.fn()
+    ;(client as unknown as { transport: { socket: { readyState: number; send: (payload: string) => void } } }).transport.socket = { readyState: 1, send }
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+
+    const startedPromise = client.startBrowserRecording('session-1', 'tab-1')
+    const startCommand = JSON.parse(send.mock.calls[0]![0] as string)
+    expect(startCommand).toMatchObject({ type: 'browser_recording_start', sessionAgentId: 'session-1', tabId: 'tab-1' })
+    expect(startCommand).not.toHaveProperty('artifactDirectory')
+    const started = { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: new Date(0).toISOString(), mimeType: 'video/webm', width: 1000, height: 700 }
+    ingest({ type: 'browser_recording_command_succeeded', requestId: startCommand.requestId, commandType: 'browser_recording_start', result: started, snapshot: snapshot(2) })
+    await expect(startedPromise).resolves.toEqual(started)
+
+    const stoppedPromise = client.stopBrowserRecording('session-1', 'tab-1', 'recording-1')
+    const stopCommand = JSON.parse(send.mock.calls[1]![0] as string)
+    expect(stopCommand).toMatchObject({ type: 'browser_recording_stop', sessionAgentId: 'session-1', tabId: 'tab-1', recordingId: 'recording-1' })
+    expect(stopCommand).not.toHaveProperty('artifactDirectory')
+    const stopped = { recordingId: 'recording-1', tabId: 'tab-1', path: '/canonical/browser/recording-1.webm', mimeType: 'video/webm', extension: 'webm', sizeBytes: 14, width: 1000, height: 700, createdAt: new Date(1).toISOString() }
+    ingest({ type: 'browser_recording_command_succeeded', requestId: stopCommand.requestId, commandType: 'browser_recording_stop', result: stopped, snapshot: snapshot(3) })
+    await expect(stoppedPromise).resolves.toEqual(stopped)
   })
 
   it('limits reveal requests to the selected session and current host generation', () => {

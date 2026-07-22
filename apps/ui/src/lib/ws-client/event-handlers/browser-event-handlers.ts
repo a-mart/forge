@@ -80,20 +80,33 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
       return true
     }
     case 'browser_tab_command_succeeded': {
-      const previous = context.state.browserSessions[event.snapshot.sessionAgentId]
-      if (!previous || event.snapshot.revision >= previous.revision) {
-        context.updateState({
-          browserSessions: {
-            ...context.state.browserSessions,
-            [event.snapshot.sessionAgentId]: event.snapshot,
-          },
-        })
-      }
+      updateSessionFromCommand(context, event.snapshot)
       context.requestTracker.resolve(event.commandType, event.requestId, event.snapshot)
+      return true
+    }
+    case 'browser_recording_command_succeeded': {
+      updateSessionFromCommand(context, event.snapshot)
+      if (event.commandType === 'browser_recording_start') {
+        context.requestTracker.resolve(event.commandType, event.requestId, event.result)
+      } else {
+        context.requestTracker.resolve(event.commandType, event.requestId, event.result)
+      }
       return true
     }
     default:
       return false
+  }
+}
+
+function updateSessionFromCommand(context: BrowserEventContext, snapshot: BrowserSessionSnapshot): void {
+  const previous = context.state.browserSessions[snapshot.sessionAgentId]
+  if (!previous || snapshot.revision >= previous.revision) {
+    context.updateState({
+      browserSessions: {
+        ...context.state.browserSessions,
+        [snapshot.sessionAgentId]: snapshot,
+      },
+    })
   }
 }
 

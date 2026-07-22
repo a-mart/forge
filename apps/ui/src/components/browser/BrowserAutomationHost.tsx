@@ -40,7 +40,6 @@ export interface BrowserAutomationHostHandle {
   reload(tabId: string, hard?: boolean): void
   setZoom(tabId: string, factor: number): void
   captureScreenshot(tabId: string): Promise<string>
-  toggleRecording(tab: BrowserTabSnapshot): Promise<BrowserAutomationResponse>
 }
 
 interface BrowserAutomationHostProps {
@@ -62,12 +61,10 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const visibleTabIds = useRef(new Set<string>())
     const sessionsRef = useRef(state.browserSessions)
     const bridgeRef = useRef(bridge)
-    const clientRef = useRef(client)
     const hostIdRef = useRef(`forge-browser-${randomId()}`)
 
     useEffect(() => { sessionsRef.current = state.browserSessions }, [state.browserSessions])
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
-    useEffect(() => { clientRef.current = client }, [client])
 
     const tabs = useMemo(() => {
       const canonical = Object.values(state.browserSessions).flatMap((session) => session.tabs)
@@ -212,25 +209,6 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       },
       async captureScreenshot(tabId) {
         return (await requireWebview(webviews.current, tabId).capturePage()).toDataURL()
-      },
-      async toggleRecording(tab) {
-        const currentBridge = bridgeRef.current
-        const host = clientRef.current?.getState().browserHost
-        if (!currentBridge || !host?.hostId || host.hostGeneration === null) throw new Error('Browser host is unavailable')
-        const operation = tab.recording ? 'recordingStop' : 'recordingStart'
-        const request = {
-          requestId: `human-${randomId()}`,
-          sessionAgentId: tab.sessionAgentId,
-          profileId: tab.profileId,
-          tabId: tab.tabId,
-          hostId: host.hostId,
-          hostGeneration: host.hostGeneration,
-          deadlineAt: new Date(Date.now() + 60_000).toISOString(),
-          artifactDirectory: null,
-          operation,
-          input: tab.recording ? { tabId: tab.tabId, recordingId: tab.recording.recordingId } : { tabId: tab.tabId },
-        } as BrowserAutomationRequest
-        return currentBridge.invoke(request)
       },
     }), [])
 

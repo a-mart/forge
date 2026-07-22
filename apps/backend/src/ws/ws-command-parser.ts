@@ -95,6 +95,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "browser_tab_activate":
     case "browser_tab_close":
     case "browser_tab_resize":
+    case "browser_recording_start":
+    case "browser_recording_stop":
       return command.requestId;
 
     case "pin_message":

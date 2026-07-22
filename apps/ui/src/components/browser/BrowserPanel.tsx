@@ -110,7 +110,9 @@ export function BrowserPanel({ client, sessionAgentId, profileId, snapshot, host
           </button>
           <IconButton label="Zoom in" disabled={controlsUnavailable || !activeTab} onClick={() => activeTab && hostRef.current?.setZoom(activeTab.tabId, activeTab.zoomFactor + 0.1)}><ZoomIn /></IconButton>
           <IconButton label="Screenshot" disabled={controlsUnavailable || !activeTab} onClick={() => activeTab && void run(async () => setScreenshot(await hostRef.current!.captureScreenshot(activeTab.tabId)))}><Camera /></IconButton>
-          <IconButton label={activeTab?.recording ? 'Stop recording' : 'Start recording'} disabled={controlsUnavailable || !activeTab || !host.capabilities?.supportsRecording} onClick={() => activeTab && void run(async () => { const response = await hostRef.current!.toggleRecording(activeTab); if (!response.ok) throw new Error(response.error.message) })}>
+          <IconButton label={activeTab?.recording ? 'Stop recording' : 'Start recording'} disabled={controlsUnavailable || !activeTab || !host.capabilities?.supportsRecording} onClick={() => activeTab && client && void run(() => activeTab.recording
+            ? client.stopBrowserRecording(sessionAgentId, activeTab.tabId, activeTab.recording.recordingId)
+            : client.startBrowserRecording(sessionAgentId, activeTab.tabId))}>
             <Circle className={cn(activeTab?.recording && 'fill-red-500 text-red-500')} />
           </IconButton>
         </div>

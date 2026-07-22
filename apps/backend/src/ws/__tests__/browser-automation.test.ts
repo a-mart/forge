@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -35,7 +35,107 @@ describe('browser websocket transport', () => {
     for (const type of [
       'browser_host_register', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
       'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
+      'browser_recording_start', 'browser_recording_stop',
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
+  })
+
+  it('routes human recording through the service and returns a canonical artifact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-recording-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'connection-1',
+      subscribedAgentId: 'session-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+
+    const opening = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_tab_open', requestId: 'open-1', sessionAgentId: 'session-1', profileId: 'profile-1' },
+    })
+    const openRequest = await nextAutomationRequest(sent, 'open')
+    const initialTab = tabFor(openRequest, 'tab-1')
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(openRequest), operation: 'open', ok: true, result: { tab: initialTab, created: true, panelRevealRequested: false }, elapsedMs: 1, updatedTab: initialTab,
+    } } })
+    await opening
+
+    const starting = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_recording_start', requestId: 'recording-start-1', sessionAgentId: 'session-1', tabId: 'tab-1' },
+    })
+    const startRequest = await nextAutomationRequest(sent, 'recordingStart')
+    expect(startRequest.artifactDirectory).toBeNull()
+    const recordingTab = { ...initialTab, recording: { recordingId: 'recording-1', startedAt: new Date().toISOString(), mimeType: 'video/webm' } }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(startRequest), operation: 'recordingStart', ok: true,
+      result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: recordingTab.recording.startedAt, mimeType: 'video/webm', width: 1000, height: 700 },
+      elapsedMs: 2, updatedTab: recordingTab,
+    } } })
+    await starting
+
+    const stopping = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_recording_stop', requestId: 'recording-stop-1', sessionAgentId: 'session-1', tabId: 'tab-1', recordingId: 'recording-1' },
+    })
+    const stopRequest = await nextAutomationRequest(sent, 'recordingStop')
+    const artifactDirectory = service.store.getArtifactsDirectory('profile-1', 'session-1')
+    expect(stopRequest.artifactDirectory).toBe(artifactDirectory)
+    await mkdir(artifactDirectory, { recursive: true })
+    const artifactPath = join(artifactDirectory, 'recording-1.webm')
+    await writeFile(artifactPath, Buffer.from('real recording'))
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(stopRequest), operation: 'recordingStop', ok: true,
+      result: { recordingId: 'recording-1', tabId: 'tab-1', path: artifactPath, mimeType: 'video/webm', extension: 'webm', sizeBytes: 14, width: 1000, height: 700, createdAt: new Date().toISOString() },
+      elapsedMs: 3, updatedTab: { ...recordingTab, recording: null },
+    } } })
+    await stopping
+
+    const succeeded = sent.find((event): event is Extract<ServerEvent, { type: 'browser_recording_command_succeeded' }> =>
+      event.type === 'browser_recording_command_succeeded' && event.commandType === 'browser_recording_stop')
+    expect(succeeded?.result.path).toBe(artifactPath)
+    expect(await readFile(succeeded!.result.path, 'utf8')).toBe('real recording')
+  })
+
+  it('rejects human recording for the wrong session, tab, or host connection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-recording-errors-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'connection-1',
+      subscribedAgentId: 'session-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+
+    await handleBrowserCommand({ ...common, command: { type: 'browser_recording_start', requestId: 'wrong-session', sessionAgentId: 'session-2', tabId: 'tab-1' } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_recording_start', requestId: 'wrong-tab', sessionAgentId: 'session-1', tabId: 'missing-tab' } })
+    await handleBrowserCommand({ ...common, connectionId: 'connection-2', command: { type: 'browser_recording_start', requestId: 'wrong-host', sessionAgentId: 'session-1', tabId: 'tab-1' } })
+
+    const errors = sent.filter((event): event is Extract<ServerEvent, { type: 'error' }> => event.type === 'error')
+    expect(errors.map((event) => [event.requestId, event.code])).toEqual([
+      ['wrong-session', 'BROWSER_RECORDING_START_SUBSCRIPTION_MISMATCH'],
+      ['wrong-tab', 'BROWSER_RECORDING_START_TAB_NOT_FOUND'],
+      ['wrong-host', 'BROWSER_RECORDING_START_BROWSER_UNAVAILABLE'],
+    ])
+    expect(sent.filter((event) => event.type === 'browser_automation_request')).toHaveLength(0)
   })
 
   it('routes an open request only through the registering socket generation', async () => {
@@ -106,6 +206,11 @@ function tabFor(request: BrowserAutomationRequest, tabId: string) {
     controller: 'none' as const, agentCursor: null, recording: null, viewportSetting: { mode: 'fill' as const }, renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, error: null, createdAt: now, updatedAt: now,
   }
 }
+async function nextAutomationRequest(sent: ServerEvent[], operation: BrowserAutomationRequest['operation']): Promise<BrowserAutomationRequest> {
+  await viWaitFor(() => sent.some((event) => event.type === 'browser_automation_request' && event.request.operation === operation))
+  return (sent.find((event) => event.type === 'browser_automation_request' && event.request.operation === operation) as Extract<ServerEvent, { type: 'browser_automation_request' }>).request
+}
+
 async function viWaitFor(predicate: () => boolean): Promise<void> {
   for (let index = 0; index < 50; index += 1) {
     if (predicate()) return

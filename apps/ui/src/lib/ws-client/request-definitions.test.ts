@@ -1,11 +1,31 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildBrowserRecordingStartCommand,
+  buildBrowserRecordingStopCommand,
   buildCreateManagerCommand,
   buildHydrateArchiveLastUsedCommand,
   buildProfileArchiveActionCommand,
   buildSessionActionCommand,
   buildSessionGoalControlCommand,
 } from './request-definitions'
+
+describe('browser recording command builders', () => {
+  it('send only canonical identifiers and never a filesystem path', () => {
+    expect(buildBrowserRecordingStartCommand('session-1', 'tab-1', 'request-start')).toEqual({
+      type: 'browser_recording_start',
+      requestId: 'request-start',
+      sessionAgentId: 'session-1',
+      tabId: 'tab-1',
+    })
+    expect(buildBrowserRecordingStopCommand('session-1', 'tab-1', 'recording-1', 'request-stop')).toEqual({
+      type: 'browser_recording_stop',
+      requestId: 'request-stop',
+      sessionAgentId: 'session-1',
+      tabId: 'tab-1',
+      recordingId: 'recording-1',
+    })
+  })
+})
 
 describe('buildCreateManagerCommand', () => {
   it('serializes reasoningLevel with preset create_manager payloads', () => {

@@ -7,6 +7,8 @@ import {
   buildBrowserHostRegisterCommand,
   buildBrowserHostResponseCommand,
   buildBrowserHostStateReportCommand,
+  buildBrowserRecordingStartCommand,
+  buildBrowserRecordingStopCommand,
   buildBrowserTabActivateCommand,
   buildBrowserTabCloseCommand,
   buildBrowserTabOpenCommand,
@@ -348,6 +350,18 @@ export class ManagerWsClient {
     assertConnectedSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('browser_tab_resize', (requestId) =>
       buildBrowserTabResizeCommand(sessionAgentId, tabId, viewport, requestId))
+  }
+
+  startBrowserRecording(sessionAgentId: string, tabId: string) {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_recording_start', (requestId) =>
+      buildBrowserRecordingStartCommand(sessionAgentId, tabId, requestId))
+  }
+
+  stopBrowserRecording(sessionAgentId: string, tabId: string, recordingId: string) {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_recording_stop', (requestId) =>
+      buildBrowserRecordingStopCommand(sessionAgentId, tabId, recordingId, requestId))
   }
 
   hasExplicitSelection(): boolean {

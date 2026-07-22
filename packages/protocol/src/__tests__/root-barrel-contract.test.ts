@@ -62,6 +62,8 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'browser_tab_activate',
   'browser_tab_close',
   'browser_tab_resize',
+  'browser_recording_start',
+  'browser_recording_stop',
   'api_proxy',
   'kill_agent',
   'stop_all_agents',
@@ -121,6 +123,8 @@ const REQUEST_ID_COMMAND_TYPES = [
   'browser_tab_activate',
   'browser_tab_close',
   'browser_tab_resize',
+  'browser_recording_start',
+  'browser_recording_stop',
   'api_proxy',
   'stop_all_agents',
   'hydrate_archive_last_used',
@@ -454,6 +458,8 @@ const requestIdCommands = [
   { type: 'browser_tab_activate', requestId: 'browser-request-2', sessionAgentId: agent.agentId, tabId: 'tab-1' },
   { type: 'browser_tab_close', requestId: 'browser-request-3', sessionAgentId: agent.agentId, tabId: 'tab-1' },
   { type: 'browser_tab_resize', requestId: 'browser-request-4', sessionAgentId: agent.agentId, tabId: 'tab-1', viewport: { mode: 'fill' } },
+  { type: 'browser_recording_start', requestId: 'browser-request-5', sessionAgentId: agent.agentId, tabId: 'tab-1' },
+  { type: 'browser_recording_stop', requestId: 'browser-request-6', sessionAgentId: agent.agentId, tabId: 'tab-1', recordingId: 'recording-1' },
   { type: 'api_proxy', requestId: 'request-1', method: 'GET', path: '/api/test' },
   { type: 'stop_all_agents', managerId: agent.agentId, requestId: 'request-2' },
   { type: 'hydrate_archive_last_used', requestId: 'request-hydrate-archive-last-used' },
@@ -537,6 +543,8 @@ describe('protocol root barrel contract', () => {
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
+      'browser_recording_start',
+      'browser_recording_stop',
       'browser_tab_open',
       'browser_tab_activate',
       'browser_tab_close',
@@ -588,7 +596,7 @@ describe('protocol root barrel contract', () => {
       WS_REQUEST_CONTRACTS.every((contract) =>
         contract.commandType === 'create_repository_project' ||
         contract.commandType === 'get_conversation_page' ||
-        contract.commandType.startsWith('browser_tab_')
+        contract.commandType.startsWith('browser_')
           ? contract.requestId.wire === 'required'
           : contract.requestId.wire === 'optional',
       ),
@@ -840,7 +848,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(67)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(69)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -851,7 +859,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(47)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(49)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)

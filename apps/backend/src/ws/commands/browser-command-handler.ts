@@ -56,6 +56,10 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       if (!accepted) options.logDebug?.("browser-state-report-ignored", { hostId: command.hostId, hostGeneration: command.hostGeneration });
       return true;
     }
+    case "browser_recording_start":
+    case "browser_recording_stop":
+      await handleRecordingCommand(options, command);
+      return true;
     case "browser_tab_open":
     case "browser_tab_activate":
     case "browser_tab_close":
@@ -65,9 +69,65 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
   }
 }
 
+async function handleRecordingCommand(
+  options: BrowserCommandHandlerOptions,
+  command: Extract<BrowserClientCommand, { type: "browser_recording_start" | "browser_recording_stop" }>,
+): Promise<void> {
+  const { browserAutomationService: service, connectionId } = options;
+  const subscribedAgentId = options.subscribedAgentId;
+  const managerSessionId = subscribedAgentId ? options.resolveManagerContextAgentId(subscribedAgentId) : undefined;
+  if (!subscribedAgentId || managerSessionId !== command.sessionAgentId) {
+    sendFailure(options, command, "SUBSCRIPTION_MISMATCH", "Browser commands may only target the currently selected Forge session.");
+    return;
+  }
+  const profileId = options.resolveProfileIdForAgent(command.sessionAgentId);
+  if (!profileId) {
+    sendFailure(options, command, "PROFILE_MISMATCH", "Browser command profile does not match the selected Forge session.");
+    return;
+  }
+  const host = service.broker.getConnectionSnapshot();
+  if (!host.connected || !host.hostId || host.hostGeneration === null || !service.broker.isCurrentConnection(connectionId, host.hostId, host.hostGeneration)) {
+    sendFailure(options, command, "BROWSER_UNAVAILABLE", "Browser controls require the local Electron host on this connection.");
+    return;
+  }
+
+  try {
+    if (command.type === "browser_recording_start") {
+      const outcome = await service.invoke(command.sessionAgentId, profileId, "recordingStart", { tabId: command.tabId });
+      if (!outcome.ok) throw new BrowserCommandFailure(outcome.error.code, outcome.error.message);
+      const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
+      options.send(options.socket, {
+        type: "browser_recording_command_succeeded",
+        requestId: command.requestId,
+        commandType: command.type,
+        result: outcome.result,
+        snapshot: cloneSnapshot(snapshot),
+      } satisfies BrowserServerEvent);
+      return;
+    }
+
+    const outcome = await service.invoke(command.sessionAgentId, profileId, "recordingStop", {
+      tabId: command.tabId,
+      recordingId: command.recordingId,
+    });
+    if (!outcome.ok) throw new BrowserCommandFailure(outcome.error.code, outcome.error.message);
+    const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
+    options.send(options.socket, {
+      type: "browser_recording_command_succeeded",
+      requestId: command.requestId,
+      commandType: command.type,
+      result: outcome.result,
+      snapshot: cloneSnapshot(snapshot),
+    } satisfies BrowserServerEvent);
+  } catch (error) {
+    const code = error instanceof BrowserCommandFailure ? error.code : "FAILED";
+    sendFailure(options, command, code, error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function handleTabCommand(
   options: BrowserCommandHandlerOptions,
-  command: Extract<BrowserClientCommand, { requestId: string }>,
+  command: Extract<BrowserClientCommand, { type: "browser_tab_open" | "browser_tab_activate" | "browser_tab_close" | "browser_tab_resize" }>,
 ): Promise<void> {
   const { browserAutomationService: service, connectionId } = options;
   const subscribedAgentId = options.subscribedAgentId;
@@ -139,7 +199,7 @@ async function handleTabCommand(
 
 function sendSuccess(
   options: BrowserCommandHandlerOptions,
-  command: Extract<BrowserClientCommand, { requestId: string }>,
+  command: Extract<BrowserClientCommand, { type: "browser_tab_open" | "browser_tab_activate" | "browser_tab_close" | "browser_tab_resize" }>,
   snapshot: BrowserSessionSnapshot,
 ): void {
   options.send(options.socket, {

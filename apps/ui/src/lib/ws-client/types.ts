@@ -146,6 +146,8 @@ export type WsRequestResultMap = {
   browser_tab_activate: BrowserSessionSnapshot
   browser_tab_close: BrowserSessionSnapshot
   browser_tab_resize: BrowserSessionSnapshot
+  browser_recording_start: import('@forge/protocol').BrowserRecordingStatusResult
+  browser_recording_stop: import('@forge/protocol').BrowserRecordingArtifactResult
 }
 
 export type WsRequestType = Extract<keyof WsRequestResultMap, string>

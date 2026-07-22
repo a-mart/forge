@@ -263,6 +263,8 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_tab_activate', requestId: '2', sessionAgentId: 'session-1', tabId: 'tab-1' },
       { type: 'browser_tab_close', requestId: '3', sessionAgentId: 'session-1', tabId: 'tab-1' },
       { type: 'browser_tab_resize', requestId: '4', sessionAgentId: 'session-1', tabId: 'tab-1', viewport: { mode: 'fill' } },
+      { type: 'browser_recording_start', requestId: '5', sessionAgentId: 'session-1', tabId: 'tab-1' },
+      { type: 'browser_recording_stop', requestId: '6', sessionAgentId: 'session-1', tabId: 'tab-1', recordingId: 'recording-1' },
     ] satisfies ClientCommand[]
     const events = [
       { type: 'browser_host_connected', host: { connected: true, hostId: host.hostId, hostGeneration: 4, focused: true, capabilities: host.capabilities, connectedAt: host.registeredAt } },
@@ -272,17 +274,18 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_session_changed', snapshot: session, reason: 'recovery' },
       { type: 'browser_panel_reveal_requested', sessionAgentId: 'session-1', tabId: 'tab-1', hostGeneration: 4, revision: 1 },
       { type: 'browser_tab_command_succeeded', requestId: '1', commandType: 'browser_tab_open', snapshot: session },
+      { type: 'browser_recording_command_succeeded', requestId: '5', commandType: 'browser_recording_start', result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: host.registeredAt, mimeType: 'video/webm', width: 1000, height: 700 }, snapshot: session },
     ] satisfies ServerEvent[]
-    expect(commands).toHaveLength(8)
-    expect(events).toHaveLength(7)
+    expect(commands).toHaveLength(10)
+    expect(events).toHaveLength(8)
   })
 
   it('makes every human tab mutation a required wire request', () => {
-    for (const commandType of ['browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize'] as const) {
+    for (const commandType of ['browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
       expect(getWsRequestContract(commandType)).toMatchObject({
         commandType,
         requestId: { ui: 'required', wire: 'required' },
-        successEvents: ['browser_tab_command_succeeded'],
+        successEvents: [commandType.startsWith('browser_recording_') ? 'browser_recording_command_succeeded' : 'browser_tab_command_succeeded'],
       })
     }
   })

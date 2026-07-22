@@ -30,8 +30,8 @@ describe('BrowserPanel', () => {
 
   it('wires tab, history, reload, zoom, viewport, screenshot, and recording controls', async () => {
     window.electronBridge = { backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin', browserAutomation: {} as never }
-    const client = { activateBrowserTab: vi.fn(), closeBrowserTab: vi.fn(), openBrowserTab: vi.fn(), resizeBrowserTab: vi.fn() }
-    const hostHandle: BrowserAutomationHostHandle = { navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), captureScreenshot: vi.fn(async () => 'data:image/png;base64,a'), toggleRecording: vi.fn(async () => ({ ok: false, error: { message: 'not available' } } as never)) }
+    const client = { activateBrowserTab: vi.fn(), closeBrowserTab: vi.fn(), openBrowserTab: vi.fn(), resizeBrowserTab: vi.fn(), startBrowserRecording: vi.fn(), stopBrowserRecording: vi.fn() }
+    const hostHandle: BrowserAutomationHostHandle = { navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), captureScreenshot: vi.fn(async () => 'data:image/png;base64,a') }
     const hostRef = { current: hostHandle }
     const connectedHost = { ...disconnectedHost, connected: true, hostId: 'host-1', hostGeneration: 1, capabilities: { supportedOperations: ['status'], electronVersion: '37', chromiumVersion: '138', playwrightVersion: '1.60.0', maxResponseBytes: 1024, supportsSandboxedWebviews: true, supportsCapturePage: true, supportsRecording: true }, connectedAt: now }
     act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { client: client as never, sessionAgentId: 'session-1', profileId: 'profile-1', snapshot, host: connectedHost as never, hostRef })) })
@@ -42,8 +42,18 @@ describe('BrowserPanel', () => {
     expect(hostHandle.reload).toHaveBeenCalledWith('tab-1', true)
     expect(hostHandle.setZoom).toHaveBeenCalledWith('tab-1', 1)
     expect(container.querySelector('[aria-label="Browser screenshot"]')).not.toBeNull()
-    click('Resize')
+    click('Resize'); click('Start recording')
+    await act(async () => { await Promise.resolve() })
     expect(client.resizeBrowserTab).toHaveBeenCalled()
+    expect(client.startBrowserRecording).toHaveBeenCalledWith('session-1', 'tab-1')
+    expect(window.electronBridge?.browserAutomation?.invoke).toBeUndefined()
+
+    const recordingTab = { ...tab, recording: { recordingId: 'recording-1', startedAt: now, mimeType: 'video/webm' } }
+    const recordingSnapshot = { ...snapshot, tabs: [recordingTab] }
+    act(() => root!.render(createElement(BrowserPanel, { client: client as never, sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: recordingSnapshot, host: connectedHost as never, hostRef })))
+    click('Stop recording')
+    await act(async () => { await Promise.resolve() })
+    expect(client.stopBrowserRecording).toHaveBeenCalledWith('session-1', 'tab-1', 'recording-1')
   })
 })
 

@@ -575,6 +575,21 @@ export interface BrowserTabResizeCommand {
   viewport: BrowserViewportSetting
 }
 
+export interface BrowserRecordingStartCommand {
+  type: 'browser_recording_start'
+  requestId: string
+  sessionAgentId: string
+  tabId: string
+}
+
+export interface BrowserRecordingStopCommand {
+  type: 'browser_recording_stop'
+  requestId: string
+  sessionAgentId: string
+  tabId: string
+  recordingId: string
+}
+
 export type BrowserClientCommand =
   | BrowserHostRegisterCommand
   | BrowserHostFocusCommand
@@ -584,6 +599,8 @@ export type BrowserClientCommand =
   | BrowserTabActivateCommand
   | BrowserTabCloseCommand
   | BrowserTabResizeCommand
+  | BrowserRecordingStartCommand
+  | BrowserRecordingStopCommand
 
 export interface BrowserHostConnectedEvent {
   type: 'browser_host_connected'
@@ -628,6 +645,22 @@ export interface BrowserTabCommandSucceededEvent {
   snapshot: BrowserSessionSnapshot
 }
 
+export type BrowserRecordingCommandSucceededEvent =
+  | {
+      type: 'browser_recording_command_succeeded'
+      requestId: string
+      commandType: 'browser_recording_start'
+      result: BrowserRecordingStatusResult
+      snapshot: BrowserSessionSnapshot
+    }
+  | {
+      type: 'browser_recording_command_succeeded'
+      requestId: string
+      commandType: 'browser_recording_stop'
+      result: BrowserRecordingArtifactResult
+      snapshot: BrowserSessionSnapshot
+    }
+
 export type BrowserServerEvent =
   | BrowserHostConnectedEvent
   | BrowserHostStateSnapshotEvent
@@ -636,6 +669,7 @@ export type BrowserServerEvent =
   | BrowserSessionChangedEvent
   | BrowserPanelRevealRequestedEvent
   | BrowserTabCommandSucceededEvent
+  | BrowserRecordingCommandSucceededEvent
 
 export class BrowserAutomationContractError extends Error {
   readonly operation: BrowserAutomationOperation

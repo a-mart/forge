@@ -108,6 +108,8 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   browser_tab_activate: "admin",
   browser_tab_close: "admin",
   browser_tab_resize: "admin",
+  browser_recording_start: "admin",
+  browser_recording_stop: "admin",
   // Opens a native picker on the server host; meaningless and unsafe remotely.
   pick_directory: "admin",
 };
