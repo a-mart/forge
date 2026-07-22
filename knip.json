@@ -81,6 +81,8 @@
         "src/main.ts",
         "src/preload.ts",
         "src/auto-updater.ts",
+        "src/browser/fixture-smoke-main.ts",
+        "src/browser/guest-preload.ts",
         "scripts/**/*.mjs",
         "src/**/*.test.ts",
         "src/**/__tests__/**/*.ts"

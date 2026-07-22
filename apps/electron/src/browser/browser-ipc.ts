@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url'
-import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserViewportSetting } from '@forge/protocol'
+import type { BrowserAutomationRequest, BrowserViewportSetting } from '@forge/protocol'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import { webContents } from 'electron'
 import {
@@ -7,7 +7,7 @@ import {
   type BrowserWebContentsLike,
   type BrowserWebviewRegistration,
 } from './browser-automation-manager.js'
-import { BrowserHostError, asBrowserHostError } from './browser-errors.js'
+import { BrowserHostError } from './browser-errors.js'
 import { BrowserSessionRegistry } from './browser-session.js'
 import { BROWSER_IPC, type BrowserBridgeConfig } from './browser-bridge-contract.js'
 
@@ -90,19 +90,4 @@ export function installBrowserIpc(options: {
 
 export function isTrustedGuest(candidate: WebContents | undefined, host: WebContents): candidate is WebContents {
   return Boolean(candidate && !candidate.isDestroyed() && candidate.getType() === 'webview' && candidate.hostWebContents?.id === host.id)
-}
-
-export function browserIpcFailure(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {
-  return {
-    requestId: request.requestId,
-    sessionAgentId: request.sessionAgentId,
-    profileId: request.profileId,
-    tabId: request.tabId,
-    hostId: request.hostId,
-    hostGeneration: request.hostGeneration,
-    operation: request.operation,
-    ok: false,
-    error: asBrowserHostError(error, `Browser ${request.operation} failed`).toFailure(),
-    elapsedMs: 0,
-  }
 }

@@ -75,13 +75,24 @@ class FakeWebContents extends EventEmitter implements BrowserWebContentsLike {
   url = 'about:blank'
   title = 'Fixture'
   zoom = 1
+  loadURLImplementation: ((url: string) => Promise<void>) | null = null
   constructor(readonly id: number) { super() }
   isDestroyed(): boolean { return this.destroyed }
   isLoading(): boolean { return this.loading }
   getURL(): string { return this.url }
   getTitle(): string { return this.title }
   getZoomFactor(): number { return this.zoom }
-  async loadURL(url: string): Promise<void> { this.url = url; this.emit('did-navigate'); this.emit('did-stop-loading') }
+  async loadURL(url: string): Promise<void> {
+    if (this.loadURLImplementation) return this.loadURLImplementation(url)
+    this.url = url
+    this.loading = true
+    this.emit('did-start-loading')
+    this.emit('did-navigate')
+    this.emit('dom-ready')
+    this.loading = false
+    this.emit('did-finish-load')
+    this.emit('did-stop-loading')
+  }
   async capturePage(): Promise<BrowserImageLike> { return new FakeImage() }
   focus(): void {}
   close(): void { this.destroyed = true; this.emit('destroyed') }
@@ -109,6 +120,15 @@ async function setup(): Promise<{ manager: BrowserAutomationManager; webview: Fa
   return { manager, webview, root }
 }
 
+function navigationListenerCounts(webview: FakeWebContents): Record<string, number> {
+  return {
+    domReady: webview.listenerCount('dom-ready'),
+    didFinishLoad: webview.listenerCount('did-finish-load'),
+    didFailLoad: webview.listenerCount('did-fail-load'),
+    destroyed: webview.listenerCount('destroyed'),
+  }
+}
+
 function request(operation: BrowserAutomationRequest['operation'], input: Record<string, unknown>, tabId: string | null = 'tab-1', overrides: Partial<BrowserAutomationRequest> = {}): BrowserAutomationRequest {
   return {
     requestId: `request-${++requestSequence}`, sessionAgentId: 'session-1', profileId: 'profile-1', tabId,
@@ -117,7 +137,10 @@ function request(operation: BrowserAutomationRequest['operation'], input: Record
   } as BrowserAutomationRequest
 }
 
-afterEach(async () => { await Promise.all(managers.splice(0).map((manager) => manager.destroy())) })
+afterEach(async () => {
+  await Promise.all(managers.splice(0).map((manager) => manager.destroy()))
+  vi.useRealTimers()
+})
 
 describe('BrowserAutomationManager', () => {
   it('normalizes only blank and HTTP(S) browser URLs', () => {
@@ -146,6 +169,106 @@ describe('BrowserAutomationManager', () => {
     expect(snapshot?.ok && snapshot.operation === 'snapshot' ? snapshot.result : null).toMatchObject({
       visibleText: 'Fixture text', viewport: { width: 800, height: 600 }, screenshot: { mimeType: 'image/png', width: 1280, height: 720 },
     })
+  })
+
+  it('resolves none before DOMContentLoaded before load and removes readiness listeners', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const fixtures = await Promise.all([setup(), setup(), setup()])
+    const configureNavigation = (webview: FakeWebContents): void => {
+      webview.loadURLImplementation = (url) => new Promise<void>((resolve) => {
+        webview.url = url
+        webview.loading = true
+        webview.emit('did-start-loading')
+        setTimeout(() => webview.emit('dom-ready'), 100)
+        setTimeout(() => {
+          webview.loading = false
+          webview.emit('did-finish-load')
+          webview.emit('did-stop-loading')
+          resolve()
+        }, 200)
+      })
+    }
+    for (const { webview } of fixtures) configureNavigation(webview)
+    const baselines = fixtures.map(({ webview }) => navigationListenerCounts(webview))
+    const completedAt: Partial<Record<'none' | 'domContentLoaded' | 'load', number>> = {}
+    const readiness = ['none', 'domContentLoaded', 'load'] as const
+    const pending = readiness.map((mode, index) => fixtures[index]!.manager.execute(
+      request('navigate', { url: `http://127.0.0.1:3000/${mode}`, readiness: mode, timeoutMs: 1_000 }),
+    ).then((response) => {
+      completedAt[mode] = Date.now()
+      return response
+    }))
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(completedAt).toEqual({ none: 0 })
+    await vi.advanceTimersByTimeAsync(99)
+    expect(completedAt).toEqual({ none: 0 })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(completedAt).toEqual({ none: 0, domContentLoaded: 100 })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(completedAt).toEqual({ none: 0, domContentLoaded: 100, load: 200 })
+    expect((await Promise.all(pending)).every((response) => response.ok)).toBe(true)
+    expect(fixtures.map(({ webview }) => navigationListenerCounts(webview))).toEqual(baselines)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('uses one navigation deadline instead of starting a second readiness timeout', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const { manager, webview } = await setup()
+    const baseline = navigationListenerCounts(webview)
+    webview.loadURLImplementation = (url) => new Promise<void>((resolve) => {
+      webview.url = url
+      webview.loading = true
+      setTimeout(resolve, 75)
+    })
+    let settled = false
+    const pending = manager.execute(request('navigate', {
+      url: 'http://127.0.0.1:3000/slow-dom', readiness: 'domContentLoaded', timeoutMs: 100,
+    })).then((response) => { settled = true; return response })
+
+    await vi.advanceTimersByTimeAsync(99)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'timeout' }, elapsedMs: 100 })
+    expect(navigationListenerCounts(webview)).toEqual(baseline)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('cleans navigation waits on failure, tab destruction, and human interruption', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+
+    const failed = await setup()
+    const failedBaseline = navigationListenerCounts(failed.webview)
+    failed.webview.loadURLImplementation = async (url) => { failed.webview.url = url; await new Promise<void>(() => undefined) }
+    const failedResponse = failed.manager.execute(request('navigate', { url: 'http://127.0.0.1:3000/fail', readiness: 'load', timeoutMs: 1_000 }))
+    await vi.advanceTimersByTimeAsync(0)
+    failed.webview.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', failed.webview.url, true)
+    await expect(failedResponse).resolves.toMatchObject({ ok: false, error: { code: 'navigation-failed' } })
+    expect(navigationListenerCounts(failed.webview)).toEqual(failedBaseline)
+    expect(vi.getTimerCount()).toBe(0)
+
+    const destroyed = await setup()
+    destroyed.webview.loadURLImplementation = async (url) => { destroyed.webview.url = url; await new Promise<void>(() => undefined) }
+    const destroyedResponse = destroyed.manager.execute(request('navigate', { url: 'http://127.0.0.1:3000/destroy', readiness: 'load', timeoutMs: 1_000 }))
+    await vi.advanceTimersByTimeAsync(0)
+    destroyed.webview.close()
+    await expect(destroyedResponse).resolves.toMatchObject({ ok: false, error: { code: 'tab-not-found' } })
+    expect(navigationListenerCounts(destroyed.webview)).toEqual({ domReady: 0, didFinishLoad: 0, didFailLoad: 0, destroyed: 0 })
+    expect(vi.getTimerCount()).toBe(0)
+
+    const interrupted = await setup()
+    const interruptedBaseline = navigationListenerCounts(interrupted.webview)
+    interrupted.webview.loadURLImplementation = async (url) => { interrupted.webview.url = url; await new Promise<void>(() => undefined) }
+    const interruptedResponse = interrupted.manager.execute(request('navigate', { url: 'http://127.0.0.1:3000/interrupted', readiness: 'load', timeoutMs: 1_000 }))
+    await vi.advanceTimersByTimeAsync(0)
+    interrupted.webview.ipc.emit(BROWSER_GUEST_HUMAN_INPUT_CHANNEL, {}, { kind: 'key', key: 'x', code: 'KeyX' })
+    await expect(interruptedResponse).resolves.toMatchObject({ ok: false, error: { code: 'control-interrupted' } })
+    expect(navigationListenerCounts(interrupted.webview)).toEqual(interruptedBaseline)
+    await vi.advanceTimersByTimeAsync(750)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('serializes same-tab input, recognizes synthetic input, and isolates tab queues', async () => {

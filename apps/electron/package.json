@@ -28,6 +28,7 @@
     "playwright-core": "1.60.0"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.0.3",
     "@types/node": "^24.3.0",
     "electron": "^37.2.5",

@@ -119,6 +119,7 @@ interface TabRuntime {
   debuggerMessage: DebuggerMessageListener | null
   listeners: Array<{ event: string; listener: (...args: unknown[]) => void }>
   humanInputListener: (event: unknown, signal?: unknown) => void
+  navigationWait: { interrupt(error: BrowserHostError): void } | null
   destroyed: boolean
 }
 
@@ -232,6 +233,7 @@ export class BrowserAutomationManager {
       debuggerMessage: null,
       listeners: [],
       humanInputListener: (_event, signal) => this.handleGuestInput(registration.tab.tabId, signal),
+      navigationWait: null,
       destroyed: false,
     }
     this.tabs.set(runtime.snapshot.tabId, runtime)
@@ -434,27 +436,79 @@ export class BrowserAutomationManager {
   }
 
   private async loadAndWait(tab: TabRuntime, url: string, readiness: 'load' | 'domContentLoaded' | 'none', timeoutMs: number): Promise<void> {
-    await this.serialize(tab, 'navigate', async (send) => {
+    const deadline = this.now() + timeoutMs
+    await this.serialize(tab, 'navigate', async () => {
       tab.snapshot = { ...tab.snapshot, lifecycle: 'loading', loading: true, url, error: null }
       try {
-        await this.withTimeout(tab.webContents.loadURL(url), timeoutMs, 'Navigation timed out')
-        if (readiness !== 'none') {
-          const deadline = this.now() + timeoutMs
-          while (this.now() <= deadline) {
-            const readyState = await this.evaluateValue<string>(tab, send, 'document.readyState', true, true)
-            if (readyState === 'complete' || (readiness === 'domContentLoaded' && readyState === 'interactive')) break
-            await this.delay(POLL_INTERVAL_MS)
-          }
-          if (this.now() > deadline) throw new BrowserHostError('timeout', `Navigation did not reach ${readiness}`, true)
+        if (this.now() >= deadline) throw new BrowserHostError('timeout', `Navigation did not reach ${readiness}`, true)
+        if (readiness === 'none') {
+          const navigation = tab.webContents.loadURL(url)
+          void navigation.catch((error) => this.markBackgroundNavigationFailure(tab, error))
+        } else {
+          await this.waitForNavigationReadiness(tab, url, readiness, deadline)
         }
-        tab.snapshot = { ...tab.snapshot, lifecycle: 'ready', loading: false }
         this.syncSnapshot(tab)
       } catch (error) {
-        tab.snapshot = { ...tab.snapshot, lifecycle: 'failed', loading: false, error: { code: 'navigation-failed', message: error instanceof Error ? error.message : 'Navigation failed' } }
-        if (error instanceof BrowserHostError) throw error
-        throw new BrowserHostError('navigation-failed', error instanceof Error ? error.message : 'Navigation failed', true)
+        const failure = error instanceof BrowserHostError
+          ? error
+          : new BrowserHostError('navigation-failed', error instanceof Error ? error.message : 'Navigation failed', true)
+        tab.snapshot = { ...tab.snapshot, lifecycle: 'failed', loading: false, error: { code: failure.code, message: failure.message } }
+        throw failure
       }
     })
+  }
+
+  private waitForNavigationReadiness(tab: TabRuntime, url: string, readiness: 'load' | 'domContentLoaded', deadline: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false
+      let cancelTimeout = (): void => undefined
+      const complete = (error?: BrowserHostError): void => {
+        if (settled) return
+        settled = true
+        cancelTimeout()
+        tab.webContents.off(readiness === 'load' ? 'did-finish-load' : 'dom-ready', ready)
+        tab.webContents.off('did-fail-load', failed)
+        tab.webContents.off('destroyed', destroyed)
+        if (tab.navigationWait === navigationWait) tab.navigationWait = null
+        if (error) reject(error)
+        else resolve()
+      }
+      const ready = (): void => complete()
+      const failed = (...args: unknown[]): void => {
+        if (args[4] === false) return
+        const code = typeof args[1] === 'number' ? args[1] : 0
+        const description = typeof args[2] === 'string' ? args[2] : 'Page failed to load'
+        complete(new BrowserHostError('navigation-failed', `Navigation failed (${code}): ${description}`, true))
+      }
+      const destroyed = (): void => complete(new BrowserHostError('tab-not-found', 'Browser tab was destroyed', true))
+      const navigationWait = { interrupt: (error: BrowserHostError): void => complete(error) }
+      const remaining = deadline - this.now()
+      if (remaining <= 0) {
+        complete(new BrowserHostError('timeout', `Navigation did not reach ${readiness}`, true))
+        return
+      }
+
+      tab.navigationWait = navigationWait
+      tab.webContents.on(readiness === 'load' ? 'did-finish-load' : 'dom-ready', ready)
+      tab.webContents.on('did-fail-load', failed)
+      tab.webContents.on('destroyed', destroyed)
+      const timeout = setTimeout(() => complete(new BrowserHostError('timeout', `Navigation did not reach ${readiness}`, true)), remaining)
+      cancelTimeout = () => clearTimeout(timeout)
+      try {
+        void tab.webContents.loadURL(url).catch((error) => {
+          complete(new BrowserHostError('navigation-failed', error instanceof Error ? error.message : 'Navigation failed', true))
+        })
+      } catch (error) {
+        complete(new BrowserHostError('navigation-failed', error instanceof Error ? error.message : 'Navigation failed', true))
+      }
+    })
+  }
+
+  private markBackgroundNavigationFailure(tab: TabRuntime, error: unknown): void {
+    if (tab.destroyed || tab.webContents.isDestroyed()) return
+    const message = error instanceof Error ? error.message : 'Navigation failed'
+    tab.snapshot = { ...tab.snapshot, lifecycle: 'failed', loading: false, error: { code: 'navigation-failed', message } }
+    this.emitTabState(tab)
   }
 
   private async resize(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'resize' }>['input']): Promise<BrowserAutomationResultByOperation['resize']> {
@@ -798,6 +852,7 @@ export class BrowserAutomationManager {
   private disposeTabRuntime(tab: TabRuntime, close: boolean): void {
     if (tab.destroyed) return
     tab.destroyed = true
+    tab.navigationWait?.interrupt(new BrowserHostError('tab-not-found', 'Browser tab was destroyed', true))
     if (this.activeRecording?.tabId === tab.snapshot.tabId) this.cancelRecording(this.activeRecording.recordingId)
     for (const { event, listener } of tab.listeners) tab.webContents.off(event, listener)
     tab.listeners = []
@@ -842,6 +897,7 @@ export class BrowserAutomationManager {
     const match = tab.expectedInputs.findIndex((expected) => this.inputsMatch(expected.signal, value))
     if (match >= 0) { tab.expectedInputs.splice(match, 1); return }
     tab.controlEpoch += 1
+    tab.navigationWait?.interrupt(new BrowserHostError('control-interrupted', 'Human input interrupted navigate', true))
     tab.snapshot = { ...tab.snapshot, controller: 'human', updatedAt: new Date(now).toISOString() }
     this.emitTabState(tab)
     setTimeout(() => {
@@ -969,13 +1025,6 @@ export class BrowserAutomationManager {
 
   private errorResponse(request: BrowserAutomationRequest, error: BrowserAutomationFailure, started: number): BrowserAutomationResponse {
     return { requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false, error, elapsedMs: Math.max(0, this.now() - started), ...(request.tabId && this.tabs.get(request.tabId) ? { updatedTab: { ...this.tabs.get(request.tabId)!.snapshot } } : {}) }
-  }
-
-  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-    let timeout: NodeJS.Timeout | undefined
-    try {
-      return await Promise.race([promise, new Promise<T>((_resolve, reject) => { timeout = setTimeout(() => reject(new BrowserHostError('timeout', message, true)), timeoutMs) })])
-    } finally { if (timeout) clearTimeout(timeout) }
   }
 
   private delay(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)) }
