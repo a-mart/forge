@@ -59,6 +59,10 @@ type ContractCommandType = Extract<
   | 'get_project_agent_sharing'
   | 'set_project_agent_sharing'
   | 'get_project_agent_external_directory'
+  | 'browser_tab_open'
+  | 'browser_tab_activate'
+  | 'browser_tab_close'
+  | 'browser_tab_resize'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -103,9 +107,38 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_sharing'
   | 'project_agent_sharing_updated'
   | 'project_agent_external_directory'
+  | 'browser_tab_command_succeeded'
 >
 
 export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'browser_tab_open',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_open', 'browser_unavailable', 'browser_invalid_url'],
+  },
+  {
+    commandType: 'browser_tab_activate',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_activate', 'browser_tab_not_found'],
+  },
+  {
+    commandType: 'browser_tab_close',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_close', 'browser_tab_not_found'],
+  },
+  {
+    commandType: 'browser_tab_resize',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_resize', 'browser_tab_not_found', 'browser_invalid_viewport'],
+  },
   {
     commandType: 'list_directories',
     resultFamily: 'directory_listing',

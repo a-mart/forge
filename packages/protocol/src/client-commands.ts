@@ -1,4 +1,5 @@
 import type { ConversationAttachment } from './attachments.js'
+import type { BrowserClientCommand } from './browser-automation.js'
 import type { ConversationReplyTargetInput } from './conversation-events.js'
 import type { BuilderTimelineChannelView } from './builder-timeline-visibility.js'
 import type { ProjectAgentCapability } from './agents.js'
@@ -74,6 +75,7 @@ export type ClientCommand =
   | CollaborationChoiceResponseCommand
   | CollaborationChoiceCancelCommand
   | CollaborationPinMessageCommand
+  | BrowserClientCommand
   | ApiProxyCommand
   | { type: 'kill_agent'; agentId: string }
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }

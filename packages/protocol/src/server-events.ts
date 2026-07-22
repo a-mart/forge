@@ -4,6 +4,7 @@ import type {
   SessionWorkersSnapshotEvent,
 } from './agent-events.js'
 import type { BuilderSidebarOrderUpdatedEvent } from './builder-sidebar-order.js'
+import type { BrowserServerEvent } from './browser-automation.js'
 import type { CliServerEvent } from './cli.js'
 import type { CodexElicitationDismissedEvent, CodexElicitationRequestEvent } from './codex-elicitation.js'
 import type {
@@ -127,6 +128,7 @@ import type {
 
 // Compatibility re-exports from leaf modules
 export * from './builder-sidebar-order.js'
+export * from './browser-automation.js'
 export * from './conversation-events.js'
 export * from './agent-events.js'
 export * from './cli.js'
@@ -146,6 +148,7 @@ export * from './remote-update-awareness.js'
 
 export type ServerEvent =
   | BuilderSidebarOrderUpdatedEvent
+  | BrowserServerEvent
   | CliServerEvent
   | CodexElicitationRequestEvent
   | CodexElicitationDismissedEvent
