@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
+import { prepareElectronBetterSqlite3Binding } from './prepare-dev-native.mjs'
 
 gracefulFs.gracefulify(fs)
 
@@ -50,6 +51,12 @@ export const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
     optional: false,
     validateLoadedModule: (loadedModule) =>
       typeof loadedModule?.spawn === 'function' ? null : 'expected a spawn() export',
+  },
+  {
+    name: 'better-sqlite3',
+    optional: false,
+    validateWithElectronOnly: true,
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedBetterSqlite3PackageDir(stagedPackageDir),
   },
   {
     name: '@anthropic-ai/claude-agent-sdk',
@@ -189,6 +196,7 @@ async function stageBundledBackend() {
     BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => ({ packageName: pkg.name, optional: pkg.optional }))
   )
   await stageRuntimePackages(runtimePackages)
+  await stageElectronBetterSqlite3Binding()
 
   const fileCount = await countFiles(backendStageDir)
   const stagedCount = runtimePackages.hoisted.length + runtimePackages.nested.length
@@ -242,6 +250,13 @@ export async function validatePackagedRuntimePreflight() {
       `Packaged-runtime preflight failed: runtime package "${runtimePackage.name}" resolved outside the staged node_modules directory`,
     )
 
+    if (runtimePackage.validateWithElectronOnly) {
+      verifiedPackages.push(
+        `${runtimePackage.name} -> ${path.relative(backendStageDir, resolvedEntry)} (deferred to Electron-as-Node validation)`,
+      )
+      continue
+    }
+
     let loadedModule
     try {
       loadedModule = await loadRuntimeModuleFromEntry(stagedRequire, resolvedEntry)
@@ -266,6 +281,7 @@ export async function validatePackagedRuntimePreflight() {
   }
 
   validateBackendMetafileHasNoEmbeddedPiAiImplementation()
+  await validateStagedBetterSqlite3Runtime()
   await validateStagedCursorSdkRuntime(stagedRequire)
   await validateStagedPiSingletonRuntime(stagedRequire)
   await assertStagedPiPackageRelativeAssets()
@@ -275,6 +291,75 @@ export async function validatePackagedRuntimePreflight() {
   for (const resolution of verifiedPackages) {
     console.log(`[electron/build-all]   ${resolution}`)
   }
+}
+
+export function validateStagedBetterSqlite3PackageDir(stagedPackageDir) {
+  const requiredPaths = [
+    'package.json',
+    path.join('lib', 'database.js'),
+    path.join('build', 'Release', 'better_sqlite3.node'),
+  ]
+
+  for (const relativePath of requiredPaths) {
+    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
+      return `missing required asset ${relativePath}`
+    }
+  }
+
+  return null
+}
+
+async function stageElectronBetterSqlite3Binding() {
+  const stagedPackageDir = path.join(backendStageNodeModulesDir, 'better-sqlite3')
+  if (!existsSync(stagedPackageDir)) {
+    throw new Error(`Unable to stage Electron better-sqlite3 binding: package is missing at ${stagedPackageDir}`)
+  }
+
+  const preparedBindingPath = await prepareElectronBetterSqlite3Binding()
+  const stagedBuildDir = path.join(stagedPackageDir, 'build')
+  const stagedBindingDir = path.join(stagedBuildDir, 'Release')
+  const stagedBindingPath = path.join(stagedBindingDir, 'better_sqlite3.node')
+
+  await rm(stagedBuildDir, { recursive: true, force: true })
+  await mkdir(stagedBindingDir, { recursive: true })
+  await cp(preparedBindingPath, stagedBindingPath)
+  console.log(`[electron/build-all] Staged Electron better-sqlite3 binding at ${path.relative(electronDir, stagedBindingPath)}`)
+}
+
+async function validateStagedBetterSqlite3Runtime() {
+  const electronRequire = createRequire(path.join(electronDir, 'package.json'))
+  const electronExecutable = electronRequire('electron')
+  const smokeSource = [
+    "const Database = require('better-sqlite3')",
+    "const database = new Database(':memory:')",
+    "const row = database.prepare('SELECT 1 AS value').get()",
+    'database.close()',
+    "if (row?.value !== 1) throw new Error('Unexpected SQLite smoke result')",
+  ].join(';')
+
+  const child = spawn(electronExecutable, ['-e', smokeSource], {
+    cwd: backendStageDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    timeout: 15_000,
+  })
+
+  await new Promise((resolve, reject) => {
+    let stderr = ''
+    child.stderr?.on('data', (chunk) => { stderr += chunk.toString() })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolve()
+        return
+      }
+      reject(new Error(
+        `Packaged-runtime preflight failed: staged better-sqlite3 Electron smoke exited with code=${String(code)} signal=${String(signal)}${stderr ? `: ${stderr.trim()}` : ''}`,
+      ))
+    })
+  })
+
+  console.log('[electron/build-all] Packaged-runtime preflight verified staged better-sqlite3 with Electron-as-Node')
 }
 
 async function stageCliArtifact() {

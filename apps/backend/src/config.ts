@@ -27,6 +27,7 @@ import {
 import type { SwarmConfig } from "./swarm/types.js";
 import { isCollaborationServerRuntimeTarget, resolveRuntimeTargetFromEnv } from "./runtime-target.js";
 import { parseRemoteProjectsEnv } from "./collaboration/remote-projects-env.js";
+import { loadConfiguredSqliteDatabaseConstructor } from "./sqlite-database-loader.js";
 
 export function readTelemetryEnvOverride(): boolean | undefined {
   return parseOptionalBooleanEnv(
@@ -97,7 +98,7 @@ export function createConfig(): SwarmConfig {
   const collaborationModules = isCollaborationServerRuntimeTarget(runtimeTarget)
     ? {
         loadAuthModule: () => import("better-auth"),
-        loadDatabaseModule: async () => (await import("better-sqlite3")).default,
+        loadDatabaseModule: loadConfiguredSqliteDatabaseConstructor,
       }
     : undefined;
   // Collaboration-server only: Builder ignores these variables entirely.
@@ -125,7 +126,7 @@ export function createConfig(): SwarmConfig {
     collaborationTrustedOrigins,
     collaborationModules,
     remoteUpdateAwarenessModules: {
-      loadDatabaseModule: async () => (await import("better-sqlite3")).default,
+      loadDatabaseModule: loadConfiguredSqliteDatabaseConstructor,
     },
     remoteProjectsEnv,
     allowNonManagerSubscriptions: true,

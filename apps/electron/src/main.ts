@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
-import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
+import { fork, type ChildProcess } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,6 +11,8 @@ import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerS
 import { sendSleepBlockerStatusToWindow } from './sleep-blocker-status-ipc.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
+import { createBackendForkOptions } from './backend-fork-options.js'
+import { resolveDevBetterSqlite3Binding } from './dev-native-binding.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -181,25 +183,30 @@ class BackendSupervisor {
     const runtimeRoot = resolveBackendRuntimeRoot()
     const resourcesDir = resolveBackendResourcesDir()
     const execArgv = resolveBackendExecArgv(backendEntry)
+    const devBetterSqlite3Binding = app.isPackaged
+      ? undefined
+      : resolveDevBetterSqlite3Binding({
+          electronDir: path.resolve(__dirname, '..'),
+          electronVersion: process.versions.electron ?? '',
+          platform: process.platform,
+          arch: process.arch,
+        })
+    const forkOptions = createBackendForkOptions({
+      runtimeRoot,
+      inheritedEnv: process.env,
+      isPackaged: app.isPackaged,
+      backendPort: resolveDefaultBackendPort(),
+      resourcesDir,
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron ?? '',
+      execArgv,
+      devBetterSqlite3Binding,
+    })
 
     this.initializeLaunchLogging()
 
     return await new Promise<number>((resolve, reject) => {
-      const child = fork(backendEntry, [], {
-        cwd: runtimeRoot,
-        env: {
-          ...process.env,
-          FORGE_DESKTOP: '1',
-          FORGE_ELECTRON_DEV: app.isPackaged ? '0' : '1',
-          FORGE_HOST: process.env.FORGE_HOST || '0.0.0.0',
-          FORGE_PORT: process.env.FORGE_PORT || String(resolveDefaultBackendPort()),
-          FORGE_RESOURCES_DIR: resourcesDir,
-          FORGE_APP_VERSION: app.getVersion(),
-          FORGE_ELECTRON_VERSION: process.versions.electron ?? '',
-        },
-        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-        execArgv,
-      } satisfies ForkOptions)
+      const child = fork(backendEntry, [], forkOptions)
 
       this.child = child
       this.attachOutputCapture(child)

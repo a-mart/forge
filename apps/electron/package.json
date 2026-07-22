@@ -13,8 +13,9 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:all": "node ./scripts/build-all.mjs",
-    "dev": "node esbuild.config.mjs && electron .",
-    "start": "electron .",
+    "prepare:dev-native": "node ./scripts/prepare-dev-native.mjs",
+    "dev": "pnpm prepare:dev-native && node esbuild.config.mjs && electron .",
+    "start": "pnpm prepare:dev-native && electron .",
     "pack": "pnpm build:all && electron-builder --dir",
     "package": "pnpm build:all && electron-builder --publish never",
     "dist": "pnpm run package"
@@ -23,6 +24,7 @@
     "electron-updater": "^6.8.3"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@types/node": "^24.3.0",
     "electron": "^37.2.5",
     "electron-builder": "^26.0.12",

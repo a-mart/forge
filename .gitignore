@@ -23,6 +23,7 @@ troubleshoot-*.md
 .internal/
 data/
 apps/electron/.stage/
+apps/electron/.dev-native/
 apps/electron/release/
 .swarm/
 

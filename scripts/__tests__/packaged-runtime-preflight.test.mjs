@@ -12,6 +12,7 @@ import {
   resolveStagedPackageEntryFromManifest,
   validateStagedPiAiPackageDir,
   validateStagedPiCodingAgentPackageDir,
+  validateStagedBetterSqlite3PackageDir,
   BACKEND_BUNDLE_EXTERNAL_PACKAGES,
 } from '../../apps/electron/scripts/build-all.mjs'
 
@@ -40,6 +41,32 @@ describe('BACKEND_BUNDLE_EXTERNAL_PACKAGES packaging', () => {
     expect(names).toContain('@earendil-works/pi-ai')
     expect(names).toContain('@earendil-works/pi-coding-agent')
     expect(names).toContain('@mariozechner/clipboard')
+    expect(names).toContain('better-sqlite3')
+    expect(BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === 'better-sqlite3')?.validateWithElectronOnly).toBe(true)
+  })
+})
+
+describe('validateStagedBetterSqlite3PackageDir', () => {
+  it('requires the package implementation and Electron native binding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-better-sqlite3-'))
+
+    await mkdir(join(root, 'lib'), { recursive: true })
+    await mkdir(join(root, 'build', 'Release'), { recursive: true })
+    await writeFile(join(root, 'package.json'), '{}')
+    await writeFile(join(root, 'lib', 'database.js'), 'module.exports = function Database() {}')
+    await writeFile(join(root, 'build', 'Release', 'better_sqlite3.node'), 'fixture')
+
+    expect(validateStagedBetterSqlite3PackageDir(root)).toBeNull()
+  })
+
+  it('rejects staged packages without the native binding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-better-sqlite3-missing-'))
+
+    await mkdir(join(root, 'lib'), { recursive: true })
+    await writeFile(join(root, 'package.json'), '{}')
+    await writeFile(join(root, 'lib', 'database.js'), 'module.exports = function Database() {}')
+
+    expect(validateStagedBetterSqlite3PackageDir(root)).toContain('better_sqlite3.node')
   })
 })
 
