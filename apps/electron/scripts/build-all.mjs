@@ -383,11 +383,13 @@ export async function stageBrowserRuntime() {
 
   const rootNotice = path.join(repoRoot, 'THIRD_PARTY_NOTICES.md')
   const noticeTarget = path.join(browserRuntimeDir, 'THIRD_PARTY_NOTICES.md')
-  if (existsSync(rootNotice)) {
-    await cp(rootNotice, noticeTarget)
-  } else {
-    await writeFile(noticeTarget, `# Third-Party Notices\n\n## T3 Code\n\nForge browser automation includes source adapted from T3 Code commit 9a0a07167f0623c3a7db0ffeff2e3939760309df.\n\nMIT License\n\nCopyright (c) 2026 T3 Tools Inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n## Playwright\n\nplaywright-core 1.60.0 is distributed with its LICENSE, NOTICE, and ThirdPartyNotices.txt files under browser-runtime/playwright-core/.\n`, 'utf8')
+  if (!existsSync(rootNotice)) {
+    throw new Error(
+      `Maintained browser third-party notice is missing at ${rootNotice}. Electron packaging requires the exact root THIRD_PARTY_NOTICES.md (T3 MIT notice, adapted-file mapping, and Playwright attribution).`,
+    )
   }
+  await mkdir(browserRuntimeDir, { recursive: true })
+  await cp(rootNotice, noticeTarget)
   console.log(`[electron/build-all] Staged playwright-core ${playwright.manifest.version} and browser notices`)
 }
 

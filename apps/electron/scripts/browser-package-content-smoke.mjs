@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -7,6 +8,7 @@ import { createRequire } from 'node:module'
 import { stageBrowserRuntime } from './build-all.mjs'
 
 const electronDir = path.resolve(import.meta.dirname, '..')
+const repoRoot = path.resolve(electronDir, '..', '..')
 const require = createRequire(path.join(electronDir, 'package.json'))
 const asar = require('@electron/asar')
 const output = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-package-'))
@@ -36,12 +38,19 @@ try {
   const stagedCore = path.join(resources, 'browser-runtime', 'playwright-core', 'lib', 'coreBundle.js')
   const stagedLicense = path.join(resources, 'browser-runtime', 'playwright-core', 'LICENSE')
   const stagedNotice = path.join(resources, 'browser-runtime', 'THIRD_PARTY_NOTICES.md')
-  for (const [file, label] of [[stagedCore, 'Playwright coreBundle.js'], [stagedLicense, 'Playwright license'], [stagedNotice, 'browser notice']]) {
+  const rootNotice = path.join(repoRoot, 'THIRD_PARTY_NOTICES.md')
+  for (const [file, label] of [[stagedCore, 'Playwright coreBundle.js'], [stagedLicense, 'Playwright license'], [stagedNotice, 'browser notice'], [rootNotice, 'root browser notice']]) {
     if (!existsSync(file)) throw new Error(`Packaged resources are missing ${label}: ${file}`)
   }
   const bundle = await readFile(stagedCore, 'utf8')
   if (!bundle.includes('source3 = ')) throw new Error('Packaged Playwright bundle does not contain the validated locator marker')
-  process.stdout.write(`${JSON.stringify({ passed: true, resources, archiveEntries: ['dist/main.js', 'dist/preload.js', 'dist/guest-preload.js'], playwrightCoreBundle: stagedCore, notice: stagedNotice }, null, 2)}\n`)
+  const rootNoticeBytes = await readFile(rootNotice)
+  const stagedNoticeBytes = await readFile(stagedNotice)
+  if (!rootNoticeBytes.equals(stagedNoticeBytes)) {
+    throw new Error('Packaged browser-runtime/THIRD_PARTY_NOTICES.md is not byte-identical to the maintained root THIRD_PARTY_NOTICES.md')
+  }
+  const noticeSha256 = createHash('sha256').update(stagedNoticeBytes).digest('hex')
+  process.stdout.write(`${JSON.stringify({ passed: true, resources, archiveEntries: ['dist/main.js', 'dist/preload.js', 'dist/guest-preload.js'], playwrightCoreBundle: stagedCore, notice: stagedNotice, noticeSha256 }, null, 2)}\n`)
 } finally {
   await rm(configPath, { force: true })
   await rm(output, { recursive: true, force: true })

@@ -441,7 +441,15 @@ describe("RuntimeConversationEventMapper", () => {
 
   it("sanitizes browser input and result audit projections without mutating immediate provider data", () => {
     const descriptor = makeDescriptor();
-    const input = { tabId: "tab-1", expression: "document.body.innerText", awaitPromise: true };
+    const input = {
+      tabId: "tab-1",
+      expression: "document.body.innerText",
+      awaitPromise: true,
+      selector: "#SECRET_SELECTOR",
+      locator: "role=button[name=SECRET_NAME]",
+      name: "SECRET_ELEMENT_NAME",
+      urlIncludes: "/secret-path",
+    };
     const start = mapRuntimeEvent({
       descriptor,
       event: {
@@ -452,9 +460,18 @@ describe("RuntimeConversationEventMapper", () => {
       },
     });
     expect(input.expression).toBe("document.body.innerText");
+    expect(input.selector).toBe("#SECRET_SELECTOR");
     for (const projection of start) {
       expect(projection.text).not.toContain("document.body.innerText");
+      expect(projection.text).not.toContain("SECRET");
+      expect(projection.text).not.toContain("selector");
+      expect(projection.text).not.toContain("locator");
       expect(projection.text).toContain("utf8Bytes");
+      expect(JSON.parse(projection.text)).toMatchObject({
+        tabId: "tab-1",
+        awaitPromise: true,
+        expression: { characters: 23, utf8Bytes: 23 },
+      });
     }
 
     const screenshotData = "SCREENSHOT_BASE64_SECRET";
@@ -466,10 +483,15 @@ describe("RuntimeConversationEventMapper", () => {
             ok: true,
             result: {
               tabId: "tab-1",
+              url: "https://example.test/page",
+              title: "Example",
               visibleText: "PAGE_TEXT_SECRET",
               accessibility: { name: "A11Y_SECRET" },
               consoleEntries: [{ text: "CONSOLE_SECRET" }],
               networkEntries: [{ url: "https://secret.test/body" }],
+              interactiveElements: [{ tag: "button", name: "Increment", selector: "#increment" }],
+              actionTimeline: [{ id: "act-1", action: "click", status: "succeeded" }],
+              selector: "#nested-selector-secret",
               screenshot: { data: screenshotData, mimeType: "image/png", width: 800, height: 600 },
             },
           }),
@@ -479,6 +501,7 @@ describe("RuntimeConversationEventMapper", () => {
       details: {
         value: "EVALUATE_RESULT_SECRET",
         remoteObject: { description: "REMOTE_SECRET" },
+        expression: "document.body.innerText",
         serializedBytes: 22,
         screenshot: { data: screenshotData, mimeType: "image/png", width: 800, height: 600 },
       },
@@ -494,10 +517,89 @@ describe("RuntimeConversationEventMapper", () => {
       },
     });
     expect(JSON.stringify(result)).toContain(screenshotData);
+    expect(JSON.stringify(result)).toContain("PAGE_TEXT_SECRET");
     for (const projection of end) {
       expect(projection.text).toContain("serializedBytes");
       expect(projection.text).toContain("image/png");
-      expect(projection.text).not.toMatch(/SECRET|visibleText|accessibility|consoleEntries|networkEntries|remoteObject/);
+      expect(projection.text).toContain("https://example.test/page");
+      expect(projection.text).not.toMatch(/SECRET|visibleText|accessibility|consoleEntries|networkEntries|remoteObject|interactiveElements|actionTimeline/);
+      expect(projection.text).not.toContain(screenshotData);
+      expect(projection.text).not.toContain("document.body.innerText");
+      expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
+    }
+  });
+
+  it("sanitizes nested browser snapshot text, JSON, and image audit payloads", () => {
+    const nestedPageText = "NESTED_VISIBLE_TEXT_SECRET";
+    const nestedJson = JSON.stringify({
+      ok: true,
+      result: {
+        tabId: "tab-2",
+        visibleText: nestedPageText,
+        interactiveElements: [{ name: "Nested Button", selector: "#nested" }],
+        actionTimeline: [{ id: "a1", action: "snapshot", status: "succeeded" }],
+        accessibility: { role: "document", name: "NESTED_A11Y" },
+        consoleEntries: [{ text: "NESTED_CONSOLE" }],
+        networkEntries: [{ url: "https://nested.secret/api" }],
+        screenshot: { data: "NESTED_PNG_SECRET", mimeType: "image/png", width: 100, height: 50 },
+      },
+    });
+    const result = {
+      content: [
+        { type: "text", text: nestedJson },
+        { type: "text", text: "PLAIN_PAGE_TEXT_SECRET" },
+        { type: "image", data: "NESTED_PNG_SECRET", mimeType: "image/png" },
+      ],
+      details: {
+        tabId: "tab-2",
+        interactiveElements: [{ name: "Details Button", selector: "#details" }],
+        actionTimeline: [{ id: "a2", action: "click", status: "failed" }],
+        screenshot: { data: "NESTED_PNG_SECRET", mimeType: "image/png", width: 100, height: 50 },
+      },
+    };
+
+    const projections = mapRuntimeEvent({
+      descriptor: makeDescriptor(),
+      event: {
+        type: "tool_execution_end",
+        toolName: "browser_snapshot",
+        toolCallId: "browser-snapshot-1",
+        result,
+        isError: false,
+      },
+    });
+
+    expect(JSON.stringify(result)).toContain(nestedPageText);
+    expect(JSON.stringify(result)).toContain("NESTED_PNG_SECRET");
+    for (const projection of projections) {
+      const parsed = JSON.parse(projection.text) as {
+        content: Array<{ type: string; text?: string | { characters: number; utf8Bytes: number } }>;
+        details: Record<string, unknown>;
+      };
+      expect(parsed.content.some((entry) => entry.type === "image")).toBe(false);
+      expect(parsed.details).not.toHaveProperty("interactiveElements");
+      expect(parsed.details).not.toHaveProperty("actionTimeline");
+      expect(parsed.details).toMatchObject({
+        tabId: "tab-2",
+        screenshot: { mimeType: "image/png", width: 100, height: 50 },
+      });
+      expect(parsed.details.screenshot).not.toHaveProperty("data");
+
+      const nestedTextEntry = parsed.content.find((entry) => typeof entry.text === "string");
+      expect(nestedTextEntry).toBeTruthy();
+      const nestedPayload = JSON.parse(String(nestedTextEntry!.text));
+      expect(nestedPayload.result).toMatchObject({ tabId: "tab-2" });
+      expect(nestedPayload.result).not.toHaveProperty("visibleText");
+      expect(nestedPayload.result).not.toHaveProperty("interactiveElements");
+      expect(nestedPayload.result).not.toHaveProperty("actionTimeline");
+      expect(nestedPayload.result).not.toHaveProperty("accessibility");
+      expect(nestedPayload.result).not.toHaveProperty("consoleEntries");
+      expect(nestedPayload.result).not.toHaveProperty("networkEntries");
+      expect(nestedPayload.result.screenshot).not.toHaveProperty("data");
+
+      const plainTextEntry = parsed.content.find((entry) => entry.text && typeof entry.text === "object");
+      expect(plainTextEntry?.text).toEqual({ characters: 22, utf8Bytes: 22 });
+      expect(projection.text).not.toMatch(/SECRET|Nested Button|#nested|NESTED_A11Y|nested\.secret/);
     }
   });
 
@@ -508,12 +610,23 @@ describe("RuntimeConversationEventMapper", () => {
         type: "tool_execution_start",
         toolName: "browser_type",
         toolCallId: "browser-2",
-        args: { text: "PASSWORD_SECRET", clear: true },
+        args: {
+          text: "PASSWORD_SECRET",
+          clear: true,
+          selector: "#password",
+          locator: "role=textbox[name=Password]",
+          name: "Password",
+        },
       },
     });
     for (const projection of projections) {
       expect(projection.text).not.toContain("PASSWORD_SECRET");
-      expect(JSON.parse(projection.text)).toMatchObject({ text: { characters: 15, utf8Bytes: 15 }, clear: true });
+      expect(projection.text).not.toContain("#password");
+      expect(projection.text).not.toContain("Password");
+      expect(JSON.parse(projection.text)).toEqual({
+        text: { characters: 15, utf8Bytes: 15 },
+        clear: true,
+      });
     }
   });
 

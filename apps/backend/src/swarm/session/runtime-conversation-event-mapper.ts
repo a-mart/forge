@@ -313,18 +313,19 @@ function mapToolCallActivityFromRuntime(
 
 export function sanitizeToolExecutionInputForAudit(value: unknown, toolName?: string): unknown {
   if (!isBrowserToolName(toolName) || !isRecord(value)) return value;
-  const sanitized = { ...value };
-  if (toolName === "browser_type" && typeof sanitized.text === "string") {
-    sanitized.text = {
-      characters: sanitized.text.length,
-      utf8Bytes: Buffer.byteLength(sanitized.text, "utf8"),
-    };
-  }
-  if (toolName === "browser_evaluate" && typeof sanitized.expression === "string") {
-    sanitized.expression = {
-      characters: sanitized.expression.length,
-      utf8Bytes: Buffer.byteLength(sanitized.expression, "utf8"),
-    };
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (BROWSER_AUDIT_OMITTED_INPUT_KEYS.has(key)) {
+      continue;
+    }
+    if ((key === "text" || key === "expression") && typeof entry === "string") {
+      sanitized[key] = {
+        characters: entry.length,
+        utf8Bytes: Buffer.byteLength(entry, "utf8"),
+      };
+      continue;
+    }
+    sanitized[key] = entry;
   }
   return sanitized;
 }
@@ -354,7 +355,10 @@ function sanitizeBrowserAuditResult(value: unknown, toolName: string, seen: Weak
 
   const sanitized: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (BROWSER_AUDIT_OMITTED_KEYS.has(key) || (toolName === "browser_evaluate" && (key === "value" || key === "remoteObject"))) {
+    if (
+      BROWSER_AUDIT_OMITTED_KEYS.has(key)
+      || (toolName === "browser_evaluate" && (key === "value" || key === "remoteObject" || key === "expression"))
+    ) {
       continue;
     }
     if (key === "data" && typeof entry === "string") continue;
@@ -364,6 +368,11 @@ function sanitizeBrowserAuditResult(value: unknown, toolName: string, seen: Weak
         sanitized[key] = JSON.stringify(sanitizeBrowserAuditResult(parsed, toolName, new WeakSet<object>()));
         continue;
       }
+      sanitized[key] = {
+        characters: entry.length,
+        utf8Bytes: Buffer.byteLength(entry, "utf8"),
+      };
+      continue;
     }
     sanitized[key] = sanitizeBrowserAuditResult(entry, toolName, seen);
   }
@@ -374,11 +383,25 @@ function isBrowserToolName(toolName: string | undefined): toolName is string {
   return typeof toolName === "string" && toolName.startsWith("browser_");
 }
 
+const BROWSER_AUDIT_OMITTED_INPUT_KEYS = new Set([
+  "selector",
+  "locator",
+  "name",
+  "urlIncludes",
+]);
+
 const BROWSER_AUDIT_OMITTED_KEYS = new Set([
   "visibleText",
   "accessibility",
   "consoleEntries",
   "networkEntries",
+  "interactiveElements",
+  "actionTimeline",
+  "selector",
+  "locator",
+  "name",
+  "urlIncludes",
+  "expression",
 ]);
 
 function shouldSanitizeCodexPluginScopedToolResult(
