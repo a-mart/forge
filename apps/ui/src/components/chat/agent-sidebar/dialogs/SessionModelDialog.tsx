@@ -173,6 +173,7 @@ export function SessionModelDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     const decoded = decodeManagerModelValue(selectedKey)
     if (decoded) {
       onConfirm(sessionAgentId, 'override', decoded, reasoning)

@@ -504,6 +504,50 @@ describe('MessageInput', () => {
       expect(modelsApiMock.fetchModelOverrides).toHaveBeenCalledWith(pickerApiClient)
     })
 
+    it('does not submit a non-empty draft when saving a session model change', async () => {
+      const onSend = vi.fn()
+      const onUpdate = vi.fn()
+      renderMessageInput({
+        onSend,
+        sessionModelPicker: {
+          ...basePicker,
+          onUpdate,
+        },
+      })
+      await flush()
+
+      typeInTextarea('Keep this draft unsent')
+      await flush()
+
+      const trigger = getByLabelText(container, 'Session model: GPT-5.5, reasoning Max. Change session model.')
+      fireEvent.click(trigger)
+      await flush()
+
+      const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
+      expect(dialog).toBeTruthy()
+      const reasoningSelect = Array.from(dialog!.querySelectorAll<HTMLSelectElement>('select'))
+        .find((select) => Array.from(select.options).some((option) => option.value === 'high'))
+      expect(reasoningSelect).toBeTruthy()
+      fireEvent.change(reasoningSelect!, { target: { value: 'high' } })
+      await flush()
+
+      const overrideButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Override')
+      expect(overrideButton).toBeTruthy()
+      expect(overrideButton!.disabled).toBe(false)
+      fireEvent.click(overrideButton!)
+      await flush()
+
+      expect(onUpdate).toHaveBeenCalledWith(
+        'manager-1',
+        'override',
+        { provider: 'openai-codex', modelId: 'gpt-5.5' },
+        'high',
+      )
+      expect(onSend).not.toHaveBeenCalled()
+      expect(getTextarea().value).toBe('Keep this draft unsent')
+    })
+
     it.each([
       ['Cancel', (_trigger: HTMLElement) => {
         const cancel = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
