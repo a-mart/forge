@@ -212,6 +212,8 @@ export const settingsArticles: HelpArticle[] = [
       'chrome',
       'cdp',
       'image generation',
+      'managed browser',
+      'browser automation',
       'configuration',
       'secrets',
       'share',
@@ -225,7 +227,7 @@ export const settingsArticles: HelpArticle[] = [
       'category',
       'selection',
     ],
-    relatedIds: ['settings-auth', 'settings-extensions', 'settings-specialists'],
+    relatedIds: ['settings-auth', 'settings-extensions', 'settings-specialists', 'chat-browser'],
     contextKeys: ['settings.skills'],
   },
   {

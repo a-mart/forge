@@ -161,6 +161,8 @@ The active origin determines the backend for these project-scoped surfaces:
 | Session Audit | Audit reads target the active remote session. |
 | Model availability | Project/session model pickers read availability from the active remote server. |
 
+Managed Browser is not an active-origin surface. Forge Desktop's Browser rail, Forge-owned Electron webviews, profile partitions, and local browser IPC stay bound to the selected local Builder manager; the client never forwards that host registration or IPC to a Remote Project. A remote normal Builder manager may still receive the typed browser tools from its runtime plan, but without a Desktop host connected directly to that remote backend the tools return `unavailable-host`. Do not describe the tools as structurally absent. Collaboration channel sessions do not receive Managed Browser tools.
+
 Remote New Project and Change Working Directory use the server directory browser and only allow paths under `FORGE_CWD_ALLOWLIST_ROOTS`. There is no local native directory picker for a remote origin.
 
 These surfaces remain local even while a remote project is selected:
@@ -172,6 +174,7 @@ These surfaces remain local even while a remote project is selected:
 - Cortex
 - sidebar provider-usage data
 - the unified sidebar-order API and persistence
+- the Forge Desktop Managed Browser host, webviews, partitions, and Browser workspace
 
 Do not infer support from a mounted backend route. Remote Projects is an explicitly allowlisted subset of Builder behavior. Collaboration channels have a different protocol and feature boundary.
 
