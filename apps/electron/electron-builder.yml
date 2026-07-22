@@ -6,6 +6,8 @@ directories:
   buildResources: build
 files:
   - dist/**/*
+  - '!dist/browser-fixture-smoke-main*'
+  - node_modules/playwright-core/**/*
   - package.json
 extraResources:
   - from: .stage/backend/dist
@@ -33,6 +35,10 @@ extraResources:
       - '**/*'
   - from: .stage/cli
     to: cli
+    filter:
+      - '**/*'
+  - from: .stage/browser-runtime
+    to: browser-runtime
     filter:
       - '**/*'
 protocols:

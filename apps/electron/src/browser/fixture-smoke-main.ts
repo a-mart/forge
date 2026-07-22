@@ -1,0 +1,73 @@
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { mkdirSync } from 'node:fs'
+import http from 'node:http'
+import path from 'node:path'
+import { BrowserAutomationManager } from './browser-automation-manager.js'
+import { installBrowserIpc } from './browser-ipc.js'
+import { BrowserSessionRegistry } from './browser-session.js'
+import { enforceBrowserWebviewAttachment } from './browser-webview-security.js'
+
+const root = process.env.FORGE_BROWSER_FIXTURE_ROOT
+if (!root) throw new Error('FORGE_BROWSER_FIXTURE_ROOT is required')
+mkdirSync(root, { recursive: true })
+app.setPath('userData', path.join(root, 'electron-user-data'))
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+
+const fixtureHtml = `<!doctype html><html><head><title>Forge Browser Fixture</title><style>body{font:16px sans-serif;height:1600px}button,input{margin:8px;padding:8px}</style></head><body>
+<button id="increment" aria-label="Increment">Increment</button><label>Message<input id="message" aria-label="Message"></label><div id="delayed"></div><output id="state"></output>
+<script>const state={clicks:0,keys:0};const render=()=>stateEl.textContent=JSON.stringify({...state,typed:message.value});const stateEl=document.querySelector('#state');increment.onclick=()=>{state.clicks++;render()};message.oninput=render;message.onkeydown=e=>{if(e.key==='Enter'){state.keys++;render()}};setTimeout(()=>{delayed.textContent='Ready for automation'},100);render();window.animateFixture=()=>{let i=0;const timer=setInterval(()=>{document.body.style.backgroundColor=i++%2?'#fff':'#eef';if(i>20)clearInterval(timer)},30)}</script></body></html>`
+
+async function listen(server: http.Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Fixture server did not bind TCP')
+  return address.port
+}
+
+void app.whenReady().then(async () => {
+  const server = http.createServer((_request, response) => { response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }); response.end(fixtureHtml) })
+  const port = await listen(server)
+  ipcMain.on('forge:get-backend-bootstrap', (event) => { event.returnValue = { backendUrl: 'http://127.0.0.1:1', backendWsUrl: 'ws://127.0.0.1:1', version: 'fixture', platform: process.platform } })
+  const window = new BrowserWindow({ show: false, width: 1_000, height: 800, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: true } })
+  const sessions = new BrowserSessionRegistry()
+  const guestPreloadPath = path.join(__dirname, 'guest-preload.js')
+  window.webContents.on('will-attach-webview', (event, preferences, params) => { enforceBrowserWebviewAttachment(event, preferences, params, guestPreloadPath) })
+  const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: window.webContents.id, sendToRenderer: (channel, payload) => window.webContents.send(channel, payload) })
+  const dispose = installBrowserIpc({ ipcMain, mainWindow: window, manager, sessions, guestPreloadPath })
+  let settled = false
+  const finish = async (code: number, report: unknown): Promise<void> => {
+    if (settled) return
+    settled = true
+    process.stdout.write(`FORGE_BROWSER_FIXTURE_RESULT=${JSON.stringify(report)}\n`)
+    dispose()
+    if (!window.isDestroyed()) window.destroy()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    app.exit(code)
+  }
+  window.webContents.on('console-message', (_event, detailsOrLevel: unknown, message?: string) => {
+    const text = typeof detailsOrLevel === 'object' && detailsOrLevel && 'message' in detailsOrLevel ? String((detailsOrLevel as { message: unknown }).message) : String(message ?? '')
+    if (!text.startsWith('FORGE_BROWSER_FIXTURE_PAGE=')) return
+    const raw = text.slice('FORGE_BROWSER_FIXTURE_PAGE='.length)
+    let report: unknown = raw
+    try { report = JSON.parse(raw) } catch { /* retain renderer diagnostic */ }
+    void finish(raw.includes('"passed":true') ? 0 : 1, report)
+  })
+  setTimeout(() => { void finish(1, { passed: false, error: 'fixture timeout' }) }, 30_000).unref()
+
+  const fixtureUrl = `http://127.0.0.1:${port}/fixture`
+  const renderer = `<!doctype html><html><body><script>
+  (async()=>{try{
+    const bridge=window.electronBridge.browserAutomation;const config=await bridge.getWebviewConfig('fixture-profile');
+    const webview=document.createElement('webview');webview.src=${JSON.stringify(fixtureUrl)};webview.partition=config.partition;webview.setAttribute('preload',config.preloadUrl);webview.setAttribute('webpreferences',config.webPreferences);webview.style.cssText='width:800px;height:600px';document.body.append(webview);
+    await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('webview dom-ready timeout')),10000);webview.addEventListener('dom-ready',()=>{clearTimeout(timer);resolve()},{once:true})});
+    const now=new Date().toISOString();const tab={tabId:'fixture-tab',sessionAgentId:'fixture-session',profileId:'fixture-profile',url:${JSON.stringify(fixtureUrl)},title:'Forge Browser Fixture',lifecycle:'ready',loading:false,live:false,canGoBack:false,canGoForward:false,zoomFactor:1,controller:'none',agentCursor:null,recording:null,viewportSetting:{mode:'fill'},renderedViewport:null,error:null,createdAt:now,updatedAt:now};
+    await bridge.registerWebview({tab,webContentsId:webview.getWebContentsId(),visible:true});
+    let seq=0;const call=async(operation,input,artifactDirectory=null)=>bridge.invoke({requestId:'fixture-'+(++seq),sessionAgentId:'fixture-session',profileId:'fixture-profile',tabId:operation==='status'?'fixture-tab':'fixture-tab',hostId:'fixture-host',hostGeneration:1,deadlineAt:new Date(Date.now()+15000).toISOString(),artifactDirectory,operation,input});
+    const responses=[];responses.push(await call('status',{}));responses.push(await call('open',{url:${JSON.stringify(fixtureUrl)},show:true,reuseExistingTab:true}));responses.push(await call('navigate',{url:${JSON.stringify(fixtureUrl)},readiness:'load',timeoutMs:5000}));responses.push(await call('resize',{mode:'freeform',width:800,height:600,timeoutMs:5000}));responses.push(await call('snapshot',{}));responses.push(await call('click',{locator:"role=button[name='Increment']",timeoutMs:5000}));responses.push(await call('type',{locator:"role=textbox[name='Message']",text:'fixture typed',clear:true,timeoutMs:5000}));responses.push(await call('press',{key:'Enter',modifiers:[]}));responses.push(await call('scroll',{deltaY:100}));responses.push(await call('evaluate',{expression:'window.animateFixture(); JSON.parse(document.querySelector(\"#state\").textContent)',awaitPromise:true,returnByValue:true}));responses.push(await call('waitFor',{text:'Ready for automation',timeoutMs:5000}));
+    const started=await call('recordingStart',{});responses.push(started);await new Promise(resolve=>setTimeout(resolve,1200));const recordingId=started.ok?started.result.recordingId:undefined;responses.push(await call('recordingStop',{recordingId},${JSON.stringify(path.join(root, 'artifacts', 'browser'))}));
+    const failures=responses.filter(response=>!response.ok).map(response=>({operation:response.operation,error:response.error}));const evaluated=responses.find(response=>response.operation==='evaluate');const snapshot=responses.find(response=>response.operation==='snapshot');const stopped=responses.find(response=>response.operation==='recordingStop');
+    console.log('FORGE_BROWSER_FIXTURE_PAGE='+JSON.stringify({passed:failures.length===0&&evaluated?.result?.value?.clicks===1&&evaluated?.result?.value?.typed==='fixture typed'&&snapshot?.result?.screenshot?.data?.length>0&&stopped?.result?.sizeBytes>0,operations:responses.map(response=>response.operation),failures,recording:stopped?.ok?{mimeType:stopped.result.mimeType,sizeBytes:stopped.result.sizeBytes,path:stopped.result.path}:null}));
+  }catch(error){console.log('FORGE_BROWSER_FIXTURE_PAGE='+JSON.stringify({passed:false,error:error?.stack||String(error)}))}})();
+  </script></body></html>`
+  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderer)}`)
+}).catch((error) => { process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`); app.exit(1) })

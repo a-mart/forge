@@ -13,6 +13,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:all": "node ./scripts/build-all.mjs",
+    "test:browser-fixture": "pnpm build && node ./scripts/browser-fixture-smoke.mjs",
+    "test:browser-package": "pnpm build && node ./scripts/browser-package-content-smoke.mjs",
     "prepare:dev-native": "node ./scripts/prepare-dev-native.mjs",
     "dev": "pnpm prepare:dev-native && node esbuild.config.mjs && electron .",
     "start": "pnpm prepare:dev-native && electron .",
@@ -21,7 +23,9 @@
     "dist": "pnpm run package"
   },
   "dependencies": {
-    "electron-updater": "^6.8.3"
+    "@forge/protocol": "workspace:*",
+    "electron-updater": "^6.8.3",
+    "playwright-core": "1.60.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",

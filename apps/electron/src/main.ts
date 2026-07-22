@@ -13,6 +13,10 @@ import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 import { createBackendForkOptions } from './backend-fork-options.js'
 import { resolveDevBetterSqlite3Binding } from './dev-native-binding.js'
+import { BrowserAutomationManager } from './browser/browser-automation-manager.js'
+import { installBrowserIpc } from './browser/browser-ipc.js'
+import { BrowserSessionRegistry } from './browser/browser-session.js'
+import { enforceBrowserWebviewAttachment } from './browser/browser-webview-security.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -48,7 +52,11 @@ let mainWindow: BrowserWindow | null = null
 let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
 let appProtocolRegistered = false
+let disposeBrowserHost: (() => void) | null = null
+const browserSessions = new BrowserSessionRegistry()
 let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
+
+app.commandLine.appendSwitch('disable-background-timer-throttling')
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -407,6 +415,8 @@ async function prepareQuitForUpdate(): Promise<void> {
   if (!appIsQuitting) {
     appIsQuitting = true
     sleepBlockerService?.dispose()
+    disposeBrowserHost?.()
+    disposeBrowserHost = null
     await backendSupervisor.stop()
   }
 }
@@ -545,6 +555,22 @@ if (!hasSingleInstanceLock) {
     writeInstallHint()
 
     mainWindow = createMainWindow()
+    const browserManager = new BrowserAutomationManager({
+      approvedDataRoot: resolveForgeDataRoot(),
+      hostWebContentsId: mainWindow.webContents.id,
+      sendToRenderer: (channel, payload) => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send(channel, payload)
+        }
+      },
+    })
+    disposeBrowserHost = installBrowserIpc({
+      ipcMain,
+      mainWindow,
+      manager: browserManager,
+      sessions: browserSessions,
+      guestPreloadPath: path.join(__dirname, 'guest-preload.js'),
+    })
     initAutoUpdater({
       mainWindow,
       getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
@@ -580,6 +606,8 @@ if (!hasSingleInstanceLock) {
     event.preventDefault()
     appIsQuitting = true
     sleepBlockerService?.dispose()
+    disposeBrowserHost?.()
+    disposeBrowserHost = null
 
     void backendSupervisor.stop().finally(() => {
       app.exit(0)
@@ -610,11 +638,17 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      webviewTag: true,
       spellcheck: true,
     },
   })
 
   trackWindowState(window)
+
+  const guestPreloadPath = path.join(__dirname, 'guest-preload.js')
+  window.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    enforceBrowserWebviewAttachment(event, webPreferences, params, guestPreloadPath)
+  })
 
   window.once('ready-to-show', () => {
     if (savedState.isFullScreen) {
@@ -628,6 +662,8 @@ function createMainWindow(): BrowserWindow {
 
   window.on('closed', () => {
     if (mainWindow === window) {
+      disposeBrowserHost?.()
+      disposeBrowserHost = null
       mainWindow = null
     }
   })
@@ -1008,6 +1044,14 @@ function assertPathExists(targetPath: string, label: string): void {
  */
 function resolveDefaultBackendPort(): number {
   return DEFAULT_BACKEND_PORT
+}
+
+function resolveForgeDataRoot(): string {
+  return path.resolve(
+    process.env.FORGE_DATA_DIR ??
+      process.env.MIDDLEMAN_DATA_DIR ??
+      path.join(app.getPath('home'), '.forge'),
+  )
 }
 
 function isBackendReadyMessage(value: unknown): value is BackendReadyMessage {
