@@ -11,6 +11,9 @@ import { AgentSidebarConnected } from '@/components/chat/AgentSidebarConnected'
 import { WorkGraphWorkerHighlightProvider } from '@/components/chat/WorkGraphWorkerHighlight'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
+import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
+import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
+import { BrowserPanel } from '@/components/browser/BrowserPanel'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
@@ -199,15 +202,18 @@ export function BuilderSurface({
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
   const fileEditorCoordinatorRef = useRef<FileEditorCoordinator | null>(null)
   const archiveHydrationRequestedRef = useRef(false)
+  const browserHostRef = useRef<BrowserAutomationHostHandle | null>(null)
+  const handledBrowserRevealRef = useRef<string | null>(null)
 
   const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, localWsUrl)
   const localState = useOriginSnapshot(LOCAL_ORIGIN_ID)
   const localClientRef = useRef<ManagerWsClient | null>(null)
+  const localClient = originRegistry.getOrigin(LOCAL_ORIGIN_ID)?.getClient() ?? null
   // Keep local sidebar action handlers bound to the current local-origin client
   // during render so callbacks created below do not observe a stale ref when the
   // active origin changes.
   // eslint-disable-next-line -- deliberate render-time assignment; see comment above
-  localClientRef.current = originRegistry.getOrigin(LOCAL_ORIGIN_ID)?.getClient() ?? null
+  localClientRef.current = localClient
   const setLocalState = useCallback((update: SetStateAction<ManagerWsState>) => {
     const target = originRegistry.getOrigin(LOCAL_ORIGIN_ID)
     if (!target) return
@@ -468,6 +474,29 @@ export function BuilderSurface({
   // in-component ordering where the ref always held the live coordinator.
   // eslint-disable-next-line -- deliberate render-time assignment (see comment above); matches original in-component ordering
   fileEditorCoordinatorRef.current = panels.fileEditorCoordinator
+
+  const browserSessionAgentId = !isRemoteOriginActive ? activeManagerAgent?.agentId ?? null : null
+  const browserProfileId = !isRemoteOriginActive
+    ? activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null
+    : null
+  const browserSessionSnapshot = browserSessionAgentId
+    ? localState.browserSessions[browserSessionAgentId] ?? null
+    : null
+
+  useEffect(() => {
+    const request = localState.browserPanelRevealRequest
+    if (!shouldRevealBrowserPanel({
+      electronHostAvailable: Boolean(window.electronBridge?.browserAutomation),
+      selectedSessionAgentId: browserSessionAgentId,
+      request,
+      currentHostGeneration: localState.browserHost.hostGeneration,
+      currentRevision: browserSessionSnapshot?.revision ?? null,
+    })) return
+    const key = `${localState.connectionEpoch}:${request!.hostGeneration}:${request!.revision}:${request!.tabId}`
+    if (handledBrowserRevealRef.current === key) return
+    handledBrowserRevealRef.current = key
+    panels.handleOpenBrowserFromReveal()
+  }, [browserSessionAgentId, browserSessionSnapshot?.revision, localState.browserHost.hostGeneration, localState.browserPanelRevealRequest, localState.connectionEpoch, panels])
 
   // Workers belonging to the active manager session (for pill bar)
   const sessionWorkers = useMemo(() => {
@@ -802,6 +831,13 @@ export function BuilderSurface({
   return (
     <WorkGraphWorkerHighlightProvider>
       <FileDirtyConfirmDialog state={panels.fileEditorCoordinator.dialogState} />
+      <BrowserAutomationHost
+        ref={browserHostRef}
+        client={localClient}
+        state={localState}
+        selectedSessionAgentId={browserSessionAgentId}
+        panelVisible={activeView === 'chat' && panels.isBrowserOpen}
+      />
 
       <AgentSidebarConnected
         wsUrl={localWsUrl}
@@ -1017,6 +1053,15 @@ export function BuilderSurface({
                 }
                 onRestoreProfile={session.handleRestoreProfile}
                 onRestoreSession={session.handleRestoreSession}
+              />
+            ) : activeView === 'chat' && panels.isBrowserOpen && browserSessionAgentId && browserProfileId ? (
+              <BrowserPanel
+                client={localClient}
+                sessionAgentId={browserSessionAgentId}
+                profileId={browserProfileId}
+                snapshot={browserSessionSnapshot}
+                host={localState.browserHost}
+                hostRef={browserHostRef}
               />
             ) : (
               <ChatWorkspace

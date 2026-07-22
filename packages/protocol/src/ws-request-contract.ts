@@ -59,6 +59,13 @@ type ContractCommandType = Extract<
   | 'get_project_agent_sharing'
   | 'set_project_agent_sharing'
   | 'get_project_agent_external_directory'
+  | 'browser_host_state_report'
+  | 'browser_tab_open'
+  | 'browser_tab_activate'
+  | 'browser_tab_close'
+  | 'browser_tab_resize'
+  | 'browser_recording_start'
+  | 'browser_recording_stop'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -103,9 +110,61 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_sharing'
   | 'project_agent_sharing_updated'
   | 'project_agent_external_directory'
+  | 'browser_host_state_report_result'
+  | 'browser_tab_command_succeeded'
+  | 'browser_recording_command_succeeded'
 >
 
 export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'browser_host_state_report',
+    resultFamily: 'browser_host_state_report',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_host_state_report_result'],
+    errorCodeFragments: ['browser_host_state_report'],
+  },
+  {
+    commandType: 'browser_recording_start',
+    resultFamily: 'browser_recording_start',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_recording_command_succeeded'],
+    errorCodeFragments: ['browser_recording_start', 'browser_unavailable', 'browser_tab_not_found'],
+  },
+  {
+    commandType: 'browser_recording_stop',
+    resultFamily: 'browser_recording_stop',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_recording_command_succeeded'],
+    errorCodeFragments: ['browser_recording_stop', 'browser_unavailable', 'browser_tab_not_found'],
+  },
+  {
+    commandType: 'browser_tab_open',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_open', 'browser_unavailable', 'browser_invalid_url'],
+  },
+  {
+    commandType: 'browser_tab_activate',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_activate', 'browser_tab_not_found'],
+  },
+  {
+    commandType: 'browser_tab_close',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_close', 'browser_tab_not_found'],
+  },
+  {
+    commandType: 'browser_tab_resize',
+    resultFamily: 'browser_tab_mutation',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_tab_command_succeeded'],
+    errorCodeFragments: ['browser_tab_resize', 'browser_tab_not_found', 'browser_invalid_viewport'],
+  },
   {
     commandType: 'list_directories',
     resultFamily: 'directory_listing',

@@ -1,3 +1,10 @@
+import type {
+  BrowserAutomationRequest,
+  BrowserAutomationResponse,
+  BrowserTabSnapshot,
+  BrowserViewportSetting,
+} from '@forge/protocol'
+
 /**
  * Type declarations and detection for the Electron preload bridge.
  *
@@ -40,6 +47,30 @@ export interface CliInstallResult {
   error?: string
 }
 
+export interface BrowserBridgeConfig {
+  partition: string
+  preloadUrl: string
+  webPreferences: string
+}
+
+export interface BrowserAutomationBridge {
+  capabilities: {
+    supportedOperations: readonly string[]
+    playwrightVersion: string
+    supportsRecording: boolean
+  }
+  getWebviewConfig(profileId: string): Promise<BrowserBridgeConfig>
+  registerWebview(registration: { tab: BrowserTabSnapshot; webContentsId: number; visible: boolean; created: boolean }): Promise<BrowserTabSnapshot>
+  unregisterWebview(tabId: string, webContentsId?: number): Promise<void>
+  setTabPresentation(tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): Promise<BrowserTabSnapshot>
+  navigate(tabId: string, url: string): Promise<BrowserTabSnapshot>
+  history(tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot>
+  reload(tabId: string, hard?: boolean): Promise<BrowserTabSnapshot>
+  setZoom(tabId: string, factor: number): Promise<BrowserTabSnapshot>
+  invoke(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse>
+  onStateChanged(listener: (tab: BrowserTabSnapshot) => void): () => void
+}
+
 export interface ElectronBridge {
   /** HTTP base URL for the backend, e.g. "http://127.0.0.1:47187" */
   backendUrl: string
@@ -49,6 +80,8 @@ export interface ElectronBridge {
   getVersion(): string
   /** Host platform for desktop-specific renderer behavior. */
   platform: string
+  /** Managed browser host bridge. Present only in the desktop shell. */
+  browserAutomation?: BrowserAutomationBridge
   /** Opens a native file dialog. Available only in Electron. */
   showOpenDialog?(options: {
     title?: string

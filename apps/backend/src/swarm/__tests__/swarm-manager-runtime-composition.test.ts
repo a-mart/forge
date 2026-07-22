@@ -65,6 +65,7 @@ function toolHost(): SwarmToolHost {
     createSessionFromAgent: noResult,
     publishToUser: noResult,
     requestUserChoice: noResult,
+    invokeBrowserAutomation: noResult,
     updatePlan: noResult,
     updateWorkGraph: noResult,
     createGoal: noResult,

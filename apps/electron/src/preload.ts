@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { SleepBlockerSettingsPatch, SleepBlockerStatus } from './sleep-blocker.js'
+import { createTrustedBrowserBridge } from './browser/trusted-browser-bridge.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -12,12 +13,14 @@ type BackendBootstrap = {
 }
 
 const bootstrap = readBootstrap()
+const browserAutomation = createTrustedBrowserBridge(ipcRenderer)
 
 contextBridge.exposeInMainWorld('electronBridge', {
   backendUrl: bootstrap.backendUrl,
   backendWsUrl: bootstrap.backendWsUrl,
   getVersion: (): string => bootstrap.version,
   platform: bootstrap.platform,
+  browserAutomation,
   showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
     ipcRenderer.invoke('bridge:showOpenDialog', options),
   onTerminalShortcut: (listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): (() => void) => {

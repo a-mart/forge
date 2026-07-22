@@ -147,6 +147,13 @@ describe('ManagerWsClient', () => {
     const requestTypeSet = new Set(WS_REQUEST_TYPES)
 
     expect(contractTypes).toEqual([
+      'browser_host_state_report',
+      'browser_recording_start',
+      'browser_recording_stop',
+      'browser_tab_open',
+      'browser_tab_activate',
+      'browser_tab_close',
+      'browser_tab_resize',
       'list_directories',
       'validate_directory',
       'create_directory',

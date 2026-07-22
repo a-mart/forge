@@ -54,6 +54,16 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'collab_choice_response',
   'collab_choice_cancel',
   'collab_pin_message',
+  'browser_host_register',
+  'browser_host_focus',
+  'browser_host_response',
+  'browser_host_state_report',
+  'browser_tab_open',
+  'browser_tab_activate',
+  'browser_tab_close',
+  'browser_tab_resize',
+  'browser_recording_start',
+  'browser_recording_stop',
   'api_proxy',
   'kill_agent',
   'stop_all_agents',
@@ -109,6 +119,13 @@ type RequestIdCommand = Extract<ClientCommand, { requestId?: string } | { reques
 type RequestIdCommandType = RequestIdCommand['type']
 
 const REQUEST_ID_COMMAND_TYPES = [
+  'browser_host_state_report',
+  'browser_tab_open',
+  'browser_tab_activate',
+  'browser_tab_close',
+  'browser_tab_resize',
+  'browser_recording_start',
+  'browser_recording_stop',
   'api_proxy',
   'stop_all_agents',
   'hydrate_archive_last_used',
@@ -438,6 +455,13 @@ const serverEventsByLeafModule = [
 ] as const satisfies readonly ServerEvent[]
 
 const requestIdCommands = [
+  { type: 'browser_host_state_report', requestId: 'browser-state-request-1', hostId: 'host-1', hostGeneration: 1, sessions: [] },
+  { type: 'browser_tab_open', requestId: 'browser-request-1', sessionAgentId: agent.agentId, profileId: profile.profileId },
+  { type: 'browser_tab_activate', requestId: 'browser-request-2', sessionAgentId: agent.agentId, tabId: 'tab-1' },
+  { type: 'browser_tab_close', requestId: 'browser-request-3', sessionAgentId: agent.agentId, tabId: 'tab-1' },
+  { type: 'browser_tab_resize', requestId: 'browser-request-4', sessionAgentId: agent.agentId, tabId: 'tab-1', viewport: { mode: 'fill' } },
+  { type: 'browser_recording_start', requestId: 'browser-request-5', sessionAgentId: agent.agentId, tabId: 'tab-1' },
+  { type: 'browser_recording_stop', requestId: 'browser-request-6', sessionAgentId: agent.agentId, tabId: 'tab-1', recordingId: 'recording-1' },
   { type: 'api_proxy', requestId: 'request-1', method: 'GET', path: '/api/test' },
   { type: 'stop_all_agents', managerId: agent.agentId, requestId: 'request-2' },
   { type: 'hydrate_archive_last_used', requestId: 'request-hydrate-archive-last-used' },
@@ -521,6 +545,13 @@ describe('protocol root barrel contract', () => {
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
+      'browser_host_state_report',
+      'browser_recording_start',
+      'browser_recording_stop',
+      'browser_tab_open',
+      'browser_tab_activate',
+      'browser_tab_close',
+      'browser_tab_resize',
       'list_directories',
       'validate_directory',
       'create_directory',
@@ -566,7 +597,9 @@ describe('protocol root barrel contract', () => {
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
     expect(
       WS_REQUEST_CONTRACTS.every((contract) =>
-        contract.commandType === 'create_repository_project' || contract.commandType === 'get_conversation_page'
+        contract.commandType === 'create_repository_project' ||
+        contract.commandType === 'get_conversation_page' ||
+        contract.commandType.startsWith('browser_')
           ? contract.requestId.wire === 'required'
           : contract.requestId.wire === 'optional',
       ),
@@ -818,7 +851,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(59)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(69)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -829,7 +862,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(43)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(50)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)

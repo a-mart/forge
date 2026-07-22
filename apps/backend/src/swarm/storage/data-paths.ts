@@ -173,6 +173,14 @@ export function getSessionGoalHistoryPath(dataDir: string, profileId: string, se
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "goal-history.ndjson");
 }
 
+export function getSessionBrowserStatePath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "browser.json");
+}
+
+export function getSessionBrowserArtifactsDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "artifacts", "browser");
+}
+
 export function getSessionContextDir(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "context");
 }

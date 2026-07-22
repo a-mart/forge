@@ -31,6 +31,8 @@ const uiStageDir = path.join(stageDir, 'ui')
 const cliStageDir = path.join(stageDir, 'cli')
 const cliStagedEntry = path.join(cliStageDir, 'cli.js')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
+const browserRuntimeDir = path.join(stageDir, 'browser-runtime')
+const stagedPlaywrightCoreDir = path.join(browserRuntimeDir, 'playwright-core')
 const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
 const stagedBuiltinArchetypesDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'archetypes', 'builtins')
 const stagedBuiltinSpecialistsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins')
@@ -150,6 +152,7 @@ async function main() {
   await stageBundledBackend()
   await stageRendererAssets()
   await stageBackendResources()
+  await stageBrowserRuntime()
   await stageCliArtifact()
 
   await assertExists(backendStageBundlePath, 'staged backend bundle entry')
@@ -158,6 +161,8 @@ async function main() {
   await assertExists(stagedBuiltinArchetypesDir, 'staged built-in archetypes')
   await assertExists(stagedBuiltinSpecialistsDir, 'staged built-in specialists')
   await assertExists(cliStagedEntry, 'staged CLI entry')
+  await assertExists(path.join(stagedPlaywrightCoreDir, 'lib', 'coreBundle.js'), 'staged Playwright injected runtime')
+  await assertExists(path.join(browserRuntimeDir, 'THIRD_PARTY_NOTICES.md'), 'staged browser third-party notice')
 
   await validatePackagedRuntimePreflight()
   await validateStagedCliPreflight()
@@ -360,6 +365,32 @@ async function validateStagedBetterSqlite3Runtime() {
   })
 
   console.log('[electron/build-all] Packaged-runtime preflight verified staged better-sqlite3 with Electron-as-Node')
+}
+
+export async function stageBrowserRuntime() {
+  const playwright = await resolveInstalledPackage('playwright-core', path.join(electronDir, 'package.json'), false)
+  if (playwright.manifest.version !== '1.60.0') {
+    throw new Error(`Browser runtime requires playwright-core 1.60.0, found ${playwright.manifest.version}`)
+  }
+  await mkdir(path.dirname(stagedPlaywrightCoreDir), { recursive: true })
+  await cp(playwright.packageRoot, stagedPlaywrightCoreDir, { recursive: true, dereference: true })
+
+  const coreBundlePath = path.join(stagedPlaywrightCoreDir, 'lib', 'coreBundle.js')
+  const coreBundle = await readFile(coreBundlePath, 'utf8')
+  if (!coreBundle.includes('source3 = ') || !coreBundle.includes(';\n  }\n});')) {
+    throw new Error(`Staged playwright-core ${playwright.manifest.version} does not contain the validated injected-runtime markers`)
+  }
+
+  const rootNotice = path.join(repoRoot, 'THIRD_PARTY_NOTICES.md')
+  const noticeTarget = path.join(browserRuntimeDir, 'THIRD_PARTY_NOTICES.md')
+  if (!existsSync(rootNotice)) {
+    throw new Error(
+      `Maintained browser third-party notice is missing at ${rootNotice}. Electron packaging requires the exact root THIRD_PARTY_NOTICES.md (T3 MIT notice, adapted-file mapping, and Playwright attribution).`,
+    )
+  }
+  await mkdir(browserRuntimeDir, { recursive: true })
+  await cp(rootNotice, noticeTarget)
+  console.log(`[electron/build-all] Staged playwright-core ${playwright.manifest.version} and browser notices`)
 }
 
 async function stageCliArtifact() {

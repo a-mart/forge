@@ -18,7 +18,12 @@ import type { UpdatePlanInput, UpdatePlanResult } from "./planning/update-plan-t
 import type { UpdateWorkGraphResult } from "./planning/update-work-graph-tool.js";
 import type { UpdateWorkGraphInput } from "./planning/work-graph-state.js";
 import type { CreateGoalInput, UpdateGoalInput } from "./goals/goal-tools.js";
-import type { SessionGoalSnapshot } from "@forge/protocol";
+import type {
+  BrowserAutomationInputByOperation,
+  BrowserAutomationOperation,
+  SessionGoalSnapshot,
+} from "@forge/protocol";
+import type { BrowserAutomationInvocationResult } from "./browser-automation/browser-automation-service.js";
 import type {
   KnowledgeEntry,
   KnowledgeEntryScope,
@@ -94,6 +99,11 @@ export interface SwarmToolHost {
     agentId: string,
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]>;
+  invokeBrowserAutomation<Operation extends BrowserAutomationOperation>(
+    callerAgentId: string,
+    operation: Operation,
+    input: BrowserAutomationInputByOperation[Operation],
+  ): Promise<BrowserAutomationInvocationResult<Operation>>;
   updatePlan(
     callerAgentId: string,
     toolCallId: string,

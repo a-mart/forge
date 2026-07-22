@@ -22,6 +22,7 @@ import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
 import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "./runtime-target.js";
 import { FeedbackService } from "./swarm/feedback-service.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
+import { BrowserAutomationService } from "./swarm/browser-automation/index.js";
 import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
 import { UnreadTracker } from "./swarm/unread-tracker.js";
 import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swarm/types.js";
@@ -88,6 +89,14 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   // eslint-disable-next-line prefer-const -- forward reference: used in onCommit callback before assignment
   let swarmManager: SwarmManager | undefined;
+  let wsServer: SwarmWebSocketServer | undefined;
+  const browserAutomationService = new BrowserAutomationService({
+    dataDir: config.paths.dataDir,
+    onSessionChanged: (snapshot, reason) => wsServer?.broadcastBrowserSessionChanged(snapshot, reason),
+    onPanelRevealRequested: (snapshot, tabId, hostGeneration) =>
+      wsServer?.broadcastBrowserPanelReveal(snapshot, tabId, hostGeneration),
+    onHostChanged: (host) => wsServer?.broadcastBrowserHostChanged(host),
+  });
   const versioningService = new EmbeddedGitVersioningService({
     dataDir: config.paths.dataDir,
     logger,
@@ -110,6 +119,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   swarmManager = new SwarmManager(config, {
     versioningService,
     observability: observabilityService,
+    browserAutomationService,
   });
   await versioningService.start();
 
@@ -353,7 +363,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
     const feedbackService = new FeedbackService(config.paths.dataDir, { observability: observabilityService });
 
-    const wsServer = new SwarmWebSocketServer({
+    wsServer = new SwarmWebSocketServer({
       swarmManager,
       host: config.host,
       port: config.port,
@@ -369,7 +379,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       feedbackService,
       collaborationSettingsService,
       collaborationReadinessService,
-
+      browserAutomationService,
     });
 
     server = new BackendServer({

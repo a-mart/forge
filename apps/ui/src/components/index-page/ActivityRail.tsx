@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 
 export type ActivityRailItemId =
   | 'chat'
+  | 'browser'
   | 'artifacts'
   | 'schedules'
   | 'files'

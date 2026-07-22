@@ -99,6 +99,17 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   // Instance-scoped or local-machine operations — admin only.
   resume_restart_recovery: "admin",
   dismiss_restart_recovery: "admin",
+  // Browser host ownership and managed webviews are local-machine capabilities.
+  browser_host_register: "admin",
+  browser_host_focus: "admin",
+  browser_host_response: "admin",
+  browser_host_state_report: "admin",
+  browser_tab_open: "admin",
+  browser_tab_activate: "admin",
+  browser_tab_close: "admin",
+  browser_tab_resize: "admin",
+  browser_recording_start: "admin",
+  browser_recording_stop: "admin",
   // Opens a native picker on the server host; meaningless and unsafe remotely.
   pick_directory: "admin",
 };

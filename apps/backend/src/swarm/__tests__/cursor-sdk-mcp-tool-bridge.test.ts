@@ -82,6 +82,42 @@ describe("cursor-sdk-mcp-tool-bridge", () => {
     }
   });
 
+  it("preserves Forge text and image content blocks for browser snapshots", async () => {
+    const bridge = await createCursorSdkMcpToolBridge([
+      {
+        name: "browser_snapshot",
+        parameters: { type: "object", properties: {} },
+        execute: async () => ({
+          content: [
+            { type: "text", text: JSON.stringify({ ok: true, screenshot: { mimeType: "image/png" } }) },
+            { type: "image", data: "base64data", mimeType: "image/png" },
+          ],
+          details: { ok: true },
+        }),
+      } as unknown as ToolDefinition,
+    ]);
+
+    try {
+      const serverConfig = bridge.mcpServers[bridge.serverName];
+      if (!serverConfig || !("url" in serverConfig)) throw new Error("Expected URL");
+      await expect(postJson(serverConfig.url, {
+        jsonrpc: "2.0",
+        id: "snapshot",
+        method: "tools/call",
+        params: { name: "browser_snapshot", arguments: {} },
+      })).resolves.toMatchObject({
+        result: {
+          content: [
+            { type: "text", text: expect.stringContaining("image/png") },
+            { type: "image", data: "base64data", mimeType: "image/png" },
+          ],
+        },
+      });
+    } finally {
+      await bridge.shutdown();
+    }
+  });
+
   it("returns default schemas and MCP isError results for unknown tools", async () => {
     const bridge = await createCursorSdkMcpToolBridge([
       { name: "no_schema", execute: async () => "ok" } as unknown as ToolDefinition

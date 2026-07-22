@@ -26,7 +26,7 @@ import {
   useState,
   type MutableRefObject,
 } from 'react'
-import { Clock3, FolderOpen, GitBranch, MessageSquare, Package, SquareTerminal } from 'lucide-react'
+import { Clock3, FolderOpen, GitBranch, Globe2, MessageSquare, Package, SquareTerminal } from 'lucide-react'
 import type { AgentDescriptor, GitWorktreeSummary } from '@forge/protocol'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import type { ManagerWsClient } from '@/lib/ws-client'
@@ -118,6 +118,9 @@ export function useWorkspacePanels({
     openDiffViewer,
     openDiffViewerDeepLink,
     isFileBrowserOpen,
+    isBrowserOpen,
+    openBrowser: handleOpenBrowser,
+    toggleBrowser: handleToggleBrowser,
     openFileBrowser: handleOpenFileBrowser,
     toggleFileBrowser: handleToggleFileBrowser,
     selectedFileBrowserFile,
@@ -480,6 +483,20 @@ export function useWorkspacePanels({
     })
   }, [fileEditorCoordinator, handleGuardedToggleFileBrowser, handleOpenFileBrowser, isFileBrowserOpen, isInlineDiffViewerOpen, setIsDiffViewerOpen])
 
+  const handleToggleBrowserFromRail = useCallback(() => {
+    fileEditorCoordinator.requestFileEditorTransition({ type: 'open-workspace-panel', panel: 'chat' }, () => {
+      setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
+      handleToggleBrowser()
+    })
+  }, [fileEditorCoordinator, handleToggleBrowser, setIsDiffViewerOpen])
+
+  const handleOpenBrowserFromReveal = useCallback(() => {
+    setIsDiffViewerOpen(false)
+    setDiffViewerPresentation('modal')
+    handleOpenBrowser()
+  }, [handleOpenBrowser, setIsDiffViewerOpen])
+
   const handleOpenDiffViewerInline = useCallback(() => {
     fileEditorCoordinator.requestFileEditorTransition({ type: 'open-source-control-inline' }, () => {
       if (isInlineDiffViewerOpen) {
@@ -609,7 +626,7 @@ export function useWorkspacePanels({
       ? isArtifactsPanelOpen && cortexDashboardTab === 'consolidation'
       : isArtifactsPanelOpen && artifactsPanelTab === 'schedules'
 
-    const chatActive = !isInlineDiffViewerOpen && !isFileBrowserOpen && !isArtifactsPanelOpen
+    const chatActive = !isInlineDiffViewerOpen && !isFileBrowserOpen && !isArtifactsPanelOpen && !isBrowserOpen
 
     return [
       {
@@ -619,6 +636,14 @@ export function useWorkspacePanels({
         active: chatActive,
         disabled: !activeAgentId,
         onClick: handleReturnToChatWorkspace,
+      },
+      {
+        id: 'browser' as const,
+        label: isBrowserOpen ? 'Close Browser' : 'Browser',
+        icon: Globe2,
+        active: isBrowserOpen && !isInlineDiffViewerOpen,
+        disabled: workspaceDisabled,
+        onClick: handleToggleBrowserFromRail,
       },
       {
         id: 'files' as const,
@@ -690,11 +715,13 @@ export function useWorkspacePanels({
     handleOpenCortexDashboardFromRail,
     handleOpenDiffViewerInline,
     handleReturnToChatWorkspace,
+    handleToggleBrowserFromRail,
     handleToggleFileBrowserFromRail,
     isArtifactsPanelOpen,
     isCortexSession,
     isInlineDiffViewerOpen,
     isFileBrowserOpen,
+    isBrowserOpen,
     terminalCount,
     terminalPanel,
     terminalSessionAgentId,
@@ -721,6 +748,7 @@ export function useWorkspacePanels({
     diffViewerInitialState,
     diffViewerNavigationRequest,
     isFileBrowserOpen,
+    isBrowserOpen,
     selectedFileBrowserFile,
     fileBrowserTabs,
     activeFileBrowserTabId,
@@ -760,6 +788,8 @@ export function useWorkspacePanels({
     handleOpenDiffViewerModal,
     handleOpenDiffViewerDeepLink,
     handleReturnToChatWorkspace,
+    handleToggleBrowserFromRail,
+    handleOpenBrowserFromReveal,
     handleToggleFileBrowserFromRail,
     handleOpenDiffViewerInline,
     handleGuardedToggleArtifactsPanel,

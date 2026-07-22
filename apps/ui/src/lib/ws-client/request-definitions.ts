@@ -2,6 +2,9 @@ import {
   MANAGER_MODEL_PRESETS,
   MANAGER_REASONING_LEVELS,
   type AgentSessionPurpose,
+  type BrowserHostRegistration,
+  type BrowserHostSessionStateReport,
+  type BrowserViewportSetting,
   type BuilderTimelineChannelView,
   type ChoiceAnswer,
   type CodexElicitationDecision,
@@ -56,6 +59,61 @@ export function buildSubscribeCommand(
     conversationPaging: true,
     ...(conversationView ? { conversationView } : {}),
   }
+}
+
+export function buildBrowserHostRegisterCommand(registration: BrowserHostRegistration): ClientCommand {
+  return { type: 'browser_host_register', registration }
+}
+
+export function buildBrowserHostFocusCommand(hostId: string, hostGeneration: number, focused: boolean): ClientCommand {
+  return { type: 'browser_host_focus', hostId, hostGeneration, focused }
+}
+
+export function buildBrowserHostResponseCommand(response: Extract<ClientCommand, { type: 'browser_host_response' }>['response']): ClientCommand {
+  return { type: 'browser_host_response', response }
+}
+
+export function buildBrowserHostStateReportCommand(
+  requestId: string,
+  hostId: string,
+  hostGeneration: number,
+  sessions: BrowserHostSessionStateReport[],
+): ClientCommand {
+  return { type: 'browser_host_state_report', requestId, hostId, hostGeneration, sessions }
+}
+
+export function buildBrowserTabOpenCommand(
+  sessionAgentId: string,
+  profileId: string,
+  requestId: string,
+  options?: { url?: string; activate?: boolean },
+): ClientCommand {
+  return { type: 'browser_tab_open', requestId, sessionAgentId, profileId, ...options }
+}
+
+export function buildBrowserTabActivateCommand(sessionAgentId: string, tabId: string, requestId: string): ClientCommand {
+  return { type: 'browser_tab_activate', requestId, sessionAgentId, tabId }
+}
+
+export function buildBrowserTabCloseCommand(sessionAgentId: string, tabId: string, requestId: string): ClientCommand {
+  return { type: 'browser_tab_close', requestId, sessionAgentId, tabId }
+}
+
+export function buildBrowserTabResizeCommand(
+  sessionAgentId: string,
+  tabId: string,
+  viewport: BrowserViewportSetting,
+  requestId: string,
+): ClientCommand {
+  return { type: 'browser_tab_resize', requestId, sessionAgentId, tabId, viewport }
+}
+
+export function buildBrowserRecordingStartCommand(sessionAgentId: string, tabId: string, requestId: string): ClientCommand {
+  return { type: 'browser_recording_start', requestId, sessionAgentId, tabId }
+}
+
+export function buildBrowserRecordingStopCommand(sessionAgentId: string, tabId: string, recordingId: string, requestId: string): ClientCommand {
+  return { type: 'browser_recording_stop', requestId, sessionAgentId, tabId, recordingId }
 }
 
 export function buildRestartRecoveryActionCommand(

@@ -10,13 +10,12 @@ const DEFAULT_SERVER_NAME = "forge-swarm";
 
 type JsonRpcId = string | number | null;
 
-type McpTextContentBlock = {
-  type: "text";
-  text: string;
-};
+type McpContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
 
 type McpToolResult = {
-  content: McpTextContentBlock[];
+  content: McpContentBlock[];
   isError?: boolean;
 };
 
@@ -190,6 +189,11 @@ function normalizeToolArguments(value: unknown): Record<string, unknown> {
 }
 
 function formatToolResult(result: unknown, toolName: string): McpToolResult {
+  if (hasContentArray(result)) {
+    const content = extractContentBlocks(result.content);
+    if (content.length === 0) content.push({ type: "text", text: `Tool ${toolName} completed.` });
+    return { content, ...(result.isError === true ? { isError: true } : {}) };
+  }
   if (typeof result === "string") {
     return { content: [{ type: "text", text: result }] };
   }
@@ -197,6 +201,24 @@ function formatToolResult(result: unknown, toolName: string): McpToolResult {
     return { content: [{ type: "text", text: `Tool ${toolName} completed.` }] };
   }
   return { content: [{ type: "text", text: safeSerialize(result) }] };
+}
+
+function hasContentArray(value: unknown): value is { content: unknown[]; isError?: boolean } {
+  return !!value && typeof value === "object" && Array.isArray((value as { content?: unknown }).content);
+}
+
+function extractContentBlocks(content: unknown[]): McpContentBlock[] {
+  const blocks: McpContentBlock[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const block = item as { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown };
+    if (block.type === "text" && typeof block.text === "string") {
+      blocks.push({ type: "text", text: block.text });
+    } else if (block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+      blocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+    }
+  }
+  return blocks;
 }
 
 function formatToolError(message: string): McpToolResult {

@@ -12,6 +12,7 @@ import { getCollaborationSocketAuthContext } from "../collaboration/auth/collabo
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import type { BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
@@ -63,6 +64,7 @@ export class WsSubscriptions {
   private readonly terminalService: TerminalService | null;
   private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   private readonly unreadTracker: UnreadTracker | null;
+  private readonly browserAutomationService: BrowserAutomationService | null;
   private readonly perf: SidebarPerfRecorder;
   private readonly send: (socket: WebSocket, event: ServerEvent) => number | null;
   private readonly sendBootstrapCritical: (
@@ -80,6 +82,7 @@ export class WsSubscriptions {
     terminalService: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
     unreadTracker: UnreadTracker | null;
+    browserAutomationService?: BrowserAutomationService | null;
     perf: SidebarPerfRecorder;
     send: (socket: WebSocket, event: ServerEvent) => number | null;
     sendBootstrapCritical?: (socket: WebSocket, event: ServerEvent) => Promise<number | null>;
@@ -93,6 +96,7 @@ export class WsSubscriptions {
     this.terminalService = options.terminalService;
     this.listTerminalsForSession = options.listTerminalsForSession;
     this.unreadTracker = options.unreadTracker;
+    this.browserAutomationService = options.browserAutomationService ?? null;
     this.perf = options.perf;
     this.send = options.send;
     // Falls back to the plain send when a backpressure-aware sender isn't wired (e.g. in tests).
@@ -677,11 +681,13 @@ export class WsSubscriptions {
       terminalService: this.terminalService,
       listTerminalsForSession: this.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
+      browserAutomationService: this.browserAutomationService,
       perf: this.perf,
       // Bootstrap-critical events flow-control (await drain) instead of dropping under backpressure.
       send: this.sendBootstrapCritical,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolvePlanSnapshotSessionAgentId: (agentId) => this.resolvePlanSnapshotSessionAgentId(agentId),
+      resolveBrowserSessionAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       includeAgentsSnapshot:
         deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion ||
         selectedWorkerSnapshotMissing,

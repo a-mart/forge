@@ -6,6 +6,7 @@ import { ProfileBootReconciler } from "./agents/descriptor-store/profile-boot-re
 import { WorkerBootRecovery } from "./agents/descriptor-store/worker-boot-recovery.js";
 import { ProjectAgentMirrorReconciler } from "./agents/descriptor-store/project-agent-mirror-reconciler.js";
 import { AssistantOutputRouter } from "./assistant-output-router.js";
+import type { BrowserAutomationService } from "./browser-automation/browser-automation-service.js";
 import { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
 import type {
   CodexPluginDelegationTurnContext,
@@ -25,8 +26,7 @@ import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-st
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { SecretsEnvService } from "./secrets-env-service.js";
-import type { SessionLifecycleCoordinator } from "./session-lifecycle-coordinator.js";
-import { SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
+import { type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import type { SkillMetadata } from "./skill-metadata-service.js";
 import {
@@ -245,6 +245,7 @@ export interface SwarmManagerRuntimeCompositionOptions {
     versioningService?: VersioningMutationSink;
   };
   toolHost: SwarmToolHost;
+  browserAutomation: BrowserAutomationService;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
   messaging: RuntimeCompositionMessaging;
@@ -254,13 +255,11 @@ export interface SwarmManagerRuntimeCompositionOptions {
   capture: RuntimeCompositionCaptureOperations;
   sessions: RuntimeCompositionSessionOperations;
 }
-
 export type {
   SwarmManagerCompletedRuntimeComposition,
   SwarmManagerRuntimeBoundServices,
   SwarmManagerRuntimeCompositionOverrides,
 } from "./swarm-manager-runtime-boundary.js";
-
 /**
  * Typed, phased owner for the runtime/lifecycle/boot graph.
  *
@@ -854,6 +853,7 @@ export class SwarmManagerRuntimeComposition {
         clearSession: (agentId) =>
           events.emitSessionActiveToolsSnapshot(events.clearSessionActiveTools(agentId)),
       },
+      browser: this.options.browserAutomation,
       events,
       terminal: { getHooks: sessions.getTerminalArchiveHooks },
       descriptorMutations: { patchDescriptor: this.options.descriptors.patchDescriptor },

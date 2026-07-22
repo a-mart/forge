@@ -52,9 +52,11 @@ describe("SessionLifecycleCoordinator", () => {
     expect(result.terminatedWorkerIds).toEqual(["worker-1"]);
     expect(harness.calls).toEqual([
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "capture",
       "codex.close:forge--s2",
       "archive",
+      "browser.archive:forge:forge--s2",
       "tools:forge--s2",
       "events.agents",
     ]);
@@ -85,10 +87,14 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "codex.close:forge",
       "goals.cancel:forge",
+      "browser.cancel:forge",
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "archive.profile",
+      "browser.archive:forge:forge",
       "tools:forge",
+      "browser.archive:forge:forge--s2",
       "tools:forge--s2",
       "terminal.suspend",
       "log:archive:terminal_suspend:error",
@@ -112,7 +118,9 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "sessions.delete",
+      "browser.delete:forge:forge--s2",
       "plans:forge--s2",
       "goals.forget:forge--s2",
       "tools:forge--s2",
@@ -130,6 +138,7 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "sessions.delete",
     ]);
   });
@@ -151,6 +160,7 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "lifecycle.stopAll",
     ]);
 
@@ -167,11 +177,15 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "codex.close:forge",
       "goals.cancel:forge",
+      "browser.cancel:forge",
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "lifecycle.deleteManager",
+      "browser.delete:forge:forge",
       "goals.forget:forge",
       "extensions.deleted:forge",
+      "browser.delete:forge:forge--s2",
       "goals.forget:forge--s2",
       "extensions.deleted:forge--s2",
     ]);
@@ -188,6 +202,7 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
       "lifecycle.stop",
       "tools:forge--s2",
     ]);
@@ -407,6 +422,23 @@ function createHarness(): Harness {
     },
     activeTools: {
       clearSession: (agentId) => calls.push(`tools:${agentId}`),
+    },
+    browser: {
+      cancelSession: (agentId) => {
+        calls.push(`browser.cancel:${agentId}`);
+        return 0;
+      },
+      archiveSession: async (profileId, agentId) => {
+        calls.push(`browser.archive:${profileId}:${agentId}`);
+        return {} as never;
+      },
+      restoreSession: async (profileId, agentId) => {
+        calls.push(`browser.restore:${profileId}:${agentId}`);
+        return {} as never;
+      },
+      deleteSession: async (profileId, agentId) => {
+        calls.push(`browser.delete:${profileId}:${agentId}`);
+      },
     },
     events: {
       emitAgentsSnapshot: () => calls.push("events.agents"),
