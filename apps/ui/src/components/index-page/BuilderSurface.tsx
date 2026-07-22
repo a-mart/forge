@@ -1151,15 +1151,15 @@ export function BuilderSurface({
                   onPlanExpandedChange: setPlanExpanded,
                   statuses: state.statuses,
                   hasOlder: state.conversationPage?.hasOlder ?? false,
+                  olderCursor: state.conversationPage?.nextCursor,
                   isLoadingOlder: state.conversationPageLoading,
                   historyCompleteness: state.conversationPage?.completeness ?? 'complete',
                   historyMutation: state.conversationHistoryMutation,
                   onLoadOlder: () => {
                     if (state.conversationPage?.completeness === 'source_changed') {
-                      clientRef.current?.refreshConversationHistory()
-                      return
+                      return clientRef.current?.refreshConversationHistory()
                     }
-                    void clientRef.current?.loadOlderConversation().catch(() => undefined)
+                    return clientRef.current?.loadOlderConversation()
                   },
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'

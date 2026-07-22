@@ -932,10 +932,12 @@ export class ManagerWsClient {
 
     assertReconnectableSocket(this.socket)
     this.updateState({ conversationPageLoading: true, lastError: null })
+    let pageRequestId: string | null = null
     try {
       return await this.requestDispatcher.enqueueRequest(
         'get_conversation_page',
         (requestId) => {
+          pageRequestId = requestId
           this.updateState({ conversationPageRequestId: requestId })
           return buildGetConversationPageCommand(
             agentId,
@@ -948,11 +950,16 @@ export class ManagerWsClient {
         { timeoutMs: CONVERSATION_PAGE_REQUEST_TIMEOUT_MS },
       )
     } catch (error) {
-      this.updateState({
-        conversationPageLoading: false,
-        conversationPageRequestId: null,
-        lastError: error instanceof Error ? error.message : String(error),
-      })
+      if (
+        this.state.targetAgentId === agentId &&
+        this.state.conversationPageRequestId === pageRequestId
+      ) {
+        this.updateState({
+          conversationPageLoading: false,
+          conversationPageRequestId: null,
+          lastError: error instanceof Error ? error.message : String(error),
+        })
+      }
       throw error
     }
   }
