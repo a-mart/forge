@@ -70,7 +70,7 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
 
   return (
     <div className="relative z-20 h-0 shrink-0">
-      <div className="absolute inset-x-0 bottom-1 flex justify-center px-3">
+      <div className="pointer-events-none absolute inset-x-0 bottom-1 flex justify-center px-3">
         <Popover
           open={open}
           onOpenChange={(nextOpen) => {
@@ -89,7 +89,7 @@ export function PlanDockIndicator({ snapshot }: { snapshot?: SessionPlanSnapshot
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 rounded-full bg-card/95 px-3 text-xs shadow-sm backdrop-blur"
+              className="pointer-events-auto h-8 gap-1.5 rounded-full bg-card/95 px-3 text-xs shadow-sm backdrop-blur"
               aria-label={`Open working plan, ${label}`}
             >
               {isComplete ? (

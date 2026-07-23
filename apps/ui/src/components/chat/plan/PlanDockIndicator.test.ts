@@ -80,7 +80,17 @@ describe('PlanDockIndicator', () => {
       .toBe('Open working plan, 11/13 done')
     expect(container.firstElementChild?.className).toBe('relative z-20 h-0 shrink-0')
     expect(container.firstElementChild?.firstElementChild?.className)
-      .toBe('absolute inset-x-0 bottom-1 flex justify-center px-3')
+      .toBe('pointer-events-none absolute inset-x-0 bottom-1 flex justify-center px-3')
+  })
+
+  it('only captures pointer events on the dock trigger, not across the newest message row', () => {
+    act(() => root.render(createElement(PlanDockIndicator, { snapshot })))
+
+    const positioningLayer = container.firstElementChild?.firstElementChild
+    const trigger = container.querySelector('button')
+
+    expect(positioningLayer?.classList.contains('pointer-events-none')).toBe(true)
+    expect(trigger?.classList.contains('pointer-events-auto')).toBe(true)
   })
 
   it('shows zero completed progress when no items are done', () => {
