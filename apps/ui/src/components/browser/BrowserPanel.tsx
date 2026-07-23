@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Circle, ExternalLink, Globe2, PanelTopClose, Plus, RefreshCw, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   BROWSER_VIEWPORT_PRESETS,
@@ -17,7 +17,7 @@ import { isElectron } from '@/lib/electron-bridge'
 import { cn } from '@/lib/utils'
 
 export interface BrowserWorkspaceCommandPort {
-  open(): Promise<void>
+  open(autoOpenAttemptKey?: string): Promise<void>
   activate(tabId: string): Promise<void>
   close(tabId: string): Promise<void>
   resize(tabId: string, viewport: BrowserViewportSetting): Promise<void>
@@ -46,16 +46,31 @@ interface BrowserPanelProps {
   hostRef?: RefObject<BrowserAutomationHostHandle | null>
 }
 
+/** One automatic blank-tab attempt per canonical empty snapshot identity. */
+function emptyBrowserOpenAttemptKey(
+  sessionAgentId: string,
+  profileId: string,
+  host: Pick<BrowserHostConnectionSnapshot, 'hostGeneration'>,
+  snapshot: Pick<BrowserSessionSnapshot, 'revision'>,
+): string {
+  return `${sessionAgentId}:${profileId}:${host.hostGeneration ?? 'null'}:${snapshot.revision}`
+}
+
 export function BrowserPanel({
   client = null, sessionAgentId, profileId, snapshot, host, hostRef, commandPort,
   mode = 'docked', popoutAvailable = Boolean(window.electronBridge?.browserWorkspace?.capability.popoutAvailable),
 }: BrowserPanelProps) {
-  const activeTab = snapshot?.tabs.find((tab) => tab.tabId === snapshot.activeTabId) ?? snapshot?.tabs[0] ?? null
+  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed')
+  const hasOpenTab = openTabs.length > 0
+  const activeTab = openTabs.find((tab) => tab.tabId === snapshot?.activeTabId) ?? openTabs[0] ?? null
   const [address, setAddress] = useState(activeTab?.url ?? '')
   const [error, setError] = useState<string | null>(null)
   const [screenshot, setScreenshot] = useState<string | null>(null)
   const [customWidth, setCustomWidth] = useState(1280)
   const [customHeight, setCustomHeight] = useState(800)
+  const [autoOpeningTab, setAutoOpeningTab] = useState(false)
+  const attemptedEmptyOpenKeyRef = useRef<string | null>(null)
+  const emptySnapshotPhaseAttemptedRef = useRef(false)
   useEffect(() => setAddress(activeTab?.url ?? ''), [activeTab?.tabId, activeTab?.url])
 
   const commands = commandPort ?? createLegacyLocalPort(client, sessionAgentId, profileId, hostRef)
@@ -69,6 +84,44 @@ export function BrowserPanel({
     setError(null)
     try { await action() } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
   }
+  const openCommandRef = useRef(commands.open)
+  openCommandRef.current = commands.open
+  const runRef = useRef(run)
+  runRef.current = run
+
+  const managedBrowserSurface = window.electronBridge?.windowRole === 'main' || window.electronBridge?.windowRole === 'managed-browser-popout'
+  const emptyAuthorityKey = managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
+    ? emptyBrowserOpenAttemptKey(sessionAgentId, profileId, host, snapshot)
+    : null
+
+  useEffect(() => {
+    if (hasOpenTab) {
+      emptySnapshotPhaseAttemptedRef.current = false
+      setAutoOpeningTab(false)
+      return
+    }
+    if (!emptyAuthorityKey) {
+      if (controlsUnavailable || !host.connected) setAutoOpeningTab(false)
+      return
+    }
+    // Keep one attempt for the current empty phase even if delayed transport
+    // snapshots change metadata or revision before a tab arrives. A canonical
+    // open tab resets the phase, allowing one attempt after its later closure.
+    if (emptySnapshotPhaseAttemptedRef.current || attemptedEmptyOpenKeyRef.current === emptyAuthorityKey) return
+    emptySnapshotPhaseAttemptedRef.current = true
+    attemptedEmptyOpenKeyRef.current = emptyAuthorityKey
+    let cancelled = false
+    setAutoOpeningTab(true)
+    void (async () => {
+      try {
+        await runRef.current(() => openCommandRef.current(emptyAuthorityKey))
+      } finally {
+        if (!cancelled) setAutoOpeningTab(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [controlsUnavailable, emptyAuthorityKey, hasOpenTab, host.connected])
+
   const resize = (viewport: BrowserViewportSetting): void => { if (activeTab) void run(() => commands.resize(activeTab.tabId, viewport)) }
   const popped = mode === 'popped-out' || mode === 'opening'
 
@@ -77,7 +130,7 @@ export function BrowserPanel({
       <div className="sr-only" aria-live="polite">{popped ? 'Managed Browser is open in a separate window.' : 'Managed Browser is docked in the main window.'}</div>
       <header className="border-b bg-muted/30">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto px-2 pt-2" role="tablist" aria-label="Browser tabs">
-          {(snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed').map((tab) => (
+          {openTabs.map((tab) => (
             <div key={tab.tabId} className={cn('group flex min-w-32 max-w-56 items-center rounded-t-md border px-1', tab.tabId === activeTab?.tabId ? 'bg-background' : 'bg-muted/50')}>
               <button type="button" role="tab" aria-selected={tab.tabId === activeTab?.tabId} className="min-w-0 flex-1 truncate px-2 py-1.5 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled={controlsUnavailable} onClick={() => void run(() => commands.activate(tab.tabId))}>
                 {tab.loading ? 'Loading…' : tab.title || tab.url || 'New tab'}
@@ -138,6 +191,8 @@ export function BrowserPanel({
           </div>
           {screenshot ? <ScreenshotPreview dataUrl={screenshot} onClose={() => setScreenshot(null)} /> : null}
         </div>
+      ) : autoOpeningTab ? (
+        <div className="m-auto text-center text-sm text-muted-foreground" aria-live="polite"><p>Opening a new tab…</p></div>
       ) : (
         <div className="m-auto text-center text-sm text-muted-foreground"><p>No browser tabs are open.</p><button type="button" className="mt-3 rounded border px-3 py-1.5 hover:bg-muted focus-visible:ring-2" onClick={() => void run(() => commands.open())}>Open a tab</button></div>
       )}
@@ -150,7 +205,7 @@ export function BrowserPanel({
 function createLegacyLocalPort(client: ManagerWsClient | null, sessionAgentId: string, profileId: string, hostRef?: RefObject<BrowserAutomationHostHandle | null>): BrowserWorkspaceCommandPort {
   const handle = () => { if (!hostRef?.current) throw new Error('Browser host is unavailable'); return hostRef.current }
   return {
-    open: async () => { if (hostRef?.current) await hostRef.current.open(); else await client?.openBrowserTab(sessionAgentId, profileId, { activate: true }) },
+    open: async (autoOpenAttemptKey) => { if (hostRef?.current) await hostRef.current.open(autoOpenAttemptKey); else await client?.openBrowserTab(sessionAgentId, profileId, { activate: true }) },
     activate: async (tabId) => { if (hostRef?.current) await hostRef.current.activate(tabId); else await client?.activateBrowserTab(sessionAgentId, tabId) },
     close: async (tabId) => { if (hostRef?.current) await hostRef.current.close(tabId); else await client?.closeBrowserTab(sessionAgentId, tabId) },
     resize: async (tabId, viewport) => { if (hostRef?.current) await hostRef.current.resize(tabId, viewport); else await client?.resizeBrowserTab(sessionAgentId, tabId, viewport) },

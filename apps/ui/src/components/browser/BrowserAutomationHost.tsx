@@ -18,7 +18,7 @@ import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 
 export interface BrowserAutomationHostHandle {
-  open(): Promise<void>
+  open(autoOpenAttemptKey?: string): Promise<void>
   activate(tabId: string): Promise<void>
   close(tabId: string): Promise<void>
   resize(tabId: string, viewport: BrowserViewportSetting): Promise<void>
@@ -66,6 +66,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const reportRetryState = useRef({ generation: null as number | null, conflicts: 0 })
     const disposed = useRef(false)
     const revealAcknowledgements = useRef(new Set<string>())
+    const automaticEmptyOpenAttempts = useRef(new Set<string>())
     const [workspaceMode, setWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(workspace?.capability.popoutAvailable ? 'docked' : 'unavailable')
     const workspaceModeRef = useRef<ManagedBrowserWorkspaceMode>(workspaceMode)
 
@@ -80,6 +81,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       const nextProjected = new Map(Object.entries(state.browserSessions))
       let receivedCanonicalState = false
       for (const [sessionAgentId, session] of nextProjected) {
+        if (session.tabs.some((tab) => tab.lifecycle !== 'closed')) {
+          automaticEmptyOpenAttempts.current.delete(`${session.profileId}:${sessionAgentId}`)
+        }
         // Preserve a conflict snapshot for one session when an unrelated
         // session changes. Reducer snapshots retain object identity for
         // untouched sessions, while hydration/restart replaces each object.
@@ -333,7 +337,17 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       const currentBridge = bridgeRef.current
       if (!currentClient || !sessionAgentId || !profileId || !currentBridge) throw new Error('Selected local Managed Browser is unavailable')
       switch (command.type) {
-        case 'open': return currentClient.openBrowserTab(sessionAgentId, profileId, { activate: true })
+        case 'open': {
+          const attemptKey = command.autoOpenAttemptKey
+          if (attemptKey) {
+            const attemptIdentity = `${profileId}:${sessionAgentId}`
+            if (automaticEmptyOpenAttempts.current.has(attemptIdentity)) return
+            // Mark before dispatching. A failed automatic attempt is deliberately
+            // not retried; the panel's manual fallback remains available.
+            automaticEmptyOpenAttempts.current.add(attemptIdentity)
+          }
+          return currentClient.openBrowserTab(sessionAgentId, profileId, { activate: true })
+        }
         case 'activate': return currentClient.activateBrowserTab(sessionAgentId, command.tabId)
         case 'close': return currentClient.closeBrowserTab(sessionAgentId, command.tabId)
         case 'resize': return currentClient.resizeBrowserTab(sessionAgentId, command.tabId, command.viewport)
@@ -411,7 +425,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [client, state.browserHost.hostGeneration, state.browserHost.hostId, workspace])
 
     useImperativeHandle(ref, () => ({
-      open: async () => { await executeWorkspaceCommand({ type: 'open' }) },
+      open: async (autoOpenAttemptKey) => { await executeWorkspaceCommand({ type: 'open', ...(autoOpenAttemptKey ? { autoOpenAttemptKey } : {}) }) },
       activate: async (tabId) => { await executeWorkspaceCommand({ type: 'activate', tabId }) },
       close: async (tabId) => { await executeWorkspaceCommand({ type: 'close', tabId }) },
       resize: async (tabId, viewport) => { await executeWorkspaceCommand({ type: 'resize', tabId, viewport }) },

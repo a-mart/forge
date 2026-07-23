@@ -51,7 +51,7 @@ export function BrowserPopoutSurface() {
       command,
     })
     return {
-      open: async () => { await invoke({ type: 'open' }) },
+      open: async (autoOpenAttemptKey) => { await invoke({ type: 'open', ...(autoOpenAttemptKey ? { autoOpenAttemptKey } : {}) }) },
       activate: async (tabId) => { await invoke({ type: 'activate', tabId }) },
       close: async (tabId) => { await invoke({ type: 'close', tabId }) },
       resize: async (tabId, viewport) => { await invoke({ type: 'resize', tabId, viewport }) },

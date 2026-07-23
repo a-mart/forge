@@ -175,6 +175,10 @@ function validateCommand(value: unknown, projection: ManagedBrowserWorkspaceProj
   if (typeof request.requestId !== 'string' || request.requestId.length < 8 || !request.command || typeof request.command.type !== 'string') {
     throw new BrowserHostError('invalid-input', 'Browser workspace command correlation is invalid')
   }
+  if (request.command.type === 'open' && request.command.autoOpenAttemptKey !== undefined
+    && (typeof request.command.autoOpenAttemptKey !== 'string' || request.command.autoOpenAttemptKey.length === 0 || request.command.autoOpenAttemptKey.length > 512)) {
+    throw new BrowserHostError('invalid-input', 'Browser workspace automatic-open key is invalid')
+  }
   if (request.command.type !== 'open') {
     const tabId = 'tabId' in request.command ? request.command.tabId : null
     if (!tabId || !projection.snapshot?.tabs.some((tab) => tab.tabId === tabId && tab.lifecycle !== 'closed')) {

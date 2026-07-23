@@ -50,7 +50,7 @@ export interface ManagedBrowserWorkspaceProjection {
   host: BrowserHostConnectionSnapshot; mode: ManagedBrowserWorkspaceMode; popoutAvailable: boolean; connected: boolean; publishedAt: string
 }
 export type BrowserWorkspaceCommand =
-  | { type: 'open' }
+  | { type: 'open'; autoOpenAttemptKey?: string }
   | { type: 'activate'; tabId: string }
   | { type: 'close'; tabId: string }
   | { type: 'resize'; tabId: string; viewport: BrowserViewportSetting }
