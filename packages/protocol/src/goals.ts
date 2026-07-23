@@ -38,6 +38,8 @@ export interface SessionGoalSnapshotEvent extends SessionGoalSnapshot {
   type: 'session_goal_snapshot'
   sessionAgentId: string
   profileId: string
+  /** Echoed only for controls from clients that negotiated goal-control correlation. */
+  requestId?: string
 }
 
 export type SessionGoalControlAction =

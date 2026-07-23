@@ -50,6 +50,8 @@ export type ClientCommand =
       conversationPaging?: true
       /** Paging view is cursor-bound; switching views starts a fresh replace bootstrap. */
       conversationView?: BuilderTimelineChannelView
+      /** Advertises support for request-correlated session goal control results. */
+      goalControlRequestId?: true
     }
   | { type: 'resume_restart_recovery'; requestId?: string }
   | { type: 'dismiss_restart_recovery'; requestId?: string }
@@ -177,7 +179,7 @@ export type ClientCommand =
       requestId?: string
     }
   | { type: 'clear_session'; agentId: string; requestId?: string }
-  | ({ type: 'session_goal_control'; agentId: string } & SessionGoalControlAction)
+  | ({ type: 'session_goal_control'; agentId: string; requestId?: string } & SessionGoalControlAction)
   | { type: 'pin_message'; agentId: string; messageId: string; pinned: boolean }
   | { type: 'clear_all_pins'; agentId: string }
   | { type: 'merge_session_memory'; agentId: string; requestId?: string }

@@ -25,6 +25,7 @@ export interface SessionCommandRouteContext {
   handleDeletedAgentSubscriptions: (deletedAgentIds: Set<string>) => void;
   unreadTracker?: UnreadTracker;
   broadcastUnreadCountUpdate?: (sessionAgentId: string, count: number) => void;
+  supportsGoalControlRequestId?: boolean;
 }
 
 export async function handleSessionCommand(context: SessionCommandRouteContext): Promise<boolean> {
@@ -37,7 +38,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     send,
     handleDeletedAgentSubscriptions,
     unreadTracker,
-    broadcastUnreadCountUpdate
+    broadcastUnreadCountUpdate,
+    supportsGoalControlRequestId = false,
   } = context;
 
   if (
@@ -74,7 +76,9 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       type: "error",
       code: "UNKNOWN_AGENT",
       message: `Agent ${subscribedAgentId} does not exist.`,
-      requestId: "requestId" in command ? command.requestId : undefined
+      requestId: command.type === "session_goal_control" && !supportsGoalControlRequestId
+        ? undefined
+        : "requestId" in command ? command.requestId : undefined
     });
     return true;
   }
@@ -297,12 +301,31 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         swarmManager.listProfiles(),
         (agentId) => swarmManager.getAgent(agentId),
       );
-      await swarmManager.controlSessionGoal(command.agentId, command);
+      if (supportsGoalControlRequestId) {
+        const snapshot = await swarmManager.controlSessionGoal(command.agentId, command, command.requestId);
+        // Goal snapshots normally fan out to exact subscribers through the coordinator event.
+        // A profile/default-session subscriber may control another session, so return the same
+        // correlated result directly when that fanout cannot reach the requesting socket.
+        if (command.requestId !== undefined && subscribedAgentId !== command.agentId) {
+          send(socket, {
+            type: "session_goal_snapshot",
+            sessionAgentId: command.agentId,
+            profileId: resolveSessionProfileId(swarmManager, command.agentId),
+            ...snapshot,
+            requestId: command.requestId,
+          });
+        }
+      } else {
+        await swarmManager.controlSessionGoal(command.agentId, command);
+      }
     } catch (error) {
       send(socket, {
         type: "error",
         code: "SESSION_GOAL_CONTROL_FAILED",
         message: error instanceof Error ? error.message : String(error),
+        ...(supportsGoalControlRequestId && command.requestId !== undefined
+          ? { requestId: command.requestId }
+          : {}),
       });
     }
     return true;

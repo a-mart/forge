@@ -64,6 +64,89 @@ describe("session command handler", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("passes negotiated goal-control correlation through success publication", async () => {
+    const send = vi.fn();
+    const controlSessionGoal = vi.fn(async () => ({
+      revision: 2,
+      measuredAt: "2026-07-22T00:00:00.000Z",
+      goal: null,
+    }));
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      controlSessionGoal,
+    };
+
+    await handleSessionCommand({
+      command: {
+        type: "session_goal_control",
+        agentId: "manager--s2",
+        action: "pause",
+        requestId: "goal-control-1",
+      },
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+      supportsGoalControlRequestId: true,
+    });
+
+    expect(controlSessionGoal).toHaveBeenCalledWith(
+      "manager--s2",
+      expect.objectContaining({ action: "pause", requestId: "goal-control-1" }),
+      "goal-control-1",
+    );
+    expect(send).toHaveBeenCalledWith(expect.anything(), {
+      type: "session_goal_snapshot",
+      sessionAgentId: "manager--s2",
+      profileId: "manager",
+      revision: 2,
+      measuredAt: "2026-07-22T00:00:00.000Z",
+      goal: null,
+      requestId: "goal-control-1",
+    });
+  });
+
+  it("echoes goal-control failure correlation only when negotiated", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      controlSessionGoal: vi.fn(async () => { throw new Error("No active goal"); }),
+    };
+    const command = {
+      type: "session_goal_control" as const,
+      agentId: "manager--s2",
+      action: "pause" as const,
+      requestId: "goal-control-failure",
+    };
+    const common = {
+      command,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    };
+
+    await handleSessionCommand({ ...common, supportsGoalControlRequestId: true });
+    await handleSessionCommand({ ...common, supportsGoalControlRequestId: false });
+
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      type: "error",
+      code: "SESSION_GOAL_CONTROL_FAILED",
+      requestId: "goal-control-failure",
+    });
+    expect(send.mock.calls[1]?.[1]).toEqual({
+      type: "error",
+      code: "SESSION_GOAL_CONTROL_FAILED",
+      message: "No active goal",
+    });
+  });
+
   it("handles archive_session and restore_session commands with request-correlated events", async () => {
     const send = vi.fn();
     const swarmManager = {

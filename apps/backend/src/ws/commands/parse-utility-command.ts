@@ -42,6 +42,10 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     if (conversationView !== undefined && conversationView !== "web" && conversationView !== "all") {
       return fail("subscribe.conversationView must be web or all when provided");
     }
+    const goalControlRequestId = (maybe as { goalControlRequestId?: unknown }).goalControlRequestId;
+    if (goalControlRequestId !== undefined && goalControlRequestId !== true) {
+      return fail("subscribe.goalControlRequestId must be true when provided");
+    }
 
     return ok({
       type: "subscribe",
@@ -49,6 +53,7 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
       messageCount: normalizeMessageCount(maybeMessageCount),
       ...(conversationPaging === true ? { conversationPaging: true as const } : {}),
       ...(conversationView ? { conversationView } : {}),
+      ...(goalControlRequestId === true ? { goalControlRequestId: true as const } : {}),
     });
   }
 

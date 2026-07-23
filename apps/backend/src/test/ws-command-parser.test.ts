@@ -17,6 +17,7 @@ describe('ws command parser session commands', () => {
       action: 'edit',
       objective: '  Refined outcome  ',
       tokenBudget: null,
+      requestId: 'goal-control-1',
     })).toEqual({
       ok: true,
       command: {
@@ -25,6 +26,7 @@ describe('ws command parser session commands', () => {
         action: 'edit',
         objective: 'Refined outcome',
         tokenBudget: null,
+        requestId: 'goal-control-1',
       },
     })
     expect(parseJsonCommand({
@@ -33,7 +35,7 @@ describe('ws command parser session commands', () => {
       action: 'pause',
     })).toEqual({
       ok: true,
-      command: { type: 'session_goal_control', agentId: 'session-a', action: 'pause' },
+      command: { type: 'session_goal_control', agentId: 'session-a', action: 'pause', requestId: undefined },
     })
     expect(parseJsonCommand({
       type: 'session_goal_control',
@@ -54,11 +56,21 @@ describe('ws command parser session commands', () => {
       ok: false,
       error: 'session_goal_control.tokenBudget must be a positive integer or null when provided',
     })
+    expect(parseJsonCommand({
+      type: 'session_goal_control',
+      agentId: 'session-a',
+      action: 'pause',
+      requestId: 42,
+    })).toEqual({
+      ok: false,
+      error: 'session_goal_control.requestId must be a string when provided',
+    })
     expect(extractRequestId({
       type: 'session_goal_control',
       agentId: 'session-a',
       action: 'cancel',
-    })).toBeUndefined()
+      requestId: 'goal-control-2',
+    })).toBe('goal-control-2')
   })
 
   it('parses create_session and normalizes optional label + name', () => {
@@ -136,6 +148,7 @@ describe('ws command parser session commands', () => {
       restore_session: { type: 'restore_session', agentId: 'session-a' },
       delete_session: { type: 'delete_session', agentId: 'session-a' },
       clear_session: { type: 'clear_session', agentId: 'session-a' },
+      session_goal_control: { type: 'session_goal_control', agentId: 'session-a', action: 'pause' },
       set_session_project_agent: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null },
       get_project_agent_config: { type: 'get_project_agent_config', agentId: 'session-a' },
       list_project_agent_references: { type: 'list_project_agent_references', agentId: 'session-a' },
@@ -358,6 +371,7 @@ describe('ws command parser session commands', () => {
       messageCount: 75,
       conversationPaging: true,
       conversationView: 'web',
+      goalControlRequestId: true,
     })
 
     expect(parsed).toEqual({
@@ -368,6 +382,7 @@ describe('ws command parser session commands', () => {
         messageCount: 75,
         conversationPaging: true,
         conversationView: 'web',
+        goalControlRequestId: true,
       },
     })
   })
@@ -388,6 +403,10 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'subscribe', conversationView: 'details' })).toEqual({
       ok: false,
       error: 'subscribe.conversationView must be web or all when provided',
+    })
+    expect(parseJsonCommand({ type: 'subscribe', goalControlRequestId: false })).toEqual({
+      ok: false,
+      error: 'subscribe.goalControlRequestId must be true when provided',
     })
     expect(parseJsonCommand({
       type: 'get_conversation_page',

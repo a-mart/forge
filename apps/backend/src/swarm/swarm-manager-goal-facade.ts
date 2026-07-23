@@ -38,7 +38,8 @@ export abstract class SwarmManagerGoalFacade extends EventEmitter {
   controlSessionGoal(
     sessionAgentId: string,
     action: SessionGoalControlAction,
+    requestId?: string,
   ): Promise<SessionGoalSnapshot> {
-    return this.getFacadeServices().goals.control(sessionAgentId, action);
+    return this.getFacadeServices().goals.control(sessionAgentId, action, requestId);
   }
 }

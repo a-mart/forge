@@ -64,6 +64,7 @@ export async function sendSubscriptionBootstrap(options: {
   requestedMessageCount?: number;
   supportsConversationPaging?: boolean;
   conversationView?: BuilderTimelineChannelView;
+  supportsGoalControlRequestId?: boolean;
   swarmManager: SwarmManager;
   terminalService: TerminalService | null;
   listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -85,6 +86,7 @@ export async function sendSubscriptionBootstrap(options: {
     requestedMessageCount,
     supportsConversationPaging = false,
     conversationView = "all",
+    supportsGoalControlRequestId = false,
     swarmManager,
     terminalService,
     listTerminalsForSession,
@@ -136,7 +138,8 @@ export async function sendSubscriptionBootstrap(options: {
   await sendMeasured("ready", {
     type: "ready",
     serverTime: new Date().toISOString(),
-    subscribedAgentId: targetAgentId
+    subscribedAgentId: targetAgentId,
+    ...(supportsGoalControlRequestId ? { goalControlRequestId: true as const } : {}),
   });
 
   if (!canContinue()) {

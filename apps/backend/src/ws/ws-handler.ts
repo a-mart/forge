@@ -296,6 +296,9 @@ export class WsHandler {
           collaborationEnabled && authContext?.role !== "admin"
             ? builderSubscribedAgentId ?? this.collabSubscriptionManager.getReadySubscriptionId(socket)
             : builderSubscribedAgentId ?? this.resolveDefaultSubscriptionAgentId(),
+        ...(this.subscriptionManager.supportsGoalControlRequestId(socket)
+          ? { goalControlRequestId: true as const }
+          : {}),
       });
       return;
     }
@@ -367,6 +370,7 @@ export class WsHandler {
         command.messageCount,
         command.conversationPaging === true,
         command.conversationView,
+        command.goalControlRequestId === true,
       );
       return;
     }
@@ -442,7 +446,10 @@ export class WsHandler {
         type: "error",
         code: "NOT_SUBSCRIBED",
         message: `Send subscribe before ${command.type}.`,
-        requestId: extractRequestId(command),
+        requestId: command.type === "session_goal_control" &&
+          !this.subscriptionManager.supportsGoalControlRequestId(socket)
+          ? undefined
+          : extractRequestId(command),
       });
       return;
     }
@@ -588,6 +595,7 @@ export class WsHandler {
       handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
       unreadTracker: this.unreadTracker ?? undefined,
       broadcastUnreadCountUpdate: (sessionAgentId, count) => this.broadcastUnreadCountUpdate(sessionAgentId, count),
+      supportsGoalControlRequestId: this.subscriptionManager.supportsGoalControlRequestId(socket),
     });
     if (sessionHandled) {
       return;
@@ -652,6 +660,7 @@ export class WsHandler {
     requestedMessageCount?: number,
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
+    supportsGoalControlRequestId = false,
   ): Promise<void> {
     await this.subscriptionManager.handleSubscribe(
       socket,
@@ -659,6 +668,7 @@ export class WsHandler {
       requestedMessageCount,
       supportsConversationPaging,
       conversationView,
+      supportsGoalControlRequestId,
     );
   }
 

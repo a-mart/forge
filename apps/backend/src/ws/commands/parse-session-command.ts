@@ -19,11 +19,15 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
   if (maybe.type === "session_goal_control") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const action = (maybe as { action?: unknown }).action;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
     if (typeof agentId !== "string" || agentId.trim().length === 0) {
       return fail("session_goal_control.agentId must be a non-empty string");
     }
     if (action !== "pause" && action !== "resume" && action !== "cancel" && action !== "edit") {
       return fail('session_goal_control.action must be "pause", "resume", "cancel", or "edit"');
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("session_goal_control.requestId must be a string when provided");
     }
     if (action === "edit") {
       const objective = (maybe as { objective?: unknown }).objective;
@@ -44,9 +48,15 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
         action,
         objective: objective.trim(),
         ...(tokenBudget === undefined ? {} : { tokenBudget: tokenBudget as number | null }),
+        requestId,
       });
     }
-    return ok({ type: "session_goal_control", agentId: agentId.trim(), action });
+    return ok({
+      type: "session_goal_control",
+      agentId: agentId.trim(),
+      action,
+      requestId,
+    });
   }
 
   if (maybe.type === "create_session") {

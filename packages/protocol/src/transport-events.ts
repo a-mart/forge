@@ -4,6 +4,8 @@ export interface ReadyEvent {
   type: 'ready'
   serverTime: string
   subscribedAgentId: string
+  /** Echoes acceptance of request-correlated session goal controls. */
+  goalControlRequestId?: true
 }
 
 export interface ConversationResetEvent {

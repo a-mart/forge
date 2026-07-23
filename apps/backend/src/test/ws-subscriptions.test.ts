@@ -205,6 +205,51 @@ function getEventTypes(events: ServerEvent[]): string[] {
 }
 
 describe('WsSubscriptions snapshot delivery tracking', () => {
+  it('echoes goal-control capability acceptance and strips correlation for legacy subscribers', async () => {
+    const manager = createManagerStub()
+    const legacySocket = createSocket()
+    const capableSocket = createSocket()
+    const legacyEvents: ServerEvent[] = []
+    const capableEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (socket, event) => {
+        if (socket === legacySocket) legacyEvents.push(event)
+        if (socket === capableSocket) capableEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([legacySocket, capableSocket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(legacySocket, 'manager')
+    await subscriptions.handleSubscribe(capableSocket, 'manager', undefined, false, 'all', true)
+
+    expect(legacyEvents.find((event) => event.type === 'ready')).toEqual(expect.not.objectContaining({
+      goalControlRequestId: true,
+    }))
+    expect(capableEvents.find((event) => event.type === 'ready')).toMatchObject({
+      type: 'ready',
+      goalControlRequestId: true,
+    })
+
+    legacyEvents.length = 0
+    capableEvents.length = 0
+    subscriptions.broadcastToExactSubscription('manager', {
+      ...createGoalSnapshotEvent('manager'),
+      requestId: 'goal-control-1',
+    })
+
+    expect(legacyEvents).toEqual([createGoalSnapshotEvent('manager')])
+    expect(capableEvents).toEqual([{
+      ...createGoalSnapshotEvent('manager'),
+      requestId: 'goal-control-1',
+    }])
+  })
+
   it('applies the negotiated Builder view to live conversation events', async () => {
     const manager = createManagerStub()
     const socket = createSocket()

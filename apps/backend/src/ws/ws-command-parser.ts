@@ -64,6 +64,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "restore_session":
     case "delete_session":
     case "clear_session":
+    case "session_goal_control":
     case "rename_session":
     case "pin_session":
     case "update_session_model":
@@ -100,7 +101,6 @@ export function extractRequestId(command: ClientCommand): string | undefined {
       return command.requestId;
 
     case "pin_message":
-    case "session_goal_control":
     case "clear_all_pins":
     case "subscribe":
     case "user_message":

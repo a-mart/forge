@@ -137,6 +137,7 @@ export class SessionGoalCoordinator {
   async control(
     sessionAgentId: string,
     action: SessionGoalControlAction,
+    requestId?: string,
   ): Promise<SessionGoalSnapshot> {
     const owner = this.requireOwner(sessionAgentId, "control session goals", false);
     const invalidatesContinuation = action.action === "pause" || action.action === "cancel";
@@ -152,7 +153,7 @@ export class SessionGoalCoordinator {
       this.statesByAgentId.set(owner.agentId, state);
       if (action.action === "resume") this.scheduleContinuation(owner);
       const snapshot = await this.buildSnapshot(owner, state);
-      this.emitSnapshot(owner, snapshot);
+      this.emitSnapshot(owner, snapshot, requestId);
       return snapshot;
     } catch (error) {
       if (invalidatesContinuation) this.scheduleContinuation(owner);
@@ -360,16 +361,25 @@ export class SessionGoalCoordinator {
     };
   }
 
-  private emitSnapshot(owner: SessionGoalOwner, snapshot: SessionGoalSnapshot): void {
-    this.options.emitSnapshot(this.toEvent(owner, snapshot));
+  private emitSnapshot(
+    owner: SessionGoalOwner,
+    snapshot: SessionGoalSnapshot,
+    requestId?: string,
+  ): void {
+    this.options.emitSnapshot(this.toEvent(owner, snapshot, requestId));
   }
 
-  private toEvent(owner: SessionGoalOwner, snapshot: SessionGoalSnapshot): SessionGoalSnapshotEvent {
+  private toEvent(
+    owner: SessionGoalOwner,
+    snapshot: SessionGoalSnapshot,
+    requestId?: string,
+  ): SessionGoalSnapshotEvent {
     return {
       type: "session_goal_snapshot",
       sessionAgentId: owner.agentId,
       profileId: owner.profileId,
       ...snapshot,
+      ...(requestId === undefined ? {} : { requestId }),
     };
   }
 

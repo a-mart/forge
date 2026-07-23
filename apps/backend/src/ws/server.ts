@@ -302,7 +302,12 @@ export class SwarmWebSocketServer {
   private readonly onSessionGoalSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_goal_snapshot") return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
-    this.cliWsHandler.broadcast(event);
+    if (event.requestId === undefined) {
+      this.cliWsHandler.broadcast(event);
+      return;
+    }
+    const { requestId: _requestId, ...uncorrelatedEvent } = event;
+    this.cliWsHandler.broadcast(uncorrelatedEvent);
   };
 
   private readonly onAgentsSnapshot = (event: ServerEvent): void => {

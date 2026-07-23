@@ -25,6 +25,7 @@ describe('goal protocol', () => {
       type: 'session_goal_snapshot',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
+      requestId: 'goal-control-1',
       revision: 4,
       measuredAt: '2026-07-13T10:01:00.000Z',
       goal: {
@@ -42,6 +43,7 @@ describe('goal protocol', () => {
       },
     } satisfies SessionGoalSnapshotEvent
 
+    expect(event.requestId).toBe('goal-control-1')
     expect(event.goal.status).toBe('active')
     expect(event.goal.remainingTokens).toBe(18_500)
   })

@@ -42,6 +42,7 @@ interface SocketBootstrapRequest {
   messageCount?: number;
   supportsConversationPaging: boolean;
   conversationView: BuilderTimelineChannelView;
+  supportsGoalControlRequestId: boolean;
 }
 
 interface SocketBootstrapControllerState {
@@ -58,6 +59,7 @@ export class WsSubscriptions {
   private readonly bootstrapControllers = new Map<WebSocket, SocketBootstrapControllerState>();
   private readonly conversationViews = new Map<WebSocket, BuilderTimelineChannelView>();
   private readonly conversationPagingCapabilities = new Map<WebSocket, boolean>();
+  private readonly goalControlRequestIdCapabilities = new Map<WebSocket, boolean>();
 
   private readonly swarmManager: SwarmManager;
   private readonly allowNonManagerSubscriptions: boolean;
@@ -110,6 +112,7 @@ export class WsSubscriptions {
     this.subscriptions.clear();
     this.deliveredSnapshotVersions.clear();
     this.conversationPagingCapabilities.clear();
+    this.goalControlRequestIdCapabilities.clear();
     for (const socket of this.bootstrapControllers.keys()) {
       this.cancelBootstrapController(socket);
     }
@@ -170,12 +173,17 @@ export class WsSubscriptions {
     this.subscriptions.delete(socket);
     this.conversationViews.delete(socket);
     this.conversationPagingCapabilities.delete(socket);
+    this.goalControlRequestIdCapabilities.delete(socket);
     this.deliveredSnapshotVersions.delete(socket);
     this.cancelBootstrapController(socket);
   }
 
   getSubscribedAgentId(socket: WebSocket): string | undefined {
     return this.subscriptions.get(socket);
+  }
+
+  supportsGoalControlRequestId(socket: WebSocket): boolean {
+    return this.goalControlRequestIdCapabilities.get(socket) === true;
   }
 
   broadcastToSubscribed(event: ServerEvent): void {
@@ -293,7 +301,16 @@ export class WsSubscriptions {
         continue;
       }
 
-      this.send(client, event);
+      let outboundEvent = event;
+      if (
+        event.type === "session_goal_snapshot" &&
+        event.requestId !== undefined &&
+        !this.supportsGoalControlRequestId(client)
+      ) {
+        const { requestId: _requestId, ...legacyEvent } = event;
+        outboundEvent = legacyEvent;
+      }
+      this.send(client, outboundEvent);
     }
   }
 
@@ -357,6 +374,7 @@ export class WsSubscriptions {
     requestedMessageCount?: number,
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
+    supportsGoalControlRequestId = false,
   ): Promise<void> {
     const managerId = this.resolveConfiguredManagerId();
     const targetAgentId =
@@ -404,6 +422,7 @@ export class WsSubscriptions {
     this.subscriptions.set(socket, targetAgentId);
     this.conversationViews.set(socket, conversationView);
     this.conversationPagingCapabilities.set(socket, supportsConversationPaging);
+    this.goalControlRequestIdCapabilities.set(socket, supportsGoalControlRequestId);
     if (previousAgentId && previousAgentId !== targetAgentId) {
       this.emitProjectPresence(previousAgentId);
     }
@@ -423,6 +442,7 @@ export class WsSubscriptions {
       messageCount,
       supportsConversationPaging,
       conversationView,
+      supportsGoalControlRequestId,
     );
     this.emitProjectPresence(targetAgentId);
   }
@@ -450,6 +470,7 @@ export class WsSubscriptions {
       DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
       this.conversationPagingCapabilities.get(socket) === true,
       this.conversationViews.get(socket) ?? "all",
+      this.supportsGoalControlRequestId(socket),
     );
 
     return fallbackAgentId;
@@ -532,6 +553,7 @@ export class WsSubscriptions {
         DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
         this.conversationPagingCapabilities.get(socket) === true,
         this.conversationViews.get(socket) ?? "all",
+        this.supportsGoalControlRequestId(socket),
       );
     }
   }
@@ -542,6 +564,7 @@ export class WsSubscriptions {
     requestedMessageCount?: number,
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
+    supportsGoalControlRequestId = false,
   ): Promise<void> {
     const messageCount = normalizeSubscribeMessageCount(requestedMessageCount);
     let state = this.bootstrapControllers.get(socket);
@@ -562,6 +585,7 @@ export class WsSubscriptions {
       messageCount,
       supportsConversationPaging,
       conversationView,
+      supportsGoalControlRequestId,
     )) {
       return state.activePromise ?? Promise.resolve();
     }
@@ -574,6 +598,7 @@ export class WsSubscriptions {
       messageCount,
       supportsConversationPaging,
       conversationView,
+      supportsGoalControlRequestId,
     };
 
     this.ensureBootstrapControllerDrain(socket, state);
@@ -639,6 +664,7 @@ export class WsSubscriptions {
           request.messageCount,
           request.supportsConversationPaging,
           request.conversationView,
+          request.supportsGoalControlRequestId,
           shouldContinue,
         );
       } catch (error) {
@@ -660,6 +686,7 @@ export class WsSubscriptions {
     requestedMessageCount?: number,
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
+    supportsGoalControlRequestId = false,
     shouldContinue?: () => boolean,
   ): Promise<void> {
     const currentAgentsSnapshotVersion = this.swarmManager.getAgentsSnapshotVersion();
@@ -677,6 +704,7 @@ export class WsSubscriptions {
       requestedMessageCount,
       supportsConversationPaging,
       conversationView,
+      supportsGoalControlRequestId,
       swarmManager: this.swarmManager,
       terminalService: this.terminalService,
       listTerminalsForSession: this.listTerminalsForSession,
@@ -733,6 +761,7 @@ export class WsSubscriptions {
     messageCount?: number,
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
+    supportsGoalControlRequestId = false,
   ): boolean {
     const activeRequest = state.activeRequest;
     const latestRequest = state.latestRequest;
@@ -746,6 +775,7 @@ export class WsSubscriptions {
       activeRequest.messageCount === messageCount &&
       activeRequest.supportsConversationPaging === supportsConversationPaging
       && activeRequest.conversationView === conversationView
+      && activeRequest.supportsGoalControlRequestId === supportsGoalControlRequestId
     );
   }
 
