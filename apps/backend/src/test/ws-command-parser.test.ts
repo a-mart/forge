@@ -1,4 +1,4 @@
-import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
+import { BROWSER_AUTOMATION_OPERATIONS, WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import type { WsRequestContractType } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
@@ -86,6 +86,8 @@ describe('ws command parser session commands', () => {
 
   it('parses request contracts while preserving optional wire requestId', () => {
     const payloadByType = {
+      browser_host_register: { type: 'browser_host_register', registration: { hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: new Date(0).toISOString(), capabilities: { supportedOperations: BROWSER_AUTOMATION_OPERATIONS, electronVersion: '1', chromiumVersion: '1', playwrightVersion: '1', maxResponseBytes: 1024, supportsSandboxedWebviews: true, supportsCapturePage: true, supportsRecording: true } } },
+      browser_host_hydrate: { type: 'browser_host_hydrate', hostId: 'host-1', hostGeneration: 1 },
       browser_tab_open: { type: 'browser_tab_open', sessionAgentId: 'session-a', profileId: 'profile-a' },
       browser_host_state_report: { type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] },
       browser_panel_reveal_acknowledge: { type: 'browser_panel_reveal_acknowledge', hostId: 'host-1', hostGeneration: 1, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'tab-1', sequence: 1 },

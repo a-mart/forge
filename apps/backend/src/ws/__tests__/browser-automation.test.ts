@@ -34,10 +34,83 @@ describe('browser websocket transport', () => {
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_response', response: { requestId: 1 } }))).ok).toBe(false)
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] }))).ok).toBe(false)
     for (const type of [
-      'browser_host_register', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
+      'browser_host_register', 'browser_host_hydrate', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
       'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
       'browser_recording_start', 'browser_recording_stop',
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
+  })
+
+  it('recovers independently dropped registration and hydration phases without changing the connection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-handshake-retry-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const delivered: ServerEvent[] = []
+    let dropRegistration = true
+    let dropHydration = true
+    const common = {
+      socket,
+      connectionId: 'same-connection',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: () => undefined,
+      sendCritical: async (_socket: WebSocket, event: ServerEvent) => {
+        if (event.type === 'browser_host_connected' && dropRegistration) { dropRegistration = false; return null }
+        if (event.type === 'browser_host_hydration_chunk' && dropHydration) { dropHydration = false; return null }
+        delivered.push(event)
+        return Buffer.byteLength(JSON.stringify(event))
+      },
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-dropped', registration: registration() } })
+    expect(delivered).toEqual([])
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-retry', registration: registration() } })
+    const connected = delivered[0] as Extract<ServerEvent, { type: 'browser_host_connected' }>
+    expect(connected).toMatchObject({ type: 'browser_host_connected', requestId: 'register-retry', host: { hostGeneration: 2 } })
+
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'hydrate-dropped', hostId: 'host-1', hostGeneration: 2 } })
+    expect(delivered).toHaveLength(1)
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'hydrate-retry', hostId: 'host-1', hostGeneration: 2 } })
+    expect(delivered[1]).toMatchObject({ type: 'browser_host_hydration_chunk', requestId: 'hydrate-retry', hostGeneration: 2, chunkIndex: 0, chunkCount: 1 })
+    expect(service.broker.isCurrentConnection('same-connection', 'host-1', 2)).toBe(true)
+  })
+
+  it('frames oversized multi-session hydration below the websocket event limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-handshake-chunks-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const delivered: ServerEvent[] = []
+    const sessions = Array.from({ length: 6 }, (_, index) => ({
+      sessionAgentId: `session-${index}`,
+      profileId: `profile-${index}`,
+      padding: 'x'.repeat(220_000),
+    })) as unknown as Awaited<ReturnType<BrowserAutomationService['getSessionSnapshot']>>[]
+    const common = {
+      socket,
+      connectionId: 'connection-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => undefined,
+      resolveProfileIdForAgent: () => undefined,
+      send: () => undefined,
+      sendCritical: async (_socket: WebSocket, event: ServerEvent) => {
+        delivered.push(event)
+        return Buffer.byteLength(JSON.stringify(event))
+      },
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => sessions,
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'hydrate-1', hostId: 'host-1', hostGeneration: 1 } })
+    const chunks = delivered.filter((event): event is Extract<ServerEvent, { type: 'browser_host_hydration_chunk' }> => event.type === 'browser_host_hydration_chunk')
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.map((chunk) => chunk.chunkIndex)).toEqual(chunks.map((_chunk, index) => index))
+    expect(chunks.every((chunk) => Buffer.byteLength(JSON.stringify(chunk)) < 1 * 1024 * 1024)).toBe(true)
+    const decoded = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.payloadBase64, 'base64')))
+    expect(JSON.parse(decoded.toString('utf8'))).toHaveLength(6)
   })
 
   it('routes human recording through the service and returns a canonical artifact', async () => {
@@ -57,7 +130,7 @@ describe('browser websocket transport', () => {
       broadcastToSession: () => undefined,
       hydrateHostSessions: async () => [],
     }
-    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
 
     const opening = handleBrowserCommand({
       ...common,
@@ -124,7 +197,7 @@ describe('browser websocket transport', () => {
       broadcastToSession: () => undefined,
       hydrateHostSessions: async () => [],
     }
-    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
 
     await handleBrowserCommand({ ...common, command: { type: 'browser_recording_start', requestId: 'wrong-session', sessionAgentId: 'session-2', tabId: 'tab-1' } })
     await handleBrowserCommand({ ...common, command: { type: 'browser_recording_start', requestId: 'wrong-tab', sessionAgentId: 'session-1', tabId: 'missing-tab' } })
@@ -156,8 +229,10 @@ describe('browser websocket transport', () => {
       hydrateHostSessions: async () => [],
     }
 
-    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
-    expect(sent.map((event) => event.type)).toEqual(['browser_host_connected', 'browser_host_state_snapshot'])
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
+    expect(sent).toEqual([expect.objectContaining({ type: 'browser_host_connected', requestId: 'register-1' })])
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'hydrate-1', hostId: 'host-1', hostGeneration: 1 } })
+    expect(sent.map((event) => event.type)).toEqual(['browser_host_connected', 'browser_host_hydration_chunk'])
 
     const opening = handleBrowserCommand({
       ...common,
@@ -182,7 +257,7 @@ describe('browser websocket transport', () => {
     expect(succeeded.requestId).toBe('ui-1')
     expect(succeeded.snapshot.tabs[0]?.tabId).toBe('tab-1')
 
-    await handleBrowserCommand({ ...common, connectionId: 'connection-2', command: { type: 'browser_host_register', registration: registration('host-2') } })
+    await handleBrowserCommand({ ...common, connectionId: 'connection-2', command: { type: 'browser_host_register', requestId: 'register-1', registration: registration('host-2') } })
     expect(service.acceptHostResponse('connection-1', response)).toBe('duplicate')
     expect(service.unregisterHost('connection-1')).toBe(false)
     expect(service.broker.getConnectionSnapshot().hostId).toBe('host-2')
@@ -205,7 +280,7 @@ describe('browser websocket transport', () => {
       broadcastToSession: () => undefined,
       hydrateHostSessions: async () => [],
     }
-    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
 
     const firstOpen = handleBrowserCommand({
       ...common,
@@ -264,7 +339,7 @@ describe('browser websocket transport', () => {
     canonical.panelReveal = { sequence: 4, acknowledgedSequence: 3, tabId: 'tab-1' }
     canonical.revision = 2
     await service.store.save(canonical)
-    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
     sent.length = 0
 
     await handleBrowserCommand({ ...common, command: {
@@ -310,7 +385,7 @@ describe('browser websocket transport', () => {
     canonical.revision = 2
     canonical.recentActions = [{ id: 'action-1', operation: 'status', tabId: 'tab-1', status: 'succeeded', startedAt: new Date(0).toISOString() }]
     await service.store.save(canonical)
-    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-1', registration: registration() } })
     sent.length = 0
 
     const runtimeTab = { ...canonical.tabs[0]!, title: 'Runtime title', controller: 'agent' as const }
@@ -337,7 +412,7 @@ describe('browser websocket transport', () => {
       } }] },
     })
 
-    await handleBrowserCommand({ ...common, connectionId: 'connection-2', command: { type: 'browser_host_register', registration: registration('host-2') } })
+    await handleBrowserCommand({ ...common, connectionId: 'connection-2', command: { type: 'browser_host_register', requestId: 'register-1', registration: registration('host-2') } })
     await handleBrowserCommand({ ...common, command: {
       type: 'browser_host_state_report', requestId: 'report-stale', hostId: 'host-1', hostGeneration: 1,
       sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', baseRevision: 3, tabs: [runtimeTab] }],

@@ -142,6 +142,8 @@ export type WsRequestResultMap = {
   validate_directory: DirectoryValidationResult
   create_directory: DirectoryCreatedResult
   pick_directory: string | null
+  browser_host_register: import('@forge/protocol').BrowserHostConnectionSnapshot
+  browser_host_hydrate: BrowserSessionSnapshot[]
   browser_host_state_report: import('@forge/protocol').BrowserHostStateReportResult
   browser_panel_reveal_acknowledge: BrowserSessionSnapshot
   browser_tab_open: BrowserSessionSnapshot
@@ -161,7 +163,7 @@ export interface WsRequestErrorHint {
 
 export type RequestTrackerAdapter = Pick<
   WsRequestTracker<WsRequestResultMap>,
-  'resolve' | 'reject' | 'rejectByRequestId' | 'rejectOldest' | 'rejectOnlyPending'
+  'resolve' | 'reject' | 'getPendingRequestType' | 'rejectByRequestId' | 'rejectOldest' | 'rejectOnlyPending'
 >
 
 export interface ManagerWsConversationEventContext {

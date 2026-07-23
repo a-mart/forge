@@ -17,6 +17,7 @@ export interface BrowserCommandHandlerOptions {
   resolveManagerContextAgentId: (agentId: string) => string | undefined;
   resolveProfileIdForAgent: (agentId: string) => string | undefined;
   send: (socket: WebSocket, event: ServerEvent) => void;
+  sendCritical?: (socket: WebSocket, event: ServerEvent) => Promise<number | null>;
   broadcastToSession: (sessionAgentId: string, event: ServerEvent) => void;
   hydrateHostSessions: () => Promise<BrowserSessionSnapshot[]>;
   logDebug?: (message: string, details?: unknown) => void;
@@ -29,17 +30,36 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       const host = service.registerHost({
         connectionId,
         registration: command.registration,
-        sendRequest: (request) => options.send(socket, { type: "browser_automation_request", request }),
+        sendRequest: async (request) => {
+          const sent = await sendCritical(options, { type: "browser_automation_request", request });
+          if (sent === null) throw new Error("Browser automation request could not be delivered");
+        },
       });
-      options.send(socket, { type: "browser_host_connected", host });
+      await sendCritical(options, { type: "browser_host_connected", requestId: command.requestId, host });
+      return true;
+    }
+    case "browser_host_hydrate": {
+      if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) {
+        sendFailure(options, command, "STALE_HOST_GENERATION", "Browser hydration requested for a stale host generation.");
+        return true;
+      }
       const sessions = await options.hydrateHostSessions();
-      if (service.broker.isCurrentConnection(connectionId, command.registration.hostId, host.hostGeneration ?? -1)) {
-        options.send(socket, {
-          type: "browser_host_state_snapshot",
-          hostId: command.registration.hostId,
-          hostGeneration: host.hostGeneration!,
-          sessions,
+      if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) return true;
+      const payload = Buffer.from(JSON.stringify(sessions), "utf8");
+      const chunkCount = Math.max(1, Math.ceil(payload.byteLength / MAX_BROWSER_HYDRATION_CHUNK_BYTES));
+      for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+        if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) return true;
+        const start = chunkIndex * MAX_BROWSER_HYDRATION_CHUNK_BYTES;
+        const sent = await sendCritical(options, {
+          type: "browser_host_hydration_chunk",
+          requestId: command.requestId,
+          hostId: command.hostId,
+          hostGeneration: command.hostGeneration,
+          chunkIndex,
+          chunkCount,
+          payloadBase64: payload.subarray(start, start + MAX_BROWSER_HYDRATION_CHUNK_BYTES).toString("base64"),
         });
+        if (sent === null) return true;
       }
       return true;
     }
@@ -277,6 +297,14 @@ function viewportInput(viewport: BrowserViewportSetting, tabId: string) {
 
 function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as BrowserSessionSnapshot;
+}
+
+const MAX_BROWSER_HYDRATION_CHUNK_BYTES = 256 * 1024;
+
+async function sendCritical(options: BrowserCommandHandlerOptions, event: ServerEvent): Promise<number | null> {
+  if (options.sendCritical) return options.sendCritical(options.socket, event);
+  options.send(options.socket, event);
+  return Buffer.byteLength(JSON.stringify(event), "utf8");
 }
 
 class BrowserCommandFailure extends Error {

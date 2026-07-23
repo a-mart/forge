@@ -259,7 +259,7 @@ describe('browser host, session, and routing wire contract', () => {
       error: { code: 'unavailable-host', message: 'Unavailable', retryable: true },
     } as const satisfies BrowserAutomationResponse
     const commands = [
-      { type: 'browser_host_register', registration: host },
+      { type: 'browser_host_register', requestId: 'register-1', registration: host },
       { type: 'browser_host_focus', hostId: host.hostId, hostGeneration: 4, focused: true },
       { type: 'browser_host_response', response: routedResponse },
       { type: 'browser_host_state_report', requestId: 'state-1', hostId: host.hostId, hostGeneration: 4, sessions: [{

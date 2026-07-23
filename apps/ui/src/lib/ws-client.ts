@@ -4,6 +4,7 @@ import {
   assertConnectedSocket,
   assertReconnectableSocket,
   buildBrowserHostFocusCommand,
+  buildBrowserHostHydrateCommand,
   buildBrowserHostRegisterCommand,
   buildBrowserHostResponseCommand,
   buildBrowserHostStateReportCommand,
@@ -75,6 +76,9 @@ import {
   SESSION_WORKERS_REQUEST_TIMEOUT_MS,
   CONVERSATION_PAGE_REQUEST_TIMEOUT_MS,
 } from './ws-client/runtime-types'
+
+const BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS = 2_000
+const BROWSER_HANDSHAKE_RETRY_MS = 500
 
 /** Server close code for a permanently invalidated collaboration session. */
 const SESSION_INVALIDATED_CLOSE_CODE = 4001
@@ -197,6 +201,10 @@ export class ManagerWsClient {
   private readonly bootstrapBuffer: BootstrapBuffer
   private readonly sessionWorkerCache: SessionWorkerCache
   private browserHostRegistration: BrowserHostRegistration | null = null
+  private browserHandshakeTimer: ReturnType<typeof setTimeout> | null = null
+  private browserHandshakeEpoch = 0
+  private browserHandshakeInFlight = false
+  private readonly browserHydrationChunks = new Map<string, { chunkCount: number; chunks: Array<Uint8Array | undefined> }>()
   private browserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
   private readonly repositoryProjectProgressListeners = new Map<
     string,
@@ -308,12 +316,101 @@ export class ManagerWsClient {
   ): () => void {
     this.browserHostRegistration = registration
     this.browserAutomationRequestHandler = handleRequest
-    if (isSocketOpen(this.socket)) this.send(buildBrowserHostRegisterCommand(registration))
+    this.restartBrowserHandshake()
     return () => {
       if (this.browserHostRegistration?.hostId === registration.hostId) {
         this.browserHostRegistration = null
         this.browserAutomationRequestHandler = null
+        this.stopBrowserHandshake()
       }
+    }
+  }
+
+  private restartBrowserHandshake(): void {
+    this.stopBrowserHandshake()
+    if (!this.browserHostRegistration || !isSocketOpen(this.socket)) return
+    const epoch = this.browserHandshakeEpoch
+    this.browserHandshakeTimer = setTimeout(() => {
+      this.browserHandshakeTimer = null
+      void this.runBrowserHandshake(epoch)
+    }, 0)
+  }
+
+  private stopBrowserHandshake(): void {
+    this.browserHandshakeEpoch += 1
+    if (this.browserHandshakeTimer) clearTimeout(this.browserHandshakeTimer)
+    this.browserHandshakeTimer = null
+    this.browserHandshakeInFlight = false
+    this.browserHydrationChunks.clear()
+  }
+
+  private async runBrowserHandshake(epoch: number): Promise<void> {
+    const registration = this.browserHostRegistration
+    if (epoch !== this.browserHandshakeEpoch || !registration || !isSocketOpen(this.socket) || this.browserHandshakeInFlight) return
+    this.browserHandshakeInFlight = true
+    try {
+      let host = this.state.browserHost
+      if (host.hostId !== registration.hostId || host.hostGeneration === null) {
+        host = await this.requestDispatcher.enqueueRequest(
+          'browser_host_register',
+          (requestId) => buildBrowserHostRegisterCommand(requestId, { ...registration, registeredAt: new Date().toISOString() }),
+          { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
+        )
+      }
+      if (epoch !== this.browserHandshakeEpoch || this.browserHostRegistration !== registration || host.hostId !== registration.hostId || host.hostGeneration === null) return
+      this.browserHydrationChunks.clear()
+      await this.requestDispatcher.enqueueRequest(
+        'browser_host_hydrate',
+        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!),
+        { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
+      )
+    } catch {
+      // Registration and hydration are independently retried on the same live
+      // transport. A saturated socket therefore cannot strand the host until
+      // the next reconnect.
+    } finally {
+      if (epoch !== this.browserHandshakeEpoch) return
+      this.browserHandshakeInFlight = false
+      if (!this.state.browserHostHydrated && this.browserHostRegistration === registration && isSocketOpen(this.socket)) {
+        this.browserHandshakeTimer = setTimeout(() => {
+          this.browserHandshakeTimer = null
+          void this.runBrowserHandshake(epoch)
+        }, BROWSER_HANDSHAKE_RETRY_MS)
+      }
+    }
+  }
+
+  private acceptBrowserHydrationChunk(
+    event: Extract<ServerEvent, { type: 'browser_host_hydration_chunk' }>,
+  ): BrowserSessionSnapshot[] | null {
+    if (event.chunkCount < 1 || event.chunkIndex < 0 || event.chunkIndex >= event.chunkCount) return null
+    let bytes: Uint8Array
+    try {
+      const binary = atob(event.payloadBase64)
+      bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    } catch {
+      return null
+    }
+    const existing = this.browserHydrationChunks.get(event.requestId)
+    const hydration = existing?.chunkCount === event.chunkCount
+      ? existing
+      : { chunkCount: event.chunkCount, chunks: new Array<Uint8Array | undefined>(event.chunkCount) }
+    hydration.chunks[event.chunkIndex] = bytes
+    this.browserHydrationChunks.set(event.requestId, hydration)
+    if (hydration.chunks.some((chunk) => chunk === undefined)) return null
+    this.browserHydrationChunks.delete(event.requestId)
+    try {
+      const total = hydration.chunks.reduce((sum, chunk) => sum + chunk!.byteLength, 0)
+      const joined = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of hydration.chunks) {
+        joined.set(chunk!, offset)
+        offset += chunk!.byteLength
+      }
+      const parsed = JSON.parse(new TextDecoder().decode(joined)) as unknown
+      return Array.isArray(parsed) ? parsed as BrowserSessionSnapshot[] : null
+    } catch {
+      return null
     }
   }
 
@@ -442,6 +539,7 @@ export class ManagerWsClient {
       clearTimeout(timer)
     }
     this.optimisticSendExpiryTimers.clear()
+    this.stopBrowserHandshake()
 
     this.transport.disconnect()
   }
@@ -1157,12 +1255,7 @@ export class ManagerWsClient {
     this.sessionWorkerCache.retryFailedFetchesAfterReconnect()
 
     this.send(buildSubscribeCommand(this.desiredAgentId, this.conversationView))
-    if (this.browserHostRegistration) {
-      this.send(buildBrowserHostRegisterCommand({
-        ...this.browserHostRegistration,
-        registeredAt: new Date().toISOString(),
-      }))
-    }
+    this.restartBrowserHandshake()
   }
 
   private handleTransportClose(event?: CloseEvent): void {
@@ -1171,6 +1264,7 @@ export class ManagerWsClient {
     this.explicitAgentSelectionPending = false
     this.rejectedExplicitAgentSelectionId = null
     this.bootstrapBuffer.clear()
+    this.stopBrowserHandshake()
 
     // Keep `loadedSessionIds` — see handleTransportOpen.
     this.updateState({
@@ -1251,6 +1345,7 @@ export class ManagerWsClient {
       state: this.state,
       updateState: (patch) => this.updateState(patch),
       requestTracker: this.requestDispatcher.tracker,
+      acceptHydrationChunk: (chunk) => this.acceptBrowserHydrationChunk(chunk),
       registration: this.browserHostRegistration,
       handleAutomationRequest: this.browserAutomationRequestHandler,
       sendHostResponse: (response) => this.send(buildBrowserHostResponseCommand(response)),

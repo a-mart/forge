@@ -147,6 +147,8 @@ describe('ManagerWsClient', () => {
     const requestTypeSet = new Set(WS_REQUEST_TYPES)
 
     expect(contractTypes).toEqual([
+      'browser_host_register',
+      'browser_host_hydrate',
       'browser_panel_reveal_acknowledge',
       'browser_host_state_report',
       'browser_recording_start',

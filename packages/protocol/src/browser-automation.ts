@@ -586,7 +586,15 @@ export type BrowserAutomationResponse = BrowserAutomationSuccessResponse | Brows
 
 export interface BrowserHostRegisterCommand {
   type: 'browser_host_register'
+  requestId: string
   registration: BrowserHostRegistration
+}
+
+export interface BrowserHostHydrateCommand {
+  type: 'browser_host_hydrate'
+  requestId: string
+  hostId: string
+  hostGeneration: number
 }
 
 export interface BrowserHostFocusCommand {
@@ -668,6 +676,7 @@ export interface BrowserRecordingStopCommand {
 
 export type BrowserClientCommand =
   | BrowserHostRegisterCommand
+  | BrowserHostHydrateCommand
   | BrowserHostFocusCommand
   | BrowserHostResponseCommand
   | BrowserHostStateReportCommand
@@ -681,9 +690,26 @@ export type BrowserClientCommand =
 
 export interface BrowserHostConnectedEvent {
   type: 'browser_host_connected'
+  /** Present on the registration acknowledgement; absent on unsolicited host broadcasts. */
+  requestId?: string
   host: BrowserHostConnectionSnapshot
 }
 
+/**
+ * Request-correlated, bounded host hydration framing. Payload chunks are base64
+ * slices of one UTF-8 JSON-encoded BrowserSessionSnapshot array.
+ */
+export interface BrowserHostHydrationChunkEvent {
+  type: 'browser_host_hydration_chunk'
+  requestId: string
+  hostId: string
+  hostGeneration: number
+  chunkIndex: number
+  chunkCount: number
+  payloadBase64: string
+}
+
+/** Legacy unchunked event retained for wire compatibility with older peers. */
 export interface BrowserHostStateSnapshotEvent {
   type: 'browser_host_state_snapshot'
   hostId: string
@@ -744,6 +770,7 @@ export type BrowserRecordingCommandSucceededEvent =
 
 export type BrowserServerEvent =
   | BrowserHostConnectedEvent
+  | BrowserHostHydrationChunkEvent
   | BrowserHostStateSnapshotEvent
   | BrowserHostStateReportResultEvent
   | BrowserAutomationRequestEvent

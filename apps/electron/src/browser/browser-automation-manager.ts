@@ -3,7 +3,7 @@
  * apps/desktop/src/preview/Manager.ts at 9a0a0716 (MIT). Forge uses plain
  * promises and protocol-native errors instead of T3's Effect services.
  */
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   BrowserActionTimelineEntry,
@@ -167,6 +167,8 @@ export interface BrowserAutomationManagerOptions {
   sendToRenderer(channel: string, payload: unknown): void
   now?: () => number
   isMac?: boolean
+  /** Test seam for exercising deadline/cancellation during the filesystem write. */
+  writeArtifactFile?: typeof writeFile
 }
 
 export function isHttpUrl(url: string): boolean {
@@ -212,6 +214,7 @@ export class BrowserAutomationManager {
   private readonly approvedDataRoot: string
   private readonly sendToRenderer: BrowserAutomationManagerOptions['sendToRenderer']
   private readonly isMac: boolean
+  private readonly writeArtifactFile: typeof writeFile
   private activeRecording: ActiveRecording | null = null
   private sequence = 0
   private destroyed = false
@@ -221,6 +224,7 @@ export class BrowserAutomationManager {
     this.sendToRenderer = options.sendToRenderer
     this.now = options.now ?? Date.now
     this.isMac = options.isMac ?? process.platform === 'darwin'
+    this.writeArtifactFile = options.writeArtifactFile ?? writeFile
     void options.hostWebContentsId
   }
 
@@ -405,11 +409,16 @@ export class BrowserAutomationManager {
   async stopRecordingCapture(request: BrowserAutomationRequest & { operation: 'recordingStop' }): Promise<PreparedRecording> {
     const recording = this.requireRecording(request)
     const tab = this.requestTab(request)
-    await this.serialize(tab, 'recording.stop', async (send) => {
-      if (recording.phase === 'recording') await send('Page.stopScreencast')
-      recording.phase = 'stopping'
-    }, new Date(request.deadlineAt).getTime())
-    return { ...recording }
+    try {
+      await this.serialize(tab, 'recording.stop', async (send) => {
+        if (recording.phase === 'recording') await send('Page.stopScreencast')
+        recording.phase = 'stopping'
+      }, new Date(request.deadlineAt).getTime())
+      return { ...recording }
+    } catch (error) {
+      this.cancelRecording(recording.recordingId)
+      throw error
+    }
   }
 
   async saveRecording(
@@ -418,15 +427,36 @@ export class BrowserAutomationManager {
     bytes: Uint8Array,
   ): Promise<BrowserAutomationResponse> {
     const started = this.now()
+    const deadline = Date.parse(request.deadlineAt)
+    let artifactPath: string | null = null
+    let temporaryPath: string | null = null
+    let artifactPublished = false
     try {
+      this.ensureRecordingDeadline(deadline)
       const recording = this.requireRecording(request)
       if (recording.phase !== 'stopping') throw new BrowserHostError('recording-conflict', 'Recording has not stopped capturing')
       if (!mimeType.startsWith('video/') || bytes.byteLength === 0) throw new BrowserHostError('execution-failed', 'MediaRecorder produced no video data')
       const directory = resolveApprovedArtifactDirectory(this.approvedDataRoot, request.artifactDirectory)
       const extension = mimeType.includes('mp4') ? 'mp4' : 'webm'
-      const artifactPath = path.join(directory, `${recording.recordingId}.${extension}`)
+      artifactPath = path.join(directory, `${recording.recordingId}.${extension}`)
+      temporaryPath = path.join(directory, `.${recording.recordingId}.${request.requestId}.tmp`)
       await mkdir(directory, { recursive: true })
-      await writeFile(artifactPath, bytes)
+      this.ensureRecordingDeadline(deadline)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - this.now()))
+      try {
+        await this.writeArtifactFile(temporaryPath, bytes, { flag: 'wx', signal: controller.signal })
+      } catch (error) {
+        if (controller.signal.aborted) throw new BrowserHostError('timeout', 'Browser recording deadline elapsed during artifact save', true)
+        throw error
+      } finally {
+        clearTimeout(timer)
+      }
+      this.ensureRecordingDeadline(deadline)
+      await rename(temporaryPath, artifactPath)
+      temporaryPath = null
+      artifactPublished = true
+      this.ensureRecordingDeadline(deadline)
       const createdAt = new Date(this.now()).toISOString()
       const result: BrowserAutomationResultByOperation['recordingStop'] = {
         recordingId: recording.recordingId,
@@ -452,7 +482,16 @@ export class BrowserAutomationManager {
         ...(tab ? { updatedTab: { ...tab.snapshot } } : {}),
       }
     } catch (error) {
+      if (temporaryPath) await unlink(temporaryPath).catch(() => undefined)
+      if (artifactPublished && artifactPath) await unlink(artifactPath).catch(() => undefined)
+      this.cancelRecording(request.input.recordingId)
       return this.errorResponse(request, asBrowserHostError(error, 'Failed to save recording').toFailure(), started)
+    }
+  }
+
+  private ensureRecordingDeadline(deadline: number): void {
+    if (!Number.isFinite(deadline) || this.now() >= deadline) {
+      throw new BrowserHostError('timeout', 'Browser recording deadline has elapsed', true)
     }
   }
 
@@ -460,14 +499,17 @@ export class BrowserAutomationManager {
     const active = this.activeRecording
     if (!active || (recordingId && active.recordingId !== recordingId)) return
     const tab = this.tabs.get(active.tabId)
-    if (tab && tab.debuggerReady && this.isWebContentsAlive(tab)) {
-      try {
-        const debuggerApi = tab.webContents.debugger
-        if (debuggerApi.isAttached() && active.phase === 'recording') {
-          void debuggerApi.sendCommand('Page.stopScreencast').catch(() => undefined)
-          tab.snapshot = { ...tab.snapshot, recording: null }
-        }
-      } catch { /* a racing guest destruction already stopped capture */ }
+    if (tab) {
+      if (tab.debuggerReady && this.isWebContentsAlive(tab)) {
+        try {
+          const debuggerApi = tab.webContents.debugger
+          if (debuggerApi.isAttached() && active.phase === 'recording') {
+            void debuggerApi.sendCommand('Page.stopScreencast').catch(() => undefined)
+          }
+        } catch { /* a racing guest destruction already stopped capture */ }
+      }
+      tab.snapshot = { ...tab.snapshot, recording: null, updatedAt: new Date(this.now()).toISOString() }
+      this.emitTabState(tab)
     }
     this.activeRecording = null
   }

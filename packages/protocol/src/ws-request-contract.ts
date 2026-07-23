@@ -59,6 +59,8 @@ type ContractCommandType = Extract<
   | 'get_project_agent_sharing'
   | 'set_project_agent_sharing'
   | 'get_project_agent_external_directory'
+  | 'browser_host_register'
+  | 'browser_host_hydrate'
   | 'browser_host_state_report'
   | 'browser_panel_reveal_acknowledge'
   | 'browser_tab_open'
@@ -111,6 +113,8 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_sharing'
   | 'project_agent_sharing_updated'
   | 'project_agent_external_directory'
+  | 'browser_host_connected'
+  | 'browser_host_hydration_chunk'
   | 'browser_host_state_report_result'
   | 'browser_panel_reveal_acknowledged'
   | 'browser_tab_command_succeeded'
@@ -118,6 +122,20 @@ type ContractSuccessEventType = Extract<
 >
 
 export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'browser_host_register',
+    resultFamily: 'browser_host_register',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_host_connected'],
+    errorCodeFragments: ['browser_host_register'],
+  },
+  {
+    commandType: 'browser_host_hydrate',
+    resultFamily: 'browser_host_hydrate',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_host_hydration_chunk'],
+    errorCodeFragments: ['browser_host_hydrate', 'stale_host_generation'],
+  },
   {
     commandType: 'browser_panel_reveal_acknowledge',
     resultFamily: 'browser_panel_reveal_acknowledge',

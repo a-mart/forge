@@ -61,8 +61,12 @@ export function buildSubscribeCommand(
   }
 }
 
-export function buildBrowserHostRegisterCommand(registration: BrowserHostRegistration): ClientCommand {
-  return { type: 'browser_host_register', registration }
+export function buildBrowserHostRegisterCommand(requestId: string, registration: BrowserHostRegistration): ClientCommand {
+  return { type: 'browser_host_register', requestId, registration }
+}
+
+export function buildBrowserHostHydrateCommand(requestId: string, hostId: string, hostGeneration: number): ClientCommand {
+  return { type: 'browser_host_hydrate', requestId, hostId, hostGeneration }
 }
 
 export function buildBrowserHostFocusCommand(hostId: string, hostGeneration: number, focused: boolean): ClientCommand {

@@ -12,6 +12,7 @@ export interface BrowserEventContext {
   state: ManagerWsState
   updateState: (patch: Partial<ManagerWsState>) => void
   requestTracker: RequestTrackerAdapter
+  acceptHydrationChunk: (event: Extract<ServerEvent, { type: 'browser_host_hydration_chunk' }>) => BrowserSessionSnapshot[] | null
   registration: BrowserHostRegistration | null
   handleAutomationRequest: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null
   sendHostResponse: (response: BrowserAutomationResponse) => void
@@ -20,6 +21,7 @@ export interface BrowserEventContext {
 export function handleBrowserEvent(event: ServerEvent, context: BrowserEventContext): boolean {
   switch (event.type) {
     case 'browser_host_connected': {
+      if (event.requestId && context.requestTracker.getPendingRequestType(event.requestId) !== 'browser_host_register') return true
       const registration = context.registration
       if (registration && event.host.hostId !== null && event.host.hostId !== registration.hostId) return true
       context.updateState({
@@ -27,6 +29,26 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
         browserHostHydrated: false,
         browserPanelRevealRequest: null,
       })
+      if (event.requestId && context.requestTracker.getPendingRequestType(event.requestId) === 'browser_host_register') {
+        context.requestTracker.resolve('browser_host_register', event.requestId, event.host)
+      }
+      return true
+    }
+    case 'browser_host_hydration_chunk': {
+      if (
+        !isCurrentHostEvent(context, event.hostId, event.hostGeneration)
+        || context.requestTracker.getPendingRequestType(event.requestId) !== 'browser_host_hydrate'
+      ) return true
+      const sessions = context.acceptHydrationChunk(event)
+      if (!sessions) return true
+      const browserSessions = indexSessions(sessions)
+      context.updateState({
+        browserSessions,
+        browserHostHydrated: true,
+        browserPanelRevealRequest: projectPanelRevealRequest(context.state, browserSessions, event.hostGeneration),
+        browserMetadataStale: false,
+      })
+      context.requestTracker.resolve('browser_host_hydrate', event.requestId, sessions)
       return true
     }
     case 'browser_host_state_snapshot': {

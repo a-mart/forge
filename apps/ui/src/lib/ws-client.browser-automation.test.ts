@@ -27,9 +27,50 @@ function snapshotWithReveal(revision: number, acknowledgedSequence = 0): Browser
   }
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
 
 describe('ManagerWsClient browser automation state', () => {
+  it('retries dropped registration and hydration phases on the same open transport', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    const send = vi.fn()
+    const socket = { readyState: 1, send, close: vi.fn() }
+    ;(client as unknown as { transport: { socket: typeof socket } }).transport.socket = socket
+    client.registerBrowserAutomationHost(registration, vi.fn())
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+
+    await vi.advanceTimersByTimeAsync(0)
+    const firstRegister = JSON.parse(send.mock.calls[0]![0] as string)
+    expect(firstRegister).toMatchObject({ type: 'browser_host_register', requestId: expect.any(String) })
+    // Simulate a saturated server dropping the first registration acknowledgement.
+    await vi.advanceTimersByTimeAsync(2_500)
+    const secondRegister = JSON.parse(send.mock.calls[1]![0] as string)
+    expect(secondRegister).toMatchObject({ type: 'browser_host_register' })
+    expect(secondRegister.requestId).not.toBe(firstRegister.requestId)
+    ingest({ type: 'browser_host_connected', requestId: secondRegister.requestId, host: { connected: true, hostId: 'host-1', hostGeneration: 2, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
+    await Promise.resolve()
+
+    const firstHydrate = JSON.parse(send.mock.calls[2]![0] as string)
+    expect(firstHydrate).toMatchObject({ type: 'browser_host_hydrate', hostId: 'host-1', hostGeneration: 2 })
+    // Drop hydration independently. The established generation must be reused.
+    await vi.advanceTimersByTimeAsync(2_500)
+    const secondHydrate = JSON.parse(send.mock.calls[3]![0] as string)
+    expect(secondHydrate).toMatchObject({ type: 'browser_host_hydrate', hostGeneration: 2 })
+    expect(send.mock.calls.map(([payload]) => JSON.parse(payload as string).type).filter((type) => type === 'browser_host_register')).toHaveLength(2)
+
+    const payloadBase64 = btoa(JSON.stringify([snapshot(8)]))
+    ingest({ type: 'browser_host_hydration_chunk', requestId: secondHydrate.requestId, hostId: 'host-1', hostGeneration: 2, chunkIndex: 0, chunkCount: 1, payloadBase64 })
+    await Promise.resolve()
+    expect(client.getState().browserHostHydrated).toBe(true)
+    expect(client.getState().browserSessions['session-1']?.revision).toBe(8)
+    expect((client as unknown as { transport: { socket: unknown } }).transport.socket).toBe(socket)
+    client.destroy()
+  })
+
   it('hydrates a host generation, ignores stale revisions, and applies reconnect bootstrap authoritatively', () => {
     const client = new ManagerWsClient('ws://example.test', 'session-1')
     client.registerBrowserAutomationHost(registration, vi.fn())

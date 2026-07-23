@@ -108,19 +108,28 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
     if (!recording || (request.input.recordingId && request.input.recordingId !== recording.prepared.recordingId) || (request.tabId && request.tabId !== recording.prepared.tabId)) {
       return Promise.resolve(failure(request, 'recording-not-found', 'The requested browser recording is not active'))
     }
-    if (recording.stopPromise) return recording.stopPromise
+    if (recording.stopPromise) {
+      return Promise.resolve(failure(request, 'recording-conflict', 'Browser recording stop is already in progress', true))
+    }
     const stopPromise = (async () => {
+      const deadline = Date.parse(request.deadlineAt)
       try {
+        ensureDeadline(deadline)
         if (recording.phase === 'starting' && recording.startPromise) {
-          const startResponse = await recording.startPromise
-          if (!startResponse.ok) return startResponse
+          const startResponse = await withinDeadline(recording.startPromise, deadline)
+          if (!startResponse.ok) return failure(request, startResponse.error.code, startResponse.error.message, startResponse.error.retryable, startResponse.error.details)
         }
         recording.phase = 'stopping'
-        await invokeIpc<PreparedRecording>(BROWSER_IPC.stopRecordingCapture, request)
-        await stopMediaRecorder(recording.recorder)
+        await withinDeadline(invokeIpc<PreparedRecording>(BROWSER_IPC.stopRecordingCapture, request), deadline)
+        await stopMediaRecorder(recording.recorder, deadline)
+        ensureDeadline(deadline)
         const blob = new Blob(recording.chunks, { type: recording.mimeType })
-        const bytes = new Uint8Array(await blob.arrayBuffer())
-        return await invokeIpc<BrowserAutomationResponse>(BROWSER_IPC.saveRecording, { request, mimeType: recording.mimeType, bytes })
+        const bytes = new Uint8Array(await withinDeadline(blob.arrayBuffer(), deadline))
+        ensureDeadline(deadline)
+        return await withinDeadline(
+          invokeIpc<BrowserAutomationResponse>(BROWSER_IPC.saveRecording, { request, mimeType: recording.mimeType, bytes }),
+          deadline,
+        )
       } catch (error) {
         await invokeIpc<void>(BROWSER_IPC.cancelRecording, recording.prepared.recordingId).catch(() => undefined)
         return failureFromError(request, error, 'Browser recording failed to stop')
@@ -170,12 +179,35 @@ function preferredMimeType(): string {
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? 'video/webm'
 }
 
-async function stopMediaRecorder(recorder: MediaRecorder): Promise<void> {
+async function stopMediaRecorder(recorder: MediaRecorder, deadline?: number): Promise<void> {
   if (recorder.state === 'inactive') return
-  await new Promise<void>((resolve) => {
+  const stopped = new Promise<void>((resolve) => {
     recorder.addEventListener('stop', () => resolve(), { once: true })
     recorder.stop()
   })
+  await (deadline === undefined ? stopped : withinDeadline(stopped, deadline))
+}
+
+function ensureDeadline(deadline: number): void {
+  if (!Number.isFinite(deadline) || Date.now() >= deadline) {
+    throw new BrowserIpcError({ code: 'timeout', message: 'Browser recording deadline has elapsed', retryable: true })
+  }
+}
+
+async function withinDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
+  ensureDeadline(deadline)
+  const remaining = Math.max(1, deadline - Date.now())
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new BrowserIpcError({ code: 'timeout', message: 'Browser recording deadline has elapsed', retryable: true })), remaining)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function failureFromError(request: BrowserAutomationRequest, error: unknown, fallbackMessage: string): BrowserAutomationResponse {

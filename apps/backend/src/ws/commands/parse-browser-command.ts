@@ -14,6 +14,7 @@ import { fail, ok } from "./command-parse-helpers.js";
 
 const TYPES = new Set([
   "browser_host_register",
+  "browser_host_hydrate",
   "browser_host_focus",
   "browser_host_response",
   "browser_host_state_report",
@@ -36,6 +37,7 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         const capabilities = parseCapabilities(registration.capabilities);
         return ok({
           type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
           registration: {
             hostId: identifier(registration.hostId, "registration.hostId"),
             clientInstanceId: identifier(registration.clientInstanceId, "registration.clientInstanceId"),
@@ -44,6 +46,13 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
           },
         });
       }
+      case "browser_host_hydrate":
+        return ok({
+          type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
+          hostId: identifier(value.hostId, "hostId"),
+          hostGeneration: generation(value.hostGeneration),
+        });
       case "browser_host_focus":
         return ok({
           type: command.type,

@@ -31,7 +31,14 @@ export const BOOTSTRAP_CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
  */
 export function hasRequestId(event: ServerEvent | CollaborationServerEvent): boolean {
   const requestId = (event as { requestId?: unknown }).requestId;
-  return typeof requestId === "string" && requestId.length > 0;
+  if (typeof requestId === "string" && requestId.length > 0) return true;
+  // Browser broker requests carry their correlation ID in the nested request
+  // envelope. Dropping one leaves the broker pending until its deadline even
+  // though the host remains connected, so it is just as critical as a
+  // top-level request/response event.
+  if (event.type !== "browser_automation_request") return false;
+  const nestedRequestId = (event as { request?: { requestId?: unknown } }).request?.requestId;
+  return typeof nestedRequestId === "string" && nestedRequestId.length > 0;
 }
 
 /** Max time to await a saturated socket buffer to drain before falling back to the drop path. */

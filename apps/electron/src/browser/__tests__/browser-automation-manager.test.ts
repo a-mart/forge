@@ -152,9 +152,12 @@ function tabSnapshot(tabId = 'tab-1', sessionAgentId = 'session-1', profileId = 
   }
 }
 
-async function setup(created = false): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
+async function setup(
+  created = false,
+  options: Pick<ConstructorParameters<typeof BrowserAutomationManager>[0], 'writeArtifactFile'> = {},
+): Promise<{ manager: BrowserAutomationManager; webview: FakeWebContents; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'forge-browser-manager-'))
-  const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: 1, sendToRenderer: vi.fn() })
+  const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: 1, sendToRenderer: vi.fn(), ...options })
   const webview = new FakeWebContents(101)
   manager.registerWebview({ tab: tabSnapshot(), webContentsId: webview.id, visible: false, created }, webview)
   manager.setTabPresentation({ tabId: 'tab-1', visible: true, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 800, height: 600, deviceScaleFactor: 1 }, hostGeneration: 1, sessionRevision: 1, sequence: 1 })
@@ -499,6 +502,47 @@ describe('BrowserAutomationManager', () => {
     if (saved.ok && saved.operation === 'recordingStop') expect(await readFile(saved.result.path)).toEqual(Buffer.from([1, 2, 3, 4]))
 
     expect(() => resolveApprovedArtifactDirectory(root, path.join(root, '..', 'escape'))).toThrow(/outside/)
+  })
+
+  it('cancels expired recording saves before writing and leaves no artifact or active recording', async () => {
+    const { manager, root } = await setup()
+    const artifactDirectory = path.join(root, 'profiles', 'profile-1', 'artifacts', 'browser')
+    const start = request('recordingStart', {}) as BrowserAutomationRequest & { operation: 'recordingStart' }
+    const prepared = await manager.prepareRecording(start)
+    await manager.execute(start)
+    const stop = request('recordingStop', { recordingId: prepared.recordingId }, 'tab-1', { artifactDirectory }) as BrowserAutomationRequest & { operation: 'recordingStop' }
+    await manager.stopRecordingCapture(stop)
+    const expired = { ...stop, requestId: 'expired-save', deadlineAt: new Date(Date.now() - 1).toISOString() }
+    await expect(manager.saveRecording(expired, 'video/webm', new Uint8Array([1]))).resolves.toMatchObject({
+      requestId: 'expired-save', ok: false, error: { code: 'timeout', retryable: true },
+    })
+    await expect(import('node:fs/promises').then(({ readdir }) => readdir(artifactDirectory))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(manager.prepareRecording(request('recordingStart', {}) as BrowserAutomationRequest & { operation: 'recordingStart' })).resolves.toMatchObject({ tabId: 'tab-1' })
+  })
+
+  it('aborts a recording write at its deadline and removes temporary/final artifacts', async () => {
+    const writeArtifactFile = vi.fn((_path, _bytes, options) => new Promise<void>((_resolve, reject) => {
+      const signal = (options as { signal?: AbortSignal } | undefined)?.signal
+      signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+    })) as unknown as NonNullable<ConstructorParameters<typeof BrowserAutomationManager>[0]['writeArtifactFile']>
+    const { manager, root } = await setup(false, { writeArtifactFile })
+    const artifactDirectory = path.join(root, 'profiles', 'profile-1', 'artifacts', 'browser')
+    const start = request('recordingStart', {}) as BrowserAutomationRequest & { operation: 'recordingStart' }
+    const prepared = await manager.prepareRecording(start)
+    await manager.execute(start)
+    const stop = request('recordingStop', { recordingId: prepared.recordingId }, 'tab-1', {
+      artifactDirectory,
+      requestId: 'during-save',
+      deadlineAt: new Date(Date.now() + 50).toISOString(),
+    }) as BrowserAutomationRequest & { operation: 'recordingStop' }
+    await manager.stopRecordingCapture(stop)
+    await expect(manager.saveRecording(stop, 'video/webm', new Uint8Array([1]))).resolves.toMatchObject({
+      requestId: 'during-save', ok: false, error: { code: 'timeout', retryable: true },
+    })
+    expect(writeArtifactFile).toHaveBeenCalledOnce()
+    const entries = await import('node:fs/promises').then(({ readdir }) => readdir(artifactDirectory))
+    expect(entries).toEqual([])
+    await expect(manager.prepareRecording(request('recordingStart', {}) as BrowserAutomationRequest & { operation: 'recordingStart' })).resolves.toMatchObject({ tabId: 'tab-1' })
   })
 
   it('makes destroyed-event, repeated unregister, and manager teardown races harmless', async () => {

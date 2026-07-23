@@ -352,6 +352,7 @@ export class WsHandler {
         resolveManagerContextAgentId: (agentId) => this.subscriptionManager.resolveManagerContextAgentId(agentId),
         resolveProfileIdForAgent: (agentId) => this.subscriptionManager.resolveProfileIdForAgent(agentId),
         send: (targetSocket, event) => this.send(targetSocket, event),
+        sendCritical: (targetSocket, event) => this.sendWithBackpressure(targetSocket, event),
         broadcastToSession: (sessionAgentId, event) => this.broadcastToSession(sessionAgentId, event),
         hydrateHostSessions: () => this.hydrateBrowserHostSessions(),
         logDebug: (message, details) => this.logDebug(message, details),

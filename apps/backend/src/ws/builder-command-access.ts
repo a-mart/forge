@@ -101,6 +101,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   dismiss_restart_recovery: "admin",
   // Browser host ownership and managed webviews are local-machine capabilities.
   browser_host_register: "admin",
+  browser_host_hydrate: "admin",
   browser_host_focus: "admin",
   browser_host_response: "admin",
   browser_host_state_report: "admin",

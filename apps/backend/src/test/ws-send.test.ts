@@ -148,6 +148,24 @@ describe('sendWsEventWithBackpressure', () => {
     expect(onDropSocket).not.toHaveBeenCalled()
   })
 
+  it('classifies a nested browser automation requestId as critical and waits for drain', async () => {
+    resetWsLogThrottleForTest()
+    const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 100 })
+    const pending = sendWsEventWithBackpressure({
+      socket: fake.socket,
+      event: {
+        type: 'browser_automation_request',
+        request: { requestId: 'broker-1' },
+      } as unknown as ServerEvent,
+      onDropSocket: vi.fn(),
+    })
+    await Promise.resolve()
+    expect(fake.sendMock).not.toHaveBeenCalled()
+    fake.setBufferedAmount(0)
+    await expect(pending).resolves.toEqual(expect.any(Number))
+    expect(fake.sendMock).toHaveBeenCalledOnce()
+  })
+
   it('still drops a requestId-less broadcast of the same event type when over the cap', async () => {
     resetWsLogThrottleForTest()
     const fake = createFakeSocket({ bufferedAmount: MAX_WS_BUFFERED_AMOUNT_BYTES + 1 })
