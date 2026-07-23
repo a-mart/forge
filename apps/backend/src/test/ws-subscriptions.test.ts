@@ -205,7 +205,7 @@ function getEventTypes(events: ServerEvent[]): string[] {
 }
 
 describe('WsSubscriptions snapshot delivery tracking', () => {
-  it('echoes goal-control capability acceptance and strips correlation for legacy subscribers', async () => {
+  it('echoes goal-control capability acceptance and strips shared correlation for every observer', async () => {
     const manager = createManagerStub()
     const legacySocket = createSocket()
     const capableSocket = createSocket()
@@ -244,10 +244,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     })
 
     expect(legacyEvents).toEqual([createGoalSnapshotEvent('manager')])
-    expect(capableEvents).toEqual([{
-      ...createGoalSnapshotEvent('manager'),
-      requestId: 'goal-control-1',
-    }])
+    expect(capableEvents).toEqual([createGoalSnapshotEvent('manager')])
   })
 
   it('applies the negotiated Builder view to live conversation events', async () => {

@@ -295,37 +295,39 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
   }
 
   if (command.type === "session_goal_control") {
+    const responseRequestId = supportsGoalControlRequestId ? command.requestId : undefined;
     try {
       requireNonSystemSessionProfile(
         command.agentId,
         swarmManager.listProfiles(),
         (agentId) => swarmManager.getAgent(agentId),
       );
-      if (supportsGoalControlRequestId) {
-        const snapshot = await swarmManager.controlSessionGoal(command.agentId, command, command.requestId);
-        // Goal snapshots normally fan out to exact subscribers through the coordinator event.
-        // A profile/default-session subscriber may control another session, so return the same
-        // correlated result directly when that fanout cannot reach the requesting socket.
-        if (command.requestId !== undefined && subscribedAgentId !== command.agentId) {
-          send(socket, {
-            type: "session_goal_snapshot",
+      // Capture the origin-scoped response context before control yields. Subscription and
+      // capability state may change on this socket while the domain operation is in flight.
+      const responseContext = responseRequestId === undefined
+        ? undefined
+        : {
+            socket,
+            requestId: responseRequestId,
             sessionAgentId: command.agentId,
             profileId: resolveSessionProfileId(swarmManager, command.agentId),
-            ...snapshot,
-            requestId: command.requestId,
-          });
-        }
-      } else {
-        await swarmManager.controlSessionGoal(command.agentId, command);
+          };
+      const snapshot = await swarmManager.controlSessionGoal(command.agentId, command);
+      if (responseContext) {
+        send(responseContext.socket, {
+          type: "session_goal_snapshot",
+          sessionAgentId: responseContext.sessionAgentId,
+          profileId: responseContext.profileId,
+          ...snapshot,
+          requestId: responseContext.requestId,
+        });
       }
     } catch (error) {
       send(socket, {
         type: "error",
         code: "SESSION_GOAL_CONTROL_FAILED",
         message: error instanceof Error ? error.message : String(error),
-        ...(supportsGoalControlRequestId && command.requestId !== undefined
-          ? { requestId: command.requestId }
-          : {}),
+        ...(responseRequestId === undefined ? {} : { requestId: responseRequestId }),
       });
     }
     return true;

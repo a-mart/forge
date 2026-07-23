@@ -64,7 +64,7 @@ describe("session command handler", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("passes negotiated goal-control correlation through success publication", async () => {
+  it("delivers negotiated goal-control success directly to its captured origin", async () => {
     const send = vi.fn();
     const controlSessionGoal = vi.fn(async () => ({
       revision: 2,
@@ -85,7 +85,7 @@ describe("session command handler", () => {
         requestId: "goal-control-1",
       },
       socket: {} as never,
-      subscribedAgentId: "manager",
+      subscribedAgentId: "manager--s2",
       swarmManager: swarmManager as never,
       resolveManagerContextAgentId: vi.fn(() => "manager"),
       send,
@@ -96,7 +96,6 @@ describe("session command handler", () => {
     expect(controlSessionGoal).toHaveBeenCalledWith(
       "manager--s2",
       expect.objectContaining({ action: "pause", requestId: "goal-control-1" }),
-      "goal-control-1",
     );
     expect(send).toHaveBeenCalledWith(expect.anything(), {
       type: "session_goal_snapshot",

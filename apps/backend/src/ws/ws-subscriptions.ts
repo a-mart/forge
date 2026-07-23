@@ -301,14 +301,12 @@ export class WsSubscriptions {
         continue;
       }
 
+      // Goal-control request correlation is origin-scoped. Shared state fanout must never expose
+      // one socket's request ID to observers, including other capability-enabled subscribers.
       let outboundEvent = event;
-      if (
-        event.type === "session_goal_snapshot" &&
-        event.requestId !== undefined &&
-        !this.supportsGoalControlRequestId(client)
-      ) {
-        const { requestId: _requestId, ...legacyEvent } = event;
-        outboundEvent = legacyEvent;
+      if (event.type === "session_goal_snapshot" && event.requestId !== undefined) {
+        const { requestId: _requestId, ...sharedEvent } = event;
+        outboundEvent = sharedEvent;
       }
       this.send(client, outboundEvent);
     }

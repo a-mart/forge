@@ -102,20 +102,22 @@ describe("SessionGoalCoordinator continuation cancellation", () => {
     expect(clearCalls).toContain("store.clear");
   });
 
-  it("publishes an accepted goal-control request id on the resulting snapshot", async () => {
+  it("publishes goal-control state as an uncorrelated shared snapshot", async () => {
     const harness = createHarness();
     const store = {
       control: vi.fn(async () => makeState("paused", 2)),
     } as unknown as SessionGoalStore;
     stubMeasuredState(harness.coordinator, makeState("active", 1), store, []);
 
-    await harness.coordinator.control("manager", { action: "pause" }, "goal-control-1");
+    await harness.coordinator.control("manager", { action: "pause" });
 
     expect(harness.options.emitSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       type: "session_goal_snapshot",
       sessionAgentId: "manager",
-      requestId: "goal-control-1",
       revision: 2,
+    }));
+    expect(harness.options.emitSnapshot).toHaveBeenCalledWith(expect.not.objectContaining({
+      requestId: expect.anything(),
     }));
   });
 

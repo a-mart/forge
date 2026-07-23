@@ -130,6 +130,14 @@ async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Pro
   throw new Error('Timed out waiting for condition')
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 async function openCliWebSocket(url: string, apiKey: string): Promise<{ client: WebSocket; events: ServerEvent[] }> {
   const client = new WebSocket(url, { headers: { authorization: `Bearer ${apiKey}` } })
   const events: ServerEvent[] = []
@@ -239,6 +247,141 @@ describe('SwarmWebSocketServer', () => {
     client.close()
     await once(client, 'close')
     await server.stop()
+  })
+
+  it('delivers goal-control success to its origin across concurrent re-subscription', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
+    await manager.createGoal('manager', 'goal-control-race', { objective: 'Ship the correlated result' })
+
+    const controlGates = [createDeferred(), createDeferred()]
+    const controlStarts = [createDeferred(), createDeferred()]
+    const actualControl = manager.controlSessionGoal.bind(manager)
+    let controlIndex = 0
+    vi.spyOn(manager, 'controlSessionGoal').mockImplementation(async (agentId, action) => {
+      const index = controlIndex++
+      controlStarts[index]?.resolve()
+      await controlGates[index]?.promise
+      return actualControl(agentId, action)
+    })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    const url = `ws://${config.host}:${config.port}`
+    const origin = new WebSocket(url)
+    const capableObserver = new WebSocket(url)
+    const legacyObserver = new WebSocket(url)
+    const originEvents: ServerEvent[] = []
+    const capableObserverEvents: ServerEvent[] = []
+    const legacyObserverEvents: ServerEvent[] = []
+    origin.on('message', (raw) => originEvents.push(JSON.parse(raw.toString()) as ServerEvent))
+    capableObserver.on('message', (raw) => capableObserverEvents.push(JSON.parse(raw.toString()) as ServerEvent))
+    legacyObserver.on('message', (raw) => legacyObserverEvents.push(JSON.parse(raw.toString()) as ServerEvent))
+
+    try {
+      await Promise.all([once(origin, 'open'), once(capableObserver, 'open'), once(legacyObserver, 'open')])
+      origin.send(JSON.stringify({ type: 'subscribe', agentId: 'manager', goalControlRequestId: true }))
+      capableObserver.send(JSON.stringify({ type: 'subscribe', agentId: 'manager', goalControlRequestId: true }))
+      legacyObserver.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+      await Promise.all([
+        waitForEvent(originEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager'),
+        waitForEvent(capableObserverEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager'),
+        waitForEvent(legacyObserverEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager'),
+      ])
+      originEvents.length = 0
+      capableObserverEvents.length = 0
+      legacyObserverEvents.length = 0
+
+      origin.send(JSON.stringify({
+        type: 'session_goal_control',
+        agentId: 'manager',
+        action: 'pause',
+        requestId: 'goal-control-origin-1',
+      }))
+      await controlStarts[0].promise
+
+      // Re-subscribe to a different agent without re-advertising the capability. The in-flight
+      // command must retain the request context negotiated when it started.
+      origin.send(JSON.stringify({ type: 'subscribe', agentId: secondarySession.agentId }))
+      await waitForEvent(
+        originEvents,
+        (event) => event.type === 'ready' && event.subscribedAgentId === secondarySession.agentId,
+      )
+      controlGates[0].resolve()
+
+      const correlated = await waitForEvent(
+        originEvents,
+        (event) => event.type === 'session_goal_snapshot' && event.requestId === 'goal-control-origin-1',
+      )
+      expect(correlated).toMatchObject({
+        type: 'session_goal_snapshot',
+        sessionAgentId: 'manager',
+        requestId: 'goal-control-origin-1',
+        goal: { status: 'paused' },
+      })
+      await Promise.all([
+        waitForEvent(capableObserverEvents, (event) =>
+          event.type === 'session_goal_snapshot' && event.sessionAgentId === 'manager' && event.goal?.status === 'paused'),
+        waitForEvent(legacyObserverEvents, (event) =>
+          event.type === 'session_goal_snapshot' && event.sessionAgentId === 'manager' && event.goal?.status === 'paused'),
+      ])
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(originEvents.filter((event) => event.type === 'session_goal_snapshot'
+        && event.requestId === 'goal-control-origin-1')).toHaveLength(1)
+      expect(capableObserverEvents.some((event) => event.type === 'session_goal_snapshot'
+        && event.requestId !== undefined)).toBe(false)
+      expect(legacyObserverEvents.some((event) => event.type === 'session_goal_snapshot'
+        && event.requestId !== undefined)).toBe(false)
+
+      // A successful control whose origin closes in flight still publishes normal shared state and
+      // does not make the direct response path unsafe.
+      const closingOrigin = new WebSocket(url)
+      const closingOriginEvents: ServerEvent[] = []
+      closingOrigin.on('message', (raw) => closingOriginEvents.push(JSON.parse(raw.toString()) as ServerEvent))
+      await once(closingOrigin, 'open')
+      closingOrigin.send(JSON.stringify({ type: 'subscribe', agentId: 'manager', goalControlRequestId: true }))
+      await waitForEvent(
+        closingOriginEvents,
+        (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+      )
+      const capableObserverStart = capableObserverEvents.length
+      const legacyObserverStart = legacyObserverEvents.length
+      closingOrigin.send(JSON.stringify({
+        type: 'session_goal_control',
+        agentId: 'manager',
+        action: 'edit',
+        objective: 'Ship after origin close',
+        requestId: 'goal-control-closed-origin',
+      }))
+      await controlStarts[1].promise
+      closingOrigin.close()
+      await once(closingOrigin, 'close')
+      controlGates[1].resolve()
+
+      await Promise.all([
+        waitForEventAfter(capableObserverEvents, capableObserverStart, (event) =>
+          event.type === 'session_goal_snapshot' && event.goal?.objective === 'Ship after origin close'),
+        waitForEventAfter(legacyObserverEvents, legacyObserverStart, (event) =>
+          event.type === 'session_goal_snapshot' && event.goal?.objective === 'Ship after origin close'),
+      ])
+      expect(closingOriginEvents.some((event) => event.type === 'session_goal_snapshot'
+        && event.requestId === 'goal-control-closed-origin')).toBe(false)
+    } finally {
+      for (const gate of controlGates) gate.resolve()
+      for (const client of [origin, capableObserver, legacyObserver]) {
+        if (client.readyState === WebSocket.OPEN) client.close()
+      }
+      await server.stop()
+    }
   })
 
   it('bootstrap agents_snapshot excludes streaming workers while preserving manager worker counts', async () => {
