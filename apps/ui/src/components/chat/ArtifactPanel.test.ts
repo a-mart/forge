@@ -64,14 +64,14 @@ function imageArtifact(overrides: Partial<ArtifactReference> = {}): ArtifactRefe
 }
 
 describe('ArtifactPanel transcript-authorized reads', () => {
-  it('posts exact transcript provenance and renders a returned base64 PNG', async () => {
-    const pngBase64 = 'iVBORw0KGgo='
+  it('requests a bounded capable response and renders only a same-origin image ticket', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       path: '/private/tmp/result.png',
       binary: true,
-      encoding: 'base64',
+      transport: 'http_ticket',
       contentType: 'image/png',
-      content: pngBase64,
+      totalBytes: 4 * 1024 * 1024,
+      ticket: { url: '/api/chat-artifacts/tickets/opaque_ticket_token', expiresAt: new Date(Date.now() + 30_000).toISOString() },
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -79,7 +79,7 @@ describe('ArtifactPanel transcript-authorized reads', () => {
 
     await waitFor(() => {
       expect(document.querySelector('img[alt="result.png"]')?.getAttribute('src'))
-        .toBe(`data:image/png;base64,${pngBase64}`)
+        .toBe('https://forge.example.test/api/chat-artifacts/tickets/opaque_ticket_token')
     })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]!
@@ -89,7 +89,45 @@ describe('ArtifactPanel transcript-authorized reads', () => {
       transcriptAgentId: 'viewed-manager',
       messageId: 'message-7',
       path: '/tmp/result.png',
+      previewBytes: 512 * 1024,
+      imageTransport: 'http_ticket',
     })
+  })
+
+  it('performs one exact old-server compatibility retry and keeps the legacy base64 response', async () => {
+    const pngBase64 = 'iVBORw0KGgo='
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body))
+      if (request.imageTransport) {
+        return new Response(JSON.stringify({ error: 'invalid_request', code: 'invalid_request' }), { status: 400 })
+      }
+      return new Response(JSON.stringify({ path: request.path, binary: true, encoding: 'base64', contentType: 'image/png', content: pngBase64 }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderPanel(imageArtifact())
+    await waitFor(() => expect(document.querySelector('img[alt="result.png"]')?.getAttribute('src')).toBe(`data:image/png;base64,${pngBase64}`))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ transcriptAgentId: 'viewed-manager', messageId: 'message-7', path: '/tmp/result.png' })
+  })
+
+  it('rejects an uninspected cross-origin image ticket URL', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      path: '/tmp/result.png', binary: true, transport: 'http_ticket', contentType: 'image/png', totalBytes: 4,
+      ticket: { url: 'https://attacker.example/image', expiresAt: new Date(Date.now() + 30_000).toISOString() },
+    }), { status: 200 })))
+    renderPanel(imageArtifact())
+    await waitFor(() => expect(document.body.textContent).toContain('Invalid image ticket response.'))
+    expect(document.querySelector('img[alt="result.png"]')).toBeNull()
+  })
+
+  it('renders bounded text metadata without requesting the discarded tail', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      path: '/tmp/report.txt', contentType: 'application/octet-stream', content: 'bounded', truncated: true, totalBytes: 2 * 1024 * 1024,
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderPanel(imageArtifact({ path: '/tmp/report.txt', fileName: 'report.txt', href: 'swarm-file:///tmp/report.txt' }))
+    await waitFor(() => expect(document.body.textContent).toContain('Showing a bounded preview of 2,097,152 bytes.'))
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ previewBytes: 512 * 1024, imageTransport: 'http_ticket' })
   })
 
   it('surfaces secure denial without falling back to the legacy read-file route', async () => {

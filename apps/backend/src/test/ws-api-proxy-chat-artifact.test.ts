@@ -48,10 +48,11 @@ describe("WS chat artifact API proxy", () => {
   it("checks the exact serialized event and returns a sendable 413 for transport overflow", async () => {
     const tempRoot = process.platform === "darwin" ? `/private${tmpdir()}` : tmpdir(); const dataDir = await mkdtemp(join(tempRoot, "artifact-ws-boundary-")); roots.push(dataDir);
     const profileId = "profile"; const agentId = "manager"; const sessionFile = getSessionFilePath(dataDir, profileId, agentId); await mkdir(join(dataDir, "profiles", profileId, "sessions", agentId), { recursive: true });
-    const image = join(dataDir, "near-limit.png"); const escapableText = join(dataDir, "escapable.txt");
+    const image = join(dataDir, "near-limit.png"); const escapableText = join(dataDir, "escapable.txt"); const boundedText = join(dataDir, "bounded.txt");
     await writeFile(image, Buffer.alloc(760 * 1024, 0x89));
     await writeFile(escapableText, `"\\`.repeat(160_000));
-    await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[image](swarm-file://${image}) [text](swarm-file://${escapableText})`, timestamp: new Date().toISOString() } }) + "\n");
+    await writeFile(boundedText, Buffer.alloc(5 * 1024 * 1024, 0x61));
+    await writeFile(sessionFile, JSON.stringify({ type: "custom", customType: CONVERSATION_ENTRY_TYPE, id: "m", data: { type: "conversation_message", id: "m", agentId, role: "assistant", source: "speak_to_user", text: `[image](swarm-file://${image}) [text](swarm-file://${escapableText}) [bounded](swarm-file://${boundedText})`, timestamp: new Date().toISOString() } }) + "\n");
     const descriptor: any = { agentId, managerId: agentId, role: "manager", profileId, sessionFile, cwd: dataDir };
     const swarmManager: any = { getAgent: (id: string) => id === agentId ? descriptor : undefined, listProfiles: () => [{ profileId }], getConfig: () => ({ paths: { dataDir } }) };
     const proxy = new WsApiProxy({ swarmManager, mobilePushService: {}, feedbackService: {}, terminalService: null, unreadTracker: null } as any);
@@ -68,11 +69,23 @@ describe("WS chat artifact API proxy", () => {
     expect(JSON.parse(escapableOverflow.body)).toEqual({ error: "artifact_response_too_large", code: "artifact_response_too_large" });
     expect(apiProxyResponseEventByteLength(escapableOverflow)).toBeLessThanOrEqual(MAX_WS_EVENT_BYTES);
 
+    const bounded = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId, method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: boundedText, previewBytes: 512 * 1024 }) } as any, agentId);
+    expect(bounded.status).toBe(200);
+    expect(apiProxyResponseEventByteLength(bounded)).toBeLessThanOrEqual(MAX_WS_EVENT_BYTES);
+    expect(JSON.parse(bounded.body)).toMatchObject({ truncated: true, totalBytes: 5 * 1024 * 1024 });
+
     await writeFile(image, Buffer.alloc(800 * 1024, 0x89));
     const imageOverflow = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId, method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: image }) } as any, agentId);
     expect(imageOverflow.status).toBe(413);
     expect(JSON.parse(imageOverflow.body)).toEqual({ error: "artifact_response_too_large", code: "artifact_response_too_large" });
     expect(apiProxyResponseEventByteLength(imageOverflow)).toBeLessThanOrEqual(MAX_WS_EVENT_BYTES);
+
+    await writeFile(image, Buffer.alloc(4 * 1024 * 1024, 0x89));
+    const imageTicket = await proxy.routeApiProxyCommand({ type: "api_proxy", requestId, method: "POST", path: "/api/chat-artifacts/read", body: JSON.stringify({ messageId: "m", path: image, imageTransport: "http_ticket" }) } as any, agentId);
+    expect(imageTicket.status).toBe(200);
+    expect(apiProxyResponseEventByteLength(imageTicket)).toBeLessThanOrEqual(MAX_WS_EVENT_BYTES);
+    expect(JSON.parse(imageTicket.body)).toMatchObject({ transport: "http_ticket", totalBytes: 4 * 1024 * 1024 });
+    expect(JSON.parse(imageTicket.body)).not.toHaveProperty("content");
 
     const fake = createSendableSocket();
     expect(sendWsEvent({ socket: fake.socket, event: imageOverflow, onDropSocket: vi.fn() })).not.toBeNull();

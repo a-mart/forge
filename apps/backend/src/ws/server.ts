@@ -60,6 +60,7 @@ import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
+import { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -573,6 +574,7 @@ export class SwarmWebSocketServer {
     );
     this.shouldManageControlPid =
       !this.swarmManager.getConfig().isDesktop && readDaemonizedEnv() !== "1";
+    const artifactTicketStore = new PresentedChatArtifactTicketStore();
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -589,6 +591,7 @@ export class SwarmWebSocketServer {
       isRemoteBuildEnabled: () => this.remoteBuildSettingsService.isRemoteBuildEnabled(),
       areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
       browserAutomationService: options.browserAutomationService,
+      artifactTicketStore,
       getRemoteUpdateAwarenessBootstrapEvent: this.remoteUpdateAwarenessService
         ? (projectId) => {
             try {
@@ -682,7 +685,7 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
-      ...createChatArtifactRoutes({ swarmManager: this.swarmManager }),
+      ...createChatArtifactRoutes({ swarmManager: this.swarmManager, ticketStore: artifactTicketStore }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),

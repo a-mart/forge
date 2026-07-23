@@ -56,6 +56,7 @@ import { WsApiProxy } from "./ws-api-proxy.js";
 import { hasRequestId, sendWsEvent, sendWsEventWithBackpressure } from "./ws-send.js";
 import { WsSubscriptions } from "./ws-subscriptions.js";
 import type { RepositoryProjectCreationService } from "../swarm/repository-project-creation-service.js";
+import type { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
 
 const CONVERSATION_PAGE_RATE_WINDOW_MS = 5_000;
 const MAX_CONVERSATION_PAGE_REQUESTS_PER_WINDOW = 8;
@@ -94,6 +95,7 @@ export class WsHandler {
     getRemoteUpdateAwarenessBootstrapEvent?: (
       projectId: string
     ) => Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
+    artifactTicketStore?: PresentedChatArtifactTicketStore;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
@@ -130,6 +132,7 @@ export class WsHandler {
       feedbackService,
       terminalService,
       unreadTracker: this.unreadTracker,
+      artifactTicketStore: options.artifactTicketStore,
     });
 
     this.collabSubscriptionManager = new CollabSubscriptionManager(
@@ -476,7 +479,7 @@ export class WsHandler {
         }
       }
 
-      await this.handleApiProxyCommand(socket, command, subscribedAgentId);
+      await this.handleApiProxyCommand(socket, command, subscribedAgentId, authContext?.userId);
       return;
     }
 
@@ -642,16 +645,18 @@ export class WsHandler {
     socket: WebSocket,
     command: ApiProxyCommand,
     subscribedAgentId: string,
+    artifactTicketAuthBinding?: string,
   ): Promise<void> {
-    const response = await this.routeApiProxyCommand(command, subscribedAgentId);
+    const response = await this.routeApiProxyCommand(command, subscribedAgentId, artifactTicketAuthBinding);
     this.send(socket, response);
   }
 
   private async routeApiProxyCommand(
     command: ApiProxyCommand,
     subscribedAgentId: string,
+    artifactTicketAuthBinding?: string,
   ) {
-    return this.apiProxy.routeApiProxyCommand(command, subscribedAgentId);
+    return this.apiProxy.routeApiProxyCommand(command, subscribedAgentId, artifactTicketAuthBinding);
   }
 
   private async handleSubscribe(

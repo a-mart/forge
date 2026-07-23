@@ -27,7 +27,12 @@ import {
   requireApiProxyQueryString,
 } from "./ws-api-proxy-parse.js";
 import { readApiProxyFile } from "./ws-file-access.js";
-import { ChatArtifactError, chatArtifactStatus, readPresentedChatArtifact } from "../swarm/session/presented-chat-artifact.js";
+import {
+  ChatArtifactError,
+  PresentedChatArtifactTicketStore,
+  chatArtifactStatus,
+  readPresentedChatArtifact,
+} from "../swarm/session/presented-chat-artifact.js";
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 
 const API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/smart-compact$/;
@@ -61,6 +66,7 @@ export class WsApiProxy {
   private readonly feedbackService: FeedbackService;
   private readonly terminalService: TerminalService | null;
   private readonly unreadTracker: UnreadTracker | null;
+  private readonly artifactTicketStore: PresentedChatArtifactTicketStore;
 
   constructor(options: {
     swarmManager: SwarmManager;
@@ -68,17 +74,20 @@ export class WsApiProxy {
     feedbackService: FeedbackService;
     terminalService: TerminalService | null;
     unreadTracker: UnreadTracker | null;
+    artifactTicketStore?: PresentedChatArtifactTicketStore;
   }) {
     this.swarmManager = options.swarmManager;
     this.mobilePushService = options.mobilePushService;
     this.feedbackService = options.feedbackService;
     this.terminalService = options.terminalService;
     this.unreadTracker = options.unreadTracker;
+    this.artifactTicketStore = options.artifactTicketStore ?? new PresentedChatArtifactTicketStore();
   }
 
   async routeApiProxyCommand(
     command: ApiProxyCommand,
     subscribedAgentId: string,
+    artifactTicketAuthBinding?: string,
   ): Promise<ApiProxyResponseEvent> {
     const parsedPath = parseApiProxyPath(command.path);
     if (!parsedPath.ok) {
@@ -121,7 +130,7 @@ export class WsApiProxy {
       }
 
       if (pathname === API_PROXY_CHAT_ARTIFACT_READ_PATH) {
-        return await this.handleApiProxyChatArtifactRead(command, payload, subscribedAgentId);
+        return await this.handleApiProxyChatArtifactRead(command, payload, subscribedAgentId, artifactTicketAuthBinding);
       }
 
       if (pathname === API_PROXY_FEEDBACK_PATH) {
@@ -281,17 +290,27 @@ export class WsApiProxy {
     return this.createApiProxyJsonResponse(command.requestId, result.status, result.payload, result.headers);
   }
 
-  private async handleApiProxyChatArtifactRead(command: ApiProxyCommand, payload: unknown, subscribedAgentId: string): Promise<ApiProxyResponseEvent> {
+  private async handleApiProxyChatArtifactRead(command: ApiProxyCommand, payload: unknown, subscribedAgentId: string, artifactTicketAuthBinding?: string): Promise<ApiProxyResponseEvent> {
     if (command.method !== "POST") return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
-    if (!isRecord(payload) || Object.keys(payload).some(key => key !== "messageId" && key !== "path") || typeof payload.messageId !== "string" || typeof payload.path !== "string") {
+    if (!isRecord(payload) || Object.keys(payload).some(key => !["messageId", "path", "previewBytes", "imageTransport"].includes(key)) || typeof payload.messageId !== "string" || typeof payload.path !== "string") {
       return this.createApiProxyJsonResponse(command.requestId, 400, { error: "invalid_request", code: "invalid_request" });
     }
     try {
       const result = await readPresentedChatArtifact(
         this.swarmManager,
-        { transcriptAgentId: subscribedAgentId, messageId: payload.messageId, path: payload.path },
+        {
+          transcriptAgentId: subscribedAgentId,
+          messageId: payload.messageId,
+          path: payload.path,
+          ...(payload.previewBytes !== undefined ? { previewBytes: payload.previewBytes } : {}),
+          ...(payload.imageTransport !== undefined ? { imageTransport: payload.imageTransport } : {}),
+        },
+        {
+          ticketStore: this.artifactTicketStore,
+          ...(artifactTicketAuthBinding ? { ticketAuthBinding: artifactTicketAuthBinding } : {}),
+        },
       );
-      const response = this.createApiProxyJsonResponse(command.requestId, 200, result);
+      const response = this.createApiProxyJsonResponse(command.requestId, 200, { ...result });
       if (apiProxyResponseEventByteLength(response) <= MAX_WS_EVENT_BYTES) return response;
       const oversizedResponse = this.createApiProxyJsonResponse(
         command.requestId,

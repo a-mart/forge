@@ -30,6 +30,13 @@ describe("chat artifact HTTP route", () => {
     try {
       const ok = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcriptAgentId: agentId, messageId: "m", path: presentedImage }) });
       expect(ok.status).toBe(200); expect(ok.headers.get("cache-control")).toBe("no-store"); const payload: any = await ok.json(); expect(payload).toMatchObject({ path: presentedImage, binary: true, encoding: "base64", contentType: "image/png" }); expect(Buffer.from(payload.content, "base64")).toHaveLength(imageBytes.length);
+      const ticketResponse = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcriptAgentId: agentId, messageId: "m", path: presentedImage, imageTransport: "http_ticket" }) });
+      expect(ticketResponse.status).toBe(200); const ticket: any = await ticketResponse.json();
+      expect(ticket).toMatchObject({ binary: true, transport: "http_ticket", totalBytes: imageBytes.length }); expect(ticket).not.toHaveProperty("content");
+      expect(ticket.ticket.url).toMatch(/^\/api\/chat-artifacts\/tickets\/[A-Za-z0-9_-]+$/);
+      const raw = await fetch(`http://127.0.0.1:${address.port}${ticket.ticket.url}`);
+      expect(raw.status).toBe(200); expect(raw.headers.get("content-type")).toBe("image/png"); expect(raw.headers.get("cache-control")).toBe("no-store"); expect(Buffer.from(await raw.arrayBuffer())).toEqual(imageBytes);
+      const reused = await fetch(`http://127.0.0.1:${address.port}${ticket.ticket.url}`); expect(reused.status).toBe(404); expect(await reused.json()).toMatchObject({ code: "ticket_not_found" });
       const injectedContext = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcriptAgentId: agentId, messageId: "m", path: presentedImage, worktreeId: "caller-selected", sourceOwnerAgentId: "other" }) });
       expect(injectedContext.status).toBe(400); expect(await injectedContext.json()).toMatchObject({ code: "invalid_request" });
       await writeFile(image, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES + 1));

@@ -159,6 +159,8 @@ describe("collaboration HTTP auth middleware", () => {
       ["/api/files/raw", "GET"],
       ["/api/read-file", "GET"],
       ["/api/read-file", "POST"],
+      ["/api/chat-artifacts/read", "POST"],
+      ["/api/chat-artifacts/tickets/opaque_token_1234", "GET"],
       ["/api/attachments/file-abc123", "GET"],
       ["/api/git/status", "GET"],
       ["/api/git/diff", "GET"],

@@ -53,6 +53,7 @@ const MEMBER_FILE_BROWSER_READ_PATHS = new Set([
 const MEMBER_READ_FILE_PATH = "/api/read-file";
 /** Privileged transcript-authorized artifact reads remain Builder project surface. */
 const MEMBER_CHAT_ARTIFACT_READ_PATH = "/api/chat-artifacts/read";
+const MEMBER_CHAT_ARTIFACT_TICKET_PATH = /^\/api\/chat-artifacts\/tickets\/[A-Za-z0-9_-]+$/;
 /** Conversation attachment downloads (R1). */
 const MEMBER_ATTACHMENTS_PATH_PREFIX = "/api/attachments/";
 /** Git read surfaces (R1). */
@@ -332,6 +333,10 @@ function isMemberProjectRoute(
     }
 
     if (pathname.startsWith(MEMBER_ATTACHMENTS_PATH_PREFIX)) {
+      return true;
+    }
+
+    if (MEMBER_CHAT_ARTIFACT_TICKET_PATH.test(pathname)) {
       return true;
     }
 
