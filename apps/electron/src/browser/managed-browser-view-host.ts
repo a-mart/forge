@@ -232,7 +232,9 @@ export class ManagedBrowserViewHost {
       owned.view.setVisible(true)
       this.attachedTabId = request.tabId
       this.attachedWindow = target.window
-      owned.view.webContents.focus()
+      // Presentation is layout/lifecycle reconciliation, not a user request to
+      // focus guest content. Native clicks focus the view normally; explicit
+      // keyboard automation focuses narrowly in BrowserAutomationManager.
       const renderedViewport = {
         width: bounds.width,
         height: bounds.height,

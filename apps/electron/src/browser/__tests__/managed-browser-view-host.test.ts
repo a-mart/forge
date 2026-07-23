@@ -61,7 +61,7 @@ describe('ManagedBrowserViewHost', () => {
     expect(host.tabCount).toBe(2)
   })
 
-  it('attaches only the selected physical tab and reparents the identical view', async () => {
+  it('reconciles, presents, and reparents the identical view without stealing toolbar focus', async () => {
     const { host } = makeHost()
     await host.reconcile({ controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 1, workspaceEpoch: 2, sessions: [session([tab('one'), tab('two')])] })
     const main = fakeWindow(); const popout = fakeWindow()
@@ -72,9 +72,12 @@ describe('ManagedBrowserViewHost', () => {
     const identity = createdViews[0]
     expect(main.children).toEqual(new Set([identity]))
     await host.transferOwner('popout', 2)
+    await host.reconcile({ controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 2, workspaceEpoch: 2, sessions: [session([{ ...tab('one'), title: 'metadata changed' }, tab('two')])] })
+    await host.present({ tabId: 'one', visible: true, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 1, height: 1, deviceScaleFactor: 1 }, hostGeneration: 1, sessionRevision: 2, sequence: 2, workspaceEpoch: 2 })
     expect(main.children.size).toBe(0)
     expect(popout.children).toEqual(new Set([identity]))
     expect(createdViews).toHaveLength(2)
+    expect((identity.webContents as { focus: ReturnType<typeof vi.fn> }).focus).not.toHaveBeenCalled()
   })
 
   it('makes canonical removal win over queued presentation and teardown repeats', async () => {

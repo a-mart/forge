@@ -83,6 +83,27 @@ describe("BrowserHostBroker", () => {
     expect(broker.acceptResponse("socket-1", success(sent[0]!))).toBe("duplicate");
   });
 
+  it("accepts a provisional open failure only when it retains the original null-tab routing", async () => {
+    const sent: BrowserAutomationRequest[] = [];
+    const broker = new BrowserHostBroker({ requestId: () => "open-request" });
+    broker.register({ connectionId: "socket-1", registration: registration(["open"]), sendRequest: (request) => sent.push(request) });
+    const pending = broker.request({
+      sessionAgentId: "manager-1", profileId: "profile-1", tabId: null, operation: "open",
+      input: { reuseExistingTab: false, show: false }, timeoutMs: 1_000,
+    });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    const request = sent[0]!;
+    const provisionalMismatch = {
+      requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+      tabId: "provisional-tab", hostId: request.hostId, hostGeneration: request.hostGeneration,
+      operation: "open", ok: false, error: { code: "execution-failed", message: "failed", retryable: false }, elapsedMs: 0,
+    };
+    expect(broker.acceptResponse("socket-1", provisionalMismatch)).toBe("mismatched-response");
+    const correlated = { ...provisionalMismatch, tabId: null };
+    expect(broker.acceptResponse("socket-1", correlated)).toBe("accepted");
+    await expect(pending).resolves.toMatchObject({ requestId: "open-request", operation: "open", tabId: null, ok: false });
+  });
+
   it("rejects unavailable and unsupported operations deterministically", async () => {
     const broker = new BrowserHostBroker();
     await expectBrokerCode(requestStatus(broker), "unavailable-host");

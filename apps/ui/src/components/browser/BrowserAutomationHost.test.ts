@@ -10,11 +10,11 @@ import { BrowserAutomationHost } from './BrowserAutomationHost'
 let container: HTMLDivElement
 let root: Root | null = null
 beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container) })
-afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); delete window.electronBridge })
+afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); delete window.electronBridge; vi.useRealTimers() })
 
 const now = new Date(0).toISOString()
 function tab(tabId = 'tab-1'): BrowserTabSnapshot { return { tabId, sessionAgentId: 'session-1', profileId: 'profile-1', url: 'about:blank', title: tabId, lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null, createdAt: now, updatedAt: now } }
-function session(): BrowserSessionSnapshot { return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [tab()], activeTabId: 'tab-1', defaultTabId: 'tab-1', panelVisible: true, recentActions: [], revision: 1, createdAt: now, updatedAt: now } }
+function session(revision = 1, tabs = [tab()]): BrowserSessionSnapshot { return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs, activeTabId: tabs[0]?.tabId ?? null, defaultTabId: tabs[0]?.tabId ?? null, panelVisible: true, recentActions: [], revision, createdAt: now, updatedAt: new Date(revision).toISOString() } }
 
 function installBridge() {
   const listeners: Array<(tab: BrowserTabSnapshot) => void> = []
@@ -51,18 +51,95 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     expect(container.querySelector('webview')).toBeNull()
   })
 
-  it('creates and atomically aborts a failed provisional main-owned tab', async () => {
+  it('preserves the original open envelope for every provisional lifecycle failure and tears down provisional state', async () => {
     const bridge = installBridge()
     let execute: ((request: BrowserAutomationRequest) => Promise<unknown>) | null = null
-    bridge.invoke.mockResolvedValue({ requestId: 'request-1', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'native-tab', hostId: 'host', hostGeneration: 1, operation: 'open', ok: false, error: { code: 'navigation-failed', message: 'failed', retryable: true }, elapsedMs: 1 })
     const state = createInitialManagerWsState('session-1')
     const client = { registerBrowserAutomationHost: vi.fn((_registration, handler) => { execute = handler; return vi.fn() }), reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
     await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve() })
-    const request: Extract<BrowserAutomationRequest, { operation: 'open' }> = { requestId: 'request-1', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null, hostId: 'host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 10_000).toISOString(), artifactDirectory: null, operation: 'open', input: { show: false, reuseExistingTab: false } }
-    await execute!(request)
-    expect(bridge.ensureProvisional).toHaveBeenCalledOnce()
-    expect(bridge.abortProvisional).toHaveBeenCalledOnce()
-    expect(bridge.commitProvisional).not.toHaveBeenCalled()
+
+    for (const phase of ['ensure', 'invoke', 'commit', 'abort'] as const) {
+      bridge.ensureProvisional.mockReset().mockImplementation(async ({ tab: value }: { tab: BrowserTabSnapshot }) => value)
+      bridge.invoke.mockReset().mockImplementation(async (invoked: BrowserAutomationRequest) => ({ ...invoked, ok: true, result: { tab: tab(String(invoked.tabId)) }, elapsedMs: 1 }))
+      bridge.commitProvisional.mockReset().mockResolvedValue(undefined)
+      bridge.abortProvisional.mockReset().mockResolvedValue(undefined)
+      const failure = Object.assign(new Error(`${phase} failed`), { code: 'execution-failed' })
+      if (phase === 'ensure') bridge.ensureProvisional.mockRejectedValue(failure)
+      if (phase === 'invoke') bridge.invoke.mockRejectedValue(failure)
+      if (phase === 'commit') bridge.commitProvisional.mockRejectedValue(failure)
+      if (phase === 'abort') {
+        bridge.invoke.mockImplementation(async (invoked: BrowserAutomationRequest) => ({ ...invoked, ok: false, error: { code: 'navigation-failed', message: 'failed', retryable: true }, elapsedMs: 1 }))
+        bridge.abortProvisional.mockRejectedValue(failure)
+      }
+      const request: Extract<BrowserAutomationRequest, { operation: 'open' }> = { requestId: `request-${phase}`, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null, hostId: 'host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 10_000).toISOString(), artifactDirectory: null, operation: 'open', input: { show: false, reuseExistingTab: false } }
+      const response = await execute!(request)
+      expect(response).toMatchObject({
+        requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+        tabId: null, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false,
+      })
+      expect(bridge.abortProvisional).toHaveBeenCalled()
+    }
+  })
+
+  it('adopts an authoritative conflict snapshot, rebases host fields, and reports against the new base', async () => {
+    vi.useFakeTimers()
+    installBridge()
+    const original = session()
+    const canonicalCreatedAt = new Date(123).toISOString()
+    const conflict = session(5, [{ ...tab(), createdAt: canonicalCreatedAt, title: 'backend-old-runtime' }])
+    const state = { ...createInitialManagerWsState('session-1'), browserSessions: { 'session-1': original } }
+    let registeredHostId: string | null = null
+    const reportBrowserHostState = vi.fn()
+      .mockImplementationOnce(async () => ({ hostId: registeredHostId, hostGeneration: 7, status: 'processed', sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'revision-conflict', snapshot: conflict }] }))
+      .mockImplementationOnce(async () => ({ hostId: registeredHostId, hostGeneration: 7, status: 'processed', sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'accepted', snapshot: session(6) }] }))
+    const client = {
+      registerBrowserAutomationHost: vi.fn((registration: BrowserHostRegistration) => { registeredHostId = registration.hostId; return vi.fn() }),
+      reportBrowserHostState,
+      setBrowserHostFocused: vi.fn(),
+      getState: () => ({ ...state, browserHost: { ...state.browserHost, connected: true, hostId: registeredHostId, hostGeneration: 7 } }),
+    } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: true })); await Promise.resolve() })
+    await act(async () => { await vi.runAllTimersAsync() })
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(2)
+    expect(reportBrowserHostState.mock.calls[0]?.[0]?.[0]).toMatchObject({ baseRevision: 1 })
+    expect(reportBrowserHostState.mock.calls[1]?.[0]?.[0]).toMatchObject({
+      baseRevision: 5,
+      tabs: [expect.objectContaining({ createdAt: canonicalCreatedAt, title: 'tab-1', physicalVisible: true })],
+    })
+  })
+
+  it('ceases unchanged conflicts and hard-caps advancing conflicts until new runtime state arrives', async () => {
+    vi.useFakeTimers()
+    const bridge = installBridge()
+    const state = { ...createInitialManagerWsState('session-1'), browserSessions: { 'session-1': session() } }
+    let registeredHostId: string | null = null
+    let mode: 'unchanged' | 'advancing' | 'accepted' = 'unchanged'
+    const reportBrowserHostState = vi.fn(async ([report]) => {
+      const revision = mode === 'unchanged' ? 2 : report.baseRevision + 1
+      return mode === 'accepted'
+        ? { hostId: registeredHostId, hostGeneration: 9, status: 'processed', sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'accepted', snapshot: session(revision) }] }
+        : { hostId: registeredHostId, hostGeneration: 9, status: 'processed', sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'revision-conflict', snapshot: session(revision) }] }
+    })
+    const client = {
+      registerBrowserAutomationHost: vi.fn((registration: BrowserHostRegistration) => { registeredHostId = registration.hostId; return vi.fn() }),
+      reportBrowserHostState, setBrowserHostFocused: vi.fn(),
+      getState: () => ({ ...state, browserHost: { ...state.browserHost, connected: true, hostId: registeredHostId, hostGeneration: 9 } }),
+    } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: true })); await Promise.resolve() })
+    await act(async () => { await vi.runAllTimersAsync() })
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(2)
+
+    mode = 'advancing'
+    act(() => bridge.listeners[0]?.({ ...tab(), title: 'new-runtime-1' }))
+    await act(async () => { await vi.runAllTimersAsync() })
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(5)
+    mode = 'accepted'
+    act(() => bridge.listeners[0]?.({ ...tab(), title: 'new-runtime-2' }))
+    await act(async () => { await vi.runAllTimersAsync() })
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(6)
+    expect(reportBrowserHostState.mock.calls[5]?.[0]?.[0]?.tabs[0]?.title).toBe('new-runtime-2')
   })
 
   it('publishes only the selected local projection and never renders a second host surface', async () => {

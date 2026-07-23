@@ -135,7 +135,8 @@ class FakeWebContents extends EventEmitter implements BrowserWebContentsLike {
   reload(): void { this.reloads.push('normal') }
   reloadIgnoringCache(): void { this.reloads.push('hard') }
   setZoomFactor(factor: number): void { this.zoom = factor }
-  focus(): void {}
+  focusCalls = 0
+  focus(): void { this.focusCalls += 1 }
   close(): void { this.destroyed = true; this.emit('destroyed') }
   setWindowOpenHandler(): void {}
 }
@@ -391,6 +392,7 @@ describe('BrowserAutomationManager', () => {
   it('verifies key delivery and fails when the focused guest observes no DOM events', async () => {
     const delivered = await setup()
     await expect(delivered.manager.execute(request('press', { key: 'Enter', modifiers: [] }))).resolves.toMatchObject({ ok: true })
+    expect(delivered.webview.focusCalls).toBe(1)
     expect(delivered.webview.debugger.commands.filter((command) => command === 'Input.dispatchKeyEvent')).toHaveLength(2)
 
     const missing = await setup()
