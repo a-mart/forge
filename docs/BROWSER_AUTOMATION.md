@@ -10,7 +10,7 @@ Managed Browser requires all of the following:
 - a selected local, normal Builder manager session; and
 - a live connection between the renderer and that session's Builder backend.
 
-Managed Browser tab hosting remains available in Forge Desktop on supported platforms. Seamless native pop-out is enabled only on macOS for this release: the committed same-view reparenting fixture passed there, while Windows and Linux remain explicitly capability-gated until the same native qualification passes on those platforms. There is no remount fallback.
+Managed Browser tab hosting and seamless native pop-out are available in Forge Desktop on macOS, Windows, and Linux. Pop-out reparents the same native view; there is no remount fallback.
 
 The Browser rail item is still visible in an ordinary web client, but the workspace reports **Browser host unavailable** and does not attempt local browser IPC. Normal Builder managers receive the typed browser tools independently of whether a host is connected, so a normal manager reached through Remote Projects may still have those tools in its runtime; calls fail with `unavailable-host` because the remote backend cannot use the viewing machine's Desktop host. Collaboration channels, workers, Cortex, CLI sessions, special-purpose sessions, and external threads do not receive these tools.
 
@@ -20,7 +20,7 @@ There is no Managed Browser environment variable or Settings → Skills toggle. 
 
 Select **Browser** in the desktop activity rail for the current local manager. It is a mutually exclusive main workspace alongside Chat, Files, Source Control, Artifacts/Dashboard, and Schedules; Terminal remains independent. An agent can also request that Forge reveal Browser when it opens a tab with `show: true`. Forge persists a monotonic reveal token with the session, projects an unacknowledged token onto each current host generation, and acknowledges it only after Electron confirms that the target tab is physically visible. A dropped live WebSocket update is therefore recovered by host hydration or subscription bootstrap, while an acknowledged token is not revealed again after reconnect. Status reports pending canonical intent separately from Electron-acknowledged physical tab visibility; recording requires the physical acknowledgement and non-empty viewport bounds.
 
-On macOS, **Open Managed Browser in a separate window** moves the same native tab view into one dedicated window. Dock, the pop-out title-bar close button, and Cmd+W move that same view back; document state, history, profile storage, CDP queues, automation, and an active recording continue without creating another browser host. While popped out, the main workspace shows Bring to front and Dock controls. The pop-out is a role-scoped projection and never owns a backend connection, host registration, raw automation IPC, recording authority, or filesystem access.
+**Open Managed Browser in a separate window** moves the same native tab view into one dedicated window on macOS, Windows, and Linux. Dock, the pop-out title-bar close button, and Cmd+W on macOS or Ctrl+W on Windows/Linux move that same view back; document state, history, profile storage, CDP queues, automation, and an active recording continue without creating another browser host. While popped out, the main workspace shows Bring to front and Dock controls. The pop-out is a role-scoped projection and never owns a backend connection, host registration, raw automation IPC, recording authority, or filesystem access.
 
 The workspace provides:
 

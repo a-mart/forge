@@ -11,7 +11,7 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 - **Renderer process** — loads the staged UI bundle from `ui/index.html` and keeps the single connected Desktop browser host/recording authority registered with the local Builder backend
 - **Guest preload** (`src/browser/guest-preload.ts`) — runs inside sandboxed managed tab views, reports only real pointer/key input so human control can interrupt an agent action, and renders the non-interactive agent cursor inside the native guest
 
-Managed Browser partitions are persistent and profile-scoped. The main process owns exactly one `WebContentsView` and automation runtime per live tab; views enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected partitions. On macOS, the same view can move into the single native Managed Browser pop-out and back without remounting, changing host generation, or interrupting CDP/recording. Windows and Linux expose pop-out as unavailable until native reparent qualification passes there. The main-process `BrowserAutomationManager` serializes typed operations and uses Chromium's debugger protocol. Semantic locator work uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
+Managed Browser partitions are persistent and profile-scoped. The main process owns exactly one `WebContentsView` and automation runtime per live tab; views enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected partitions. On macOS, Windows, and Linux, the same view can move into the single native Managed Browser pop-out and back without remounting, changing host generation, or interrupting CDP/recording. Cmd+W docks it on macOS and Ctrl+W docks it on Windows/Linux. The main-process `BrowserAutomationManager` serializes typed operations and uses Chromium's debugger protocol. Semantic locator work uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
 
 ### Packaged layout
 
@@ -89,7 +89,7 @@ pnpm --dir apps/electron test:browser-package
 pnpm exec vitest run scripts/__tests__/browser-third-party-notices.test.mjs
 ```
 
-The real fixtures require a graphical Electron environment supported by the current platform. The fixtures and package-content smoke have currently been exercised natively only on macOS. This includes the `WebContentsView` pop-out/reparent spike; native Windows and Linux reparenting, execution, recording/media, close-race, and packaged-layout validation remain outstanding release gates. Run all smoke commands on each target platform; passing on one operating system does not validate another.
+The real fixtures require a graphical Electron environment supported by the current platform. They execute rather than intentionally skip on macOS, Windows, and Linux. Validation for the cross-platform pop-out change was executed natively only on macOS; native Windows and Linux reparenting, recording/media, close-race, and packaged-layout qualification remain unexecuted. Run all smoke commands on each target platform; passing on one operating system does not qualify another.
 
 If you only want to run the Electron app without starting the UI dev server separately:
 

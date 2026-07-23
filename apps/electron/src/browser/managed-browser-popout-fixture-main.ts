@@ -20,16 +20,12 @@ const listen = async (server: http.Server): Promise<number> => {
 }
 
 void app.whenReady().then(async () => {
-  if (process.platform !== 'darwin') {
-    process.stdout.write('FORGE_BROWSER_POPOUT_PRODUCT_RESULT='+JSON.stringify({ passed: true, skipped: true, reason: 'macOS-only production capability' })+'\n')
-    app.exit(0); return
-  }
   const server = http.createServer((_request, response) => { response.writeHead(200, { 'content-type': 'text/html' }); response.end(html) })
   const port = await listen(server)
   const main = new BrowserWindow({ show: false, width: 900, height: 700 })
   const popout = new BrowserWindow({ show: false, width: 900, height: 700 })
   const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: main.webContents.id, sendToRenderer: () => undefined })
-  const host = new ManagedBrowserViewHost({ manager, sessions: new BrowserSessionRegistry(), guestPreloadPath: path.join(__dirname, 'guest-preload.js'), capabilityEnabled: true })
+  const host = new ManagedBrowserViewHost({ manager, sessions: new BrowserSessionRegistry(), guestPreloadPath: path.join(__dirname, 'guest-preload.js') })
   const now = new Date().toISOString()
   const url = `http://127.0.0.1:${port}/fixture`
   const tab: BrowserTabSnapshot = { tabId: 'product-tab', sessionAgentId: 'product-session', profileId: 'product-profile', url, title: 'Product', lifecycle: 'restoring', loading: false, live: false, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null, error: null, createdAt: now, updatedAt: now }
@@ -59,7 +55,7 @@ void app.whenReady().then(async () => {
     const unhosted = { ...session, hostingState: 'unhosted' as const, revision: 2 }
     await host.reconcile({ controllerInstanceId: 'product-controller', hostGeneration: 5, updateSequence: 2, workspaceEpoch: 4, sessions: [unhosted] })
     passed = host.tabCount === 0 && manager.runtimeCount === 0
-    report = { passed, identity, owners, oneRuntime: true, canonicalCloseWon: passed }
+    report = { passed, platform: process.platform, identity, owners, oneRuntime: true, canonicalCloseWon: passed }
   } catch (error) {
     report = { passed: false, error: error instanceof Error ? error.stack : String(error) }
   } finally {

@@ -2,7 +2,7 @@ import type {
   BrowserSessionSnapshot,
   BrowserTabSnapshot,
 } from '@forge/protocol'
-import { WebContentsView, type BrowserWindow, type Rectangle } from 'electron'
+import { WebContentsView, type BrowserWindow, type Event, type Input, type Rectangle } from 'electron'
 import type { BrowserAutomationManager, BrowserWebContentsLike } from './browser-automation-manager.js'
 import type { BrowserPresentationAcknowledgement, BrowserPresentationRequest } from './browser-bridge-contract.js'
 import { BrowserHostError } from './browser-errors.js'
@@ -71,11 +71,10 @@ export class ManagedBrowserViewHost {
     manager: BrowserAutomationManager
     sessions: BrowserSessionRegistry
     guestPreloadPath: string
-    capabilityEnabled: boolean
+    onGuestBeforeInput?: (event: Event, input: Input) => void
     onGuestCrash?: (tabId: string, reason: string) => void
   }) {}
 
-  get capabilityEnabled(): boolean { return this.options.capabilityEnabled }
   get currentOwner(): ManagedBrowserOwner { return this.owner }
   get tabCount(): number { return this.tabs.size }
   get currentAttachedTabId(): string | null { return this.attachedTabId }
@@ -173,9 +172,6 @@ export class ManagedBrowserViewHost {
   async setOwner(owner: ManagedBrowserOwner, workspaceEpoch: number): Promise<void> {
     return this.serialize(() => {
       this.assertEpoch(workspaceEpoch)
-      if (owner === 'popout' && !this.options.capabilityEnabled) {
-        throw new BrowserHostError('unavailable-host', 'Managed Browser pop-out is available on macOS only')
-      }
       this.owner = owner
       this.transferEpoch += 1
     })
@@ -184,9 +180,6 @@ export class ManagedBrowserViewHost {
   async transferOwner(owner: ManagedBrowserOwner, workspaceEpoch: number): Promise<boolean> {
     return this.serialize(() => {
       this.assertEpoch(workspaceEpoch)
-      if (owner === 'popout' && !this.options.capabilityEnabled) {
-        throw new BrowserHostError('unavailable-host', 'Managed Browser pop-out is available on macOS only')
-      }
       const target = this.targets.get(owner)
       if (!target || target.window.isDestroyed() || target.metrics.workspaceEpoch !== workspaceEpoch) return false
       this.owner = owner
@@ -310,6 +303,9 @@ export class ManagedBrowserViewHost {
       }
     }
     view.webContents.once('render-process-gone', recover)
+    if (this.options.onGuestBeforeInput) {
+      view.webContents.on('before-input-event', this.options.onGuestBeforeInput)
+    }
     if (tab.url !== 'about:blank') void view.webContents.loadURL(tab.url).catch(() => undefined)
     return { ...tab, live: true }
   }

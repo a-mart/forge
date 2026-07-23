@@ -18,6 +18,7 @@ import { installBrowserIpc } from './browser/browser-ipc.js'
 import { BrowserSessionRegistry } from './browser/browser-session.js'
 import { ManagedBrowserViewHost } from './browser/managed-browser-view-host.js'
 import { installBrowserWorkspaceIpc } from './browser/browser-workspace-ipc.js'
+import { isDockManagedBrowserShortcut, isManagedBrowserPopoutAvailable } from './browser/managed-browser-platform.js'
 import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
 import { LifecycleLog } from './lifecycle-log.js'
 
@@ -58,7 +59,7 @@ let mainWindow: BrowserWindow | null = null
 let browserPopoutWindow: BrowserWindow | null = null
 let browserViewHost: ManagedBrowserViewHost | null = null
 let browserWorkspaceIpc: ReturnType<typeof installBrowserWorkspaceIpc> | null = null
-let browserWorkspaceMode: ManagedBrowserWorkspaceMode = process.platform === 'darwin' ? 'docked' : 'unavailable'
+let browserWorkspaceMode: ManagedBrowserWorkspaceMode = isManagedBrowserPopoutAvailable() ? 'docked' : 'unavailable'
 let browserTransition: Promise<ManagedBrowserWorkspaceMode> = Promise.resolve(browserWorkspaceMode)
 let allowPopoutClose = false
 let mainWindowClosing = false
@@ -525,7 +526,7 @@ if (!hasSingleInstanceLock) {
     const windowRole = browserPopoutWindow && !browserPopoutWindow.isDestroyed() && event.sender.id === browserPopoutWindow.webContents.id
       ? 'managed-browser-popout'
       : 'main'
-    event.returnValue = { ...bootstrap, windowRole, managedBrowserPopoutAvailable: process.platform === 'darwin' }
+    event.returnValue = { ...bootstrap, windowRole, managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable() }
   })
 
   ipcMain.handle('bridge:showOpenDialog', async (_event, options: Electron.OpenDialogOptions) => {
@@ -643,7 +644,7 @@ if (!hasSingleInstanceLock) {
       manager: browserManager,
       sessions: browserSessions,
       guestPreloadPath: path.join(__dirname, 'guest-preload.js'),
-      capabilityEnabled: process.platform === 'darwin',
+      onGuestBeforeInput: handleManagedBrowserCloseShortcut,
       onGuestCrash: (tabId, reason) => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('forge:browser-guest-crashed', { tabId, reason })
       },
@@ -838,6 +839,9 @@ async function createBrowserPopoutWindow(): Promise<BrowserWindow> {
     minWidth: 720,
     minHeight: 560,
     show: false,
+    ...(process.platform !== 'darwin' && {
+      autoHideMenuBar: true,
+    }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -870,20 +874,13 @@ async function createBrowserPopoutWindow(): Promise<BrowserWindow> {
   }
   window.webContents.on('render-process-gone', recover)
   window.webContents.on('did-fail-load', recover)
-  window.webContents.on('before-input-event', (event, input) => {
-    if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') {
-      event.preventDefault()
-      const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
-      if (epoch !== undefined) void dockManagedBrowser(epoch).catch(() => undefined)
-    }
-  })
+  window.webContents.on('before-input-event', handleManagedBrowserCloseShortcut)
   await loadRenderer(window)
   return window
 }
 
 function popOutManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMode> {
   const run = async (): Promise<ManagedBrowserWorkspaceMode> => {
-    if (process.platform !== 'darwin') return 'unavailable'
     if (browserWorkspaceMode === 'popped-out' && browserPopoutWindow && !browserPopoutWindow.isDestroyed()) {
       bringManagedBrowserToFront()
       return browserWorkspaceMode
@@ -906,7 +903,7 @@ function popOutManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMod
   }
   const result = browserTransition.then(run, run)
   browserTransition = result.catch(() => {
-    browserWorkspaceMode = process.platform === 'darwin' ? 'docked' : 'unavailable'
+    browserWorkspaceMode = isManagedBrowserPopoutAvailable() ? 'docked' : 'unavailable'
     browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
     return browserWorkspaceMode
   })
@@ -915,7 +912,6 @@ function popOutManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMod
 
 function dockManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMode> {
   const run = async (): Promise<ManagedBrowserWorkspaceMode> => {
-    if (process.platform !== 'darwin') return 'unavailable'
     if (browserWorkspaceMode === 'docked' && (!browserPopoutWindow || browserPopoutWindow.isDestroyed())) {
       focusMainWindow()
       return browserWorkspaceMode
@@ -951,6 +947,17 @@ async function waitForBrowserTarget(owner: 'docked' | 'popout', epoch: number): 
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   throw new Error(`Managed Browser ${owner} viewport did not become ready`)
+}
+
+function handleManagedBrowserCloseShortcut(
+  event: { preventDefault(): void },
+  input: { type: string; key: string; alt?: boolean; control?: boolean; meta?: boolean; shift?: boolean },
+): void {
+  if (browserWorkspaceMode !== 'popped-out' && browserWorkspaceMode !== 'opening') return
+  if (!isDockManagedBrowserShortcut(input)) return
+  event.preventDefault()
+  const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
+  if (epoch !== undefined) void dockManagedBrowser(epoch).catch(() => undefined)
 }
 
 function bringManagedBrowserToFront(): void {
@@ -1157,9 +1164,9 @@ function createApplicationMenu(): void {
       { role: 'minimize', ...(isMac ? { accelerator: 'CmdOrCtrl+M' } : {}) },
       { role: 'zoom' },
       {
-        label: isMac ? 'Pop Out / Dock Managed Browser' : 'Managed Browser Pop-out (macOS only)',
-        accelerator: isMac ? 'CmdOrCtrl+Shift+B' : undefined,
-        enabled: isMac,
+        label: 'Pop Out / Dock Managed Browser',
+        accelerator: 'CmdOrCtrl+Shift+B',
+        enabled: isManagedBrowserPopoutAvailable(),
         click: () => {
           const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
           if (epoch === undefined) return
@@ -1198,7 +1205,7 @@ function buildBackendBootstrap(port: number): BackendBootstrap {
     version: app.getVersion(),
     platform: process.platform,
     windowRole: 'main',
-    managedBrowserPopoutAvailable: process.platform === 'darwin',
+    managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
   }
 }
 

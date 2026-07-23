@@ -27,12 +27,12 @@ async function listen(server: http.Server): Promise<number> {
 void app.whenReady().then(async () => {
   const server = http.createServer((_request, response) => { response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }); response.end(fixtureHtml) })
   const port = await listen(server)
-  ipcMain.on('forge:get-backend-bootstrap', (event) => { event.returnValue = { backendUrl: 'http://127.0.0.1:1', backendWsUrl: 'ws://127.0.0.1:1', version: 'fixture', platform: process.platform, windowRole: 'main', managedBrowserPopoutAvailable: process.platform === 'darwin' } })
+  ipcMain.on('forge:get-backend-bootstrap', (event) => { event.returnValue = { backendUrl: 'http://127.0.0.1:1', backendWsUrl: 'ws://127.0.0.1:1', version: 'fixture', platform: process.platform, windowRole: 'main', managedBrowserPopoutAvailable: true } })
   const window = new BrowserWindow({ show: false, width: 1_000, height: 800, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false } })
   const sessions = new BrowserSessionRegistry()
   const guestPreloadPath = path.join(__dirname, 'guest-preload.js')
   const manager = new BrowserAutomationManager({ approvedDataRoot: root, hostWebContentsId: window.webContents.id, sendToRenderer: (channel, payload) => window.webContents.send(channel, payload) })
-  const viewHost = new ManagedBrowserViewHost({ manager, sessions, guestPreloadPath, capabilityEnabled: process.platform === 'darwin' })
+  const viewHost = new ManagedBrowserViewHost({ manager, sessions, guestPreloadPath })
   const dispose = installBrowserIpc({ ipcMain, mainWindow: window, manager, viewHost })
   let settled = false
   const finish = async (code: number, report: unknown): Promise<void> => {
