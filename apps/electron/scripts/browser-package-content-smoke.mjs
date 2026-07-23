@@ -19,7 +19,7 @@ try {
     appId: 'com.forge.browser-host-smoke',
     productName: 'Forge Browser Host Smoke',
     directories: { app: electronDir, output, buildResources: path.join(electronDir, 'build') },
-    files: ['dist/**/*', '!dist/browser-fixture-smoke-main*', 'node_modules/playwright-core/**/*', 'package.json'],
+    files: ['dist/**/*', '!dist/browser-fixture-smoke-main*', '!dist/browser-popout-reparent-smoke-main*', 'node_modules/playwright-core/**/*', 'package.json'],
     extraResources: [{ from: path.join(electronDir, '.stage', 'browser-runtime'), to: 'browser-runtime', filter: ['**/*'] }],
     mac: { target: ['dir'], identity: null },
     linux: { target: ['dir'] },

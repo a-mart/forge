@@ -77,6 +77,9 @@ pnpm --filter @forge/protocol build
 # Electron host fixture: launches real Electron/webviews against a local HTTP fixture
 pnpm --dir apps/electron test:browser-fixture
 
+# Native WebContentsView spike: repeatedly reparents one main-owned guest between windows
+pnpm --dir apps/electron test:browser-popout-reparent
+
 # Builds a minimal unpacked app and verifies app.asar, Playwright runtime, and notices
 pnpm --dir apps/electron test:browser-package
 
@@ -84,7 +87,7 @@ pnpm --dir apps/electron test:browser-package
 pnpm exec vitest run scripts/__tests__/browser-third-party-notices.test.mjs
 ```
 
-The real fixture requires a graphical Electron environment supported by the current platform. The fixture and package-content smoke have currently been exercised natively only on macOS. Native Windows and Linux execution, recording/media, and packaged-layout validation remain outstanding release gates. Run both smoke commands on each target platform; passing on one operating system does not validate another.
+The real fixtures require a graphical Electron environment supported by the current platform. The fixtures and package-content smoke have currently been exercised natively only on macOS. This includes the `WebContentsView` pop-out/reparent spike; native Windows and Linux reparenting, execution, recording/media, close-race, and packaged-layout validation remain outstanding release gates. Run all smoke commands on each target platform; passing on one operating system does not validate another.
 
 If you only want to run the Electron app without starting the UI dev server separately:
 

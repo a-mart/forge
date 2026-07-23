@@ -28,4 +28,8 @@ await Promise.all([
     ...sharedOptions,
     entryPoints: [{ in: 'src/browser/fixture-smoke-main.ts', out: 'browser-fixture-smoke-main' }],
   }),
+  build({
+    ...sharedOptions,
+    entryPoints: [{ in: 'src/browser/popout-reparent-fixture-main.ts', out: 'browser-popout-reparent-smoke-main' }],
+  }),
 ])
