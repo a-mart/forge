@@ -38,10 +38,18 @@ void app.whenReady().then(async () => {
   const finish = async (code: number, report: unknown): Promise<void> => {
     if (settled) return
     settled = true
-    process.stdout.write(`FORGE_BROWSER_FIXTURE_RESULT=${JSON.stringify(report)}\n`)
     dispose()
     if (!window.isDestroyed()) window.destroy()
+    await manager.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
+    const result = report && typeof report === 'object' ? report as Record<string, unknown> : { report }
+    const close = result.close && typeof result.close === 'object' ? result.close as Record<string, unknown> : {}
+    const finalReport = {
+      ...result,
+      passed: result.passed === true && window.isDestroyed(),
+      close: { ...close, hostWindowDestroyed: window.isDestroyed(), repeatedManagerDestroy: true },
+    }
+    process.stdout.write(`FORGE_BROWSER_FIXTURE_RESULT=${JSON.stringify(finalReport)}\n`)
     app.exit(code)
   }
   window.webContents.on('console-message', (_event, detailsOrLevel: unknown, message?: string) => {
@@ -68,9 +76,10 @@ void app.whenReady().then(async () => {
     const interruptedPromise=call('waitFor',{text:'Never appears',timeoutMs:2000});setTimeout(()=>{webview.sendInputEvent({type:'keyDown',keyCode:'X'});webview.sendInputEvent({type:'keyUp',keyCode:'X'})},50);const interrupted=await interruptedPromise;
     await bridge.setTabPresentation({tabId:'fixture-tab',visible:false,renderedViewport:null,hostGeneration:1,sessionRevision:2,sequence:2});const typedFailure=await call('recordingStart',{});await bridge.setTabPresentation({tabId:'fixture-tab',visible:true,viewportSetting:{mode:'freeform',width:800,height:600},renderedViewport:{width:800,height:600,deviceScaleFactor:window.devicePixelRatio||1},hostGeneration:1,sessionRevision:3,sequence:3});
     const started=await call('recordingStart',{});responses.push(started);await new Promise(resolve=>setTimeout(resolve,1200));const recordingId=started.ok?started.result.recordingId:undefined;responses.push(await call('recordingStop',{recordingId},${JSON.stringify(path.join(root, 'artifacts', 'browser'))}));
-    const failures=responses.filter(response=>!response.ok).map(response=>({operation:response.operation,error:response.error}));const status=responses.find(response=>response.operation==='status');const evaluated=responses.find(response=>response.operation==='evaluate');const snapshot=responses.find(response=>response.operation==='snapshot');const stopped=responses.find(response=>response.operation==='recordingStop');
-    const passed=failures.length===0&&presentation.applied===true&&status?.result?.physicalTabVisible===true&&status?.result?.panelVisible===true&&evaluated?.result?.value?.clicks===1&&evaluated?.result?.value?.keys===1&&evaluated?.result?.value?.keyDowns>=2&&evaluated?.result?.value?.keyUps>=2&&evaluated?.result?.value?.typed==='fixture typeda'&&printable.ok&&snapshot?.result?.screenshot?.data?.length>0&&typedFailure?.error?.code==='recording-requires-visible-tab'&&typedFailure?.error?.retryable===true&&interrupted?.error?.code==='control-interrupted'&&stopped?.result?.sizeBytes>0;
-    console.log('FORGE_BROWSER_FIXTURE_PAGE='+JSON.stringify({passed,operations:responses.map(response=>response.operation),failures,visibility:{presentation,status:status?.result},typedFailure:typedFailure.ok?null:typedFailure.error,interruption:interrupted.ok?null:interrupted.error,keyboard:evaluated?.result?.value,recording:stopped?.ok?{mimeType:stopped.result.mimeType,sizeBytes:stopped.result.sizeBytes,path:stopped.result.path}:null}));
+    const webContentsId=webview.getWebContentsId();await bridge.unregisterWebview('fixture-tab',webContentsId);await bridge.unregisterWebview('fixture-tab',webContentsId);webview.remove();const postCloseStatus=await call('status',{});
+    const failures=responses.filter(response=>!response.ok).map(response=>({operation:response.operation,error:response.error}));const status=responses.find(response=>response.operation==='status');const evaluated=responses.find(response=>response.operation==='evaluate');const snapshot=responses.find(response=>response.operation==='snapshot');const stopped=responses.find(response=>response.operation==='recordingStop');const close={repeatedUnregister:true,webviewDetached:!webview.isConnected,tabUnavailable:postCloseStatus.ok&&postCloseStatus.operation==='status'&&postCloseStatus.result.selectedTab===null&&postCloseStatus.result.physicalTabVisible===false};
+    const passed=failures.length===0&&presentation.applied===true&&status?.result?.physicalTabVisible===true&&status?.result?.panelVisible===true&&evaluated?.result?.value?.clicks===1&&evaluated?.result?.value?.keys===1&&evaluated?.result?.value?.keyDowns>=2&&evaluated?.result?.value?.keyUps>=2&&evaluated?.result?.value?.typed==='fixture typeda'&&printable.ok&&snapshot?.result?.screenshot?.data?.length>0&&typedFailure?.error?.code==='recording-requires-visible-tab'&&typedFailure?.error?.retryable===true&&interrupted?.error?.code==='control-interrupted'&&stopped?.result?.sizeBytes>0&&close.repeatedUnregister&&close.webviewDetached&&close.tabUnavailable;
+    console.log('FORGE_BROWSER_FIXTURE_PAGE='+JSON.stringify({passed,operations:responses.map(response=>response.operation),failures,visibility:{presentation,status:status?.result},typedFailure:typedFailure.ok?null:typedFailure.error,interruption:interrupted.ok?null:interrupted.error,keyboard:evaluated?.result?.value,recording:stopped?.ok?{mimeType:stopped.result.mimeType,sizeBytes:stopped.result.sizeBytes,path:stopped.result.path}:null,close}));
   }catch(error){console.log('FORGE_BROWSER_FIXTURE_PAGE='+JSON.stringify({passed:false,error:error?.stack||String(error)}))}})();
   </script></body></html>`
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderer)}`)
