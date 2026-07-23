@@ -19,6 +19,7 @@ import { BrowserSessionRegistry } from './browser/browser-session.js'
 import { ManagedBrowserViewHost } from './browser/managed-browser-view-host.js'
 import { installBrowserWorkspaceIpc } from './browser/browser-workspace-ipc.js'
 import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
+import { LifecycleLog } from './lifecycle-log.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -31,6 +32,7 @@ const BACKEND_SHUTDOWN_TIMEOUT_MS = 5_000
 const BACKEND_RESTART_DELAY_MS = 1_000
 const BACKEND_LOG_TAIL_LINES = 40
 const BACKEND_LOG_FILENAME = 'backend.log'
+const LIFECYCLE_LOG_FILENAME = 'lifecycle.log'
 const PACKAGED_BACKEND_DIRNAME = 'backend'
 const PACKAGED_RENDERER_DIRNAME = 'ui'
 const PACKAGED_RESOURCES_DIRNAME = 'forge-resources'
@@ -66,6 +68,10 @@ let appProtocolRegistered = false
 let disposeBrowserHost: (() => void) | null = null
 const browserSessions = new BrowserSessionRegistry()
 let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
+const lifecycleLog = new LifecycleLog({
+  getLogPath: () => path.join(app.getPath('userData'), LIFECYCLE_LOG_FILENAME),
+})
+const handledTerminationSignals = new Set<NodeJS.Signals>()
 
 app.commandLine.appendSwitch('disable-background-timer-throttling')
 
@@ -118,6 +124,7 @@ class BackendSupervisor {
 
     const isRestart = this.currentPort != null
     this.stopping = false
+    lifecycleLog.record('backend_launch_requested', { isRestart })
     this.startPromise = this.launch(isRestart).finally(() => {
       this.startPromise = null
     })
@@ -137,6 +144,8 @@ class BackendSupervisor {
       return
     }
 
+    lifecycleLog.record('backend_shutdown_requested', { pid: child.pid ?? null })
+
     this.child = null
 
     await new Promise<void>((resolve) => {
@@ -152,6 +161,7 @@ class BackendSupervisor {
       }
 
       const timeout = setTimeout(() => {
+        lifecycleLog.record('backend_shutdown_timeout', { pid: child.pid ?? null })
         void this.forceTerminate(child).finally(() => {
           finish()
         })
@@ -159,6 +169,7 @@ class BackendSupervisor {
 
       child.once('exit', () => {
         clearTimeout(timeout)
+        lifecycleLog.record('backend_shutdown_completed', { pid: child.pid ?? null })
         finish()
       })
 
@@ -166,6 +177,7 @@ class BackendSupervisor {
         child.send({ type: 'shutdown' })
       } catch {
         clearTimeout(timeout)
+        lifecycleLog.record('backend_shutdown_ipc_failed', { pid: child.pid ?? null })
         void this.forceTerminate(child).finally(() => {
           finish()
         })
@@ -174,6 +186,7 @@ class BackendSupervisor {
   }
 
   private async forceTerminate(child: ChildProcess): Promise<void> {
+    lifecycleLog.record('backend_force_terminate_requested', { pid: child.pid ?? null })
     if (process.platform === 'win32') {
       const pid = child.pid
       if (typeof pid !== 'number') {
@@ -228,6 +241,7 @@ class BackendSupervisor {
       const child = fork(backendEntry, [], forkOptions)
 
       this.child = child
+      lifecycleLog.record('backend_spawned', { isRestart, pid: child.pid ?? null })
       this.attachOutputCapture(child)
 
       let ready = false
@@ -265,6 +279,7 @@ class BackendSupervisor {
 
         ready = true
         this.currentPort = message.port
+        lifecycleLog.record('backend_ready', { isRestart, pid: child.pid ?? null, port: message.port })
         this.onReady(message.port, isRestart)
         finalizeResolve(message.port)
       }
@@ -277,12 +292,22 @@ class BackendSupervisor {
       child.on('error', handleError)
       child.once('exit', (code, signal) => {
         this.flushOutputRemainders()
+        lifecycleLog.record('backend_exited', {
+          code: code ?? null,
+          ready,
+          signal: signal ?? null,
+          stopping: this.stopping,
+        })
 
         if (this.child === child) {
           this.child = null
         }
 
         if (!ready) {
+          lifecycleLog.record('backend_start_failed', {
+            code: code ?? null,
+            signal: signal ?? null,
+          })
           finalizeReject(
             new Error(
               `Backend exited before signaling readiness (code=${code ?? 'null'}, signal=${signal ?? 'null'}).\n\n${this.describeRecentOutput()}`,
@@ -296,6 +321,11 @@ class BackendSupervisor {
         }
 
         console.warn(`Backend child exited unexpectedly (code=${code ?? 'null'}, signal=${signal ?? 'null'}). Restarting...`)
+        lifecycleLog.record('backend_restart_scheduled', {
+          delayMs: BACKEND_RESTART_DELAY_MS,
+          code: code ?? null,
+          signal: signal ?? null,
+        })
         this.restartTimer = setTimeout(() => {
           this.restartTimer = null
           void this.start().catch((error) => {
@@ -427,6 +457,7 @@ async function prepareQuitForUpdate(): Promise<void> {
     appIsQuitting = true
     allowPopoutClose = true
     if (browserPopoutWindow && !browserPopoutWindow.isDestroyed()) browserPopoutWindow.close()
+    lifecycleLog.record('electron_quit_prepared_for_update')
     sleepBlockerService?.dispose()
     browserWorkspaceIpc?.dispose()
     browserWorkspaceIpc = null
@@ -435,6 +466,26 @@ async function prepareQuitForUpdate(): Promise<void> {
     await backendSupervisor.stop()
   }
 }
+
+function handleTerminationSignal(signal: NodeJS.Signals): void {
+  if (handledTerminationSignals.has(signal)) {
+    return
+  }
+
+  handledTerminationSignals.add(signal)
+  lifecycleLog.record('electron_signal_received', { signal })
+  app.quit()
+}
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(signal, () => {
+    handleTerminationSignal(signal)
+  })
+}
+
+process.on('exit', (code) => {
+  lifecycleLog.record('electron_process_exit', { code })
+})
 
 function getUnavailableSleepBlockerStatus(): SleepBlockerStatus {
   return {
@@ -545,6 +596,10 @@ if (!hasSingleInstanceLock) {
   })
 
   app.whenReady().then(async () => {
+    lifecycleLog.record('electron_started', {
+      isPackaged: app.isPackaged,
+      version: app.getVersion(),
+    })
     nativeTheme.themeSource = 'dark'
     fixPath()
     createApplicationMenu()
@@ -556,6 +611,7 @@ if (!hasSingleInstanceLock) {
     try {
       await backendSupervisor.start()
     } catch (error) {
+      lifecycleLog.record('electron_backend_start_failed')
       const detail = error instanceof Error ? error.message : String(error)
       const logPath = backendSupervisor.logPath
       const logHint = logPath ? `\n\nBackend log: ${logPath}` : ''
@@ -623,15 +679,18 @@ if (!hasSingleInstanceLock) {
       console.warn('Failed to show What\'s New dialog', error)
     })
   }).catch((error) => {
+    lifecycleLog.record('electron_initialization_failed')
     console.error('Electron app failed to initialize', error)
     app.exit(1)
   })
 
   app.on('window-all-closed', () => {
+    lifecycleLog.record('electron_window_all_closed')
     app.quit()
   })
 
   app.on('before-quit', (event) => {
+    lifecycleLog.record('electron_before_quit', { alreadyQuitting: appIsQuitting })
     if (appIsQuitting) {
       return
     }
@@ -647,8 +706,13 @@ if (!hasSingleInstanceLock) {
     disposeBrowserHost = null
 
     void backendSupervisor.stop().finally(() => {
+      lifecycleLog.record('electron_exit_requested', { code: 0 })
       app.exit(0)
     })
+  })
+
+  app.on('will-quit', () => {
+    lifecycleLog.record('electron_will_quit')
   })
 }
 
