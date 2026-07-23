@@ -1,6 +1,6 @@
 # Managed Browser
 
-Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron webviews for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
+Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron `WebContentsView` tabs for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
 
 ## Availability
 
@@ -10,7 +10,7 @@ Managed Browser requires all of the following:
 - a selected local, normal Builder manager session; and
 - a live connection between the renderer and that session's Builder backend.
 
-Native Managed Browser fixture, recording, and package-content validation has currently been exercised only on macOS. Windows and Linux validation remains outstanding; passing on one operating system does not validate another.
+Managed Browser tab hosting remains available in Forge Desktop on supported platforms. Seamless native pop-out is enabled only on macOS for this release: the committed same-view reparenting fixture passed there, while Windows and Linux remain explicitly capability-gated until the same native qualification passes on those platforms. There is no remount fallback.
 
 The Browser rail item is still visible in an ordinary web client, but the workspace reports **Browser host unavailable** and does not attempt local browser IPC. Normal Builder managers receive the typed browser tools independently of whether a host is connected, so a normal manager reached through Remote Projects may still have those tools in its runtime; calls fail with `unavailable-host` because the remote backend cannot use the viewing machine's Desktop host. Collaboration channels, workers, Cortex, CLI sessions, special-purpose sessions, and external threads do not receive these tools.
 
@@ -19,6 +19,8 @@ There is no Managed Browser environment variable or Settings → Skills toggle. 
 ## Browser workspace
 
 Select **Browser** in the desktop activity rail for the current local manager. It is a mutually exclusive main workspace alongside Chat, Files, Source Control, Artifacts/Dashboard, and Schedules; Terminal remains independent. An agent can also request that Forge reveal Browser when it opens a tab with `show: true`. Forge persists a monotonic reveal token with the session, projects an unacknowledged token onto each current host generation, and acknowledges it only after Electron confirms that the target tab is physically visible. A dropped live WebSocket update is therefore recovered by host hydration or subscription bootstrap, while an acknowledged token is not revealed again after reconnect. Status reports pending canonical intent separately from Electron-acknowledged physical tab visibility; recording requires the physical acknowledgement and non-empty viewport bounds.
+
+On macOS, **Open Managed Browser in a separate window** moves the same native tab view into one dedicated window. Dock, the pop-out title-bar close button, and Cmd+W move that same view back; document state, history, profile storage, CDP queues, automation, and an active recording continue without creating another browser host. While popped out, the main workspace shows Bring to front and Dock controls. The pop-out is a role-scoped projection and never owns a backend connection, host registration, raw automation IPC, recording authority, or filesystem access.
 
 The workspace provides:
 
@@ -62,9 +64,9 @@ Toolbar navigation and other human controls remain available when the Desktop ho
 
 ## Security and privacy
 
-Managed tabs use a persistent Electron partition derived from the Forge profile ID. Webviews are sandboxed with context isolation and web security enabled, Node integration disabled, and insecure content disabled. Top-level navigation is restricted to HTTP, HTTPS, and the initial `about:blank`; new-window requests are denied and safe HTTP(S) targets are loaded in the managed tab instead.
+Managed tabs use a persistent Electron partition derived from the Forge profile ID. Managed tab views are sandboxed with context isolation and web security enabled, Node integration disabled, and insecure content disabled. Top-level navigation is restricted to HTTP, HTTPS, and the initial `about:blank`; new-window requests are denied and safe HTTP(S) targets are loaded in the managed tab instead.
 
-Only Forge's trusted renderer may call the main-process browser IPC bridge, and a registered guest must be a Forge-hosted webview in the expected profile partition. The guest preload exposes only human pointer/key signals. Electron grants only the allowlisted clipboard-read, sanitized clipboard-write, notifications, and geolocation permissions to managed partitions; other permission requests are denied.
+Only Forge's trusted main renderer may call privileged browser IPC. Main process ownership creates every guest in the expected profile partition; the pop-out renderer receives only a bounded workspace projection and correlated command relay. The guest preload exposes only human pointer/key signals. Electron grants only the allowlisted clipboard-read, sanitized clipboard-write, notifications, and geolocation permissions to managed partitions; other permission requests are denied.
 
 These controls do not make untrusted websites safe. A manager can inspect page text, interact with authenticated content, type data, capture screenshots, and run arbitrary JavaScript in the page. Treat page content as untrusted and potentially prompt-injecting, review consequential actions, avoid entering secrets unnecessarily, and use a dedicated Forge profile when browser identity should be isolated. Protect the Forge data directory and Desktop user account accordingly.
 
@@ -72,7 +74,7 @@ Persisted conversation/audit projections retain operation status and bounded saf
 
 ## Persistence, artifacts, and lifecycle
 
-Forge stores per-session tab metadata, selection, monotonic reveal/acknowledgement state, panel state, and bounded recent-action summaries in `profiles/<profileId>/sessions/<sessionId>/browser.json`. Live webviews and any still-pending reveal are reconstructed from that metadata when the Desktop host reconnects. Host registration is acknowledged before hydration begins, and hydration uses bounded request-correlated chunks. If either acknowledgement is delayed by WebSocket backpressure, Desktop retries that phase on the existing connection rather than waiting for a transport reconnect.
+Forge stores per-session tab metadata, selection, monotonic reveal/acknowledgement state, panel state, and bounded recent-action summaries in `profiles/<profileId>/sessions/<sessionId>/browser.json`. Live main-owned tab views and any still-pending reveal are reconstructed from that metadata when the Desktop host reconnects. Host registration is acknowledged before hydration begins, and hydration uses bounded request-correlated chunks. If either acknowledgement is delayed by WebSocket backpressure, Desktop retries that phase on the existing connection rather than waiting for a transport reconnect.
 
 Cookies, local storage, IndexedDB, service workers, cache, and other site state belong to the persistent Electron partition for the profile. Sessions in the same Forge profile therefore share browser identity, and that partition can outlive deletion of an individual session or its project. There is currently no shipped **Clear managed browser data** control. Removing profile partition data requires manual operating-system/application-data cleanup outside Forge; Forge does not provide a verified in-app cleanup workflow.
 
@@ -81,7 +83,7 @@ Screenshots are transient: the workspace keeps its preview in renderer memory, a
 Lifecycle behavior is intentional:
 
 - stopping a session cancels in-flight browser requests but preserves its browser state;
-- archiving cancels requests and unhosts its webviews while preserving metadata and completed recordings; restoring remounts its tabs;
+- archiving cancels requests and unhosts its native tab views while preserving metadata and completed recordings; restoring cold-reconstructs its tabs;
 - clearing the conversation does not clear browser metadata, recordings, or profile browser storage;
 - a fork starts with independent browser state and does not copy the source session's tabs or recordings; and
 - deleting a session removes its `browser.json` and `artifacts/browser/`, but does not clear the profile's persistent Electron partition.
@@ -96,7 +98,7 @@ Collaboration channel sessions do not receive Managed Browser tools or a local-h
 
 | Capability | What it controls | Identity and UI | Typical use |
 |---|---|---|---|
-| **Managed Browser** | Forge-owned Electron webviews through typed manager tools | Profile-scoped persistent Electron partition; shared human/agent Browser workspace; Forge Desktop required | Visually inspect and automate a local Builder session in a browser Forge owns. |
+| **Managed Browser** | Forge-owned Electron `WebContentsView` tabs through typed manager tools | Profile-scoped persistent Electron partition; shared human/agent Browser workspace; Forge Desktop required | Visually inspect and automate a local Builder session in a browser Forge owns. |
 | **`agent-browser` Skill** | The separately installed Vercel Labs `agent-browser` CLI and its browser sessions | External CLI lifecycle; no Forge Browser rail or managed-tab persistence contract | Command-line browsing/extraction where that Skill and its prerequisites are available. |
 | **Chrome CDP Skill** | Tabs exposed by a separately configured everyday Chrome instance | Can reach existing Chrome profiles and authenticated tabs within its configured scope/allowlist; no Forge-owned webview | Explicitly inspect or debug pages already open in Chrome. |
 

@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserSessionSnapshot, BrowserTabSnapshot } from '@forge/protocol'
 import type { BrowserAutomationHostHandle } from './BrowserAutomationHost'
+import type { BrowserWorkspaceCommandPort } from './BrowserPanel'
 import { getArticlesForContext, initializeHelpContent } from '@/components/help/help-registry'
 
 vi.mock('@/components/help/HelpTrigger', () => ({
@@ -34,7 +35,7 @@ const disconnectedHost = { connected: false, hostId: null, hostGeneration: null,
 describe('BrowserPanel', () => {
   it('shows an accessible web-unavailable state without invoking a bridge', () => {
     act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { client: null, sessionAgentId: 'session-1', profileId: 'profile-1', snapshot, host: disconnectedHost, hostRef: createRef<BrowserAutomationHostHandle>() })) })
-    expect(container.querySelector('[aria-label="Browser workspace"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Managed Browser workspace"]')).not.toBeNull()
     expect(container.textContent).toContain('available in the Forge desktop app')
     expect(container.querySelector('button[aria-label="Back"]')).not.toBeNull()
     expect(container.querySelector('input[aria-label="Viewport width"]')).not.toBeNull()
@@ -69,31 +70,32 @@ describe('BrowserPanel', () => {
   })
 
   it('wires tab, history, reload, zoom, viewport, screenshot, and recording controls', async () => {
-    window.electronBridge = { backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin', browserAutomation: {} as never }
-    const client = { activateBrowserTab: vi.fn(), closeBrowserTab: vi.fn(), openBrowserTab: vi.fn(), resizeBrowserTab: vi.fn(), startBrowserRecording: vi.fn(), stopBrowserRecording: vi.fn() }
-    const hostHandle: BrowserAutomationHostHandle = { navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), captureScreenshot: vi.fn(async () => 'data:image/png;base64,a') }
-    const hostRef = { current: hostHandle }
+    window.electronBridge = { windowRole: 'main', backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin', browserAutomation: {} as never }
+    const commandPort: BrowserWorkspaceCommandPort = {
+      open: vi.fn(), activate: vi.fn(), close: vi.fn(), resize: vi.fn(), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), zoom: vi.fn(),
+      capture: vi.fn(async () => 'data:image/png;base64,a'), startRecording: vi.fn(), stopRecording: vi.fn(), popOut: vi.fn(), dock: vi.fn(),
+    }
     const connectedHost = { ...disconnectedHost, connected: true, hostId: 'host-1', hostGeneration: 1, capabilities: { supportedOperations: ['status'], electronVersion: '37', chromiumVersion: '138', playwrightVersion: '1.60.0', maxResponseBytes: 1024, supportsSandboxedWebviews: true, supportsCapturePage: true, supportsRecording: true }, connectedAt: now }
-    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { client: client as never, sessionAgentId: 'session-1', profileId: 'profile-1', snapshot, host: connectedHost as never, hostRef })) })
+    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot, host: connectedHost as never, commandPort, popoutAvailable: true })) })
 
     click('Back'); click('Hard reload'); click('Zoom in'); click('Reset zoom'); click('Screenshot')
     await act(async () => { await Promise.resolve() })
-    expect(hostHandle.history).toHaveBeenCalledWith('tab-1', 'back')
-    expect(hostHandle.reload).toHaveBeenCalledWith('tab-1', true)
-    expect(hostHandle.setZoom).toHaveBeenCalledWith('tab-1', 1)
+    expect(commandPort.history).toHaveBeenCalledWith('tab-1', 'back')
+    expect(commandPort.reload).toHaveBeenCalledWith('tab-1', true)
+    expect(commandPort.zoom).toHaveBeenCalledWith('tab-1', 1)
     expect(container.querySelector('[aria-label="Browser screenshot"]')).not.toBeNull()
     click('Resize'); click('Start recording')
     await act(async () => { await Promise.resolve() })
-    expect(client.resizeBrowserTab).toHaveBeenCalled()
-    expect(client.startBrowserRecording).toHaveBeenCalledWith('session-1', 'tab-1')
+    expect(commandPort.resize).toHaveBeenCalled()
+    expect(commandPort.startRecording).toHaveBeenCalledWith('tab-1')
     expect(window.electronBridge?.browserAutomation?.invoke).toBeUndefined()
 
     const recordingTab = { ...tab, recording: { recordingId: 'recording-1', startedAt: now, mimeType: 'video/webm' } }
     const recordingSnapshot = { ...snapshot, tabs: [recordingTab] }
-    act(() => root!.render(createElement(BrowserPanel, { client: client as never, sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: recordingSnapshot, host: connectedHost as never, hostRef })))
+    act(() => root!.render(createElement(BrowserPanel, { sessionAgentId: 'session-1', profileId: 'profile-1', snapshot: recordingSnapshot, host: connectedHost as never, commandPort, popoutAvailable: true })))
     click('Stop recording')
     await act(async () => { await Promise.resolve() })
-    expect(client.stopBrowserRecording).toHaveBeenCalledWith('session-1', 'tab-1', 'recording-1')
+    expect(commandPort.stopRecording).toHaveBeenCalledWith('tab-1', 'recording-1')
   })
 })
 

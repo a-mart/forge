@@ -6,6 +6,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router'
 import { BuilderSurface } from '@/components/index-page/BuilderSurface'
+import { BrowserPopoutSurface } from '@/components/browser/BrowserPopoutSurface'
 import { CollabSurface } from '@/components/index-page/CollabSurface'
 import { CollaborationInlineLoginDialog } from '@/components/index-page/CollaborationInlineLoginDialog'
 import {
@@ -52,6 +53,12 @@ type RouteSearch = {
 }
 
 export function IndexPage() {
+  return typeof window !== 'undefined' && window.electronBridge?.windowRole === 'managed-browser-popout'
+    ? <BrowserPopoutSurface />
+    : <MainIndexPage />
+}
+
+function MainIndexPage() {
   const wsUrl = resolveBackendWsUrl()
   const collabWsUrl = resolveCollaborationWsUrl()
 

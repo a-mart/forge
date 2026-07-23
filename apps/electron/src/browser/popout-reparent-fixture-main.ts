@@ -209,7 +209,7 @@ void app.whenReady().then(async () => {
     const presentation = manager.setTabPresentation({
       tabId: tab.tabId, visible: true, viewportSetting: { mode: 'fill' },
       renderedViewport: { width: bounds.width, height: bounds.height, deviceScaleFactor: 1 },
-      hostGeneration, sessionRevision: 1, sequence: 1,
+      hostGeneration, sessionRevision: 1, sequence: 1, workspaceEpoch: 1,
     })
     await waitUntil('manager debugger attachment', () => guest.debugger.isAttached())
     const baseline = await cdpPageState()

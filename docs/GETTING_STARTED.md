@@ -151,13 +151,13 @@ When Source Control has a linked worktree selected, that worktree scopes Files b
 
 ### Managed Browser
 
-Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron webviews for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
+Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron tab views for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
 
 Select **Browser** in the desktop rail, then open a tab or enter an HTTP(S) address. The toolbar provides tab switching, back/forward, reload/hard reload, zoom, transient screenshot preview, visible-tab recording, and fill/freeform/device viewport sizes. Normal Builder managers can operate the same tabs with typed status, navigation, snapshot, interaction, evaluation, wait, and recording tools. If you click or type in the page during an agent action, Forge gives you control and interrupts that action instead of racing your input.
 
 A connected Forge Desktop host is required. In an ordinary web browser, the Browser workspace reports **Browser host unavailable** and does not attempt local browser IPC. A normal Builder manager reached through Remote Projects may still receive the tools, but calls return `unavailable-host` because the viewing machine's Desktop bridge is not forwarded to the remote backend. Collaboration channels do not receive Managed Browser access. There is no Managed Browser environment variable or Settings → Skills toggle.
 
-Tab metadata persists with the session; stopped recordings become session artifacts under `artifacts/browser/`, while screenshots remain transient. Cookies and site storage use a persistent profile-scoped Electron partition shared by sessions in that Forge profile, and can outlive session deletion. See [Managed Browser](BROWSER_AUTOMATION.md) for security, lifecycle, and comparison details.
+On macOS, the Browser toolbar can pop the same live native tab into a dedicated window and dock it again without remounting or changing browser-host authority. Windows and Linux keep pop-out unavailable until native reparenting is qualified there. Tab metadata persists with the session; stopped recordings become session artifacts under `artifacts/browser/`, while screenshots remain transient. Cookies and site storage use a persistent profile-scoped Electron partition shared by sessions in that Forge profile, and can outlive session deletion. See [Managed Browser](BROWSER_AUTOMATION.md) for security, lifecycle, and comparison details.
 
 ### Source Control Workspace
 

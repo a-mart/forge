@@ -8,6 +8,7 @@ files:
   - dist/**/*
   - '!dist/browser-fixture-smoke-main*'
   - '!dist/browser-popout-reparent-smoke-main*'
+  - '!dist/managed-browser-popout-fixture-main*'
   - node_modules/playwright-core/**/*
   - package.json
 extraResources:

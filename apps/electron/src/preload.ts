@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { SleepBlockerSettingsPatch, SleepBlockerStatus } from './sleep-blocker.js'
-import { createTrustedBrowserBridge } from './browser/trusted-browser-bridge.js'
+import { createTrustedBrowserBridge, createTrustedBrowserWorkspaceBridge } from './browser/trusted-browser-bridge.js'
+import type { ElectronWindowRole } from './browser/browser-bridge-contract.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -10,91 +11,87 @@ type BackendBootstrap = {
   backendWsUrl: string
   version: string
   platform: string
+  windowRole: ElectronWindowRole
+  managedBrowserPopoutAvailable: boolean
 }
 
 const bootstrap = readBootstrap()
-const browserAutomation = createTrustedBrowserBridge(ipcRenderer)
+const browserWorkspace = createTrustedBrowserWorkspaceBridge(
+  ipcRenderer,
+  bootstrap.windowRole,
+  bootstrap.managedBrowserPopoutAvailable,
+)
 
-contextBridge.exposeInMainWorld('electronBridge', {
-  backendUrl: bootstrap.backendUrl,
-  backendWsUrl: bootstrap.backendWsUrl,
-  getVersion: (): string => bootstrap.version,
-  platform: bootstrap.platform,
-  browserAutomation,
-  showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
-    ipcRenderer.invoke('bridge:showOpenDialog', options),
-  onTerminalShortcut: (listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): (() => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: { action: 'toggle' | 'new' | 'next' | 'prev' }) => {
-      listener(payload)
+const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
+  ? {
+      windowRole: bootstrap.windowRole,
+      platform: bootstrap.platform,
+      browserWorkspace,
     }
-    ipcRenderer.on(TERMINAL_SHORTCUT_CHANNEL, wrapped)
-    return () => {
-      ipcRenderer.removeListener(TERMINAL_SHORTCUT_CHANNEL, wrapped)
+  : {
+      windowRole: bootstrap.windowRole,
+      backendUrl: bootstrap.backendUrl,
+      backendWsUrl: bootstrap.backendWsUrl,
+      getVersion: (): string => bootstrap.version,
+      platform: bootstrap.platform,
+      browserAutomation: createTrustedBrowserBridge(ipcRenderer),
+      browserWorkspace,
+      showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
+        ipcRenderer.invoke('bridge:showOpenDialog', options),
+      onTerminalShortcut: (listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): (() => void) => {
+        const wrapped = (_event: Electron.IpcRendererEvent, payload: { action: 'toggle' | 'new' | 'next' | 'prev' }) => listener(payload)
+        ipcRenderer.on(TERMINAL_SHORTCUT_CHANNEL, wrapped)
+        return () => ipcRenderer.removeListener(TERMINAL_SHORTCUT_CHANNEL, wrapped)
+      },
+      updateTitleBarOverlay: (colors: { color: string; symbolColor: string }): void => ipcRenderer.send('update-title-bar-overlay', colors),
+      checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
+      downloadUpdate: (): Promise<void> => ipcRenderer.invoke('download-update'),
+      installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
+      getBetaChannel: (): Promise<boolean> => ipcRenderer.invoke('get-beta-channel'),
+      setBetaChannel: (enabled: boolean): Promise<void> => ipcRenderer.invoke('set-beta-channel', enabled),
+      getSleepBlockerSettings: (): Promise<SleepBlockerStatus> => ipcRenderer.invoke('get-sleep-blocker-settings'),
+      setSleepBlockerSettings: (patch: SleepBlockerSettingsPatch): Promise<SleepBlockerStatus | null> => ipcRenderer.invoke('set-sleep-blocker-settings', patch),
+      revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
+      installCli: (): Promise<{
+        success: boolean
+        installedPath: string
+        binDir: string
+        pathIncluded: boolean
+        pathInstructions: string | null
+        error?: string
+      }> => ipcRenderer.invoke('install-cli'),
+      verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
+      onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => callback(status)
+        ipcRenderer.on('update-status', handler)
+        return () => ipcRenderer.removeListener('update-status', handler)
+      },
+      onSleepBlockerStatus: (callback: (status: SleepBlockerStatus) => void): (() => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, status: SleepBlockerStatus): void => callback(status)
+        ipcRenderer.on('sleep-blocker-status', handler)
+        return () => ipcRenderer.removeListener('sleep-blocker-status', handler)
+      },
     }
-  },
-  updateTitleBarOverlay: (colors: { color: string; symbolColor: string }): void => {
-    ipcRenderer.send('update-title-bar-overlay', colors)
-  },
-  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
-  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('download-update'),
-  installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
-  getBetaChannel: (): Promise<boolean> => ipcRenderer.invoke('get-beta-channel'),
-  setBetaChannel: (enabled: boolean): Promise<void> => ipcRenderer.invoke('set-beta-channel', enabled),
-  getSleepBlockerSettings: (): Promise<SleepBlockerStatus> => ipcRenderer.invoke('get-sleep-blocker-settings'),
-  setSleepBlockerSettings: (patch: SleepBlockerSettingsPatch): Promise<SleepBlockerStatus | null> =>
-    ipcRenderer.invoke('set-sleep-blocker-settings', patch),
-  revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
-  installCli: (): Promise<{
-    success: boolean
-    installedPath: string
-    binDir: string
-    pathIncluded: boolean
-    pathInstructions: string | null
-    error?: string
-  }> => ipcRenderer.invoke('install-cli'),
-  verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
-  onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
-      callback(status)
-    }
-    ipcRenderer.on('update-status', handler)
-    return () => {
-      ipcRenderer.removeListener('update-status', handler)
-    }
-  },
-  onSleepBlockerStatus: (callback: (status: SleepBlockerStatus) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, status: SleepBlockerStatus) => {
-      callback(status)
-    }
-    ipcRenderer.on('sleep-blocker-status', handler)
-    return () => {
-      ipcRenderer.removeListener('sleep-blocker-status', handler)
-    }
-  },
-})
+
+contextBridge.exposeInMainWorld('electronBridge', roleScopedBridge)
 
 function readBootstrap(): BackendBootstrap {
-  const bootstrap = ipcRenderer.sendSync(BACKEND_READY_CHANNEL) as BackendBootstrap | null
-
-  if (!bootstrap) {
-    throw new Error('Electron bridge bootstrap was not available from the main process')
+  const value = ipcRenderer.sendSync(BACKEND_READY_CHANNEL) as Partial<BackendBootstrap> | null
+  if (!value) throw new Error('Electron bridge bootstrap was not available from the main process')
+  if (value.windowRole !== 'main' && value.windowRole !== 'managed-browser-popout') throw new Error('Electron bridge bootstrap did not include a valid windowRole')
+  if (typeof value.platform !== 'string' || value.platform.length === 0) throw new Error('Electron bridge bootstrap did not include a valid platform')
+  if (typeof value.managedBrowserPopoutAvailable !== 'boolean') throw new Error('Electron bridge bootstrap did not include Managed Browser capability')
+  if (value.windowRole === 'main') {
+    if (typeof value.backendUrl !== 'string' || value.backendUrl.length === 0) throw new Error('Electron bridge bootstrap did not include a valid backendUrl')
+    if (typeof value.backendWsUrl !== 'string' || value.backendWsUrl.length === 0) throw new Error('Electron bridge bootstrap did not include a valid backendWsUrl')
+    if (typeof value.version !== 'string') throw new Error('Electron bridge bootstrap did not include a valid version')
   }
-
-  if (typeof bootstrap.backendUrl !== 'string' || bootstrap.backendUrl.length === 0) {
-    throw new Error('Electron bridge bootstrap did not include a valid backendUrl')
+  return {
+    backendUrl: value.backendUrl ?? '',
+    backendWsUrl: value.backendWsUrl ?? '',
+    version: value.version ?? '',
+    platform: value.platform,
+    windowRole: value.windowRole,
+    managedBrowserPopoutAvailable: value.managedBrowserPopoutAvailable,
   }
-
-  if (typeof bootstrap.backendWsUrl !== 'string' || bootstrap.backendWsUrl.length === 0) {
-    throw new Error('Electron bridge bootstrap did not include a valid backendWsUrl')
-  }
-
-  if (typeof bootstrap.version !== 'string') {
-    throw new Error('Electron bridge bootstrap did not include a valid version')
-  }
-
-  if (typeof bootstrap.platform !== 'string' || bootstrap.platform.length === 0) {
-    throw new Error('Electron bridge bootstrap did not include a valid platform')
-  }
-
-  return bootstrap
 }

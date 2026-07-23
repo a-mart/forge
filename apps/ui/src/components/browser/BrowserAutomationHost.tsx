@@ -1,302 +1,160 @@
-import {
-  createElement,
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type {
+  BrowserAutomationErrorCode,
   BrowserAutomationRequest,
   BrowserAutomationResponse,
   BrowserHostRegistration,
   BrowserHostSessionStateReport,
-  BrowserSessionSnapshot,
   BrowserTabSnapshot,
   BrowserViewportSetting,
 } from '@forge/protocol'
-import type { BrowserAutomationBridge, BrowserBridgeConfig } from '@/lib/electron-bridge'
+import type {
+  BrowserWorkspaceCommand,
+  BrowserWorkspaceCommandRequest,
+  ManagedBrowserWorkspaceMode,
+} from '@/lib/electron-bridge'
 import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 
-interface ElectronWebviewElement extends HTMLElement {
-  getWebContentsId(): number
-  capturePage(): Promise<{ toDataURL(): string }>
-}
-
 export interface BrowserAutomationHostHandle {
+  open(): Promise<void>
+  activate(tabId: string): Promise<void>
+  close(tabId: string): Promise<void>
+  resize(tabId: string, viewport: BrowserViewportSetting): Promise<void>
   navigate(tabId: string, url: string): Promise<void>
   history(tabId: string, direction: 'back' | 'forward'): void
   reload(tabId: string, hard?: boolean): void
   setZoom(tabId: string, factor: number): void
   captureScreenshot(tabId: string): Promise<string>
+  startRecording(tabId: string): Promise<void>
+  stopRecording(tabId: string, recordingId: string): Promise<void>
+  popOut(): Promise<void>
+  dock(): Promise<void>
+  bringToFront(): Promise<void>
 }
 
 interface BrowserAutomationHostProps {
   client: ManagerWsClient | null
   state: ManagerWsState
   selectedSessionAgentId: string | null
+  selectedProfileId?: string | null
   panelVisible: boolean
+  onWorkspaceModeChange?: (mode: ManagedBrowserWorkspaceMode) => void
 }
 
 export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, BrowserAutomationHostProps>(
-  function BrowserAutomationHost({ client, state, selectedSessionAgentId, panelVisible }, ref) {
+  function BrowserAutomationHost({ client, state, selectedSessionAgentId, selectedProfileId, panelVisible, onWorkspaceModeChange }, ref) {
     const bridge = typeof window !== 'undefined' ? window.electronBridge?.browserAutomation : undefined
-    const [configs, setConfigs] = useState<Record<string, BrowserBridgeConfig>>({})
-    const [provisionalTabs, setProvisionalTabs] = useState<Record<string, BrowserTabSnapshot>>({})
-    const [viewportRect, setViewportRect] = useState<DOMRect | null>(null)
-    const webviews = useRef(new Map<string, ElectronWebviewElement>())
-    const readyPromises = useRef(new Map<string, Promise<void>>())
-    const readyResolvers = useRef(new Map<string, () => void>())
-    const readyCancellers = useRef(new Map<string, (reason: Error) => void>())
-    const visibleTabIds = useRef(new Set<string>())
-    const presentationSequences = useRef(new Map<string, number>())
-    const sessionsRef = useRef(state.browserSessions)
+    const workspace = typeof window !== 'undefined' ? window.electronBridge?.browserWorkspace : undefined
     const bridgeRef = useRef(bridge)
     const clientRef = useRef(client)
+    const stateRef = useRef(state)
+    const selectedSessionRef = useRef(selectedSessionAgentId)
+    const selectedProfileRef = useRef(selectedProfileId ?? null)
     const hostIdRef = useRef(`forge-browser-${randomId()}`)
+    const controllerInstanceIdRef = useRef(`renderer-${randomId()}`)
+    const workspaceEpochRef = useRef(Date.now())
+    const reconcileSequenceRef = useRef(0)
+    const presentationSequences = useRef(new Map<string, number>())
     const pendingTabUpdates = useRef(new Map<string, BrowserTabSnapshot>())
-    const reportTimerRef = useRef<number | null>(null)
-    const reportInFlightRef = useRef(false)
-    const updateSequenceRef = useRef(0)
-    const retryStateRef = useRef({ generation: null as number | null, conflicts: 0 })
-    const canonicalRef = useRef(new Map<string, BrowserSessionSnapshot>())
+    const reportInFlight = useRef(false)
+    const reportTimer = useRef<number | null>(null)
     const revealAcknowledgements = useRef(new Set<string>())
-    const disposedRef = useRef(false)
+    const [workspaceMode, setWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(workspace?.capability.popoutAvailable ? 'docked' : 'unavailable')
+    const workspaceModeRef = useRef<ManagedBrowserWorkspaceMode>(workspaceMode)
 
-    useEffect(() => {
-      // ManagerWsState snapshots are authoritative within their connection/host
-      // generation. Replace rather than revision-merge so a restarted backend's
-      // lower canonical revision immediately becomes the report base.
-      sessionsRef.current = state.browserSessions
-      canonicalRef.current = new Map(Object.entries(state.browserSessions))
-      retryStateRef.current.conflicts = 0
-      for (const [sessionAgentId, session] of Object.entries(state.browserSessions)) {
-        if (session.hostingState !== 'hosted') dropPendingSession(pendingTabUpdates.current, sessionAgentId)
-      }
-      if (state.browserHostHydrated) {
-        for (const pending of pendingTabUpdates.current.values()) {
-          if (!state.browserSessions[pending.sessionAgentId]) {
-            dropPendingSession(pendingTabUpdates.current, pending.sessionAgentId)
-          }
-        }
-      }
-    }, [state.browserHostHydrated, state.browserSessions])
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
     useEffect(() => { clientRef.current = client }, [client])
+    useEffect(() => { stateRef.current = state }, [state])
+    useEffect(() => { selectedSessionRef.current = selectedSessionAgentId }, [selectedSessionAgentId])
+    useEffect(() => { selectedProfileRef.current = selectedProfileId ?? null }, [selectedProfileId])
 
-    const tabs = useMemo(() => {
-      const canonical = Object.values(state.browserSessions)
-        .filter((session) => session.hostingState === 'hosted')
-        .flatMap((session) => session.tabs)
-      const canonicalIds = new Set(canonical.map((tab) => tab.tabId))
-      return [...canonical, ...Object.values(provisionalTabs).filter((tab) => !canonicalIds.has(tab.tabId))]
-        .filter((tab) => tab.lifecycle !== 'closed')
-    }, [provisionalTabs, state.browserSessions])
-
-    useEffect(() => {
-      setProvisionalTabs((current) => {
-        const canonicalIds = new Set(Object.values(state.browserSessions).flatMap((session) => session.tabs.map((tab) => tab.tabId)))
-        const next = Object.fromEntries(Object.entries(current).filter(([tabId]) => !canonicalIds.has(tabId)))
-        return Object.keys(next).length === Object.keys(current).length ? current : next
-      })
-    }, [state.browserSessions])
-
-    useEffect(() => {
-      if (!bridge) return
-      for (const profileId of new Set(tabs.map((tab) => tab.profileId))) {
-        if (configs[profileId]) continue
-        void bridge.getWebviewConfig(profileId).then((config) => {
-          setConfigs((current) => current[profileId] ? current : { ...current, [profileId]: config })
-        }).catch((error) => {
-          const failure = error instanceof Error ? error : new Error('Browser webview configuration failed')
-          for (const tab of tabs) {
-            if (tab.profileId === profileId && provisionalTabs[tab.tabId]) readyCancellers.current.get(tab.tabId)?.(failure)
-          }
-        })
-      }
-    }, [bridge, configs, provisionalTabs, tabs])
-
-    const flushStateReports = useCallback(async () => {
+    const flushReports = useCallback(async () => {
       const currentClient = clientRef.current
-      if (!currentClient || reportInFlightRef.current || pendingTabUpdates.current.size === 0) return
+      const currentState = stateRef.current
+      if (!currentClient || reportInFlight.current || pendingTabUpdates.current.size === 0) return
       const host = currentClient.getState().browserHost
       if (!host.connected || host.hostId !== hostIdRef.current || host.hostGeneration === null) return
-
-      const reportsBySession = new Map<string, BrowserHostSessionStateReport>()
-      const sentTabs = new Map<string, BrowserTabSnapshot>()
-      for (const updatedTab of pendingTabUpdates.current.values()) {
-        const latest = canonicalRef.current.get(updatedTab.sessionAgentId) ?? sessionsRef.current[updatedTab.sessionAgentId]
-        if (!latest || latest.hostingState !== 'hosted') {
-          pendingTabUpdates.current.delete(updatedTab.tabId)
+      const reports = new Map<string, BrowserHostSessionStateReport>()
+      const sent = new Map(pendingTabUpdates.current)
+      for (const updated of sent.values()) {
+        const session = currentState.browserSessions[updated.sessionAgentId]
+        const canonical = session?.tabs.find((tab) => tab.tabId === updated.tabId)
+        if (!session || session.hostingState !== 'hosted' || !canonical) {
+          pendingTabUpdates.current.delete(updated.tabId)
           continue
         }
-        const canonicalTab = latest.tabs.find((tab) => tab.tabId === updatedTab.tabId)
-        if (!canonicalTab) {
-          pendingTabUpdates.current.delete(updatedTab.tabId)
-          continue
-        }
-        const rebased = rebaseHostOwnedTabFields(canonicalTab, updatedTab)
-        if (pendingTabUpdates.current.get(updatedTab.tabId) === updatedTab) pendingTabUpdates.current.set(updatedTab.tabId, rebased)
-        sentTabs.set(updatedTab.tabId, rebased)
-        const existing = reportsBySession.get(updatedTab.sessionAgentId)
-        reportsBySession.set(updatedTab.sessionAgentId, {
-          sessionAgentId: latest.sessionAgentId,
-          profileId: latest.profileId,
-          baseRevision: latest.revision,
+        const rebased = rebaseHostOwnedTabFields(canonical, updated)
+        const existing = reports.get(session.sessionAgentId)
+        reports.set(session.sessionAgentId, {
+          sessionAgentId: session.sessionAgentId,
+          profileId: session.profileId,
+          baseRevision: session.revision,
           tabs: [...(existing?.tabs ?? []), rebased],
         })
       }
-      if (reportsBySession.size === 0) return
-
-      const generation = host.hostGeneration
-      const sequence = updateSequenceRef.current
-      let retryConflict = false
-      reportInFlightRef.current = true
+      if (reports.size === 0) return
+      reportInFlight.current = true
       try {
-        const result = await currentClient.reportBrowserHostState([...reportsBySession.values()])
-        if (
-          disposedRef.current
-          || clientRef.current !== currentClient
-          || result.hostId !== hostIdRef.current
-          || result.hostGeneration !== generation
-          || result.status === 'stale-host-generation'
-        ) return
-
-        for (const report of reportsBySession.values()) {
-          const reportResult = result.sessions.find((candidate) =>
-            candidate.sessionAgentId === report.sessionAgentId && candidate.profileId === report.profileId)
-          if (!reportResult) continue
-          if (reportResult.snapshot) {
-            // Conflict snapshots are unconditional authority, including after a
-            // backend restart where the server revision is lower than our cache.
-            canonicalRef.current.set(report.sessionAgentId, reportResult.snapshot)
-          }
-          if (reportResult.status === 'accepted') {
-            for (const sentTab of report.tabs) {
-              if (pendingTabUpdates.current.get(sentTab.tabId) === sentTabs.get(sentTab.tabId)) {
-                pendingTabUpdates.current.delete(sentTab.tabId)
-              }
+        const result = await currentClient.reportBrowserHostState([...reports.values()])
+        if (result.hostId !== hostIdRef.current || result.hostGeneration !== host.hostGeneration || result.status === 'stale-host-generation') return
+        for (const report of reports.values()) {
+          const sessionResult = result.sessions.find((candidate) => candidate.sessionAgentId === report.sessionAgentId)
+          if (!sessionResult) continue
+          if (sessionResult.status === 'accepted') {
+            for (const tab of report.tabs) {
+              if (pendingTabUpdates.current.get(tab.tabId) === sent.get(tab.tabId)) pendingTabUpdates.current.delete(tab.tabId)
             }
-            rebasePendingSession(pendingTabUpdates.current, reportResult.snapshot)
-          } else if (reportResult.status === 'revision-conflict') {
-            rebasePendingSession(pendingTabUpdates.current, reportResult.snapshot)
-            retryConflict = true
-          } else if (reportResult.status === 'rejected' && reportResult.reason !== 'invalid-report') {
-            dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
+          } else if (sessionResult.status === 'rejected') {
+            for (const tab of report.tabs) pendingTabUpdates.current.delete(tab.tabId)
           }
         }
-      } catch {
-        // Disconnects and timeouts retain pending updates. A fresh host generation
-        // or runtime update will schedule another bounded attempt.
-      } finally {
-        reportInFlightRef.current = false
-        if (disposedRef.current) return
-        if (updateSequenceRef.current !== sequence) {
-          retryStateRef.current.conflicts = 0
-          scheduleReportTimer(flushStateReports, reportTimerRef)
-        } else if (retryConflict && pendingTabUpdates.current.size > 0) {
-          retryStateRef.current.conflicts += 1
-          // A fresh physical update, canonical snapshot, or host generation
-          // resets this budget. One unchanged update never churns forever.
-          if (retryStateRef.current.conflicts < MAX_HOST_REPORT_CONFLICT_RETRIES) {
-            scheduleReportTimer(flushStateReports, reportTimerRef)
-          }
-        } else if (!retryConflict) {
-          retryStateRef.current.conflicts = 0
+      } catch { /* transport reconnect retries after the next state/runtime event */ }
+      finally {
+        reportInFlight.current = false
+        if (pendingTabUpdates.current.size > 0 && reportTimer.current === null) {
+          reportTimer.current = window.setTimeout(() => { reportTimer.current = null; void flushReports() }, 25)
         }
       }
     }, [])
-
-    const scheduleStateReport = useCallback(() => {
-      scheduleReportTimer(flushStateReports, reportTimerRef)
-    }, [flushStateReports])
-
-    useEffect(() => {
-      const generation = state.browserHost.hostId === hostIdRef.current ? state.browserHost.hostGeneration : null
-      if (retryStateRef.current.generation !== generation) {
-        retryStateRef.current = { generation, conflicts: 0 }
-      }
-      if (
-        generation !== null
-        && state.browserHostHydrated
-        && pendingTabUpdates.current.size > 0
-        && retryStateRef.current.conflicts < MAX_HOST_REPORT_CONFLICT_RETRIES
-      ) scheduleStateReport()
-    }, [scheduleStateReport, state.browserHost.hostGeneration, state.browserHost.hostId, state.browserHostHydrated, state.browserSessions])
-
-    useEffect(() => {
-      disposedRef.current = false
-      return () => {
-        disposedRef.current = true
-        clearReportTimer(reportTimerRef)
-      }
-    }, [])
+    const scheduleReport = useCallback(() => {
+      if (reportTimer.current !== null) return
+      reportTimer.current = window.setTimeout(() => { reportTimer.current = null; void flushReports() }, 0)
+    }, [flushReports])
 
     const executeRequest = useCallback(async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
       const currentBridge = bridgeRef.current
-      if (!currentBridge) throw new Error('Electron browser host is unavailable')
-      let invokedRequest = request
-      let provisionalTabId: string | null = null
-      const cleanupProvisional = async (reason: Error) => {
-        if (!provisionalTabId) return
-        const tabId = provisionalTabId
-        readyCancellers.current.get(tabId)?.(reason)
-        readyPromises.current.delete(tabId)
-        readyResolvers.current.delete(tabId)
-        readyCancellers.current.delete(tabId)
-        visibleTabIds.current.delete(tabId)
-        pendingTabUpdates.current.delete(tabId)
-        const element = webviews.current.get(tabId)
-        webviews.current.delete(tabId)
-        await currentBridge.unregisterWebview(tabId, element ? safeWebContentsId(element) : undefined).catch(() => undefined)
-        setProvisionalTabs((current) => {
-          if (!current[tabId]) return current
-          const { [tabId]: _removed, ...remaining } = current
-          return remaining
-        })
-      }
+      if (!currentBridge) return hostFailureResponse(request, new Error('Electron browser host is unavailable'))
+      let invoked = request
+      let provisional: BrowserTabSnapshot | null = null
       try {
         if (request.operation === 'open' && request.tabId === null) {
-          const tab = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
-          provisionalTabId = tab.tabId
-          setProvisionalTabs((current) => ({ ...current, [tab.tabId]: tab }))
-          if (!webviews.current.has(tab.tabId)) {
-            await waitUntilReady(tab.tabId, readyPromises.current, readyResolvers.current, readyCancellers.current)
-          }
-          invokedRequest = { ...request, tabId: tab.tabId, input: { ...request.input, tabId: tab.tabId } } as BrowserAutomationRequest
-        } else if (request.tabId && !webviews.current.has(request.tabId)) {
-          await waitUntilReady(request.tabId, readyPromises.current, readyResolvers.current, readyCancellers.current)
+          provisional = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
+          await currentBridge.ensureProvisional({ tab: provisional, visible: false, created: true, workspaceEpoch: workspaceEpochRef.current })
+          invoked = { ...request, tabId: provisional.tabId, input: { ...request.input, tabId: provisional.tabId } } as BrowserAutomationRequest
         }
-        const response = await currentBridge.invoke(invokedRequest)
-        if (provisionalTabId && (!response.ok || response.operation !== 'open')) {
-          await cleanupProvisional(new Error(response.ok ? 'Unexpected browser open response' : response.error.message))
+        const response = await currentBridge.invoke(invoked)
+        if (provisional) {
+          if (response.ok && response.operation === 'open') await currentBridge.commitProvisional(provisional.tabId, workspaceEpochRef.current)
+          else await currentBridge.abortProvisional(provisional.tabId)
         }
-        return invokedRequest === request ? response : { ...response, tabId: request.tabId }
+        return invoked === request ? response : { ...response, tabId: request.tabId }
       } catch (error) {
-        await cleanupProvisional(error instanceof Error ? error : new Error('Browser open failed'))
-        return hostFailureResponse(invokedRequest, error)
+        if (provisional) await currentBridge.abortProvisional(provisional.tabId).catch(() => undefined)
+        return hostFailureResponse(invoked, error)
       }
     }, [])
 
     useEffect(() => {
       if (!client || !bridge) return
-      const capabilities = bridge.capabilities
       const registration: BrowserHostRegistration = {
         hostId: hostIdRef.current,
-        clientInstanceId: `renderer-${randomId()}`,
+        clientInstanceId: controllerInstanceIdRef.current,
         capabilities: {
-          supportedOperations: capabilities.supportedOperations as BrowserHostRegistration['capabilities']['supportedOperations'],
-          electronVersion: 'desktop',
-          chromiumVersion: 'embedded',
-          playwrightVersion: capabilities.playwrightVersion,
-          maxResponseBytes: 8 * 1024 * 1024,
-          supportsSandboxedWebviews: true,
-          supportsCapturePage: true,
-          supportsRecording: capabilities.supportsRecording,
+          supportedOperations: bridge.capabilities.supportedOperations as BrowserHostRegistration['capabilities']['supportedOperations'],
+          electronVersion: 'desktop', chromiumVersion: 'embedded', playwrightVersion: bridge.capabilities.playwrightVersion,
+          maxResponseBytes: 8 * 1024 * 1024, supportsSandboxedWebviews: true, supportsCapturePage: true,
+          supportsRecording: bridge.capabilities.supportsRecording,
         },
         registeredAt: new Date().toISOString(),
       }
@@ -304,337 +162,207 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [bridge, client, executeRequest])
 
     useEffect(() => {
+      if (!bridge) return
+      const sequence = ++reconcileSequenceRef.current
+      void bridge.reconcile({
+        controllerInstanceId: controllerInstanceIdRef.current,
+        hostGeneration: state.browserHost.hostGeneration ?? 0,
+        updateSequence: sequence,
+        workspaceEpoch: workspaceEpochRef.current,
+        sessions: Object.values(state.browserSessions),
+      }).catch(() => undefined)
+    }, [bridge, state.browserHost.hostGeneration, state.browserSessions])
+
+    useEffect(() => {
       if (!bridge || !client) return
-      return bridge.onStateChanged((updatedTab) => {
-        const session = sessionsRef.current[updatedTab.sessionAgentId]
-        if (!session || session.hostingState !== 'hosted') return
-        if (!session.tabs.some((tab) => tab.tabId === updatedTab.tabId)) return
-        pendingTabUpdates.current.set(updatedTab.tabId, updatedTab)
-        updateSequenceRef.current += 1
-        retryStateRef.current.conflicts = 0
-        scheduleStateReport()
+      return bridge.onStateChanged((tab) => {
+        const session = stateRef.current.browserSessions[tab.sessionAgentId]
+        if (!session || session.hostingState !== 'hosted' || !session.tabs.some((candidate) => candidate.tabId === tab.tabId)) return
+        pendingTabUpdates.current.set(tab.tabId, tab)
+        scheduleReport()
       })
-    }, [bridge, client, scheduleStateReport])
+    }, [bridge, client, scheduleReport])
+
+    useEffect(() => () => {
+      if (reportTimer.current !== null) window.clearTimeout(reportTimer.current)
+    }, [])
 
     useEffect(() => {
-      if (!bridge || !client || state.browserHost.hostId !== hostIdRef.current || state.browserHost.hostGeneration === null) return
-      const reportFocus = () => client.setBrowserHostFocused(document.visibilityState !== 'hidden' && document.hasFocus())
-      reportFocus()
-      window.addEventListener('focus', reportFocus)
-      window.addEventListener('blur', reportFocus)
-      document.addEventListener('visibilitychange', reportFocus)
-      return () => {
-        window.removeEventListener('focus', reportFocus)
-        window.removeEventListener('blur', reportFocus)
-        document.removeEventListener('visibilitychange', reportFocus)
-      }
-    }, [bridge, client, state.browserHost.hostGeneration, state.browserHost.hostId])
-
-    useEffect(() => {
-      const update = () => {
+      if (!bridge) return
+      const update = (): void => {
         const target = document.querySelector('[data-browser-automation-viewport]')
-        setViewportRect(target instanceof HTMLElement ? target.getBoundingClientRect() : null)
+        if (!(target instanceof HTMLElement)) return
+        const rect = target.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) return
+        void bridge.reportViewport({
+          workspaceEpoch: workspaceEpochRef.current,
+          rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          deviceScaleFactor: window.devicePixelRatio || 1,
+        }).catch(() => undefined)
       }
       update()
       const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null
       const target = document.querySelector('[data-browser-automation-viewport]')
       if (target) observer?.observe(target)
       window.addEventListener('resize', update)
-      return () => {
-        observer?.disconnect()
-        window.removeEventListener('resize', update)
-      }
-    }, [panelVisible, selectedSessionAgentId])
+      return () => { observer?.disconnect(); window.removeEventListener('resize', update) }
+    }, [bridge, panelVisible, selectedSessionAgentId, state.browserSessions, workspaceMode])
 
     useEffect(() => {
       if (!bridge) return
-      const hostGeneration = state.browserHost.hostGeneration ?? 0
-      for (const tab of tabs) {
-        if (!webviews.current.has(tab.tabId)) continue
-        const session = state.browserSessions[tab.sessionAgentId]
-        const visible = Boolean(panelVisible && viewportRect && tab.sessionAgentId === selectedSessionAgentId && session?.activeTabId === tab.tabId)
-        if (visible) visibleTabIds.current.add(tab.tabId)
-        else visibleTabIds.current.delete(tab.tabId)
-        const sequence = (presentationSequences.current.get(tab.tabId) ?? 0) + 1
-        presentationSequences.current.set(tab.tabId, sequence)
-        const renderedViewport = visible && viewportRect ? renderedWebviewViewport(tab.viewportSetting, viewportRect) : null
-        void bridge.setTabPresentation({
-          tabId: tab.tabId,
-          visible,
-          viewportSetting: tab.viewportSetting,
-          renderedViewport,
-          hostGeneration,
-          sessionRevision: session?.revision ?? 0,
-          sequence,
-        }).then((acknowledgement) => {
-          if (!acknowledgement.applied
-            || acknowledgement.sequence !== presentationSequences.current.get(tab.tabId)
-            || acknowledgement.hostGeneration !== (clientRef.current?.getState().browserHost.hostGeneration ?? 0)) return
-          pendingTabUpdates.current.set(tab.tabId, acknowledgement.tab)
-          updateSequenceRef.current += 1
-          retryStateRef.current.conflicts = 0
-          scheduleStateReport()
-
-          const currentClient = clientRef.current
-          const reveal = currentClient?.getState().browserPanelRevealRequest
-          if (
-            visible
-            && currentClient
-            && reveal?.sessionAgentId === tab.sessionAgentId
-            && reveal.tabId === tab.tabId
-            && reveal.hostGeneration === acknowledgement.hostGeneration
-          ) {
-            const acknowledgementKey = `${reveal.hostGeneration}:${reveal.sequence}:${reveal.tabId}`
-            if (!revealAcknowledgements.current.has(acknowledgementKey)) {
-              revealAcknowledgements.current.add(acknowledgementKey)
-              void currentClient.acknowledgeBrowserPanelReveal({
-                sessionAgentId: reveal.sessionAgentId,
-                profileId: reveal.profileId,
-                tabId: reveal.tabId,
-                sequence: reveal.sequence,
-              }).catch(() => {
-                revealAcknowledgements.current.delete(acknowledgementKey)
-              })
-            }
-          }
-        }).catch(() => undefined)
+      const mode = workspaceMode
+      const logicalVisible = mode === 'popped-out' || (mode !== 'opening' && mode !== 'docking' && panelVisible)
+      for (const session of Object.values(state.browserSessions)) {
+        if (session.hostingState !== 'hosted') continue
+        for (const tab of session.tabs) {
+          if (tab.lifecycle === 'closed') continue
+          const visible = Boolean(logicalVisible && selectedSessionAgentId === session.sessionAgentId && session.activeTabId === tab.tabId)
+          const sequence = (presentationSequences.current.get(tab.tabId) ?? 0) + 1
+          presentationSequences.current.set(tab.tabId, sequence)
+          void bridge.setTabPresentation({
+            tabId: tab.tabId,
+            visible,
+            viewportSetting: tab.viewportSetting,
+            renderedViewport: visible ? { width: 1, height: 1, deviceScaleFactor: window.devicePixelRatio || 1 } : null,
+            hostGeneration: state.browserHost.hostGeneration ?? 0,
+            sessionRevision: session.revision,
+            sequence,
+            workspaceEpoch: workspaceEpochRef.current,
+          }).then((ack) => {
+            if (!ack.applied || presentationSequences.current.get(tab.tabId) !== ack.sequence) return
+            pendingTabUpdates.current.set(tab.tabId, ack.tab)
+            scheduleReport()
+            const currentClient = clientRef.current
+            const reveal = currentClient?.getState().browserPanelRevealRequest
+            if (!visible || !currentClient || !reveal || reveal.tabId !== tab.tabId || reveal.hostGeneration !== ack.hostGeneration) return
+            const key = `${reveal.hostGeneration}:${reveal.sequence}:${reveal.tabId}`
+            if (revealAcknowledgements.current.has(key)) return
+            revealAcknowledgements.current.add(key)
+            void currentClient.acknowledgeBrowserPanelReveal({
+              sessionAgentId: reveal.sessionAgentId, profileId: reveal.profileId, tabId: reveal.tabId, sequence: reveal.sequence,
+            }).catch(() => revealAcknowledgements.current.delete(key))
+          }).catch(() => undefined)
+        }
       }
-    }, [bridge, panelVisible, scheduleStateReport, selectedSessionAgentId, state.browserHost.hostGeneration, state.browserSessions, tabs, viewportRect])
+    }, [bridge, panelVisible, scheduleReport, selectedSessionAgentId, state.browserHost.hostGeneration, state.browserSessions, workspaceMode])
+
+    const executeWorkspaceCommand = useCallback(async (command: BrowserWorkspaceCommand): Promise<unknown> => {
+      const currentClient = clientRef.current
+      const sessionAgentId = selectedSessionRef.current
+      const profileId = selectedProfileRef.current
+      const currentBridge = bridgeRef.current
+      if (!currentClient || !sessionAgentId || !profileId || !currentBridge) throw new Error('Selected local Managed Browser is unavailable')
+      switch (command.type) {
+        case 'open': return currentClient.openBrowserTab(sessionAgentId, profileId, { activate: true })
+        case 'activate': return currentClient.activateBrowserTab(sessionAgentId, command.tabId)
+        case 'close': return currentClient.closeBrowserTab(sessionAgentId, command.tabId)
+        case 'resize': return currentClient.resizeBrowserTab(sessionAgentId, command.tabId, command.viewport)
+        case 'navigate': return currentBridge.navigate(command.tabId, normalizeUrl(command.url))
+        case 'history': return currentBridge.history(command.tabId, command.direction)
+        case 'reload': return currentBridge.reload(command.tabId, command.hard)
+        case 'zoom': return currentBridge.setZoom(command.tabId, Math.max(.25, Math.min(3, command.factor)))
+        case 'capture': return currentBridge.captureScreenshot(command.tabId)
+        case 'recordingStart': return currentClient.startBrowserRecording(sessionAgentId, command.tabId)
+        case 'recordingStop': return currentClient.stopBrowserRecording(sessionAgentId, command.tabId, command.recordingId)
+      }
+    }, [])
+
+    useEffect(() => {
+      if (!workspace?.onCommand || !workspace.replyToCommand) return
+      return workspace.onCommand((request: BrowserWorkspaceCommandRequest) => {
+        if (request.workspaceEpoch !== workspaceEpochRef.current
+          || request.sessionAgentId !== selectedSessionRef.current
+          || request.profileId !== selectedProfileRef.current) {
+          workspace.replyToCommand?.(request.requestId, { ok: false, error: 'Browser workspace command is stale' })
+          return
+        }
+        void executeWorkspaceCommand(request.command).then(
+          (value) => workspace.replyToCommand?.(request.requestId, { ok: true, value }),
+          (error) => workspace.replyToCommand?.(request.requestId, { ok: false, error: error instanceof Error ? error.message : String(error) }),
+        )
+      })
+    }, [executeWorkspaceCommand, workspace])
+
+    useEffect(() => {
+      if (!workspace?.publish) return
+      const snapshot = selectedSessionAgentId ? state.browserSessions[selectedSessionAgentId] ?? null : null
+      void workspace.publish({
+        workspaceEpoch: workspaceEpochRef.current,
+        sessionAgentId: selectedSessionAgentId,
+        profileId: selectedProfileId ?? snapshot?.profileId ?? null,
+        snapshot,
+        host: state.browserHost,
+        mode: workspaceModeRef.current,
+        popoutAvailable: workspace.capability.popoutAvailable,
+        connected: Boolean(client && state.connected && selectedSessionAgentId),
+        publishedAt: new Date().toISOString(),
+      }).catch(() => undefined)
+    }, [client, selectedProfileId, selectedSessionAgentId, state.browserHost, state.browserSessions, state.connected, workspace])
+
+    useEffect(() => {
+      if (!workspace) return
+      return workspace.onModeChanged((mode) => {
+        workspaceModeRef.current = mode
+        setWorkspaceMode(mode)
+        onWorkspaceModeChange?.(mode)
+        // Native owner changed without a host generation change. Re-publish and
+        // let the presentation effect verify non-empty physical bounds.
+        const session = selectedSessionRef.current ? stateRef.current.browserSessions[selectedSessionRef.current] : null
+        if (workspace.publish) void workspace.publish({
+          workspaceEpoch: workspaceEpochRef.current,
+          sessionAgentId: selectedSessionRef.current,
+          profileId: selectedProfileRef.current,
+          snapshot: session ?? null,
+          host: stateRef.current.browserHost,
+          mode,
+          popoutAvailable: workspace.capability.popoutAvailable,
+          connected: Boolean(clientRef.current && stateRef.current.connected && selectedSessionRef.current),
+          publishedAt: new Date().toISOString(),
+        }).catch(() => undefined)
+      })
+    }, [onWorkspaceModeChange, workspace])
+
+    useEffect(() => {
+      if (!client || state.browserHost.hostId !== hostIdRef.current || state.browserHost.hostGeneration === null) return
+      if (workspace?.onFocusChanged) return workspace.onFocusChanged((focused) => client.setBrowserHostFocused(focused))
+      const report = () => client.setBrowserHostFocused(document.visibilityState !== 'hidden' && document.hasFocus())
+      report(); window.addEventListener('focus', report); window.addEventListener('blur', report); document.addEventListener('visibilitychange', report)
+      return () => { window.removeEventListener('focus', report); window.removeEventListener('blur', report); document.removeEventListener('visibilitychange', report) }
+    }, [client, state.browserHost.hostGeneration, state.browserHost.hostId, workspace])
 
     useImperativeHandle(ref, () => ({
-      async navigate(tabId, rawUrl) {
-        const currentBridge = bridgeRef.current
-        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
-        await currentBridge.navigate(tabId, normalizeUrl(rawUrl))
-      },
-      history(tabId, direction) {
-        const currentBridge = bridgeRef.current
-        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
-        void currentBridge.history(tabId, direction).catch(() => undefined)
-      },
-      reload(tabId, hard = false) {
-        const currentBridge = bridgeRef.current
-        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
-        void currentBridge.reload(tabId, hard).catch(() => undefined)
-      },
-      setZoom(tabId, factor) {
-        const currentBridge = bridgeRef.current
-        if (!currentBridge || !webviews.current.has(tabId)) throw new Error('Browser tab is not live')
-        void currentBridge.setZoom(tabId, Math.max(0.25, Math.min(3, factor))).catch(() => undefined)
-      },
-      async captureScreenshot(tabId) {
-        const image = await boundedNativeCapture(requireWebview(webviews.current, tabId).capturePage(), 5_000)
-        const dataUrl = image.toDataURL()
-        if (!dataUrl || dataUrl === 'data:,') throw new Error('Browser screenshot was empty')
-        return dataUrl
-      },
-    }), [])
+      open: async () => { await executeWorkspaceCommand({ type: 'open' }) },
+      activate: async (tabId) => { await executeWorkspaceCommand({ type: 'activate', tabId }) },
+      close: async (tabId) => { await executeWorkspaceCommand({ type: 'close', tabId }) },
+      resize: async (tabId, viewport) => { await executeWorkspaceCommand({ type: 'resize', tabId, viewport }) },
+      navigate: async (tabId, url) => { await executeWorkspaceCommand({ type: 'navigate', tabId, url }) },
+      history: (tabId, direction) => { void executeWorkspaceCommand({ type: 'history', tabId, direction }) },
+      reload: (tabId, hard = false) => { void executeWorkspaceCommand({ type: 'reload', tabId, hard }) },
+      setZoom: (tabId, factor) => { void executeWorkspaceCommand({ type: 'zoom', tabId, factor }) },
+      captureScreenshot: async (tabId) => String(await executeWorkspaceCommand({ type: 'capture', tabId })),
+      startRecording: async (tabId) => { await executeWorkspaceCommand({ type: 'recordingStart', tabId }) },
+      stopRecording: async (tabId, recordingId) => { await executeWorkspaceCommand({ type: 'recordingStop', tabId, recordingId }) },
+      popOut: async () => { await workspace?.popOut(workspaceEpochRef.current) },
+      dock: async () => { await workspace?.dock(workspaceEpochRef.current) },
+      bringToFront: async () => { await workspace?.bringToFront() },
+    }), [executeWorkspaceCommand, workspace])
 
-    const handleWebviewReady = useCallback((tabId: string, element: ElectronWebviewElement) => {
-      webviews.current.set(tabId, element)
-      readyResolvers.current.get(tabId)?.()
-    }, [])
-    const handleWebviewUnmount = useCallback((tabId: string) => {
-      webviews.current.delete(tabId)
-    }, [])
-    const handleWebviewError = useCallback((tabId: string, error: unknown) => {
-      readyCancellers.current.get(tabId)?.(error instanceof Error ? error : new Error('Browser webview registration failed'))
-    }, [])
-
-    if (!bridge) return null
-
-    return (
-      <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden">
-        {tabs.map((tab) => {
-          const config = configs[tab.profileId]
-          if (!config) return null
-          const session = state.browserSessions[tab.sessionAgentId]
-          const visible = Boolean(panelVisible && viewportRect && tab.sessionAgentId === selectedSessionAgentId && session?.activeTabId === tab.tabId)
-          const style = webviewStyle(tab.viewportSetting, visible ? viewportRect : null)
-          return (
-            <HostedWebview
-              key={tab.tabId}
-              tab={tab}
-              config={config}
-              visible={visible}
-              style={style}
-              bridge={bridge}
-              created={Boolean(provisionalTabs[tab.tabId])}
-              onReady={handleWebviewReady}
-              onError={handleWebviewError}
-              onUnmount={handleWebviewUnmount}
-            />
-          )
-        })}
-      </div>
-    )
+    return null
   },
 )
 
-const MAX_HOST_REPORT_CONFLICT_RETRIES = 3
-
-function scheduleReportTimer(
-  flush: () => void | Promise<void>,
-  timerRef: { current: number | null },
-): void {
-  if (timerRef.current !== null) return
-  timerRef.current = window.setTimeout(() => {
-    timerRef.current = null
-    void flush()
-  }, 0)
-}
-
-function clearReportTimer(timerRef: { current: number | null }): void {
-  if (timerRef.current === null) return
-  window.clearTimeout(timerRef.current)
-  timerRef.current = null
-}
-
-function dropPendingSession(pending: Map<string, BrowserTabSnapshot>, sessionAgentId: string): void {
-  for (const [tabId, tab] of pending) {
-    if (tab.sessionAgentId === sessionAgentId) pending.delete(tabId)
-  }
-}
-
-function rebasePendingSession(pending: Map<string, BrowserTabSnapshot>, canonical: BrowserSessionSnapshot): void {
-  if (canonical.hostingState !== 'hosted') {
-    dropPendingSession(pending, canonical.sessionAgentId)
-    return
-  }
-  for (const [tabId, updatedTab] of pending) {
-    if (updatedTab.sessionAgentId !== canonical.sessionAgentId) continue
-    const canonicalTab = canonical.tabs.find((tab) => tab.tabId === tabId)
-    if (!canonicalTab) pending.delete(tabId)
-    else pending.set(tabId, rebaseHostOwnedTabFields(canonicalTab, updatedTab))
-  }
-}
-
-/** Preserve backend-owned identity/membership while replaying physical runtime state. */
 function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: BrowserTabSnapshot): BrowserTabSnapshot {
   return {
     ...canonical,
-    url: updated.url,
-    title: updated.title,
-    lifecycle: updated.lifecycle,
-    loading: updated.loading,
-    live: updated.live,
-    canGoBack: updated.canGoBack,
-    canGoForward: updated.canGoForward,
-    zoomFactor: updated.zoomFactor,
-    controller: updated.controller,
-    agentCursor: updated.agentCursor,
-    recording: updated.recording,
-    viewportSetting: updated.viewportSetting,
-    renderedViewport: updated.renderedViewport,
+    url: updated.url, title: updated.title, lifecycle: updated.lifecycle, loading: updated.loading, live: updated.live,
+    canGoBack: updated.canGoBack, canGoForward: updated.canGoForward, zoomFactor: updated.zoomFactor,
+    controller: updated.controller, agentCursor: updated.agentCursor, recording: updated.recording,
+    viewportSetting: updated.viewportSetting, renderedViewport: updated.renderedViewport,
     ...(updated.physicalVisible !== undefined ? { physicalVisible: updated.physicalVisible } : {}),
-    error: updated.error,
-    updatedAt: updated.updatedAt,
+    error: updated.error, updatedAt: updated.updatedAt,
   }
-}
-
-function HostedWebview({ tab, config, visible, style, bridge, created, onReady, onError, onUnmount }: {
-  tab: BrowserTabSnapshot
-  config: BrowserBridgeConfig
-  visible: boolean
-  style: CSSProperties
-  bridge: BrowserAutomationBridge
-  created: boolean
-  onReady: (tabId: string, element: ElectronWebviewElement) => void
-  onError: (tabId: string, error: unknown) => void
-  onUnmount: (tabId: string) => void
-}) {
-  const [element, setElement] = useState<ElectronWebviewElement | null>(null)
-  const initialTab = useRef(tab)
-  const initiallyCreated = useRef(created)
-  useEffect(() => {
-    if (!element) return
-    const register = () => {
-      void bridge.registerWebview({ tab: initialTab.current, webContentsId: element.getWebContentsId(), visible: false, created: initiallyCreated.current })
-        .then(() => onReady(tab.tabId, element))
-        .catch((error) => onError(tab.tabId, error))
-    }
-    element.addEventListener('dom-ready', register)
-    return () => {
-      element.removeEventListener('dom-ready', register)
-      onUnmount(tab.tabId)
-      void bridge.unregisterWebview(tab.tabId, safeWebContentsId(element))
-    }
-  }, [bridge, element, onError, onReady, onUnmount, tab.tabId])
-
-  return createElement('webview', {
-    ref: setElement,
-    src: tab.url || 'about:blank',
-    partition: config.partition,
-    preload: config.preloadUrl,
-    webpreferences: config.webPreferences,
-    style,
-    tabIndex: visible ? 0 : -1,
-    'aria-label': tab.title || 'Managed browser tab',
-  })
-}
-
-function webviewStyle(viewport: BrowserViewportSetting, rect: DOMRect | null): CSSProperties {
-  if (!rect) return { position: 'fixed', left: -10_000, top: 0, width: viewportWidth(viewport), height: viewportHeight(viewport), pointerEvents: 'none' }
-  const width = viewport.mode === 'fill' ? rect.width : Math.min(rect.width, viewport.width)
-  const height = viewport.mode === 'fill' ? rect.height : Math.min(rect.height, viewport.height)
-  return {
-    position: 'fixed',
-    left: rect.left + Math.max(0, (rect.width - width) / 2),
-    top: rect.top + Math.max(0, (rect.height - height) / 2),
-    width,
-    height,
-    pointerEvents: 'auto',
-    background: 'white',
-    borderRadius: 6,
-  }
-}
-function renderedWebviewViewport(viewport: BrowserViewportSetting, rect: DOMRect): { width: number; height: number; deviceScaleFactor: number } {
-  return {
-    width: Math.max(1, Math.round(viewport.mode === 'fill' ? rect.width : Math.min(rect.width, viewport.width))),
-    height: Math.max(1, Math.round(viewport.mode === 'fill' ? rect.height : Math.min(rect.height, viewport.height))),
-    deviceScaleFactor: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
-  }
-}
-function viewportWidth(viewport: BrowserViewportSetting): number { return viewport.mode === 'fill' ? 1280 : viewport.width }
-function viewportHeight(viewport: BrowserViewportSetting): number { return viewport.mode === 'fill' ? 800 : viewport.height }
-function safeWebContentsId(element: ElectronWebviewElement): number | undefined { try { return element.getWebContentsId() } catch { return undefined } }
-function requireWebview(map: Map<string, ElectronWebviewElement>, tabId: string): ElectronWebviewElement {
-  const webview = map.get(tabId)
-  if (!webview) throw new Error('Browser tab is not live')
-  return webview
-}
-async function boundedNativeCapture<T>(capture: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: number | undefined
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = window.setTimeout(() => reject(new Error('Browser native screenshot timed out')), timeoutMs)
-  })
-  try { return await Promise.race([capture, timeout]) }
-  finally { if (timer !== undefined) window.clearTimeout(timer) }
-}
-function waitUntilReady(
-  tabId: string,
-  promises: Map<string, Promise<void>>,
-  resolvers: Map<string, () => void>,
-  cancellers: Map<string, (reason: Error) => void>,
-): Promise<void> {
-  const existing = promises.get(tabId)
-  if (existing) return existing
-  const promise = new Promise<void>((resolve, reject) => {
-    const clear = () => {
-      window.clearTimeout(timer)
-      promises.delete(tabId)
-      resolvers.delete(tabId)
-      cancellers.delete(tabId)
-    }
-    const timer = window.setTimeout(() => {
-      clear()
-      reject(new Error('Browser tab did not become ready'))
-    }, 15_000)
-    resolvers.set(tabId, () => { clear(); resolve() })
-    cancellers.set(tabId, (reason) => { clear(); reject(reason) })
-  })
-  promises.set(tabId, promise)
-  return promise
 }
 function createProvisionalTab(sessionAgentId: string, profileId: string, url?: string): BrowserTabSnapshot {
   const now = new Date().toISOString()
@@ -655,27 +383,19 @@ function normalizeUrl(value: string): string {
 }
 class BrowserRendererError extends Error {
   readonly retryable = false
-  constructor(readonly code: import('@forge/protocol').BrowserAutomationErrorCode, message: string, readonly details?: Record<string, string | number | boolean | null>) {
-    super(message)
-    this.name = 'BrowserRendererError'
-  }
+  constructor(readonly code: BrowserAutomationErrorCode, message: string, readonly details?: Record<string, string | number | boolean | null>) { super(message); this.name = 'BrowserRendererError' }
 }
 function hostFailureResponse(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {
   const failure = error && typeof error === 'object' ? error as { code?: unknown; message?: unknown; retryable?: unknown; details?: unknown } : null
-  const code = typeof failure?.code === 'string' ? failure.code as import('@forge/protocol').BrowserAutomationErrorCode : 'execution-failed'
   return {
-    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
-    tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation,
-    ok: false,
+    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId,
+    hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false,
     error: {
-      code,
+      code: typeof failure?.code === 'string' ? failure.code as BrowserAutomationErrorCode : 'execution-failed',
       message: typeof failure?.message === 'string' ? failure.message : 'Browser host execution failed',
       retryable: failure?.retryable === true,
       ...(failure?.details && typeof failure.details === 'object' ? { details: failure.details as Record<string, string | number | boolean | null> } : {}),
-    },
-    elapsedMs: 0,
+    }, elapsedMs: 0,
   }
 }
-function randomId(): string {
-  try { return crypto.randomUUID() } catch { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` }
-}
+function randomId(): string { try { return crypto.randomUUID() } catch { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` } }

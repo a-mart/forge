@@ -82,6 +82,8 @@
         "src/preload.ts",
         "src/auto-updater.ts",
         "src/browser/fixture-smoke-main.ts",
+        "src/browser/popout-reparent-fixture-main.ts",
+        "src/browser/managed-browser-popout-fixture-main.ts",
         "src/browser/guest-preload.ts",
         "scripts/**/*.mjs",
         "src/**/*.test.ts",

@@ -15,6 +15,7 @@
     "build:all": "node ./scripts/build-all.mjs",
     "test:browser-fixture": "pnpm build && node ./scripts/browser-fixture-smoke.mjs",
     "test:browser-popout-reparent": "pnpm build && node ./scripts/browser-popout-reparent-smoke.mjs",
+    "test:browser-popout-product": "pnpm build && node ./scripts/managed-browser-popout-product-smoke.mjs",
     "test:browser-package": "pnpm build && node ./scripts/browser-package-content-smoke.mjs",
     "prepare:dev-native": "node ./scripts/prepare-dev-native.mjs",
     "dev": "pnpm prepare:dev-native && node esbuild.config.mjs && electron .",

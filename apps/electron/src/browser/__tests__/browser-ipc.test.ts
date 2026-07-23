@@ -1,59 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserHostError } from '../browser-errors.js'
 import { BROWSER_IPC } from '../browser-bridge-contract.js'
-
-vi.mock('electron', () => ({
-  webContents: { fromId: vi.fn() },
-}))
-
 import { installBrowserIpc } from '../browser-ipc.js'
 
-describe('browser IPC lifecycle envelopes', () => {
-  it('makes repeated renderer unregister harmless and preserves typed host failures', async () => {
+describe('main-owned browser IPC role and lifecycle', () => {
+  it('restricts reconciliation/automation to main and disposes the view host once', async () => {
     const handlers = new Map<string, (event: unknown, ...args: unknown[]) => Promise<unknown>>()
-    const ipcMain = {
-      handle: vi.fn((channel: string, handler: (event: unknown, ...args: unknown[]) => Promise<unknown>) => handlers.set(channel, handler)),
-      removeHandler: vi.fn((channel: string) => handlers.delete(channel)),
-    }
-    const unregisterWebview = vi.fn()
-    const destroy = vi.fn(async () => undefined)
+    const ipcMain = { handle: vi.fn((channel, handler) => handlers.set(channel, handler)), removeHandler: vi.fn((channel) => handlers.delete(channel)) }
     const manager = {
-      unregisterWebview,
-      destroy,
-      prepareRecording: vi.fn(async () => {
-        throw new BrowserHostError('recording-requires-visible-tab', 'physical bounds missing', true, { generation: 7 })
-      }),
+      prepareRecording: vi.fn(async () => { throw new BrowserHostError('recording-requires-visible-tab', 'physical bounds missing', true) }),
+      humanNavigate: vi.fn(), humanHistory: vi.fn(), humanReload: vi.fn(), humanSetZoom: vi.fn(), execute: vi.fn(),
+      stopRecordingCapture: vi.fn(), saveRecording: vi.fn(), cancelRecording: vi.fn(), setRecordingMimeType: vi.fn(),
     }
-    const dispose = installBrowserIpc({
-      ipcMain: ipcMain as never,
-      mainWindow: { webContents: { id: 10 } } as never,
-      manager: manager as never,
-      sessions: {} as never,
-      guestPreloadPath: '/tmp/guest-preload.js',
-    })
-    const event = { sender: { id: 10 } }
+    const viewHost = {
+      reconcile: vi.fn(async () => ({ applied: true, tabCount: 1 })), ensureProvisional: vi.fn(), commitProvisional: vi.fn(), abortProvisional: vi.fn(),
+      setPresentationTarget: vi.fn(), present: vi.fn(), captureScreenshot: vi.fn(), destroy: vi.fn(async () => undefined),
+    }
+    const mainWindow = { isDestroyed: () => false, webContents: { id: 10 } }
+    const dispose = installBrowserIpc({ ipcMain: ipcMain as never, mainWindow: mainWindow as never, manager: manager as never, viewHost: viewHost as never })
 
-    await expect(handlers.get(BROWSER_IPC.unregister)!(event, { tabId: 'tab-1', webContentsId: 22 })).resolves.toEqual({
-      __forgeBrowserIpcResult: true,
-      ok: true,
-      value: undefined,
-    })
-    await expect(handlers.get(BROWSER_IPC.unregister)!(event, { tabId: 'tab-1', webContentsId: 22 })).resolves.toMatchObject({ ok: true })
-    expect(unregisterWebview).toHaveBeenCalledTimes(2)
+    await expect(handlers.get(BROWSER_IPC.reconcile)!({ sender: { id: 10 } }, { updateSequence: 1 })).resolves.toMatchObject({ ok: true, value: { applied: true } })
+    await expect(handlers.get(BROWSER_IPC.reconcile)!({ sender: { id: 11 } }, {})).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    await expect(handlers.get(BROWSER_IPC.prepareRecording)!({ sender: { id: 10 } }, {})).resolves.toMatchObject({ ok: false, error: { code: 'recording-requires-visible-tab' } })
 
-    await expect(handlers.get(BROWSER_IPC.prepareRecording)!(event, {})).resolves.toEqual({
-      __forgeBrowserIpcResult: true,
-      ok: false,
-      error: {
-        code: 'recording-requires-visible-tab',
-        message: 'physical bounds missing',
-        retryable: true,
-        details: { generation: 7 },
-      },
-    })
-
-    expect(() => dispose()).not.toThrow()
-    await Promise.resolve()
-    expect(destroy).toHaveBeenCalledOnce()
+    dispose(); dispose(); await Promise.resolve()
+    expect(viewHost.destroy).toHaveBeenCalledOnce()
+    expect(ipcMain.removeHandler).toHaveBeenCalledTimes(16)
   })
 })

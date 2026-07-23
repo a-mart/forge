@@ -16,7 +16,9 @@ import { resolveDevBetterSqlite3Binding } from './dev-native-binding.js'
 import { BrowserAutomationManager } from './browser/browser-automation-manager.js'
 import { installBrowserIpc } from './browser/browser-ipc.js'
 import { BrowserSessionRegistry } from './browser/browser-session.js'
-import { enforceBrowserWebviewAttachment } from './browser/browser-webview-security.js'
+import { ManagedBrowserViewHost } from './browser/managed-browser-view-host.js'
+import { installBrowserWorkspaceIpc } from './browser/browser-workspace-ipc.js'
+import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -46,9 +48,18 @@ type BackendBootstrap = {
   backendWsUrl: string
   version: string
   platform: string
+  windowRole: 'main' | 'managed-browser-popout'
+  managedBrowserPopoutAvailable: boolean
 }
 
 let mainWindow: BrowserWindow | null = null
+let browserPopoutWindow: BrowserWindow | null = null
+let browserViewHost: ManagedBrowserViewHost | null = null
+let browserWorkspaceIpc: ReturnType<typeof installBrowserWorkspaceIpc> | null = null
+let browserWorkspaceMode: ManagedBrowserWorkspaceMode = process.platform === 'darwin' ? 'docked' : 'unavailable'
+let browserTransition: Promise<ManagedBrowserWorkspaceMode> = Promise.resolve(browserWorkspaceMode)
+let allowPopoutClose = false
+let mainWindowClosing = false
 let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
 let appProtocolRegistered = false
@@ -414,7 +425,11 @@ let sleepBlockerService: SleepBlockerService | null = null
 async function prepareQuitForUpdate(): Promise<void> {
   if (!appIsQuitting) {
     appIsQuitting = true
+    allowPopoutClose = true
+    if (browserPopoutWindow && !browserPopoutWindow.isDestroyed()) browserPopoutWindow.close()
     sleepBlockerService?.dispose()
+    browserWorkspaceIpc?.dispose()
+    browserWorkspaceIpc = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
     await backendSupervisor.stop()
@@ -455,7 +470,11 @@ if (!hasSingleInstanceLock) {
   })
 
   ipcMain.on(BACKEND_READY_CHANNEL, (event) => {
-    event.returnValue = backendBootstrap ?? backendSupervisor.bootstrap
+    const bootstrap = backendBootstrap ?? backendSupervisor.bootstrap
+    const windowRole = browserPopoutWindow && !browserPopoutWindow.isDestroyed() && event.sender.id === browserPopoutWindow.webContents.id
+      ? 'managed-browser-popout'
+      : 'main'
+    event.returnValue = { ...bootstrap, windowRole, managedBrowserPopoutAvailable: process.platform === 'darwin' }
   })
 
   ipcMain.handle('bridge:showOpenDialog', async (_event, options: Electron.OpenDialogOptions) => {
@@ -564,13 +583,27 @@ if (!hasSingleInstanceLock) {
         }
       },
     })
-    disposeBrowserHost = installBrowserIpc({
-      ipcMain,
-      mainWindow,
+    browserViewHost = new ManagedBrowserViewHost({
       manager: browserManager,
       sessions: browserSessions,
       guestPreloadPath: path.join(__dirname, 'guest-preload.js'),
+      capabilityEnabled: process.platform === 'darwin',
+      onGuestCrash: (tabId, reason) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('forge:browser-guest-crashed', { tabId, reason })
+      },
     })
+    disposeBrowserHost = installBrowserIpc({ ipcMain, mainWindow, manager: browserManager, viewHost: browserViewHost })
+    browserWorkspaceIpc = installBrowserWorkspaceIpc({
+      ipcMain,
+      getMainWindow: () => mainWindow,
+      getPopoutWindow: () => browserPopoutWindow,
+      viewHost: browserViewHost,
+      getMode: () => browserWorkspaceMode,
+      popOut: popOutManagedBrowser,
+      dock: dockManagedBrowser,
+      bringToFront: bringManagedBrowserToFront,
+    })
+    installManagedBrowserFocusAggregation(mainWindow)
     initAutoUpdater({
       mainWindow,
       getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
@@ -605,7 +638,11 @@ if (!hasSingleInstanceLock) {
 
     event.preventDefault()
     appIsQuitting = true
+    allowPopoutClose = true
+    if (browserPopoutWindow && !browserPopoutWindow.isDestroyed()) browserPopoutWindow.close()
     sleepBlockerService?.dispose()
+    browserWorkspaceIpc?.dispose()
+    browserWorkspaceIpc = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
 
@@ -638,17 +675,12 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      webviewTag: true,
+      webviewTag: false,
       spellcheck: true,
     },
   })
 
   trackWindowState(window)
-
-  const guestPreloadPath = path.join(__dirname, 'guest-preload.js')
-  window.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    enforceBrowserWebviewAttachment(event, webPreferences, params, guestPreloadPath)
-  })
 
   window.once('ready-to-show', () => {
     if (savedState.isFullScreen) {
@@ -660,10 +692,20 @@ function createMainWindow(): BrowserWindow {
     window.show()
   })
 
+  window.on('close', () => {
+    mainWindowClosing = true
+    if (browserPopoutWindow && !browserPopoutWindow.isDestroyed()) {
+      allowPopoutClose = true
+      browserPopoutWindow.close()
+    }
+  })
   window.on('closed', () => {
     if (mainWindow === window) {
+      browserWorkspaceIpc?.dispose()
+      browserWorkspaceIpc = null
       disposeBrowserHost?.()
       disposeBrowserHost = null
+      browserViewHost = null
       mainWindow = null
     }
   })
@@ -714,6 +756,160 @@ function createMainWindow(): BrowserWindow {
   })
 
   return window
+}
+
+async function createBrowserPopoutWindow(): Promise<BrowserWindow> {
+  if (browserPopoutWindow && !browserPopoutWindow.isDestroyed()) return browserPopoutWindow
+  const saved = loadWindowState({
+    key: 'managed-browser-window-state',
+    minWidth: 720,
+    minHeight: 560,
+    defaultState: { width: 1180, height: 820, isMaximized: false, isFullScreen: false },
+  })
+  const window = new BrowserWindow({
+    title: 'Forge Managed Browser',
+    width: saved.width,
+    height: saved.height,
+    ...(saved.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : {}),
+    minWidth: 720,
+    minHeight: 560,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webviewTag: false,
+      backgroundThrottling: false,
+    },
+  })
+  browserPopoutWindow = window
+  trackWindowState(window, { key: 'managed-browser-window-state', minWidth: 720, minHeight: 560 })
+  installManagedBrowserFocusAggregation(window)
+  window.on('close', (event) => {
+    if (allowPopoutClose || appIsQuitting || mainWindowClosing) return
+    event.preventDefault()
+    const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
+    if (epoch !== undefined) void dockManagedBrowser(epoch).catch((error) => console.error('Failed to dock Managed Browser', error))
+  })
+  window.on('closed', () => {
+    if (browserPopoutWindow === window) browserPopoutWindow = null
+    if (!allowPopoutClose && !appIsQuitting && !mainWindowClosing && browserWorkspaceMode === 'popped-out') {
+      const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
+      if (epoch !== undefined) void dockManagedBrowser(epoch).catch(() => undefined)
+    }
+  })
+  const recover = (): void => {
+    if (appIsQuitting || mainWindowClosing) return
+    const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
+    if (epoch !== undefined) void dockManagedBrowser(epoch).catch(() => undefined)
+  }
+  window.webContents.on('render-process-gone', recover)
+  window.webContents.on('did-fail-load', recover)
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') {
+      event.preventDefault()
+      const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
+      if (epoch !== undefined) void dockManagedBrowser(epoch).catch(() => undefined)
+    }
+  })
+  await loadRenderer(window)
+  return window
+}
+
+function popOutManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMode> {
+  const run = async (): Promise<ManagedBrowserWorkspaceMode> => {
+    if (process.platform !== 'darwin') return 'unavailable'
+    if (browserWorkspaceMode === 'popped-out' && browserPopoutWindow && !browserPopoutWindow.isDestroyed()) {
+      bringManagedBrowserToFront()
+      return browserWorkspaceMode
+    }
+    const host = browserViewHost
+    if (!host) throw new Error('Managed Browser host is unavailable')
+    browserWorkspaceMode = 'opening'
+    browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
+    const window = await createBrowserPopoutWindow()
+    await waitForBrowserTarget('popout', epoch)
+    const transferred = await host.transferOwner('popout', epoch)
+    if (!transferred) throw new Error('Managed Browser pop-out viewport was not physically ready')
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+    browserWorkspaceMode = 'popped-out'
+    browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
+    publishManagedBrowserFocus()
+    return browserWorkspaceMode
+  }
+  const result = browserTransition.then(run, run)
+  browserTransition = result.catch(() => {
+    browserWorkspaceMode = process.platform === 'darwin' ? 'docked' : 'unavailable'
+    browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
+    return browserWorkspaceMode
+  })
+  return result
+}
+
+function dockManagedBrowser(epoch: number): Promise<ManagedBrowserWorkspaceMode> {
+  const run = async (): Promise<ManagedBrowserWorkspaceMode> => {
+    if (process.platform !== 'darwin') return 'unavailable'
+    if (browserWorkspaceMode === 'docked' && (!browserPopoutWindow || browserPopoutWindow.isDestroyed())) {
+      focusMainWindow()
+      return browserWorkspaceMode
+    }
+    const host = browserViewHost
+    if (!host) throw new Error('Managed Browser host is unavailable')
+    browserWorkspaceMode = 'docking'
+    browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
+    await waitForBrowserTarget('docked', epoch)
+    const transferred = await host.transferOwner('docked', epoch)
+    if (!transferred) throw new Error('Managed Browser dock viewport was not physically ready')
+    const popout = browserPopoutWindow
+    if (popout && !popout.isDestroyed()) {
+      allowPopoutClose = true
+      popout.close()
+      allowPopoutClose = false
+    }
+    browserWorkspaceMode = 'docked'
+    browserWorkspaceIpc?.publishMode(browserWorkspaceMode)
+    focusMainWindow()
+    publishManagedBrowserFocus()
+    return browserWorkspaceMode
+  }
+  const result = browserTransition.then(run, run)
+  browserTransition = result.catch(() => browserWorkspaceMode)
+  return result
+}
+
+async function waitForBrowserTarget(owner: 'docked' | 'popout', epoch: number): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (browserViewHost?.hasPresentationTarget(owner, epoch)) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error(`Managed Browser ${owner} viewport did not become ready`)
+}
+
+function bringManagedBrowserToFront(): void {
+  const target = browserWorkspaceMode === 'popped-out' ? browserPopoutWindow : mainWindow
+  if (!target || target.isDestroyed()) return
+  if (target.isMinimized()) target.restore()
+  target.show()
+  target.focus()
+}
+
+function installManagedBrowserFocusAggregation(window: BrowserWindow): void {
+  window.on('focus', publishManagedBrowserFocus)
+  window.on('blur', publishManagedBrowserFocus)
+  window.on('show', publishManagedBrowserFocus)
+  window.on('hide', publishManagedBrowserFocus)
+  window.on('minimize', publishManagedBrowserFocus)
+  window.on('restore', publishManagedBrowserFocus)
+}
+
+function publishManagedBrowserFocus(): void {
+  const ownerWindow = browserWorkspaceMode === 'popped-out' ? browserPopoutWindow : mainWindow
+  const focused = Boolean(ownerWindow && !ownerWindow.isDestroyed() && ownerWindow.isVisible() && !ownerWindow.isMinimized() && ownerWindow.isFocused())
+  browserWorkspaceIpc?.publishFocus(focused)
 }
 
 function sendTerminalShortcut(action: 'toggle' | 'new' | 'next' | 'prev'): void {
@@ -896,6 +1092,17 @@ function createApplicationMenu(): void {
     submenu: [
       { role: 'minimize', ...(isMac ? { accelerator: 'CmdOrCtrl+M' } : {}) },
       { role: 'zoom' },
+      {
+        label: isMac ? 'Pop Out / Dock Managed Browser' : 'Managed Browser Pop-out (macOS only)',
+        accelerator: isMac ? 'CmdOrCtrl+Shift+B' : undefined,
+        enabled: isMac,
+        click: () => {
+          const epoch = browserWorkspaceIpc?.getProjection()?.workspaceEpoch
+          if (epoch === undefined) return
+          if (browserWorkspaceMode === 'popped-out' || browserWorkspaceMode === 'opening') void dockManagedBrowser(epoch)
+          else void popOutManagedBrowser(epoch)
+        },
+      },
       ...(isMac ? [
         { type: 'separator' as const },
         { role: 'front' as const },
@@ -926,6 +1133,8 @@ function buildBackendBootstrap(port: number): BackendBootstrap {
     backendWsUrl: `ws://127.0.0.1:${port}`,
     version: app.getVersion(),
     platform: process.platform,
+    windowRole: 'main',
+    managedBrowserPopoutAvailable: process.platform === 'darwin',
   }
 }
 

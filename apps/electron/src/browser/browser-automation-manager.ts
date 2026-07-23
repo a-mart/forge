@@ -33,6 +33,7 @@ import { BrowserHostError, asBrowserHostError } from './browser-errors.js'
 import { makeBrowserKeySequence } from './browser-keyboard.js'
 import { playwrightInjectedRuntimeInstallExpression } from './playwright-injected-runtime.js'
 import {
+  BROWSER_GUEST_AGENT_CURSOR_CHANNEL,
   BROWSER_GUEST_HUMAN_INPUT_CHANNEL,
   BROWSER_GUEST_SYNTHETIC_INPUT_CHANNEL,
   BROWSER_IPC,
@@ -100,12 +101,16 @@ export interface BrowserWebContentsLike {
   off(event: string, listener: (...args: unknown[]) => void): void
 }
 
-export interface BrowserWebviewRegistration {
+export interface BrowserTabRegistration {
   tab: BrowserTabSnapshot
-  webContentsId: number
   visible: boolean
-  /** True only for a renderer-created provisional tab awaiting its first open. */
+  /** True only for a provisional tab awaiting its first canonical open. */
   created: boolean
+}
+
+/** @deprecated Main-owned tabs no longer register renderer webview IDs. */
+export interface BrowserWebviewRegistration extends BrowserTabRegistration {
+  webContentsId: number
 }
 
 interface ExpectedInput {
@@ -232,7 +237,7 @@ export class BrowserAutomationManager {
     return [...BROWSER_AUTOMATION_OPERATIONS]
   }
 
-  registerWebview(registration: BrowserWebviewRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
+  registerTabWebContents(registration: BrowserTabRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
     if (this.destroyed) throw new BrowserHostError('host-disconnected', 'Browser host is shutting down')
     if (webContents.isDestroyed()) throw new BrowserHostError('tab-not-found', 'The hosted webview was already destroyed')
     const current = this.tabs.get(registration.tab.tabId)
@@ -270,6 +275,44 @@ export class BrowserAutomationManager {
     this.attachTabListeners(runtime)
     void this.ensureDebugger(runtime).catch(() => undefined)
     return this.syncSnapshot(runtime)
+  }
+
+  /** Compatibility seam for the native fixture while callers migrate to main-owned tabs. */
+  registerWebview(registration: BrowserWebviewRegistration, webContents: BrowserWebContentsLike): BrowserTabSnapshot {
+    return this.registerTabWebContents(registration, webContents)
+  }
+
+  hasTab(tabId: string): boolean {
+    const tab = this.tabs.get(tabId)
+    return Boolean(tab && !tab.destroyed && this.isWebContentsAlive(tab))
+  }
+
+  get runtimeCount(): number {
+    return this.tabs.size
+  }
+
+  async captureScreenshot(tabId: string): Promise<string> {
+    const tab = this.requireTab(tabId)
+    const image = await tab.webContents.capturePage()
+    if (image.isEmpty()) throw new BrowserHostError('execution-failed', 'Browser screenshot was empty')
+    let bounded = image
+    if (image.getSize().width > BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH) {
+      bounded = image.resize({ width: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH })
+    }
+    const png = bounded.toPNG()
+    if (png.byteLength === 0 || png.byteLength > MAX_SCREENSHOT_PNG_BYTES) {
+      throw new BrowserHostError('response-too-large', 'Browser screenshot exceeded the native capture limit')
+    }
+    return `data:image/png;base64,${png.toString('base64')}`
+  }
+
+  markGuestCrashed(tabId: string, reason = 'Managed browser renderer crashed'): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    if (this.activeRecording?.tabId === tabId) this.cancelRecording()
+    tab.navigationWait?.interrupt(new BrowserHostError('host-disconnected', reason, true))
+    this.disposeTabRuntime(tab, false)
+    this.tabs.delete(tabId)
   }
 
   setTabPresentation(request: BrowserPresentationRequest): BrowserPresentationAcknowledgement {
@@ -341,7 +384,7 @@ export class BrowserAutomationManager {
     return this.syncSnapshot(tab)
   }
 
-  unregisterWebview(tabId: string, webContentsId?: number): void {
+  unregisterTabWebContents(tabId: string, webContentsId?: number): void {
     const tab = this.tabs.get(tabId)
     if (!tab) return
     if (webContentsId !== undefined) {
@@ -351,6 +394,11 @@ export class BrowserAutomationManager {
     }
     this.disposeTabRuntime(tab, false)
     this.tabs.delete(tabId)
+  }
+
+  /** @deprecated Main-owned tabs use unregisterTabWebContents. */
+  unregisterWebview(tabId: string, webContentsId?: number): void {
+    this.unregisterTabWebContents(tabId, webContentsId)
   }
 
   async execute(request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> {
@@ -744,9 +792,11 @@ export class BrowserAutomationManager {
     const syntheticSequence = await this.beginSyntheticInput(tab, { kind: 'pointer', x: point.x, y: point.y, button: 0 })
     try {
       tab.snapshot = { ...tab.snapshot, agentCursor: { ...point, phase: 'move', sequence: ++this.sequence, createdAt: new Date(this.now()).toISOString() } }
+      tab.webContents.send(BROWSER_GUEST_AGENT_CURSOR_CHANNEL, tab.snapshot.agentCursor)
       this.emitTabState(tab)
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' })
       tab.snapshot = { ...tab.snapshot, agentCursor: { ...point, phase: 'click', sequence: ++this.sequence, createdAt: new Date(this.now()).toISOString() } }
+      tab.webContents.send(BROWSER_GUEST_AGENT_CURSOR_CHANNEL, tab.snapshot.agentCursor)
       this.emitTabState(tab)
       await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 })
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 })
@@ -1042,7 +1092,7 @@ export class BrowserAutomationManager {
       tab.snapshot = { ...tab.snapshot, lifecycle: 'failed', loading: false, error: { code: String(code), message: description } }
     }
     const registeredWebContentsId = tab.webContents.id
-    const destroyed = (): void => this.unregisterWebview(tab.snapshot.tabId, registeredWebContentsId)
+    const destroyed = (): void => this.unregisterTabWebContents(tab.snapshot.tabId, registeredWebContentsId)
     const willNavigate = (...args: unknown[]): void => {
       const event = args[0] as { preventDefault?: () => void } | undefined
       const url = typeof args[1] === 'string' ? args[1] : ''

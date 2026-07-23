@@ -8,10 +8,10 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 
 - **Main process** (`src/main.ts`) — launches the packaged backend, manages the application window and auto-updates, owns Managed Browser sessions, and installs the trusted browser IPC handlers
 - **Trusted preload** (`src/preload.ts`) — bridges the Forge renderer to a narrow IPC API, including the Managed Browser host bridge; browser IPC rejects callers other than the trusted Forge renderer
-- **Renderer process** — loads the staged UI bundle from `ui/index.html`, registers the connected Desktop browser host with the Builder backend, and mounts Forge-owned `<webview>` guests for local manager sessions
-- **Guest preload** (`src/browser/guest-preload.ts`) — runs inside sandboxed webviews and reports only real pointer/key input so human control can interrupt an agent action
+- **Renderer process** — loads the staged UI bundle from `ui/index.html` and keeps the single connected Desktop browser host/recording authority registered with the local Builder backend
+- **Guest preload** (`src/browser/guest-preload.ts`) — runs inside sandboxed managed tab views, reports only real pointer/key input so human control can interrupt an agent action, and renders the non-interactive agent cursor inside the native guest
 
-Managed Browser partitions are persistent and profile-scoped. Webviews enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected-partition registration. The main-process `BrowserAutomationManager` serializes typed operations and uses Chromium's debugger protocol. Semantic locator work uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
+Managed Browser partitions are persistent and profile-scoped. The main process owns exactly one `WebContentsView` and automation runtime per live tab; views enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected partitions. On macOS, the same view can move into the single native Managed Browser pop-out and back without remounting, changing host generation, or interrupting CDP/recording. Windows and Linux expose pop-out as unavailable until native reparent qualification passes there. The main-process `BrowserAutomationManager` serializes typed operations and uses Chromium's debugger protocol. Semantic locator work uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
 
 ### Packaged layout
 
@@ -35,7 +35,9 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 | `src/main.ts` | Main process entry point. Window management, backend lifecycle, IPC handlers |
 | `src/preload.ts` | Trusted renderer bridge, including the narrow Managed Browser IPC facade |
 | `src/browser/browser-automation-manager.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
-| `src/browser/browser-ipc.ts` | Trusted renderer/guest validation and main-process browser IPC handlers |
+| `src/browser/browser-ipc.ts` | Main-authority-only automation IPC handlers |
+| `src/browser/managed-browser-view-host.ts` | Epoch/sequence-guarded main-process ownership, bounds, and same-view reparenting |
+| `src/browser/browser-workspace-ipc.ts` | Narrow role-scoped pop-out projection and correlated command relay |
 | `src/browser/guest-preload.ts` | Sandboxed guest input-only preload |
 | `src/browser/playwright-injected-runtime.ts` | Pinned, fail-closed Playwright semantic-locator runtime extraction |
 | `src/auto-updater.ts` | Auto-update logic using `electron-updater` and GitHub Releases |
@@ -74,7 +76,7 @@ Focused Managed Browser validation commands:
 # A fresh worktree needs the shared protocol output used by the Electron bundle
 pnpm --filter @forge/protocol build
 
-# Electron host fixture: launches real Electron/webviews against a local HTTP fixture
+# Electron host fixture: launches real Electron/main-owned tab views against a local HTTP fixture
 pnpm --dir apps/electron test:browser-fixture
 
 # Native WebContentsView spike: repeatedly reparents one main-owned guest between windows

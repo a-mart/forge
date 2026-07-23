@@ -13,7 +13,8 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
 import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
 import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
-import { BrowserPanel } from '@/components/browser/BrowserPanel'
+import { BrowserPanel, type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
+import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
@@ -204,6 +205,23 @@ export function BuilderSurface({
   const archiveHydrationRequestedRef = useRef(false)
   const browserHostRef = useRef<BrowserAutomationHostHandle | null>(null)
   const handledBrowserRevealRef = useRef<string | null>(null)
+  const [browserWorkspaceMode, setBrowserWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(
+    window.electronBridge?.browserWorkspace?.capability.popoutAvailable ? 'docked' : 'unavailable',
+  )
+  const browserCommandPort = useMemo<BrowserWorkspaceCommandPort>(() => {
+    const host = (): BrowserAutomationHostHandle => {
+      if (!browserHostRef.current) throw new Error('Managed Browser controller is unavailable')
+      return browserHostRef.current
+    }
+    return {
+      open: () => host().open(), activate: (tabId) => host().activate(tabId), close: (tabId) => host().close(tabId),
+      resize: (tabId, viewport) => host().resize(tabId, viewport), navigate: (tabId, url) => host().navigate(tabId, url),
+      history: async (tabId, direction) => host().history(tabId, direction), reload: async (tabId, hard) => host().reload(tabId, hard),
+      zoom: async (tabId, factor) => host().setZoom(tabId, factor), capture: (tabId) => host().captureScreenshot(tabId),
+      startRecording: (tabId) => host().startRecording(tabId), stopRecording: (tabId, recordingId) => host().stopRecording(tabId, recordingId),
+      popOut: () => host().popOut(), dock: () => host().dock(),
+    }
+  }, [])
 
   const { clientRef, httpClientRef, state, setState } = useOriginConnection(activeOriginId, localWsUrl)
   const localState = useOriginSnapshot(LOCAL_ORIGIN_ID)
@@ -495,7 +513,10 @@ export function BuilderSurface({
     if (handledBrowserRevealRef.current === key) return
     handledBrowserRevealRef.current = key
     panels.handleOpenBrowserFromReveal()
-  }, [browserSessionAgentId, localState.browserHost.hostGeneration, localState.browserPanelRevealRequest, panels])
+    if (browserWorkspaceMode === 'popped-out' || browserWorkspaceMode === 'opening') {
+      void browserHostRef.current?.bringToFront()
+    }
+  }, [browserSessionAgentId, browserWorkspaceMode, localState.browserHost.hostGeneration, localState.browserPanelRevealRequest, panels])
 
   // Workers belonging to the active manager session (for pill bar)
   const sessionWorkers = useMemo(() => {
@@ -835,7 +856,15 @@ export function BuilderSurface({
         client={localClient}
         state={localState}
         selectedSessionAgentId={browserSessionAgentId}
+        selectedProfileId={browserProfileId}
         panelVisible={activeView === 'chat' && panels.isBrowserOpen}
+        onWorkspaceModeChange={(mode) => {
+          setBrowserWorkspaceMode(mode)
+          if (mode === 'docked') window.requestAnimationFrame(() => {
+            const control = document.querySelector('button[aria-label="Open Managed Browser in a separate window"]')
+            if (control instanceof HTMLElement) control.focus()
+          })
+        }}
       />
 
       <AgentSidebarConnected
@@ -1054,13 +1083,26 @@ export function BuilderSurface({
                 onRestoreSession={session.handleRestoreSession}
               />
             ) : activeView === 'chat' && panels.isBrowserOpen && browserSessionAgentId && browserProfileId ? (
-              <BrowserPanel
-                client={localClient}
+              browserWorkspaceMode === 'popped-out' || browserWorkspaceMode === 'opening' ? (
+                <section className="relative flex min-h-0 flex-1 items-center justify-center bg-background" aria-label="Managed Browser workspace">
+                  <div data-browser-automation-viewport className="pointer-events-none absolute inset-0" aria-hidden="true" />
+                  <div className="relative z-10 max-w-md text-center">
+                    <h2 className="font-medium">Browser is open in a separate window</h2>
+                    <p className="mt-2 text-sm text-muted-foreground">The same managed tab, automation queue, and recording remain active.</p>
+                    <div className="mt-4 flex justify-center gap-2">
+                      <button type="button" className="rounded border px-3 py-1.5 text-sm hover:bg-muted focus-visible:ring-2" onClick={() => void browserHostRef.current?.bringToFront()}>Bring to front</button>
+                      <button id="managed-browser-dock-control" type="button" className="rounded border px-3 py-1.5 text-sm hover:bg-muted focus-visible:ring-2" onClick={() => void browserHostRef.current?.dock()}>Dock</button>
+                    </div>
+                  </div>
+                </section>
+              ) : <BrowserPanel
                 sessionAgentId={browserSessionAgentId}
                 profileId={browserProfileId}
                 snapshot={browserSessionSnapshot}
                 host={localState.browserHost}
-                hostRef={browserHostRef}
+                commandPort={browserCommandPort}
+                mode={browserWorkspaceMode}
+                popoutAvailable={Boolean(window.electronBridge?.browserWorkspace?.capability.popoutAvailable)}
               />
             ) : (
               <ChatWorkspace

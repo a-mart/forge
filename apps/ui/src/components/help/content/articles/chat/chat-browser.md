@@ -1,4 +1,4 @@
-Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron webviews for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
+Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron tab views for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
 
 ## Open the Browser workspace
 
@@ -13,6 +13,8 @@ Use the workspace to:
 - start or stop a recording of the visible tab.
 
 An agent can reveal Browser when it opens a visible tab. The current session's tabs stay separate from tabs belonging to other sessions.
+
+On macOS, **Open Managed Browser in a separate window** moves the same live tab into one dedicated native window. Dock it with the toolbar control, Cmd+W, or the title-bar close button. Page state, history, profile storage, automation, and an active recording continue because Forge reparents the same native view instead of remounting it. The main window remains the only backend browser host and recording authority. Pop-out is unavailable on Windows and Linux in this release pending native qualification; there is no remount fallback.
 
 ## Work alongside the manager
 

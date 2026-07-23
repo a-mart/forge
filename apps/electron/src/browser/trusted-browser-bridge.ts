@@ -4,12 +4,18 @@ import type { IpcRenderer, IpcRendererEvent } from 'electron'
 import {
   BROWSER_IPC,
   browserBridgeCapabilities,
+  BROWSER_WORKSPACE_IPC,
   type BrowserAutomationBridge,
-  type BrowserBridgeConfig,
   type BrowserPresentationAcknowledgement,
   type BrowserPresentationRequest,
+  type BrowserWorkspaceBridge,
+  type BrowserWorkspaceCommandRequest,
+  type ElectronWindowRole,
+  type ManagedBrowserWorkspaceMode,
+  type ManagedBrowserWorkspaceProjection,
 } from './browser-bridge-contract.js'
-import type { BrowserWebviewRegistration, PreparedRecording } from './browser-automation-manager.js'
+import type { BrowserTabRegistration, PreparedRecording } from './browser-automation-manager.js'
+import type { BrowserViewportMetrics, ManagedBrowserReconcileInput } from './managed-browser-view-host.js'
 
 interface RendererRecording {
   prepared: PreparedRecording
@@ -143,10 +149,13 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
 
   return {
     capabilities: browserBridgeCapabilities,
-    getWebviewConfig: (profileId: string): Promise<BrowserBridgeConfig> => invokeIpc(BROWSER_IPC.config, profileId),
-    registerWebview: (registration: BrowserWebviewRegistration): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.register, registration),
-    unregisterWebview: (tabId: string, webContentsId?: number): Promise<void> => invokeIpc(BROWSER_IPC.unregister, { tabId, webContentsId }),
+    reconcile: (input: ManagedBrowserReconcileInput): Promise<{ applied: boolean; tabCount: number }> => invokeIpc(BROWSER_IPC.reconcile, input),
+    ensureProvisional: (registration: BrowserTabRegistration & { workspaceEpoch: number }): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.ensureProvisional, { tab: registration.tab, workspaceEpoch: registration.workspaceEpoch }),
+    commitProvisional: (tabId: string, workspaceEpoch: number): Promise<void> => invokeIpc(BROWSER_IPC.commitProvisional, { tabId, workspaceEpoch }),
+    abortProvisional: (tabId: string): Promise<void> => invokeIpc(BROWSER_IPC.abortProvisional, tabId),
+    reportViewport: (metrics: BrowserViewportMetrics): Promise<void> => invokeIpc(BROWSER_IPC.viewport, metrics),
     setTabPresentation: (request: BrowserPresentationRequest): Promise<BrowserPresentationAcknowledgement> => invokeIpc(BROWSER_IPC.presentation, request),
+    captureScreenshot: (tabId: string): Promise<string> => invokeIpc(BROWSER_IPC.capture, tabId),
     navigate: (tabId: string, url: string): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanNavigate, { tabId, url }),
     history: (tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanHistory, { tabId, direction }),
     reload: (tabId: string, hard = false): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanReload, { tabId, hard }),
@@ -157,6 +166,58 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
       ipcRenderer.on(BROWSER_IPC.stateChanged, handler)
       return () => ipcRenderer.removeListener(BROWSER_IPC.stateChanged, handler)
     },
+  }
+}
+
+export function createTrustedBrowserWorkspaceBridge(
+  ipcRenderer: IpcRenderer,
+  role: ElectronWindowRole,
+  popoutAvailable: boolean,
+): BrowserWorkspaceBridge {
+  const requireMain = (): void => {
+    if (role !== 'main') throw new Error('This Managed Browser workspace method requires the authoritative renderer')
+  }
+  const requirePopout = (): void => {
+    if (role !== 'managed-browser-popout') throw new Error('This Managed Browser workspace method requires the pop-out renderer')
+  }
+  const listen = <T>(channel: string, listener: (value: T) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, value: T): void => listener(value)
+    ipcRenderer.on(channel, handler)
+    return () => ipcRenderer.removeListener(channel, handler)
+  }
+  return {
+    capability: { popoutAvailable },
+    getSnapshot: async (): Promise<ManagedBrowserWorkspaceProjection | null> => {
+      requirePopout()
+      return ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.snapshot) as Promise<ManagedBrowserWorkspaceProjection | null>
+    },
+    ...(role === 'main' ? {
+      publish: (projection: ManagedBrowserWorkspaceProjection): Promise<void> => ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.publish, projection),
+      onCommand: (listener: (request: BrowserWorkspaceCommandRequest) => void): (() => void) => listen(BROWSER_WORKSPACE_IPC.commandForward, listener),
+      replyToCommand: (requestId: string, result: { ok: true; value?: unknown } | { ok: false; error: string }): void => {
+        void ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.commandReply, { requestId, ...result })
+      },
+    } : {
+      sendCommand: (request: BrowserWorkspaceCommandRequest): Promise<unknown> => ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.command, request),
+    }),
+    popOut: async (workspaceEpoch: number): Promise<ManagedBrowserWorkspaceMode> => {
+      requireMain()
+      return ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.popOut, workspaceEpoch) as Promise<ManagedBrowserWorkspaceMode>
+    },
+    dock: (workspaceEpoch: number): Promise<ManagedBrowserWorkspaceMode> => ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.dock, workspaceEpoch) as Promise<ManagedBrowserWorkspaceMode>,
+    bringToFront: async (): Promise<void> => {
+      requireMain()
+      await ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.bringToFront)
+    },
+    reportViewport: async (metrics: BrowserViewportMetrics): Promise<void> => {
+      requirePopout()
+      await ipcRenderer.invoke(BROWSER_WORKSPACE_IPC.viewport, metrics)
+    },
+    onProjection: (listener: (projection: ManagedBrowserWorkspaceProjection | null) => void): (() => void) => listen(BROWSER_WORKSPACE_IPC.projection, listener),
+    onModeChanged: (listener: (mode: ManagedBrowserWorkspaceMode) => void): (() => void) => listen(BROWSER_WORKSPACE_IPC.mode, listener),
+    ...(role === 'main' ? {
+      onFocusChanged: (listener: (focused: boolean) => void): (() => void) => listen(BROWSER_WORKSPACE_IPC.focus, listener),
+    } : {}),
   }
 }
 
