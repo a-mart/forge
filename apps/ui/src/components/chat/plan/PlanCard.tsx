@@ -2,6 +2,7 @@ import { useId } from 'react'
 import { ChevronDown, ClipboardList, GitBranch } from 'lucide-react'
 import type { SessionPlanSnapshotEvent } from '@forge/protocol'
 import { cn } from '@/lib/utils'
+import { PLAN_SURFACE_WIDTH_CLASS } from './plan-surface'
 import { PlanView } from './PlanView'
 
 interface PlanCardProps {
@@ -23,7 +24,7 @@ export function PlanCard({ snapshot, expanded, onExpandedChange }: PlanCardProps
     : active[0]?.step
 
   return (
-    <section className="mx-auto w-full max-w-3xl px-4 pt-3" aria-label={isGraph ? 'Work graph' : 'Working plan'}>
+    <section className={cn('mx-auto w-full px-4 pt-3', PLAN_SURFACE_WIDTH_CLASS)} aria-label={isGraph ? 'Work graph' : 'Working plan'}>
       <div className="overflow-hidden rounded-xl border border-border/70 bg-card/80 shadow-sm backdrop-blur">
         <button
           type="button"

@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { WorkGraphSnapshot } from '@forge/protocol'
+import { workGraphColumnCount } from './plan-surface'
 import { WorkGraphView } from './WorkGraphView'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -74,10 +75,17 @@ describe('WorkGraphView', () => {
     expect(container.textContent).toContain('After: Research current behavior')
   })
 
-  it('keeps compact dock rendering useful without long acceptance copy', () => {
+  it('keeps compact rendering denser without long acceptance copy', () => {
     act(() => root.render(createElement(WorkGraphView, { graph, compact: true })))
     expect(container.textContent).toContain('Research current behavior')
     expect(container.textContent).not.toContain('Accept when:')
+  })
+
+  it('derives graph columns from stage width, not compact mode', () => {
+    expect(workGraphColumnCount(320)).toBe(1)
+    expect(workGraphColumnCount(430)).toBe(2)
+    expect(workGraphColumnCount(620)).toBe(3)
+    expect(workGraphColumnCount(720)).toBe(3)
   })
 
   it('keeps an explicit list choice across graph revisions while graph is active', () => {

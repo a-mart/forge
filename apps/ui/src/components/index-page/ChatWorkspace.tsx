@@ -146,6 +146,7 @@ export function ChatWorkspace({
               'min-h-0 flex flex-1 flex-col overflow-hidden',
               isMessageListHidden && 'hidden',
             )}
+            data-chat-transcript-surface=""
           >
             <MessageList ref={messageListRef} {...messageListProps} />
           </div>

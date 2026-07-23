@@ -17,6 +17,7 @@ import {
 import { workGraphNodeStatusLabel } from './work-graph-node-status'
 import { getWorkGraphNodeWorkerId } from '../work-graph-node-worker'
 import { useWorkGraphWorkerHighlight } from '../work-graph-worker-highlight-context'
+import { workGraphColumnCount } from './plan-surface'
 
 interface PositionedNode {
   node: WorkGraphNode
@@ -43,10 +44,11 @@ export function WorkGraphDiagram({
   const stageRef = useRef<HTMLDivElement | null>(null)
   const nodeRefs = useRef(new Map<string, HTMLButtonElement>())
   const userSelectedRef = useRef(false)
-  const [stageWidth, setStageWidth] = useState(compact ? 320 : 720)
+  const [stageWidth, setStageWidth] = useState(720)
   const [selectedNodeId, setSelectedNodeId] = useState(() => defaultSelectedNodeId(graph.nodes))
   const [edges, setEdges] = useState<GraphEdge[]>([])
-  const columnCount = compact ? 1 : stageWidth >= 620 ? 3 : stageWidth >= 430 ? 2 : 1
+  // Column count is always width-driven so dock and inline surfaces share layout.
+  const columnCount = workGraphColumnCount(stageWidth)
   const positionedNodes = useMemo(
     () => positionGraphNodes(graph.nodes, columnCount),
     [columnCount, graph.nodes],

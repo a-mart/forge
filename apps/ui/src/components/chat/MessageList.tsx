@@ -1285,7 +1285,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const renderIndexes = Array.from(startByIndex.keys()).sort((a, b) => a - b)
 
   return (
-    <div className="relative min-h-0 flex flex-1 flex-col overflow-hidden">
+    <div
+      className="relative min-h-0 flex flex-1 flex-col overflow-hidden"
+      data-chat-transcript-surface=""
+    >
       {codexElicitations.length ? <div className="shrink-0 space-y-2 overflow-auto p-2 md:p-3">{codexElicitations.map((request) => <CodexElicitationCard key={request.elicitationId} request={request} onRespond={(decision, values, persistScope) => onCodexElicitationResponse?.(request.agentId, request.elicitationId, decision, values, persistScope)} />)}</div> : null}
       <div
         ref={(el) => {

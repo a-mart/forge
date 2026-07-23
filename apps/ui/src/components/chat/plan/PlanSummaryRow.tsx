@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { Check, ChevronDown, ClipboardList, GitBranch } from 'lucide-react'
 import type { PlanSummaryEvent, SessionPlanSnapshotEvent } from '@forge/protocol'
 import { cn } from '@/lib/utils'
+import { PLAN_SURFACE_WIDTH_CLASS } from './plan-surface'
 import { PlanView } from './PlanView'
 
 export function PlanSummaryRow({
@@ -25,7 +26,7 @@ export function PlanSummaryRow({
     : active[0]?.step
 
   return (
-    <section className="mx-auto w-full max-w-3xl px-4 py-1" aria-label={isComplete ? (isGraph ? 'Completed graph' : 'Completed plan') : (isGraph ? 'Work graph' : 'Working plan')}>
+    <section className={cn('mx-auto w-full px-4 py-1', PLAN_SURFACE_WIDTH_CLASS)} aria-label={isComplete ? (isGraph ? 'Completed graph' : 'Completed plan') : (isGraph ? 'Work graph' : 'Working plan')}>
       <div className={cn('overflow-hidden rounded-xl bg-card/60', isComplete ? 'border border-emerald-500/20' : 'border border-border/70')}>
         <button
           type="button"
