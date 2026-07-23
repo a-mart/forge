@@ -1,7 +1,14 @@
 /* Recording coordination follows T3 Code browserRecording.ts at 9a0a0716 (MIT). */
-import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserTabSnapshot, BrowserViewportSetting } from '@forge/protocol'
+import type { BrowserAutomationFailure, BrowserAutomationRequest, BrowserAutomationResponse, BrowserTabSnapshot } from '@forge/protocol'
 import type { IpcRenderer, IpcRendererEvent } from 'electron'
-import { BROWSER_IPC, browserBridgeCapabilities, type BrowserAutomationBridge, type BrowserBridgeConfig } from './browser-bridge-contract.js'
+import {
+  BROWSER_IPC,
+  browserBridgeCapabilities,
+  type BrowserAutomationBridge,
+  type BrowserBridgeConfig,
+  type BrowserPresentationAcknowledgement,
+  type BrowserPresentationRequest,
+} from './browser-bridge-contract.js'
 import type { BrowserWebviewRegistration, PreparedRecording } from './browser-automation-manager.js'
 
 interface RendererRecording {
@@ -18,6 +25,21 @@ interface RendererRecording {
 
 export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAutomationBridge {
   let active: RendererRecording | null = null
+  const invokeIpc = async <T>(channel: string, ...args: unknown[]): Promise<T> => {
+    const envelope = await ipcRenderer.invoke(channel, ...args) as {
+      __forgeBrowserIpcResult?: boolean
+      ok?: boolean
+      value?: T
+      error?: BrowserAutomationFailure
+    }
+    if (!envelope?.__forgeBrowserIpcResult) {
+      throw new BrowserIpcError({ code: 'malformed-response', message: `Browser IPC ${channel} returned no typed envelope`, retryable: false })
+    }
+    if (!envelope.ok) {
+      throw new BrowserIpcError(envelope.error ?? { code: 'execution-failed', message: `Browser IPC ${channel} failed`, retryable: false })
+    }
+    return envelope.value as T
+  }
 
   const drawFrame = (_event: IpcRendererEvent, payload: unknown): void => {
     if (!active || !payload || typeof payload !== 'object') return
@@ -35,18 +57,18 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
   const invoke = async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
     if (request.operation === 'recordingStart') return startRecording(request)
     if (request.operation === 'recordingStop') return stopRecording(request)
-    return ipcRenderer.invoke(BROWSER_IPC.execute, request) as Promise<BrowserAutomationResponse>
+    return invokeIpc<BrowserAutomationResponse>(BROWSER_IPC.execute, request)
   }
 
   const startRecording = async (request: BrowserAutomationRequest & { operation: 'recordingStart' }): Promise<BrowserAutomationResponse> => {
     if (active) {
       if (active.prepared.tabId === request.tabId && active.phase === 'recording') {
-        return ipcRenderer.invoke(BROWSER_IPC.execute, request) as Promise<BrowserAutomationResponse>
+        return invokeIpc<BrowserAutomationResponse>(BROWSER_IPC.execute, request)
       }
       return failure(request, 'recording-conflict', 'Another browser recording is active')
     }
     try {
-      const prepared = await ipcRenderer.invoke(BROWSER_IPC.prepareRecording, request) as PreparedRecording
+      const prepared = await invokeIpc<PreparedRecording>(BROWSER_IPC.prepareRecording, request)
       const canvas = document.createElement('canvas')
       canvas.width = Math.max(1, prepared.width)
       canvas.height = Math.max(1, prepared.height)
@@ -59,13 +81,13 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
       const recording: RendererRecording = { prepared, canvas, context, recorder, chunks, mimeType, phase: 'starting', startPromise: null, stopPromise: null }
       active = recording
       recorder.start(1_000)
-      const startPromise = ipcRenderer.invoke(BROWSER_IPC.execute, { ...request, recordingMimeType: mimeType }) as Promise<BrowserAutomationResponse>
+      const startPromise = invokeIpc<BrowserAutomationResponse>(BROWSER_IPC.execute, { ...request, recordingMimeType: mimeType })
       recording.startPromise = startPromise
       const response = await startPromise
       if (!response.ok) {
         await stopMediaRecorder(recorder)
         active = null
-        await ipcRenderer.invoke(BROWSER_IPC.cancelRecording, prepared.recordingId)
+        await invokeIpc<void>(BROWSER_IPC.cancelRecording, prepared.recordingId)
         return response
       }
       if (active !== recording) throw new Error('Browser recording startup was interrupted')
@@ -76,8 +98,8 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
       const recordingId = active?.prepared.recordingId
       if (active) await stopMediaRecorder(active.recorder).catch(() => undefined)
       active = null
-      await ipcRenderer.invoke(BROWSER_IPC.cancelRecording, recordingId).catch(() => undefined)
-      return failure(request, 'execution-failed', error instanceof Error ? error.message : 'Browser recording failed to start')
+      await invokeIpc<void>(BROWSER_IPC.cancelRecording, recordingId).catch(() => undefined)
+      return failureFromError(request, error, 'Browser recording failed to start')
     }
   }
 
@@ -94,14 +116,14 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
           if (!startResponse.ok) return startResponse
         }
         recording.phase = 'stopping'
-        await ipcRenderer.invoke(BROWSER_IPC.stopRecordingCapture, request)
+        await invokeIpc<PreparedRecording>(BROWSER_IPC.stopRecordingCapture, request)
         await stopMediaRecorder(recording.recorder)
         const blob = new Blob(recording.chunks, { type: recording.mimeType })
         const bytes = new Uint8Array(await blob.arrayBuffer())
-        return await ipcRenderer.invoke(BROWSER_IPC.saveRecording, { request, mimeType: recording.mimeType, bytes }) as BrowserAutomationResponse
+        return await invokeIpc<BrowserAutomationResponse>(BROWSER_IPC.saveRecording, { request, mimeType: recording.mimeType, bytes })
       } catch (error) {
-        await ipcRenderer.invoke(BROWSER_IPC.cancelRecording, recording.prepared.recordingId).catch(() => undefined)
-        return failure(request, 'execution-failed', error instanceof Error ? error.message : 'Browser recording failed to stop')
+        await invokeIpc<void>(BROWSER_IPC.cancelRecording, recording.prepared.recordingId).catch(() => undefined)
+        return failureFromError(request, error, 'Browser recording failed to stop')
       } finally {
         if (active === recording) active = null
       }
@@ -112,20 +134,34 @@ export function createTrustedBrowserBridge(ipcRenderer: IpcRenderer): BrowserAut
 
   return {
     capabilities: browserBridgeCapabilities,
-    getWebviewConfig: (profileId: string): Promise<BrowserBridgeConfig> => ipcRenderer.invoke(BROWSER_IPC.config, profileId),
-    registerWebview: (registration: BrowserWebviewRegistration): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.register, registration),
-    unregisterWebview: (tabId: string, webContentsId?: number): Promise<void> => ipcRenderer.invoke(BROWSER_IPC.unregister, { tabId, webContentsId }),
-    setTabPresentation: (tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.presentation, { tabId, visible, viewportSetting }),
-    navigate: (tabId: string, url: string): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanNavigate, { tabId, url }),
-    history: (tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanHistory, { tabId, direction }),
-    reload: (tabId: string, hard = false): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanReload, { tabId, hard }),
-    setZoom: (tabId: string, factor: number): Promise<BrowserTabSnapshot> => ipcRenderer.invoke(BROWSER_IPC.humanZoom, { tabId, factor }),
+    getWebviewConfig: (profileId: string): Promise<BrowserBridgeConfig> => invokeIpc(BROWSER_IPC.config, profileId),
+    registerWebview: (registration: BrowserWebviewRegistration): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.register, registration),
+    unregisterWebview: (tabId: string, webContentsId?: number): Promise<void> => invokeIpc(BROWSER_IPC.unregister, { tabId, webContentsId }),
+    setTabPresentation: (request: BrowserPresentationRequest): Promise<BrowserPresentationAcknowledgement> => invokeIpc(BROWSER_IPC.presentation, request),
+    navigate: (tabId: string, url: string): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanNavigate, { tabId, url }),
+    history: (tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanHistory, { tabId, direction }),
+    reload: (tabId: string, hard = false): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanReload, { tabId, hard }),
+    setZoom: (tabId: string, factor: number): Promise<BrowserTabSnapshot> => invokeIpc(BROWSER_IPC.humanZoom, { tabId, factor }),
     invoke,
     onStateChanged: (listener: (tab: BrowserTabSnapshot) => void): (() => void) => {
       const handler = (_event: IpcRendererEvent, tab: BrowserTabSnapshot): void => listener(tab)
       ipcRenderer.on(BROWSER_IPC.stateChanged, handler)
       return () => ipcRenderer.removeListener(BROWSER_IPC.stateChanged, handler)
     },
+  }
+}
+
+class BrowserIpcError extends Error {
+  readonly code: BrowserAutomationFailure['code']
+  readonly retryable: boolean
+  readonly details?: BrowserAutomationFailure['details']
+
+  constructor(failure: BrowserAutomationFailure) {
+    super(failure.message)
+    this.name = 'BrowserIpcError'
+    this.code = failure.code
+    this.retryable = failure.retryable
+    this.details = failure.details
   }
 }
 
@@ -142,10 +178,21 @@ async function stopMediaRecorder(recorder: MediaRecorder): Promise<void> {
   })
 }
 
-function failure(request: BrowserAutomationRequest, code: 'recording-conflict' | 'recording-not-found' | 'execution-failed', message: string): BrowserAutomationResponse {
+function failureFromError(request: BrowserAutomationRequest, error: unknown, fallbackMessage: string): BrowserAutomationResponse {
+  if (error instanceof BrowserIpcError) return failure(request, error.code, error.message, error.retryable, error.details)
+  return failure(request, 'execution-failed', error instanceof Error ? error.message : fallbackMessage)
+}
+
+function failure(
+  request: BrowserAutomationRequest,
+  code: BrowserAutomationFailure['code'],
+  message: string,
+  retryable = false,
+  details?: BrowserAutomationFailure['details'],
+): BrowserAutomationResponse {
   return {
     requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
     tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
-    operation: request.operation, ok: false, error: { code, message, retryable: false }, elapsedMs: 0,
+    operation: request.operation, ok: false, error: { code, message, retryable, ...(details ? { details } : {}) }, elapsedMs: 0,
   }
 }

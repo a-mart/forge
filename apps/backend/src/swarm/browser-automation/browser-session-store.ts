@@ -219,6 +219,7 @@ function normalizeTab(value: unknown, profileId: string, sessionAgentId: string)
     recording: normalizeRecording(tab.recording),
     viewportSetting: normalizeViewport(tab.viewportSetting),
     renderedViewport: normalizeRenderedViewport(tab.renderedViewport),
+    physicalVisible: tab.physicalVisible === undefined ? false : requiredBoolean(tab.physicalVisible, "physicalVisible"),
     error: normalizeTabError(tab.error),
     createdAt: requiredString(tab.createdAt, "createdAt", 128),
     updatedAt: requiredString(tab.updatedAt, "updatedAt", 128),

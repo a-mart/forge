@@ -102,6 +102,8 @@ function response(request: BrowserAutomationRequest): BrowserAutomationResponse 
         connectedAt: timestamp,
       },
       panelVisible: false,
+      panelRevealRequested: false,
+      physicalTabVisible: false,
       selectedTab: null,
     },
   };
@@ -312,6 +314,27 @@ describe("BrowserAutomationService", () => {
       tabs: [expect.objectContaining({ tabId: "tab-1", title: "runtime" })],
     });
     expect(snapshot.tabs).toHaveLength(1);
+  });
+
+  it("keeps canonical reveal intent separate from Electron-authoritative physical visibility", async () => {
+    const { service } = await createService();
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.tabs = [tab()];
+    state.activeTabId = "tab-1";
+    state.defaultTabId = "tab-1";
+    state.panelVisible = true;
+    await service.store.save(state);
+    const requests: BrowserAutomationRequest[] = [];
+    connect(service, requests);
+
+    await expect(service.invoke("manager-1", "profile-1", "status", {})).resolves.toMatchObject({
+      ok: true,
+      result: {
+        panelRevealRequested: true,
+        physicalTabVisible: false,
+        panelVisible: false,
+      },
+    });
   });
 
   it("uses broker host connection fields for status results", async () => {

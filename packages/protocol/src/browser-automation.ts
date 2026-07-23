@@ -107,6 +107,8 @@ export interface BrowserTabSnapshot {
   } | null
   viewportSetting: BrowserViewportSetting
   renderedViewport: BrowserRenderedViewport | null
+  /** Broker-reported physical webview presentation; absent in legacy persisted snapshots. */
+  physicalVisible?: boolean
   error: { code: string; message: string } | null
   createdAt: string
   updatedAt: string
@@ -328,7 +330,12 @@ export interface BrowserRecordingStopInput extends BrowserTabTargetInput {
 export interface BrowserAutomationStatusResult {
   available: boolean
   host: BrowserHostConnectionSnapshot
+  /** Legacy alias for physicalTabVisible. It is never canonical reveal intent. */
   panelVisible: boolean
+  /** Canonical workspace reveal intent persisted by the backend. */
+  panelRevealRequested: boolean
+  /** Electron-authoritative physical presentation acknowledgement for selectedTab. */
+  physicalTabVisible: boolean
   selectedTab: BrowserTabSnapshot | null
 }
 

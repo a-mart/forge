@@ -30,6 +30,18 @@ function session(sessionAgentId: string, profileId: string, hostedTab: BrowserTa
   const now = new Date(0).toISOString()
   return { schemaVersion: 1, sessionAgentId, profileId, hostingState: 'hosted', tabs: [hostedTab], activeTabId: hostedTab.tabId, defaultTabId: hostedTab.tabId, panelVisible: false, recentActions: [], revision: 1, createdAt: now, updatedAt: now }
 }
+function presentationAck(request: import('@/lib/electron-bridge').BrowserPresentationRequest) {
+  const hostedTab = tab(request.tabId, 'unused', 'unused')
+  hostedTab.physicalVisible = request.visible
+  hostedTab.renderedViewport = request.renderedViewport
+  return Promise.resolve({
+    applied: true,
+    tab: hostedTab,
+    hostGeneration: request.hostGeneration,
+    sessionRevision: request.sessionRevision,
+    sequence: request.sequence,
+  })
+}
 
 describe('BrowserAutomationHost', () => {
   it('mounts every hydrated session tab offscreen so background tabs stay alive', async () => {
@@ -39,7 +51,7 @@ describe('BrowserAutomationHost', () => {
       browserAutomation: {
         capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
         getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
-        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(presentationAck),
         navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke: vi.fn(), onStateChanged: vi.fn(() => vi.fn()),
       },
     }
@@ -88,7 +100,7 @@ describe('BrowserAutomationHost', () => {
       browserAutomation: {
         capabilities: { supportedOperations: ['open'], playwrightVersion: '1.60.0', supportsRecording: true },
         getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
-        registerWebview, unregisterWebview, setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        registerWebview, unregisterWebview, setTabPresentation: vi.fn(presentationAck),
         navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke, onStateChanged: vi.fn(() => vi.fn()),
       },
     }
@@ -106,11 +118,19 @@ describe('BrowserAutomationHost', () => {
       await Promise.resolve()
     })
 
-    const openRequest = (requestId: string): BrowserAutomationRequest => ({
+    const openRequest = (requestId: string): Extract<BrowserAutomationRequest, { operation: 'open' }> => ({
       requestId, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null,
       hostId: 'host-1', hostGeneration: 1, deadlineAt: new Date(Date.now() + 30_000).toISOString(), artifactDirectory: null,
       operation: 'open', input: { show: false, reuseExistingTab: false },
     })
+    await expect(executeRequest!({
+      ...openRequest('invalid-url'),
+      input: { show: false, reuseExistingTab: false, url: 'data:text/html,blocked' },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'invalid-url', retryable: false },
+    })
+
     const readyLatestWebview = async () => {
       for (let attempt = 0; attempt < 20 && container.querySelectorAll('webview').length === 0; attempt += 1) {
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
@@ -137,12 +157,13 @@ describe('BrowserAutomationHost', () => {
     invoke.mockRejectedValueOnce(new Error('IPC failed'))
     let exceptional!: Promise<BrowserAutomationResponse>
     act(() => { exceptional = executeRequest!(openRequest('exceptional')) })
-    const exceptionalOutcome = exceptional.then(
-      () => null,
-      (error: unknown) => error,
-    )
     await readyLatestWebview()
-    await act(async () => { expect(await exceptionalOutcome).toEqual(new Error('IPC failed')) })
+    await act(async () => {
+      await expect(exceptional).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'execution-failed', message: 'IPC failed', retryable: false },
+      })
+    })
     expect(container.querySelectorAll('webview')).toHaveLength(0)
     expect(unregisterWebview).toHaveBeenCalledTimes(4)
     expect(registerWebview.mock.calls.every(([registration]) => registration.created === true)).toBe(true)
@@ -154,14 +175,14 @@ describe('BrowserAutomationHost', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('unhosts webviews when hostingState becomes unhosted and remounts after restore', async () => {
+  it('unhosts webviews idempotently and remounts after restore without duplicate close failures', async () => {
     const unregisterWebview = vi.fn(async () => undefined)
     window.electronBridge = {
       backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
       browserAutomation: {
         capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
         getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
-        registerWebview: vi.fn(), unregisterWebview, setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        registerWebview: vi.fn(), unregisterWebview, setTabPresentation: vi.fn(presentationAck),
         navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke: vi.fn(), onStateChanged: vi.fn(() => vi.fn()),
       },
     }
@@ -185,6 +206,12 @@ describe('BrowserAutomationHost', () => {
       await Promise.resolve()
     })
     expect(container.querySelectorAll('webview')).toHaveLength(0)
+    expect(unregisterWebview).toHaveBeenCalledOnce()
+    await act(async () => {
+      root!.render(createElement(BrowserAutomationHost, { client, state: unhostedState, selectedSessionAgentId: 'session-1', panelVisible: false }))
+      await Promise.resolve()
+    })
+    expect(unregisterWebview).toHaveBeenCalledOnce()
 
     const restoredState = {
       ...state,
@@ -205,7 +232,7 @@ describe('BrowserAutomationHost', () => {
       browserAutomation: {
         capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
         getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
-        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(presentationAck),
         navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke: vi.fn(), onStateChanged: vi.fn((listener) => { stateChanged = listener; return () => undefined }),
       },
     }
@@ -265,14 +292,14 @@ describe('BrowserAutomationHost', () => {
     }])
   })
 
-  it('retains rapid updates, rebases conflicts, and retries only on a current reconnect generation', async () => {
+  it('retains rapid updates and keeps rebasing conflicts on the current reconnect generation', async () => {
     let stateChanged: ((tab: BrowserTabSnapshot) => void) | null = null
     window.electronBridge = {
       backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
       browserAutomation: {
         capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
         getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
-        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(async (_id, _visible, _viewport) => tab('unused', 'unused', 'unused')),
+        registerWebview: vi.fn(), unregisterWebview: vi.fn(async () => undefined), setTabPresentation: vi.fn(presentationAck),
         navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke: vi.fn(), onStateChanged: vi.fn((listener) => { stateChanged = listener; return () => undefined }),
       },
     }
@@ -414,7 +441,7 @@ describe('BrowserAutomationHost', () => {
     })
     expect(reportBrowserHostState).toHaveBeenCalledTimes(4)
 
-    const boundedRuntime = { ...reconnectRuntime, title: 'Bounded retry' }
+    const boundedRuntime = { ...reconnectRuntime, title: 'Ready after stop-loading', lifecycle: 'ready' as const, loading: false }
     await act(async () => {
       ;(stateChanged as ((tab: BrowserTabSnapshot) => void) | null)?.(boundedRuntime)
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -433,7 +460,18 @@ describe('BrowserAutomationHost', () => {
         await vi.waitFor(() => expect(reportBrowserHostState).toHaveBeenCalledTimes(deferredIndex + 2))
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(reportBrowserHostState).toHaveBeenCalledTimes(8)
+    await vi.waitFor(() => expect(reportBrowserHostState).toHaveBeenCalledTimes(9))
+    expect(deferred[8]!.sessions[0]).toMatchObject({
+      tabs: [{ tabId: 'tab-1', lifecycle: 'ready', loading: false }],
+    })
+    const finalCanonical = { ...reconnectedCanonical, revision: 9, tabs: [boundedRuntime, secondTab] }
+    await act(async () => {
+      deferred[8]!.resolve({
+        hostId, hostGeneration: 2, status: 'processed',
+        sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'accepted', snapshot: finalCanonical }],
+      })
+      await Promise.resolve()
+    })
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(9)
   })
 })

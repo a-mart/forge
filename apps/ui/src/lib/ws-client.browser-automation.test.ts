@@ -88,12 +88,12 @@ describe('ManagerWsClient browser automation state', () => {
     await expect(stoppedPromise).resolves.toEqual(stopped)
   })
 
-  it('limits reveal requests to the selected session and current host generation', () => {
+  it('limits reveal requests to the selected session/generation without invalidating intent on newer revisions', () => {
     const client = new ManagerWsClient('ws://example.test', 'session-1')
     client.registerBrowserAutomationHost(registration, vi.fn())
     const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
     ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 3, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
-    ingest({ type: 'browser_session_snapshot', snapshot: snapshot(2) })
+    ingest({ type: 'browser_session_snapshot', snapshot: snapshot(5) })
     ingest({ type: 'browser_panel_reveal_requested', sessionAgentId: 'background', tabId: 'tab-1', hostGeneration: 3, revision: 2 })
     expect(client.getState().browserPanelRevealRequest).toBeNull()
     ingest({ type: 'browser_panel_reveal_requested', sessionAgentId: 'session-1', tabId: 'tab-1', hostGeneration: 2, revision: 2 })

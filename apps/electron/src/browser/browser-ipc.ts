@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url'
-import type { BrowserAutomationRequest, BrowserViewportSetting } from '@forge/protocol'
+import type { BrowserAutomationRequest } from '@forge/protocol'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import { webContents } from 'electron'
 import {
@@ -7,9 +7,9 @@ import {
   type BrowserWebContentsLike,
   type BrowserWebviewRegistration,
 } from './browser-automation-manager.js'
-import { BrowserHostError } from './browser-errors.js'
+import { BrowserHostError, asBrowserHostError } from './browser-errors.js'
 import { BrowserSessionRegistry } from './browser-session.js'
-import { BROWSER_IPC, type BrowserBridgeConfig } from './browser-bridge-contract.js'
+import { BROWSER_IPC, type BrowserBridgeConfig, type BrowserPresentationRequest } from './browser-bridge-contract.js'
 
 export function installBrowserIpc(options: {
   ipcMain: IpcMain
@@ -24,7 +24,14 @@ export function installBrowserIpc(options: {
   }
   const handles: Array<[string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown]> = []
   const handle = (channel: string, listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown): void => {
-    ipcMain.handle(channel, listener as unknown as Parameters<IpcMain['handle']>[1])
+    const wrapped = async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+      try {
+        return { __forgeBrowserIpcResult: true, ok: true, value: await listener(event, ...args) }
+      } catch (error) {
+        return { __forgeBrowserIpcResult: true, ok: false, error: asBrowserHostError(error, `Browser IPC ${channel} failed`).toFailure() }
+      }
+    }
+    ipcMain.handle(channel, wrapped as unknown as Parameters<IpcMain['handle']>[1])
     handles.push([channel, listener])
   }
 
@@ -53,8 +60,7 @@ export function installBrowserIpc(options: {
   })
   handle(BROWSER_IPC.presentation, (event, input) => {
     trusted(event)
-    const value = input as { tabId: string; visible: boolean; viewportSetting?: BrowserViewportSetting }
-    return manager.setTabPresentation(value.tabId, value.visible, value.viewportSetting)
+    return manager.setTabPresentation(input as BrowserPresentationRequest)
   })
   handle(BROWSER_IPC.humanNavigate, (event, input) => {
     trusted(event)

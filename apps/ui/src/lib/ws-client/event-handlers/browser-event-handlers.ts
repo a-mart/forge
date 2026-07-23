@@ -72,7 +72,8 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
     case 'browser_panel_reveal_requested':
       if (!isSelectedSession(context.state, event.sessionAgentId)) return true
       if (context.state.browserHost.hostGeneration !== event.hostGeneration) return true
-      if ((context.state.browserSessions[event.sessionAgentId]?.revision ?? -1) > event.revision) return true
+      // Reveal is idempotent UI intent, not tab metadata. A newer canonical
+      // revision must not invalidate an in-generation reveal request.
       context.updateState({ browserPanelRevealRequest: event })
       return true
     case 'browser_automation_request': {
@@ -136,6 +137,20 @@ function indexSessions(sessions: BrowserSessionSnapshot[]): Record<string, Brows
 }
 
 function failureResponse(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {
+  const candidate = error && typeof error === 'object' ? error as Record<string, unknown> : null
+  const validCodes = new Set<import('@forge/protocol').BrowserAutomationErrorCode>([
+    'unavailable-host', 'unsupported-operation', 'session-not-found', 'tab-not-found', 'tab-session-mismatch',
+    'invalid-input', 'invalid-url', 'navigation-failed', 'timeout', 'control-interrupted', 'target-not-found',
+    'invalid-selector', 'target-not-editable', 'coordinates-outside-viewport', 'evaluation-failed', 'result-too-large',
+    'response-too-large', 'host-disconnected', 'stale-host-generation', 'malformed-response', 'artifact-path-invalid',
+    'recording-conflict', 'recording-requires-visible-tab', 'recording-not-found', 'request-cancelled', 'execution-failed',
+  ])
+  const code = typeof candidate?.code === 'string' && validCodes.has(candidate.code as import('@forge/protocol').BrowserAutomationErrorCode)
+    ? candidate.code as import('@forge/protocol').BrowserAutomationErrorCode
+    : 'execution-failed'
+  const details = candidate?.details && typeof candidate.details === 'object' && !Array.isArray(candidate.details)
+    ? candidate.details as Record<string, string | number | boolean | null>
+    : undefined
   return {
     requestId: request.requestId,
     sessionAgentId: request.sessionAgentId,
@@ -146,9 +161,10 @@ function failureResponse(request: BrowserAutomationRequest, error: unknown): Bro
     operation: request.operation,
     ok: false,
     error: {
-      code: 'execution-failed',
-      message: error instanceof Error ? error.message : String(error),
-      retryable: false,
+      code,
+      message: error instanceof Error ? error.message : typeof candidate?.message === 'string' ? candidate.message : String(error),
+      retryable: candidate?.retryable === true,
+      ...(details ? { details } : {}),
     },
     elapsedMs: 0,
   }

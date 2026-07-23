@@ -53,6 +53,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const readyResolvers = useRef(new Map<string, () => void>())
     const readyCancellers = useRef(new Map<string, (reason: Error) => void>())
     const visibleTabIds = useRef(new Set<string>())
+    const presentationSequences = useRef(new Map<string, number>())
     const sessionsRef = useRef(state.browserSessions)
     const bridgeRef = useRef(bridge)
     const clientRef = useRef(client)
@@ -195,7 +196,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         if (updateSequenceRef.current !== sequence) {
           retryStateRef.current.conflicts = 0
           scheduleReportTimer(flushStateReports, reportTimerRef)
-        } else if (retryConflict && retryStateRef.current.conflicts < MAX_CONFLICT_RETRIES) {
+        } else if (retryConflict && pendingTabUpdates.current.size > 0) {
+          // Host lifecycle updates (notably did-stop-loading) must eventually
+          // converge even through arbitrarily many canonical automation writes.
           retryStateRef.current.conflicts += 1
           scheduleReportTimer(flushStateReports, reportTimerRef)
         } else if (!retryConflict) {
@@ -266,7 +269,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         return invokedRequest === request ? response : { ...response, tabId: request.tabId }
       } catch (error) {
         await cleanupProvisional(error instanceof Error ? error : new Error('Browser open failed'))
-        throw error
+        return hostFailureResponse(invokedRequest, error)
       }
     }, [])
 
@@ -336,15 +339,35 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
 
     useEffect(() => {
       if (!bridge) return
+      const hostGeneration = state.browserHost.hostGeneration ?? 0
       for (const tab of tabs) {
         if (!webviews.current.has(tab.tabId)) continue
         const session = state.browserSessions[tab.sessionAgentId]
         const visible = Boolean(panelVisible && viewportRect && tab.sessionAgentId === selectedSessionAgentId && session?.activeTabId === tab.tabId)
         if (visible) visibleTabIds.current.add(tab.tabId)
         else visibleTabIds.current.delete(tab.tabId)
-        void bridge.setTabPresentation(tab.tabId, visible, tab.viewportSetting).catch(() => undefined)
+        const sequence = (presentationSequences.current.get(tab.tabId) ?? 0) + 1
+        presentationSequences.current.set(tab.tabId, sequence)
+        const renderedViewport = visible && viewportRect ? renderedWebviewViewport(tab.viewportSetting, viewportRect) : null
+        void bridge.setTabPresentation({
+          tabId: tab.tabId,
+          visible,
+          viewportSetting: tab.viewportSetting,
+          renderedViewport,
+          hostGeneration,
+          sessionRevision: session?.revision ?? 0,
+          sequence,
+        }).then((acknowledgement) => {
+          if (!acknowledgement.applied
+            || acknowledgement.sequence !== presentationSequences.current.get(tab.tabId)
+            || acknowledgement.hostGeneration !== (clientRef.current?.getState().browserHost.hostGeneration ?? 0)) return
+          pendingTabUpdates.current.set(tab.tabId, acknowledgement.tab)
+          updateSequenceRef.current += 1
+          retryStateRef.current.conflicts = 0
+          scheduleStateReport()
+        }).catch(() => undefined)
       }
-    }, [bridge, panelVisible, selectedSessionAgentId, state.browserSessions, tabs, viewportRect])
+    }, [bridge, panelVisible, scheduleStateReport, selectedSessionAgentId, state.browserHost.hostGeneration, state.browserSessions, tabs, viewportRect])
 
     useImperativeHandle(ref, () => ({
       async navigate(tabId, rawUrl) {
@@ -368,7 +391,10 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         void currentBridge.setZoom(tabId, Math.max(0.25, Math.min(3, factor))).catch(() => undefined)
       },
       async captureScreenshot(tabId) {
-        return (await requireWebview(webviews.current, tabId).capturePage()).toDataURL()
+        const image = await boundedNativeCapture(requireWebview(webviews.current, tabId).capturePage(), 5_000)
+        const dataUrl = image.toDataURL()
+        if (!dataUrl || dataUrl === 'data:,') throw new Error('Browser screenshot was empty')
+        return dataUrl
       },
     }), [])
 
@@ -412,8 +438,6 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     )
   },
 )
-
-const MAX_CONFLICT_RETRIES = 3
 
 function scheduleReportTimer(
   flush: () => void | Promise<void>,
@@ -468,6 +492,7 @@ function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: Browse
     recording: updated.recording,
     viewportSetting: updated.viewportSetting,
     renderedViewport: updated.renderedViewport,
+    ...(updated.physicalVisible !== undefined ? { physicalVisible: updated.physicalVisible } : {}),
     error: updated.error,
     updatedAt: updated.updatedAt,
   }
@@ -529,6 +554,13 @@ function webviewStyle(viewport: BrowserViewportSetting, rect: DOMRect | null): C
     borderRadius: 6,
   }
 }
+function renderedWebviewViewport(viewport: BrowserViewportSetting, rect: DOMRect): { width: number; height: number; deviceScaleFactor: number } {
+  return {
+    width: Math.max(1, Math.round(viewport.mode === 'fill' ? rect.width : Math.min(rect.width, viewport.width))),
+    height: Math.max(1, Math.round(viewport.mode === 'fill' ? rect.height : Math.min(rect.height, viewport.height))),
+    deviceScaleFactor: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+  }
+}
 function viewportWidth(viewport: BrowserViewportSetting): number { return viewport.mode === 'fill' ? 1280 : viewport.width }
 function viewportHeight(viewport: BrowserViewportSetting): number { return viewport.mode === 'fill' ? 800 : viewport.height }
 function safeWebContentsId(element: ElectronWebviewElement): number | undefined { try { return element.getWebContentsId() } catch { return undefined } }
@@ -536,6 +568,14 @@ function requireWebview(map: Map<string, ElectronWebviewElement>, tabId: string)
   const webview = map.get(tabId)
   if (!webview) throw new Error('Browser tab is not live')
   return webview
+}
+async function boundedNativeCapture<T>(capture: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: number | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = window.setTimeout(() => reject(new Error('Browser native screenshot timed out')), timeoutMs)
+  })
+  try { return await Promise.race([capture, timeout]) }
+  finally { if (timer !== undefined) window.clearTimeout(timer) }
 }
 function waitUntilReady(
   tabId: string,
@@ -568,16 +608,39 @@ function createProvisionalTab(sessionAgentId: string, profileId: string, url?: s
     tabId: `tab-${randomId()}`, sessionAgentId, profileId, url: url ? normalizeUrl(url) : 'about:blank', title: 'New tab',
     lifecycle: 'restoring', loading: false, live: false, canGoBack: false, canGoForward: false, zoomFactor: 1,
     controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null,
-    error: null, createdAt: now, updatedAt: now,
+    physicalVisible: false, error: null, createdAt: now, updatedAt: now,
   }
 }
 function normalizeUrl(value: string): string {
   const trimmed = value.trim()
   if (trimmed === '' || trimmed === 'about:blank') return 'about:blank'
   if (/^https?:\/\//i.test(trimmed)) return trimmed
-  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) throw new Error('Managed browser URLs must use HTTP or HTTPS')
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) throw new BrowserRendererError('invalid-url', 'Managed browser URLs must use HTTP or HTTPS')
   if (/^(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(trimmed)) return `http://${trimmed}`
   return `https://${trimmed}`
+}
+class BrowserRendererError extends Error {
+  readonly retryable = false
+  constructor(readonly code: import('@forge/protocol').BrowserAutomationErrorCode, message: string, readonly details?: Record<string, string | number | boolean | null>) {
+    super(message)
+    this.name = 'BrowserRendererError'
+  }
+}
+function hostFailureResponse(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {
+  const failure = error && typeof error === 'object' ? error as { code?: unknown; message?: unknown; retryable?: unknown; details?: unknown } : null
+  const code = typeof failure?.code === 'string' ? failure.code as import('@forge/protocol').BrowserAutomationErrorCode : 'execution-failed'
+  return {
+    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+    tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation,
+    ok: false,
+    error: {
+      code,
+      message: typeof failure?.message === 'string' ? failure.message : 'Browser host execution failed',
+      retryable: failure?.retryable === true,
+      ...(failure?.details && typeof failure.details === 'object' ? { details: failure.details as Record<string, string | number | boolean | null> } : {}),
+    },
+    elapsedMs: 0,
+  }
 }
 function randomId(): string {
   try { return crypto.randomUUID() } catch { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` }

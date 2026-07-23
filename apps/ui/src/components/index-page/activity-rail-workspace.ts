@@ -38,8 +38,7 @@ export function shouldRevealBrowserPanel(options: {
     options.electronHostAvailable &&
     request &&
     options.selectedSessionAgentId === request.sessionAgentId &&
-    options.currentHostGeneration === request.hostGeneration &&
-    (options.currentRevision === null || request.revision >= options.currentRevision),
+    options.currentHostGeneration === request.hostGeneration,
   )
 }
 

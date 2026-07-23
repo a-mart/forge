@@ -138,7 +138,9 @@ export class BrowserAutomationService {
           result: {
             available: false,
             host: this.broker.getConnectionSnapshot(),
-            panelVisible: snapshot.panelVisible,
+            panelVisible: false,
+            panelRevealRequested: snapshot.panelVisible,
+            physicalTabVisible: false,
             selectedTab: target.tab ?? null,
           } as BrowserAutomationResultByOperation[Operation],
         };
@@ -248,7 +250,8 @@ export class BrowserAutomationService {
           const statusResult = response.result as BrowserAutomationResultByOperation["status"];
           statusResult.host = this.broker.getConnectionSnapshot();
           statusResult.available = statusResult.host.connected;
-          statusResult.panelVisible = snapshot.panelVisible;
+          // Electron owns physical visibility. Canonical panel state is reveal intent only.
+          statusResult.panelRevealRequested = snapshot.panelVisible;
         }
         const completedMetadata = extractSafeCompletionMetadata(response.result);
         await this.completeAction(snapshot, actionId, "succeeded", {
@@ -506,6 +509,8 @@ export class BrowserAutomationService {
       snapshot.tabs = snapshot.tabs.map((tab) => ({
         ...tab,
         live: false,
+        physicalVisible: false,
+        renderedViewport: null,
         controller: "none",
         recording: null,
         updatedAt: this.now(),
@@ -526,6 +531,8 @@ export class BrowserAutomationService {
       snapshot.tabs = snapshot.tabs.map((tab) => ({
         ...tab,
         live: false,
+        physicalVisible: false,
+        renderedViewport: null,
         lifecycle: tab.lifecycle === "closed" ? "closed" : "restoring",
         controller: "none",
         updatedAt: this.now(),
@@ -564,6 +571,8 @@ export class BrowserAutomationService {
           snapshot.tabs = snapshot.tabs.map((tab) => ({
             ...tab,
             live: false,
+            physicalVisible: false,
+            renderedViewport: null,
             lifecycle: "closed" as const,
             controller: "none" as const,
             recording: null,
@@ -794,6 +803,9 @@ function isValidSuccessResult(
     case "status":
       return typeof value.available === "boolean"
         && typeof value.panelVisible === "boolean"
+        && typeof value.panelRevealRequested === "boolean"
+        && typeof value.physicalTabVisible === "boolean"
+        && value.panelVisible === value.physicalTabVisible
         && (value.selectedTab === null || (
           isValidTabForSession(value.selectedTab, snapshot)
           && (expectedTabId === null || value.selectedTab.tabId === expectedTabId)
@@ -939,6 +951,7 @@ function mergeHostOwnedTabFields(canonical: BrowserTabSnapshot, reported: Browse
     recording: reported.recording,
     viewportSetting: reported.viewportSetting,
     renderedViewport: reported.renderedViewport,
+    physicalVisible: reported.physicalVisible ?? false,
     error: reported.error,
     updatedAt: reported.updatedAt,
   };

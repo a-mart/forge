@@ -1,6 +1,7 @@
 import type {
   BrowserAutomationRequest,
   BrowserAutomationResponse,
+  BrowserRenderedViewport,
   BrowserTabSnapshot,
   BrowserViewportSetting,
 } from '@forge/protocol'
@@ -53,6 +54,24 @@ export interface BrowserBridgeConfig {
   webPreferences: string
 }
 
+export interface BrowserPresentationRequest {
+  tabId: string
+  visible: boolean
+  viewportSetting?: BrowserViewportSetting
+  renderedViewport: BrowserRenderedViewport | null
+  hostGeneration: number
+  sessionRevision: number
+  sequence: number
+}
+
+export interface BrowserPresentationAcknowledgement {
+  applied: boolean
+  tab: BrowserTabSnapshot
+  hostGeneration: number
+  sessionRevision: number
+  sequence: number
+}
+
 export interface BrowserAutomationBridge {
   capabilities: {
     supportedOperations: readonly string[]
@@ -62,7 +81,7 @@ export interface BrowserAutomationBridge {
   getWebviewConfig(profileId: string): Promise<BrowserBridgeConfig>
   registerWebview(registration: { tab: BrowserTabSnapshot; webContentsId: number; visible: boolean; created: boolean }): Promise<BrowserTabSnapshot>
   unregisterWebview(tabId: string, webContentsId?: number): Promise<void>
-  setTabPresentation(tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): Promise<BrowserTabSnapshot>
+  setTabPresentation(request: BrowserPresentationRequest): Promise<BrowserPresentationAcknowledgement>
   navigate(tabId: string, url: string): Promise<BrowserTabSnapshot>
   history(tabId: string, direction: 'back' | 'forward'): Promise<BrowserTabSnapshot>
   reload(tabId: string, hard?: boolean): Promise<BrowserTabSnapshot>

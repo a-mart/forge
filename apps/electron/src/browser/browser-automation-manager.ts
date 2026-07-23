@@ -32,18 +32,24 @@ import {
 import { BrowserHostError, asBrowserHostError } from './browser-errors.js'
 import { makeBrowserKeySequence } from './browser-keyboard.js'
 import { playwrightInjectedRuntimeInstallExpression } from './playwright-injected-runtime.js'
-import { BROWSER_GUEST_HUMAN_INPUT_CHANNEL, BROWSER_IPC } from './browser-bridge-contract.js'
+import {
+  BROWSER_GUEST_HUMAN_INPUT_CHANNEL,
+  BROWSER_GUEST_SYNTHETIC_INPUT_CHANNEL,
+  BROWSER_IPC,
+  type BrowserPresentationAcknowledgement,
+  type BrowserPresentationRequest,
+} from './browser-bridge-contract.js'
 
 export const BROWSER_RECORDING_FRAME_CHANNEL = 'forge:browser-recording-frame'
 const ACTION_LIMIT = 200
-const EXPECTED_INPUT_TTL_MS = 1_000
 const POLL_INTERVAL_MS = 50
+const OPERATION_RECOVERY_TIMEOUT_MS = 250
 const MAX_SCREENSHOT_PNG_BYTES = 5 * 1_024 * 1_024
 
 type UnknownRecord = Record<string, unknown>
 type InputSignal =
-  | { kind: 'pointer'; x: number; y: number; button: number }
-  | { kind: 'key'; key: string; code: string }
+  | { kind: 'pointer'; x: number; y: number; button: number; syntheticSequence?: string }
+  | { kind: 'key'; key: string; code: string; syntheticSequence?: string }
 
 type DebuggerMessageListener = (event: unknown, method: string, params: UnknownRecord) => void
 
@@ -86,6 +92,7 @@ export interface BrowserWebContentsLike {
   reloadIgnoringCache(): void
   setZoomFactor(factor: number): void
   capturePage(): Promise<BrowserImageLike>
+  send(channel: string, ...args: unknown[]): void
   focus(): void
   close(options?: { waitForBeforeUnload?: boolean }): void
   setWindowOpenHandler(handler: (details: { url: string }) => { action: 'allow' | 'deny' }): void
@@ -102,8 +109,8 @@ export interface BrowserWebviewRegistration {
 }
 
 interface ExpectedInput {
+  sequence: string
   signal: InputSignal
-  expiresAt: number
 }
 
 interface TabDiagnostics {
@@ -119,14 +126,19 @@ interface TabRuntime {
   queue: Promise<void>
   controlEpoch: number
   expectedInputs: ExpectedInput[]
+  syntheticReadyWaiters: Map<string, () => void>
   diagnostics: TabDiagnostics
   actionTimeline: BrowserActionTimelineEntry[]
   debuggerReady: boolean
   debuggerPromise: Promise<void> | null
+  debuggerGeneration: number
   debuggerMessage: DebuggerMessageListener | null
   listeners: Array<{ event: string; listener: (...args: unknown[]) => void }>
   humanInputListener: (event: unknown, signal?: unknown) => void
   navigationWait: { interrupt(error: BrowserHostError): void } | null
+  presentationGeneration: number
+  presentationSequence: number
+  operationGeneration: number
   destroyed: boolean
   createdForOpen: boolean
 }
@@ -222,26 +234,31 @@ export class BrowserAutomationManager {
     const current = this.tabs.get(registration.tab.tabId)
     if (current && current.webContents.id !== webContents.id) this.disposeTabRuntime(current, true)
     if (current?.webContents.id === webContents.id && !current.destroyed) {
-      current.visible = registration.visible
-      current.snapshot = { ...registration.tab, live: true, renderedViewport: current.snapshot.renderedViewport }
+      current.visible = Boolean(registration.visible && current.snapshot.renderedViewport)
+      current.snapshot = { ...registration.tab, live: true, renderedViewport: current.snapshot.renderedViewport, physicalVisible: current.visible }
       return this.syncSnapshot(current)
     }
 
     const runtime: TabRuntime = {
-      snapshot: { ...registration.tab, live: true, lifecycle: webContents.isLoading() ? 'loading' : 'ready', updatedAt: new Date(this.now()).toISOString() },
+      snapshot: { ...registration.tab, live: true, lifecycle: webContents.isLoading() ? 'loading' : 'ready', physicalVisible: false, updatedAt: new Date(this.now()).toISOString() },
       webContents,
-      visible: registration.visible,
+      visible: false,
       queue: Promise.resolve(),
       controlEpoch: 0,
       expectedInputs: [],
+      syntheticReadyWaiters: new Map(),
       diagnostics: { consoleEntries: [], networkEntries: [], requests: new Map() },
       actionTimeline: [],
       debuggerReady: false,
       debuggerPromise: null,
+      debuggerGeneration: 0,
       debuggerMessage: null,
       listeners: [],
       humanInputListener: (_event, signal) => this.handleGuestInput(registration.tab.tabId, signal),
       navigationWait: null,
+      presentationGeneration: 0,
+      presentationSequence: 0,
+      operationGeneration: 0,
       destroyed: false,
       createdForOpen: registration.created,
     }
@@ -251,11 +268,43 @@ export class BrowserAutomationManager {
     return this.syncSnapshot(runtime)
   }
 
-  setTabPresentation(tabId: string, visible: boolean, viewportSetting?: BrowserViewportSetting): BrowserTabSnapshot {
-    const tab = this.requireTab(tabId)
-    tab.visible = visible
-    if (viewportSetting) tab.snapshot = { ...tab.snapshot, viewportSetting }
-    return this.syncSnapshot(tab)
+  setTabPresentation(request: BrowserPresentationRequest): BrowserPresentationAcknowledgement {
+    const tab = this.requireTab(request.tabId)
+    const stale = request.hostGeneration < tab.presentationGeneration
+      || (request.hostGeneration === tab.presentationGeneration && request.sequence < tab.presentationSequence)
+    let changed = false
+    if (!stale) {
+      const viewport = request.visible && request.renderedViewport
+        && request.renderedViewport.width > 0 && request.renderedViewport.height > 0
+        ? request.renderedViewport
+        : null
+      const visible = Boolean(request.visible && viewport)
+      const renderedViewport = visible ? viewport : null
+      changed = tab.visible !== visible
+        || JSON.stringify(tab.snapshot.renderedViewport) !== JSON.stringify(renderedViewport)
+        || (request.viewportSetting !== undefined && JSON.stringify(tab.snapshot.viewportSetting) !== JSON.stringify(request.viewportSetting))
+      tab.presentationGeneration = request.hostGeneration
+      tab.presentationSequence = request.sequence
+      tab.visible = visible
+      if (changed) {
+        tab.snapshot = {
+          ...tab.snapshot,
+          ...(request.viewportSetting ? { viewportSetting: request.viewportSetting } : {}),
+          renderedViewport,
+          physicalVisible: visible,
+          updatedAt: new Date(this.now()).toISOString(),
+        }
+        this.emitTabState(tab)
+      }
+    }
+    return {
+      applied: !stale,
+      tab: changed ? { ...tab.snapshot } : { ...tab.snapshot, physicalVisible: tab.visible },
+
+      hostGeneration: request.hostGeneration,
+      sessionRevision: request.sessionRevision,
+      sequence: request.sequence,
+    }
   }
 
   async humanNavigate(tabId: string, rawUrl: string): Promise<BrowserTabSnapshot> {
@@ -290,7 +339,12 @@ export class BrowserAutomationManager {
 
   unregisterWebview(tabId: string, webContentsId?: number): void {
     const tab = this.tabs.get(tabId)
-    if (!tab || (webContentsId !== undefined && tab.webContents.id !== webContentsId)) return
+    if (!tab) return
+    if (webContentsId !== undefined) {
+      let currentId: number | undefined
+      try { currentId = tab.webContents.id } catch { currentId = undefined }
+      if (currentId !== undefined && currentId !== webContentsId) return
+    }
     this.disposeTabRuntime(tab, false)
     this.tabs.delete(tabId)
   }
@@ -323,14 +377,17 @@ export class BrowserAutomationManager {
 
   async prepareRecording(request: BrowserAutomationRequest & { operation: 'recordingStart' }): Promise<PreparedRecording> {
     const tab = this.requestTab(request)
-    if (!tab.visible) throw new BrowserHostError('recording-requires-visible-tab', 'Browser recording requires a visible tab')
+    if (!tab.visible || !tab.snapshot.physicalVisible || !tab.snapshot.renderedViewport) {
+      throw new BrowserHostError('recording-requires-visible-tab', 'Browser recording requires acknowledged physical visibility and bounds', true)
+    }
     if (this.activeRecording) {
       if (this.activeRecording.tabId === tab.snapshot.tabId && this.activeRecording.phase === 'recording') {
         return { ...this.activeRecording }
       }
       throw new BrowserHostError('recording-conflict', `Tab ${this.activeRecording.tabId} is already being recorded`)
     }
-    const viewport = await this.measureViewport(tab, this.rawSend(tab))
+    const deadline = new Date(request.deadlineAt).getTime()
+    const viewport = await this.serialize(tab, 'recording.prepare', (send) => this.measureViewport(tab, send), deadline)
     const recordingId = `browser-recording-${this.now().toString(36)}-${(++this.sequence).toString(36)}`
     const startedAt = new Date(this.now()).toISOString()
     this.activeRecording = { recordingId, tabId: tab.snapshot.tabId, startedAt, mimeType: '', width: viewport.width, height: viewport.height, phase: 'prepared' }
@@ -403,9 +460,14 @@ export class BrowserAutomationManager {
     const active = this.activeRecording
     if (!active || (recordingId && active.recordingId !== recordingId)) return
     const tab = this.tabs.get(active.tabId)
-    if (tab && tab.debuggerReady && tab.webContents.debugger.isAttached() && active.phase === 'recording') {
-      void tab.webContents.debugger.sendCommand('Page.stopScreencast').catch(() => undefined)
-      tab.snapshot = { ...tab.snapshot, recording: null }
+    if (tab && tab.debuggerReady && this.isWebContentsAlive(tab)) {
+      try {
+        const debuggerApi = tab.webContents.debugger
+        if (debuggerApi.isAttached() && active.phase === 'recording') {
+          void debuggerApi.sendCommand('Page.stopScreencast').catch(() => undefined)
+          tab.snapshot = { ...tab.snapshot, recording: null }
+        }
+      } catch { /* a racing guest destruction already stopped capture */ }
     }
     this.activeRecording = null
   }
@@ -452,6 +514,8 @@ export class BrowserAutomationManager {
         connectedAt: null,
       },
       panelVisible: selected?.visible ?? false,
+      panelRevealRequested: false,
+      physicalTabVisible: selected?.visible ?? false,
       selectedTab: selected ? this.syncSnapshot(selected) : null,
     }
   }
@@ -590,21 +654,23 @@ export class BrowserAutomationManager {
         .map(element => { const rect=element.getBoundingClientRect(); return { tag: element.tagName.toLowerCase(), role: element.getAttribute('role'), name: (element.getAttribute('aria-label') || element.innerText || element.getAttribute('name') || '').slice(0, 500), selector: selectorFor(element), x: rect.x, y: rect.y, width: rect.width, height: rect.height }; });
       return { url: location.href, title: document.title, loading: document.readyState !== 'complete', visibleText: (document.body?.innerText || '').slice(0, ${BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH}), interactiveElements: elements };
     })()`, true, true)
-    const [ax, sourceImage, viewport] = await Promise.all([
+    const viewport = await this.measureViewport(tab, send)
+    const scale = Math.min(1, BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH / viewport.width)
+    const [ax, capture] = await Promise.all([
       send('Accessibility.getFullAXTree'),
-      tab.webContents.capturePage(),
-      this.measureViewport(tab, send),
+      send('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: false,
+        clip: { x: 0, y: 0, width: viewport.width, height: viewport.height, scale },
+      }),
     ])
-    if (sourceImage.isEmpty()) throw new BrowserHostError('execution-failed', 'Browser screenshot was empty')
-    const sourceSize = sourceImage.getSize()
-    let image = sourceSize.width > BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH ? sourceImage.resize({ width: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH }) : sourceImage
-    let png = image.toPNG()
-    while (png.byteLength > MAX_SCREENSHOT_PNG_BYTES && image.getSize().width > 320) {
-      image = image.resize({ width: Math.max(320, Math.floor(image.getSize().width * 0.75)) })
-      png = image.toPNG()
-    }
+    const encoded = this.record(capture).data
+    if (typeof encoded !== 'string' || encoded.length === 0) throw new BrowserHostError('execution-failed', 'Browser screenshot was empty', true)
+    const png = Buffer.from(encoded, 'base64')
+    if (png.byteLength === 0) throw new BrowserHostError('execution-failed', 'Browser screenshot was empty', true)
     if (png.byteLength > MAX_SCREENSHOT_PNG_BYTES) throw new BrowserHostError('response-too-large', 'Browser screenshot exceeds the host response limit')
-    const size = image.getSize()
+    const size = pngDimensions(png) ?? { width: Math.max(1, Math.round(viewport.width * scale)), height: Math.max(1, Math.round(viewport.height * scale)) }
     tab.snapshot = { ...tab.snapshot, url: page.url, title: page.title, loading: page.loading, renderedViewport: viewport }
     return {
       tabId: tab.snapshot.tabId,
@@ -633,14 +699,18 @@ export class BrowserAutomationManager {
     if (point.x < 0 || point.y < 0 || point.x > viewport.width || point.y > viewport.height) {
       throw new BrowserHostError('coordinates-outside-viewport', 'Click coordinates are outside the rendered viewport', false, { x: point.x, y: point.y, viewportWidth: viewport.width, viewportHeight: viewport.height })
     }
-    this.expectInput(tab, { kind: 'pointer', x: point.x, y: point.y, button: 0 })
-    tab.snapshot = { ...tab.snapshot, agentCursor: { ...point, phase: 'move', sequence: ++this.sequence, createdAt: new Date(this.now()).toISOString() } }
-    this.emitTabState(tab)
-    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' })
-    tab.snapshot = { ...tab.snapshot, agentCursor: { ...point, phase: 'click', sequence: ++this.sequence, createdAt: new Date(this.now()).toISOString() } }
-    this.emitTabState(tab)
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 })
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 })
+    const syntheticSequence = await this.beginSyntheticInput(tab, { kind: 'pointer', x: point.x, y: point.y, button: 0 })
+    try {
+      tab.snapshot = { ...tab.snapshot, agentCursor: { ...point, phase: 'move', sequence: ++this.sequence, createdAt: new Date(this.now()).toISOString() } }
+      this.emitTabState(tab)
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'none' })
+      tab.snapshot = { ...tab.snapshot, agentCursor: { ...point, phase: 'click', sequence: ++this.sequence, createdAt: new Date(this.now()).toISOString() } }
+      this.emitTabState(tab)
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 })
+    } finally {
+      this.endSyntheticInput(tab, syntheticSequence)
+    }
     return { tabId: tab.snapshot.tabId, point }
   }
 
@@ -676,18 +746,34 @@ export class BrowserAutomationManager {
 
   private async press(tab: TabRuntime, input: Extract<BrowserAutomationRequest, { operation: 'press' }>['input'], send: SendCommand, cleanup: SendCommand): Promise<BrowserAutomationResultByOperation['press']> {
     await this.prepareInput(send, false)
-    const sequence = makeBrowserKeySequence(input, this.isMac)
+    const keySequence = makeBrowserKeySequence(input, this.isMac)
+    await this.installKeyDeliveryProbe(send)
     let down = false
+    let syntheticSequence: string | null = null
     try {
-      tab.webContents.focus()
-      await send('Page.bringToFront')
       await send('Emulation.setFocusEmulationEnabled', { enabled: true })
-      this.expectInput(tab, sequence.signal)
+      tab.webContents.focus()
+      syntheticSequence = await this.beginSyntheticInput(tab, keySequence.signal)
       down = true
-      await send('Input.dispatchKeyEvent', sequence.keyDown)
+      await send('Input.dispatchKeyEvent', keySequence.keyDown)
+      await send('Input.dispatchKeyEvent', keySequence.keyUp)
+      down = false
+      const delivered = await this.readKeyDeliveryProbe(send)
+      if (delivered.keydown < 1 || delivered.keyup < 1) {
+        throw new BrowserHostError('execution-failed', `Browser key ${input.key} was not delivered to the focused guest target`, true, {
+          keydown: delivered.keydown,
+          keyup: delivered.keyup,
+        })
+      }
+      const printable = keySequence.signal.key.length === 1 && typeof keySequence.keyDown.text === 'string' && keySequence.keyDown.text.length > 0
+      if (printable && delivered.editable && !delivered.defaultPrevented && !delivered.valueChanged && delivered.input < 1) {
+        throw new BrowserHostError('execution-failed', `Browser printable key ${input.key} produced no focused-target behavior`, true)
+      }
     } finally {
-      if (down) await cleanup('Input.dispatchKeyEvent', sequence.keyUp).catch(() => undefined)
+      if (down) await cleanup('Input.dispatchKeyEvent', keySequence.keyUp).catch(() => undefined)
+      if (syntheticSequence) this.endSyntheticInput(tab, syntheticSequence)
       await cleanup('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => undefined)
+      await cleanup('Runtime.evaluate', { expression: `(() => { const holder=globalThis.__forgeKeyDeliveryProbe; if(holder){ window.removeEventListener('keydown',holder.down,true); window.removeEventListener('keyup',holder.up,true); window.removeEventListener('input',holder.input,true); delete globalThis.__forgeKeyDeliveryProbe; } })()`, returnByValue: true }).catch(() => undefined)
     }
     return { tabId: tab.snapshot.tabId, key: input.key, modifiers: input.modifiers ?? [] }
   }
@@ -795,31 +881,52 @@ export class BrowserAutomationManager {
     const previous = tab.queue.catch(() => undefined)
     let release: () => void = () => undefined
     tab.queue = new Promise<void>((resolve) => { release = resolve })
-    await previous
+    try {
+      await this.awaitDeadline(previous, deadline, 'Browser request expired while waiting for the tab queue')
+    } catch (error) {
+      release()
+      throw error
+    }
     if (tab.destroyed || tab.webContents.isDestroyed()) { release(); throw new BrowserHostError('tab-not-found', 'Browser tab was destroyed') }
     if (this.now() >= deadline) { release(); throw new BrowserHostError('timeout', 'Browser request deadline has elapsed', true) }
     const epoch = tab.controlEpoch
+    const operationGeneration = ++tab.operationGeneration
     const startedAt = new Date(this.now()).toISOString()
     const event: BrowserActionTimelineEntry = { id: `browser-action-${this.now().toString(36)}-${(++this.sequence).toString(36)}`, action, status: 'running', startedAt }
     tab.actionTimeline = [...tab.actionTimeline, event].slice(-ACTION_LIMIT)
     tab.snapshot = { ...tab.snapshot, controller: 'agent' }
     this.emitTabState(tab)
+    const active = (): void => {
+      if (operationGeneration !== tab.operationGeneration) throw new BrowserHostError('request-cancelled', `Browser ${action} operation was superseded`, true)
+      if (epoch !== tab.controlEpoch) throw new BrowserHostError('control-interrupted', `Human input interrupted ${action}`, true)
+    }
     const send: SendCommand = async (method, params) => {
-      if (epoch !== tab.controlEpoch) throw new BrowserHostError('control-interrupted', `Human input interrupted ${action}`, true)
+      active()
       const result = await this.rawSend(tab)(method, params)
-      if (epoch !== tab.controlEpoch) throw new BrowserHostError('control-interrupted', `Human input interrupted ${action}`, true)
+      active()
       return result
     }
+    const cleanup: SendCommand = async (method, params) => {
+      if (operationGeneration !== tab.operationGeneration) throw new BrowserHostError('request-cancelled', `Browser ${action} cleanup was superseded`, true)
+      return this.rawSend(tab)(method, params)
+    }
     try {
-      await this.ensureDebugger(tab)
-      const result = await use(send, this.rawSend(tab))
+      const work = (async () => {
+        await this.ensureDebugger(tab)
+        active()
+        const result = await use(send, cleanup)
+        active()
+        return result
+      })()
+      const result = await this.awaitDeadline(work, deadline, `Browser ${action} exceeded its request deadline`)
       this.finishAction(tab, event.id, 'succeeded')
       return result
     } catch (error) {
+      if (error instanceof BrowserHostError && error.code === 'timeout') await this.recoverTimedOutOperation(tab, operationGeneration)
       this.finishAction(tab, event.id, error instanceof BrowserHostError && error.code === 'control-interrupted' ? 'interrupted' : 'failed', error instanceof BrowserHostError ? error.code : 'execution-failed')
       throw error
     } finally {
-      if (!tab.destroyed) {
+      if (!tab.destroyed && operationGeneration === tab.operationGeneration) {
         tab.snapshot = { ...tab.snapshot, controller: 'none' }
         this.emitTabState(tab)
       }
@@ -841,23 +948,13 @@ export class BrowserAutomationManager {
   }
 
   private async boundLocatorWork<T>(tab: TabRuntime, timeoutMs: number, message: string, work: () => Promise<T>): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let timedOut = false
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true
-        reject(new BrowserHostError('timeout', message, true))
-      }, timeoutMs)
-    })
     try {
-      return await Promise.race([work(), timeout])
+      return await this.awaitDeadline(work(), this.now() + timeoutMs, message)
     } catch (error) {
-      if (timedOut && !tab.destroyed && !tab.webContents.isDestroyed()) {
-        void this.rawSend(tab)('Runtime.terminateExecution').catch(() => undefined)
+      if (error instanceof BrowserHostError && error.code === 'timeout') {
+        await this.recoverTimedOutOperation(tab, tab.operationGeneration)
       }
       throw error
-    } finally {
-      if (timer) clearTimeout(timer)
     }
   }
 
@@ -865,24 +962,31 @@ export class BrowserAutomationManager {
     if (tab.debuggerReady && tab.webContents.debugger.isAttached()) return
     if (tab.debuggerPromise) return tab.debuggerPromise
     if (tab.webContents.debugger.isAttached()) throw new BrowserHostError('execution-failed', 'Browser debugger is attached by another client')
+    const generation = ++tab.debuggerGeneration
     const listener: DebuggerMessageListener = (_event, method, params) => this.captureDebuggerMessage(tab, method, params)
     tab.debuggerMessage = listener
     tab.webContents.debugger.on('message', listener)
-    tab.debuggerPromise = (async () => {
+    const pending = (async () => {
       try {
         tab.webContents.debugger.attach('1.3')
         await Promise.all(['Runtime.enable', 'Accessibility.enable', 'Network.enable', 'Log.enable', 'Page.enable'].map((method) => tab.webContents.debugger.sendCommand(method)))
+        if (generation !== tab.debuggerGeneration) throw new BrowserHostError('request-cancelled', 'Browser debugger initialization was superseded', true)
         tab.debuggerReady = true
       } catch (error) {
-        tab.webContents.debugger.off('message', listener)
-        tab.debuggerMessage = null
-        if (tab.webContents.debugger.isAttached()) tab.webContents.debugger.detach()
+        if (this.isWebContentsAlive(tab)) {
+          const debuggerApi = tab.webContents.debugger
+          debuggerApi.off('message', listener)
+          if (generation === tab.debuggerGeneration && debuggerApi.isAttached()) debuggerApi.detach()
+        }
+        if (tab.debuggerMessage === listener) tab.debuggerMessage = null
+        if (error instanceof BrowserHostError) throw error
         throw new BrowserHostError('execution-failed', error instanceof Error ? error.message : 'Could not attach browser debugger')
-      } finally {
-        tab.debuggerPromise = null
       }
     })()
-    return tab.debuggerPromise
+    tab.debuggerPromise = pending
+    const clear = (): void => { if (tab.debuggerPromise === pending) tab.debuggerPromise = null }
+    void pending.then(clear, clear)
+    return pending
   }
 
   private attachTabListeners(tab: TabRuntime): void {
@@ -895,7 +999,8 @@ export class BrowserAutomationManager {
       const description = typeof args[2] === 'string' ? args[2] : 'Page failed to load'
       tab.snapshot = { ...tab.snapshot, lifecycle: 'failed', loading: false, error: { code: String(code), message: description } }
     }
-    const destroyed = (): void => this.unregisterWebview(tab.snapshot.tabId, tab.webContents.id)
+    const registeredWebContentsId = tab.webContents.id
+    const destroyed = (): void => this.unregisterWebview(tab.snapshot.tabId, registeredWebContentsId)
     const willNavigate = (...args: unknown[]): void => {
       const event = args[0] as { preventDefault?: () => void } | undefined
       const url = typeof args[1] === 'string' ? args[1] : ''
@@ -913,19 +1018,33 @@ export class BrowserAutomationManager {
 
   private disposeTabRuntime(tab: TabRuntime, close: boolean): void {
     if (tab.destroyed) return
+    const alive = this.isWebContentsAlive(tab)
+    if (this.activeRecording?.tabId === tab.snapshot.tabId) {
+      if (alive) this.cancelRecording(this.activeRecording.recordingId)
+      else this.activeRecording = null
+    }
     tab.destroyed = true
     tab.navigationWait?.interrupt(new BrowserHostError('tab-not-found', 'Browser tab was destroyed', true))
-    if (this.activeRecording?.tabId === tab.snapshot.tabId) this.cancelRecording(this.activeRecording.recordingId)
-    for (const { event, listener } of tab.listeners) tab.webContents.off(event, listener)
-    tab.listeners = []
-    tab.webContents.ipc.off(BROWSER_GUEST_HUMAN_INPUT_CHANNEL, tab.humanInputListener)
-    if (tab.debuggerMessage) tab.webContents.debugger.off('message', tab.debuggerMessage)
-    if (tab.webContents.debugger.isAttached()) {
-      try { tab.webContents.debugger.detach() } catch { /* teardown must continue */ }
+    tab.navigationWait = null
+    for (const resolve of tab.syntheticReadyWaiters.values()) resolve()
+    tab.syntheticReadyWaiters.clear()
+    if (alive) {
+      try {
+        for (const { event, listener } of tab.listeners) tab.webContents.off(event, listener)
+        tab.webContents.ipc.off(BROWSER_GUEST_HUMAN_INPUT_CHANNEL, tab.humanInputListener)
+        const debuggerApi = tab.webContents.debugger
+        if (tab.debuggerMessage) debuggerApi.off('message', tab.debuggerMessage)
+        if (debuggerApi.isAttached()) debuggerApi.detach()
+      } catch { /* duplicated unmount/destroy teardown must be fail-closed and idempotent */ }
     }
+    tab.listeners = []
+    tab.debuggerMessage = null
     tab.debuggerReady = false
     tab.debuggerPromise = null
-    if (close && !tab.webContents.isDestroyed()) tab.webContents.close({ waitForBeforeUnload: false })
+    tab.debuggerGeneration += 1
+    if (close && alive) {
+      try { tab.webContents.close({ waitForBeforeUnload: false }) } catch { /* guest may be destroyed between the liveness check and close */ }
+    }
   }
 
   private syncSnapshot(tab: TabRuntime): BrowserTabSnapshot {
@@ -953,10 +1072,17 @@ export class BrowserAutomationManager {
 
   private handleGuestInput(tabId: string, value: unknown): void {
     const tab = this.tabs.get(tabId)
-    if (!tab || !this.isInputSignal(value)) return
-    const now = this.now()
-    tab.expectedInputs = tab.expectedInputs.filter((expected) => expected.expiresAt > now)
-    const match = tab.expectedInputs.findIndex((expected) => this.inputsMatch(expected.signal, value))
+    if (!tab || !value || typeof value !== 'object') return
+    const control = value as UnknownRecord
+    if (control.kind === 'synthetic-ready' && typeof control.sequence === 'string') {
+      tab.syntheticReadyWaiters.get(control.sequence)?.()
+      return
+    }
+    if (!this.isInputSignal(value)) return
+    const syntheticSequence = value.syntheticSequence
+    const match = typeof syntheticSequence === 'string'
+      ? tab.expectedInputs.findIndex((expected) => expected.sequence === syntheticSequence && this.inputsMatch(expected.signal, value))
+      : -1
     if (match >= 0) { tab.expectedInputs.splice(match, 1); return }
     this.takeHumanControl(tab, 'input')
   }
@@ -975,23 +1101,36 @@ export class BrowserAutomationManager {
     }, 750).unref?.()
   }
 
-  private expectInput(tab: TabRuntime, signal: InputSignal): void {
-    const now = this.now()
-    tab.expectedInputs = [...tab.expectedInputs.filter((item) => item.expiresAt > now), { signal, expiresAt: now + EXPECTED_INPUT_TTL_MS }]
+  private async beginSyntheticInput(tab: TabRuntime, signal: InputSignal): Promise<string> {
+    const sequence = `browser-input-${this.now().toString(36)}-${(++this.sequence).toString(36)}`
+    tab.expectedInputs = [...tab.expectedInputs.slice(-31), { sequence, signal }]
+    const ready = new Promise<void>((resolve) => tab.syntheticReadyWaiters.set(sequence, resolve))
+    tab.webContents.send(BROWSER_GUEST_SYNTHETIC_INPUT_CHANNEL, { sequence })
+    try {
+      await this.awaitDeadline(ready, this.now() + OPERATION_RECOVERY_TIMEOUT_MS, 'Browser guest did not acknowledge synthetic input correlation')
+    } finally {
+      tab.syntheticReadyWaiters.delete(sequence)
+    }
+    return sequence
+  }
+
+  private endSyntheticInput(tab: TabRuntime, sequence: string): void {
+    void sequence
+    if (!tab.destroyed && !tab.webContents.isDestroyed()) tab.webContents.send(BROWSER_GUEST_SYNTHETIC_INPUT_CHANNEL, { sequence: null })
   }
 
   private isInputSignal(value: unknown): value is InputSignal {
     if (!value || typeof value !== 'object') return false
     const signal = value as UnknownRecord
     return signal.kind === 'pointer'
-      ? typeof signal.x === 'number' && typeof signal.y === 'number' && typeof signal.button === 'number'
-      : signal.kind === 'key' && typeof signal.key === 'string' && typeof signal.code === 'string'
+      ? typeof signal.x === 'number' && typeof signal.y === 'number' && typeof signal.button === 'number' && (signal.syntheticSequence === undefined || typeof signal.syntheticSequence === 'string')
+      : signal.kind === 'key' && typeof signal.key === 'string' && typeof signal.code === 'string' && (signal.syntheticSequence === undefined || typeof signal.syntheticSequence === 'string')
   }
 
   private inputsMatch(left: InputSignal, right: InputSignal): boolean {
     if (left.kind !== right.kind) return false
     return left.kind === 'pointer' && right.kind === 'pointer'
-      ? Math.abs(left.x - right.x) <= 1 && Math.abs(left.y - right.y) <= 1 && left.button === right.button
+      ? Math.abs(left.x - right.x) <= 4 && Math.abs(left.y - right.y) <= 4 && left.button === right.button
       : left.kind === 'key' && right.kind === 'key' && left.key === right.key && left.code === right.code
   }
 
@@ -1058,6 +1197,65 @@ export class BrowserAutomationManager {
     return Promise.all([...(runtime ? [send('Runtime.enable')] : []), send('Input.setIgnoreInputEvents', { ignore: false })])
   }
 
+  private async installKeyDeliveryProbe(send: SendCommand): Promise<void> {
+    await this.evaluateRaw(send, `(() => {
+      const active=document.activeElement; const editable=active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || Boolean(active?.isContentEditable);
+      const initialValue=active && 'value' in active ? String(active.value) : active?.textContent ?? '';
+      const probe={keydown:0,keyup:0,input:0,defaultPrevented:false,editable,initialValue,active};
+      const down=(event)=>{probe.keydown++; queueMicrotask(()=>{probe.defaultPrevented=probe.defaultPrevented||event.defaultPrevented})};
+      const up=()=>{probe.keyup++}; const input=()=>{probe.input++};
+      window.addEventListener('keydown',down,true); window.addEventListener('keyup',up,true); window.addEventListener('input',input,true);
+      globalThis.__forgeKeyDeliveryProbe={probe,down,up,input}; return true;
+    })()`, true, true)
+  }
+
+  private async readKeyDeliveryProbe(send: SendCommand): Promise<{ keydown: number; keyup: number; input: number; editable: boolean; defaultPrevented: boolean; valueChanged: boolean }> {
+    const response = await this.evaluateRaw(send, `(() => {
+      const holder=globalThis.__forgeKeyDeliveryProbe; if(!holder) return {keydown:0,keyup:0,input:0,editable:false,defaultPrevented:false,valueChanged:false};
+      window.removeEventListener('keydown',holder.down,true); window.removeEventListener('keyup',holder.up,true); window.removeEventListener('input',holder.input,true);
+      const {probe}=holder; const current=probe.active && 'value' in probe.active ? String(probe.active.value) : probe.active?.textContent ?? '';
+      return {keydown:probe.keydown,keyup:probe.keyup,input:probe.input,editable:probe.editable,defaultPrevented:probe.defaultPrevented,valueChanged:current!==probe.initialValue};
+    })()`, true, true)
+    return this.record(response.result).value as { keydown: number; keyup: number; input: number; editable: boolean; defaultPrevented: boolean; valueChanged: boolean }
+  }
+
+  private async awaitDeadline<T>(work: Promise<T>, deadline: number, message: string): Promise<T> {
+    if (!Number.isFinite(deadline)) return work
+    const remaining = deadline - this.now()
+    if (remaining <= 0) throw new BrowserHostError('timeout', message, true)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new BrowserHostError('timeout', message, true)), remaining)
+    })
+    try { return await Promise.race([work, timeout]) }
+    finally { if (timer) clearTimeout(timer) }
+  }
+
+  private async recoverTimedOutOperation(tab: TabRuntime, operationGeneration: number): Promise<void> {
+    if (tab.destroyed || tab.webContents.isDestroyed() || tab.operationGeneration !== operationGeneration) return
+    tab.operationGeneration += 1
+    tab.snapshot = { ...tab.snapshot, controller: 'none' }
+    this.emitTabState(tab)
+    const debuggerApi = tab.webContents.debugger
+    if (debuggerApi.isAttached()) {
+      await this.awaitDeadline(
+        debuggerApi.sendCommand('Runtime.terminateExecution').then(() => undefined, () => undefined),
+        this.now() + OPERATION_RECOVERY_TIMEOUT_MS,
+        'Browser execution termination timed out',
+      ).catch(() => undefined)
+    }
+    tab.debuggerGeneration += 1
+    tab.debuggerReady = false
+    tab.debuggerPromise = null
+    if (tab.debuggerMessage) {
+      debuggerApi.off('message', tab.debuggerMessage)
+      tab.debuggerMessage = null
+    }
+    if (debuggerApi.isAttached()) {
+      try { debuggerApi.detach() } catch { /* timeout recovery must continue */ }
+    }
+  }
+
   private boundAccessibility(value: unknown): unknown {
     const root = this.record(value)
     const nodes = Array.isArray(root.nodes) ? root.nodes.slice(0, BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS).map((node) => {
@@ -1076,8 +1274,12 @@ export class BrowserAutomationManager {
 
   private requireTab(tabId: string): TabRuntime {
     const tab = this.tabs.get(tabId)
-    if (!tab || tab.destroyed || tab.webContents.isDestroyed()) throw new BrowserHostError('tab-not-found', `Browser tab ${tabId} is not hosted`, true)
+    if (!tab || tab.destroyed || !this.isWebContentsAlive(tab)) throw new BrowserHostError('tab-not-found', `Browser tab ${tabId} is not hosted`, true)
     return tab
+  }
+
+  private isWebContentsAlive(tab: TabRuntime): boolean {
+    try { return !tab.webContents.isDestroyed() } catch { return false }
   }
 
   private requireRecording(request: BrowserAutomationRequest & { operation: 'recordingStop' }): ActiveRecording {
@@ -1095,6 +1297,13 @@ export class BrowserAutomationManager {
   }
 
   private delay(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)) }
+}
+
+function pngDimensions(png: Buffer): { width: number; height: number } | null {
+  if (png.byteLength < 24 || png.toString('ascii', 12, 16) !== 'IHDR') return null
+  const width = png.readUInt32BE(16)
+  const height = png.readUInt32BE(20)
+  return width > 0 && height > 0 ? { width, height } : null
 }
 
 type SendCommand = (method: string, params?: UnknownRecord) => Promise<unknown>
