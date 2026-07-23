@@ -29,7 +29,7 @@ if (MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES !== MAX_READ_FILE_CONTENT_BYTES) {
   throw new Error("Chat artifact and generic file-reader text limits must remain aligned");
 }
 
-export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "path_outside_workspace" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported" | "ticket_not_found" | "ticket_expired" | "ticket_binding_mismatch";
+export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "path_outside_workspace" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported" | "ticket_not_found" | "ticket_expired" | "ticket_binding_mismatch" | "ticket_capacity_exceeded";
 export class ChatArtifactError extends Error { constructor(public readonly code: ChatArtifactErrorCode) { super(code); } }
 const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactError(code); };
 const hasControl = (value: string) => /[\0-\x1f\x7f]/.test(value);
@@ -345,6 +345,9 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: {
 
 export const PRESENTED_CHAT_ARTIFACT_TICKET_TTL_MS = 30_000;
 const MAX_PRESENTED_CHAT_ARTIFACT_TICKETS = 256;
+const MAX_PRESENTED_CHAT_ARTIFACT_TICKETS_PER_AUTH_BINDING = 64;
+// Builder is one deliberate local principal and retains the pre-existing full-store allowance.
+const MAX_LOCAL_PRESENTED_CHAT_ARTIFACT_TICKETS = MAX_PRESENTED_CHAT_ARTIFACT_TICKETS;
 const CHAT_ARTIFACT_TICKET_PATH_PREFIX = "/api/chat-artifacts/tickets/";
 
 type PresentedChatArtifactTicketRecord = {
@@ -363,18 +366,21 @@ export class PresentedChatArtifactTicketStore {
     now?: () => number;
     createToken?: () => string;
     ttlMs?: number;
+    /** Test seam that may lower, but never raise, the production hard cap. */
     maxTickets?: number;
+    maxTicketsPerAuthBinding?: number;
+    maxLocalTickets?: number;
   } = {}) {}
 
   async issue(target: string, authBinding?: string) {
-    this.purgeExpired();
     const inspected = await securelyInspectPresentedArtifact(target);
-    const maxTickets = Math.max(1, this.options.maxTickets ?? MAX_PRESENTED_CHAT_ARTIFACT_TICKETS);
-    while (this.tickets.size >= maxTickets) this.tickets.delete(this.tickets.keys().next().value!);
     const token = this.options.createToken?.() ?? randomBytes(32).toString("base64url");
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(token) || this.tickets.has(token)) fail("transcript_read_failed");
-    const expiresAtMs = this.now() + (this.options.ttlMs ?? PRESENTED_CHAT_ARTIFACT_TICKET_TTL_MS);
-    this.tickets.set(token, { target, ...inspected, expiresAtMs, ...(authBinding ? { authBinding } : {}) });
+    const now = this.now();
+    this.purgeExpired(now);
+    this.reserveIssuerOwnedSlot(authBinding);
+    const expiresAtMs = now + (this.options.ttlMs ?? PRESENTED_CHAT_ARTIFACT_TICKET_TTL_MS);
+    this.tickets.set(token, { target, ...inspected, expiresAtMs, ...(authBinding !== undefined ? { authBinding } : {}) });
     return {
       contentType: inspected.contentType,
       totalBytes: inspected.totalBytes,
@@ -386,9 +392,15 @@ export class PresentedChatArtifactTicketStore {
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) fail("ticket_not_found");
     const ticket = this.tickets.get(token);
     if (!ticket) throw new ChatArtifactError("ticket_not_found");
-    this.tickets.delete(token); // Consume before I/O: concurrent reuse cannot race the first redemption.
-    if (ticket.expiresAtMs <= this.now()) fail("ticket_expired");
-    if (ticket.authBinding !== authBinding) fail("ticket_binding_mismatch");
+    // A binding mismatch is indistinguishable from an unknown token and never consumes the owner's ticket.
+    if (ticket.authBinding !== authBinding) fail("ticket_not_found");
+    if (ticket.expiresAtMs <= this.now()) {
+      this.tickets.delete(token);
+      fail("ticket_expired");
+    }
+    // This synchronous delete is the final operation before the first awaited I/O. Concurrent valid
+    // redeems therefore still have exactly one winner while validation failures leave the token intact.
+    this.tickets.delete(token);
     const readResult = await securelyReadPresentedArtifact(ticket.target, {
       expectedIdentity: ticket.identity,
       rawImage: true,
@@ -399,9 +411,30 @@ export class PresentedChatArtifactTicketStore {
     return result;
   }
 
+  private boundedLimit(value: number | undefined, fallback: number, ceiling: number) {
+    const requested = value === undefined || Number.isNaN(value) ? fallback : value;
+    return Math.min(ceiling, Math.max(1, Math.floor(requested)));
+  }
+
+  private reserveIssuerOwnedSlot(authBinding: string | undefined) {
+    const overallLimit = this.boundedLimit(this.options.maxTickets, MAX_PRESENTED_CHAT_ARTIFACT_TICKETS, MAX_PRESENTED_CHAT_ARTIFACT_TICKETS);
+    const issuerLimit = authBinding === undefined
+      ? this.boundedLimit(this.options.maxLocalTickets, MAX_LOCAL_PRESENTED_CHAT_ARTIFACT_TICKETS, overallLimit)
+      : this.boundedLimit(this.options.maxTicketsPerAuthBinding, MAX_PRESENTED_CHAT_ARTIFACT_TICKETS_PER_AUTH_BINDING, overallLimit);
+    const issuerTokens = [...this.tickets]
+      .filter(([, ticket]) => ticket.authBinding === authBinding)
+      .map(([token]) => token);
+
+    if (issuerTokens.length >= issuerLimit) this.tickets.delete(issuerTokens.shift()!);
+    if (this.tickets.size < overallLimit) return;
+
+    const issuerOwnedToken = issuerTokens[0];
+    if (!issuerOwnedToken) fail("ticket_capacity_exceeded");
+    this.tickets.delete(issuerOwnedToken);
+  }
+
   private now() { return this.options.now?.() ?? Date.now(); }
-  private purgeExpired() {
-    const now = this.now();
+  private purgeExpired(now = this.now()) {
     for (const [token, ticket] of this.tickets) if (ticket.expiresAtMs <= now) this.tickets.delete(token);
   }
 }
@@ -508,4 +541,4 @@ export async function readPresentedChatArtifact(
   return { ...result, path: pathValue } as ChatArtifactReadResponse;
 }
 
-export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity", "ticket_binding_mismatch"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found", "ticket_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (code === "ticket_expired") return 410; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "stable_identity_unsupported") return 501; return 500; }
+export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity", "ticket_binding_mismatch"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found", "ticket_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (code === "ticket_expired") return 410; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "ticket_capacity_exceeded") return 429; if (code === "stable_identity_unsupported") return 501; return 500; }
