@@ -129,6 +129,15 @@ export interface BrowserSafeActionSummary {
   elapsedMs?: number
 }
 
+export interface BrowserPanelRevealIntent {
+  /** Monotonic per-session token. A larger value always represents newer reveal intent. */
+  sequence: number
+  /** Last sequence presented by an authoritative Electron host. */
+  acknowledgedSequence: number
+  /** Tab that must be physically presented before this sequence is acknowledged. */
+  tabId: string | null
+}
+
 export interface BrowserSessionSnapshot {
   schemaVersion: 1
   sessionAgentId: string
@@ -139,6 +148,8 @@ export interface BrowserSessionSnapshot {
   activeTabId: string | null
   defaultTabId: string | null
   panelVisible: boolean
+  /** Durable reveal intent. Absence is a legacy snapshot with no pending reveal. */
+  panelReveal?: BrowserPanelRevealIntent
   recentActions: BrowserSafeActionSummary[]
   revision: number
   createdAt: string
@@ -598,6 +609,17 @@ export interface BrowserHostStateReportCommand {
   sessions: BrowserHostSessionStateReport[]
 }
 
+export interface BrowserPanelRevealAcknowledgeCommand {
+  type: 'browser_panel_reveal_acknowledge'
+  requestId: string
+  hostId: string
+  hostGeneration: number
+  sessionAgentId: string
+  profileId: string
+  tabId: string
+  sequence: number
+}
+
 export interface BrowserTabOpenCommand {
   type: 'browser_tab_open'
   requestId: string
@@ -649,6 +671,7 @@ export type BrowserClientCommand =
   | BrowserHostFocusCommand
   | BrowserHostResponseCommand
   | BrowserHostStateReportCommand
+  | BrowserPanelRevealAcknowledgeCommand
   | BrowserTabOpenCommand
   | BrowserTabActivateCommand
   | BrowserTabCloseCommand
@@ -690,12 +713,10 @@ export interface BrowserSessionChangedEvent {
   reason: 'host-report' | 'automation' | 'human-command' | 'lifecycle' | 'recovery'
 }
 
-export interface BrowserPanelRevealRequestedEvent {
-  type: 'browser_panel_reveal_requested'
-  sessionAgentId: string
-  tabId: string
-  hostGeneration: number
-  revision: number
+export interface BrowserPanelRevealAcknowledgedEvent {
+  type: 'browser_panel_reveal_acknowledged'
+  requestId: string
+  snapshot: BrowserSessionSnapshot
 }
 
 export interface BrowserTabCommandSucceededEvent {
@@ -728,7 +749,7 @@ export type BrowserServerEvent =
   | BrowserAutomationRequestEvent
   | BrowserSessionSnapshotEvent
   | BrowserSessionChangedEvent
-  | BrowserPanelRevealRequestedEvent
+  | BrowserPanelRevealAcknowledgedEvent
   | BrowserTabCommandSucceededEvent
   | BrowserRecordingCommandSucceededEvent
 

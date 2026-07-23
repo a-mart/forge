@@ -58,6 +58,7 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'browser_host_focus',
   'browser_host_response',
   'browser_host_state_report',
+  'browser_panel_reveal_acknowledge',
   'browser_tab_open',
   'browser_tab_activate',
   'browser_tab_close',
@@ -120,6 +121,7 @@ type RequestIdCommandType = RequestIdCommand['type']
 
 const REQUEST_ID_COMMAND_TYPES = [
   'browser_host_state_report',
+  'browser_panel_reveal_acknowledge',
   'browser_tab_open',
   'browser_tab_activate',
   'browser_tab_close',
@@ -456,6 +458,7 @@ const serverEventsByLeafModule = [
 
 const requestIdCommands = [
   { type: 'browser_host_state_report', requestId: 'browser-state-request-1', hostId: 'host-1', hostGeneration: 1, sessions: [] },
+  { type: 'browser_panel_reveal_acknowledge', requestId: 'browser-reveal-request-1', hostId: 'host-1', hostGeneration: 1, sessionAgentId: agent.agentId, profileId: profile.profileId, tabId: 'tab-1', sequence: 1 },
   { type: 'browser_tab_open', requestId: 'browser-request-1', sessionAgentId: agent.agentId, profileId: profile.profileId },
   { type: 'browser_tab_activate', requestId: 'browser-request-2', sessionAgentId: agent.agentId, tabId: 'tab-1' },
   { type: 'browser_tab_close', requestId: 'browser-request-3', sessionAgentId: agent.agentId, tabId: 'tab-1' },
@@ -545,6 +548,7 @@ describe('protocol root barrel contract', () => {
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
     expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
+      'browser_panel_reveal_acknowledge',
       'browser_host_state_report',
       'browser_recording_start',
       'browser_recording_stop',
@@ -851,7 +855,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(69)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(70)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -862,7 +866,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(50)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(51)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)

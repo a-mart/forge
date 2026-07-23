@@ -22,14 +22,20 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
     case 'browser_host_connected': {
       const registration = context.registration
       if (registration && event.host.hostId !== null && event.host.hostId !== registration.hostId) return true
-      context.updateState({ browserHost: event.host })
+      context.updateState({
+        browserHost: event.host,
+        browserHostHydrated: false,
+        browserPanelRevealRequest: null,
+      })
       return true
     }
     case 'browser_host_state_snapshot': {
       if (!isCurrentHostEvent(context, event.hostId, event.hostGeneration)) return true
+      const browserSessions = indexSessions(event.sessions)
       context.updateState({
-        browserSessions: indexSessions(event.sessions),
+        browserSessions,
         browserHostHydrated: true,
+        browserPanelRevealRequest: projectPanelRevealRequest(context.state, browserSessions, event.hostGeneration),
         browserMetadataStale: false,
       })
       return true
@@ -42,11 +48,15 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
       if (!isSelectedSession(context.state, event.snapshot.sessionAgentId)) return true
       // Bootstrap is authoritative for the new subscription/connection even
       // when its restored revision is lower than retained stale metadata.
+      const browserSessions = {
+        ...context.state.browserSessions,
+        [event.snapshot.sessionAgentId]: event.snapshot,
+      }
       context.updateState({
-        browserSessions: {
-          ...context.state.browserSessions,
-          [event.snapshot.sessionAgentId]: event.snapshot,
-        },
+        browserSessions,
+        browserPanelRevealRequest: context.state.browserHostHydrated
+          ? projectPanelRevealRequest(context.state, browserSessions, context.state.browserHost.hostGeneration)
+          : null,
         browserMetadataStale: false,
       })
       return true
@@ -55,27 +65,46 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
       if (event.snapshot.hostingState === 'removed') {
         const next = { ...context.state.browserSessions }
         delete next[event.snapshot.sessionAgentId]
-        context.updateState({ browserSessions: next, browserMetadataStale: false })
+        context.updateState({
+          browserSessions: next,
+          browserPanelRevealRequest: projectPanelRevealRequest(context.state, next, context.state.browserHost.hostGeneration),
+          browserMetadataStale: false,
+        })
         return true
       }
       const previous = context.state.browserSessions[event.snapshot.sessionAgentId]
       if (previous && event.snapshot.revision <= previous.revision) return true
+      const browserSessions = {
+        ...context.state.browserSessions,
+        [event.snapshot.sessionAgentId]: event.snapshot,
+      }
       context.updateState({
-        browserSessions: {
-          ...context.state.browserSessions,
-          [event.snapshot.sessionAgentId]: event.snapshot,
-        },
+        browserSessions,
+        browserPanelRevealRequest: projectPanelRevealRequest(
+          context.state,
+          browserSessions,
+          context.state.browserHost.hostGeneration,
+        ),
         browserMetadataStale: false,
       })
       return true
     }
-    case 'browser_panel_reveal_requested':
-      if (!isSelectedSession(context.state, event.sessionAgentId)) return true
-      if (context.state.browserHost.hostGeneration !== event.hostGeneration) return true
-      // Reveal is idempotent UI intent, not tab metadata. A newer canonical
-      // revision must not invalidate an in-generation reveal request.
-      context.updateState({ browserPanelRevealRequest: event })
+    case 'browser_panel_reveal_acknowledged': {
+      const browserSessions = {
+        ...context.state.browserSessions,
+        [event.snapshot.sessionAgentId]: event.snapshot,
+      }
+      context.updateState({
+        browserSessions,
+        browserPanelRevealRequest: projectPanelRevealRequest(
+          context.state,
+          browserSessions,
+          context.state.browserHost.hostGeneration,
+        ),
+      })
+      context.requestTracker.resolve('browser_panel_reveal_acknowledge', event.requestId, event.snapshot)
       return true
+    }
     case 'browser_automation_request': {
       const registration = context.registration
       const request = event.request
@@ -134,6 +163,25 @@ function isSelectedSession(state: ManagerWsState, sessionAgentId: string): boole
 
 function indexSessions(sessions: BrowserSessionSnapshot[]): Record<string, BrowserSessionSnapshot> {
   return Object.fromEntries(sessions.map((snapshot) => [snapshot.sessionAgentId, snapshot]))
+}
+
+function projectPanelRevealRequest(
+  state: ManagerWsState,
+  sessions: Record<string, BrowserSessionSnapshot>,
+  hostGeneration: number | null,
+): ManagerWsState['browserPanelRevealRequest'] {
+  if (hostGeneration === null) return null
+  const snapshot = Object.values(sessions).find((candidate) => isSelectedSession(state, candidate.sessionAgentId))
+  const reveal = snapshot?.panelReveal
+  if (!snapshot || !reveal || reveal.sequence <= reveal.acknowledgedSequence || reveal.tabId === null) return null
+  if (!snapshot.tabs.some((tab) => tab.tabId === reveal.tabId && tab.lifecycle !== 'closed')) return null
+  return {
+    sessionAgentId: snapshot.sessionAgentId,
+    profileId: snapshot.profileId,
+    tabId: reveal.tabId,
+    hostGeneration,
+    sequence: reveal.sequence,
+  }
 }
 
 function failureResponse(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {

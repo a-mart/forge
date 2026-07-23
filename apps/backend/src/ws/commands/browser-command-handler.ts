@@ -63,6 +63,9 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       }
       return true;
     }
+    case "browser_panel_reveal_acknowledge":
+      await handlePanelRevealAcknowledgement(options, command);
+      return true;
     case "browser_recording_start":
     case "browser_recording_stop":
       await handleRecordingCommand(options, command);
@@ -73,6 +76,43 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
     case "browser_tab_resize":
       await handleTabCommand(options, command);
       return true;
+  }
+}
+
+async function handlePanelRevealAcknowledgement(
+  options: BrowserCommandHandlerOptions,
+  command: Extract<BrowserClientCommand, { type: "browser_panel_reveal_acknowledge" }>,
+): Promise<void> {
+  const { browserAutomationService: service, connectionId } = options;
+  const managerSessionId = options.subscribedAgentId
+    ? options.resolveManagerContextAgentId(options.subscribedAgentId)
+    : undefined;
+  if (managerSessionId !== command.sessionAgentId) {
+    sendFailure(options, command, "SUBSCRIPTION_MISMATCH", "Browser reveal acknowledgement must target the selected Forge session.");
+    return;
+  }
+  if (options.resolveProfileIdForAgent(command.sessionAgentId) !== command.profileId) {
+    sendFailure(options, command, "PROFILE_MISMATCH", "Browser reveal acknowledgement profile does not match the selected Forge session.");
+    return;
+  }
+  if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) {
+    sendFailure(options, command, "STALE_HOST_GENERATION", "Browser reveal acknowledgement came from a stale host generation.");
+    return;
+  }
+  try {
+    const snapshot = await service.acknowledgePanelReveal(
+      command.profileId,
+      command.sessionAgentId,
+      command.tabId,
+      command.sequence,
+    );
+    options.send(options.socket, {
+      type: "browser_panel_reveal_acknowledged",
+      requestId: command.requestId,
+      snapshot,
+    } satisfies BrowserServerEvent);
+  } catch (error) {
+    sendFailure(options, command, "INTENT_MISMATCH", error instanceof Error ? error.message : String(error));
   }
 }
 

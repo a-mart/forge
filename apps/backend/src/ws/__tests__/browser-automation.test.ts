@@ -35,7 +35,7 @@ describe('browser websocket transport', () => {
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] }))).ok).toBe(false)
     for (const type of [
       'browser_host_register', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
-      'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
+      'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
       'browser_recording_start', 'browser_recording_stop',
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
   })
@@ -237,6 +237,53 @@ describe('browser websocket transport', () => {
       defaultTabId: 'tab-1',
       tabs: [expect.objectContaining({ tabId: 'tab-1' }), expect.objectContaining({ tabId: 'tab-2' })],
     })
+  })
+
+  it('persists reveal acknowledgement only from the selected current host generation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-reveal-ack-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'connection-1',
+      subscribedAgentId: 'session-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    const canonical = service.store.createEmpty('profile-1', 'session-1')
+    canonical.tabs = [tabFor({ sessionAgentId: 'session-1', profileId: 'profile-1' }, 'tab-1')]
+    canonical.activeTabId = 'tab-1'
+    canonical.defaultTabId = 'tab-1'
+    canonical.panelVisible = true
+    canonical.panelReveal = { sequence: 4, acknowledgedSequence: 3, tabId: 'tab-1' }
+    canonical.revision = 2
+    await service.store.save(canonical)
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', registration: registration() } })
+    sent.length = 0
+
+    await handleBrowserCommand({ ...common, command: {
+      type: 'browser_panel_reveal_acknowledge', requestId: 'ack-1', hostId: 'host-1', hostGeneration: 1,
+      sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 4,
+    } })
+    expect(sent.at(-1)).toMatchObject({
+      type: 'browser_panel_reveal_acknowledged', requestId: 'ack-1',
+      snapshot: { revision: 3, panelReveal: { sequence: 4, acknowledgedSequence: 4 } },
+    })
+    await expect(service.store.load('profile-1', 'session-1')).resolves.toMatchObject({
+      panelReveal: { sequence: 4, acknowledgedSequence: 4 },
+    })
+
+    await handleBrowserCommand({ ...common, command: {
+      type: 'browser_panel_reveal_acknowledge', requestId: 'stale-ack', hostId: 'host-1', hostGeneration: 2,
+      sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 4,
+    } })
+    expect(sent.at(-1)).toMatchObject({ type: 'error', requestId: 'stale-ack', code: expect.stringContaining('STALE_HOST_GENERATION') })
   })
 
   it('acknowledges accepted reports and returns canonical state for conflicts and stale generations', async () => {

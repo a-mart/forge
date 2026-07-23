@@ -149,7 +149,15 @@ describe("BrowserAutomationService", () => {
     await expect(restarted.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
       defaultTabId: "tab-1",
       activeTabId: "tab-1",
+      panelReveal: { sequence: 1, acknowledgedSequence: 0, tabId: "tab-1" },
       recentActions: expect.arrayContaining([expect.objectContaining({ operation: "evaluate", status: "succeeded" })]),
+    });
+    await expect(restarted.acknowledgePanelReveal("profile-1", "manager-1", "tab-1", 1)).resolves.toMatchObject({
+      panelReveal: { sequence: 1, acknowledgedSequence: 1, tabId: "tab-1" },
+    });
+    const afterAcknowledgement = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    await expect(afterAcknowledgement.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      panelReveal: { sequence: 1, acknowledgedSequence: 1 },
     });
     const persisted = await readFile(restarted.store.getStatePath("profile-1", "manager-1"), "utf8");
     expect(persisted).not.toContain("document.title");
@@ -323,6 +331,7 @@ describe("BrowserAutomationService", () => {
     state.activeTabId = "tab-1";
     state.defaultTabId = "tab-1";
     state.panelVisible = true;
+    state.panelReveal = { sequence: 1, acknowledgedSequence: 0, tabId: "tab-1" };
     await service.store.save(state);
     const requests: BrowserAutomationRequest[] = [];
     connect(service, requests);

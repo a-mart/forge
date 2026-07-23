@@ -2,7 +2,6 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   BrowserHostConnectionSnapshot,
-  BrowserPanelRevealRequestedEvent,
   BrowserSessionSnapshot,
   AgentStatus,
   ConversationEntry,
@@ -33,6 +32,14 @@ export type AgentActivityEntry = Extract<
 export interface ConversationHistoryMutation {
   revision: number
   kind: 'replace' | 'prepend'
+}
+
+export interface BrowserPanelRevealRequest {
+  sessionAgentId: string
+  profileId: string
+  tabId: string
+  hostGeneration: number
+  sequence: number
 }
 
 export interface ManagerWsState {
@@ -97,8 +104,8 @@ export interface ManagerWsState {
   browserSessions: Record<string, BrowserSessionSnapshot>
   /** True after the current host generation received its all-session hydration. */
   browserHostHydrated: boolean
-  /** Last selected-session reveal request; consumers still verify current selection. */
-  browserPanelRevealRequest: BrowserPanelRevealRequestedEvent | null
+  /** Durable unacknowledged intent projected onto the current authoritative host generation. */
+  browserPanelRevealRequest: BrowserPanelRevealRequest | null
   /** Metadata is retained during reconnect but marked stale until bootstrap. */
   browserMetadataStale: boolean
 }

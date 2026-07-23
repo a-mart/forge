@@ -18,7 +18,7 @@ There is no Managed Browser environment variable or Settings → Skills toggle. 
 
 ## Browser workspace
 
-Select **Browser** in the desktop activity rail for the current local manager. It is a mutually exclusive main workspace alongside Chat, Files, Source Control, Artifacts/Dashboard, and Schedules; Terminal remains independent. An agent can also request that Forge reveal Browser when it opens a tab with `show: true`. Reveal is idempotent intent scoped to the current host generation. Status reports that canonical intent separately from Electron-acknowledged physical tab visibility; recording requires the physical acknowledgement and non-empty viewport bounds.
+Select **Browser** in the desktop activity rail for the current local manager. It is a mutually exclusive main workspace alongside Chat, Files, Source Control, Artifacts/Dashboard, and Schedules; Terminal remains independent. An agent can also request that Forge reveal Browser when it opens a tab with `show: true`. Forge persists a monotonic reveal token with the session, projects an unacknowledged token onto each current host generation, and acknowledges it only after Electron confirms that the target tab is physically visible. A dropped live WebSocket update is therefore recovered by host hydration or subscription bootstrap, while an acknowledged token is not revealed again after reconnect. Status reports pending canonical intent separately from Electron-acknowledged physical tab visibility; recording requires the physical acknowledgement and non-empty viewport bounds.
 
 The workspace provides:
 
@@ -72,7 +72,7 @@ Persisted conversation/audit projections retain operation status and bounded saf
 
 ## Persistence, artifacts, and lifecycle
 
-Forge stores per-session tab metadata, selection, panel state, and bounded recent-action summaries in `profiles/<profileId>/sessions/<sessionId>/browser.json`. Live webviews are reconstructed from that metadata when the Desktop host reconnects.
+Forge stores per-session tab metadata, selection, monotonic reveal/acknowledgement state, panel state, and bounded recent-action summaries in `profiles/<profileId>/sessions/<sessionId>/browser.json`. Live webviews and any still-pending reveal are reconstructed from that metadata when the Desktop host reconnects.
 
 Cookies, local storage, IndexedDB, service workers, cache, and other site state belong to the persistent Electron partition for the profile. Sessions in the same Forge profile therefore share browser identity, and that partition can outlive deletion of an individual session or its project. There is currently no shipped **Clear managed browser data** control. Removing profile partition data requires manual operating-system/application-data cleanup outside Forge; Forge does not provide a verified in-app cleanup workflow.
 

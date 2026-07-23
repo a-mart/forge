@@ -35,7 +35,6 @@ export interface BrowserAutomationServiceOptions {
   brokerOptions?: BrowserHostBrokerOptions;
   store?: BrowserSessionStore;
   onSessionChanged?: (snapshot: BrowserSessionSnapshot, reason: "host-report" | "automation" | "human-command" | "lifecycle" | "recovery") => void;
-  onPanelRevealRequested?: (snapshot: BrowserSessionSnapshot, tabId: string, hostGeneration: number) => void;
   onHostChanged?: (host: BrowserHostConnectionSnapshot) => void;
   logDebug?: (message: string, details?: unknown) => void;
 }
@@ -45,7 +44,6 @@ export class BrowserAutomationService {
   readonly store: BrowserSessionStore;
   private readonly now: () => string;
   private readonly onSessionChanged: NonNullable<BrowserAutomationServiceOptions["onSessionChanged"]>;
-  private readonly onPanelRevealRequested: NonNullable<BrowserAutomationServiceOptions["onPanelRevealRequested"]>;
   private readonly onHostChanged: NonNullable<BrowserAutomationServiceOptions["onHostChanged"]>;
   private readonly logDebug: (message: string, details?: unknown) => void;
   private readonly sessions = new Map<string, BrowserSessionSnapshot>();
@@ -74,7 +72,6 @@ export class BrowserAutomationService {
       logDebug: this.logDebug,
     });
     this.onSessionChanged = options.onSessionChanged ?? (() => undefined);
-    this.onPanelRevealRequested = options.onPanelRevealRequested ?? (() => undefined);
     this.onHostChanged = options.onHostChanged ?? (() => undefined);
   }
 
@@ -139,7 +136,7 @@ export class BrowserAutomationService {
             available: false,
             host: this.broker.getConnectionSnapshot(),
             panelVisible: false,
-            panelRevealRequested: snapshot.panelVisible,
+            panelRevealRequested: isPanelRevealPending(snapshot),
             physicalTabVisible: false,
             selectedTab: target.tab ?? null,
           } as BrowserAutomationResultByOperation[Operation],
@@ -250,8 +247,8 @@ export class BrowserAutomationService {
           const statusResult = response.result as BrowserAutomationResultByOperation["status"];
           statusResult.host = this.broker.getConnectionSnapshot();
           statusResult.available = statusResult.host.connected;
-          // Electron owns physical visibility. Canonical panel state is reveal intent only.
-          statusResult.panelRevealRequested = snapshot.panelVisible;
+          // Electron owns physical visibility; durable reveal intent remains backend-owned.
+          statusResult.panelRevealRequested = isPanelRevealPending(snapshot);
         }
         const completedMetadata = extractSafeCompletionMetadata(response.result);
         await this.completeAction(snapshot, actionId, "succeeded", {
@@ -262,12 +259,17 @@ export class BrowserAutomationService {
 
         if (operation === "open" && (input as BrowserAutomationInputByOperation["open"]).show) {
           const openedTab = (response.result as BrowserAutomationResultByOperation["open"]).tab;
-          snapshot.panelVisible = true;
-          await this.persistChanged(snapshot, "automation", generation);
-          const generationHost = this.broker.getConnectionSnapshot().hostGeneration;
-          if (generationHost !== null && this.isGenerationCurrent(key, generation)) {
-            this.onPanelRevealRequested(cloneSnapshot(snapshot), openedTab.tabId, generationHost);
+          const reveal = snapshot.panelReveal ?? { sequence: 0, acknowledgedSequence: 0, tabId: null };
+          if (reveal.sequence >= Number.MAX_SAFE_INTEGER) {
+            throw new Error("Browser panel reveal sequence cannot be incremented safely.");
           }
+          snapshot.panelVisible = true;
+          snapshot.panelReveal = {
+            sequence: reveal.sequence + 1,
+            acknowledgedSequence: reveal.acknowledgedSequence,
+            tabId: openedTab.tabId,
+          };
+          await this.persistChanged(snapshot, "automation", generation);
         }
 
         return { ok: true, operation, result: response.result as BrowserAutomationResultByOperation[Operation] };
@@ -435,6 +437,29 @@ export class BrowserAutomationService {
     return { hostId, hostGeneration, status: "processed", sessions: results };
   }
 
+  async acknowledgePanelReveal(
+    profileId: string,
+    sessionAgentId: string,
+    tabId: string,
+    sequence: number,
+  ): Promise<BrowserSessionSnapshot> {
+    const key = sessionKey(profileId, sessionAgentId);
+    const generation = this.getGeneration(key);
+    return this.withSessionMutation(key, async () => {
+      this.assertMutable(key, generation);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      const reveal = snapshot.panelReveal ?? { sequence: 0, acknowledgedSequence: 0, tabId: null };
+      if (sequence <= reveal.acknowledgedSequence) return cloneSnapshot(snapshot);
+      if (sequence !== reveal.sequence || tabId !== reveal.tabId) {
+        throw new Error("Browser panel reveal acknowledgement does not match the pending intent.");
+      }
+      snapshot.panelReveal = { ...reveal, acknowledgedSequence: sequence };
+      await this.persistChanged(snapshot, "host-report", generation);
+      return cloneSnapshot(snapshot);
+    });
+  }
+
   async activateTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
@@ -463,6 +488,13 @@ export class BrowserAutomationService {
       if (!existing || existing.lifecycle === "closed") throw new Error("Browser tab was not found in the selected Forge session.");
       snapshot.tabs = snapshot.tabs.filter((candidate) => candidate.tabId !== tabId);
       this.tabOwners.delete(tabId);
+      if (snapshot.panelReveal?.tabId === tabId) {
+        snapshot.panelReveal = {
+          ...snapshot.panelReveal,
+          acknowledgedSequence: snapshot.panelReveal.sequence,
+          tabId: null,
+        };
+      }
       if (snapshot.activeTabId === tabId) snapshot.activeTabId = snapshot.tabs[0]?.tabId ?? null;
       if (snapshot.defaultTabId === tabId) snapshot.defaultTabId = snapshot.activeTabId;
       await this.persistChanged(snapshot, "human-command", generation);
@@ -506,6 +538,13 @@ export class BrowserAutomationService {
       this.assertMutable(key, generation);
       snapshot.hostingState = "unhosted";
       snapshot.panelVisible = false;
+      if (snapshot.panelReveal) {
+        snapshot.panelReveal = {
+          ...snapshot.panelReveal,
+          acknowledgedSequence: snapshot.panelReveal.sequence,
+          tabId: null,
+        };
+      }
       snapshot.tabs = snapshot.tabs.map((tab) => ({
         ...tab,
         live: false,
@@ -568,6 +607,13 @@ export class BrowserAutomationService {
         if (hadState) {
           snapshot.hostingState = "removed";
           snapshot.panelVisible = false;
+          if (snapshot.panelReveal) {
+            snapshot.panelReveal = {
+              ...snapshot.panelReveal,
+              acknowledgedSequence: snapshot.panelReveal.sequence,
+              tabId: null,
+            };
+          }
           snapshot.tabs = snapshot.tabs.map((tab) => ({
             ...tab,
             live: false,
@@ -779,6 +825,11 @@ export class BrowserAutomationService {
       }
     }
   }
+}
+
+function isPanelRevealPending(snapshot: BrowserSessionSnapshot): boolean {
+  const reveal = snapshot.panelReveal;
+  return Boolean(reveal && reveal.tabId !== null && reveal.sequence > reveal.acknowledgedSequence);
 }
 
 function getResultTabId(value: unknown): string | null {

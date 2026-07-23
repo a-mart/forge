@@ -7,6 +7,7 @@ import {
   buildBrowserHostRegisterCommand,
   buildBrowserHostResponseCommand,
   buildBrowserHostStateReportCommand,
+  buildBrowserPanelRevealAcknowledgeCommand,
   buildBrowserRecordingStartCommand,
   buildBrowserRecordingStopCommand,
   buildBrowserTabActivateCommand,
@@ -334,6 +335,29 @@ export class ManagerWsClient {
     const generation = this.state.browserHost.hostGeneration
     if (!registration || generation === null || !isSocketOpen(this.socket)) return
     this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused))
+  }
+
+  acknowledgeBrowserPanelReveal(options: {
+    sessionAgentId: string
+    profileId: string
+    tabId: string
+    sequence: number
+  }): Promise<BrowserSessionSnapshot> {
+    const registration = this.browserHostRegistration
+    const hostGeneration = this.state.browserHost.hostGeneration
+    if (!registration || hostGeneration === null || !isSocketOpen(this.socket)) {
+      return Promise.reject(new Error(RECONNECTING_SOCKET_ERROR))
+    }
+    return this.requestDispatcher.enqueueRequest(
+      'browser_panel_reveal_acknowledge',
+      (requestId) => buildBrowserPanelRevealAcknowledgeCommand({
+        requestId,
+        hostId: registration.hostId,
+        hostGeneration,
+        ...options,
+      }),
+      { timeoutMs: 15_000 },
+    )
   }
 
   openBrowserTab(sessionAgentId: string, profileId: string, options?: { url?: string; activate?: boolean }): Promise<BrowserSessionSnapshot> {
@@ -1120,9 +1144,10 @@ export class ManagerWsClient {
         capabilities: null,
         connectedAt: null,
       },
+      browserSessions: {},
       browserHostHydrated: false,
       browserPanelRevealRequest: null,
-      browserMetadataStale: Object.keys(this.state.browserSessions).length > 0,
+      browserMetadataStale: false,
       lastError: null,
     })
 

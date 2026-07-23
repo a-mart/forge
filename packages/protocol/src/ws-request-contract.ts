@@ -60,6 +60,7 @@ type ContractCommandType = Extract<
   | 'set_project_agent_sharing'
   | 'get_project_agent_external_directory'
   | 'browser_host_state_report'
+  | 'browser_panel_reveal_acknowledge'
   | 'browser_tab_open'
   | 'browser_tab_activate'
   | 'browser_tab_close'
@@ -111,11 +112,19 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_sharing_updated'
   | 'project_agent_external_directory'
   | 'browser_host_state_report_result'
+  | 'browser_panel_reveal_acknowledged'
   | 'browser_tab_command_succeeded'
   | 'browser_recording_command_succeeded'
 >
 
 export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'browser_panel_reveal_acknowledge',
+    resultFamily: 'browser_panel_reveal_acknowledge',
+    requestId: { ui: 'required', wire: 'required' },
+    successEvents: ['browser_panel_reveal_acknowledged'],
+    errorCodeFragments: ['browser_panel_reveal_acknowledge', 'stale_host_generation', 'intent_mismatch'],
+  },
   {
     commandType: 'browser_host_state_report',
     resultFamily: 'browser_host_state_report',

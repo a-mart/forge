@@ -166,6 +166,7 @@ describe('browser host, session, and routing wire contract', () => {
     activeTabId: null,
     defaultTabId: null,
     panelVisible: false,
+    panelReveal: { sequence: 0, acknowledgedSequence: 0, tabId: null },
     recentActions: [],
     revision: 1,
     createdAt: '2026-07-22T00:00:00.000Z',
@@ -210,6 +211,8 @@ describe('browser host, session, and routing wire contract', () => {
           connectedAt: host.registeredAt,
         },
         panelVisible: false,
+        panelRevealRequested: false,
+        physicalTabVisible: false,
         selectedTab: null,
       },
     }
@@ -265,6 +268,7 @@ describe('browser host, session, and routing wire contract', () => {
         baseRevision: session.revision,
         tabs: session.tabs,
       }] },
+      { type: 'browser_panel_reveal_acknowledge', requestId: 'reveal-1', hostId: host.hostId, hostGeneration: 4, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 1 },
       { type: 'browser_tab_open', requestId: '1', sessionAgentId: 'session-1', profileId: 'profile-1' },
       { type: 'browser_tab_activate', requestId: '2', sessionAgentId: 'session-1', tabId: 'tab-1' },
       { type: 'browser_tab_close', requestId: '3', sessionAgentId: 'session-1', tabId: 'tab-1' },
@@ -279,22 +283,24 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_automation_request', request: routedRequest },
       { type: 'browser_session_snapshot', snapshot: session },
       { type: 'browser_session_changed', snapshot: session, reason: 'recovery' },
-      { type: 'browser_panel_reveal_requested', sessionAgentId: 'session-1', tabId: 'tab-1', hostGeneration: 4, revision: 1 },
+      { type: 'browser_panel_reveal_acknowledged', requestId: 'reveal-1', snapshot: session },
       { type: 'browser_tab_command_succeeded', requestId: '1', commandType: 'browser_tab_open', snapshot: session },
       { type: 'browser_recording_command_succeeded', requestId: '5', commandType: 'browser_recording_start', result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: host.registeredAt, mimeType: 'video/webm', width: 1000, height: 700 }, snapshot: session },
     ] satisfies ServerEvent[]
-    expect(commands).toHaveLength(10)
+    expect(commands).toHaveLength(11)
     expect(events).toHaveLength(9)
   })
 
   it('makes browser state reports and human tab mutations required wire requests', () => {
-    for (const commandType of ['browser_host_state_report', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
+    for (const commandType of ['browser_host_state_report', 'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
       expect(getWsRequestContract(commandType)).toMatchObject({
         commandType,
         requestId: { ui: 'required', wire: 'required' },
         successEvents: [commandType === 'browser_host_state_report'
           ? 'browser_host_state_report_result'
-          : commandType.startsWith('browser_recording_')
+          : commandType === 'browser_panel_reveal_acknowledge'
+            ? 'browser_panel_reveal_acknowledged'
+            : commandType.startsWith('browser_recording_')
             ? 'browser_recording_command_succeeded'
             : 'browser_tab_command_succeeded'],
       })

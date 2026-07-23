@@ -20,7 +20,7 @@ import { BrowserAutomationHost } from './BrowserAutomationHost'
 let container: HTMLDivElement
 let root: Root | null = null
 beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container) })
-afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); delete window.electronBridge })
+afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); document.querySelector('[data-browser-automation-viewport]')?.remove(); delete window.electronBridge })
 
 function tab(tabId: string, sessionAgentId: string, profileId: string): BrowserTabSnapshot {
   const now = new Date(0).toISOString()
@@ -169,6 +169,75 @@ describe('BrowserAutomationHost', () => {
     expect(registerWebview.mock.calls.every(([registration]) => registration.created === true)).toBe(true)
   })
 
+  it('acknowledges reveal intent only after Electron confirms visible presentation', async () => {
+    const viewport = document.createElement('div')
+    viewport.dataset.browserAutomationViewport = ''
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600)
+    document.body.appendChild(viewport)
+    const setTabPresentation = vi.fn(presentationAck)
+    window.electronBridge = {
+      backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
+      browserAutomation: {
+        capabilities: { supportedOperations: ['status'], playwrightVersion: '1.60.0', supportsRecording: true },
+        getWebviewConfig: vi.fn(async (profileId) => ({ partition: `persist:forge-browser-${profileId}`, preloadUrl: 'file:///guest.js', webPreferences: 'sandbox=yes' })),
+        registerWebview: vi.fn(async (registration) => registration.tab), unregisterWebview: vi.fn(async () => undefined), setTabPresentation,
+        navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke: vi.fn(), onStateChanged: vi.fn(() => vi.fn()),
+      },
+    }
+    const hosted = {
+      ...session('session-1', 'profile-1', tab('tab-1', 'session-1', 'profile-1')),
+      panelVisible: true,
+      panelReveal: { sequence: 2, acknowledgedSequence: 1, tabId: 'tab-1' },
+    }
+    const state: ManagerWsState = {
+      ...createInitialManagerWsState('session-1'),
+      browserSessions: { 'session-1': hosted },
+      browserHostHydrated: true,
+      browserHost: {
+        connected: true, hostId: 'pending-registration', hostGeneration: 5, focused: false,
+        capabilities: null, connectedAt: new Date(0).toISOString(),
+      },
+      browserPanelRevealRequest: {
+        sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', hostGeneration: 5, sequence: 2,
+      },
+    }
+    const acknowledgeBrowserPanelReveal = vi.fn(async () => ({
+      ...hosted,
+      panelReveal: { sequence: 2, acknowledgedSequence: 2, tabId: 'tab-1' },
+    }))
+    const client = {
+      registerBrowserAutomationHost: vi.fn((registration: BrowserHostRegistration) => {
+        state.browserHost.hostId = registration.hostId
+        return vi.fn()
+      }),
+      acknowledgeBrowserPanelReveal,
+      reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
+    } as never
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', panelVisible: false }))
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const webview = container.querySelector('webview') as HTMLElement & { getWebContentsId(): number }
+    Object.defineProperty(webview, 'getWebContentsId', { configurable: true, value: () => 101 })
+    await act(async () => {
+      webview.dispatchEvent(new Event('dom-ready'))
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(acknowledgeBrowserPanelReveal).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root!.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', panelVisible: true }))
+      await Promise.resolve(); await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(acknowledgeBrowserPanelReveal).toHaveBeenCalledWith({
+      sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 2,
+    }))
+    expect(setTabPresentation.mock.calls.some(([request]) => request.visible === true)).toBe(true)
+    viewport.remove()
+  })
+
   it('does not touch Electron IPC in the normal web UI', () => {
     const state = createInitialManagerWsState('session-1')
     act(() => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client: null, state, selectedSessionAgentId: 'session-1', panelVisible: true })) })
@@ -292,7 +361,7 @@ describe('BrowserAutomationHost', () => {
     }])
   })
 
-  it('retains rapid updates and keeps rebasing conflicts on the current reconnect generation', async () => {
+  it('adopts lower reconnect authority and bounds unchanged conflict retries', async () => {
     let stateChanged: ((tab: BrowserTabSnapshot) => void) | null = null
     window.electronBridge = {
       backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
@@ -416,62 +485,39 @@ describe('BrowserAutomationHost', () => {
     })
     expect(reportBrowserHostState).toHaveBeenCalledTimes(3)
 
+    const lowerReconnectCanonical: BrowserSessionSnapshot = {
+      ...acceptedCanonical,
+      revision: 1,
+      tabs: [{ ...acceptedCanonical.tabs[0]!, title: 'Restarted canonical' }, secondTab],
+    }
     currentState = {
       ...currentState,
+      browserSessions: { 'session-1': lowerReconnectCanonical },
       browserHostHydrated: true,
       browserHost: { ...currentState.browserHost, connected: true, hostId, hostGeneration: 2, connectedAt: new Date(1).toISOString() },
     }
     await render()
     await vi.waitFor(() => expect(reportBrowserHostState).toHaveBeenCalledTimes(4))
     expect(deferred[3]!.sessions[0]).toMatchObject({
-      baseRevision: 3,
+      baseRevision: 1,
       tabs: [{ tabId: 'tab-1', title: 'After reconnect', controller: 'agent' }],
     })
-    const reconnectedCanonical: BrowserSessionSnapshot = {
-      ...acceptedCanonical,
-      revision: 4,
-      tabs: [reconnectRuntime, secondTab],
-    }
-    await act(async () => {
-      deferred[3]!.resolve({
-        hostId, hostGeneration: 2, status: 'processed',
-        sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'accepted', snapshot: reconnectedCanonical }],
-      })
-      await Promise.resolve()
-    })
-    expect(reportBrowserHostState).toHaveBeenCalledTimes(4)
 
-    const boundedRuntime = { ...reconnectRuntime, title: 'Ready after stop-loading', lifecycle: 'ready' as const, loading: false }
-    await act(async () => {
-      ;(stateChanged as ((tab: BrowserTabSnapshot) => void) | null)?.(boundedRuntime)
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-    expect(reportBrowserHostState).toHaveBeenCalledTimes(5)
-    for (let deferredIndex = 4; deferredIndex < 8; deferredIndex += 1) {
-      const conflictSnapshot = { ...reconnectedCanonical, revision: deferredIndex + 1 }
+    const revisionZeroAuthority = { ...lowerReconnectCanonical, revision: 0 }
+    for (let deferredIndex = 3; deferredIndex < 6; deferredIndex += 1) {
       await act(async () => {
         deferred[deferredIndex]!.resolve({
           hostId, hostGeneration: 2, status: 'processed',
-          sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'revision-conflict', snapshot: conflictSnapshot }],
+          sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'revision-conflict', snapshot: revisionZeroAuthority }],
         })
-        await Promise.resolve()
+        await new Promise((resolve) => setTimeout(resolve, 0))
       })
-      if (deferredIndex < 7) {
+      if (deferredIndex < 5) {
         await vi.waitFor(() => expect(reportBrowserHostState).toHaveBeenCalledTimes(deferredIndex + 2))
+        expect(deferred[deferredIndex + 1]!.sessions[0]?.baseRevision).toBe(0)
       }
     }
-    await vi.waitFor(() => expect(reportBrowserHostState).toHaveBeenCalledTimes(9))
-    expect(deferred[8]!.sessions[0]).toMatchObject({
-      tabs: [{ tabId: 'tab-1', lifecycle: 'ready', loading: false }],
-    })
-    const finalCanonical = { ...reconnectedCanonical, revision: 9, tabs: [boundedRuntime, secondTab] }
-    await act(async () => {
-      deferred[8]!.resolve({
-        hostId, hostGeneration: 2, status: 'processed',
-        sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'accepted', snapshot: finalCanonical }],
-      })
-      await Promise.resolve()
-    })
-    expect(reportBrowserHostState).toHaveBeenCalledTimes(9)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(reportBrowserHostState).toHaveBeenCalledTimes(6)
   })
 })

@@ -93,8 +93,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const browserAutomationService = new BrowserAutomationService({
     dataDir: config.paths.dataDir,
     onSessionChanged: (snapshot, reason) => wsServer?.broadcastBrowserSessionChanged(snapshot, reason),
-    onPanelRevealRequested: (snapshot, tabId, hostGeneration) =>
-      wsServer?.broadcastBrowserPanelReveal(snapshot, tabId, hostGeneration),
     onHostChanged: (host) => wsServer?.broadcastBrowserHostChanged(host),
   });
   const versioningService = new EmbeddedGitVersioningService({

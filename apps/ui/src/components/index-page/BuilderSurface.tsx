@@ -490,13 +490,12 @@ export function BuilderSurface({
       selectedSessionAgentId: browserSessionAgentId,
       request,
       currentHostGeneration: localState.browserHost.hostGeneration,
-      currentRevision: browserSessionSnapshot?.revision ?? null,
     })) return
-    const key = `${localState.connectionEpoch}:${request!.hostGeneration}:${request!.revision}:${request!.tabId}`
+    const key = `${request!.hostGeneration}:${request!.sequence}:${request!.tabId}`
     if (handledBrowserRevealRef.current === key) return
     handledBrowserRevealRef.current = key
     panels.handleOpenBrowserFromReveal()
-  }, [browserSessionAgentId, browserSessionSnapshot?.revision, localState.browserHost.hostGeneration, localState.browserPanelRevealRequest, localState.connectionEpoch, panels])
+  }, [browserSessionAgentId, localState.browserHost.hostGeneration, localState.browserPanelRevealRequest, panels])
 
   // Workers belonging to the active manager session (for pill bar)
   const sessionWorkers = useMemo(() => {

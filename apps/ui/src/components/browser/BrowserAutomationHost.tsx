@@ -64,20 +64,23 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const updateSequenceRef = useRef(0)
     const retryStateRef = useRef({ generation: null as number | null, conflicts: 0 })
     const canonicalRef = useRef(new Map<string, BrowserSessionSnapshot>())
+    const revealAcknowledgements = useRef(new Set<string>())
     const disposedRef = useRef(false)
 
     useEffect(() => {
+      // ManagerWsState snapshots are authoritative within their connection/host
+      // generation. Replace rather than revision-merge so a restarted backend's
+      // lower canonical revision immediately becomes the report base.
       sessionsRef.current = state.browserSessions
+      canonicalRef.current = new Map(Object.entries(state.browserSessions))
+      retryStateRef.current.conflicts = 0
       for (const [sessionAgentId, session] of Object.entries(state.browserSessions)) {
-        const previous = canonicalRef.current.get(sessionAgentId)
-        if (!previous || session.revision >= previous.revision) canonicalRef.current.set(sessionAgentId, session)
         if (session.hostingState !== 'hosted') dropPendingSession(pendingTabUpdates.current, sessionAgentId)
       }
       if (state.browserHostHydrated) {
-        for (const sessionAgentId of [...canonicalRef.current.keys()]) {
-          if (!state.browserSessions[sessionAgentId]) {
-            canonicalRef.current.delete(sessionAgentId)
-            dropPendingSession(pendingTabUpdates.current, sessionAgentId)
+        for (const pending of pendingTabUpdates.current.values()) {
+          if (!state.browserSessions[pending.sessionAgentId]) {
+            dropPendingSession(pendingTabUpdates.current, pending.sessionAgentId)
           }
         }
       }
@@ -168,10 +171,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
             candidate.sessionAgentId === report.sessionAgentId && candidate.profileId === report.profileId)
           if (!reportResult) continue
           if (reportResult.snapshot) {
-            const previous = canonicalRef.current.get(report.sessionAgentId)
-            if (!previous || reportResult.snapshot.revision >= previous.revision) {
-              canonicalRef.current.set(report.sessionAgentId, reportResult.snapshot)
-            }
+            // Conflict snapshots are unconditional authority, including after a
+            // backend restart where the server revision is lower than our cache.
+            canonicalRef.current.set(report.sessionAgentId, reportResult.snapshot)
           }
           if (reportResult.status === 'accepted') {
             for (const sentTab of report.tabs) {
@@ -197,10 +199,12 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
           retryStateRef.current.conflicts = 0
           scheduleReportTimer(flushStateReports, reportTimerRef)
         } else if (retryConflict && pendingTabUpdates.current.size > 0) {
-          // Host lifecycle updates (notably did-stop-loading) must eventually
-          // converge even through arbitrarily many canonical automation writes.
           retryStateRef.current.conflicts += 1
-          scheduleReportTimer(flushStateReports, reportTimerRef)
+          // A fresh physical update, canonical snapshot, or host generation
+          // resets this budget. One unchanged update never churns forever.
+          if (retryStateRef.current.conflicts < MAX_HOST_REPORT_CONFLICT_RETRIES) {
+            scheduleReportTimer(flushStateReports, reportTimerRef)
+          }
         } else if (!retryConflict) {
           retryStateRef.current.conflicts = 0
         }
@@ -216,7 +220,12 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       if (retryStateRef.current.generation !== generation) {
         retryStateRef.current = { generation, conflicts: 0 }
       }
-      if (generation !== null && state.browserHostHydrated && pendingTabUpdates.current.size > 0) scheduleStateReport()
+      if (
+        generation !== null
+        && state.browserHostHydrated
+        && pendingTabUpdates.current.size > 0
+        && retryStateRef.current.conflicts < MAX_HOST_REPORT_CONFLICT_RETRIES
+      ) scheduleStateReport()
     }, [scheduleStateReport, state.browserHost.hostGeneration, state.browserHost.hostId, state.browserHostHydrated, state.browserSessions])
 
     useEffect(() => {
@@ -365,6 +374,29 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
           updateSequenceRef.current += 1
           retryStateRef.current.conflicts = 0
           scheduleStateReport()
+
+          const currentClient = clientRef.current
+          const reveal = currentClient?.getState().browserPanelRevealRequest
+          if (
+            visible
+            && currentClient
+            && reveal?.sessionAgentId === tab.sessionAgentId
+            && reveal.tabId === tab.tabId
+            && reveal.hostGeneration === acknowledgement.hostGeneration
+          ) {
+            const acknowledgementKey = `${reveal.hostGeneration}:${reveal.sequence}:${reveal.tabId}`
+            if (!revealAcknowledgements.current.has(acknowledgementKey)) {
+              revealAcknowledgements.current.add(acknowledgementKey)
+              void currentClient.acknowledgeBrowserPanelReveal({
+                sessionAgentId: reveal.sessionAgentId,
+                profileId: reveal.profileId,
+                tabId: reveal.tabId,
+                sequence: reveal.sequence,
+              }).catch(() => {
+                revealAcknowledgements.current.delete(acknowledgementKey)
+              })
+            }
+          }
         }).catch(() => undefined)
       }
     }, [bridge, panelVisible, scheduleStateReport, selectedSessionAgentId, state.browserHost.hostGeneration, state.browserSessions, tabs, viewportRect])
@@ -438,6 +470,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     )
   },
 )
+
+const MAX_HOST_REPORT_CONFLICT_RETRIES = 3
 
 function scheduleReportTimer(
   flush: () => void | Promise<void>,

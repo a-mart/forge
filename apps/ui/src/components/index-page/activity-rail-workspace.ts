@@ -29,9 +29,8 @@ export function resolveSourceControlDeepLinkPresentation(
 export function shouldRevealBrowserPanel(options: {
   electronHostAvailable: boolean
   selectedSessionAgentId: string | null
-  request: { sessionAgentId: string; hostGeneration: number; revision: number } | null
+  request: { sessionAgentId: string; hostGeneration: number; sequence: number } | null
   currentHostGeneration: number | null
-  currentRevision: number | null
 }): boolean {
   const { request } = options
   return Boolean(

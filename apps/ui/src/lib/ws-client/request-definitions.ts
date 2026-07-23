@@ -82,6 +82,18 @@ export function buildBrowserHostStateReportCommand(
   return { type: 'browser_host_state_report', requestId, hostId, hostGeneration, sessions }
 }
 
+export function buildBrowserPanelRevealAcknowledgeCommand(options: {
+  requestId: string
+  hostId: string
+  hostGeneration: number
+  sessionAgentId: string
+  profileId: string
+  tabId: string
+  sequence: number
+}): ClientCommand {
+  return { type: 'browser_panel_reveal_acknowledge', ...options }
+}
+
 export function buildBrowserTabOpenCommand(
   sessionAgentId: string,
   profileId: string,

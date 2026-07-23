@@ -54,6 +54,7 @@ export class BrowserSessionStore {
       activeTabId: null,
       defaultTabId: null,
       panelVisible: false,
+      panelReveal: { sequence: 0, acknowledgedSequence: 0, tabId: null },
       recentActions: [],
       revision: 0,
       createdAt: timestamp,
@@ -165,6 +166,10 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
   if (activeTabId !== null && !tabIds.has(activeTabId)) throw new Error("Active browser tab is missing");
   if (defaultTabId !== null && !tabIds.has(defaultTabId)) throw new Error("Default browser tab is missing");
   if (!Array.isArray(record.recentActions)) throw new Error("Invalid recent browser actions");
+  const panelReveal = normalizePanelReveal(record.panelReveal);
+  if (panelReveal.sequence > panelReveal.acknowledgedSequence && !tabIds.has(panelReveal.tabId!)) {
+    throw new Error("Pending panel reveal tab is missing");
+  }
 
   return {
     schemaVersion: 1,
@@ -175,6 +180,7 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     activeTabId,
     defaultTabId,
     panelVisible: requiredBoolean(record.panelVisible, "panelVisible"),
+    panelReveal,
     recentActions: record.recentActions
       .slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS)
       .map(normalizeSafeAction),
@@ -182,6 +188,21 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     createdAt: requiredString(record.createdAt, "createdAt", 128),
     updatedAt: requiredString(record.updatedAt, "updatedAt", 128),
   };
+}
+
+function normalizePanelReveal(value: unknown): NonNullable<BrowserSessionSnapshot["panelReveal"]> {
+  // Persisted snapshots from before durable reveal intent are already satisfied;
+  // panelVisible alone must never cause an upgrade-time surprise reveal.
+  if (value === undefined || value === null) {
+    return { sequence: 0, acknowledgedSequence: 0, tabId: null };
+  }
+  const reveal = requiredRecord(value, "panel reveal intent");
+  const sequence = nonNegativeInteger(reveal.sequence, "panelReveal.sequence");
+  const acknowledgedSequence = nonNegativeInteger(reveal.acknowledgedSequence, "panelReveal.acknowledgedSequence");
+  if (acknowledgedSequence > sequence) throw new Error("Panel reveal acknowledgement exceeds its sequence");
+  const tabId = nullableId(reveal.tabId, "panelReveal.tabId");
+  if (sequence > acknowledgedSequence && tabId === null) throw new Error("Pending panel reveal is missing its tab");
+  return { sequence, acknowledgedSequence, tabId };
 }
 
 function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingState"] {

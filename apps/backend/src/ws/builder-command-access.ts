@@ -104,6 +104,7 @@ export const BUILDER_COMMAND_ACCESS: Readonly<Record<ClientCommand["type"], Buil
   browser_host_focus: "admin",
   browser_host_response: "admin",
   browser_host_state_report: "admin",
+  browser_panel_reveal_acknowledge: "admin",
   browser_tab_open: "admin",
   browser_tab_activate: "admin",
   browser_tab_close: "admin",

@@ -432,16 +432,6 @@ export class SwarmWebSocketServer {
     });
   }
 
-  broadcastBrowserPanelReveal(snapshot: BrowserSessionSnapshot, tabId: string, hostGeneration: number): void {
-    this.wsHandler.broadcastToSession(snapshot.sessionAgentId, {
-      type: "browser_panel_reveal_requested",
-      sessionAgentId: snapshot.sessionAgentId,
-      tabId,
-      hostGeneration,
-      revision: snapshot.revision,
-    });
-  }
-
   broadcastBrowserHostChanged(host: BrowserHostConnectionSnapshot): void {
     this.wsHandler.broadcastToSubscribed({ type: "browser_host_connected", host });
   }

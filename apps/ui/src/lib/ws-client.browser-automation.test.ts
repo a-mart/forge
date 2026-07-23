@@ -10,7 +10,21 @@ const registration: BrowserHostRegistration = {
   },
 }
 function snapshot(revision: number): BrowserSessionSnapshot {
-  return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, recentActions: [], revision, createdAt: new Date(0).toISOString(), updatedAt: new Date(revision).toISOString() }
+  return { schemaVersion: 1, sessionAgentId: 'session-1', profileId: 'profile-1', hostingState: 'hosted', tabs: [], activeTabId: null, defaultTabId: null, panelVisible: false, panelReveal: { sequence: 0, acknowledgedSequence: 0, tabId: null }, recentActions: [], revision, createdAt: new Date(0).toISOString(), updatedAt: new Date(revision).toISOString() }
+}
+function snapshotWithReveal(revision: number, acknowledgedSequence = 0): BrowserSessionSnapshot {
+  const now = new Date(0).toISOString()
+  const tab = {
+    tabId: 'tab-1', sessionAgentId: 'session-1', profileId: 'profile-1', url: 'https://example.com', title: 'Example',
+    lifecycle: 'ready' as const, loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1,
+    controller: 'none' as const, agentCursor: null, recording: null, viewportSetting: { mode: 'fill' as const },
+    renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, physicalVisible: acknowledgedSequence > 0,
+    error: null, createdAt: now, updatedAt: now,
+  }
+  return {
+    ...snapshot(revision), tabs: [tab], activeTabId: tab.tabId, defaultTabId: tab.tabId, panelVisible: true,
+    panelReveal: { sequence: 7, acknowledgedSequence, tabId: acknowledgedSequence < 7 ? tab.tabId : null },
+  }
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -88,17 +102,29 @@ describe('ManagerWsClient browser automation state', () => {
     await expect(stoppedPromise).resolves.toEqual(stopped)
   })
 
-  it('limits reveal requests to the selected session/generation without invalidating intent on newer revisions', () => {
+  it('replays a dropped reveal from authoritative hydration and never replays it after presentation acknowledgement', async () => {
+    vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
     const client = new ManagerWsClient('ws://example.test', 'session-1')
     client.registerBrowserAutomationHost(registration, vi.fn())
+    const send = vi.fn()
+    ;(client as unknown as { transport: { socket: { readyState: number; send: (payload: string) => void } } }).transport.socket = { readyState: 1, send }
     const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+
     ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 3, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
-    ingest({ type: 'browser_session_snapshot', snapshot: snapshot(5) })
-    ingest({ type: 'browser_panel_reveal_requested', sessionAgentId: 'background', tabId: 'tab-1', hostGeneration: 3, revision: 2 })
+    // No transient reveal event arrives: host hydration is the replay path.
+    ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 3, sessions: [snapshotWithReveal(5)] })
+    expect(client.getState().browserPanelRevealRequest).toMatchObject({ tabId: 'tab-1', sequence: 7, hostGeneration: 3 })
+
+    const acknowledged = client.acknowledgeBrowserPanelReveal({ sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 7 })
+    const command = JSON.parse(send.mock.calls.at(-1)![0] as string)
+    expect(command).toMatchObject({ type: 'browser_panel_reveal_acknowledge', hostId: 'host-1', hostGeneration: 3, sequence: 7 })
+    const satisfied = snapshotWithReveal(6, 7)
+    ingest({ type: 'browser_panel_reveal_acknowledged', requestId: command.requestId, snapshot: satisfied })
+    await expect(acknowledged).resolves.toEqual(satisfied)
     expect(client.getState().browserPanelRevealRequest).toBeNull()
-    ingest({ type: 'browser_panel_reveal_requested', sessionAgentId: 'session-1', tabId: 'tab-1', hostGeneration: 2, revision: 2 })
+
+    ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 4, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
+    ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 4, sessions: [satisfied] })
     expect(client.getState().browserPanelRevealRequest).toBeNull()
-    ingest({ type: 'browser_panel_reveal_requested', sessionAgentId: 'session-1', tabId: 'tab-1', hostGeneration: 3, revision: 2 })
-    expect(client.getState().browserPanelRevealRequest?.tabId).toBe('tab-1')
   })
 })

@@ -17,6 +17,7 @@ const TYPES = new Set([
   "browser_host_focus",
   "browser_host_response",
   "browser_host_state_report",
+  "browser_panel_reveal_acknowledge",
   "browser_tab_open",
   "browser_tab_activate",
   "browser_tab_close",
@@ -73,6 +74,17 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
           sessions: parsed,
         });
       }
+      case "browser_panel_reveal_acknowledge":
+        return ok({
+          type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
+          hostId: identifier(value.hostId, "hostId"),
+          hostGeneration: generation(value.hostGeneration),
+          sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
+          profileId: identifier(value.profileId, "profileId"),
+          tabId: identifier(value.tabId, "tabId"),
+          sequence: integer(value.sequence, "sequence", 1, Number.MAX_SAFE_INTEGER),
+        });
       case "browser_tab_open": {
         const url = optionalString(value.url, "url", 2_048);
         const activate = value.activate === undefined ? undefined : boolean(value.activate, "activate");

@@ -120,6 +120,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "browser_host_focus":
     case "browser_host_response":
     case "browser_host_state_report":
+    case "browser_panel_reveal_acknowledge":
     case "ping":
       return undefined;
   }
