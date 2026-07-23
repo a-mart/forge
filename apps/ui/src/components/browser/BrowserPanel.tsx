@@ -69,8 +69,7 @@ export function BrowserPanel({
   const [customWidth, setCustomWidth] = useState(1280)
   const [customHeight, setCustomHeight] = useState(800)
   const [autoOpeningTab, setAutoOpeningTab] = useState(false)
-  const attemptedEmptyOpenKeyRef = useRef<string | null>(null)
-  const emptySnapshotPhaseAttemptedRef = useRef(false)
+  const attemptedEmptyOpenAuthoritiesRef = useRef(new Set<string>())
   useEffect(() => setAddress(activeTab?.url ?? ''), [activeTab?.tabId, activeTab?.url])
 
   const commands = commandPort ?? createLegacyLocalPort(client, sessionAgentId, profileId, hostRef)
@@ -90,13 +89,17 @@ export function BrowserPanel({
   runRef.current = run
 
   const managedBrowserSurface = window.electronBridge?.windowRole === 'main' || window.electronBridge?.windowRole === 'managed-browser-popout'
+  const emptyAuthorityIdentity = `${sessionAgentId}:${profileId}`
   const emptyAuthorityKey = managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
     ? emptyBrowserOpenAttemptKey(sessionAgentId, profileId, host, snapshot)
     : null
 
   useEffect(() => {
     if (hasOpenTab) {
-      emptySnapshotPhaseAttemptedRef.current = false
+      // Only clear the authority currently represented by this canonical tab.
+      // Other authorities may still be in an empty phase while the panel is
+      // being switched between sessions.
+      attemptedEmptyOpenAuthoritiesRef.current.delete(emptyAuthorityIdentity)
       setAutoOpeningTab(false)
       return
     }
@@ -106,10 +109,10 @@ export function BrowserPanel({
     }
     // Keep one attempt for the current empty phase even if delayed transport
     // snapshots change metadata or revision before a tab arrives. A canonical
-    // open tab resets the phase, allowing one attempt after its later closure.
-    if (emptySnapshotPhaseAttemptedRef.current || attemptedEmptyOpenKeyRef.current === emptyAuthorityKey) return
-    emptySnapshotPhaseAttemptedRef.current = true
-    attemptedEmptyOpenKeyRef.current = emptyAuthorityKey
+    // open tab resets that authority's phase, allowing one attempt after its
+    // later closure. Other authorities remain independently deduplicated.
+    if (attemptedEmptyOpenAuthoritiesRef.current.has(emptyAuthorityIdentity)) return
+    attemptedEmptyOpenAuthoritiesRef.current.add(emptyAuthorityIdentity)
     let cancelled = false
     setAutoOpeningTab(true)
     void (async () => {
@@ -120,7 +123,7 @@ export function BrowserPanel({
       }
     })()
     return () => { cancelled = true }
-  }, [controlsUnavailable, emptyAuthorityKey, hasOpenTab, host.connected])
+  }, [controlsUnavailable, emptyAuthorityIdentity, emptyAuthorityKey, hasOpenTab, host.connected])
 
   const resize = (viewport: BrowserViewportSetting): void => { if (activeTab) void run(() => commands.resize(activeTab.tabId, viewport)) }
   const popped = mode === 'popped-out' || mode === 'opening'

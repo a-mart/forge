@@ -76,11 +76,13 @@ function renderPanel(props: {
   mode?: 'docked' | 'popped-out'
   popoutAvailable?: boolean
   windowRole?: 'main' | 'managed-browser-popout'
+  sessionAgentId?: string
+  profileId?: string
 }) {
   window.electronBridge = { windowRole: props.windowRole ?? 'main', backendWsUrl: 'ws://localhost', platform: 'darwin' }
   const element = createElement(BrowserPanel, {
-    sessionAgentId: 'session-1',
-    profileId: 'profile-1',
+    sessionAgentId: props.sessionAgentId ?? 'session-1',
+    profileId: props.profileId ?? 'profile-1',
     snapshot: props.snapshot,
     host: props.host,
     commandPort: props.commandPort,
@@ -171,6 +173,23 @@ describe('BrowserPanel', () => {
     renderPanel({ snapshot: { ...emptySnapshot, updatedAt: new Date(1).toISOString(), revision: emptySnapshot.revision + 1 }, host: { ...connectedHost, hostGeneration: 8 }, commandPort })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(commandPort.open).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps empty-phase attempts scoped when switching authorities', async () => {
+    const commandPort = createCommandPort()
+    const sessionB = {
+      ...emptySnapshot,
+      sessionAgentId: 'session-2',
+      profileId: 'profile-2',
+      revision: 10,
+    }
+    renderPanel({ snapshot: emptySnapshot, host: connectedHost, commandPort })
+    await act(async () => { await Promise.resolve() })
+    renderPanel({ snapshot: sessionB, host: { ...connectedHost, hostGeneration: 8 }, commandPort, sessionAgentId: 'session-2', profileId: 'profile-2' })
+    await act(async () => { await Promise.resolve() })
+    renderPanel({ snapshot: { ...sessionB, revision: 11 }, host: { ...connectedHost, hostGeneration: 9 }, commandPort, sessionAgentId: 'session-2', profileId: 'profile-2' })
+    await act(async () => { await Promise.resolve() })
+    expect(commandPort.open).toHaveBeenCalledTimes(2)
   })
 
   it('does not auto-open when the host is disconnected or the web surface is unavailable', async () => {
