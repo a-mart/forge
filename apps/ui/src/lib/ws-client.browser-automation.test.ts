@@ -168,4 +168,47 @@ describe('ManagerWsClient browser automation state', () => {
     ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 4, sessions: [satisfied] })
     expect(client.getState().browserPanelRevealRequest).toBeNull()
   })
+
+  it('preserves hydration and pending reveal across same-authority focus updates', () => {
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    client.registerBrowserAutomationHost(registration, vi.fn())
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+    const connectedAt = new Date().toISOString()
+    const hostBase = {
+      connected: true as const,
+      hostId: 'host-1',
+      hostGeneration: 5,
+      capabilities: registration.capabilities,
+      connectedAt,
+    }
+
+    ingest({ type: 'browser_host_connected', host: { ...hostBase, focused: false } })
+    ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 5, sessions: [snapshotWithReveal(5)] })
+    expect(client.getState().browserHostHydrated).toBe(true)
+    expect(client.getState().browserPanelRevealRequest).toMatchObject({ tabId: 'tab-1', sequence: 7, hostGeneration: 5 })
+    expect(client.getState().browserSessions['session-1']?.revision).toBe(5)
+
+    ingest({ type: 'browser_host_connected', host: { ...hostBase, focused: true } })
+    expect(client.getState().browserHost.focused).toBe(true)
+    expect(client.getState().browserHostHydrated).toBe(true)
+    expect(client.getState().browserPanelRevealRequest).toMatchObject({ tabId: 'tab-1', sequence: 7, hostGeneration: 5 })
+    expect(client.getState().browserSessions['session-1']?.revision).toBe(5)
+
+    ingest({ type: 'browser_host_connected', host: { ...hostBase, focused: false } })
+    expect(client.getState().browserHost.focused).toBe(false)
+    expect(client.getState().browserHostHydrated).toBe(true)
+    expect(client.getState().browserPanelRevealRequest).toMatchObject({ tabId: 'tab-1', sequence: 7, hostGeneration: 5 })
+    expect(client.getState().browserSessions['session-1']?.revision).toBe(5)
+
+    ingest({ type: 'browser_host_connected', host: { ...hostBase, hostGeneration: 6, focused: true } })
+    expect(client.getState().browserHost).toMatchObject({ hostId: 'host-1', hostGeneration: 6, focused: true })
+    expect(client.getState().browserHostHydrated).toBe(false)
+    expect(client.getState().browserPanelRevealRequest).toBeNull()
+    expect(client.getState().browserSessions['session-1']?.revision).toBe(5)
+
+    ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 6, sessions: [snapshotWithReveal(8)] })
+    expect(client.getState().browserHostHydrated).toBe(true)
+    expect(client.getState().browserPanelRevealRequest).toMatchObject({ tabId: 'tab-1', sequence: 7, hostGeneration: 6 })
+    expect(client.getState().browserSessions['session-1']?.revision).toBe(8)
+  })
 })

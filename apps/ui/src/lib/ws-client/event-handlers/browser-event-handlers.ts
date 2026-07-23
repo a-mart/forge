@@ -24,11 +24,19 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
       if (event.requestId && context.requestTracker.getPendingRequestType(event.requestId) !== 'browser_host_register') return true
       const registration = context.registration
       if (registration && event.host.hostId !== null && event.host.hostId !== registration.hostId) return true
-      context.updateState({
-        browserHost: event.host,
-        browserHostHydrated: false,
-        browserPanelRevealRequest: null,
-      })
+      const currentHost = context.state.browserHost
+      const sameAuthority = event.host.hostId !== null
+        && event.host.hostId === currentHost.hostId
+        && event.host.hostGeneration === currentHost.hostGeneration
+      context.updateState(
+        sameAuthority
+          ? { browserHost: event.host }
+          : {
+              browserHost: event.host,
+              browserHostHydrated: false,
+              browserPanelRevealRequest: null,
+            },
+      )
       if (event.requestId && context.requestTracker.getPendingRequestType(event.requestId) === 'browser_host_register') {
         context.requestTracker.resolve('browser_host_register', event.requestId, event.host)
       }
