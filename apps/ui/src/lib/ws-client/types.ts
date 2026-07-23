@@ -8,6 +8,7 @@ import type {
   ProjectAgentInfo,
   ProjectAgentShareEligibleTarget,
   ProjectAgentShareGrantInfo,
+  SessionGoalSnapshot,
   SessionMemoryMergeResult,
   ConversationEntry,
   ConversationHistoryPageMetadata,
@@ -117,6 +118,7 @@ export type WsRequestResultMap = {
   restore_session: SessionRestoreResult
   delete_session: SessionActionResult
   clear_session: SessionActionResult
+  session_goal_control: SessionGoalSnapshot
   rename_session: SessionActionResult
   pin_session: { pinnedAt: string | null }
   update_session_model: { sessionAgentId: string; mode: 'inherit' | 'override' }

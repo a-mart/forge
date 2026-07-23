@@ -187,6 +187,7 @@ describe('ManagerWsClient', () => {
       'restore_session',
       'delete_session',
       'clear_session',
+      'session_goal_control',
       'set_session_project_agent',
       'get_project_agent_config',
       'list_project_agent_references',
