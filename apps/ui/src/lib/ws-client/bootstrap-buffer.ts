@@ -159,6 +159,9 @@ export class BootstrapBuffer {
     if (event.type === 'session_goal_snapshot') {
       return event.sessionAgentId === targetAgentId
     }
+    if (event.type === 'secure_session_snapshot') {
+      return event.sessionAgentId === targetAgentId
+    }
     // unread_counts_snapshot is global — always accepted.
     return true
   }

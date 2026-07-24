@@ -11,6 +11,7 @@ import settingsNotificationsContent from './articles/settings/settings-notificat
 import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
 import settingsOauthContent from './articles/settings/settings-oauth.md?raw'
 import settingsPromptsContent from './articles/settings/settings-prompts.md?raw'
+import settingsSecretsContent from './articles/settings/settings-secrets.md?raw'
 import settingsSkillsContent from './articles/settings/settings-skills.md?raw'
 import settingsSlashCommandsContent from './articles/settings/settings-slash-commands.md?raw'
 import settingsSpecialistsContent from './articles/settings/settings-specialists.md?raw'
@@ -229,6 +230,30 @@ export const settingsArticles: HelpArticle[] = [
     ],
     relatedIds: ['settings-auth', 'settings-extensions', 'settings-specialists', 'chat-browser'],
     contextKeys: ['settings.skills'],
+  },
+  {
+    id: 'settings-secrets',
+    title: 'Secrets and Secure Sessions',
+    category: 'settings',
+    summary: 'Store private sources, connect Bitwarden, bind delivery shapes, and grant task-scoped secure execution.',
+    content: settingsSecretsContent,
+    keywords: [
+      'secure session',
+      'secret',
+      'vault',
+      'bitwarden',
+      'password',
+      'credential',
+      'docker',
+      'lease',
+      'environment',
+      'stdin',
+      'askpass',
+      'ssh',
+      'redaction',
+    ],
+    relatedIds: ['settings-auth', 'settings-skills', 'chat-overview'],
+    contextKeys: ['settings.secrets'],
   },
   {
     id: 'settings-prompts',

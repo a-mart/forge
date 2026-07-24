@@ -406,3 +406,56 @@ describe('MessageList paged activity', () => {
     expect(onLoadOlder).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('MessageList Secure Session attention', () => {
+  it('renders pending secret requests outside persisted transcript rows', () => {
+    render([], {
+      secureSessionRequests: {
+        availability: { state: 'available' },
+        requests: [{
+          requestId: 'secure-request-1',
+          requestedByAgentId: 'worker-1',
+          secretId: 'secret-1',
+          secretAlias: 'deploy-token',
+          purpose: 'Publish the verified release',
+          requestedBindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
+          requestedPolicy: { kind: 'one_use' },
+          status: 'pending',
+        }],
+        secrets: [{
+          secretId: 'secret-1',
+          displayAlias: 'deploy-token',
+          available: true,
+          bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
+        }],
+        onGrant: vi.fn(),
+        onDeny: vi.fn(),
+      },
+    })
+
+    const attention = container.querySelector('[data-testid="secure-session-attention"]')
+    expect(attention).not.toBeNull()
+    expect(attention?.querySelector('[data-secure-secret-request="secure-request-1"]')).not.toBeNull()
+    expect(container.querySelector('[data-row-id]')).toBeNull()
+  })
+
+  it('renders quarantined output outside the transcript with an explicit stop action', () => {
+    const onRevoke = vi.fn()
+    render([], {
+      secureSessionRequests: {
+        availability: { state: 'available' },
+        requests: [],
+        secrets: [],
+        outputState: 'quarantined',
+        outputStateReason: 'Potential protected material was withheld.',
+        onGrant: vi.fn(),
+        onDeny: vi.fn(),
+        onRevoke,
+      },
+    })
+
+    expect(container.textContent).toContain('Secure output quarantined')
+    expect(container.textContent).toContain('Potential protected material was withheld.')
+    expect(container.querySelector('[data-row-id]')).toBeNull()
+  })
+})

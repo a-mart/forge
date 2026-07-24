@@ -19,6 +19,9 @@ describe("RuntimeRecoveryState", () => {
     state.setPendingManagerRuntimeRecycle("m1", "specialist_roster_change");
     expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBe("specialist_roster_change");
 
+    state.setPendingManagerRuntimeRecycle("m1", "secure_session_mode_change");
+    expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBe("secure_session_mode_change");
+
     state.clearPendingManagerRuntimeRecycle("m1");
     expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
     expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBeUndefined();

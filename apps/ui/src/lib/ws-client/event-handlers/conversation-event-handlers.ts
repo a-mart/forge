@@ -3,7 +3,7 @@ import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
 import { routeModelCacheObservationsForState } from '../model-cache-visualization-state.js'
 import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
-import type { ServerEvent } from '@forge/protocol'
+import type { SecureSessionSnapshot, ServerEvent } from '@forge/protocol'
 
 /**
  * Bootstrap event types coalesced into a single state update during subscribe bootstrap.
@@ -18,6 +18,7 @@ export const BOOTSTRAP_COALESCIBLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   'pending_choices_snapshot',
   'session_plan_snapshot',
   'session_goal_snapshot',
+  'secure_session_snapshot',
   'unread_counts_snapshot',
 ])
 
@@ -37,6 +38,26 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'plan_summary',
   'model_cache_observation',
 ])
+
+export function applySecureSessionSnapshot(
+  snapshot: SecureSessionSnapshot,
+  context: ManagerWsConversationEventContext,
+): void {
+  if (snapshot.sessionAgentId !== context.state.targetAgentId) return
+
+  const current = context.state.secureSessionSnapshots[snapshot.sessionAgentId]
+  if (current && snapshot.revision < current.revision) return
+
+  context.updateState({
+    secureSessionSnapshots: {
+      ...context.state.secureSessionSnapshots,
+      [snapshot.sessionAgentId]: snapshot,
+    },
+    ...(context.state.secureSessionSnapshotLoadingSessionId === snapshot.sessionAgentId
+      ? { secureSessionSnapshotLoadingSessionId: null }
+      : {}),
+  })
+}
 
 function isChoiceEventForTarget(
   event: Extract<ServerEvent, { type: 'choice_request' }>,
@@ -463,6 +484,10 @@ export function handleConversationEvent(
       return true
     }
 
+    case 'secure_session_snapshot':
+      applySecureSessionSnapshot(event, context)
+      return true
+
     case 'conversation_reset':
       if (event.agentId !== context.state.targetAgentId) {
         return true
@@ -473,6 +498,7 @@ export function handleConversationEvent(
         activityMessages: [],
         planSnapshots: {},
         goalSnapshots: {},
+        secureSessionSnapshots: {},
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),

@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  validateSecureBuilderControlOrigin,
   validateTerminalHttpOrigin,
   validateTerminalWsOrigin,
 } from '../terminal-access-policy.js'
@@ -28,6 +29,85 @@ afterEach(() => {
 })
 
 describe('terminal-access-policy', () => {
+  it('accepts only exact configured origins for secure builder controls', () => {
+    const options = {
+      backendHost: '127.0.0.1',
+      backendPort: 47287,
+      uiPort: 47188,
+    }
+    expect(validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://localhost:47188',
+        host: 'attacker.example:47287',
+      }),
+      options,
+    )).toEqual({ ok: true, allowedOrigin: 'http://localhost:47188' })
+    expect(validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://127.0.0.1:47287',
+        host: 'attacker.example:47287',
+      }),
+      options,
+    )).toEqual({ ok: true, allowedOrigin: 'http://127.0.0.1:47287' })
+  })
+
+  it('rejects DNS-rebinding Host and Origin pairs for secure builder controls', () => {
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        origin: 'http://attacker.example',
+        host: 'attacker.example:47287',
+        remoteAddress: '127.0.0.1',
+      }),
+      {
+        backendHost: '127.0.0.1',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Origin not allowed',
+    })
+  })
+
+  it('rejects no-Origin secure control requests from non-loopback clients', () => {
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        host: '192.0.2.10:47287',
+        remoteAddress: '192.0.2.20',
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      allowedOrigin: null,
+      errorMessage: 'Missing Origin',
+    })
+  })
+
+  it('allows no-Origin secure control requests only from loopback', () => {
+    const result = validateSecureBuilderControlOrigin(
+      createRequest({
+        host: '127.0.0.1:47287',
+        remoteAddress: '::ffff:127.0.0.1',
+      }),
+      {
+        backendHost: '0.0.0.0',
+        backendPort: 47287,
+        uiPort: 47188,
+      },
+    )
+
+    expect(result).toEqual({ ok: true, allowedOrigin: null })
+  })
+
   it('allows same-origin HTTP requests', () => {
     const result = validateTerminalHttpOrigin(
       createRequest({ origin: 'http://127.0.0.1:47187' }),
@@ -44,6 +124,15 @@ describe('terminal-access-policy', () => {
     )
 
     expect(result).toEqual({ ok: false, allowedOrigin: null, errorMessage: 'Origin not allowed' })
+  })
+
+  it('allows the loopback development UI on a different port', () => {
+    const result = validateTerminalHttpOrigin(
+      createRequest({ origin: 'http://localhost:47188' }),
+      new URL('http://127.0.0.1:47287/api/secure-sessions/manager'),
+    )
+
+    expect(result).toEqual({ ok: true, allowedOrigin: 'http://localhost:47188' })
   })
 
   it('allows HTTP requests with no Origin header', () => {

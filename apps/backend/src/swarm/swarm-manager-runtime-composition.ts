@@ -26,7 +26,7 @@ import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-st
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { SecretsEnvService } from "./secrets-env-service.js";
-import { type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
+import { type SecureSessionLifecyclePort, type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import type { SkillMetadata } from "./skill-metadata-service.js";
 import {
@@ -246,6 +246,7 @@ export interface SwarmManagerRuntimeCompositionOptions {
   };
   toolHost: SwarmToolHost;
   browserAutomation: BrowserAutomationService;
+  secureSessions: SecureSessionLifecyclePort;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
   messaging: RuntimeCompositionMessaging;
@@ -854,6 +855,7 @@ export class SwarmManagerRuntimeComposition {
           events.emitSessionActiveToolsSnapshot(events.clearSessionActiveTools(agentId)),
       },
       browser: this.options.browserAutomation,
+      secureSessions: this.options.secureSessions,
       events,
       terminal: { getHooks: sessions.getTerminalArchiveHooks },
       descriptorMutations: { patchDescriptor: this.options.descriptors.patchDescriptor },
@@ -1003,12 +1005,10 @@ export class SwarmManagerRuntimeComposition {
     if (!this.completed?.runtimeLifecycle) throw new Error("Runtime composition is not complete");
     return this.completed.runtimeLifecycle;
   }
-
   private requireProjectExecutableTrust(): ProjectExecutableTrustCoordinator {
     if (!this.completed?.projectExecutableTrust) throw new Error("Runtime composition is not complete");
     return this.completed.projectExecutableTrust;
   }
 }
-export function createSwarmManagerRuntimeComposition(options: SwarmManagerRuntimeCompositionOptions): SwarmManagerRuntimeComposition {
-  return new SwarmManagerRuntimeComposition(options);
-}
+export const createSwarmManagerRuntimeComposition = (options: SwarmManagerRuntimeCompositionOptions) =>
+  new SwarmManagerRuntimeComposition(options);

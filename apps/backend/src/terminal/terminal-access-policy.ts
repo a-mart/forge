@@ -7,6 +7,46 @@ type TerminalHttpOriginValidationResult =
   | { ok: true; allowedOrigin: string | null }
   | { ok: false; allowedOrigin: null; errorMessage: string };
 
+export function validateSecureBuilderControlOrigin(
+  request: IncomingMessage,
+  options: {
+    backendHost: string;
+    backendPort: number;
+    uiPort?: number;
+  },
+): TerminalHttpOriginValidationResult {
+  const rawOrigin = getRawOriginHeader(request);
+  if (!rawOrigin) {
+    return isLoopbackAddress(request.socket.remoteAddress)
+      ? { ok: true, allowedOrigin: null }
+      : { ok: false, allowedOrigin: null, errorMessage: "Missing Origin" };
+  }
+
+  const originUrl = parseOrigin(rawOrigin);
+  if (!originUrl) {
+    return { ok: false, allowedOrigin: null, errorMessage: "Invalid Origin" };
+  }
+
+  if (
+    isDesktopMode()
+    && isLoopbackAddress(request.socket.remoteAddress)
+    && originUrl.protocol === ELECTRON_APP_PROTOCOL
+    && normalizeHost(originUrl.hostname) === ELECTRON_APP_HOST
+  ) {
+    return { ok: true, allowedOrigin: rawOrigin };
+  }
+
+  const allowedOrigins = secureBuilderControlOrigins(options);
+  if (
+    (originUrl.protocol === "http:" || originUrl.protocol === "https:")
+    && allowedOrigins.has(originUrl.origin)
+  ) {
+    return { ok: true, allowedOrigin: rawOrigin };
+  }
+
+  return { ok: false, allowedOrigin: null, errorMessage: "Origin not allowed" };
+}
+
 export function validateTerminalHttpOrigin(
   request: IncomingMessage,
   requestUrl: URL,
@@ -165,6 +205,50 @@ function isLoopbackAddress(value: string | undefined): boolean {
 
   const normalized = normalizeHost(value.replace(/^::ffff:/, ""));
   return normalized === "::1" || normalized === "127.0.0.1" || normalized.startsWith("127.");
+}
+
+function secureBuilderControlOrigins(options: {
+  backendHost: string;
+  backendPort: number;
+  uiPort?: number;
+}): Set<string> {
+  const origins = new Set<string>();
+  const backendHost = normalizeHost(options.backendHost);
+  const backendPort = validatePort(options.backendPort);
+  const backendHosts = isLoopbackHost(backendHost)
+    || backendHost === "0.0.0.0"
+    || backendHost === "::"
+    ? ["127.0.0.1", "localhost", "[::1]"]
+    : [formatUrlHost(backendHost)];
+  for (const host of backendHosts) {
+    origins.add(`http://${host}:${backendPort}`);
+  }
+
+  const uiPort = validatePort(
+    options.uiPort ?? parseConfiguredUiPort(process.env.FORGE_UI_PORT),
+  );
+  for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
+    origins.add(`http://${host}:${uiPort}`);
+  }
+  return origins;
+}
+
+function parseConfiguredUiPort(value: string | undefined): number {
+  if (!value?.trim()) return 47188;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 65_535
+    ? parsed
+    : 47188;
+}
+
+function validatePort(value: number): number {
+  return Number.isSafeInteger(value) && value >= 1 && value <= 65_535
+    ? value
+    : 47188;
+}
+
+function formatUrlHost(value: string): string {
+  return value.includes(":") ? `[${value}]` : value;
 }
 
 function isDesktopMode(): boolean {

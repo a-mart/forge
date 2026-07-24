@@ -11,6 +11,7 @@ import type {
   ProjectPresenceViewer,
   SessionPlanSnapshotEvent,
   SessionGoalSnapshotEvent,
+  SecureSessionSnapshot,
   RestartRecoverySnapshot,
   TerminalDescriptor,
   CodexElicitationRequestEvent,
@@ -81,10 +82,16 @@ export interface ManagerWsState {
   terminalSessionScopeId: string | null
   planSnapshots: Record<string, SessionPlanSnapshotEvent>
   goalSnapshots: Record<string, SessionGoalSnapshotEvent>
+  /** Secure execution authority keyed by manager session id. */
+  secureSessionSnapshots: Record<string, SecureSessionSnapshot>
   restartRecovery: RestartRecoverySnapshot | null
   /** Session whose cached plan snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
   planSnapshotLoadingSessionId: string | null
   goalSnapshotLoadingSessionId: string | null
+  /** Session whose cached secure snapshot is suppressed until fresh authority arrives. */
+  secureSessionSnapshotLoadingSessionId: string | null
+  /** Latest secure-secret catalog invalidation for this backend connection epoch. */
+  secureSecretCatalogRevision: number | null
   hasReceivedAgentsSnapshot: boolean
   /** True only after the current connection bootstrap has delivered the full profile inventory. */
   hasReceivedProfilesSnapshot: boolean
@@ -140,9 +147,12 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     terminalSessionScopeId: null,
     planSnapshots: {},
     goalSnapshots: {},
+    secureSessionSnapshots: {},
     restartRecovery: null,
     planSnapshotLoadingSessionId: null,
     goalSnapshotLoadingSessionId: null,
+    secureSessionSnapshotLoadingSessionId: null,
+    secureSecretCatalogRevision: null,
     hasReceivedAgentsSnapshot: false,
     hasReceivedProfilesSnapshot: false,
     promptChangeKey: 0,

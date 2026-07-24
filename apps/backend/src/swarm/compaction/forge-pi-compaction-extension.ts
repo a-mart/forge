@@ -9,6 +9,12 @@ import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-se
 import type { ResolvedForgePiCompactionAuth } from "./forge-pi-compaction-auth.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import {
+  guardSecureRuntimeValue,
+  SECURE_RUNTIME_GUARD_FAILURE_MESSAGE,
+  type SecureRuntimeBinding,
+} from "../secure-sessions/runtime/secure-runtime-binding.js";
+import { SECURE_OUTPUT_QUARANTINE } from "../secure-sessions/redaction/secure-value-guard.js";
+import {
   ForgePiCompactionError,
   runForgePiCompaction,
 } from "./forge-pi-compaction.js";
@@ -59,6 +65,7 @@ export function createForgePiCompactionExtensionFactory(options: {
     sessionModel?: Model<Api>;
   }) => Promise<ResolvedForgePiCompactionAuth>;
   failureScopeKey?: string;
+  secureRuntimeBinding?: SecureRuntimeBinding;
 }): ExtensionFactory {
   const { descriptor } = options;
   const failureScopeKey = options.failureScopeKey ?? descriptor.agentId;
@@ -98,12 +105,27 @@ export function createForgePiCompactionExtensionFactory(options: {
             compactionSettings,
             sessionModel: ctx.model,
           });
+          const guardedPreparation = options.secureRuntimeBinding
+            ? guardCompactionBoundaryValue(
+                options.secureRuntimeBinding,
+                event.preparation,
+              )
+            : event.preparation;
+          const guardedCombinedInstructions = options.secureRuntimeBinding
+            ? guardCompactionBoundaryValue(
+                options.secureRuntimeBinding,
+                combinedInstructions,
+              )
+            : combinedInstructions;
           const compaction = await runForgePiCompaction({
-            event,
+            event: {
+              ...event,
+              preparation: guardedPreparation,
+            },
             ctx,
             descriptor,
             compactionSettings,
-            combinedInstructions,
+            combinedInstructions: guardedCombinedInstructions,
             pinnedInstructionsMerged,
             compactionAuth,
             logDebug: options.logDebug,
@@ -112,7 +134,14 @@ export function createForgePiCompactionExtensionFactory(options: {
           await compactionAuth?.complete?.({ outcome: "success" });
           compactionAuthCompleted = true;
           clearForgePiCompactionFailure(failureScopeKey);
-          return { compaction };
+          return {
+            compaction: options.secureRuntimeBinding
+              ? guardCompactionBoundaryValue(
+                  options.secureRuntimeBinding,
+                  compaction,
+                )
+              : compaction,
+          };
         } catch (error) {
           if (!compactionAuthCompleted) {
             await compactionAuth?.complete?.({
@@ -142,6 +171,17 @@ export function createForgePiCompactionExtensionFactory(options: {
       }
     });
   };
+}
+
+function guardCompactionBoundaryValue<T>(
+  binding: SecureRuntimeBinding,
+  value: T,
+): T {
+  const guarded = guardSecureRuntimeValue(binding, value);
+  if (guarded === SECURE_OUTPUT_QUARANTINE) {
+    throw new Error(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
+  }
+  return guarded;
 }
 
 export function buildForgePiCompactionFailureRecord(

@@ -59,6 +59,17 @@ import type { CompactionRuntimeSettingsProvider } from "../../compaction-runtime
 import { buildForgePiCompactionFailureScopeKey } from "../../compaction/forge-pi-compaction-extension.js";
 import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
+import { wrapForgeToolsWithExtensionHooks } from "../../forge-instrumented-tools.js";
+import {
+  applySecurePiResourcePolicy,
+  createSecurePiCodingTools,
+  guardSecureRuntimeTools,
+} from "../../secure-sessions/runtime/pi-secure-tools.js";
+import {
+  guardSecureRuntimeValue,
+  SECURE_RUNTIME_GUARD_FAILURE_MESSAGE,
+  type SecureRuntimeBinding,
+} from "../../secure-sessions/runtime/secure-runtime-binding.js";
 
 type PiProviderContextMessages = Parameters<
   NonNullable<AgentSession["agent"]["transformContext"]>
@@ -66,7 +77,10 @@ type PiProviderContextMessages = Parameters<
 
 type PiProviderContextMessage = PiProviderContextMessages[number];
 
-export function installPiProviderContextImageResize(session: AgentSession): void {
+export function installPiProviderContextImageResize(
+  session: AgentSession,
+  secureRuntimeBinding?: SecureRuntimeBinding,
+): void {
   const existingTransformContext = session.agent.transformContext;
 
   session.agent.transformContext = async (messages, signal) => {
@@ -79,11 +93,25 @@ export function installPiProviderContextImageResize(session: AgentSession): void
       }
     }
 
+    let resizedMessages: PiProviderContextMessages;
     try {
-      return await resizePiProviderContextImages(transformedMessages);
+      resizedMessages = await resizePiProviderContextImages(transformedMessages);
     } catch {
-      return transformedMessages;
+      resizedMessages = transformedMessages;
     }
+
+    if (!secureRuntimeBinding) {
+      return resizedMessages;
+    }
+
+    const guardedMessages = guardSecureRuntimeValue(
+      secureRuntimeBinding,
+      resizedMessages,
+    );
+    if (!Array.isArray(guardedMessages)) {
+      throw new Error(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
+    }
+    return guardedMessages as PiProviderContextMessages;
   };
 }
 
@@ -214,6 +242,7 @@ export class PiRuntimeCreator {
     creationOptions?: RuntimeCreationOptions;
   }): Promise<SwarmAgentRuntime> {
     const { descriptor, systemPrompt, runtimeToken, sessionDescriptor, creationOptions } = options;
+    const secureRuntimeBinding = creationOptions?.secureRuntimeBinding;
     const projectExecutableTrustPlan = await this.deps.resolveProjectExecutableTrustPlan({
       descriptor,
       sessionDescriptor
@@ -231,6 +260,32 @@ export class PiRuntimeCreator {
       forgeExtensionHost: this.deps.forgeExtensionHost,
       preparedForgeBindings
     });
+    const secureBaseSwarmTools = secureRuntimeBinding
+      ? guardSecureRuntimeTools(baseSwarmTools, secureRuntimeBinding)
+      : baseSwarmTools;
+    const runtimeSwarmTools = secureRuntimeBinding
+      ? preparedForgeBindings
+        ? wrapForgeToolsWithExtensionHooks({
+            tools: secureBaseSwarmTools,
+            forgeExtensionHost: this.deps.forgeExtensionHost,
+            bindingToken: preparedForgeBindings.bindingToken,
+            host: this.deps.host,
+            descriptor,
+          })
+        : secureBaseSwarmTools
+      : swarmTools;
+    const secureCodingTools = secureRuntimeBinding
+      ? createSecurePiCodingTools({
+          cwd: descriptor.cwd,
+          binding: secureRuntimeBinding,
+        })
+      : [];
+    const runtimeCustomTools = secureRuntimeBinding
+      ? [...secureCodingTools, ...runtimeSwarmTools]
+      : runtimeSwarmTools;
+    const secureAllowedToolNames = isCodexPluginWorkerDescriptor(descriptor)
+      ? runtimeSwarmTools.map((tool) => tool.name)
+      : runtimeCustomTools.map((tool) => tool.name);
     const thinkingLevel = mapForgeReasoningToPiThinkingLevel(descriptor.model.thinkingLevel);
     const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
@@ -313,11 +368,12 @@ export class PiRuntimeCreator {
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
         preparedForgeBindings,
-        baseSwarmTools,
+        baseSwarmTools: secureBaseSwarmTools,
         host: this.deps.host,
         descriptor
       }),
       compactionFailureScopeKey,
+      secureRuntimeBinding,
     });
     const resourcePlan = planPiResourceLoaderOptions({
       descriptor,
@@ -336,14 +392,17 @@ export class PiRuntimeCreator {
       isCollaborationRuntime: isCollabSession(sessionDescriptor),
       mergeRuntimeContextFiles: this.deps.mergeRuntimeContextFiles
     });
+    const effectiveResourcePlan = secureRuntimeBinding
+      ? applySecurePiResourcePolicy(resourcePlan)
+      : resourcePlan;
     const resourceLoader =
       descriptor.role === "manager"
         ? new DefaultResourceLoader({
-            ...resourcePlan,
+            ...effectiveResourcePlan,
             settingsManager
           })
         : new DefaultResourceLoader({
-            ...omitSystemPrompt(resourcePlan),
+            ...omitSystemPrompt(effectiveResourcePlan),
             settingsManager
           });
 
@@ -389,9 +448,15 @@ export class PiRuntimeCreator {
       sessionManager,
       resourceLoader,
       ...(settingsManager ? { settingsManager } : {}),
-      customTools: swarmTools
+      customTools: runtimeCustomTools,
+      ...(secureRuntimeBinding
+        ? {
+            noTools: "builtin" as const,
+            tools: secureAllowedToolNames,
+          }
+        : {}),
     });
-    installPiProviderContextImageResize(session);
+    installPiProviderContextImageResize(session, secureRuntimeBinding);
 
     const extensionSnapshot = buildRuntimeExtensionSnapshot({
       descriptor,
@@ -455,11 +520,13 @@ export class PiRuntimeCreator {
       });
     }
 
-    const activeToolNames = resolvePiActiveToolNamesForDescriptor(
-      descriptor,
-      session.getActiveToolNames(),
-      swarmTools.map((tool) => tool.name),
-    );
+    const activeToolNames = secureRuntimeBinding
+      ? secureAllowedToolNames
+      : resolvePiActiveToolNamesForDescriptor(
+          descriptor,
+          session.getActiveToolNames(),
+          runtimeSwarmTools.map((tool) => tool.name),
+        );
     session.setActiveToolsByName(activeToolNames);
 
     this.deps.logDebug("runtime:create:ready", {
@@ -477,7 +544,7 @@ export class PiRuntimeCreator {
       runtimeType: "pi",
       forgeResolvedPrompt: systemPrompt,
       finalSystemPrompt: session.systemPrompt,
-      activeTools: summarizePiActiveTools(session as AgentSession, swarmTools, activeToolNames),
+      activeTools: summarizePiActiveTools(session as AgentSession, runtimeCustomTools, activeToolNames),
       metadata: {
         thinkingLevel,
         agentDir: runtimeAgentDir,

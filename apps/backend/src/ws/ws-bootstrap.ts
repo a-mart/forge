@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import {
   isSystemProfile,
   type BuilderTimelineChannelView,
+  type SecureSessionSnapshot,
   type ServerEvent,
   type TerminalDescriptor,
 } from "@forge/protocol";
@@ -18,6 +19,7 @@ import {
 } from "../swarm/session/history-policy.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { BrowserAutomationService } from "../swarm/browser-automation/index.js";
+import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 import { warnWsThrottled } from "./ws-log-throttle.js";
@@ -209,6 +211,33 @@ export async function sendSubscriptionBootstrap(options: {
 
   if (remoteUpdateAwarenessEvent) {
     await sendMeasured("remoteUpdateAwareness", remoteUpdateAwarenessEvent);
+  }
+
+  const secureSessionAgentId = resolvePlanSnapshotSessionAgentId(targetAgentId);
+  const secureSnapshotProvider = swarmManager as unknown as {
+    getSecureSessionSnapshot?: (
+      sessionAgentId: string,
+    ) => SecureSessionSnapshot | Promise<SecureSessionSnapshot>;
+  };
+  if (
+    secureSessionAgentId
+    && typeof secureSnapshotProvider.getSecureSessionSnapshot === "function"
+    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget)
+  ) {
+    try {
+      const snapshot = await secureSnapshotProvider.getSecureSessionSnapshot(
+        secureSessionAgentId,
+      );
+      await sendMeasured("secureSessionSnapshot", {
+        ...snapshot,
+        type: "secure_session_snapshot",
+      });
+    } catch {
+      // This snapshot is metadata-only and must never surface a vault/provider
+      // exception through bootstrap logs. The HTTP endpoint remains available
+      // for a fixed-code retry.
+      metricFields.secureSessionSnapshotUnavailable = true;
+    }
   }
 
   const browserSessionAgentId = resolveBrowserSessionAgentId(targetAgentId);

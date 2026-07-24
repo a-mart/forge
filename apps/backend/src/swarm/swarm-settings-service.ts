@@ -97,6 +97,7 @@ export interface SwarmSettingsServiceOptions {
     agentId: string,
     reason: ManagerRuntimeRecycleReason
   ) => Promise<ManagerRuntimeRecycleDisposition>;
+  stopSecureSessionForLifecycle(agentId: string): Promise<void>;
   now?: () => string;
   transactionDescriptors?: <T>(callback: (store: SettingsDescriptorTransactionStore) => T | Promise<T>) => Promise<T>;
   saveStore: () => Promise<void>;
@@ -227,6 +228,10 @@ export class SwarmSettingsService {
         updatedSessions: []
       });
       return resolvedCwd;
+    }
+
+    for (const session of sessions) {
+      await this.options.stopSecureSessionForLifecycle(session.agentId);
     }
 
     const recycledSessions: string[] = [];
@@ -1011,6 +1016,11 @@ export class SwarmSettingsService {
     const effectiveModelMutations = mutations.filter(
       (mutation) => !sameModelDescriptor(mutation.session.model, mutation.targetModel)
     );
+    for (const mutation of effectiveModelMutations) {
+      await this.options.stopSecureSessionForLifecycle(
+        mutation.session.agentId
+      );
+    }
     const originalSessionStates = mutations.map((mutation) => ({
       session: mutation.session,
       model: { ...mutation.session.model },

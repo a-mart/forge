@@ -48,6 +48,15 @@ import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import type { MessageRoutingReceiptRecord } from "./session/message-routing-receipts.js";
+import type {
+  GetSecureRuntimeBinding,
+  SecureRuntimeBinding,
+} from "./secure-sessions/runtime/secure-runtime-binding.js";
+import {
+  guardSecureRuntimeValue,
+  SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
+  SECURE_RUNTIME_GUARD_FAILURE_MESSAGE,
+} from "./secure-sessions/runtime/secure-runtime-binding.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
@@ -94,6 +103,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     ): void | Promise<void>;
   };
   getPiModelsJsonPathOrThrow(): string;
+  getSecureRuntimeBinding?: GetSecureRuntimeBinding;
   getCompactionRuntimeSettingsProvider(): CompactionRuntimeSettingsProvider;
   getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
     memoryContextFile: { path: string; content: string };
@@ -219,6 +229,7 @@ export class SwarmRuntimeController {
     Set<() => void>
   >();
   private readonly runtimeAdmissionContext = new AsyncLocalStorage<ReadonlySet<string>>();
+  private readonly secureRuntimeBindingsByRuntime = new Map<string, SecureRuntimeBinding>();
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeBinding = new RuntimeBinding({
@@ -398,9 +409,36 @@ export class SwarmRuntimeController {
     runtimeToken = this.allocateRuntimeToken(descriptor.agentId),
     options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
+    let secureRuntimeBinding = options?.secureRuntimeBinding;
+    if (!secureRuntimeBinding && this.host.getSecureRuntimeBinding) {
+      try {
+        secureRuntimeBinding = await this.host.getSecureRuntimeBinding(descriptor);
+      } catch {
+        this.clearRuntimeToken(descriptor.agentId, runtimeToken);
+        throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+      }
+    }
+
+    if (secureRuntimeBinding) {
+      this.secureRuntimeBindingsByRuntime.set(
+        secureRuntimeBindingKey(descriptor.agentId, runtimeToken),
+        secureRuntimeBinding,
+      );
+    }
+
     try {
-      return await this.runtimeFactory.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
+      return await this.runtimeFactory.createRuntimeForDescriptor(
+        descriptor,
+        systemPrompt,
+        runtimeToken,
+        secureRuntimeBinding
+          ? { ...options, secureRuntimeBinding }
+          : options,
+      );
     } catch (error) {
+      this.secureRuntimeBindingsByRuntime.delete(
+        secureRuntimeBindingKey(descriptor.agentId, runtimeToken),
+      );
       this.clearRuntimeToken(descriptor.agentId, runtimeToken);
       throw error;
     }
@@ -415,6 +453,13 @@ export class SwarmRuntimeController {
   }
 
   clearRuntimeToken(agentId: string, runtimeToken?: number): void {
+    const resolvedRuntimeToken =
+      runtimeToken ?? this.runtimeBinding.getRuntimeToken(agentId);
+    if (resolvedRuntimeToken !== undefined) {
+      this.secureRuntimeBindingsByRuntime.delete(
+        secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
+      );
+    }
     this.runtimeBinding.clearRuntimeToken(agentId, runtimeToken);
   }
 
@@ -423,7 +468,15 @@ export class SwarmRuntimeController {
   }
 
   detachRuntime(agentId: string, runtimeToken?: number): boolean {
-    return this.runtimeBinding.detachRuntime(agentId, runtimeToken);
+    const resolvedRuntimeToken =
+      runtimeToken ?? this.runtimeBinding.getRuntimeToken(agentId);
+    const detached = this.runtimeBinding.detachRuntime(agentId, runtimeToken);
+    if (detached && resolvedRuntimeToken !== undefined) {
+      this.secureRuntimeBindingsByRuntime.delete(
+        secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
+      );
+    }
+    return detached;
   }
 
   detachRuntimeIfMatches(
@@ -431,7 +484,19 @@ export class SwarmRuntimeController {
     expectedRuntime: SwarmAgentRuntime,
     runtimeToken?: number
   ): boolean {
-    return this.runtimeBinding.detachRuntimeIfMatches(agentId, expectedRuntime, runtimeToken);
+    const resolvedRuntimeToken =
+      runtimeToken ?? this.runtimeBinding.getRuntimeToken(agentId);
+    const detached = this.runtimeBinding.detachRuntimeIfMatches(
+      agentId,
+      expectedRuntime,
+      runtimeToken,
+    );
+    if (detached && resolvedRuntimeToken !== undefined) {
+      this.secureRuntimeBindingsByRuntime.delete(
+        secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
+      );
+    }
+    return detached;
   }
 
   getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined {
@@ -786,13 +851,18 @@ export class SwarmRuntimeController {
       return false;
     }
 
-    this.host.recordManagerTurnWatchdogEvent?.(agentId, runtimeToken, event);
-    this.host.beforeRuntimeEventProjection?.(agentId, runtimeToken, event);
-    await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
+    const guardedEvent = this.guardRuntimeSessionEvent(
+      agentId,
+      runtimeToken,
+      event,
+    );
+    this.host.recordManagerTurnWatchdogEvent?.(agentId, runtimeToken, guardedEvent);
+    this.host.beforeRuntimeEventProjection?.(agentId, runtimeToken, guardedEvent);
+    await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event: guardedEvent });
     if (this.host.afterRuntimeEventProjection) {
-      this.host.afterRuntimeEventProjection(agentId, runtimeToken, event);
+      this.host.afterRuntimeEventProjection(agentId, runtimeToken, guardedEvent);
     } else {
-      this.host.onAcceptedRuntimeSessionEvent?.(agentId, runtimeToken, event);
+      this.host.onAcceptedRuntimeSessionEvent?.(agentId, runtimeToken, guardedEvent);
     }
     return true;
   }
@@ -817,11 +887,83 @@ export class SwarmRuntimeController {
       return;
     }
 
-    this.host.recordManagerTurnWatchdogRuntimeError?.(agentId, runtimeToken, error);
+    const guardedError = this.guardRuntimeErrorEvent(
+      agentId,
+      runtimeToken,
+      error,
+    );
+    this.host.recordManagerTurnWatchdogRuntimeError?.(agentId, runtimeToken, guardedError);
     this.clearManagerAssistantOutputTurn(agentId);
-    this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
+    this.recordObservabilityRuntimeError(agentId, runtimeToken, guardedError);
 
-    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
+    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error: guardedError });
+  }
+
+  private guardRuntimeSessionEvent(
+    agentId: string,
+    runtimeToken: number | undefined,
+    event: RuntimeSessionEvent,
+  ): RuntimeSessionEvent {
+    const binding = this.getSecureRuntimeBindingForCallback(agentId, runtimeToken);
+    if (!binding) {
+      return event;
+    }
+
+    const guarded = guardSecureRuntimeValue(binding, event);
+    if (
+      !guarded ||
+      typeof guarded !== "object" ||
+      Array.isArray(guarded) ||
+      guarded.type !== event.type
+    ) {
+      throw new Error(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
+    }
+    return guarded;
+  }
+
+  private guardRuntimeErrorEvent(
+    agentId: string,
+    runtimeToken: number | undefined,
+    error: RuntimeErrorEvent,
+  ): RuntimeErrorEvent {
+    const binding = this.getSecureRuntimeBindingForCallback(agentId, runtimeToken);
+    if (!binding) {
+      return error;
+    }
+
+    try {
+      const guarded = guardSecureRuntimeValue(binding, error);
+      if (
+        guarded &&
+        typeof guarded === "object" &&
+        !Array.isArray(guarded) &&
+        guarded.phase === error.phase &&
+        typeof guarded.message === "string"
+      ) {
+        return guarded;
+      }
+    } catch {
+      // Use a fixed event below so no raw runtime error reaches another sink.
+    }
+
+    return {
+      phase: error.phase,
+      message: SECURE_RUNTIME_GUARD_FAILURE_MESSAGE,
+    };
+  }
+
+  private getSecureRuntimeBindingForCallback(
+    agentId: string,
+    runtimeToken: number | undefined,
+  ): SecureRuntimeBinding | undefined {
+    const resolvedRuntimeToken =
+      runtimeToken ?? this.runtimeBinding.getRuntimeToken(agentId);
+    if (resolvedRuntimeToken === undefined) {
+      return undefined;
+    }
+    return this.secureRuntimeBindingsByRuntime.get(
+      secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
+    );
   }
 
   async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
@@ -963,4 +1105,8 @@ export class SwarmRuntimeController {
       runtimeToken
     );
   }
+}
+
+function secureRuntimeBindingKey(agentId: string, runtimeToken: number): string {
+  return `${agentId}\0${runtimeToken}`;
 }

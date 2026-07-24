@@ -178,6 +178,7 @@ function renderMessageInput(
     replyTarget: ComponentProps<typeof MessageInput>['replyTarget']
     onClearReplyTarget: () => void
     sessionModelPicker: ComponentProps<typeof MessageInput>['sessionModelPicker']
+    secureSessionPicker: ComponentProps<typeof MessageInput>['secureSessionPicker']
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
 ): void {
@@ -599,6 +600,32 @@ describe('MessageInput', () => {
       expect(onUpdate).toHaveBeenCalledWith('manager-1', 'inherit')
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
       expect(document.activeElement).toBe(trigger)
+    })
+  })
+
+  describe('secure session picker', () => {
+    it('renders only when the parent provides a Secure Session view model', async () => {
+      renderMessageInput({
+        secureSessionPicker: {
+          availability: { state: 'available' },
+          snapshot: {
+            sessionAgentId: 'manager-1',
+            revision: 1,
+            executionMode: 'standard',
+            environmentStatus: 'stopped',
+            leases: [],
+            pendingRequests: [],
+            updatedAt: '2026-07-23T12:00:00.000Z',
+          },
+          secrets: [],
+          onStart: vi.fn(),
+          onGrant: vi.fn(),
+          onRevoke: vi.fn(),
+        },
+      })
+      await flush()
+
+      expect(getByLabelText(container, 'Start a secure session.')).toBeTruthy()
     })
   })
 

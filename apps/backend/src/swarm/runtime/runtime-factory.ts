@@ -25,6 +25,11 @@ import { assertForgeRuntimeEligibleDescriptor } from "../external-thread-compati
 import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
 import { CursorSdkRuntimeCreator } from "./cursor-sdk/cursor-sdk-runtime-creator.js";
+import {
+  SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
+  SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE,
+  type GetSecureRuntimeBinding,
+} from "../secure-sessions/runtime/secure-runtime-binding.js";
 
 export { resolveOpenAICodexTransport } from "./pi/pi-runtime-creator.js";
 
@@ -36,6 +41,7 @@ interface RuntimeFactoryDependencies {
   logDebug: (message: string, details?: unknown) => void;
   getPiModelsJsonPath: () => string;
   getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
+  getSecureRuntimeBinding?: GetSecureRuntimeBinding;
   getCredentialPoolService?: () => CredentialPoolService;
   getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   observability?: ObservabilityFacade;
@@ -99,15 +105,24 @@ export class RuntimeFactory {
     options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     assertForgeRuntimeEligibleDescriptor(descriptor, "create runtime");
+    const secureRuntimeBinding =
+      options?.secureRuntimeBinding ??
+      await this.resolveSecureRuntimeBinding(descriptor);
+    const creationOptions = secureRuntimeBinding
+      ? { ...options, secureRuntimeBinding }
+      : options;
 
     if (isClaudeSdkModelDescriptor(descriptor.model)) {
+      if (secureRuntimeBinding) {
+        throw new Error(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
+      }
       try {
         return await this.claudeRuntimeCreator.createRuntimeForDescriptor({
           descriptor,
           systemPrompt,
           runtimeToken,
           sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
-          creationOptions: options
+          creationOptions
         });
       } catch (error) {
         if (!isClaudeSdkUnavailableError(error)) {
@@ -128,12 +143,15 @@ export class RuntimeFactory {
     }
 
     if (isCursorSdkModelDescriptor(descriptor.model)) {
+      if (secureRuntimeBinding) {
+        throw new Error(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
+      }
       return this.cursorSdkRuntimeCreator.createRuntimeForDescriptor({
         descriptor,
         systemPrompt,
         runtimeToken,
         sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
-        creationOptions: options
+        creationOptions
       });
     }
 
@@ -146,8 +164,22 @@ export class RuntimeFactory {
       systemPrompt,
       runtimeToken,
       sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
-      creationOptions: options
+      creationOptions
     });
+  }
+
+  private async resolveSecureRuntimeBinding(
+    descriptor: AgentDescriptor,
+  ) {
+    if (!this.deps.getSecureRuntimeBinding) {
+      return undefined;
+    }
+
+    try {
+      return await this.deps.getSecureRuntimeBinding(descriptor);
+    } catch {
+      throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+    }
   }
 
   private getForgeSessionDescriptor(descriptor: AgentDescriptor): AgentDescriptor | undefined {

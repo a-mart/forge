@@ -19,6 +19,12 @@ import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { type MessageInputHandle } from '@/components/chat/MessageInput'
+import type {
+  SecureGrantInput,
+  SecureSessionAvailability,
+  SecureSessionPickerConfig,
+  SecureSessionRequestConfig,
+} from '@/components/chat/secure-session/types'
 import { isSessionModelPickerEligible } from '@/components/chat/message-input/session-model-picker-eligibility'
 import { type MessageListHandle } from '@/components/chat/MessageList'
 import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
@@ -51,6 +57,22 @@ import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model
 import { activateRemoteUpdateAwarenessProject } from '@/components/settings/remote-update-awareness-api'
 import { getActiveLocalRemoteUpdateSnapshot } from '@/components/index-page/remote-update-awareness'
 import { createLocalBuilderSidebarOrderApi } from '@/lib/builder-sidebar-order-api'
+import {
+  denySecureAccessRequest,
+  fetchSecureSessionCatalog,
+  fetchSecureSessionSnapshot,
+  fulfillSecureAccessRequestPrivately,
+  grantSecureSessionLease,
+  isPrivateSecureFulfillmentAvailable,
+  revokeSecureSessionLease,
+  secureSessionUiErrorMessage,
+  SecureSessionUiError,
+  startSecureSession,
+  stopSecureSession,
+  toSecureSecretOptions,
+  toSecureSessionSnapshotView,
+} from '@/lib/secure-sessions-api'
+import type { SecureSecretsCatalog } from '@/lib/secure-secrets-api'
 import { hydrateSessionWorkers } from './worker-hydration'
 import {
   LOCAL_ORIGIN_ID,
@@ -85,6 +107,7 @@ import type {
   AgentDescriptor,
   ProjectAgentExternalDirectoryEntry,
   RemoteUpdateAwarenessProjectSnapshot,
+  SecureSessionSnapshot,
 } from '@forge/protocol'
 
 type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
@@ -98,6 +121,13 @@ function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): b
         agent.archetypeId === 'cortex' ||
         agent.sessionPurpose === 'cortex_review'),
   )
+}
+
+function isSecureSessionRuntimeSupported(
+  agent: AgentDescriptor | null | undefined,
+): boolean {
+  if (!agent || agent.externalThread) return false
+  return agent.model.provider !== 'claude-sdk' && agent.model.provider !== 'cursor-sdk'
 }
 
 type BuilderNavigationState =
@@ -293,6 +323,10 @@ export function BuilderSurface({
   const [detailedAllView, setDetailedAllView] = useState(false)
   const [planExpanded, setPlanExpanded] = useState(false)
   const [externalProjectAgentEntries, setExternalProjectAgentEntries] = useState<ProjectAgentExternalDirectoryEntry[]>([])
+  const [secureCatalog, setSecureCatalog] = useState<SecureSecretsCatalog | null>(null)
+  const [secureCatalogLoading, setSecureCatalogLoading] = useState(false)
+  const [secureCatalogUnavailable, setSecureCatalogUnavailable] = useState(false)
+  const [secureRuntimeUnsupported, setSecureRuntimeUnsupported] = useState(false)
 
   // ── Active-agent derivation + route→subscription sync ──
   const {
@@ -348,6 +382,127 @@ export function BuilderSurface({
   const goalSnapshot = isActiveManager && activeAgentId && state.goalSnapshotLoadingSessionId !== activeAgentId
     ? state.goalSnapshots[activeAgentId] ?? null
     : null
+  const secureSessionSnapshot =
+    isActiveManager
+    && activeAgentId
+    && state.secureSessionSnapshotLoadingSessionId !== activeAgentId
+      ? state.secureSessionSnapshots[activeAgentId] ?? null
+      : null
+
+  useEffect(() => {
+    if (isRemoteOriginActive || !state.connected) {
+      setSecureCatalog(null)
+      setSecureCatalogLoading(false)
+      setSecureCatalogUnavailable(false)
+      return
+    }
+    const apiClient = httpClientRef.current
+    if (!apiClient) return
+
+    let cancelled = false
+    setSecureCatalogLoading(true)
+    setSecureCatalogUnavailable(false)
+    void fetchSecureSessionCatalog(apiClient)
+      .then((catalog) => {
+        if (cancelled) return
+        setSecureCatalog(catalog)
+        setSecureCatalogUnavailable(false)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSecureCatalog(null)
+        setSecureCatalogUnavailable(true)
+      })
+      .finally(() => {
+        if (!cancelled) setSecureCatalogLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeOriginId,
+    httpClientRef,
+    isRemoteOriginActive,
+    state.connected,
+    state.secureSecretCatalogRevision,
+  ])
+
+  useEffect(() => {
+    if (
+      isRemoteOriginActive
+      || !state.connected
+      || !isActiveManager
+      || !activeAgentId
+      || !isSecureSessionRuntimeSupported(activeAgent)
+    ) {
+      setSecureRuntimeUnsupported(false)
+      return
+    }
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (!apiClient || !client) return
+
+    let cancelled = false
+    const requestedSessionAgentId = activeAgentId
+    setSecureRuntimeUnsupported(false)
+    void fetchSecureSessionSnapshot(apiClient, requestedSessionAgentId)
+      .then((snapshot) => {
+        if (!cancelled && clientRef.current === client) {
+          client.applySecureSessionSnapshot(snapshot)
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setSecureRuntimeUnsupported(
+          error instanceof SecureSessionUiError
+          && error.code === 'SECURE_SESSION_UNSUPPORTED',
+        )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeAgentId,
+    activeAgent,
+    activeOriginId,
+    clientRef,
+    httpClientRef,
+    isActiveManager,
+    isRemoteOriginActive,
+    state.connected,
+  ])
+
+  const secureSessionAvailability = useMemo<SecureSessionAvailability>(() => {
+    if (isRemoteOriginActive) {
+      return {
+        state: 'remote_origin',
+        reason: 'Secure Sessions are available only in the local Builder.',
+      }
+    }
+    if (!isSecureSessionRuntimeSupported(activeAgent) || secureRuntimeUnsupported) {
+      return { state: 'unsupported_runtime' }
+    }
+    if (secureCatalogUnavailable) {
+      return { state: 'source_unavailable' }
+    }
+    return { state: 'available' }
+  }, [
+    activeAgent,
+    isRemoteOriginActive,
+    secureCatalogUnavailable,
+    secureRuntimeUnsupported,
+  ])
+
+  const secureSecretOptions = useMemo(
+    () => toSecureSecretOptions(secureCatalog?.secrets ?? []),
+    [secureCatalog?.secrets],
+  )
+  const secureSessionSnapshotView = useMemo(
+    () => secureSessionSnapshot
+      ? toSecureSessionSnapshotView(secureSessionSnapshot)
+      : null,
+    [secureSessionSnapshot],
+  )
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager
@@ -711,6 +866,288 @@ export function BuilderSurface({
       ? transcript.clearPendingResponseForAgent
       : () => {},
   })
+
+  const applySecureMutationResult = useCallback((
+    client: ManagerWsClient,
+    snapshot: SecureSessionSnapshot,
+  ) => {
+    if (
+      clientRef.current !== client
+      || client.getState().targetAgentId !== snapshot.sessionAgentId
+    ) return
+    client.applySecureSessionSnapshot(snapshot)
+    setState((current) => current.lastError
+      ? { ...current, lastError: null }
+      : current)
+  }, [clientRef, setState])
+
+  const reportSecureMutationError = useCallback((
+    client: ManagerWsClient,
+    sessionAgentId: string,
+    error: unknown,
+  ) => {
+    if (
+      clientRef.current !== client
+      || client.getState().targetAgentId !== sessionAgentId
+    ) return
+    const message = secureSessionUiErrorMessage(error)
+    setState((current) => ({ ...current, lastError: message }))
+  }, [clientRef, setState])
+
+  const handleStartSecureSession = useCallback(async () => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return
+    try {
+      applySecureMutationResult(client, await startSecureSession(
+        apiClient,
+        activeAgentId,
+        secureSessionSnapshot?.revision,
+      ))
+    } catch (error) {
+      reportSecureMutationError(client, activeAgentId, error)
+    }
+  }, [
+    activeAgentId,
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+    secureSessionSnapshot?.revision,
+  ])
+
+  const handleGrantSecureSession = useCallback(async (grant: SecureGrantInput) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (
+      !apiClient
+      || !client
+      || !activeAgentId
+      || !secureSessionSnapshot
+      || isRemoteOriginActive
+    ) return
+    try {
+      applySecureMutationResult(client, await grantSecureSessionLease(
+        apiClient,
+        activeAgentId,
+        secureSessionSnapshot.revision,
+        grant,
+      ))
+    } catch (error) {
+      reportSecureMutationError(client, activeAgentId, error)
+    }
+  }, [
+    activeAgentId,
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+    secureSessionSnapshot,
+  ])
+
+  const handleRevokeSecureSession = useCallback(async (
+    leaseId?: string,
+    options?: { stopProcesses?: boolean },
+  ) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (
+      !apiClient
+      || !client
+      || !activeAgentId
+      || !secureSessionSnapshot
+      || isRemoteOriginActive
+    ) return
+    try {
+      const nextSnapshot = options?.stopProcesses
+        ? await stopSecureSession(apiClient, activeAgentId, secureSessionSnapshot.revision)
+        : leaseId
+          ? await revokeSecureSessionLease(
+              apiClient,
+              activeAgentId,
+              leaseId,
+              secureSessionSnapshot.revision,
+            )
+          : null
+      if (nextSnapshot) applySecureMutationResult(client, nextSnapshot)
+    } catch (error) {
+      reportSecureMutationError(client, activeAgentId, error)
+    }
+  }, [
+    activeAgentId,
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+    secureSessionSnapshot,
+  ])
+
+  const handleDenySecureRequest = useCallback(async (requestId: string) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (
+      !apiClient
+      || !client
+      || !activeAgentId
+      || !secureSessionSnapshot
+      || isRemoteOriginActive
+    ) return
+    try {
+      applySecureMutationResult(client, await denySecureAccessRequest(
+        apiClient,
+        activeAgentId,
+        requestId,
+        secureSessionSnapshot.revision,
+      ))
+    } catch (error) {
+      reportSecureMutationError(client, activeAgentId, error)
+    }
+  }, [
+    activeAgentId,
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+    secureSessionSnapshot,
+  ])
+
+  const handlePrivateSecureFulfillment = useCallback(async (
+    requestId: string,
+    value: string | Uint8Array,
+  ) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    const request = secureSessionSnapshot?.pendingRequests.find(
+      (candidate) => candidate.requestId === requestId,
+    )
+    if (
+      !apiClient
+      || !client
+      || !activeAgentId
+      || !secureSessionSnapshot
+      || !request
+      || isRemoteOriginActive
+    ) return
+    if (typeof value !== 'string') {
+      reportSecureMutationError(
+        client,
+        activeAgentId,
+        new SecureSessionUiError('SECURE_REQUEST_INVALID'),
+      )
+      return
+    }
+    try {
+      const nextSnapshot = await fulfillSecureAccessRequestPrivately(
+        apiClient,
+        activeAgentId,
+        request,
+        secureSessionSnapshot.revision,
+        value,
+      )
+      applySecureMutationResult(client, nextSnapshot)
+    } catch (error) {
+      reportSecureMutationError(client, activeAgentId, error)
+    }
+  }, [
+    activeAgentId,
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+    secureSessionSnapshot,
+  ])
+
+  const secureSessionPicker = useMemo<SecureSessionPickerConfig | undefined>(() => {
+    if (!isActiveManager) return undefined
+    return {
+      originId: activeOriginId,
+      availability: secureSessionAvailability,
+      snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
+      secrets: isRemoteOriginActive ? [] : secureSecretOptions,
+      ...(isRemoteOriginActive || !secureSessionSnapshotView
+        ? {}
+        : {
+            outputState: secureSessionSnapshotView.outputState ?? 'clear',
+            ...(secureSessionSnapshotView.outputState === 'quarantined'
+              ? {
+                  outputStateReason:
+                    'Potential protected material was withheld. The secure session was stopped.',
+                }
+              : {}),
+          }),
+      disabled:
+        !state.connected
+        || (!isRemoteOriginActive && (
+          secureCatalogLoading
+          || state.secureSessionSnapshotLoadingSessionId === activeAgentId
+        )),
+      ...(isRemoteOriginActive ? {} : { onStart: handleStartSecureSession }),
+      onGrant: handleGrantSecureSession,
+      onRevoke: handleRevokeSecureSession,
+    }
+  }, [
+    activeAgentId,
+    activeOriginId,
+    handleGrantSecureSession,
+    handleRevokeSecureSession,
+    handleStartSecureSession,
+    isActiveManager,
+    isRemoteOriginActive,
+    secureCatalogLoading,
+    secureSecretOptions,
+    secureSessionAvailability,
+    secureSessionSnapshotView,
+    state.connected,
+    state.secureSessionSnapshotLoadingSessionId,
+  ])
+
+  const secureSessionRequests = useMemo<SecureSessionRequestConfig | undefined>(() => {
+    if (!isActiveManager) return undefined
+    return {
+      originId: activeOriginId,
+      availability: secureSessionAvailability,
+      requests: isRemoteOriginActive
+        ? []
+        : secureSessionSnapshotView?.pendingRequests ?? [],
+      secrets: isRemoteOriginActive ? [] : secureSecretOptions,
+      ...(isRemoteOriginActive || !secureSessionSnapshotView
+        ? {}
+        : {
+            outputState: secureSessionSnapshotView.outputState ?? 'clear',
+            ...(secureSessionSnapshotView.outputState === 'quarantined'
+              ? {
+                  outputStateReason:
+                    'Potential protected material was withheld. The secure session was stopped.',
+                }
+              : {}),
+          }),
+      disabled: !state.connected || secureCatalogLoading,
+      onGrant: handleGrantSecureSession,
+      onDeny: handleDenySecureRequest,
+      onRevoke: handleRevokeSecureSession,
+      ...(!isRemoteOriginActive && isPrivateSecureFulfillmentAvailable()
+        ? { onPrivateFulfill: handlePrivateSecureFulfillment }
+        : {}),
+    }
+  }, [
+    activeOriginId,
+    handleDenySecureRequest,
+    handleGrantSecureSession,
+    handlePrivateSecureFulfillment,
+    handleRevokeSecureSession,
+    isActiveManager,
+    isRemoteOriginActive,
+    secureCatalogLoading,
+    secureSecretOptions,
+    secureSessionAvailability,
+    secureSessionSnapshotView,
+    state.connected,
+  ])
 
   const sessionModelPicker =
     isActiveManager && isSessionModelPickerEligible(activeAgent, activeAgentProfile)
@@ -1241,6 +1678,7 @@ export function BuilderSurface({
                   isLoadingOlder: state.conversationPageLoading,
                   historyCompleteness: state.conversationPage?.completeness ?? 'complete',
                   historyMutation: state.conversationHistoryMutation,
+                  secureSessionRequests,
                   onLoadOlder: () => {
                     if (state.conversationPage?.completeness === 'source_changed') {
                       return clientRef.current?.refreshConversationHistory()
@@ -1325,6 +1763,7 @@ export function BuilderSurface({
                   replyTarget,
                   onClearReplyTarget: () => setReplyTarget(null),
                   sessionModelPicker,
+                  secureSessionPicker,
                 }}
               />
             )}

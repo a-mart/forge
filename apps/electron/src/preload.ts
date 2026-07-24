@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { SleepBlockerSettingsPatch, SleepBlockerStatus } from './sleep-blocker.js'
 import { createTrustedBrowserBridge, createTrustedBrowserWorkspaceBridge } from './browser/trusted-browser-bridge.js'
 import type { ElectronWindowRole } from './browser/browser-bridge-contract.js'
+import {
+  SECURE_VAULT_RENDERER_CHANNEL,
+  type SecureVaultRendererResponse,
+} from './secure-vault-ipc.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -61,6 +65,12 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
         error?: string
       }> => ipcRenderer.invoke('install-cli'),
       verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
+      secureVault: {
+        status: (): Promise<SecureVaultRendererResponse> =>
+          ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'status' }),
+        encryptLocalValue: (value: string): Promise<SecureVaultRendererResponse> =>
+          ipcRenderer.invoke(SECURE_VAULT_RENDERER_CHANNEL, { operation: 'encrypt', value }),
+      },
       onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
         const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => callback(status)
         ipcRenderer.on('update-status', handler)

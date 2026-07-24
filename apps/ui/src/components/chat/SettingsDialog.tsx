@@ -9,6 +9,7 @@ import { SettingsGitMonitoring } from '@/components/settings/SettingsGitMonitori
 import { SettingsAppearance } from '@/components/settings/SettingsAppearance'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
+import { SettingsSecrets } from '@/components/settings/SettingsSecrets'
 import { SettingsModels } from '@/components/settings/SettingsModels'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
@@ -153,6 +154,7 @@ export function SettingsPanel({
       {activeTab === 'appearance' && <SettingsAppearance />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}
+      {activeTab === 'secrets' && target.kind === 'builder' && <SettingsSecrets apiClient={apiClient} />}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}
       {activeTab === 'skills' && (
         <SettingsSkills

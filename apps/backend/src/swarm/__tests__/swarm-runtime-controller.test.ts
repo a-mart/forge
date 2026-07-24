@@ -265,6 +265,64 @@ afterEach(() => {
 });
 
 describe("SwarmRuntimeController", () => {
+  it("guards Secure Session events before watchdogs, projection, and observability hooks", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      captureConversationEventFromRuntime,
+    } = createRuntimeControllerHarness(config);
+    const secret = "runtime-event-secret-canary";
+    const recordManagerTurnWatchdogEvent = vi.fn();
+    const beforeRuntimeEventProjection = vi.fn();
+    const afterRuntimeEventProjection = vi.fn();
+    host.recordManagerTurnWatchdogEvent = recordManagerTurnWatchdogEvent;
+    host.beforeRuntimeEventProjection = beforeRuntimeEventProjection;
+    host.afterRuntimeEventProjection = afterRuntimeEventProjection;
+    host.getSecureRuntimeBinding = () => ({
+      executeBash: vi.fn(async () => ({ exitCode: 0 })),
+      guardValue: <T>(value: T): T =>
+        JSON.parse(JSON.stringify(value).replaceAll(secret, "[guarded]")) as T,
+    });
+    const controller = new SwarmRuntimeController(host);
+    const worker = baseDescriptor({
+      agentId: "secure-worker",
+      role: "worker",
+      managerId: "manager",
+      status: "streaming",
+    });
+    descriptors.set(worker.agentId, worker);
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    const runtimeFactory = (controller as unknown as {
+      runtimeFactory: {
+        createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
+      };
+    }).runtimeFactory;
+    runtimeFactory.createRuntimeForDescriptor = vi.fn(async () => (
+      { descriptor: worker } as unknown as SwarmAgentRuntime
+    ));
+    await controller.createRuntimeForDescriptor(worker, "prompt", token);
+
+    await controller.handleRuntimeSessionEvent(token, worker.agentId, {
+      type: "tool_execution_end",
+      toolName: "bash",
+      toolCallId: "call-1",
+      result: { content: `output:${secret}` },
+      isError: false,
+    });
+
+    for (const sink of [
+      recordManagerTurnWatchdogEvent,
+      beforeRuntimeEventProjection,
+      afterRuntimeEventProjection,
+      captureConversationEventFromRuntime,
+    ]) {
+      expect(JSON.stringify(sink.mock.calls)).not.toContain(secret);
+      expect(JSON.stringify(sink.mock.calls)).toContain("[guarded]");
+    }
+  });
+
   it("tracks runtime tokens per agent and clears stale tokens without dropping the active token", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

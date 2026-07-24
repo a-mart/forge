@@ -88,6 +88,20 @@ describe("createSwarmRuntimeControllerHost", () => {
     expect(receiver).toBe(toolHost);
   });
 
+  it("binds the Secure Session runtime capability resolver to the tool host", () => {
+    let receiver: unknown;
+    const toolHost = createToolHost(() => undefined);
+    toolHost.getSecureRuntimeBinding = function () {
+      receiver = this;
+      return undefined;
+    };
+    const host = createAdapter({ toolHost });
+
+    host.getSecureRuntimeBinding?.({} as never);
+
+    expect(receiver).toBe(toolHost);
+  });
+
   it("resolves worker-health state and late-bound services only when read", () => {
     const workerHealthState = {
       workerWatchdogState: new Map(),

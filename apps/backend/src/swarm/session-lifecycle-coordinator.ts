@@ -80,6 +80,10 @@ export interface TerminalArchiveHooks {
   restoreProfileTerminals(profileId: string): Promise<unknown>;
 }
 
+export interface SecureSessionLifecyclePort {
+  stopForLifecycle(agentId: string, options?: { deleteState?: boolean }): Promise<void>;
+}
+
 export interface SessionLifecycleCoordinatorOptions {
   descriptors: ReadonlyMap<string, AgentDescriptor>;
   profiles: ReadonlyMap<string, ManagerProfile>;
@@ -121,6 +125,7 @@ export interface SessionLifecycleCoordinatorOptions {
     BrowserAutomationService,
     "cancelSession" | "archiveSession" | "restoreSession" | "deleteSession"
   >;
+  secureSessions: SecureSessionLifecyclePort;
   events: {
     emitAgentsSnapshot(): void;
     emitProfilesSnapshot(): void;
@@ -285,6 +290,7 @@ export class SessionLifecycleCoordinator {
 
   async archiveSession(agentId: string): Promise<ArchiveSessionResult> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
+    await this.options.secureSessions.stopForLifecycle(agentId);
     this.options.goals.cancelScheduledContinuation(agentId);
     this.options.browser.cancelSession(agentId);
     await this.options.capture.run(agentId, "archive");
@@ -314,6 +320,9 @@ export class SessionLifecycleCoordinator {
 
   async archiveProfile(profileId: string): Promise<ArchiveProfileResult> {
     const sessions = this.getSessionsForProfile(profileId);
+    for (const session of sessions) {
+      await this.options.secureSessions.stopForLifecycle(session.agentId);
+    }
     for (const session of sessions) {
       this.cleanupCodex(session.agentId);
       this.options.goals.cancelScheduledContinuation(session.agentId);
@@ -376,12 +385,15 @@ export class SessionLifecycleCoordinator {
   }
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
-    this.cleanupCodex(agentId);
     const requiredDescriptor = this.getRequiredBuilderSessionDescriptor(
       agentId,
       "delete Builder sessions",
     );
     const descriptor = cloneDescriptor(requiredDescriptor);
+    await this.options.secureSessions.stopForLifecycle(agentId, {
+      deleteState: true,
+    });
+    this.cleanupCodex(agentId);
     this.options.goals.cancelScheduledContinuation(agentId);
     this.options.browser.cancelSession(agentId);
     const result = await this.options.sessions.deleteSession(agentId);
@@ -458,14 +470,18 @@ export class SessionLifecycleCoordinator {
     return forked;
   }
 
-  stopAllAgents(
+  async stopAllAgents(
     callerAgentId: string,
     targetManagerId: string,
-  ): ReturnType<SwarmAgentLifecycleService["stopAllAgents"]> {
+  ): Promise<Awaited<ReturnType<SwarmAgentLifecycleService["stopAllAgents"]>>> {
+    await this.options.secureSessions.stopForLifecycle(targetManagerId);
     this.cleanupCodex(targetManagerId);
     this.options.goals.cancelScheduledContinuation(targetManagerId);
     this.options.browser.cancelSession(targetManagerId);
-    return this.options.lifecycle.stopAllAgents(callerAgentId, targetManagerId);
+    return await this.options.lifecycle.stopAllAgents(
+      callerAgentId,
+      targetManagerId,
+    );
   }
 
   async createManager(
@@ -497,6 +513,11 @@ export class SessionLifecycleCoordinator {
     }
 
     for (const session of sessions) {
+      await this.options.secureSessions.stopForLifecycle(session.agentId, {
+        deleteState: true,
+      });
+    }
+    for (const session of sessions) {
       this.cleanupCodex(session.agentId);
       this.options.goals.cancelScheduledContinuation(session.agentId);
       this.options.browser.cancelSession(session.agentId);
@@ -517,6 +538,7 @@ export class SessionLifecycleCoordinator {
   private async stopValidatedSession(
     agentId: string,
   ): Promise<{ terminatedWorkerIds: string[] }> {
+    await this.options.secureSessions.stopForLifecycle(agentId);
     this.cleanupCodex(agentId);
     this.options.goals.cancelScheduledContinuation(agentId);
     this.options.browser.cancelSession(agentId);

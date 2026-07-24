@@ -359,6 +359,55 @@ describe('handleConversationEvent plan snapshots', () => {
   })
 })
 
+describe('handleConversationEvent secure session snapshots', () => {
+  it('accepts only the active session and rejects stale revisions', () => {
+    const initial = {
+      ...createInitialManagerWsState('manager'),
+      secureSessionSnapshotLoadingSessionId: 'manager',
+    }
+    const live = runHandler(initial, {
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'profile-1',
+      revision: 3,
+      executionMode: 'secure',
+      environmentStatus: 'ready',
+      leases: [],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:03.000Z',
+    })
+
+    expect(live.secureSessionSnapshots.manager?.revision).toBe(3)
+    expect(live.secureSessionSnapshotLoadingSessionId).toBeNull()
+
+    const stale = runHandler(live, {
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'manager',
+      profileId: 'profile-1',
+      revision: 2,
+      executionMode: 'standard',
+      environmentStatus: 'stopped',
+      leases: [],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:02.000Z',
+    })
+    expect(stale.secureSessionSnapshots.manager?.revision).toBe(3)
+
+    const wrongSession = runHandler(stale, {
+      type: 'secure_session_snapshot',
+      sessionAgentId: 'other-manager',
+      profileId: 'profile-2',
+      revision: 9,
+      executionMode: 'secure',
+      environmentStatus: 'ready',
+      leases: [],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:09.000Z',
+    })
+    expect(wrongSession.secureSessionSnapshots['other-manager']).toBeUndefined()
+  })
+})
+
 describe('handleConversationEvent goal snapshots', () => {
   it('applies live goal state and ignores an older bootstrap revision', () => {
     const initial = createInitialManagerWsState('manager')

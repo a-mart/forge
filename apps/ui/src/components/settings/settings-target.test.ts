@@ -39,6 +39,7 @@ describe('createBuilderSettingsTarget', () => {
     expect(target.availableTabs).toContain('git-monitoring')
     expect(target.availableTabs).toContain('notifications')
     expect(target.availableTabs).toContain('auth')
+    expect(target.availableTabs).toContain('secrets')
     expect(target.availableTabs).toContain('models')
     expect(target.availableTabs).not.toContain('integrations')
     expect(target.availableTabs).toContain('skills')
@@ -70,6 +71,7 @@ describe('createCollabSettingsTarget', () => {
     expect(target.availableTabs).not.toContain('notifications')
     expect(target.availableTabs).not.toContain('git-monitoring')
     expect(target.availableTabs).not.toContain('observability')
+    expect(target.availableTabs).not.toContain('secrets')
   })
 
   it('includes admin-visible collab tabs', () => {

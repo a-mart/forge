@@ -176,6 +176,7 @@ import { RuntimeFactory } from "../runtime-factory.js";
 import { resetCursorSdkLoaderForTests, setCursorSdkImporterForTests } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
+import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-runtime-binding.js";
 
 function createConfig(rootDir: string): SwarmConfig {
   const dataDir = join(rootDir, "data");
@@ -272,6 +273,7 @@ function createFactory(
     hostOverrides?: Record<string, unknown>;
     forgeExtensionHost?: ForgeExtensionHost;
     getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
+    getSecureRuntimeBinding?: (descriptor: AgentDescriptor) => SecureRuntimeBinding | undefined;
     getCredentialPoolService?: () => any;
     getOpenAIAuthBrokerRuntimeService?: () => any;
     observability?: any;
@@ -324,6 +326,7 @@ function createFactory(
     logDebug: overrides.logDebug ?? (() => {}),
     getPiModelsJsonPath: () => projectionPath,
     getAgentDescriptor: overrides.getAgentDescriptor,
+    getSecureRuntimeBinding: overrides.getSecureRuntimeBinding,
     getCredentialPoolService: overrides.getCredentialPoolService,
     getOpenAIAuthBrokerRuntimeService: overrides.getOpenAIAuthBrokerRuntimeService,
     observability: overrides.observability,
@@ -652,6 +655,67 @@ describe("RuntimeFactory", () => {
     const signal = new AbortController().signal;
     await piSession.agent.transformContext(messages, signal);
     expect(existingTransform).toHaveBeenCalledWith(messages, signal);
+  });
+
+  it("replaces Pi native coding tools and file-backed extensions for Secure Sessions", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const piSession = createMockPiSession();
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: piSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const secureRuntimeBinding = {
+      executeBash: vi.fn(async () => ({ exitCode: 0 })),
+      guardValue: <T>(value: T) => value,
+      debugSerializationCanary: "binding-must-not-be-serialized",
+    } satisfies SecureRuntimeBinding & { debugSerializationCanary: string };
+    const logDebug = vi.fn();
+    const observability = {
+      recordPromptResolved: vi.fn(),
+      recordRuntimeCreated: vi.fn(),
+    };
+    const factory = createFactory(rootDir, {
+      getSecureRuntimeBinding: () => secureRuntimeBinding,
+      logDebug,
+      observability,
+    });
+
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir),
+      "system prompt",
+    );
+
+    const sessionOptions = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0] as {
+      noTools?: string;
+      tools?: string[];
+      customTools?: Array<{ name: string }>;
+    };
+    expect(sessionOptions.noTools).toBe("builtin");
+    expect(sessionOptions.tools).toEqual(
+      expect.arrayContaining(["bash", "read", "edit", "write", "grep", "find", "ls"]),
+    );
+    expect(sessionOptions.customTools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["bash", "read", "edit", "write", "grep", "find", "ls"]),
+    );
+
+    const loaderOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      noExtensions?: boolean;
+      additionalExtensionPaths?: string[];
+      extensionFactories?: unknown[];
+    };
+    expect(loaderOptions.noExtensions).toBe(true);
+    expect(loaderOptions.additionalExtensionPaths).toEqual([]);
+    expect(loaderOptions.extensionFactories).toEqual(expect.any(Array));
+    expect(piSession.setActiveToolsByName).toHaveBeenCalledWith(
+      expect.arrayContaining(["bash", "read", "edit", "write", "grep", "find", "ls"]),
+    );
+    expect(JSON.stringify(logDebug.mock.calls)).not.toContain(
+      secureRuntimeBinding.debugSerializationCanary,
+    );
+    expect(JSON.stringify(observability)).not.toContain(
+      secureRuntimeBinding.debugSerializationCanary,
+    );
   });
 
   it("records Pi runtime prompt and creation observability metadata", async () => {

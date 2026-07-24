@@ -1,0 +1,23 @@
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+LABEL com.forge.secure-execution.runner-contract="3"
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      bash \
+      build-essential \
+      ca-certificates \
+      curl \
+      git \
+      jq \
+      openssh-client \
+      postgresql-client \
+      python3 \
+      rsync \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable pnpm \
+    && corepack install --global pnpm@10.30.1 \
+    && for tool in bash cc curl git jq node npm pnpm psql python3 rsync script ssh; do \
+      command -v "$tool" >/dev/null || exit 1; \
+    done \
+    && test "$(pnpm --version)" = "10.30.1"

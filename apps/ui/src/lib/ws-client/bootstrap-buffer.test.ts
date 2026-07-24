@@ -121,6 +121,17 @@ describe('BootstrapBuffer', () => {
           usageCoverage: 'complete',
         },
       },
+      {
+        type: 'secure_session_snapshot',
+        sessionAgentId: 'session-b',
+        profileId: 'profile-1',
+        revision: 4,
+        executionMode: 'secure',
+        environmentStatus: 'ready',
+        leases: [],
+        pendingRequests: [],
+        updatedAt: new Date().toISOString(),
+      },
       { type: 'unread_counts_snapshot', counts: { 'session-c': 3 } },
     ]
 
@@ -135,6 +146,7 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].pendingChoiceIds?.has('choice-1')).toBe(true)
     expect(patches[0].planSnapshots?.['session-b']?.plan).toHaveLength(1)
     expect(patches[0].goalSnapshots?.['session-b']?.goal?.objective).toBe('Finish the feature')
+    expect(patches[0].secureSessionSnapshots?.['session-b']?.revision).toBe(4)
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 

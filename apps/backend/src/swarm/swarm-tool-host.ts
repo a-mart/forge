@@ -30,6 +30,13 @@ import type {
   KnowledgeEntryType,
   KnowledgeSearchResult,
 } from "./knowledge-service.js";
+import type {
+  RequestSecureSecretAccessToolInput,
+  SecureSessionAgentView,
+} from "./secure-sessions/secure-session-tools.js";
+import type {
+  GetSecureRuntimeBinding,
+} from "./secure-sessions/runtime/secure-runtime-binding.js";
 
 export interface SwarmToolSideEffectEvent {
   toolName: string;
@@ -140,6 +147,15 @@ export interface SwarmToolHost {
       evidence: "user-stated" | "observed";
     },
   ): Promise<KnowledgeEntry>;
+  getSecureSessionAgentView?(
+    callerAgentId: string,
+  ): SecureSessionAgentView | Promise<SecureSessionAgentView>;
+  requestSecureSecretAccess?(
+    callerAgentId: string,
+    toolCallId: string,
+    input: RequestSecureSecretAccessToolInput,
+  ): Promise<void>;
+  getSecureRuntimeBinding?: GetSecureRuntimeBinding;
   recordToolSideEffect?(callerAgentId: string, event: SwarmToolSideEffectEvent): void;
   listCodexMcpTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
   callCodexMcpTool?(

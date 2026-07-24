@@ -1,0 +1,101 @@
+import type { AgentDescriptor } from "../../types.js";
+
+export const SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE =
+  "Secure Sessions are not supported by this runtime provider.";
+export const SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE =
+  "The Secure Session runtime could not be prepared.";
+export const SECURE_RUNTIME_GUARD_FAILURE_MESSAGE =
+  "Secure Session output could not be safely processed.";
+
+export interface SecureRuntimeBashExecutionRequest {
+  /**
+   * The command still contains only model-visible text and opaque secret
+   * references. Resolution and material delivery remain binding-owned.
+   */
+  command: string;
+  cwd: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  /**
+   * Implementations must invoke this callback only with output that already
+   * passed their stateful stream guard. Pi persists and publishes bytes
+   * synchronously after this boundary.
+   */
+  onData(data: Uint8Array): void;
+}
+
+export interface SecureRuntimeBashExecutionResult {
+  exitCode: number | null;
+}
+
+/**
+ * Backend-process-only capability for a single Secure Session lease.
+ *
+ * Implementations must not expose raw secret material through this interface.
+ * guardValue must preserve the public shape of safe runtime values while
+ * replacing or quarantining secret-bearing content.
+ */
+export interface SecureRuntimeBinding {
+  executeBash(
+    request: SecureRuntimeBashExecutionRequest,
+  ): Promise<SecureRuntimeBashExecutionResult>;
+  guardValue<T>(value: T): T;
+}
+
+export type GetSecureRuntimeBinding = (
+  descriptor: AgentDescriptor,
+) =>
+  | SecureRuntimeBinding
+  | undefined
+  | Promise<SecureRuntimeBinding | undefined>;
+
+export function guardSecureRuntimeValue<T>(
+  binding: SecureRuntimeBinding,
+  value: T,
+): T {
+  try {
+    return binding.guardValue(value);
+  } catch {
+    throw new Error(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
+  }
+}
+
+export function guardSecureRuntimeError(
+  binding: SecureRuntimeBinding,
+  error: unknown,
+): Error {
+  const unsafeDetails =
+    error instanceof Error
+      ? {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        }
+      : {
+          name: "Error",
+          message: typeof error === "string" ? error : "Secure Session tool execution failed.",
+        };
+
+  try {
+    const guarded = binding.guardValue(unsafeDetails);
+    if (
+      guarded &&
+      typeof guarded === "object" &&
+      !Array.isArray(guarded) &&
+      typeof guarded.message === "string"
+    ) {
+      const safeError = new Error(guarded.message);
+      if (typeof guarded.name === "string" && guarded.name.trim().length > 0) {
+        safeError.name = guarded.name;
+      }
+      if (typeof guarded.stack === "string") {
+        safeError.stack = guarded.stack;
+      }
+      return safeError;
+    }
+  } catch {
+    // Fall through to a fixed, non-secret error.
+  }
+
+  return new Error(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
+}

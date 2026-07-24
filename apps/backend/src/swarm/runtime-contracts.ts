@@ -5,6 +5,7 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "./types.js";
+import type { SecureRuntimeBinding } from "./secure-sessions/runtime/secure-runtime-binding.js";
 
 export interface RuntimeImageAttachment {
   mimeType: string;
@@ -100,6 +101,11 @@ export interface RuntimeCreationOptions {
   startupRecoveryContext?: RuntimeStartupRecoveryContext;
   /** Invoked after startup recovery context is committed on the first accepted prompt dispatch. */
   onStartupRecoveryConsumed?: () => void | Promise<void>;
+  /**
+   * Backend-process-only capability resolved by RuntimeFactory. It must never
+   * be copied into runtime descriptors, protocol records, or session history.
+   */
+  secureRuntimeBinding?: SecureRuntimeBinding;
 }
 
 export type RuntimeSessionEvent =

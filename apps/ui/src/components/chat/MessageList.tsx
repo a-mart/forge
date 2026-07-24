@@ -24,6 +24,7 @@ import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
 import { CodexElicitationCard } from './message-list/CodexElicitationCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
 import { MissingChoiceDetailsFallback } from './message-list/MissingChoiceDetailsFallback'
+import { SecureSecretRequestCard } from './message-list/SecureSecretRequestCard'
 import {
   buildStoppableExternalThreadMessageIds,
   resolveConversationMessageTargetId,
@@ -37,6 +38,8 @@ import {
 } from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
 import { useOlderHistoryAutoLoad } from './message-list/useOlderHistoryAutoLoad'
+import { SecureOutputQuarantineNotice } from './secure-session/SecureOutputQuarantineNotice'
+import type { SecureSessionRequestConfig } from './secure-session/types'
 import type {
   ChoiceRequestDisplayEntry,
   ConversationLogEntry,
@@ -46,7 +49,7 @@ import type {
 
 export type { MessageListSurface } from './message-list/types'
 
-interface MessageListProps {
+export interface MessageListProps {
   messages: ConversationEntry[]
   /** Agent descriptors for actor label enrichment. Optional — raw ids used when absent. */
   agents?: AgentDescriptor[]
@@ -103,6 +106,8 @@ interface MessageListProps {
   historyCompleteness?: 'complete' | 'partial_scan' | 'source_changed'
   historyMutation?: ConversationHistoryMutation | null
   onLoadOlder?: () => unknown | Promise<unknown>
+  /** Live Secure Session requests and quarantined-output state; never persisted as transcript rows. */
+  secureSessionRequests?: SecureSessionRequestConfig
 }
 
 export interface MessageListHandle {
@@ -452,6 +457,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   historyCompleteness = 'complete',
   historyMutation = null,
   onLoadOlder,
+  secureSessionRequests,
 }, ref) {
   // useState (not useRef) for the scroll element so that the callback ref's
   // re-render lets the virtualizer pick up the real element via getScrollElement.
@@ -484,6 +490,13 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const rowCountRef = useRef(0)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
+  const pendingSecureRequests = useMemo(
+    () => secureSessionRequests?.requests.filter((request) => request.status === 'pending') ?? [],
+    [secureSessionRequests?.requests],
+  )
+  const hasSecureSessionAttention =
+    pendingSecureRequests.length > 0
+    || secureSessionRequests?.outputState === 'quarantined'
   const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
   const latestPlanSummary = [...displayEntries].reverse().find((entry) => entry.type === 'plan_summary')
   const hasCurrentPlanAnchor = latestPlanSummary?.type === 'plan_summary' && (
@@ -1033,7 +1046,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     captureViewportAnchor()
   }, [activeAgentId, captureViewportAnchor, displayEntries, historyMutation, isLoading, scrollEl])
 
-  if (displayEntries.length === 0 && !isLoading && !showPlanCard && !hasMissingPendingChoices && !hasOlder) {
+  if (
+    displayEntries.length === 0
+    && !isLoading
+    && !showPlanCard
+    && !hasMissingPendingChoices
+    && !hasOlder
+    && !hasSecureSessionAttention
+  ) {
     return (
       <EmptyState
         activeAgentId={activeAgentId}
@@ -1289,6 +1309,36 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       className="relative min-h-0 flex flex-1 flex-col overflow-hidden"
       data-chat-transcript-surface=""
     >
+      {hasSecureSessionAttention && secureSessionRequests ? (
+        <section
+          className="max-h-[45%] shrink-0 space-y-2 overflow-y-auto border-b border-border/60 p-2 md:p-3"
+          aria-label="Secure Session attention"
+          data-testid="secure-session-attention"
+        >
+          {secureSessionRequests.outputState === 'quarantined' ? (
+            <SecureOutputQuarantineNotice
+              reason={secureSessionRequests.outputStateReason}
+              onStopProcessesAndRevoke={
+                secureSessionRequests.onRevoke
+                  ? () => secureSessionRequests.onRevoke?.(undefined, { stopProcesses: true })
+                  : undefined
+              }
+            />
+          ) : null}
+          {pendingSecureRequests.map((request) => (
+            <SecureSecretRequestCard
+              key={request.requestId}
+              request={request}
+              availability={secureSessionRequests.availability}
+              secrets={secureSessionRequests.secrets}
+              disabled={secureSessionRequests.disabled}
+              onGrant={secureSessionRequests.onGrant}
+              onDeny={secureSessionRequests.onDeny}
+              onPrivateFulfill={secureSessionRequests.onPrivateFulfill}
+            />
+          ))}
+        </section>
+      ) : null}
       {codexElicitations.length ? <div className="shrink-0 space-y-2 overflow-auto p-2 md:p-3">{codexElicitations.map((request) => <CodexElicitationCard key={request.elicitationId} request={request} onRespond={(decision, values, persistScope) => onCodexElicitationResponse?.(request.agentId, request.elicitationId, decision, values, persistScope)} />)}</div> : null}
       <div
         ref={(el) => {

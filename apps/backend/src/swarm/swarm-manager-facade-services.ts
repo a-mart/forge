@@ -15,6 +15,7 @@ import type { RestartRecoveryCoordinator } from "./restart-recovery-coordinator.
 import type { SessionInteractionCoordinator } from "./session-interaction-coordinator.js";
 import type { SessionLifecycleCoordinator } from "./session-lifecycle-coordinator.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
+import type { SecureSessionsService } from "./secure-sessions/secure-sessions-service.js";
 import type { SessionActiveToolsState } from "./session-active-tools.js";
 import type { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import type { SwarmBootCoordinator } from "./swarm-boot-coordinator.js";
@@ -94,6 +95,7 @@ export interface SwarmManagerSessionFacadeServices {
 }
 
 export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeServices {
+  secureSessions: SecureSessionsService;
   boot: Pick<SwarmBootCoordinator, "boot">;
   recovery: Pick<RestartRecoveryCoordinator, "dismiss" | "getSnapshot" | "resume">;
   configuration: SwarmConfigurationCoordinator;

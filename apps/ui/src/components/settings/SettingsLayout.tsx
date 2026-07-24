@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bell, Settings, KeyRound, Wrench, FileText, Terminal, TerminalSquare, Puzzle, UserCog, Info, Cpu, Users, FolderGit2, Palette, GitBranch } from 'lucide-react'
+import { Activity, ArrowLeft, Bell, Settings, KeyRound, Wrench, FileText, Terminal, TerminalSquare, Puzzle, UserCog, Info, Cpu, Users, FolderGit2, Palette, GitBranch, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
@@ -20,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette className="size-4" /> },
   { id: 'notifications', label: 'Notifications', icon: <Bell className="size-4" /> },
   { id: 'auth', label: 'Authentication', icon: <KeyRound className="size-4" /> },
+  { id: 'secrets', label: 'Secrets', icon: <ShieldCheck className="size-4" /> },
   { id: 'models', label: 'Models', icon: <Cpu className="size-4" /> },
   { id: 'skills', label: 'Skills', icon: <Wrench className="size-4" /> },
   { id: 'prompts', label: 'Prompts', icon: <FileText className="size-4" /> },

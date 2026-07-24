@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, shell } from 'electron'
 import { fork, type ChildProcess } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -21,15 +21,24 @@ import { installBrowserWorkspaceIpc } from './browser/browser-workspace-ipc.js'
 import { isDockManagedBrowserShortcut, isManagedBrowserPopoutAvailable } from './browser/managed-browser-platform.js'
 import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
 import { LifecycleLog } from './lifecycle-log.js'
+import { installSecureVaultChildBridge, installSecureVaultRendererIpc } from './secure-vault-ipc.js'
+import { applyElectronStartupOverrides } from './startup-overrides.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
 
-const ELECTRON_DEV_SERVER_URL = 'http://127.0.0.1:47188'
+const electronStartupOverrides = applyElectronStartupOverrides({
+  app,
+  env: process.env,
+})
+const electronDevServerUrl = electronStartupOverrides.devServerUrl
 const DEFAULT_BACKEND_PORT = 47287
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
-const BACKEND_SHUTDOWN_TIMEOUT_MS = 5_000
+// Secure Session teardown includes confirmed Docker removal. Give the backend
+// enough time to complete its bounded cleanup contract before escalating to a
+// process-tree kill.
+const BACKEND_SHUTDOWN_TIMEOUT_MS = 30_000
 const BACKEND_RESTART_DELAY_MS = 1_000
 const BACKEND_LOG_TAIL_LINES = 40
 const BACKEND_LOG_FILENAME = 'backend.log'
@@ -242,6 +251,11 @@ class BackendSupervisor {
       const child = fork(backendEntry, [], forkOptions)
 
       this.child = child
+      installSecureVaultChildBridge({
+        child,
+        safeStorage,
+        platform: process.platform,
+      })
       lifecycleLog.record('backend_spawned', { isRestart, pid: child.pid ?? null })
       this.attachOutputCapture(child)
 
@@ -596,6 +610,13 @@ if (!hasSingleInstanceLock) {
     return verifyCliInstall()
   })
 
+  installSecureVaultRendererIpc({
+    ipcMain,
+    safeStorage,
+    platform: process.platform,
+    isTrustedSender: isTrustedMainRenderer,
+  })
+
   app.whenReady().then(async () => {
     lifecycleLog.record('electron_started', {
       isPackaged: app.isPackaged,
@@ -792,10 +813,7 @@ function createMainWindow(): BrowserWindow {
       return
     }
 
-    const appOrigins = ['http://127.0.0.1', 'http://localhost']
-
-    const isAppOrigin = appOrigins.some((origin) => url.startsWith(origin)) || url.startsWith(`${APP_PROTOCOL_SCHEME}://`)
-    if (!isAppOrigin) {
+    if (!isTrustedRendererUrl(url)) {
       event.preventDefault()
       void shell.openExternal(url)
     }
@@ -1194,8 +1212,42 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
 }
 
 function resolveRendererUrl(skillImportUrl?: string): string {
-  const baseUrl = app.isPackaged ? resolvePackagedRendererUrl() : ELECTRON_DEV_SERVER_URL
+  const baseUrl = app.isPackaged ? resolvePackagedRendererUrl() : electronDevServerUrl
   return skillImportUrl ? buildSkillImportRouteUrl(baseUrl, skillImportUrl) : baseUrl
+}
+
+function isTrustedRendererUrl(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+
+  if (app.isPackaged) {
+    return url.protocol === `${APP_PROTOCOL_SCHEME}:` && url.hostname === APP_PROTOCOL_HOST
+  }
+
+  return url.origin === new URL(electronDevServerUrl).origin
+}
+
+function isTrustedMainRenderer(event: unknown): boolean {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    typeof event !== 'object' ||
+    event === null ||
+    !('sender' in event)
+  ) {
+    return false
+  }
+
+  const sender = (event as { sender?: unknown }).sender
+  if (sender !== mainWindow.webContents || mainWindow.webContents.isDestroyed()) {
+    return false
+  }
+
+  return isTrustedRendererUrl(mainWindow.webContents.getURL())
 }
 
 function buildBackendBootstrap(port: number): BackendBootstrap {

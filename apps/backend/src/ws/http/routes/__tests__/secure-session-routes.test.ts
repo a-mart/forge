@@ -1,0 +1,238 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { SecureSessionSnapshot } from "@forge/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { HttpRoute } from "../../shared/http-route.js";
+import {
+  createSecureSessionRoutes,
+  type SecureSessionsTransportService,
+} from "../secure-session-routes.js";
+
+const activeServers: Array<{ close: () => Promise<void> }> = [];
+
+afterEach(async () => {
+  await Promise.all(activeServers.splice(0).map((server) => server.close()));
+});
+
+const snapshot: SecureSessionSnapshot = {
+  sessionAgentId: "manager-1",
+  profileId: "profile-1",
+  revision: 4,
+  executionMode: "secure",
+  environmentStatus: "ready",
+  leases: [],
+  pendingRequests: [],
+  updatedAt: "2026-07-23T00:00:00.000Z",
+};
+
+function fakeService(): SecureSessionsTransportService {
+  return {
+    getSecureSessionSnapshot: vi.fn(() => snapshot),
+    startSecureSession: vi.fn(async () => snapshot),
+    stopSecureSession: vi.fn(async () => snapshot),
+    grantSecureSessionLease: vi.fn(async () => snapshot),
+    revokeSecureSessionLease: vi.fn(async () => snapshot),
+    resolveSecureAccessRequest: vi.fn(async () => snapshot),
+    fulfillSecureAccessRequest: vi.fn(async () => snapshot),
+  };
+}
+
+describe("secure session routes", () => {
+  it("gets, starts, and explicitly stops a secure session", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+
+    const current = await fetch(`${server.baseUrl}/api/secure-sessions/manager-1`);
+    const started = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/start`,
+      { baseRevision: 3 },
+    );
+    const stopped = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/stop`,
+      { baseRevision: 4, stopProcesses: true },
+    );
+
+    expect(current.status).toBe(200);
+    expect(started.status).toBe(200);
+    expect(stopped.status).toBe(200);
+    expect(await current.json()).toEqual(snapshot);
+    expect(service.getSecureSessionSnapshot).toHaveBeenCalledWith("manager-1");
+    expect(service.startSecureSession).toHaveBeenCalledWith("manager-1", {
+      baseRevision: 3,
+    });
+    expect(service.stopSecureSession).toHaveBeenCalledWith("manager-1", {
+      baseRevision: 4,
+      stopProcesses: true,
+    });
+    for (const response of [current, started, stopped]) {
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+  });
+
+  it("forwards strict lease, revoke, and access-resolution contracts", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const exposure = { deliveryKind: "environment", targetName: "TOKEN" } as const;
+
+    const granted = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/leases`,
+      {
+        baseRevision: 4,
+        secretId: "secret-1",
+        exposures: [exposure],
+        leaseKind: "timed",
+        durationSeconds: 600,
+      },
+    );
+    const revoked = await fetch(
+      `${server.baseUrl}/api/secure-sessions/manager-1/leases/lease-1`,
+      {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ baseRevision: 5 }),
+      },
+    );
+    const resolved = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/resolve`,
+      { baseRevision: 6, decision: "approve" },
+    );
+
+    expect(granted.status).toBe(200);
+    expect(revoked.status).toBe(200);
+    expect(resolved.status).toBe(200);
+    expect(service.grantSecureSessionLease).toHaveBeenCalledWith("manager-1", {
+      baseRevision: 4,
+      secretId: "secret-1",
+      exposures: [exposure],
+      leaseKind: "timed",
+      durationSeconds: 600,
+    });
+    expect(service.revokeSecureSessionLease).toHaveBeenCalledWith("manager-1", {
+      baseRevision: 5,
+      leaseId: "lease-1",
+    });
+    expect(service.resolveSecureAccessRequest).toHaveBeenCalledWith(
+      "manager-1",
+      "request-1",
+      { baseRevision: 6, requestId: "request-1", decision: "approve" },
+    );
+  });
+
+  it("fulfills an access request with ciphertext and never serializes it back", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const encryptedMaterial = Buffer.from("ciphertext-material").toString("base64");
+    const response = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/fulfill`,
+      {
+        baseRevision: 6,
+        displayAlias: "ONE_OFF_PASSWORD",
+        encryptedMaterial,
+        leaseKind: "one_use",
+        exposures: [{ deliveryKind: "stdin" }],
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(service.fulfillSecureAccessRequest).toHaveBeenCalledWith(
+      "manager-1",
+      "request-1",
+      {
+        baseRevision: 6,
+        displayAlias: "ONE_OFF_PASSWORD",
+        encryptedMaterial,
+        leaseKind: "one_use",
+        exposures: [{ deliveryKind: "stdin" }],
+      },
+    );
+    expect(JSON.stringify(await response.json())).not.toContain(encryptedMaterial);
+  });
+
+  it("rejects unsafe or stale mutations with fixed codes and no raw failures", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const canary = "PLAINTEXT-OR-PROVIDER-CANARY";
+
+    const unsafe = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/fulfill`,
+      {
+        baseRevision: 6,
+        displayAlias: "PASSWORD",
+        material: canary,
+        leaseKind: "one_use",
+        exposures: [{ deliveryKind: "stdin" }],
+      },
+    );
+    const unsafeStop = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/stop`,
+      { baseRevision: 6, stopProcesses: false },
+    );
+
+    vi.mocked(service.grantSecureSessionLease).mockRejectedValue(
+      Object.assign(new Error(canary), {
+        code: "secure_session_revision_conflict",
+      }),
+    );
+    const stale = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/leases`,
+      {
+        baseRevision: 1,
+        secretId: "secret-1",
+        exposures: [{ deliveryKind: "stdin" }],
+        leaseKind: "task",
+      },
+    );
+
+    expect(unsafe.status).toBe(400);
+    expect(unsafeStop.status).toBe(400);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      code: "SECURE_STALE_REVISION",
+      error: "SECURE_STALE_REVISION",
+    });
+    expect(await unsafe.text()).not.toContain(canary);
+    expect(stale.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+async function postJson(url: string, body: unknown): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function createRouteServer(
+  routes: HttpRoute[],
+): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  const httpServer = createServer(
+    (request: IncomingMessage, response: ServerResponse) => {
+      const requestUrl = new URL(request.url ?? "/", "http://localhost");
+      const route = routes.find((candidate) =>
+        candidate.matches(requestUrl.pathname)
+      );
+      if (!route) {
+        response.statusCode = 404;
+        response.end();
+        return;
+      }
+      void route.handle(request, response, requestUrl);
+    },
+  );
+  await new Promise<void>((resolve) =>
+    httpServer.listen(0, "127.0.0.1", resolve)
+  );
+  const address = httpServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Missing test server address");
+  }
+  const result = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        httpServer.close((error) => error ? reject(error) : resolve())
+      ),
+  };
+  activeServers.push(result);
+  return result;
+}

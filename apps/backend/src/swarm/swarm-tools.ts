@@ -16,6 +16,7 @@ import {
 import { buildUpdatePlanTool } from "./planning/update-plan-tool.js";
 import { buildUpdateWorkGraphTool } from "./planning/update-work-graph-tool.js";
 import { buildGoalTools } from "./goals/goal-tools.js";
+import { buildSecureSessionTools } from "./secure-sessions/secure-session-tools.js";
 import {
   resolveManagerDelegation,
   translateManagerDelegationError,
@@ -137,6 +138,7 @@ function compactPath(value: string): string {
 }
 
 export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
+  const secureSessionTools = buildSecureSessionTools(host, descriptor);
   const shared: ToolDefinition[] = [
     {
       name: "list_agents",
@@ -437,7 +439,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
     const workerBaseTools = shared.filter((tool) => tool.name === "knowledge");
 
-    return [...workerBaseTools, ...codexPluginTools];
+    return [...workerBaseTools, ...secureSessionTools, ...codexPluginTools];
   }
 
   const managerOnly: ToolDefinition[] = [
@@ -863,5 +865,5 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
     },
   ];
 
-  return [...shared, ...managerOnly];
+  return [...shared, ...secureSessionTools, ...managerOnly];
 }

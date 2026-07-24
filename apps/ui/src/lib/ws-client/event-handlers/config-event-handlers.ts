@@ -27,6 +27,15 @@ export function handleConfigEvent(
       context.updateState({ modelConfigChangeKey: context.state.modelConfigChangeKey + 1 })
       return true
 
+    case 'secure_secret_catalog_changed':
+      if (
+        context.state.secureSecretCatalogRevision === null
+        || event.revision > context.state.secureSecretCatalogRevision
+      ) {
+        context.updateState({ secureSecretCatalogRevision: event.revision })
+      }
+      return true
+
     case 'remote_update_awareness_project_changed':
       context.updateState({ remoteUpdateAwarenessSnapshot: event.snapshot })
       return true

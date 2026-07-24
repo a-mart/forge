@@ -22,3 +22,23 @@ describe('remote update awareness WS state', () => {
     expect(state.remoteUpdateAwarenessSnapshot).toBeNull()
   })
 })
+
+describe('secure secret catalog invalidation', () => {
+  it('keeps the newest catalog revision', () => {
+    let state = createInitialManagerWsState('agent-1')
+    const updateState = (patch: Partial<typeof state>) => { state = { ...state, ...patch } }
+    const context = { state, updateState, requestTracker: {} as never }
+
+    handleConfigEvent(
+      { type: 'secure_secret_catalog_changed', revision: 4 },
+      context,
+    )
+    expect(state.secureSecretCatalogRevision).toBe(4)
+
+    handleConfigEvent(
+      { type: 'secure_secret_catalog_changed', revision: 3 },
+      { ...context, state },
+    )
+    expect(state.secureSecretCatalogRevision).toBe(4)
+  })
+})

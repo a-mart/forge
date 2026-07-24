@@ -133,7 +133,10 @@ import {
   createInitialManagerWsState,
   type ManagerWsState,
 } from './ws-state'
-import { handleConversationEvent } from './ws-client/event-handlers/conversation-event-handlers'
+import {
+  applySecureSessionSnapshot as reduceSecureSessionSnapshot,
+  handleConversationEvent,
+} from './ws-client/event-handlers/conversation-event-handlers'
 import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-handlers'
 import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
 import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
@@ -162,6 +165,7 @@ import type {
   ManagerModelPreset,
   ManagerReasoningLevel,
   ServerEvent,
+  SecureSessionSnapshot,
   SessionMemoryMergeResult,
 } from '@forge/protocol'
 
@@ -275,6 +279,13 @@ export class ManagerWsClient {
         pendingObservations: this.state.pendingModelCacheObservations,
       }),
     )
+  }
+
+  applySecureSessionSnapshot(snapshot: SecureSessionSnapshot): void {
+    reduceSecureSessionSnapshot(snapshot, {
+      state: this.state,
+      updateState: (patch) => this.updateState(patch),
+    })
   }
 
   markUnread(agentId: string): void {
@@ -575,6 +586,7 @@ export class ManagerWsClient {
       codexElicitations: [],
       planSnapshotLoadingSessionId: trimmed,
       goalSnapshotLoadingSessionId: trimmed,
+      secureSessionSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
       lastError: null,
       unreadCounts: nextUnread,
@@ -1191,6 +1203,7 @@ export class ManagerWsClient {
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
       codexElicitations: [],
+      secureSessionSnapshotLoadingSessionId: agentId,
       lastError: null,
     })
     this.bootstrapBuffer.begin(agentId)
@@ -1230,6 +1243,9 @@ export class ManagerWsClient {
       // restarted backend may legitimately reload local preference authority
       // at R0, so an old R5 watermark must not suppress its new R1..R5 events.
       builderSidebarOrderRevision: null,
+      secureSecretCatalogRevision: null,
+      secureSessionSnapshots: {},
+      secureSessionSnapshotLoadingSessionId: this.desiredAgentId,
       hasReceivedAgentsSnapshot: false,
       hasReceivedProfilesSnapshot: false,
       remoteUpdateAwarenessSnapshot: null,

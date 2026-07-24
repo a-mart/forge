@@ -114,6 +114,7 @@ function createService(options: {
   profileDefaultModel?: AgentDescriptor["model"];
   profiles?: Map<string, ManagerProfile>;
   applyManagerRuntimeRecyclePolicy?: ReturnType<typeof vi.fn>;
+  stopSecureSessionForLifecycle?: ReturnType<typeof vi.fn>;
   saveStore?: ReturnType<typeof vi.fn>;
   transactionDescriptors?: (callback: any) => Promise<any>;
   emitAgentsSnapshot?: ReturnType<typeof vi.fn>;
@@ -136,6 +137,8 @@ function createService(options: {
     resolveAndValidateCwd: async (cwd) => cwd,
     assertCanChangeManagerCwd: () => {},
     applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy ?? vi.fn(async () => "none"),
+    stopSecureSessionForLifecycle:
+      options.stopSecureSessionForLifecycle ?? vi.fn(async () => undefined),
     now: options.now,
     transactionDescriptors: options.transactionDescriptors,
     saveStore: options.saveStore ?? vi.fn(async () => {}),
@@ -167,6 +170,33 @@ function createOpenAICodexOAuthSecretsEnvService(): any {
 }
 
 describe("SwarmSettingsService.updateManagerModel", () => {
+  it("blocks model mutation before continuity persistence when secure teardown fails", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager");
+    const originalModel = { ...session.model };
+    const saveStore = vi.fn(async () => undefined);
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const stopSecureSessionForLifecycle = vi.fn(async () => {
+      throw new Error("secure teardown failed");
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      saveStore,
+      applyManagerRuntimeRecyclePolicy,
+      stopSecureSessionForLifecycle,
+    });
+
+    await expect(
+      service.updateManagerModel("manager", "pi-5.4", "high"),
+    ).rejects.toThrow("secure teardown failed");
+
+    expect(stopSecureSessionForLifecycle).toHaveBeenCalledWith("manager");
+    expect(session.model).toEqual(originalModel);
+    expect(saveStore).not.toHaveBeenCalled();
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
   it("allows exact model selection with pooled-only OpenAI Codex OAuth availability", async () => {
     const root = await createTempRoot();
     const session = createSession(root, "manager");
@@ -936,6 +966,36 @@ describe("SwarmSettingsService.updateOpenAIAuthBrokerSettings", () => {
 });
 
 describe("SwarmSettingsService.updateManagerCwd", () => {
+  it("blocks cwd mutation before the descriptor transaction when secure teardown fails", async () => {
+    const root = await createTempRoot();
+    const nextCwd = join(root, "workspace");
+    const firstSession = createSession(root, "manager");
+    const secondSession = createSession(root, "manager--s2");
+    const transactionDescriptors = vi.fn(async () => undefined);
+    const stopSecureSessionForLifecycle = vi.fn(async (agentId: string) => {
+      if (agentId === secondSession.agentId) {
+        throw new Error("secure teardown failed");
+      }
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      transactionDescriptors,
+      stopSecureSessionForLifecycle,
+    });
+
+    await expect(service.updateManagerCwd("manager", nextCwd)).rejects.toThrow(
+      "secure teardown failed",
+    );
+    expect(stopSecureSessionForLifecycle.mock.calls).toEqual([
+      ["manager"],
+      ["manager--s2"],
+    ]);
+    expect(transactionDescriptors).not.toHaveBeenCalled();
+    expect(firstSession.cwd).toBe(root);
+    expect(secondSession.cwd).toBe(root);
+  });
+
   it("patches all profile sessions in one transaction and recycles only after save", async () => {
     const root = await createTempRoot();
     const nextCwd = join(root, "workspace");

@@ -115,6 +115,9 @@ export interface SwarmConfigurationCoordinatorOptions {
   skillMetadataService: SkillMetadataService;
   skillFileService: SkillFileService;
   secretsEnvService: SecretsEnvService;
+  secureSessions: {
+    stopForLifecycle(agentId: string): Promise<void>;
+  };
   sessions: SwarmConfigurationSessionIndex;
   access: SwarmConfigurationAccessPolicy;
   persistence: SwarmConfigurationPersistence;
@@ -163,6 +166,8 @@ export class SwarmConfigurationCoordinator {
       skillMetadataService: options.skillMetadataService,
       skillFileService: options.skillFileService,
       secretsEnvService: options.secretsEnvService,
+      stopSecureSessionForLifecycle: (agentId) =>
+        options.secureSessions.stopForLifecycle(agentId),
       getSessionsForProfile: options.sessions.getSessionsForProfile,
       getAllManagerSessions: options.sessions.getAllManagerSessions,
       getSessionById: options.sessions.getSessionById,

@@ -137,6 +137,9 @@ async function setup(input?: {
     skillMetadataService,
     skillFileService: new SkillFileService(),
     secretsEnvService,
+    secureSessions: {
+      stopForLifecycle: late,
+    },
     sessions: {
       getSessionsForProfile: sessionsForProfile,
       getAllManagerSessions: () => Array.from(profiles.keys()).flatMap(sessionsForProfile),

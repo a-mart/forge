@@ -10,9 +10,11 @@ import type {
 import type { RefObject } from 'react'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
+import type { SecureSessionPickerConfig } from '../secure-session/types'
 import type { ProjectAgentSuggestion } from './mention-types'
 
 export type { ProjectAgentSuggestion } from './mention-types'
+export type { SecureSessionPickerConfig } from '../secure-session/types'
 
 export interface MessageInputSendOptions {
   replyTo?: ConversationReplyTargetInput
@@ -57,6 +59,8 @@ export interface MessageInputProps {
   onClearReplyTarget?: () => void
   /** Builder manager sessions only: compact access to the existing session model override flow. */
   sessionModelPicker?: SessionModelPickerConfig
+  /** Builder-local Secure Session controls. Transport and secret values stay outside the composer. */
+  secureSessionPicker?: SecureSessionPickerConfig
 }
 
 export interface MessageInputHandle {

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
+import { loadConfiguredSqliteDatabaseConstructor } from "../sqlite-database-loader.js";
 import { backendSidebarPerfMetricManifest } from "../stats/sidebar-perf-metrics.js";
 import { createSidebarPerfRegistry } from "../stats/sidebar-perf-registry.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
@@ -22,6 +23,11 @@ import {
 import { FileBackedPromptRegistry, type PromptRegistry } from "./prompt-registry.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
+import { DockerSecureExecutionBackend } from "./secure-sessions/execution/docker-secure-execution-backend.js";
+import { BitwardenBwsSecretSource, BwsCommandClient } from "./secure-sessions/sources/bitwarden-bws-source.js";
+import { ElectronSafeStorageClient } from "./secure-sessions/sources/electron-safe-storage-client.js";
+import { LocalEncryptedSecretSource } from "./secure-sessions/sources/local-encrypted-source.js";
+import { SecureSessionStore } from "./secure-sessions/storage/secure-session-store.js";
 import {
   SessionPinCoordinator,
   type SessionPinCoordinatorHost,
@@ -29,7 +35,17 @@ import {
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
+import { getSecureSessionsDbPath } from "./storage/data-paths.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig, SwarmModelPreset } from "./types.js";
+
+export interface SecureSessionsFoundation {
+  storeFactory: () => Promise<SecureSessionStore>;
+  cipher: ElectronSafeStorageClient;
+  localSource: LocalEncryptedSecretSource;
+  bitwardenSource: BitwardenBwsSecretSource;
+  probeBitwarden: () => Promise<boolean>;
+  execution: DockerSecureExecutionBackend;
+}
 
 /**
  * Constructor dependencies that are intentionally replaceable in tests or by
@@ -73,6 +89,7 @@ export interface SwarmManagerFoundation {
   skillMetadataService: SkillMetadataService;
   skillFileService: SkillFileService;
   secretsEnvService: SecretsEnvService;
+  secureSessions: SecureSessionsFoundation;
   observabilityCoordinator: SwarmObservabilityCoordinator;
 }
 
@@ -169,6 +186,27 @@ export function createSwarmManagerFoundation(
     ensureSkillMetadataLoaded: () => skillMetadataService.ensureSkillMetadataLoaded(),
     getSkillMetadata: () => skillMetadataService.getSkillMetadata(),
   });
+  const secureVaultCipher = new ElectronSafeStorageClient();
+  const bitwardenClient = new BwsCommandClient();
+  const secureSessions: SecureSessionsFoundation = {
+    storeFactory: () =>
+      SecureSessionStore.open(
+        {
+          dbPath: getSecureSessionsDbPath(config.paths.dataDir),
+          loadDatabaseModule:
+            config.remoteUpdateAwarenessModules?.loadDatabaseModule ??
+            loadConfiguredSqliteDatabaseConstructor,
+        },
+        () => new Date(options.now()),
+      ),
+    cipher: secureVaultCipher,
+    localSource: new LocalEncryptedSecretSource(secureVaultCipher),
+    bitwardenSource: new BitwardenBwsSecretSource(secureVaultCipher, bitwardenClient),
+    probeBitwarden: () => bitwardenClient.probe(),
+    execution: new DockerSecureExecutionBackend({
+      scope: config.paths.dataDir,
+    }),
+  };
   const observabilityCoordinator = new SwarmObservabilityCoordinator({
     service: overrides.observability,
     descriptors: options.descriptors,
@@ -192,6 +230,7 @@ export function createSwarmManagerFoundation(
     skillMetadataService,
     skillFileService,
     secretsEnvService,
+    secureSessions,
     observabilityCoordinator,
   };
 }

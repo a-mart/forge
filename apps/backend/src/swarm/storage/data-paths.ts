@@ -407,6 +407,10 @@ export function getRemoteUpdateAwarenessDbPath(dataDir: string): string {
   return join(getSharedStateDir(dataDir), "remote-update-awareness.db");
 }
 
+export function getSecureSessionsDbPath(dataDir: string): string {
+  return join(getSharedStateDir(dataDir), "secure-sessions.db");
+}
+
 export function getCollaborationAuthSecretPath(dataDir: string): string {
   return join(getSharedCollaborationConfigDir(dataDir), "auth-secret.key");
 }

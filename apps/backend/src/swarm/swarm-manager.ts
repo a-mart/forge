@@ -29,7 +29,10 @@ import {
   type DescriptorStoreAdapter,
 } from "./agents/descriptor-store/live-map-adapter.js";
 import { AgentDirectory } from "./agent-directory.js";
-import { createSwarmManagerFoundation } from "./swarm-manager-foundation.js";
+import {
+  createSwarmManagerFoundation,
+  type SecureSessionsFoundation,
+} from "./swarm-manager-foundation.js";
 import { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import { createSwarmManagerSessionComposition } from "./swarm-manager-session-composition.js";
 import { createSwarmManagerRuntimeComposition } from "./swarm-manager-runtime-composition.js";
@@ -73,6 +76,7 @@ import {
 } from "./swarm-agent-lifecycle-service.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
+import { SecureSessionsService } from "./secure-sessions/secure-sessions-service.js";
 import { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import { SessionLifecycleCoordinator } from "./session-lifecycle-coordinator.js";
 import { TurnContextCoordinator } from "./turn-context-coordinator.js";
@@ -120,7 +124,6 @@ import {
   type CodexDirectSidecarManager,
 } from "./codex-app-server/codex-direct-sidecar-coordinator.js";
 import type { CodexAppServerServiceOptions } from "./codex-app-server/types.js";
-
 export {
   analyzeLatestCortexCloseoutNeed,
   buildSessionMemoryRuntimeView,
@@ -133,14 +136,10 @@ export type {
   AppendConversationUserMessageResult,
   DispatchRuntimeUserMessageOptions,
 } from "./user-message-coordinator.js";
-
 // AgentDescriptor now includes specialistId/specialistDisplayName/specialistColor directly.
-
 // Keep the orchestration facade above its known internal listener fan-out.
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
-
 export { ChoiceRequestCancelledError } from "./swarm-choice-service.js";
-
 type SwarmManagerOptions = {
   now?: () => string;
   versioningService?: VersioningMutationSink;
@@ -193,6 +192,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   private readonly skillMetadataService: SkillMetadataService;
   private readonly skillFileService: SkillFileService;
   private readonly secretsEnvService: SecretsEnvService;
+  private readonly secureSessionsService: SecureSessionsService;
   private readonly sessionMetaService: SwarmSessionMetaService;
   private readonly collaborationStorageProvisioner: CollaborationStorageProvisioner;
   private readonly cortexService: SwarmCortexService;
@@ -274,8 +274,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         knowledgeService: options?.knowledgeService,
       },
     });
-    this.config = foundation.config;
-    this.defaultModelPreset = foundation.defaultModelPreset;
+    this.config = foundation.config; this.defaultModelPreset = foundation.defaultModelPreset;
     this.knowledgeV2SettingsService = foundation.knowledgeV2SettingsService;
     this.knowledgeService = foundation.knowledgeService;
     this.promptRegistry = foundation.promptRegistry;
@@ -290,6 +289,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.secretsEnvService = foundation.secretsEnvService;
     this.observabilityCoordinator = foundation.observabilityCoordinator; this.browserAutomationService = options?.browserAutomationService ?? new BrowserAutomationService({ dataDir: this.config.paths.dataDir, now: this.now });
     this.agentDirectory = this.createAgentDirectory();
+    this.secureSessionsService = this.createSecureSessionsService(foundation.secureSessions);
     const { compactionRuntimeSettingsProvider, liveCompactionRuntimeSettingsProvider } = foundation;
     const runtimeComposition = this.createRuntimeComposition();
     this.captureCascadeCoordinator = runtimeComposition.captureCascade;
@@ -486,7 +486,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     this.agentMessageDispatcher = this.createAgentMessageDispatcher(completedRuntime.goals);
     this.userMessageCoordinator = this.createUserMessageCoordinator(completedRuntime.goals);
     this.facadeServices = {
-      interactions: this.sessionInteractionCoordinator,
+      secureSessions: this.secureSessionsService, interactions: this.sessionInteractionCoordinator,
       goals: completedRuntime.goals,
       sessions: this.sessionLifecycleCoordinator,
       pins: this.sessionPinCoordinator,
@@ -534,11 +534,22 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     };
     this.setMaxListeners(SWARM_MANAGER_MAX_EVENT_LISTENERS);
   }
-
   protected getFacadeServices(): SwarmManagerFacadeServices {
     return this.facadeServices;
   }
-
+  private createSecureSessionsService(foundation: SecureSessionsFoundation): SecureSessionsService {
+    return new SecureSessionsService({
+      ...foundation,
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      requireBuilderSession: (agentId, action) => this.agentDirectory
+        .getRequiredBuilderSessionDescriptor(agentId, action),
+      emitSnapshot: (event) => this.emit("secure_session_snapshot", event),
+      emitCatalogChanged: (event) => this.emit("secure_secret_catalog_changed", event),
+      applyModeRuntimeRecycle: (agentId) => this.projectExecutableTrustCoordinator
+        .applyManagerRuntimeRecyclePolicy(agentId, "secure_session_mode_change"),
+      now: this.now,
+    });
+  }
   private createSessionInteractionCoordinator(): SessionInteractionCoordinator {
     return new SessionInteractionCoordinator({
       descriptors: this.descriptors,
@@ -590,6 +601,13 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       toolHost: this,
       browserAutomation: this.browserAutomationService,
+      secureSessions: {
+        stopForLifecycle: (agentId, options) =>
+          this.secureSessionsService.stopSecureSessionForLifecycle(
+            agentId,
+            options,
+          ),
+      },
       descriptors: {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
@@ -723,11 +741,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }): boolean {
     return this.codexDirectSidecarCoordinator.respondToElicitation(input);
   }
-
   getPendingCodexElicitationsForManager(managerAgentId: string) {
     return this.codexDirectSidecarCoordinator.getPendingElicitationsForManager(managerAgentId);
   }
-
   private createCodexDirectSidecarCoordinator(
     options?: SwarmManagerOptions,
   ): CodexDirectSidecarCoordinator {
@@ -781,7 +797,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
     });
   }
-
   private createEventCoordinator(): SwarmEventCoordinator {
     return new SwarmEventCoordinator({
       host: {
@@ -801,7 +816,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       now: this.now,
     });
   }
-
   private createAgentDirectory(): AgentDirectory {
     return new AgentDirectory({
       descriptors: this.descriptors,
@@ -811,7 +825,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         this.choiceService.getPendingChoiceIdsForSession(agentId).length,
     });
   }
-
   private createConfigurationCoordinator(): SwarmConfigurationCoordinator {
     return new SwarmConfigurationCoordinator({
       config: this.config,
@@ -822,6 +835,10 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       skillMetadataService: this.skillMetadataService,
       skillFileService: this.skillFileService,
       secretsEnvService: this.secretsEnvService,
+      secureSessions: {
+        stopForLifecycle: (agentId) =>
+          this.secureSessionsService.stopSecureSessionForLifecycle(agentId),
+      },
       sessions: {
         getSessionsForProfile: (profileId) =>
           this.agentDirectory.getBuilderSessionsForProfile(profileId),
@@ -880,7 +897,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
     });
   }
-
   private createKnowledgeMemoryCoordinator(
     runtimeProvider: CompactionRuntimeSettingsProvider,
     liveProvider: ReturnType<typeof createLiveCompactionRuntimeSettingsProvider>,
@@ -931,7 +947,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
     });
   }
-
   private createCollaborationStorageProvisioner(): CollaborationStorageProvisioner {
     return new CollaborationStorageProvisioner({
       config: this.config,
@@ -953,7 +968,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
     });
   }
-
   private createSessionComposition(runtimeComposition: ReturnType<typeof createSwarmManagerRuntimeComposition>): ReturnType<typeof createSwarmManagerSessionComposition> {
     return createSwarmManagerSessionComposition({
       state: {
@@ -1166,7 +1180,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         });
       },
     } satisfies AgentMessageLedgerPort;
-
     return new AgentMessageDispatcher({
       descriptors: this.descriptors,
       profiles: this.profiles,
@@ -1223,7 +1236,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
     });
   }
-
   private createInboundConversationAppender(): InboundConversationAppender {
     return new InboundConversationAppender({
       attachments: this.conversationAttachmentService,
@@ -1231,7 +1243,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       now: this.now,
     });
   }
-
   private createUserMessageCoordinator(goals: ReturnType<typeof createSwarmManagerRuntimeComposition>["goals"]): UserMessageCoordinator {
     return new UserMessageCoordinator({
       targeting: {
@@ -1265,7 +1276,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
     });
   }
-
   private createCodexPluginDelegationCoordinator(): CodexPluginDelegationCoordinator {
     return new CodexPluginDelegationCoordinator({
       appServer: this.codexDirectSidecarCoordinator.appServerService,
@@ -1293,21 +1303,18 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
     });
   }
-
   private async stopSessionInternal(
     agentId: string,
     options: AgentLifecycleStopSessionOptions
   ): Promise<{ terminatedWorkerIds: string[]; unsafeShutdownAgentIds: string[] }> {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
-
   private logDebug(message: string, details?: unknown, config = this.config): void {
     if (!config.debug) return;
     const prefix = `[swarm][${this.now()}] ${message}`;
     if (details === undefined) console.log(prefix);
     else console.log(prefix, details);
   }
-
   private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
     this.agentDirectory.assertDescriptorNotEffectivelyArchived(descriptor);
     if (descriptor.role === "manager") {
@@ -1318,15 +1325,12 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     await this.projectAgentCoordinator.preflightRuntime(descriptor);
     return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
   }
-
   private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor {
     return this.lifecycleService.resolveSpawnModelWithCapacityFallback(model);
   }
-
   private async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {
     return this.configurationCoordinator.resolveSystemPromptForDescriptor(descriptor);
   }
-
   private async terminateDescriptor(
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean }
@@ -1337,7 +1341,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       this.projectExecutableTrustCoordinator.forgetManager(descriptor.agentId);
     }
   }
-
   protected async getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
@@ -1345,11 +1348,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
   }> {
     return this.configurationCoordinator.getMemoryRuntimeResources(descriptor);
   }
-
   protected async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
     return this.configurationCoordinator.getSwarmContextFiles(cwd);
   }
-
   protected async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
@@ -1363,14 +1364,12 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       options,
     );
   }
-
   protected async resolveProjectExecutableTrustPlanForRuntime(options: {
     descriptor: AgentDescriptor;
     sessionDescriptor?: AgentDescriptor;
   }): Promise<ProjectExecutableTrustPlan> {
     return this.projectExecutableTrustCoordinator.resolvePlanForRuntime(options);
   }
-
   private queueVersioningMutation(mutation: VersioningMutation): void {
     void this.versioningService?.recordMutation(mutation).catch((error) => {
       this.logDebug("versioning:record_error", {

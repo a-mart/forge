@@ -6,6 +6,7 @@ export type ManagerRuntimeRecycleReason =
   | "idle_transition"
   | "prompt_mode_change"
   | "auth_source_change"
+  | "secure_session_mode_change"
   | "project_agent_directory_change"
   | "project_resource_trust_change"
   | "specialist_roster_change";

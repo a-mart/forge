@@ -61,6 +61,10 @@ import { createNoopObservabilityFacade } from "../observability/noop-observabili
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 import { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
+import {
+  validateSecureBuilderControlOrigin,
+  validateTerminalWsOrigin,
+} from "../terminal/terminal-access-policy.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -100,6 +104,14 @@ import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createRestartRecoveryRoutes } from "./http/routes/restart-recovery-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSessionAuditRoutes } from "./http/routes/session-audit-routes.js";
+import {
+  createSecureSecretRoutes,
+  type SecureSecretTransportService,
+} from "./http/routes/secure-secret-routes.js";
+import {
+  createSecureSessionRoutes,
+  type SecureSessionsTransportService,
+} from "./http/routes/secure-session-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
 import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
@@ -128,6 +140,15 @@ import { TerminalWsProxy } from "../terminal/terminal-ws-proxy.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 import { CliWsHandler } from "./cli-ws-handler.js";
 import { WsHandler } from "./ws-handler.js";
+
+function isSecureBuilderControlPath(pathname: string): boolean {
+  return (
+    pathname === "/api/secure-secrets"
+    || pathname.startsWith("/api/secure-secrets/")
+    || pathname === "/api/secure-sessions"
+    || pathname.startsWith("/api/secure-sessions/")
+  );
+}
 
 export class SwarmWebSocketServer {
   private readonly swarmManager: SwarmManager;
@@ -321,6 +342,16 @@ export class SwarmWebSocketServer {
     void this.remoteUpdateAwarenessService?.reconcileProjects().catch((error) => {
       console.warn("[remote-update-awareness] Project reconciliation failed", error);
     });
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
+  private readonly onSecureSessionSnapshot = (event: ServerEvent): void => {
+    if (event.type !== "secure_session_snapshot") return;
+    this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
+  };
+
+  private readonly onSecureSecretCatalogChanged = (event: ServerEvent): void => {
+    if (event.type !== "secure_secret_catalog_changed") return;
     this.wsHandler.broadcastToSubscribed(event);
   };
 
@@ -635,6 +666,9 @@ export class SwarmWebSocketServer {
     });
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
 
+    const secureTransportService = this.swarmManager as unknown as
+      SecureSecretTransportService & SecureSessionsTransportService;
+
     this.httpRoutes = [
       ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
         ? [createDisabledCollaborationStatusRoute()]
@@ -650,6 +684,12 @@ export class SwarmWebSocketServer {
         cliAccessService: this.cliAccessService,
         runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
       }),
+      ...(isBuilder
+        ? [
+            ...createSecureSecretRoutes({ service: secureTransportService }),
+            ...createSecureSessionRoutes({ service: secureTransportService }),
+          ]
+        : []),
       ...(this.builderSidebarOrderService
         ? createBuilderSidebarOrderRoutes({
             service: this.builderSidebarOrderService,
@@ -881,6 +921,11 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
+    this.swarmManager.on("secure_session_snapshot", this.onSecureSessionSnapshot);
+    this.swarmManager.on(
+      "secure_secret_catalog_changed",
+      this.onSecureSecretCatalogChanged,
+    );
     this.terminalService?.on("terminal_created", this.onTerminalCreated);
     this.terminalService?.on("terminal_updated", this.onTerminalUpdated);
     this.terminalService?.on("terminal_closed", this.onTerminalClosed);
@@ -943,6 +988,11 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("session_goal_snapshot", this.onSessionGoalSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
+    this.swarmManager.off("secure_session_snapshot", this.onSecureSessionSnapshot);
+    this.swarmManager.off(
+      "secure_secret_catalog_changed",
+      this.onSecureSecretCatalogChanged,
+    );
     this.terminalService?.off("terminal_created", this.onTerminalCreated);
     this.terminalService?.off("terminal_updated", this.onTerminalUpdated);
     this.terminalService?.off("terminal_closed", this.onTerminalClosed);
@@ -1005,7 +1055,13 @@ export class SwarmWebSocketServer {
     const config = this.swarmManager.getConfig();
     let authContext: CollaborationAuthContext | null = null;
 
-    if (!isBuilderRuntimeTarget(config.runtimeTarget)) {
+    if (isBuilderRuntimeTarget(config.runtimeTarget)) {
+      const originValidation = validateTerminalWsOrigin(request);
+      if (!originValidation.ok) {
+        rejectWebSocketUpgrade(socket, 403, originValidation.errorMessage);
+        return;
+      }
+    } else {
       const originValidation = validateCollaborationHttpOrigin(request, config);
       if (!originValidation.ok) {
         rejectWebSocketUpgrade(socket, 403, originValidation.errorMessage);
@@ -1094,6 +1150,22 @@ export class SwarmWebSocketServer {
     let route: HttpRoute | undefined;
 
     try {
+      if (
+        isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+        && isSecureBuilderControlPath(requestUrl.pathname)
+      ) {
+        const originValidation = validateSecureBuilderControlOrigin(
+          request,
+          {
+            backendHost: this.host,
+            backendPort: this.getPort(),
+          },
+        );
+        if (!originValidation.ok) {
+          sendJson(response, 403, { error: originValidation.errorMessage });
+          return;
+        }
+      }
       if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
         if (isCliHttpPath(requestUrl.pathname)) {
           applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");

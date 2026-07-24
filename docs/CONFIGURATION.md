@@ -37,6 +37,23 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 
 Managed Browser has no environment variable and no Settings → Skills toggle. It is a Forge Desktop host capability for normal local Builder managers, not a Skill. Ordinary web clients have no local browser IPC host, and that IPC is not forwarded to Remote Projects or Collaboration channels. See [Managed Browser](BROWSER_AUTOMATION.md).
 
+### Secure Sessions
+
+Secure Sessions are configured through **Settings → Secrets** rather than environment
+variables. Forge Desktop encrypts local values and Bitwarden machine credentials before
+the local Builder stores them. The Docker execution backend requires the pinned
+`forge-secure-runner:node22-v3` image, which can be built with the command in the
+[Secure Sessions guide](SECURE_SESSIONS.md#set-up-the-execution-environment). Its
+effective Docker endpoint must be a local `unix://` socket; remote Docker contexts and
+remote `DOCKER_HOST` transports are rejected rather than treated as a deployment
+target.
+
+The feature is local-Builder-only and fail-closed. It does not inherit values from
+`shared/config/secrets.json`, silently fall back to host execution, or make saved
+sources available to a task without a separate lease. See
+[Secure Sessions](SECURE_SESSIONS.md) for sources, bindings, supported runtimes,
+security guarantees, and limitations.
+
 ### Skill Sharing
 
 | Variable | Default | Description |
@@ -278,6 +295,8 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │   │   │   ├── auth.db                    # Collaboration auth + structured domain state
 │   │   │   └── auth-secret.key            # Generated collaboration auth secret
 │   │   ├── secrets.json                   # Sensitive local JSON; plaintext at rest
+│   ├── state/
+│   │   ├── secure-sessions.db             # Secure Session metadata and OS-encrypted material
 │   │   ├── builder-sidebar-order.json     # Local unified project order
 │   │   ├── compaction-settings.json       # Manager compaction settings
 │   │   ├── cortex-auto-review.json        # Cortex consolidation cadence

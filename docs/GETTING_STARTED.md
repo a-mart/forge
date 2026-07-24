@@ -159,6 +159,22 @@ A connected Forge Desktop host is required. In an ordinary web browser, the Brow
 
 On macOS, Windows, and Linux, the Browser toolbar can pop the same live native tab into a dedicated window and dock it again without remounting or changing browser-host authority. Cmd+W docks on macOS, while Ctrl+W docks on Windows/Linux. Tab metadata persists with the session; stopped recordings become session artifacts under `artifacts/browser/`, while screenshots remain transient. Cookies and site storage use a persistent profile-scoped Electron partition shared by sessions in that Forge profile, and can outlive session deletion. See [Managed Browser](BROWSER_AUTOMATION.md) for security, lifecycle, and comparison details.
 
+### Secure Sessions
+
+Secure Sessions let a supported local Builder task use saved local or Bitwarden-backed
+secrets without placing their values in chat or model-visible tool arguments. Configure
+sources and delivery bindings under **Settings → Secrets**, then use the shield beside
+**Send** to start the isolated task environment and grant task, timed, or one-use
+access.
+
+The agent keeps using ordinary Bash. One task or timed grant can support many commands;
+stopping the Secure Session revokes its leases and destroys the task container.
+Secure Sessions currently require Forge Desktop for private value entry, a Pi-backed
+runtime, Docker, and the Forge runner image. Read [Secure Sessions](SECURE_SESSIONS.md)
+before relying on it: software that receives a raw value can still intentionally
+transform or exfiltrate it, and the first Docker backend is not a
+destination-constrained credential proxy.
+
 ### Source Control Workspace
 
 Desktop Source Control opens inline in the workspace content area from the rail, not as a modal overlay. It evolves the old Changes/Git view into a workspace with tabs for current changes, commit history, worktrees, and pull requests. Selecting a worktree updates the Source Control context and the Files browsing context only; it does not move the chat session CWD or change where the manager sends workers. Successful file creates, renames, saves, and deletes refresh Changes for that scope.

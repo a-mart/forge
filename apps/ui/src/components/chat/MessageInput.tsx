@@ -10,6 +10,7 @@ import { MentionMenu } from './message-input/MentionMenu'
 import { mentionMenuActiveDescendantId } from './message-input/mention-menu-a11y'
 import { VoiceRecordingBar } from './message-input/VoiceRecordingBar'
 import { ComposerTextarea } from './message-input/ComposerTextarea'
+import { SecureSessionPicker } from './message-input/SecureSessionPicker'
 import { SessionModelPicker } from './message-input/SessionModelPicker'
 import { useDraft } from './message-input/hooks/use-draft'
 import { useSlashCommands } from './message-input/hooks/use-slash-commands'
@@ -24,6 +25,7 @@ export type {
   ProjectAgentSuggestion,
   MessageInputHandle,
   MessageInputProps,
+  SecureSessionPickerConfig,
   SessionModelPickerConfig,
 } from './message-input/types'
 import type { MessageInputHandle, MessageInputProps } from './message-input/types'
@@ -47,6 +49,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     replyTarget,
     onClearReplyTarget,
     sessionModelPicker,
+    secureSessionPicker,
   },
   ref,
 ) {
@@ -490,6 +493,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             </div>
 
             <div className="flex min-w-0 items-center gap-1">
+              {secureSessionPicker ? <SecureSessionPicker config={secureSessionPicker} /> : null}
               {sessionModelPicker ? <SessionModelPicker config={sessionModelPicker} /> : null}
 
               <Button

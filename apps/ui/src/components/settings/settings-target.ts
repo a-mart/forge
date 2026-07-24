@@ -20,6 +20,7 @@ export type SettingsTab =
   | 'appearance'
   | 'notifications'
   | 'auth'
+  | 'secrets'
   | 'models'
   | 'skills'
   | 'prompts'
@@ -53,6 +54,7 @@ const BUILDER_TABS: SettingsTab[] = [
   'appearance',
   'notifications',
   'auth',
+  'secrets',
   'models',
   'skills',
   'prompts',

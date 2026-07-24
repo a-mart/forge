@@ -215,6 +215,55 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([]);
   });
 
+  it("tears down secure authority before every destructive Builder lifecycle mutation", async () => {
+    const harness = createHarness();
+    harness.deps.secureSessions.stopForLifecycle = vi.fn(async (agentId, options) => {
+      harness.calls.push(`secure.stop:${agentId}:${options?.deleteState === true}`);
+    });
+
+    await harness.coordinator.archiveSession("forge--s2");
+    expect(harness.calls[0]).toBe("secure.stop:forge--s2:false");
+
+    harness.calls.length = 0;
+    await harness.coordinator.stopSession("forge--s2");
+    expect(harness.calls[0]).toBe("secure.stop:forge--s2:false");
+
+    harness.calls.length = 0;
+    await harness.coordinator.deleteSession("forge--s2");
+    expect(harness.calls[0]).toBe("secure.stop:forge--s2:true");
+
+    harness.calls.length = 0;
+    await harness.coordinator.archiveProfile("forge");
+    expect(harness.calls.slice(0, 2)).toEqual([
+      "secure.stop:forge:false",
+      "secure.stop:forge--s2:false",
+    ]);
+
+    harness.calls.length = 0;
+    await harness.coordinator.stopAllAgents("forge", "forge--s2");
+    expect(harness.calls[0]).toBe("secure.stop:forge--s2:false");
+
+    harness.calls.length = 0;
+    await harness.coordinator.deleteManager("forge", "forge");
+    expect(harness.calls.slice(0, 2)).toEqual([
+      "secure.stop:forge:true",
+      "secure.stop:forge--s2:true",
+    ]);
+  });
+
+  it("does not mutate lifecycle state when secure teardown fails", async () => {
+    const harness = createHarness();
+    harness.deps.secureSessions.stopForLifecycle = vi.fn(async () => {
+      throw new Error("secure teardown failed");
+    });
+
+    await expect(harness.coordinator.deleteSession("forge--s2")).rejects.toThrow(
+      "secure teardown failed",
+    );
+    expect(harness.deps.sessions.deleteSession).not.toHaveBeenCalled();
+    expect(harness.calls).toEqual([]);
+  });
+
   it("forks only active Builder sessions and sends a stable source snapshot to extensions", async () => {
     const harness = createHarness();
     const source = harness.descriptors.get("forge--s2")!;
@@ -439,6 +488,9 @@ function createHarness(): Harness {
       deleteSession: async (profileId, agentId) => {
         calls.push(`browser.delete:${profileId}:${agentId}`);
       },
+    },
+    secureSessions: {
+      stopForLifecycle: vi.fn(async () => undefined),
     },
     events: {
       emitAgentsSnapshot: () => calls.push("events.agents"),

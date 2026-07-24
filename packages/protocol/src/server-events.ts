@@ -125,6 +125,10 @@ import type {
   RemoteUpdateAwarenessProjectChangedEvent,
   RemoteUpdateAwarenessProjectClearedEvent,
 } from './remote-update-awareness.js'
+import type {
+  SecureSecretCatalogChangedEvent,
+  SecureSessionSnapshotEvent,
+} from './secure-sessions.js'
 
 // Compatibility re-exports from leaf modules
 export * from './builder-sidebar-order.js'
@@ -145,6 +149,7 @@ export * from './goals.js'
 export * from './transport-events.js'
 export * from './restart-recovery.js'
 export * from './remote-update-awareness.js'
+export * from './secure-sessions.js'
 
 export type ServerEvent =
   | BuilderSidebarOrderUpdatedEvent
@@ -181,6 +186,8 @@ export type ServerEvent =
   | RestartRecoverySnapshotEvent
   | RemoteUpdateAwarenessProjectChangedEvent
   | RemoteUpdateAwarenessProjectClearedEvent
+  | SecureSessionSnapshotEvent
+  | SecureSecretCatalogChangedEvent
   | ProjectPresenceEvent
   | SessionPlanSnapshotEvent
   | SessionGoalSnapshotEvent
