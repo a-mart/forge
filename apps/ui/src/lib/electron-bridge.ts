@@ -82,6 +82,7 @@ export interface ElectronBridge {
   windowRole: ElectronWindowRole
   backendUrl?: string
   backendWsUrl?: string
+  secureControlToken?: string
   getVersion?(): string
   platform: string
   browserAutomation?: BrowserAutomationBridge

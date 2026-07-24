@@ -108,9 +108,9 @@ export function SecretBindingsPanel({
         <div>
           <h3 className="text-base font-semibold">Advanced delivery bindings</h3>
           <p className="text-sm text-muted-foreground">
-            Every saved secret already has a generated environment delivery. Add or replace
-            bindings here only when a tool needs a specific askpass, file, stdin, or environment
-            shape. Bindings never grant task access by themselves.
+            New secrets receive a generated environment delivery unless you replace it here.
+            Most people never need this screen. Use it only when a tool requires a specific
+            askpass, file, stdin, or environment shape. Delivery never grants task access by itself.
           </p>
         </div>
 

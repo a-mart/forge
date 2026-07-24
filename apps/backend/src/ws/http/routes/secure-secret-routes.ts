@@ -220,7 +220,7 @@ export function applySecureHeaders(
   response: ServerResponse,
   methods: string,
 ): void {
-  applyCorsHeaders(request, response, methods);
+  applyCorsHeaders(request, response, methods, "content-type,x-forge-secure-control");
   response.setHeader("Cache-Control", "no-store");
   response.setHeader("Pragma", "no-cache");
   response.setHeader("X-Content-Type-Options", "nosniff");

@@ -17,6 +17,7 @@ type BackendBootstrap = {
   platform: string
   windowRole: ElectronWindowRole
   managedBrowserPopoutAvailable: boolean
+  secureControlToken?: string
 }
 
 const bootstrap = readBootstrap()
@@ -31,6 +32,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       windowRole: bootstrap.windowRole,
       platform: bootstrap.platform,
       browserWorkspace,
+      secureControlToken: bootstrap.secureControlToken,
     }
   : {
       windowRole: bootstrap.windowRole,
@@ -95,6 +97,7 @@ function readBootstrap(): BackendBootstrap {
     if (typeof value.backendUrl !== 'string' || value.backendUrl.length === 0) throw new Error('Electron bridge bootstrap did not include a valid backendUrl')
     if (typeof value.backendWsUrl !== 'string' || value.backendWsUrl.length === 0) throw new Error('Electron bridge bootstrap did not include a valid backendWsUrl')
     if (typeof value.version !== 'string') throw new Error('Electron bridge bootstrap did not include a valid version')
+    if (typeof value.secureControlToken !== 'string' || value.secureControlToken.length < 32) throw new Error('Electron bridge bootstrap did not include a valid secure control capability')
   }
   return {
     backendUrl: value.backendUrl ?? '',
@@ -103,5 +106,6 @@ function readBootstrap(): BackendBootstrap {
     platform: value.platform,
     windowRole: value.windowRole,
     managedBrowserPopoutAvailable: value.managedBrowserPopoutAvailable,
+    ...(value.secureControlToken ? { secureControlToken: value.secureControlToken } : {}),
   }
 }

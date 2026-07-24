@@ -967,6 +967,42 @@ export class SecureValueGuard {
       return bytes.slice().buffer;
     }
 
+    if (value instanceof Set || value instanceof Map) {
+      if (active.has(value)) {
+        throw STRUCTURED_QUARANTINE;
+      }
+      const existing = clones.get(value);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const clone = value instanceof Set ? new Set<unknown>() : new Map<unknown, unknown>();
+      clones.set(value, clone);
+      active.add(value);
+      try {
+        if (value instanceof Set) {
+          for (const entry of value) {
+            (clone as Set<unknown>).add(this.sanitizeStructuredNode(
+              entry,
+              depth + 1,
+              budget,
+              active,
+              clones,
+            ));
+          }
+        } else {
+          for (const [key, entry] of value) {
+            (clone as Map<unknown, unknown>).set(
+              this.sanitizeStructuredNode(key, depth + 1, budget, active, clones),
+              this.sanitizeStructuredNode(entry, depth + 1, budget, active, clones),
+            );
+          }
+        }
+        return clone;
+      } finally {
+        active.delete(value);
+      }
+    }
+
     const prototype = Object.getPrototypeOf(value);
     if (
       !Array.isArray(value) &&

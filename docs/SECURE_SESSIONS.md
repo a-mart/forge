@@ -15,7 +15,8 @@ might need one.
 A Secure Session belongs to one local Builder manager task. While it is active:
 
 - Pi Bash commands run in one reusable, task-owned Linux container;
-- the workspace is mounted at the same absolute path as the host workspace;
+- the workspace is mounted directly into the container (at the same path on
+  macOS/Linux and at `/workspace` on Windows);
 - approved values can be delivered to a command as an environment variable, stdin,
   a protected RAM-backed file, or an askpass helper;
 - one task or timed grant can be reused across many commands;
@@ -60,9 +61,11 @@ commands work; pointers outside Git's standard `worktrees/` layout are rejected.
 Secret files live only beneath `/run/forge-secure/bindings/` on an owner-only,
 `noexec` tmpfs.
 
-Forge accepts only a local Unix-socket Docker endpoint. It resolves the effective
-`DOCKER_HOST` or Docker context before provisioning, rejects `ssh://`, `tcp://`, and
-other remote transports, and pins every later invocation to the accepted socket.
+Forge accepts only a local Unix-socket Docker endpoint on macOS/Linux or Docker
+Desktop's exact local `npipe:////./pipe/docker_engine` endpoint on Windows. It resolves
+the effective `DOCKER_HOST` or Docker context before provisioning, rejects `ssh://`,
+`tcp://`, and other remote transports, and pins every later invocation to the accepted
+endpoint.
 Sending the execution frame to a remote Docker daemon is not an implicit deployment
 mode; a future remote backend must have its own explicit trust and transport contract.
 
@@ -87,6 +90,8 @@ Install the official `bws` CLI on the trusted host, then choose **Sources → Co
 Bitwarden Secrets Manager**. Enter a machine-account access token and, when applicable,
 the organization, project, or self-hosted server origin. Forge Desktop encrypts the
 access token before the local backend stores it.
+Forge verifies the connection before saving the source, so a displayed
+**Available** state means the configured credential was actually accepted.
 
 Under **Secrets**, import a Bitwarden secret UUID and assign a Forge alias. Forge keeps
 the UUID and encrypted machine credential backend-only. When an approved command needs
@@ -155,8 +160,8 @@ destroying it. Different tasks can still execute in parallel.
 
 An agent can inspect safe session status and request an alias, binding, and lease
 shape. Requests appear as private approval cards outside the persisted transcript.
-A worker may raise a request for its owning manager, but worker runtimes do not
-receive or inherit the manager's secure execution binding in this release.
+Secure grants remain manager-local. Forge blocks spawning, retrying, or assigning
+workers while Secure Mode is active; stop Secure Mode before delegating work.
 
 Revision checks prevent a stale browser from overwriting a newer approval or
 revocation. Provider failures, expired leases, missing aliases, unsupported delivery
@@ -223,13 +228,12 @@ JavaScript, operating-system, vault client, Docker daemon, and same-user process
 boundaries remain part of the trusted computing base.
 
 The initial Secure Sessions release assumes a trusted, single-user local machine.
-Builder control APIs authenticate their location (configured loopback origins and
-loopback peers), not the operating-system identity of the caller. On a shared host,
-another local OS user may be able to call Builder APIs and use an already configured
-secret alias even though they cannot decrypt the local-vault record directly. Do not
-use the local Builder topology as an isolation boundary between mutually untrusted
-OS users; add an authentication-enforcing proxy or wait for a per-launch local API
-capability before doing so.
+Every mutation of secret or lease authority requires a random per-launch capability
+shared only between the Electron main renderer and its backend child. The capability
+is not persisted, logged, included in agent runtime state, or given to managed-browser
+popouts. Origin and loopback checks remain defense in depth. Same-user process
+inspection, Electron compromise, and the Docker daemon remain inside the trusted
+computing base.
 
 Forks, resumed runtimes, and workers never gain an active lease merely because another
 session had one. A stopped session must pass a fresh lease check before another
@@ -257,7 +261,9 @@ credential-set rebuild destroys it. Per-command RAM files and askpass helpers ar
 removed when the direct command exits, so background jobs that need long-lived access
 should use an inherited environment binding or be launched by a foreground supervisor.
 
-Secure Bash is Linux, even when Forge runs on macOS or Windows. Host-native binaries
+Secure Bash is Linux, even when Forge runs on macOS or Windows. On Windows, Forge uses
+Docker Desktop's Linux-container engine and translates command working directories
+under the host workspace to `/workspace`. Host-native binaries
 and native `node_modules` may be incompatible, local services are not automatically
 the container's `localhost`, and package installation writes into the selected
 workspace. A dedicated worktree is strongly recommended for native dependency

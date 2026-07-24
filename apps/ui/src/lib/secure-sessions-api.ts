@@ -434,9 +434,13 @@ async function requestSnapshot(
   init?: RequestInit,
 ): Promise<SecureSessionSnapshot> {
   assertBuilderTarget(apiClient)
+  const controlledInit = withSecureControl(init)
   let response: Response
   try {
-    response = await apiClient.fetch(path, { ...init, cache: 'no-store' })
+    response = await apiClient.fetch(path, {
+      ...controlledInit,
+      cache: 'no-store',
+    })
   } catch {
     throw new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE')
   }
@@ -479,4 +483,16 @@ async function safeResponseError(response: Response): Promise<SecureSessionUiErr
 
 function jsonHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json' }
+}
+
+function withSecureControl(init?: RequestInit): RequestInit | undefined {
+  const method = init?.method?.toUpperCase() ?? 'GET'
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return init
+  const token = typeof window === 'undefined'
+    ? undefined
+    : window.electronBridge?.secureControlToken
+  if (!token) throw new SecureSessionUiError('SECURE_PRIVATE_API_UNAVAILABLE')
+  const headers = new Headers(init?.headers)
+  headers.set('X-Forge-Secure-Control', token)
+  return { ...init, headers }
 }

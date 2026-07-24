@@ -127,6 +127,19 @@ function recordToolSideEffect(
   host.recordToolSideEffect?.(descriptor.agentId, event);
 }
 
+async function assertSecureDelegationBoundary(
+  host: SwarmToolHost,
+  descriptor: AgentDescriptor,
+): Promise<void> {
+  if (!host.getSecureSessionAgentView || descriptor.role !== "manager") return;
+  const view = await host.getSecureSessionAgentView(descriptor.agentId);
+  if (view.executionMode === "secure" && view.environmentStatus === "ready") {
+    throw new Error(
+      "secure_session_delegation_blocked: stop Secure Mode before assigning work to another agent",
+    );
+  }
+}
+
 function compactPath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
   if (normalized.length === 0 || normalized === "/") {
@@ -322,6 +335,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         }))
       }),
       async execute(_toolCallId, params) {
+        await assertSecureDelegationBoundary(host, descriptor);
         const parsed = params as {
           targetAgentId: string;
           message: string;
@@ -470,6 +484,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         initialMessage: Type.String({ description: "Concrete task and expected outcome for the worker." }),
       }),
       async execute(_toolCallId, params) {
+        await assertSecureDelegationBoundary(host, descriptor);
         const parsed = params as {
           agentId: string;
           planStep?: string;
@@ -531,6 +546,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         ),
       }),
       async execute(_toolCallId, params) {
+        await assertSecureDelegationBoundary(host, descriptor);
         const parsed = params as { initialMessage: string; planStep?: string };
         const spawnInput: SpawnAgentInput = {
           agentId: CODEX_PLUGIN_SPECIALIST_ID,
@@ -574,6 +590,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         ),
       }),
       async execute(_toolCallId, params) {
+        await assertSecureDelegationBoundary(host, descriptor);
         if (!host.retryCodexPluginWorker) {
           throw new Error("Codex Plugin retry is not available in this runtime.");
         }

@@ -1,4 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
+
+export const SECURE_CONTROL_HEADER = "x-forge-secure-control";
+
+export function validateSecureBuilderControlCapability(
+  request: IncomingMessage,
+  expectedToken = process.env.FORGE_SECURE_CONTROL_TOKEN ?? "",
+): boolean {
+  const supplied = request.headers[SECURE_CONTROL_HEADER];
+  if (
+    typeof supplied !== "string"
+    || expectedToken.length < 32
+    || supplied.length !== expectedToken.length
+  ) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(supplied), Buffer.from(expectedToken));
+}
 
 const ELECTRON_APP_PROTOCOL = "app:";
 const ELECTRON_APP_HOST = "forge";

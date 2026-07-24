@@ -45,6 +45,9 @@ const daemonProbe = process.platform === "win32"
     ]);
 const dockerAvailable =
   daemonProbe.exitCode === 0 && daemonProbe.stdout.byteLength > 0;
+if (process.env.FORGE_REQUIRE_SECURE_DOCKER_E2E === "1" && !dockerAvailable) {
+  throw new Error("Secure Sessions Docker E2E was required but Docker is unavailable");
+}
 const dockerSuite = dockerAvailable
   ? describe.sequential
   : describe.skip;

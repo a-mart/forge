@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SecureAccessRequestSummary, SecureSessionSnapshot } from '@forge/protocol'
 import {
@@ -49,6 +49,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+beforeEach(() => {
+  Object.defineProperty(window, 'electronBridge', {
+    configurable: true,
+    value: {
+      secureControlToken: 'test-secure-control-token-that-is-long-enough',
+    },
+  })
+})
+
 describe('Secure Sessions API', () => {
   it('uses no-store for snapshot reads', async () => {
     const fetch = vi.fn(async (_path: string, _init?: RequestInit) =>
@@ -83,6 +92,8 @@ describe('Secure Sessions API', () => {
     })
 
     const init = fetch.mock.calls[0]?.[1]
+    expect(new Headers(init?.headers).get('X-Forge-Secure-Control'))
+      .toBe('test-secure-control-token-that-is-long-enough')
     expect(fetch.mock.calls[0]?.[0]).toBe(
       '/api/secure-sessions/manager-1/access-requests/request-1/resolve',
     )
@@ -139,6 +150,7 @@ describe('Secure Sessions API', () => {
     Object.defineProperty(window, 'electronBridge', {
       configurable: true,
       value: {
+        secureControlToken: 'test-secure-control-token-that-is-long-enough',
         secureVault: {
           status: vi.fn(async () => ({ ok: true as const, available: true as const })),
           encryptLocalValue,

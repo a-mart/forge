@@ -128,6 +128,23 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("deletes ordinary stopped session metadata without requiring Docker", async () => {
+    const harness = createHarness({ recoveryFailures: 1 });
+    harness.store.getOrCreateSessionState("manager-a", {
+      profileId: "profile-a",
+      executionMode: "standard",
+      environmentStatus: "stopped",
+    });
+
+    await expect(harness.service.stopSecureSessionForLifecycle(
+      "manager-a",
+      { deleteState: true },
+    )).resolves.toBeUndefined();
+    expect(harness.execution.recoveryCalls).toEqual([]);
+    expect(harness.store.listSessionStates()).toEqual([]);
+    await harness.close();
+  });
+
   it("continues shutdown cleanup after one task destroy fails", async () => {
     const harness = createHarness({ destroyFailures: ["manager-a"] });
     await harness.service.startSecureSession("manager-a");
@@ -1317,6 +1334,20 @@ describe("SecureSessionsService", () => {
       failedRecycle.descriptors.get("manager-a")!,
     )).toBeUndefined();
     await failedRecycle.close();
+
+    const deferredRecycle = createHarness({ recycleDisposition: "deferred" });
+    await expect(
+      deferredRecycle.service.startSecureSession("manager-a"),
+    ).rejects.toThrow("SECURE_OPERATION_FAILED");
+    const rolledBack = await deferredRecycle.service.getSecureSessionSnapshot("manager-a");
+    expect(rolledBack).toEqual(expect.objectContaining({
+      executionMode: "standard",
+      environmentStatus: "stopped",
+    }));
+    expect(deferredRecycle.service.getSecureRuntimeBinding(
+      deferredRecycle.descriptors.get("manager-a")!,
+    )).toBeUndefined();
+    await deferredRecycle.close();
   });
 
   it("redacts protected output, preserves task leases, and emits only fixed state metadata", async () => {
@@ -1446,6 +1477,7 @@ function createHarness(options: {
   recoveredSandboxIds?: readonly string[];
   recoveryFailures?: number;
   recycleThrows?: boolean;
+  recycleDisposition?: "recycled" | "deferred" | "none";
 } = {}) {
   const database = new Database(":memory:");
   database.pragma("foreign_keys = ON");
@@ -1527,6 +1559,7 @@ function createHarness(options: {
     applyModeRuntimeRecycle: async (agentId) => {
       recycles.push(agentId);
       if (options.recycleThrows) throw new Error("recycle failed");
+      return options.recycleDisposition ?? "recycled";
     },
     now,
     createId: () => `id-${++nextId}`,

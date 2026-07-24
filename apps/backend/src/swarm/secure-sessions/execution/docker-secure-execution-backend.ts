@@ -21,6 +21,7 @@ import {
   dirname,
   isAbsolute,
   join,
+  posix,
   relative,
   resolve,
 } from "node:path";
@@ -102,7 +103,10 @@ interface TaskIdentity {
   taskHash: string;
   workspaceHash: string;
   workspacePath: string;
+  guestWorkspacePath: string;
   gitCommonDir: string | null;
+  guestGitCommonDir: string | null;
+  guestGitDirectory: string | null;
   gitCommonHash: string;
   heartbeatPath: string;
 }
@@ -131,6 +135,7 @@ export interface DockerSecureExecutionBackendOptions {
    * override, whose tool contract belongs to the embedding application.
    */
   requireImageContract?: boolean;
+  platform?: NodeJS.Platform;
 }
 
 function sha256(value: string): string {
@@ -155,7 +160,7 @@ async function readSmallRegularFile(filePath: string): Promise<string> {
 
 async function resolveExternalGitCommonDir(
   workspacePath: string,
-): Promise<string | null> {
+): Promise<{ commonDirectory: string; gitDirectory: string } | null> {
   const dotGitPath = join(workspacePath, ".git");
   let dotGitStat;
   try {
@@ -224,7 +229,7 @@ async function resolveExternalGitCommonDir(
   }
   return isPathInside(workspacePath, commonDirectory)
     ? null
-    : commonDirectory;
+    : { commonDirectory, gitDirectory };
 }
 
 function defaultRunAsUser(): { uid: number; gid: number } {
@@ -276,6 +281,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
   private readonly requireImageContract: boolean;
   private readonly runAsUser: { uid: number; gid: number };
   private readonly heartbeatRoot: string;
+  private readonly platform: NodeJS.Platform;
   private readonly preparing = new Map<string, Promise<TaskIdentity>>();
   private readonly lifecycleTails = new Map<string, Promise<void>>();
   private readonly executionTails = new Map<string, Promise<void>>();
@@ -293,6 +299,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       options.requireImageContract ?? options.image === undefined;
     this.scopeHash = sha256(options.scope ?? "forge-local").slice(0, 16);
     this.runAsUser = normalizeRunAsUser(options.runAsUser);
+    this.platform = options.platform ?? process.platform;
     this.heartbeatRoot = resolve(
       options.heartbeatRoot
         ?? join(tmpdir(), "forge-secure-heartbeats", this.scopeHash),
@@ -309,13 +316,11 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       environment: options.dockerEnvironment,
       controlPlaneTimeoutMs: options.dockerControlPlaneTimeoutMs,
       onInvocation: options.onDockerInvocation,
+      platform: this.platform,
     });
   }
 
   async probe(): Promise<SecureExecutionAvailability> {
-    if (process.platform === "win32") {
-      return { available: false, code: "unsupported_platform" };
-    }
     if (!(await this.cli.pinLocalEndpoint())) {
       return { available: false, code: "backend_unavailable" };
     }
@@ -401,9 +406,6 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
   async recoverOrphans(
     liveTasks: readonly SecureExecutionTask[],
   ): Promise<SecureOrphanRecoveryResult> {
-    if (process.platform === "win32") {
-      throw new SecureExecutionError("UNSUPPORTED_PLATFORM");
-    }
     await this.requireLocalDockerEndpoint();
     const version = await this.cli.run([
       "version",
@@ -489,14 +491,28 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
 
     const taskHash = sha256(task.taskId);
     const workspaceHash = sha256(canonicalPath);
-    const gitCommonDir = await resolveExternalGitCommonDir(canonicalPath);
+    const externalGit = await resolveExternalGitCommonDir(canonicalPath);
+    const gitCommonDir = externalGit?.commonDirectory ?? null;
+    const guestWorkspacePath = this.platform === "win32"
+      ? "/workspace"
+      : canonicalPath;
+    const guestGitCommonDir = gitCommonDir === null
+      ? null
+      : this.platform === "win32"
+        ? "/forge-git-common"
+        : gitCommonDir;
     const name = this.containerName(taskHash, workspaceHash);
     return {
       name,
       taskHash,
       workspaceHash,
       workspacePath: canonicalPath,
+      guestWorkspacePath,
       gitCommonDir,
+      guestGitCommonDir,
+      guestGitDirectory: externalGit === null || this.platform !== "win32"
+        ? null
+        : posix.join("/forge-git-common", "worktrees", basename(externalGit.gitDirectory)),
       gitCommonHash: gitCommonDir === null ? "none" : sha256(gitCommonDir),
       heartbeatPath: this.heartbeatPath(name),
     };
@@ -515,7 +531,12 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       taskHash,
       workspaceHash,
       workspacePath: task.workspacePath,
+      guestWorkspacePath: this.platform === "win32"
+        ? "/workspace"
+        : task.workspacePath,
       gitCommonDir: null,
+      guestGitCommonDir: null,
+      guestGitDirectory: null,
       gitCommonHash: "none",
       heartbeatPath: this.heartbeatPath(name),
     };
@@ -795,7 +816,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       "--user",
       user,
       "--workdir",
-      identity.workspacePath,
+      identity.guestWorkspacePath,
       "--read-only",
       "--restart",
       "no",
@@ -811,14 +832,14 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       "--tmpfs",
       temporaryTmpfs,
       "--mount",
-      `type=bind,source=${identity.workspacePath},target=${identity.workspacePath}`,
+      `type=bind,source=${identity.workspacePath},target=${identity.guestWorkspacePath}`,
       "--mount",
       `type=bind,source=${identity.heartbeatPath},target=${HOST_HEARTBEAT_TARGET},readonly`,
       ...(identity.gitCommonDir === null
         ? []
         : [
             "--mount",
-            `type=bind,source=${identity.gitCommonDir},target=${identity.gitCommonDir}`,
+            `type=bind,source=${identity.gitCommonDir},target=${identity.guestGitCommonDir}`,
           ]),
       this.image,
       "node",
@@ -854,7 +875,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     const mounts = inspected.Mounts ?? [];
     const bindMounts = mounts.filter((mount) => mount.Type === "bind");
     const workspaceMount = bindMounts.find(
-      (mount) => mount.Destination === identity.workspacePath,
+      (mount) => mount.Destination === identity.guestWorkspacePath,
     );
     const heartbeatMount = bindMounts.find(
       (mount) => mount.Destination === HOST_HEARTBEAT_TARGET,
@@ -862,7 +883,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     const gitCommonMount = identity.gitCommonDir === null
       ? undefined
       : bindMounts.find(
-          (mount) => mount.Destination === identity.gitCommonDir,
+          (mount) => mount.Destination === identity.guestGitCommonDir,
         );
     const user = `${this.runAsUser.uid}:${this.runAsUser.gid}`;
     const expectedSecretTmpfs = [
@@ -886,7 +907,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       (mount) =>
         (mount.Type === "bind" &&
           mount.Source === identity.workspacePath &&
-          mount.Destination === identity.workspacePath &&
+          mount.Destination === identity.guestWorkspacePath &&
           mount.RW === true) ||
         (mount.Type === "bind" &&
           mount.Source === identity.heartbeatPath &&
@@ -895,7 +916,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
         (identity.gitCommonDir !== null &&
           mount.Type === "bind" &&
           mount.Source === identity.gitCommonDir &&
-          mount.Destination === identity.gitCommonDir &&
+          mount.Destination === identity.guestGitCommonDir &&
           mount.RW === true) ||
         (mount.Type === "tmpfs" &&
           (mount.Destination === SECRET_ROOT ||
@@ -912,7 +933,7 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       inspected.Config.Cmd[1] === "-e" &&
       inspected.Config.Cmd[2] === DOCKER_KEEPALIVE_SOURCE &&
       inspected.Config?.User === user &&
-      inspected.Config?.WorkingDir === identity.workspacePath &&
+      inspected.Config?.WorkingDir === identity.guestWorkspacePath &&
       labels?.[MANAGED_LABEL] === "true" &&
       labels?.[SCOPE_LABEL] === this.scopeHash &&
       labels?.[TASK_LABEL] === identity.taskHash &&
@@ -944,14 +965,14 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
       allowedMounts &&
       bindMounts.length === (identity.gitCommonDir === null ? 2 : 3) &&
       workspaceMount?.Source === identity.workspacePath &&
-      workspaceMount.Destination === identity.workspacePath &&
+      workspaceMount.Destination === identity.guestWorkspacePath &&
       workspaceMount.RW === true &&
       heartbeatMount?.Source === identity.heartbeatPath &&
       heartbeatMount.Destination === HOST_HEARTBEAT_TARGET &&
       heartbeatMount.RW === false &&
       (identity.gitCommonDir === null ||
         (gitCommonMount?.Source === identity.gitCommonDir &&
-          gitCommonMount.Destination === identity.gitCommonDir &&
+          gitCommonMount.Destination === identity.guestGitCommonDir &&
           gitCommonMount.RW === true)) &&
       !mounts.some(
         (mount) =>
@@ -1017,10 +1038,28 @@ export class DockerSecureExecutionBackend implements SecureExecutionBackend {
     identity: TaskIdentity,
     request: SecureExecutionRequest,
   ): Promise<SecureExecutionResult> {
+    const hostCwd = request.command.cwd ?? identity.workspacePath;
+    const relativeCwd = relative(identity.workspacePath, hostCwd)
+      .split("\\")
+      .join("/");
+    const guestCwd = posix.join(identity.guestWorkspacePath, relativeCwd);
+    const guestCommand = identity.guestGitDirectory === null
+      ? { ...request.command, cwd: guestCwd }
+      : {
+          executable: "/usr/bin/env",
+          args: [
+            `GIT_DIR=${identity.guestGitDirectory}`,
+            `GIT_COMMON_DIR=${identity.guestGitCommonDir}`,
+            `GIT_WORK_TREE=${identity.guestWorkspacePath}`,
+            request.command.executable,
+            ...request.command.args,
+          ],
+          cwd: guestCwd,
+        };
     const frame = encodeSecureExecutionFrame({
       executionId: randomBytes(12).toString("hex"),
-      command: request.command,
-      workspacePath: identity.workspacePath,
+      command: guestCommand,
+      workspacePath: identity.guestWorkspacePath,
       delivery: request.delivery,
     });
     const child = this.cli.spawn([

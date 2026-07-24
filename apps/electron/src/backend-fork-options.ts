@@ -9,6 +9,7 @@ interface CreateBackendForkOptionsInput {
   appVersion: string
   electronVersion: string
   execArgv: string[]
+  secureControlToken: string
   devBetterSqlite3Binding?: string
 }
 
@@ -21,6 +22,7 @@ export function createBackendForkOptions({
   appVersion,
   electronVersion,
   execArgv,
+  secureControlToken,
   devBetterSqlite3Binding,
 }: CreateBackendForkOptionsInput): ForkOptions {
   if (!isPackaged && !devBetterSqlite3Binding) {
@@ -36,6 +38,7 @@ export function createBackendForkOptions({
     FORGE_RESOURCES_DIR: resourcesDir,
     FORGE_APP_VERSION: appVersion,
     FORGE_ELECTRON_VERSION: electronVersion,
+    FORGE_SECURE_CONTROL_TOKEN: secureControlToken,
   }
 
   delete env.FORGE_BETTER_SQLITE3_NATIVE_BINDING

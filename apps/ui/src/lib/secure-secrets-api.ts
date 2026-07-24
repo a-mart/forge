@@ -317,10 +317,11 @@ async function requestEmpty(
   path: string,
   init?: RequestInit,
 ): Promise<void> {
+  const controlledInit = withSecureControl(init)
   let response: Response
   try {
     response = await apiClient.fetch(path, {
-      ...init,
+      ...controlledInit,
       cache: 'no-store',
     })
   } catch {
@@ -334,10 +335,11 @@ async function requestJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const controlledInit = withSecureControl(init)
   let response: Response
   try {
     response = await apiClient.fetch(path, {
-      ...init,
+      ...controlledInit,
       cache: 'no-store',
     })
   } catch {
@@ -380,4 +382,16 @@ function mapStatusToSafeCode(status: number): SecureSecretsErrorCode {
 
 function jsonHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json' }
+}
+
+function withSecureControl(init?: RequestInit): RequestInit | undefined {
+  const method = init?.method?.toUpperCase() ?? 'GET'
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return init
+  const token = typeof window === 'undefined'
+    ? undefined
+    : window.electronBridge?.secureControlToken
+  if (!token) throw new SecureSecretsError('SECURE_PRIVATE_API_UNAVAILABLE')
+  const headers = new Headers(init?.headers)
+  headers.set('X-Forge-Secure-Control', token)
+  return { ...init, headers }
 }

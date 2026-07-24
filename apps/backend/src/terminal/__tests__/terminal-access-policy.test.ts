@@ -1,6 +1,8 @@
 import type { IncomingMessage } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  SECURE_CONTROL_HEADER,
+  validateSecureBuilderControlCapability,
   validateSecureBuilderControlOrigin,
   validateTerminalHttpOrigin,
   validateTerminalWsOrigin,
@@ -29,6 +31,19 @@ afterEach(() => {
 })
 
 describe('terminal-access-policy', () => {
+  it('requires an exact per-launch capability for secure mutations', () => {
+    const token = 'a'.repeat(43)
+    const valid = createRequest()
+    valid.headers[SECURE_CONTROL_HEADER] = token
+    const invalid = createRequest()
+    invalid.headers[SECURE_CONTROL_HEADER] = `${token.slice(0, -1)}b`
+
+    expect(validateSecureBuilderControlCapability(valid, token)).toBe(true)
+    expect(validateSecureBuilderControlCapability(invalid, token)).toBe(false)
+    expect(validateSecureBuilderControlCapability(createRequest(), token)).toBe(false)
+    expect(validateSecureBuilderControlCapability(valid, '')).toBe(false)
+  })
+
   it('accepts only exact configured origins for secure builder controls', () => {
     const options = {
       backendHost: '127.0.0.1',

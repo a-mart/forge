@@ -30,6 +30,7 @@ export interface DockerCliOptions {
   environment?: NodeJS.ProcessEnv;
   onInvocation?: (invocation: DockerInvocation) => void;
   controlPlaneTimeoutMs?: number;
+  platform?: NodeJS.Platform;
 }
 
 export interface DockerCliResult {
@@ -53,6 +54,7 @@ export class DockerCli {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly onInvocation: DockerCliOptions["onInvocation"];
   private readonly controlPlaneTimeoutMs: number;
+  private readonly platform: NodeJS.Platform;
   private pinnedEndpoint: string | null = null;
   private endpointPinPromise: Promise<boolean> | null = null;
 
@@ -66,6 +68,7 @@ export class DockerCli {
       && options.controlPlaneTimeoutMs > 0
         ? options.controlPlaneTimeoutMs
         : 5_000;
+    this.platform = options.platform ?? process.platform;
   }
 
   spawn(args: readonly string[]): ChildProcessWithoutNullStreams {
@@ -119,7 +122,7 @@ export class DockerCli {
         return false;
       }
     }
-    if (!isLocalUnixEndpoint(endpoint)) return false;
+    if (!isLocalDockerEndpoint(endpoint, this.platform)) return false;
     this.pinnedEndpoint = endpoint;
     return true;
   }
@@ -183,7 +186,13 @@ export class DockerCli {
   }
 }
 
-function isLocalUnixEndpoint(endpoint: string): boolean {
+function isLocalDockerEndpoint(
+  endpoint: string,
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === "win32") {
+    return endpoint.toLowerCase() === "npipe:////./pipe/docker_engine";
+  }
   if (
     endpoint.includes("\0")
     || endpoint.includes("%")

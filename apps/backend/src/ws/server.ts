@@ -63,6 +63,7 @@ import { FeedbackService } from "../swarm/feedback-service.js";
 import { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
 import {
   validateSecureBuilderControlOrigin,
+  validateSecureBuilderControlCapability,
   validateTerminalWsOrigin,
 } from "../terminal/terminal-access-policy.js";
 
@@ -1163,6 +1164,18 @@ export class SwarmWebSocketServer {
         );
         if (!originValidation.ok) {
           sendJson(response, 403, { error: originValidation.errorMessage });
+          return;
+        }
+        if (
+          request.method !== "GET"
+          && request.method !== "HEAD"
+          && request.method !== "OPTIONS"
+          && !validateSecureBuilderControlCapability(request)
+        ) {
+          sendJson(response, 403, {
+            code: "SECURE_PRIVATE_API_UNAVAILABLE",
+            error: "SECURE_PRIVATE_API_UNAVAILABLE",
+          });
           return;
         }
       }

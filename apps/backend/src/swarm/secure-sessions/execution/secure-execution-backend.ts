@@ -7,8 +7,8 @@ export interface SecureExecutionTask {
    */
   taskId: string;
   /**
-   * The canonical absolute host workspace. Sandboxes mount it at this exact
-   * absolute path so command and file-tool paths agree.
+   * The canonical absolute host workspace. Sandboxes mount it directly;
+   * Windows Docker Desktop uses a fixed Linux guest path and translates cwd.
    */
   workspacePath: string;
 }

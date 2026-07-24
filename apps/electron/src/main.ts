@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, shell } from 'electron'
 import { fork, type ChildProcess } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -62,6 +63,7 @@ type BackendBootstrap = {
   platform: string
   windowRole: 'main' | 'managed-browser-popout'
   managedBrowserPopoutAvailable: boolean
+  secureControlToken: string
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -107,6 +109,7 @@ class BackendSupervisor {
   private readonly recentOutputLines: string[] = []
   private stdoutRemainder = ''
   private stderrRemainder = ''
+  private readonly secureControlToken = randomBytes(32).toString('base64url')
 
   constructor(private readonly onReady: (port: number, isRestart: boolean) => void) {}
 
@@ -115,7 +118,7 @@ class BackendSupervisor {
       throw new Error('Backend bootstrap requested before backend was ready')
     }
 
-    return buildBackendBootstrap(this.currentPort)
+    return buildBackendBootstrap(this.currentPort, this.secureControlToken)
   }
 
   get logPath(): string | null {
@@ -242,6 +245,7 @@ class BackendSupervisor {
       appVersion: app.getVersion(),
       electronVersion: process.versions.electron ?? '',
       execArgv,
+      secureControlToken: this.secureControlToken,
       devBetterSqlite3Binding,
     })
 
@@ -457,8 +461,8 @@ class BackendSupervisor {
   }
 }
 
-const backendSupervisor = new BackendSupervisor((port, isRestart) => {
-  backendBootstrap = buildBackendBootstrap(port)
+const backendSupervisor = new BackendSupervisor((_port, isRestart) => {
+  backendBootstrap = backendSupervisor.bootstrap
 
   if (isRestart && mainWindow && !mainWindow.isDestroyed()) {
     void loadRenderer(mainWindow)
@@ -540,7 +544,16 @@ if (!hasSingleInstanceLock) {
     const windowRole = browserPopoutWindow && !browserPopoutWindow.isDestroyed() && event.sender.id === browserPopoutWindow.webContents.id
       ? 'managed-browser-popout'
       : 'main'
-    event.returnValue = { ...bootstrap, windowRole, managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable() }
+    event.returnValue = windowRole === 'main'
+      ? { ...bootstrap, windowRole, managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable() }
+      : {
+          backendUrl: bootstrap.backendUrl,
+          backendWsUrl: bootstrap.backendWsUrl,
+          version: bootstrap.version,
+          platform: bootstrap.platform,
+          windowRole,
+          managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
+        }
   })
 
   ipcMain.handle('bridge:showOpenDialog', async (_event, options: Electron.OpenDialogOptions) => {
@@ -1250,7 +1263,7 @@ function isTrustedMainRenderer(event: unknown): boolean {
   return isTrustedRendererUrl(mainWindow.webContents.getURL())
 }
 
-function buildBackendBootstrap(port: number): BackendBootstrap {
+function buildBackendBootstrap(port: number, secureControlToken: string): BackendBootstrap {
   return {
     backendUrl: `http://127.0.0.1:${port}`,
     backendWsUrl: `ws://127.0.0.1:${port}`,
@@ -1258,6 +1271,7 @@ function buildBackendBootstrap(port: number): BackendBootstrap {
     platform: process.platform,
     windowRole: 'main',
     managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
+    secureControlToken,
   }
 }
 

@@ -81,7 +81,9 @@ interface SecureSessionsServiceOptions {
   requireBuilderSession: (agentId: string, action: string) => AgentDescriptor;
   emitSnapshot: (event: SecureSessionSnapshotEvent) => void;
   emitCatalogChanged: (event: SecureSecretCatalogChangedEvent) => void;
-  applyModeRuntimeRecycle: (sessionAgentId: string) => Promise<unknown> | unknown;
+  applyModeRuntimeRecycle: (
+    sessionAgentId: string,
+  ) => Promise<"recycled" | "deferred" | "none"> | "recycled" | "deferred" | "none";
   now?: () => string;
   createId?: () => string;
 }
@@ -173,8 +175,17 @@ export class SecureSessionsService {
         };
         return this.startupRecoveryResult;
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         this.startupRecoveryPromise = null;
+        const store = await this.store();
+        for (const state of store.listSessionStates()) {
+          store.updateSessionRuntimeState({
+            sessionAgentId: state.sessionAgentId,
+            profileId: state.profileId,
+            executionMode: "standard",
+            environmentStatus: "degraded",
+          });
+        }
         throw error;
       });
     try {
@@ -197,6 +208,10 @@ export class SecureSessionsService {
     const providerId = this.options.createId?.() ?? randomUUID();
     const store = await this.store();
     try {
+      await this.options.bitwardenSource.testConnection({
+        encryptedCredential: encryptedAccessToken,
+        endpointOrigin: serverOrigin,
+      });
       const provider = store.upsertProvider({
         providerId,
         kind: "bitwarden_secrets_manager",
@@ -503,6 +518,7 @@ export class SecureSessionsService {
     }
     const task = toTask(descriptor);
     const bindingWasActive = this.activeSessions.has(sessionAgentId);
+    let activationDeferred = false;
     try {
       await this.initializeSecureSessions();
       await this.options.execution.ensureTask(task);
@@ -527,10 +543,14 @@ export class SecureSessionsService {
       this.scheduleLeaseExpiry(store, sessionAgentId);
       const snapshot = this.toPublicSnapshot(store, result.snapshot);
       if (result.changed || !bindingWasActive) {
+        const recycle = await this.options.applyModeRuntimeRecycle(sessionAgentId);
+        if (recycle === "deferred") {
+          activationDeferred = true;
+          throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+        }
         if (options.emitSnapshot !== false) {
           this.options.emitSnapshot(toSnapshotEvent(snapshot));
         }
-        await this.options.applyModeRuntimeRecycle(sessionAgentId);
       }
       return snapshot;
     } catch (error) {
@@ -540,8 +560,8 @@ export class SecureSessionsService {
       const failed = store.updateSessionRuntimeState({
         sessionAgentId,
         profileId: requireProfileId(descriptor),
-        executionMode: "secure",
-        environmentStatus: "failed",
+        executionMode: activationDeferred ? "standard" : "secure",
+        environmentStatus: activationDeferred ? "stopped" : "failed",
       });
       this.options.emitSnapshot(toSnapshotEvent(this.toPublicSnapshot(store, failed.snapshot)));
       throw this.publicError(error);
@@ -619,12 +639,6 @@ export class SecureSessionsService {
       );
       const hasActiveEnvironment = this.activeSessions.has(sessionAgentId);
       if (persistedState || hasActiveEnvironment) {
-        // A failed startup sweep leaves persisted state intentionally present
-        // as recovery evidence. Lifecycle deletion must not erase that record
-        // until deterministic orphan cleanup has succeeded.
-        await this.initializeSecureSessions();
-      }
-      if (persistedState || hasActiveEnvironment) {
         const snapshot = store.getSnapshot(sessionAgentId);
         const hasActiveLease = snapshot.leases.some(
           (lease) => lease.state === "active",
@@ -635,6 +649,10 @@ export class SecureSessionsService {
           || snapshot.state.executionMode === "secure"
           || snapshot.state.environmentStatus !== "stopped"
         ) {
+          // Only touch Docker when there is secure runtime authority or
+          // recovery evidence to tear down. Standard stopped rows are purely
+          // local metadata and must remain Docker-independent.
+          await this.initializeSecureSessions();
           const stopped = await this.stopSecureSessionUnlocked(sessionAgentId, {
             baseRevision: snapshot.state.revision,
             stopProcesses: true,

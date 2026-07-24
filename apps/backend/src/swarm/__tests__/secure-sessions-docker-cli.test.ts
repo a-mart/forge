@@ -36,6 +36,23 @@ describe("DockerCli", () => {
     ]);
   });
 
+  it("pins only Docker Desktop's local named pipe on Windows", async () => {
+    const invocations: string[][] = [];
+    const endpoint = "npipe:////./pipe/docker_engine";
+    const cli = new DockerCli({
+      command: process.execPath,
+      environment: { DOCKER_HOST: endpoint },
+      platform: "win32",
+      onInvocation: ({ args }) => invocations.push([...args]),
+    });
+
+    await expect(cli.pinLocalEndpoint()).resolves.toBe(true);
+    await cli.run(["-e", "process.exit(0)"]);
+    expect(invocations).toEqual([
+      ["--host", endpoint, "-e", "process.exit(0)"],
+    ]);
+  });
+
   it("bounds a hung control-plane invocation and discards its output", async () => {
     const cli = new DockerCli({
       command: process.execPath,

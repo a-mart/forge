@@ -159,6 +159,23 @@ function propertyNames(schema: unknown, names = new Set<string>()): Set<string> 
 }
 
 describe("secure session agent tools", () => {
+  it("blocks cross-agent delegation while manager secrets are active", async () => {
+    const spawnAgent = vi.fn();
+    const sendMessage = vi.fn();
+    const tools = buildSwarmTools(host({ spawnAgent, sendMessage }), manager());
+
+    await expect(toolByName(tools, "spawn_agent").execute("call-1", {
+      agentId: "worker",
+      initialMessage: "Inspect the workspace",
+    })).rejects.toThrow("secure_session_delegation_blocked");
+    await expect(toolByName(tools, "send_message_to_agent").execute("call-2", {
+      targetAgentId: "worker-1",
+      message: "Continue",
+    })).rejects.toThrow("secure_session_delegation_blocked");
+    expect(spawnAgent).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("exposes both capabilities to Builder managers and their workers", () => {
     const toolHost = host();
     const managerTools = buildSwarmTools(toolHost, manager()).map(

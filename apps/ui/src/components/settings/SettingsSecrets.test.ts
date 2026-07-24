@@ -156,7 +156,7 @@ describe('SettingsSecrets', () => {
     expect(container.textContent).toContain('no task receives access until you grant it')
 
     activateTab('Advanced delivery')
-    expect(container.textContent).toContain('Bindings never grant task access by themselves')
+    expect(container.textContent).toContain('Delivery never grants task access by itself')
     expect(container.textContent).toContain('generated environment delivery')
   })
 

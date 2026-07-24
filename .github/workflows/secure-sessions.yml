@@ -1,0 +1,55 @@
+name: Secure Sessions
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  docker-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run mandatory secure Docker suites
+        env:
+          FORGE_REQUIRE_SECURE_DOCKER_E2E: "1"
+        run: |
+          cd apps/backend
+          pnpm exec vitest run \
+            src/swarm/__tests__/secure-sessions-docker-execution-backend.test.ts \
+            src/swarm/__tests__/secure-sessions-e2e-docker.test.ts
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate Windows control, vault, and Docker Desktop paths
+        shell: bash
+        run: |
+          cd apps/backend
+          pnpm exec vitest run \
+            src/terminal/__tests__/terminal-access-policy.test.ts \
+            src/swarm/__tests__/secure-sessions-docker-cli.test.ts \
+            src/swarm/__tests__/secure-sessions-electron-safe-storage-client.test.ts
+      - name: Build Windows-compatible packages
+        run: pnpm build

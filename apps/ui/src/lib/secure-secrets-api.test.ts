@@ -66,6 +66,7 @@ function installSecureVault(
   Object.defineProperty(window, 'electronBridge', {
     configurable: true,
     value: {
+      secureControlToken: 'test-secure-control-token-that-is-long-enough',
       secureVault: {
         status: vi.fn(async () => ({ ok: true as const, available: true as const })),
         encryptLocalValue,
@@ -88,6 +89,7 @@ describe('secure secrets API', () => {
     Object.defineProperty(window, 'electronBridge', {
       configurable: true,
       value: {
+        secureControlToken: 'test-secure-control-token-that-is-long-enough',
         secureVault: {
           status: vi.fn(async () => ({
             ok: false as const,
@@ -156,6 +158,8 @@ describe('secure secrets API', () => {
     })
 
     const requestBody = String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Forge-Secure-Control'))
+      .toBe('test-secure-control-token-that-is-long-enough')
     expect(requestBody).toContain('"encryptedMaterial":"ciphertext-only"')
     expect(requestBody).not.toContain(rawSecret)
   })

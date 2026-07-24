@@ -491,6 +491,25 @@ describe("SecureValueGuard one-shot sanitization", () => {
     expect(getterCalls).toBe(0);
   });
 
+  it("preserves safe Set and Map containers used by compaction preparation", () => {
+    const guard = new SecureValueGuard([SELECTIVE_VALUE]);
+    const input = {
+      ids: new Set(["turn-1", "turn-2"]),
+      metadata: new Map<unknown, unknown>([
+        ["turn-1", { compacted: true }],
+      ]),
+    };
+
+    const sanitized = guard.sanitizeStructured(input) as typeof input;
+
+    expect(sanitized).not.toBe(input);
+    expect([...sanitized.ids]).toEqual(["turn-1", "turn-2"]);
+    expect([...sanitized.metadata]).toEqual([["turn-1", { compacted: true }]]);
+    expect(guard.sanitizeStructured(new Set([SELECTIVE_VALUE.toString("utf8")]))).toBe(
+      SECURE_OUTPUT_QUARANTINE,
+    );
+  });
+
   it("returns exact safe strings and constant whole-value quarantine markers", () => {
     const guard = new SecureValueGuard([SELECTIVE_VALUE]);
     const safe = "  safe π text  ";
