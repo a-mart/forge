@@ -36,6 +36,7 @@ const RENDEZVOUS: RendezvousDocument = {
   keyId: 'test-key',
   userScope: 'test-user',
   desktopInstanceId: DESKTOP_INSTANCE_ID,
+  desktopPid: 4242,
   protocolMin: HOST_PROTOCOL_MIN_VERSION,
   protocolMax: HOST_PROTOCOL_MAX_VERSION,
 }

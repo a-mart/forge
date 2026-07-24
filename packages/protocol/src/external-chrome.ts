@@ -30,6 +30,20 @@ export const EXTERNAL_CHROME_PROTOCOL_MAX_VERSION = 1
 export const EXTERNAL_CHROME_PROTOCOL_VERSIONS = [1] as const
 export type ExternalChromeProtocolVersion = (typeof EXTERNAL_CHROME_PROTOCOL_VERSIONS)[number]
 
+/** Non-secret, current-user-only Desktop rendezvous consumed by the native messaging host. */
+export interface ExternalChromeRendezvousDocument {
+  schemaVersion: 1
+  endpoint: string
+  epoch: string
+  expiresAt: string
+  keyId: string
+  userScope: string
+  desktopInstanceId: string
+  desktopPid: number
+  protocolMin: number
+  protocolMax: number
+}
+
 /** Lower Forge bounds apply before the native-messaging transport's platform bounds. */
 export const EXTERNAL_CHROME_MAX_MESSAGE_BYTES = 1 * 1_024 * 1_024
 export const EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES = 64 * 1_024 * 1_024

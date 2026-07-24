@@ -1,0 +1,20 @@
+import { describe, expect, it } from 'vitest'
+import * as root from '../index.js'
+import {
+  EXTERNAL_CHROME_COORDINATOR_OPERATIONS,
+  parseExternalChromeCoordinatorRequest,
+} from '../external-chrome-coordinator.js'
+
+describe('External Chrome coordinator contract', () => {
+  it('exports the narrow exact operation set from the root barrel', () => {
+    expect(EXTERNAL_CHROME_COORDINATOR_OPERATIONS).toEqual(['status', 'enable', 'disable', 'repair', 'remove'])
+    expect(root.parseExternalChromeCoordinatorRequest).toBe(parseExternalChromeCoordinatorRequest)
+  })
+
+  it('rejects unknown, extra, and malformed control inputs', () => {
+    expect(parseExternalChromeCoordinatorRequest({ operation: 'status' })).toEqual({ operation: 'status' })
+    expect(() => parseExternalChromeCoordinatorRequest({ operation: 'rotate-key' })).toThrow(/operation/u)
+    expect(() => parseExternalChromeCoordinatorRequest({ operation: 'status', endpoint: '/tmp/leak' })).toThrow(/fields/u)
+    expect(() => parseExternalChromeCoordinatorRequest('status')).toThrow(/object/u)
+  })
+})

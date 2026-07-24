@@ -31,6 +31,7 @@ const VALID_RENDEZVOUS: RendezvousDocument = {
   keyId: 'test-key',
   userScope: 'user-a',
   desktopInstanceId: 'desktop_1234567890abcdef',
+  desktopPid: 4242,
   protocolMin: 1,
   protocolMax: 1,
 }
@@ -65,6 +66,10 @@ describe('native host trust and process boundaries', () => {
       ...VALID_RENDEZVOUS,
       expiresAt: '2028-01-01T00:00:00.000Z',
     }, 'user-a', 'darwin', now)).toThrow(/stale/u)
+    expect(() => validateRendezvous({
+      ...VALID_RENDEZVOUS,
+      desktopPid: 0,
+    }, 'user-a', 'darwin', now)).toThrow(/process identifier/u)
     expect(() => validateRendezvous({
       ...VALID_RENDEZVOUS,
       endpoint: 'tcp://127.0.0.1:1234',

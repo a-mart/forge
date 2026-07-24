@@ -23,6 +23,8 @@ import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contr
 import { LifecycleLog } from './lifecycle-log.js'
 import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
+import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
+import { installExternalChromeIpc } from './external-chrome/ipc.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -73,15 +75,16 @@ let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
 let appProtocolRegistered = false
 let disposeBrowserHost: (() => void) | null = null
+let disposeExternalChromeIpc: (() => void) | null = null
+let externalChromeCoordinator: ExternalChromeHostCoordinator | null = null
 const browserSessions = new BrowserSessionRegistry()
 let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
 const lifecycleLog = new LifecycleLog({
   getLogPath: () => path.join(app.getPath('userData'), LIFECYCLE_LOG_FILENAME),
 })
 const handledTerminationSignals = new Set<NodeJS.Signals>()
-// M2 lifecycle seam. The coordinator node replaces this with bounded lease/native-port quiescence.
 const externalChromeUpdateQuiesceHook: UpdateQuiesceHook = {
-  quiesce: async () => undefined,
+  quiesce: async () => externalChromeCoordinator?.quiesce('desktop-update'),
 }
 
 app.commandLine.appendSwitch('disable-background-timer-throttling')
@@ -476,6 +479,9 @@ async function prepareQuitForUpdate(): Promise<void> {
     browserWorkspaceIpc = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
+    disposeExternalChromeIpc?.()
+    disposeExternalChromeIpc = null
+    await externalChromeCoordinator?.quiesce('desktop-update')
     await backendSupervisor.stop()
   }
 }
@@ -640,6 +646,12 @@ if (!hasSingleInstanceLock) {
     }
 
     await deployPackagedExternalChrome()
+    externalChromeCoordinator = new ExternalChromeHostCoordinator({
+      dataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
+    })
+    await externalChromeCoordinator.resumeIfEnabled().catch((error) => {
+      console.warn('[external-chrome] Previously enabled coordinator could not resume', error instanceof Error ? error.message : String(error))
+    })
 
     // Write CLI install hint on every launch so the shim can find the current app
     writeInstallHint()
@@ -664,6 +676,12 @@ if (!hasSingleInstanceLock) {
       },
     })
     disposeBrowserHost = installBrowserIpc({ ipcMain, mainWindow, manager: browserManager, viewHost: browserViewHost })
+    disposeExternalChromeIpc = installExternalChromeIpc({
+      ipcMain,
+      mainWindow,
+      coordinator: externalChromeCoordinator,
+      onError: (error) => console.warn('[external-chrome] Coordinator operation failed', error instanceof Error ? error.message : String(error)),
+    })
     browserWorkspaceIpc = installBrowserWorkspaceIpc({
       ipcMain,
       getMainWindow: () => mainWindow,
@@ -720,8 +738,12 @@ if (!hasSingleInstanceLock) {
     browserWorkspaceIpc = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
+    disposeExternalChromeIpc?.()
+    disposeExternalChromeIpc = null
 
-    void backendSupervisor.stop().finally(() => {
+    void (externalChromeCoordinator?.quiesce('desktop-quit') ?? Promise.resolve()).catch((error) => {
+      console.warn('[external-chrome] Quit quiesce failed', error instanceof Error ? error.message : String(error))
+    }).finally(() => backendSupervisor.stop()).finally(() => {
       lifecycleLog.record('electron_exit_requested', { code: 0 })
       app.exit(0)
     })
@@ -785,6 +807,8 @@ function createMainWindow(): BrowserWindow {
       browserWorkspaceIpc = null
       disposeBrowserHost?.()
       disposeBrowserHost = null
+      disposeExternalChromeIpc?.()
+      disposeExternalChromeIpc = null
       browserViewHost = null
       mainWindow = null
     }

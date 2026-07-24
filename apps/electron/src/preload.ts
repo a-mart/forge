@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { SleepBlockerSettingsPatch, SleepBlockerStatus } from './sleep-blocker.js'
 import { createTrustedBrowserBridge, createTrustedBrowserWorkspaceBridge } from './browser/trusted-browser-bridge.js'
 import type { ElectronWindowRole } from './browser/browser-bridge-contract.js'
+import { createTrustedExternalChromeBridge } from './external-chrome/ipc.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -36,6 +37,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       platform: bootstrap.platform,
       browserAutomation: createTrustedBrowserBridge(ipcRenderer),
       browserWorkspace,
+      externalChrome: createTrustedExternalChromeBridge(ipcRenderer),
       showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
         ipcRenderer.invoke('bridge:showOpenDialog', options),
       onTerminalShortcut: (listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): (() => void) => {

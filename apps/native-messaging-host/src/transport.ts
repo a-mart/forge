@@ -1,5 +1,6 @@
 import { createConnection, type Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
+import type { ExternalChromeRendezvousDocument } from '@forge/protocol'
 import {
   HOST_MAX_QUEUED_RELAY_BYTES,
   HOST_MAX_QUEUED_RELAY_RECORDS,
@@ -7,17 +8,7 @@ import {
 import { encodeNativeMessage, NativeMessageDecoder, type JsonObject } from './framing.js'
 import type { Platform } from './platform.js'
 
-export interface RendezvousDocument {
-  schemaVersion: 1
-  endpoint: string
-  epoch: string
-  expiresAt: string
-  keyId: string
-  userScope: string
-  desktopInstanceId: string
-  protocolMin: number
-  protocolMax: number
-}
+export type RendezvousDocument = ExternalChromeRendezvousDocument
 
 export interface RendezvousProvider {
   read(): Promise<RendezvousDocument>
@@ -54,6 +45,7 @@ export class RelayBackpressureError extends DesktopUnavailableError {
 
 const RENDEZVOUS_FIELDS = [
   'desktopInstanceId',
+  'desktopPid',
   'endpoint',
   'epoch',
   'expiresAt',
@@ -82,6 +74,9 @@ export function validateRendezvous(
   if (!/^[A-Za-z0-9_-]{16,128}$/u.test(document.epoch)) throw new DesktopUnavailableError('rendezvous epoch is malformed')
   if (!/^[A-Za-z0-9_-]{16,128}$/u.test(document.desktopInstanceId)) {
     throw new DesktopUnavailableError('Desktop instance identifier is malformed')
+  }
+  if (!Number.isSafeInteger(document.desktopPid) || document.desktopPid <= 0) {
+    throw new DesktopUnavailableError('Desktop process identifier is malformed')
   }
   if (!/^[A-Za-z0-9._-]{1,128}$/u.test(document.keyId)) throw new DesktopUnavailableError('rendezvous key identifier is malformed')
   if (

@@ -6,6 +6,7 @@ import type {
   BrowserSessionSnapshot,
   BrowserTabSnapshot,
   BrowserViewportSetting,
+  ExternalChromeCoordinatorStatus,
 } from '@forge/protocol'
 
 export interface SleepBlockerStatus { enabled: boolean; blocking: boolean; graceRemainingMs: number | null; reason: string }
@@ -17,6 +18,11 @@ export type UpdateStatus =
   | { type: 'downloaded'; version?: string }
   | { type: 'error'; message?: string }
 export interface CliInstallResult { success: boolean; installedPath: string; binDir: string; pathIncluded: boolean; pathInstructions: string | null; error?: string }
+export type ExternalChromeControlResult = { ok: true; status: ExternalChromeCoordinatorStatus } | { ok: false; error: 'invalid-request' | 'operation-failed' }
+export interface ExternalChromeBridge {
+  status(): Promise<ExternalChromeControlResult>; enable(): Promise<ExternalChromeControlResult>; disable(): Promise<ExternalChromeControlResult>
+  repair(): Promise<ExternalChromeControlResult>; remove(): Promise<ExternalChromeControlResult>
+}
 
 export type ElectronWindowRole = 'main' | 'managed-browser-popout'
 export type ManagedBrowserWorkspaceMode = 'docked' | 'opening' | 'popped-out' | 'docking' | 'unavailable'
@@ -86,6 +92,7 @@ export interface ElectronBridge {
   platform: string
   browserAutomation?: BrowserAutomationBridge
   browserWorkspace?: BrowserWorkspaceBridge
+  externalChrome?: ExternalChromeBridge
   showOpenDialog?(options: { title?: string; defaultPath?: string; properties?: Array<'openFile' | 'openDirectory' | 'multiSelections' | 'showHiddenFiles'> }): Promise<{ canceled: boolean; filePaths: string[] }>
   onTerminalShortcut?(listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): () => void
   updateTitleBarOverlay?(colors: { color: string; symbolColor: string }): void
