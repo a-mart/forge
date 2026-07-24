@@ -1,9 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import {
   authenticateRecord,
+  createHandshakeProof,
+  deriveRelaySessionKey,
   RelayAuthenticationError,
   ReplayGuard,
   verifyAuthenticatedRecord,
+  verifyHandshakeProof,
 } from './auth.js'
 import {
   HOST_CONNECT_BUDGET_MS,
@@ -20,6 +23,7 @@ import {
   type RelayConnector,
   type RelayRecordTransport,
   type RelaySecretProvider,
+  type RendezvousDocument,
   type RendezvousProvider,
   validateRendezvous,
 } from './transport.js'
@@ -29,14 +33,68 @@ export interface RelayClientDependencies {
   secrets: RelaySecretProvider
   connector: RelayConnector
   expectedUserScope: string
+  expectedExtensionOrigin: string
   platform: Platform
   now?: () => number
   nonce?: () => string
   sleep?: (milliseconds: number) => Promise<void>
+  clientNonceGuard?: ReplayGuard
   serverNonceGuard?: ReplayGuard
   maxAttempts?: number
   retryDelayMs?: number
   connectBudgetMs?: number
+}
+
+const CHALLENGE_FIELDS = [
+  'clientNonce',
+  'clientProtocolMax',
+  'clientProtocolMin',
+  'desktopInstanceId',
+  'desktopProtocolMax',
+  'desktopProtocolMin',
+  'epoch',
+  'extensionOrigin',
+  'maxMessageBytes',
+  'proof',
+  'protocolVersion',
+  'sequence',
+  'serverNonce',
+  'type',
+] as const
+
+const READY_FIELDS = [
+  'clientNonce',
+  'desktopInstanceId',
+  'epoch',
+  'extensionOrigin',
+  'mac',
+  'maxMessageBytes',
+  'protocolVersion',
+  'sequence',
+  'serverNonce',
+  'type',
+] as const
+
+const RELAY_FIELDS = [
+  'clientNonce',
+  'desktopInstanceId',
+  'direction',
+  'epoch',
+  'extensionOrigin',
+  'mac',
+  'payload',
+  'protocolVersion',
+  'sequence',
+  'serverNonce',
+  'type',
+] as const
+
+function assertExactFields(record: JsonObject, expected: readonly string[], recordName: string): void {
+  const actual = Object.keys(record).sort()
+  const sortedExpected = [...expected].sort()
+  if (actual.length !== sortedExpected.length || actual.some((field, index) => field !== sortedExpected[index])) {
+    throw new RelayAuthenticationError('malformed-auth-record', `${recordName} fields do not exactly match the protocol`)
+  }
 }
 
 function stringField(record: JsonObject, name: string): string {
@@ -63,14 +121,43 @@ function defaultNonce(): string {
   return randomBytes(32).toString('base64url')
 }
 
+function challengeContext(
+  rendezvous: RendezvousDocument,
+  extensionOrigin: string,
+  clientNonce: string,
+  serverNonce: string,
+  protocolVersion: number,
+  maxMessageBytes: number,
+  type: 'challenge' | 'authenticate',
+  sequence: 0 | 1,
+): JsonObject {
+  return {
+    type,
+    sequence,
+    epoch: rendezvous.epoch,
+    desktopInstanceId: rendezvous.desktopInstanceId,
+    extensionOrigin,
+    clientNonce,
+    serverNonce,
+    clientProtocolMin: HOST_PROTOCOL_MIN_VERSION,
+    clientProtocolMax: HOST_PROTOCOL_MAX_VERSION,
+    desktopProtocolMin: rendezvous.protocolMin,
+    desktopProtocolMax: rendezvous.protocolMax,
+    protocolVersion,
+    maxMessageBytes,
+  }
+}
+
 export class AuthenticatedRelayClient {
   private outboundSequence = 2
   private closed = false
 
   private constructor(
     private readonly transport: RelayRecordTransport,
-    private readonly key: Uint8Array,
+    private readonly sessionKey: Buffer,
     private readonly epoch: string,
+    private readonly desktopInstanceId: string,
+    private readonly extensionOrigin: string,
     private readonly clientNonce: string,
     private readonly serverNonce: string,
     private readonly inboundGuard: ReplayGuard,
@@ -85,29 +172,45 @@ export class AuthenticatedRelayClient {
     const maxAttempts = dependencies.maxAttempts ?? HOST_CONNECT_MAX_ATTEMPTS
     const retryDelayMs = dependencies.retryDelayMs ?? HOST_CONNECT_RETRY_DELAY_MS
     const connectBudgetMs = dependencies.connectBudgetMs ?? HOST_CONNECT_BUDGET_MS
+    const clientNonceGuard = dependencies.clientNonceGuard ?? new ReplayGuard()
+    const serverNonceGuard = dependencies.serverNonceGuard ?? new ReplayGuard()
     const startedAt = now()
     let lastError: unknown
 
     for (let attempt = 1; attempt <= maxAttempts && now() - startedAt <= connectBudgetMs; attempt += 1) {
       let transport: RelayRecordTransport | undefined
+      let secret: Buffer | undefined
       try {
         const rendezvous = await dependencies.rendezvous.read()
         validateRendezvous(rendezvous, dependencies.expectedUserScope, dependencies.platform, now())
-        const key = await dependencies.secrets.getSecret(rendezvous.keyId)
-        if (key.byteLength < 32) throw new RelayAuthenticationError('malformed-auth-record', 'relay secret is too short')
+        if (
+          rendezvous.protocolMax < HOST_PROTOCOL_MIN_VERSION
+          || rendezvous.protocolMin > HOST_PROTOCOL_MAX_VERSION
+        ) {
+          throw new RelayAuthenticationError('malformed-auth-record', 'relay protocol ranges do not overlap')
+        }
+        const clientNonce = nonce()
+        clientNonceGuard.acceptNonce(clientNonce)
         transport = await dependencies.connector.connect(rendezvous.endpoint)
+        const suppliedSecret = await dependencies.secrets.getSecret(rendezvous.keyId)
+        secret = Buffer.from(suppliedSecret)
+        suppliedSecret.fill(0)
+        if (secret.byteLength < 32) throw new RelayAuthenticationError('malformed-auth-record', 'relay secret is too short')
         return await AuthenticatedRelayClient.handshake(
           transport,
-          key,
-          rendezvous.epoch,
-          nonce(),
-          dependencies.serverNonceGuard ?? new ReplayGuard(),
+          secret,
+          rendezvous,
+          dependencies.expectedExtensionOrigin,
+          clientNonce,
+          serverNonceGuard,
         )
       } catch (error) {
         transport?.close()
         if (error instanceof RelayAuthenticationError) throw error
         lastError = error
         if (attempt < maxAttempts && now() - startedAt + retryDelayMs <= connectBudgetMs) await sleep(retryDelayMs)
+      } finally {
+        secret?.fill(0)
       }
     }
     throw new DesktopUnavailableError(lastError instanceof Error ? lastError.message : undefined)
@@ -115,124 +218,185 @@ export class AuthenticatedRelayClient {
 
   private static async handshake(
     transport: RelayRecordTransport,
-    key: Uint8Array,
-    epoch: string,
+    secret: Uint8Array,
+    rendezvous: RendezvousDocument,
+    extensionOrigin: string,
     clientNonce: string,
     serverNonceGuard: ReplayGuard,
   ): Promise<AuthenticatedRelayClient> {
-    const hello = authenticateRecord({
+    await transport.send({
       type: 'hello',
-      epoch,
       sequence: 0,
+      epoch: rendezvous.epoch,
+      desktopInstanceId: rendezvous.desktopInstanceId,
+      extensionOrigin,
       clientNonce,
-      protocolMin: HOST_PROTOCOL_MIN_VERSION,
-      protocolMax: HOST_PROTOCOL_MAX_VERSION,
+      clientProtocolMin: HOST_PROTOCOL_MIN_VERSION,
+      clientProtocolMax: HOST_PROTOCOL_MAX_VERSION,
+      desktopProtocolMin: rendezvous.protocolMin,
+      desktopProtocolMax: rendezvous.protocolMax,
       maxMessageBytes: HOST_MAX_NEGOTIATED_MESSAGE_BYTES,
-    }, key)
-    await transport.send(hello)
+    })
 
     const challengeRaw = await transport.receive()
     if (challengeRaw === null) throw new DesktopUnavailableError('relay disconnected during challenge')
-    const challenge = verifyAuthenticatedRecord(challengeRaw, key)
+    assertExactFields(challengeRaw, CHALLENGE_FIELDS, 'challenge')
+    const { proof, ...challengeFields } = challengeRaw
+    verifyHandshakeProof('desktop-challenge', challengeFields, proof, secret)
+
     const inboundGuard = new ReplayGuard()
-    inboundGuard.acceptSequence(numberField(challenge, 'sequence'))
-    if (stringField(challenge, 'type') !== 'challenge') throw new RelayAuthenticationError('malformed-auth-record', 'expected challenge')
-    if (stringField(challenge, 'epoch') !== epoch) throw new RelayAuthenticationError('malformed-auth-record', 'stale rendezvous epoch')
-    if (stringField(challenge, 'clientNonce') !== clientNonce) throw new RelayAuthenticationError('nonce-replay', 'challenge client nonce mismatch')
-    const serverNonce = stringField(challenge, 'serverNonce')
-    serverNonceGuard.acceptNonce(serverNonce)
-    const protocolVersion = numberField(challenge, 'protocolVersion')
-    if (protocolVersion < HOST_PROTOCOL_MIN_VERSION || protocolVersion > HOST_PROTOCOL_MAX_VERSION) {
-      throw new RelayAuthenticationError('malformed-auth-record', 'relay protocol versions do not overlap')
+    inboundGuard.acceptSequence(numberField(challengeRaw, 'sequence'))
+    if (stringField(challengeRaw, 'type') !== 'challenge') {
+      throw new RelayAuthenticationError('malformed-auth-record', 'expected challenge')
     }
-    const maxMessageBytes = numberField(challenge, 'maxMessageBytes')
+    if (stringField(challengeRaw, 'epoch') !== rendezvous.epoch) {
+      throw new RelayAuthenticationError('malformed-auth-record', 'stale rendezvous epoch')
+    }
+    if (stringField(challengeRaw, 'desktopInstanceId') !== rendezvous.desktopInstanceId) {
+      throw new RelayAuthenticationError('malformed-auth-record', 'stale Desktop instance')
+    }
+    if (stringField(challengeRaw, 'extensionOrigin') !== extensionOrigin) {
+      throw new RelayAuthenticationError('malformed-auth-record', 'relay extension origin mismatch')
+    }
+    if (stringField(challengeRaw, 'clientNonce') !== clientNonce) {
+      throw new RelayAuthenticationError('nonce-replay', 'challenge client nonce mismatch')
+    }
+    const serverNonce = stringField(challengeRaw, 'serverNonce')
+    serverNonceGuard.acceptNonce(serverNonce)
+    if (
+      numberField(challengeRaw, 'clientProtocolMin') !== HOST_PROTOCOL_MIN_VERSION
+      || numberField(challengeRaw, 'clientProtocolMax') !== HOST_PROTOCOL_MAX_VERSION
+      || numberField(challengeRaw, 'desktopProtocolMin') !== rendezvous.protocolMin
+      || numberField(challengeRaw, 'desktopProtocolMax') !== rendezvous.protocolMax
+    ) {
+      throw new RelayAuthenticationError('malformed-auth-record', 'relay protocol range binding does not match rendezvous')
+    }
+    const protocolVersion = numberField(challengeRaw, 'protocolVersion')
+    const negotiatedMin = Math.max(HOST_PROTOCOL_MIN_VERSION, rendezvous.protocolMin)
+    const negotiatedMax = Math.min(HOST_PROTOCOL_MAX_VERSION, rendezvous.protocolMax)
+    if (protocolVersion < negotiatedMin || protocolVersion > negotiatedMax) {
+      throw new RelayAuthenticationError('malformed-auth-record', 'relay protocol ranges do not overlap')
+    }
+    const maxMessageBytes = numberField(challengeRaw, 'maxMessageBytes')
     if (maxMessageBytes <= 0 || maxMessageBytes > HOST_MAX_NEGOTIATED_MESSAGE_BYTES) {
       throw new RelayAuthenticationError('malformed-auth-record', 'relay selected an invalid message bound')
     }
 
-    await transport.send(authenticateRecord({
-      type: 'authenticate',
-      epoch,
-      sequence: 1,
-      clientNonce,
-      serverNonce,
-      protocolVersion,
-      maxMessageBytes,
-    }, key))
+    let sessionKey: Buffer | undefined = deriveRelaySessionKey(challengeFields, secret)
+    try {
+      const authenticateFields = challengeContext(
+        rendezvous,
+        extensionOrigin,
+        clientNonce,
+        serverNonce,
+        protocolVersion,
+        maxMessageBytes,
+        'authenticate',
+        1,
+      )
+      await transport.send({
+        ...authenticateFields,
+        proof: createHandshakeProof('native-host-authenticate', authenticateFields, secret),
+      })
 
-    const readyRaw = await transport.receive()
-    if (readyRaw === null) throw new DesktopUnavailableError('relay disconnected before ready')
-    const ready = verifyAuthenticatedRecord(readyRaw, key)
-    inboundGuard.acceptSequence(numberField(ready, 'sequence'))
-    if (
-      stringField(ready, 'type') !== 'ready'
-      || stringField(ready, 'epoch') !== epoch
-      || stringField(ready, 'clientNonce') !== clientNonce
-      || stringField(ready, 'serverNonce') !== serverNonce
-      || numberField(ready, 'protocolVersion') !== protocolVersion
-      || numberField(ready, 'maxMessageBytes') !== maxMessageBytes
-    ) {
-      throw new RelayAuthenticationError('malformed-auth-record', 'relay ready acknowledgement does not match negotiation')
+      const readyRaw = await transport.receive()
+      if (readyRaw === null) throw new DesktopUnavailableError('relay disconnected before ready')
+      assertExactFields(readyRaw, READY_FIELDS, 'ready')
+      const ready = verifyAuthenticatedRecord(readyRaw, sessionKey)
+      inboundGuard.acceptSequence(numberField(ready, 'sequence'))
+      if (
+        stringField(ready, 'type') !== 'ready'
+        || stringField(ready, 'epoch') !== rendezvous.epoch
+        || stringField(ready, 'desktopInstanceId') !== rendezvous.desktopInstanceId
+        || stringField(ready, 'extensionOrigin') !== extensionOrigin
+        || stringField(ready, 'clientNonce') !== clientNonce
+        || stringField(ready, 'serverNonce') !== serverNonce
+        || numberField(ready, 'protocolVersion') !== protocolVersion
+        || numberField(ready, 'maxMessageBytes') !== maxMessageBytes
+      ) {
+        throw new RelayAuthenticationError('malformed-auth-record', 'relay ready acknowledgement does not match negotiation')
+      }
+
+      const client = new AuthenticatedRelayClient(
+        transport,
+        sessionKey,
+        rendezvous.epoch,
+        rendezvous.desktopInstanceId,
+        extensionOrigin,
+        clientNonce,
+        serverNonce,
+        inboundGuard,
+        protocolVersion,
+        maxMessageBytes,
+      )
+      sessionKey = undefined
+      return client
+    } finally {
+      sessionKey?.fill(0)
     }
-
-    return new AuthenticatedRelayClient(
-      transport,
-      key,
-      epoch,
-      clientNonce,
-      serverNonce,
-      inboundGuard,
-      protocolVersion,
-      maxMessageBytes,
-    )
   }
 
   async send(message: JsonObject): Promise<void> {
     this.assertOpen()
-    this.assertMessageBound(message)
-    const record = authenticateRecord({
-      type: 'relay',
-      direction: 'extension-to-desktop',
-      epoch: this.epoch,
-      sequence: this.outboundSequence,
-      clientNonce: this.clientNonce,
-      serverNonce: this.serverNonce,
-      protocolVersion: this.protocolVersion,
-      payload: message,
-    }, this.key)
-    this.outboundSequence += 1
-    await this.transport.send(record)
+    try {
+      this.assertMessageBound(message)
+      const record = authenticateRecord({
+        type: 'relay',
+        direction: 'extension-to-desktop',
+        epoch: this.epoch,
+        desktopInstanceId: this.desktopInstanceId,
+        extensionOrigin: this.extensionOrigin,
+        sequence: this.outboundSequence,
+        clientNonce: this.clientNonce,
+        serverNonce: this.serverNonce,
+        protocolVersion: this.protocolVersion,
+        payload: message,
+      }, this.sessionKey)
+      this.outboundSequence += 1
+      await this.transport.send(record)
+    } catch (error) {
+      this.close()
+      throw error
+    }
   }
 
   async receive(): Promise<JsonObject | null> {
     this.assertOpen()
-    const raw = await this.transport.receive()
-    if (raw === null) {
+    try {
+      const raw = await this.transport.receive()
+      if (raw === null) {
+        this.close()
+        return null
+      }
+      assertExactFields(raw, RELAY_FIELDS, 'relay')
+      const record = verifyAuthenticatedRecord(raw, this.sessionKey)
+      this.inboundGuard.acceptSequence(numberField(record, 'sequence'))
+      if (
+        stringField(record, 'type') !== 'relay'
+        || stringField(record, 'direction') !== 'desktop-to-extension'
+        || stringField(record, 'epoch') !== this.epoch
+        || stringField(record, 'desktopInstanceId') !== this.desktopInstanceId
+        || stringField(record, 'extensionOrigin') !== this.extensionOrigin
+        || stringField(record, 'clientNonce') !== this.clientNonce
+        || stringField(record, 'serverNonce') !== this.serverNonce
+        || numberField(record, 'protocolVersion') !== this.protocolVersion
+      ) {
+        throw new RelayAuthenticationError('malformed-auth-record', 'relay routing metadata does not match the authenticated session')
+      }
+      const message = objectField(record, 'payload')
+      this.assertMessageBound(message)
+      return message
+    } catch (error) {
       this.close()
-      return null
+      throw error
     }
-    const record = verifyAuthenticatedRecord(raw, this.key)
-    this.inboundGuard.acceptSequence(numberField(record, 'sequence'))
-    if (
-      stringField(record, 'type') !== 'relay'
-      || stringField(record, 'direction') !== 'desktop-to-extension'
-      || stringField(record, 'epoch') !== this.epoch
-      || stringField(record, 'clientNonce') !== this.clientNonce
-      || stringField(record, 'serverNonce') !== this.serverNonce
-      || numberField(record, 'protocolVersion') !== this.protocolVersion
-    ) {
-      throw new RelayAuthenticationError('malformed-auth-record', 'relay routing metadata does not match the authenticated session')
-    }
-    const message = objectField(record, 'payload')
-    this.assertMessageBound(message)
-    return message
   }
 
   close(): void {
     if (this.closed) return
     this.closed = true
     this.transport.close()
-    this.key.fill(0)
+    this.sessionKey.fill(0)
   }
 
   private assertOpen(): void {

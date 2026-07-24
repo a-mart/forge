@@ -30,6 +30,9 @@ const VALID_RENDEZVOUS: RendezvousDocument = {
   expiresAt: '2030-01-01T00:00:00.000Z',
   keyId: 'test-key',
   userScope: 'user-a',
+  desktopInstanceId: 'desktop_1234567890abcdef',
+  protocolMin: 1,
+  protocolMax: 1,
 }
 
 describe('native host trust and process boundaries', () => {

@@ -1,5 +1,5 @@
 import { isSea } from 'node:sea'
-import { HOST_CONNECT_MAX_ATTEMPTS } from './constants.js'
+import { HOST_CONNECT_MAX_ATTEMPTS, HOST_EXTENSION_ORIGIN } from './constants.js'
 import { runNativeHost } from './host.js'
 import { assertSupportedPlatform } from './platform.js'
 import { AuthenticatedRelayClient } from './relay-client.js'
@@ -32,6 +32,7 @@ async function main(): Promise<void> {
         },
       },
       expectedUserScope: 'unconfigured-m1-spike',
+      expectedExtensionOrigin: HOST_EXTENSION_ORIGIN,
       platform,
       maxAttempts: HOST_CONNECT_MAX_ATTEMPTS,
     }),
