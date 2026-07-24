@@ -167,7 +167,7 @@ export function SettingsExternalChrome() {
             <div className="space-y-3 rounded-md border border-border/70 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-sm font-semibold">Validated Load unpacked folder</p>
+                  <p className="text-sm font-semibold">{setup?.pathState === 'ready' ? 'Validated Load unpacked folder' : 'Load unpacked folder not ready'}</p>
                   <p className="text-xs text-muted-foreground">Resolved by Forge Desktop; this field cannot accept another path.</p>
                 </div>
                 <Badge variant={setup?.pathState === 'ready' ? 'default' : 'destructive'}>{setup?.pathState ?? 'unavailable'}</Badge>
@@ -183,7 +183,7 @@ export function SettingsExternalChrome() {
                   </Button>
                 </div>
               ) : (
-                <p className="text-sm text-destructive">The deployed folder is missing or failed identity/path validation. Load and reveal actions stay disabled.</p>
+                <p className="text-sm text-destructive">The deployment is missing or failed integrity, identity, compatibility, or path validation. Load, reveal, and enable actions stay disabled.</p>
               )}
               <div className="flex flex-wrap gap-2">
                 <code data-testid="external-chrome-extension-id" className="min-w-0 flex-1 select-all break-all rounded bg-muted px-3 py-2 text-xs">{setup?.extensionId}</code>
@@ -194,7 +194,7 @@ export function SettingsExternalChrome() {
             </div>
 
             <BuildStatus status={status} />
-            <CoordinatorActions status={status} busy={busy} onConfirm={setConfirming} />
+            <CoordinatorActions status={status} deploymentReady={setup?.pathState === 'ready'} busy={busy} onConfirm={setConfirming} />
           </>
         ) : null}
 
@@ -269,10 +269,12 @@ function nativeStatusMessage(status: ExternalChromeCoordinatorStatus): string {
 
 function CoordinatorActions({
   status,
+  deploymentReady,
   busy,
   onConfirm,
 }: {
   status: ExternalChromeCoordinatorStatus
+  deploymentReady: boolean
   busy: string | null
   onConfirm: (action: ConfirmedAction) => void
 }) {
@@ -284,11 +286,11 @@ function CoordinatorActions({
         <p className="text-xs text-muted-foreground">These actions manage only Forge-owned deployment, authentication, and native registration. They do not attach tabs or change Chrome profiles.</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" onClick={() => onConfirm('enable')} disabled={!status.canEnable || unavailable}>Enable</Button>
+        <Button type="button" size="sm" onClick={() => onConfirm('enable')} disabled={!deploymentReady || !status.canEnable || unavailable}>Enable</Button>
         <Button type="button" variant="outline" size="sm" onClick={() => onConfirm('disable')} disabled={!status.canDisable || unavailable}>Disable</Button>
         <Button type="button" variant="outline" size="sm" onClick={() => onConfirm('repair')} disabled={!status.canRepair || unavailable}>Repair native host</Button>
         <Button type="button" variant="outline" size="sm" onClick={() => onConfirm('rollback')} disabled={!status.canRollback || unavailable}>Roll back</Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => onConfirm('takeover')} disabled={!status.canTakeover || unavailable}>Take over stale owner</Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => onConfirm('takeover')} disabled={!deploymentReady || !status.canTakeover || unavailable}>Take over stale owner</Button>
         <Button type="button" variant="destructive" size="sm" onClick={() => onConfirm('remove')} disabled={!status.canRemove || unavailable}>Remove integration</Button>
       </div>
     </div>

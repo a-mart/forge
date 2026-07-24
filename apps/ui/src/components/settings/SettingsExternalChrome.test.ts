@@ -168,24 +168,36 @@ describe('SettingsExternalChrome', () => {
     }
   })
 
-  it('truthfully disables unsafe actions for another live owner and an invalid extension path', async () => {
+  it('truthfully disables unsafe actions for another live owner and a mismatched deployment', async () => {
     const bridge = createBridge(coordinatorStatus({
       state: 'other-instance', authority: 'other-live', registration: 'needs-repair', trust: 'untrusted',
       canEnable: false, canDisable: false, canRepair: false, canRollback: false, canRemove: false, canTakeover: false, canReveal: false,
       setup: {
         extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd',
-        pathState: 'invalid',
+        pathState: 'mismatch',
       },
     }))
     await render(bridge)
 
     expect(document.body.textContent).toContain('untrusted — repair blocked')
     expect(document.body.textContent).toContain('Another live Forge Desktop instance owns the coordinator')
-    expect(document.body.textContent).toContain('failed identity/path validation')
+    expect(document.body.textContent).toContain('failed integrity, identity, compatibility, or path validation')
+    expect(document.body.textContent).toContain('Load unpacked folder not ready')
+    expect(document.body.textContent).not.toContain('Validated Load unpacked folder')
     for (const name of ['Enable', 'Disable', 'Repair native host', 'Roll back', 'Take over stale owner', 'Remove integration']) {
       expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true)
     }
     expect(screen.queryByRole('button', { name: 'Reveal folder' })).toBeNull()
+  })
+
+  it('defensively blocks enable when corrupt deployment status is inconsistent', async () => {
+    const bridge = createBridge(coordinatorStatus({
+      canEnable: true,
+      setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'mismatch' },
+    }))
+    await render(bridge)
+    expect((screen.getByRole('button', { name: 'Enable' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(document.body.textContent).not.toContain('Validated Load unpacked folder')
   })
 
   it('does not expose coordinator actions outside Forge Desktop', async () => {

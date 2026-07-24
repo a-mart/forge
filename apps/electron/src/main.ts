@@ -656,6 +656,7 @@ if (!hasSingleInstanceLock) {
       ...(externalChromeDeployer ? {
         rollbackController: externalChromeDeployer,
         repairDeployment: () => externalChromeDeployer!.deploy(),
+        deploymentVerifier: externalChromeDeployer,
       } : {}),
     })
     await externalChromeCoordinator.resumeIfEnabled().catch((error) => {

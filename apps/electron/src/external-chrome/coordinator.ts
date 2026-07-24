@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -24,13 +23,15 @@ import {
   type ExternalChromeEndpointAuthority,
   type ExternalChromeEndpointHandle,
 } from './endpoint.js'
-import { assertPathInside, resolveExternalChromeDataPaths, type ExternalChromeDataPaths } from './data-paths.js'
+import { resolveExternalChromeDataPaths, type ExternalChromeDataPaths } from './data-paths.js'
 import {
   readExternalChromePackageManifest,
-  sha256,
   type ExternalChromePackageManifest,
 } from './package-manifest.js'
-import type { ExternalChromeInstallRecord, ExternalChromeSelector } from './deployer.js'
+import type {
+  ExternalChromeDeploymentVerifier,
+  ExternalChromeInstallRecord,
+} from './deployer.js'
 import {
   createExternalChromeNativeRegistration,
   type ExternalChromeNativeRegistration,
@@ -50,6 +51,7 @@ export interface ExternalChromeHostCoordinatorOptions {
   packagedManifestPath?: string
   rollbackController?: ExternalChromeRollbackController
   repairDeployment?: () => Promise<unknown>
+  deploymentVerifier?: ExternalChromeDeploymentVerifier
   platform?: NodeJS.Platform
   pid?: number
   username?: string
@@ -85,6 +87,7 @@ export class ExternalChromeHostCoordinator {
   private readonly packagedManifestPath?: string
   private readonly rollbackController?: ExternalChromeRollbackController
   private readonly repairDeployment?: () => Promise<unknown>
+  private readonly deploymentVerifier?: ExternalChromeDeploymentVerifier
   private readonly enabledStatePath: string
   private readonly runDirectory: string
   private readonly schedule: typeof setInterval
@@ -128,6 +131,7 @@ export class ExternalChromeHostCoordinator {
     this.packagedManifestPath = options.packagedManifestPath
     this.rollbackController = options.rollbackController
     this.repairDeployment = options.repairDeployment
+    this.deploymentVerifier = options.deploymentVerifier
     this.enabledStatePath = path.join(this.paths.state, 'enabled.json')
     this.runDirectory = this.paths.run
   }
@@ -320,45 +324,18 @@ export class ExternalChromeHostCoordinator {
   }
 
   private async inspectSetup(): Promise<ExternalChromeSetupStatus> {
-    const [pathState, packaged, deployed] = await Promise.all([
-      this.validateExtensionPath(),
+    const [verification, packaged] = await Promise.all([
+      this.deploymentVerifier?.verifyDeployment().catch(() => ({ state: 'mismatch' as const }))
+        ?? Promise.resolve({ state: 'missing' as const }),
       this.readPackagedInventory(),
-      this.readDeployedInventory(),
     ])
+    const pathState: ExternalChromeSetupStatus['pathState'] = verification.state
     return {
       extensionId: EXTERNAL_CHROME_EXTENSION_ID,
       pathState,
       ...(pathState === 'ready' ? { loadUnpackedPath: this.paths.extension } : {}),
       ...(packaged ? { packaged } : {}),
-      ...(deployed ? { deployed } : {}),
-    }
-  }
-
-  private async validateExtensionPath(): Promise<ExternalChromeSetupStatus['pathState']> {
-    try {
-      for (const directory of [
-        this.paths.dataRoot,
-        path.join(this.paths.dataRoot, 'integrations'),
-        this.paths.integrationRoot,
-        this.paths.extension,
-      ]) {
-        const info = await fs.lstat(directory)
-        if (!info.isDirectory() || info.isSymbolicLink()) return 'invalid'
-      }
-      const manifest = JSON.parse(await fs.readFile(path.join(this.paths.extension, 'manifest.json'), 'utf8')) as { key?: unknown }
-      if (typeof manifest.key !== 'string') return 'invalid'
-      const identity = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex')
-        .slice(0, 32).replace(/[0-9a-f]/g, (digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
-      if (identity !== EXTERNAL_CHROME_EXTENSION_ID) return 'invalid'
-      const selector = await this.readJson<ExternalChromeSelector>(path.join(this.paths.extension, 'current.json'))
-      if (!isSafeSelector(selector)) return 'invalid'
-      const payload = path.join(this.paths.payloads, selector.payloadDirectory)
-      assertPathInside(this.paths.payloads, payload)
-      const payloadInfo = await fs.lstat(payload)
-      if (!payloadInfo.isDirectory() || payloadInfo.isSymbolicLink()) return 'invalid'
-      return 'ready'
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid'
+      ...(verification.state === 'ready' ? { deployed: inventoryFromInstall(verification.install, this.desktopVersion) } : {}),
     }
   }
 
@@ -368,33 +345,6 @@ export class ExternalChromeHostCoordinator {
       return inventoryFromManifest(await readExternalChromePackageManifest(this.packagedManifestPath), this.desktopVersion)
     } catch {
       return null
-    }
-  }
-
-  private async readDeployedInventory(): Promise<ExternalChromeBuildInventory | null> {
-    const install = await this.readJson<ExternalChromeInstallRecord>(this.paths.installState)
-    if (!isSafeInstallRecord(install)) return null
-    let nativeHash: string | null = null
-    try {
-      nativeHash = sha256(await fs.readFile(this.paths.nativeHostExecutable))
-    } catch {
-      // Missing native binary is represented by coordinator trust/registration state.
-    }
-    return {
-      ...(this.desktopVersion ? { desktopVersion: this.desktopVersion } : {}),
-      packageVersion: install.packageVersion,
-      shell: { abi: install.shellAbi, sha256: install.shellSha256 },
-      payload: { version: install.payloadVersion, sha256: install.payloadSha256 },
-      nativeHost: { ...(install.nativeVersion ? { version: install.nativeVersion } : {}), sha256: nativeHash ?? install.nativeSha256 },
-    }
-  }
-
-  private async readJson<T>(file: string): Promise<T | null> {
-    try {
-      return JSON.parse(await fs.readFile(file, 'utf8')) as T
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null
-      throw error
     }
   }
 
@@ -482,10 +432,6 @@ export class ExternalChromeHostCoordinator {
   }
 }
 
-const SHA256 = /^[a-f0-9]{64}$/u
-const SAFE_VERSION = /^[A-Za-z0-9._+-]{1,128}$/u
-const SAFE_PAYLOAD_DIRECTORY = /^[A-Za-z0-9._-]{1,256}$/u
-
 function inventoryFromManifest(
   manifest: ExternalChromePackageManifest,
   desktopVersion?: string,
@@ -499,22 +445,15 @@ function inventoryFromManifest(
   }
 }
 
-function isSafeSelector(value: ExternalChromeSelector | null): value is ExternalChromeSelector {
-  return value?.schemaVersion === 1
-    && Number.isSafeInteger(value.shellAbi) && value.shellAbi > 0
-    && SAFE_VERSION.test(value.payloadVersion)
-    && SHA256.test(value.payloadSha256)
-    && SAFE_PAYLOAD_DIRECTORY.test(value.payloadDirectory)
-    && !value.payloadDirectory.includes('..')
-}
-
-function isSafeInstallRecord(value: ExternalChromeInstallRecord | null): value is ExternalChromeInstallRecord {
-  return value?.schemaVersion === 1
-    && SAFE_VERSION.test(value.packageVersion)
-    && Number.isSafeInteger(value.shellAbi) && value.shellAbi > 0
-    && SHA256.test(value.shellSha256)
-    && SAFE_VERSION.test(value.payloadVersion)
-    && SHA256.test(value.payloadSha256)
-    && (value.nativeVersion === undefined || SAFE_VERSION.test(value.nativeVersion))
-    && SHA256.test(value.nativeSha256)
+function inventoryFromInstall(
+  install: ExternalChromeInstallRecord,
+  desktopVersion?: string,
+): ExternalChromeBuildInventory {
+  return {
+    ...(desktopVersion ? { desktopVersion } : {}),
+    packageVersion: install.packageVersion,
+    shell: { abi: install.shellAbi, sha256: install.shellSha256 },
+    payload: { version: install.payloadVersion, sha256: install.payloadSha256 },
+    nativeHost: { version: install.nativeVersion, sha256: install.nativeSha256 },
+  }
 }

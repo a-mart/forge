@@ -3,6 +3,7 @@ import * as root from '../index.js'
 import {
   EXTERNAL_CHROME_COORDINATOR_OPERATIONS,
   parseExternalChromeCoordinatorRequest,
+  type ExternalChromeExtensionPathState,
 } from '../external-chrome-coordinator.js'
 
 describe('External Chrome coordinator contract', () => {
@@ -11,6 +12,8 @@ describe('External Chrome coordinator contract', () => {
       'status', 'enable', 'disable', 'repair', 'rollback', 'remove', 'takeover', 'reveal-extension-folder',
     ])
     expect(root.parseExternalChromeCoordinatorRequest).toBe(parseExternalChromeCoordinatorRequest)
+    const corruptDeployment: ExternalChromeExtensionPathState = 'mismatch'
+    expect(corruptDeployment).toBe('mismatch')
   })
 
   it('rejects unknown, extra, and malformed control inputs', () => {

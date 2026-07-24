@@ -4,6 +4,8 @@ import path from 'node:path'
 import type { FileHandle } from 'node:fs/promises'
 import { assertPathInside, resolveExternalChromeDataPaths, type ExternalChromeDataPaths } from './data-paths.js'
 import {
+  EXTERNAL_CHROME_EXTENSION_ID,
+  EXTERNAL_CHROME_PUBLIC_KEY_SHA256,
   readExternalChromePackageManifest,
   sha256,
   type ExternalChromePackageManifest,
@@ -22,16 +24,29 @@ export type DeploymentPhase =
 export interface ExternalChromeInstallRecord {
   schemaVersion: 1
   packageVersion: string
+  extensionId: string
+  publicKeySha256: string
   shellAbi: number
   shellSha256: string
+  shellFiles: Record<string, string>
   payloadVersion: string
   payloadSha256: string
   payloadDirectory: string
   payloadFiles: Record<string, string>
-  nativeVersion?: string
+  nativeVersion: string
   nativeSha256: string
   platform: string
   architecture: string
+  desktopCompatibility: { min: string; max: string }
+  shellAbiCompatibility: { min: number; max: number }
+}
+
+export type ExternalChromeDeploymentVerification =
+  | { state: 'ready'; install: ExternalChromeInstallRecord }
+  | { state: 'missing' | 'mismatch' }
+
+export interface ExternalChromeDeploymentVerifier {
+  verifyDeployment(): Promise<ExternalChromeDeploymentVerification>
 }
 
 export interface ExternalChromeSelector {
@@ -54,6 +69,7 @@ export interface DeployerFileSystem {
   readFile: typeof nodeFs.readFile
   rename: typeof nodeFs.rename
   rm: typeof nodeFs.rm
+  rmdir: typeof nodeFs.rmdir
   stat: typeof nodeFs.stat
   writeFile: typeof nodeFs.writeFile
 }
@@ -76,6 +92,18 @@ export interface DeploymentLock {
 
 const fsyncIgnoredCodes = new Set(['EINVAL', 'ENOTSUP', 'EBADF', 'EPERM'])
 
+interface DeploymentLockOwner {
+  schemaVersion: 1
+  pid: number
+  token: string
+}
+
+/**
+ * A directory lock whose owner is a uniquely named marker. Stale contenders may
+ * remove only the marker they inspected, then race through atomic rmdir/rename;
+ * exactly one prepared claim directory can become the lock. Release likewise
+ * removes only its own marker, so it can never unlink a replacement holder.
+ */
 export class FileDeploymentLock implements DeploymentLock {
   constructor(
     private readonly fs: DeployerFileSystem = nodeFs,
@@ -84,29 +112,74 @@ export class FileDeploymentLock implements DeploymentLock {
 
   async acquire(lockPath: string): Promise<() => Promise<void>> {
     await this.fs.mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 })
-    let handle: FileHandle
+    const token = randomUUID()
+    const markerName = `owner-${token}.json`
+    const claimPath = `${lockPath}.claim-${token}`
+    const owner: DeploymentLockOwner = { schemaVersion: 1, pid: process.pid, token }
+    await this.fs.mkdir(claimPath, { mode: 0o700 })
+    await this.fs.writeFile(path.join(claimPath, markerName), `${stableJson(owner)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+
     try {
-      handle = await this.fs.open(lockPath, 'wx', 0o600)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const owner = Number.parseInt(await this.fs.readFile(lockPath, 'utf8').catch(() => ''), 10)
-      if (Number.isSafeInteger(owner) && owner > 0 && this.isProcessAlive(owner)) {
-        throw new Error('External Chrome deployment is already in progress')
+      for (;;) {
+        try {
+          await this.fs.rename(claimPath, lockPath)
+          break
+        } catch (error) {
+          if (!['EEXIST', 'ENOTEMPTY', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+        }
+
+        const observed = await this.inspectOwner(lockPath)
+        if (!observed) {
+          if (!(await exists(this.fs, lockPath))) continue
+          throw new Error('External Chrome deployment is already in progress')
+        }
+        if (this.isProcessAlive(observed.pid)) throw new Error('External Chrome deployment is already in progress')
+        // The marker name contains an unguessable generation. Removing this
+        // exact entry cannot remove a replacement owner's differently named marker.
+        await this.fs.rm(path.join(lockPath, `owner-${observed.token}.json`), { force: true })
+        try {
+          await this.fs.rmdir(lockPath)
+        } catch (error) {
+          if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+        }
       }
-      await this.fs.rm(lockPath, { force: true })
-      handle = await this.fs.open(lockPath, 'wx', 0o600)
-    }
-    try {
-      await handle.writeFile(`${process.pid}\n`)
-      await handle.sync()
     } catch (error) {
-      await handle.close().catch(() => undefined)
-      await this.fs.rm(lockPath, { force: true })
+      await this.fs.rm(claimPath, { recursive: true, force: true })
       throw error
     }
+
+    let released = false
     return async () => {
-      await handle.close().catch(() => undefined)
-      await this.fs.rm(lockPath, { force: true })
+      if (released) return
+      released = true
+      await this.fs.rm(path.join(lockPath, markerName), { force: true })
+      await this.fs.rmdir(lockPath).catch((error) => {
+        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+      })
+    }
+  }
+
+  private async inspectOwner(lockPath: string): Promise<DeploymentLockOwner | null> {
+    let entries: string[]
+    try {
+      const info = await this.fs.lstat(lockPath)
+      if (!info.isDirectory() || info.isSymbolicLink()) return null
+      entries = (await this.fs.readdir(lockPath)).filter((entry) => entry.startsWith('owner-') && entry.endsWith('.json'))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+    if (entries.length !== 1) return null
+    try {
+      const markerPath = path.join(lockPath, entries[0]!)
+      if ((await this.fs.stat(markerPath)).size > 1_024) return null
+      const value = JSON.parse(await this.fs.readFile(markerPath, 'utf8')) as unknown
+      if (!isExactObject(value, ['schemaVersion', 'pid', 'token'])) return null
+      if (value.schemaVersion !== 1 || !Number.isSafeInteger(value.pid) || (value.pid as number) < 1) return null
+      if (typeof value.token !== 'string' || entries[0] !== `owner-${value.token}.json`) return null
+      return value as unknown as DeploymentLockOwner
+    } catch {
+      return null
     }
   }
 }
@@ -135,7 +208,14 @@ export class ExternalChromeDeployer {
       await this.validatePackagedResources(manifest)
       await this.phase('validated', manifest)
 
-      const oldSelector = await this.readJson<ExternalChromeSelector>(path.join(this.paths.extension, 'current.json'))
+      const oldSelector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
+      const oldInstall = await this.readInstall(this.paths.installState)
+      const rollbackInstall = oldSelector && oldInstall && selectorMatchesInstall(oldSelector, oldInstall)
+        && await this.isValidRollbackAt(oldInstall, this.paths.extension)
+        && await fileHasHash(this.fs, this.paths.nativeHostExecutable, oldInstall.nativeSha256) ? oldInstall : null
+      const record = installRecordFromManifest(manifest)
+      const rollbackInstallToRetain = rollbackInstall && stableJson(rollbackInstall) !== stableJson(record)
+        ? rollbackInstall : null
       const selector = selectorFromManifest(manifest)
       const stagingPayload = path.join(this.paths.deployment, `.payload-${randomUUID()}`)
       await this.fs.mkdir(this.paths.deployment, { recursive: true, mode: 0o700 })
@@ -149,22 +229,21 @@ export class ExternalChromeDeployer {
 
       const shellChanged = !(await this.shellMatches(manifest))
       if (shellChanged) {
-        await this.installWithShellMigration(manifest, stagingPayload, oldSelector)
+        await this.installWithShellMigration(manifest, stagingPayload, oldSelector, rollbackInstallToRetain)
       } else {
         await this.installPayload(stagingPayload, selector.payloadDirectory)
       }
       await this.phase('payload-installed', manifest)
 
-      if (oldSelector && oldSelector.payloadDirectory !== selector.payloadDirectory && await this.isValidPayload(oldSelector)) {
-        await this.atomicJson(this.paths.previousState, oldSelector)
+      if (rollbackInstallToRetain) {
+        await this.atomicJson(this.paths.previousState, rollbackInstallToRetain)
       }
       if (!shellChanged) await this.atomicJson(path.join(this.paths.extension, 'current.json'), selector)
       await this.phase('selector-written', manifest)
 
-      await this.installNative(manifest)
+      await this.installNative(manifest, rollbackInstallToRetain?.nativeSha256)
       await this.phase('native-written', manifest)
 
-      const record = installRecordFromManifest(manifest)
       await this.atomicJson(this.paths.installState, record)
       await this.retainCurrentAndPrevious(selector)
       await this.phase('complete', manifest)
@@ -176,27 +255,64 @@ export class ExternalChromeDeployer {
   }
 
   async canRollback(): Promise<boolean> {
-    const previous = await this.readJson<ExternalChromeSelector>(this.paths.previousState)
-    if (!previous) return false
-    if (await this.isValidPayload(previous)) return true
+    const previous = await this.readInstall(this.paths.previousState)
+    if (!previous || !(await this.nativeAvailable(previous.nativeSha256))) return false
+    const selector = selectorFromInstall(previous)
+    if (await this.isValidRollbackAt(previous, this.paths.extension)) return true
     const previousShell = path.join(this.paths.integrationRoot, 'extension.previous')
-    const previousShellSelector = await this.readJson<ExternalChromeSelector>(path.join(previousShell, 'current.json'))
-    return previousShellSelector?.payloadDirectory === previous.payloadDirectory
-      && await this.isValidPayloadAt(previousShellSelector, path.join(previousShell, 'payloads'))
+    const previousShellSelector = await this.readSelector(path.join(previousShell, 'current.json'))
+    return !!previousShellSelector && selectorEquals(previousShellSelector, selector)
+      && await this.isValidRollbackAt(previous, previousShell)
+  }
+
+  async verifyDeployment(): Promise<ExternalChromeDeploymentVerification> {
+    try {
+      const selector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
+      const install = await this.readInstall(this.paths.installState)
+      if (!selector || !install) {
+        const extensionExists = await exists(this.fs, this.paths.extension)
+        const installExists = await exists(this.fs, this.paths.installState)
+        return { state: extensionExists || installExists ? 'mismatch' : 'missing' }
+      }
+      if (!selectorMatchesInstall(selector, install)) return { state: 'mismatch' }
+      this.assertInstallCompatible(install)
+      await this.assertSafeDeploymentDirectories()
+      await this.validateShellAt(this.paths.extension, install.shellFiles, install.shellSha256)
+      if (!(await this.isValidPayload(selector))) return { state: 'mismatch' }
+      const manifest = JSON.parse(await this.fs.readFile(this.safeInside(this.paths.extension, 'manifest.json'), 'utf8')) as unknown
+      if (!isExactObject(manifest, ['manifest_version', 'key']) && !isManifestWithKey(manifest)) return { state: 'mismatch' }
+      const key = (manifest as { key?: unknown }).key
+      if (typeof key !== 'string') return { state: 'mismatch' }
+      const publicKeyHash = createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex')
+      const extensionId = extensionIdFromPublicKeyHash(publicKeyHash)
+      if (
+        install.extensionId !== EXTERNAL_CHROME_EXTENSION_ID
+        || install.publicKeySha256 !== EXTERNAL_CHROME_PUBLIC_KEY_SHA256
+        || publicKeyHash !== install.publicKeySha256
+        || extensionId !== install.extensionId
+      ) return { state: 'mismatch' }
+      const nativeHash = sha256(await this.fs.readFile(this.safeInside(this.paths.nativeHost, path.basename(this.paths.nativeHostExecutable))))
+      if (nativeHash !== install.nativeSha256) return { state: 'mismatch' }
+      return { state: 'ready', install }
+    } catch (error) {
+      return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'mismatch' }
+    }
   }
 
   async rollback(): Promise<ExternalChromeSelector> {
     const release = await this.lock.acquire(this.paths.lock)
     try {
       await this.recoverUnlocked()
-      const current = await this.readJson<ExternalChromeSelector>(path.join(this.paths.extension, 'current.json'))
-      const previous = await this.readJson<ExternalChromeSelector>(this.paths.previousState)
-      if (!previous) throw new Error('No valid External Chrome rollback payload is available')
+      const current = await this.readSelector(path.join(this.paths.extension, 'current.json'))
+      const currentInstall = await this.readInstall(this.paths.installState)
+      const previousInstall = await this.readInstall(this.paths.previousState)
+      if (!previousInstall || !(await this.nativeAvailable(previousInstall.nativeSha256))) throw new Error('No valid External Chrome rollback payload is available')
+      const previous = selectorFromInstall(previousInstall)
       const previousShell = path.join(this.paths.integrationRoot, 'extension.previous')
-      const previousShellSelector = await this.readJson<ExternalChromeSelector>(path.join(previousShell, 'current.json'))
+      const previousShellSelector = await this.readSelector(path.join(previousShell, 'current.json'))
       if (
-        previousShellSelector?.payloadDirectory === previous.payloadDirectory &&
-        await this.isValidPayloadAt(previousShellSelector, path.join(previousShell, 'payloads'))
+        previousShellSelector && selectorEquals(previousShellSelector, previous) &&
+        await this.isValidRollbackAt(previousInstall, previousShell)
       ) {
         const rollbackShell = path.join(this.paths.integrationRoot, 'extension.rollback-new')
         await this.fs.rm(rollbackShell, { recursive: true, force: true })
@@ -210,17 +326,17 @@ export class ExternalChromeDeployer {
           }
           throw error
         }
-        if (current) await this.atomicJson(this.paths.previousState, current)
-        await this.rollbackNative()
-        await this.updateInstallSelector(previousShellSelector)
+        await this.selectNative(previousInstall.nativeSha256)
+        if (current && currentInstall && selectorMatchesInstall(current, currentInstall)) await this.atomicJson(this.paths.previousState, currentInstall)
+        await this.atomicJson(this.paths.installState, previousInstall)
         return previousShellSelector
       }
-      if (!(await this.isValidPayload(previous))) throw new Error('No valid External Chrome rollback payload is available')
+      if (!(await this.isValidRollbackAt(previousInstall, this.paths.extension))) throw new Error('No valid External Chrome rollback payload is available')
+      await this.selectNative(previousInstall.nativeSha256)
       await this.atomicJson(path.join(this.paths.extension, 'current.json'), previous)
-      if (current && await this.isValidPayload(current)) await this.atomicJson(this.paths.previousState, current)
+      if (current && currentInstall && selectorMatchesInstall(current, currentInstall)) await this.atomicJson(this.paths.previousState, currentInstall)
       await this.retainCurrentAndPrevious(previous)
-      await this.rollbackNative()
-      await this.updateInstallSelector(previous)
+      await this.atomicJson(this.paths.installState, previousInstall)
       return previous
     } finally {
       await release()
@@ -234,18 +350,6 @@ export class ExternalChromeDeployer {
     } finally {
       await release()
     }
-  }
-
-  private async updateInstallSelector(selector: ExternalChromeSelector): Promise<void> {
-    const install = await this.readJson<ExternalChromeInstallRecord>(this.paths.installState)
-    if (!install) return
-    await this.atomicJson(this.paths.installState, {
-      ...install,
-      payloadVersion: selector.payloadVersion,
-      payloadSha256: selector.payloadSha256,
-      payloadDirectory: selector.payloadDirectory,
-      payloadFiles: selector.payloadFiles,
-    })
   }
 
   private async recoverUnlocked(): Promise<void> {
@@ -278,11 +382,12 @@ export class ExternalChromeDeployer {
       }
     }
 
-    const current = await this.readJson<ExternalChromeSelector>(path.join(this.paths.extension, 'current.json'))
+    const current = await this.readSelector(path.join(this.paths.extension, 'current.json'))
     if (!current || !(await this.isValidPayload(current))) {
-      const installed = await this.readJson<ExternalChromeInstallRecord>(this.paths.installState)
+      const installed = await this.readInstall(this.paths.installState)
       const installedSelector = installed ? selectorFromInstall(installed) : null
-      const previous = await this.readJson<ExternalChromeSelector>(this.paths.previousState)
+      const previousInstall = await this.readInstall(this.paths.previousState)
+      const previous = previousInstall ? selectorFromInstall(previousInstall) : null
       if (installedSelector && await this.isValidPayload(installedSelector)) {
         await this.atomicJson(path.join(this.paths.extension, 'current.json'), installedSelector)
       } else if (previous && await this.isValidPayload(previous)) {
@@ -308,7 +413,7 @@ export class ExternalChromeDeployer {
       for (const file of files) {
         if (sha256(await this.fs.readFile(path.join(this.paths.extension, file))) !== manifest.extension.shellFiles[file]) return false
       }
-      return true
+      return await this.inventoryTreeHash(this.paths.extension, files) === manifest.extension.shellSha256
     } catch {
       return false
     }
@@ -320,6 +425,12 @@ export class ExternalChromeDeployer {
     const nativeRoot = path.join(this.options.resourcesRoot, 'native-host', `${this.platform}-${this.architecture}`)
     await this.validateInventory(shellRoot, manifest.extension.shellFiles)
     await this.validateInventory(payloadRoot, manifest.extension.payloadFiles)
+    if (await this.inventoryTreeHash(shellRoot, Object.keys(manifest.extension.shellFiles).sort()) !== manifest.extension.shellSha256) {
+      throw new Error('External Chrome packaged shell tree hash mismatch')
+    }
+    if (await this.inventoryTreeHash(payloadRoot, Object.keys(manifest.extension.payloadFiles).sort()) !== manifest.extension.payloadSha256) {
+      throw new Error('External Chrome packaged payload tree hash mismatch')
+    }
     await this.validateInventory(nativeRoot, { [manifest.nativeHost.executable]: manifest.nativeHost.sha256 })
     const chromeManifest = JSON.parse(await this.fs.readFile(path.join(shellRoot, 'manifest.json'), 'utf8')) as { key?: unknown }
     if (typeof chromeManifest.key !== 'string') throw new Error('External Chrome shell manifest has no public identity')
@@ -367,6 +478,7 @@ export class ExternalChromeDeployer {
     manifest: ExternalChromePackageManifest,
     stagingPayload: string,
     oldSelector: ExternalChromeSelector | null,
+    rollbackInstall: ExternalChromeInstallRecord | null,
   ): Promise<void> {
     const nextShell = path.join(this.paths.integrationRoot, 'extension.new')
     const previousShell = path.join(this.paths.integrationRoot, 'extension.previous')
@@ -375,11 +487,12 @@ export class ExternalChromeDeployer {
     const nextPayloads = path.join(nextShell, 'payloads')
     await this.fs.mkdir(nextPayloads, { recursive: true, mode: 0o755 })
     if (oldSelector && await this.isValidPayload(oldSelector)) {
-      await this.copyDirectorySafe(path.join(this.paths.payloads, oldSelector.payloadDirectory), path.join(nextPayloads, oldSelector.payloadDirectory))
+      await this.copyDirectorySafe(this.payloadPath(this.paths.payloads, oldSelector), this.payloadPath(nextPayloads, oldSelector))
     }
-    const previousSelector = await this.readJson<ExternalChromeSelector>(this.paths.previousState)
+    const previousInstall = await this.readInstall(this.paths.previousState)
+    const previousSelector = previousInstall ? selectorFromInstall(previousInstall) : null
     if (previousSelector && previousSelector.payloadDirectory !== oldSelector?.payloadDirectory && await this.isValidPayload(previousSelector)) {
-      await this.copyDirectorySafe(path.join(this.paths.payloads, previousSelector.payloadDirectory), path.join(nextPayloads, previousSelector.payloadDirectory))
+      await this.copyDirectorySafe(this.payloadPath(this.paths.payloads, previousSelector), this.payloadPath(nextPayloads, previousSelector))
     }
     const nextPayload = path.join(nextPayloads, manifest.extension.payloadDirectory)
     if (await exists(this.fs, nextPayload)) {
@@ -387,8 +500,8 @@ export class ExternalChromeDeployer {
       await this.fs.rm(stagingPayload, { recursive: true, force: true })
     } else await this.renameWithRetry(stagingPayload, nextPayload)
     await this.atomicJson(path.join(nextShell, 'current.json'), selectorFromManifest(manifest))
-    if (oldSelector && oldSelector.payloadDirectory !== manifest.extension.payloadDirectory) {
-      await this.atomicJson(this.paths.previousState, oldSelector)
+    if (rollbackInstall) {
+      await this.atomicJson(this.paths.previousState, rollbackInstall)
     }
     await this.syncTree(nextShell)
     await this.phase('shell-staged', manifest)
@@ -423,7 +536,7 @@ export class ExternalChromeDeployer {
     await this.renameWithRetry(stagingPayload, destination)
   }
 
-  private async installNative(manifest: ExternalChromePackageManifest): Promise<void> {
+  private async installNative(manifest: ExternalChromePackageManifest, rollbackNativeSha256?: string): Promise<void> {
     await this.fs.mkdir(this.paths.nativeHost, { recursive: true, mode: 0o700 })
     const source = path.join(
       this.options.resourcesRoot,
@@ -439,11 +552,15 @@ export class ExternalChromeDeployer {
       const existingHash = sha256(await this.fs.readFile(this.paths.nativeHostExecutable))
       if (existingHash === manifest.nativeHost.sha256) {
         await this.fs.rm(temporary, { force: true })
+        if (rollbackNativeSha256) await this.ensurePreviousNativeAssociation(rollbackNativeSha256, existingHash)
         return
       }
       const previous = `${this.paths.nativeHostExecutable}.previous`
       await this.fs.rm(previous, { force: true })
       await this.renameWithRetry(this.paths.nativeHostExecutable, previous)
+      if (rollbackNativeSha256 && !(await fileHasHash(this.fs, previous, rollbackNativeSha256))) {
+        throw new Error('External Chrome rollback native host association mismatch')
+      }
       try {
         await this.renameWithRetry(temporary, this.paths.nativeHostExecutable)
       } catch (error) {
@@ -455,9 +572,35 @@ export class ExternalChromeDeployer {
     await this.renameWithRetry(temporary, this.paths.nativeHostExecutable)
   }
 
-  private async rollbackNative(): Promise<void> {
+  private async ensurePreviousNativeAssociation(expectedHash: string, currentHash: string): Promise<void> {
     const previous = `${this.paths.nativeHostExecutable}.previous`
-    if (!(await exists(this.fs, previous))) return
+    if (await fileHasHash(this.fs, previous, expectedHash)) return
+    if (currentHash !== expectedHash) throw new Error('External Chrome rollback native host association mismatch')
+    const temporary = `${previous}.new-${randomUUID()}`
+    await this.fs.copyFile(this.paths.nativeHostExecutable, temporary)
+    if (this.platform !== 'win32') await this.fs.chmod(temporary, 0o755)
+    await this.syncFile(temporary)
+    await this.renameReplace(temporary, previous)
+    if (!(await fileHasHash(this.fs, previous, expectedHash))) throw new Error('External Chrome rollback native host association mismatch')
+  }
+
+  private async nativeAvailable(expectedHash: string): Promise<boolean> {
+    for (const candidate of [this.paths.nativeHostExecutable, `${this.paths.nativeHostExecutable}.previous`]) {
+      try {
+        if (sha256(await this.fs.readFile(candidate)) === expectedHash) return true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    return false
+  }
+
+  private async selectNative(expectedHash: string): Promise<void> {
+    if (await fileHasHash(this.fs, this.paths.nativeHostExecutable, expectedHash)) return
+    const previous = `${this.paths.nativeHostExecutable}.previous`
+    if (!(await fileHasHash(this.fs, previous, expectedHash))) {
+      throw new Error('Validated External Chrome rollback native host is unavailable')
+    }
     const rollbackCurrent = `${this.paths.nativeHostExecutable}.rollback-new`
     await this.fs.rm(rollbackCurrent, { force: true })
     if (await exists(this.fs, this.paths.nativeHostExecutable)) await this.renameWithRetry(this.paths.nativeHostExecutable, rollbackCurrent)
@@ -474,7 +617,8 @@ export class ExternalChromeDeployer {
 
   private async retainCurrentAndPrevious(current: ExternalChromeSelector): Promise<void> {
     if (!(await exists(this.fs, this.paths.payloads))) return
-    const previous = await this.readJson<ExternalChromeSelector>(this.paths.previousState)
+    const previousInstall = await this.readInstall(this.paths.previousState)
+    const previous = previousInstall ? selectorFromInstall(previousInstall) : null
     const retain = new Set([current.payloadDirectory])
     if (previous && await this.isValidPayload(previous)) retain.add(previous.payloadDirectory)
     for (const entry of await this.fs.readdir(this.paths.payloads)) {
@@ -487,11 +631,57 @@ export class ExternalChromeDeployer {
   }
 
   private async isValidPayloadAt(selector: ExternalChromeSelector, payloadsRoot: string): Promise<boolean> {
-    if (!selector || selector.schemaVersion !== 1 || !selector.payloadDirectory) return false
-    const root = path.join(payloadsRoot, selector.payloadDirectory)
     try {
+      const root = this.payloadPath(payloadsRoot, selector)
       await this.validateInventory(root, selector.payloadFiles)
-      return true
+      return await this.inventoryTreeHash(root, Object.keys(selector.payloadFiles).sort()) === selector.payloadSha256
+    } catch {
+      return false
+    }
+  }
+
+  private payloadPath(payloadsRoot: string, selector: ExternalChromeSelector): string {
+    const root = path.join(payloadsRoot, selector.payloadDirectory)
+    assertPathInside(payloadsRoot, root)
+    return root
+  }
+
+  private safeInside(root: string, relative: string): string {
+    const target = path.join(root, ...relative.split('/'))
+    assertPathInside(root, target)
+    return target
+  }
+
+  private async inventoryTreeHash(root: string, files: string[]): Promise<string> {
+    const hash = createHash('sha256')
+    for (const file of files) {
+      const bytes = await this.fs.readFile(this.safeInside(root, file))
+      hash.update(`${file}\0${bytes.byteLength}\0`)
+      hash.update(bytes)
+    }
+    return hash.digest('hex')
+  }
+
+  private async validateShellAt(shellRoot: string, inventory: Record<string, string>, expectedTreeHash: string): Promise<void> {
+    const files = (await this.walkSafeFiles(shellRoot))
+      .filter((file) => file !== 'current.json' && !file.startsWith('payloads/'))
+    const expected = Object.keys(inventory).sort()
+    if (files.join('\0') !== expected.join('\0')) throw new Error('External Chrome deployed shell inventory mismatch')
+    for (const file of files) {
+      if (sha256(await this.fs.readFile(this.safeInside(shellRoot, file))) !== inventory[file]) {
+        throw new Error(`External Chrome deployed shell hash mismatch: ${file}`)
+      }
+    }
+    if (await this.inventoryTreeHash(shellRoot, files) !== expectedTreeHash) {
+      throw new Error('External Chrome deployed shell tree hash mismatch')
+    }
+  }
+
+  private async isValidRollbackAt(install: ExternalChromeInstallRecord, shellRoot: string): Promise<boolean> {
+    try {
+      this.assertInstallCompatible(install)
+      await this.validateShellAt(shellRoot, install.shellFiles, install.shellSha256)
+      return await this.isValidPayloadAt(selectorFromInstall(install), path.join(shellRoot, 'payloads'))
     } catch {
       return false
     }
@@ -612,12 +802,48 @@ export class ExternalChromeDeployer {
     await this.options.afterPhase?.(phase)
   }
 
-  private async readJson<T>(file: string): Promise<T | null> {
+  private async readSelector(file: string): Promise<ExternalChromeSelector | null> {
+    return this.readPersisted(file, parseSelector)
+  }
+
+  private async readInstall(file: string): Promise<ExternalChromeInstallRecord | null> {
+    return this.readPersisted(file, parseInstallRecord)
+  }
+
+  private async readPersisted<T>(file: string, parse: (value: unknown) => T): Promise<T | null> {
     try {
-      return JSON.parse(await this.fs.readFile(file, 'utf8')) as T
+      if ((await this.fs.stat(file)).size > MAX_PERSISTED_STATE_BYTES) return null
+      return parse(JSON.parse(await this.fs.readFile(file, 'utf8')) as unknown)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError || error instanceof PersistedStateError) return null
       throw error
+    }
+  }
+
+  private async assertSafeDeploymentDirectories(): Promise<void> {
+    for (const directory of [
+      this.paths.dataRoot,
+      path.join(this.paths.dataRoot, 'integrations'),
+      this.paths.integrationRoot,
+      this.paths.extension,
+      this.paths.payloads,
+      this.paths.nativeHost,
+      this.paths.state,
+    ]) {
+      const info = await this.fs.lstat(directory)
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Unsafe External Chrome deployment path: ${directory}`)
+    }
+  }
+
+  private assertInstallCompatible(install: ExternalChromeInstallRecord): void {
+    if (install.platform !== this.platform || install.architecture !== this.architecture) {
+      throw new Error('External Chrome deployed native host targets another platform')
+    }
+    if (!versionInRange(this.options.desktopVersion, install.desktopCompatibility.min, install.desktopCompatibility.max)) {
+      throw new Error('External Chrome deployment is incompatible with this Desktop version')
+    }
+    if (install.shellAbi < install.shellAbiCompatibility.min || install.shellAbi > install.shellAbiCompatibility.max) {
+      throw new Error('External Chrome deployed shell ABI is incompatible')
     }
   }
 
@@ -649,8 +875,11 @@ function installRecordFromManifest(manifest: ExternalChromePackageManifest): Ext
   return {
     schemaVersion: 1,
     packageVersion: manifest.packageVersion,
+    extensionId: manifest.extension.extensionId,
+    publicKeySha256: manifest.extension.publicKeySha256,
     shellAbi: manifest.extension.shellAbi,
     shellSha256: manifest.extension.shellSha256,
+    shellFiles: manifest.extension.shellFiles,
     payloadVersion: manifest.extension.payloadVersion,
     payloadSha256: manifest.extension.payloadSha256,
     payloadDirectory: manifest.extension.payloadDirectory,
@@ -659,6 +888,8 @@ function installRecordFromManifest(manifest: ExternalChromePackageManifest): Ext
     nativeSha256: manifest.nativeHost.sha256,
     platform: manifest.nativeHost.platform,
     architecture: manifest.nativeHost.architecture,
+    desktopCompatibility: { ...manifest.compatibility.desktop },
+    shellAbiCompatibility: { ...manifest.compatibility.shellAbi },
   }
 }
 
@@ -671,6 +902,141 @@ function selectorFromInstall(install: ExternalChromeInstallRecord): ExternalChro
     payloadDirectory: install.payloadDirectory,
     payloadFiles: install.payloadFiles,
   }
+}
+
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u
+const SAFE_VERSION_PATTERN = /^[A-Za-z0-9._+-]{1,128}$/u
+const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9._+-]{1,256}$/u
+const SAFE_RELATIVE_FILE_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._+/-]{1,512}$/u
+const MAX_INVENTORY_FILES = 4_096
+const MAX_PERSISTED_STATE_BYTES = 4 * 1_024 * 1_024
+const MAX_ABI = 1_000_000
+
+class PersistedStateError extends Error {}
+
+function parseSelector(value: unknown): ExternalChromeSelector {
+  if (!isExactObject(value, [
+    'schemaVersion', 'shellAbi', 'payloadVersion', 'payloadSha256', 'payloadDirectory', 'payloadFiles',
+  ])) throw new PersistedStateError('External Chrome selector fields are invalid')
+  if (value.schemaVersion !== 1) throw new PersistedStateError('External Chrome selector schema is invalid')
+  const shellAbi = boundedPositiveInteger(value.shellAbi, 'selector.shellAbi')
+  const payloadVersion = safeVersion(value.payloadVersion, 'selector.payloadVersion')
+  const payloadSha256 = persistedHash(value.payloadSha256, 'selector.payloadSha256')
+  const payloadDirectory = safePayloadDirectory(value.payloadDirectory, payloadVersion, payloadSha256)
+  const payloadFiles = persistedInventory(value.payloadFiles, 'selector.payloadFiles')
+  return { schemaVersion: 1, shellAbi, payloadVersion, payloadSha256, payloadDirectory, payloadFiles }
+}
+
+function parseInstallRecord(value: unknown): ExternalChromeInstallRecord {
+  if (!isExactObject(value, [
+    'schemaVersion', 'packageVersion', 'extensionId', 'publicKeySha256', 'shellAbi', 'shellSha256', 'shellFiles',
+    'payloadVersion', 'payloadSha256', 'payloadDirectory', 'payloadFiles', 'nativeVersion', 'nativeSha256',
+    'platform', 'architecture', 'desktopCompatibility', 'shellAbiCompatibility',
+  ])) throw new PersistedStateError('External Chrome install fields are invalid')
+  if (value.schemaVersion !== 1) throw new PersistedStateError('External Chrome install schema is invalid')
+  const packageVersion = safeVersion(value.packageVersion, 'install.packageVersion')
+  if (typeof value.extensionId !== 'string' || !/^[a-p]{32}$/u.test(value.extensionId)) throw new PersistedStateError('install.extensionId is invalid')
+  const extensionId = value.extensionId
+  const publicKeySha256 = persistedHash(value.publicKeySha256, 'install.publicKeySha256')
+  const shellAbi = boundedPositiveInteger(value.shellAbi, 'install.shellAbi')
+  const shellSha256 = persistedHash(value.shellSha256, 'install.shellSha256')
+  const shellFiles = persistedInventory(value.shellFiles, 'install.shellFiles')
+  const payloadVersion = safeVersion(value.payloadVersion, 'install.payloadVersion')
+  const payloadSha256 = persistedHash(value.payloadSha256, 'install.payloadSha256')
+  const payloadDirectory = safePayloadDirectory(value.payloadDirectory, payloadVersion, payloadSha256)
+  const payloadFiles = persistedInventory(value.payloadFiles, 'install.payloadFiles')
+  const nativeVersion = safeVersion(value.nativeVersion, 'install.nativeVersion')
+  const nativeSha256 = persistedHash(value.nativeSha256, 'install.nativeSha256')
+  if (value.platform !== 'darwin' && value.platform !== 'linux' && value.platform !== 'win32') throw new PersistedStateError('install.platform is invalid')
+  const platform = value.platform
+  const architecture = safeVersion(value.architecture, 'install.architecture')
+  const desktopCompatibility = parseVersionRange(value.desktopCompatibility, 'install.desktopCompatibility')
+  const shellAbiCompatibility = parseIntegerRange(value.shellAbiCompatibility, 'install.shellAbiCompatibility')
+  return {
+    schemaVersion: 1, packageVersion, extensionId, publicKeySha256, shellAbi, shellSha256, shellFiles,
+    payloadVersion, payloadSha256, payloadDirectory, payloadFiles, nativeVersion, nativeSha256,
+    platform, architecture, desktopCompatibility, shellAbiCompatibility,
+  }
+}
+
+function parseVersionRange(value: unknown, label: string): { min: string; max: string } {
+  if (!isExactObject(value, ['min', 'max'])) throw new PersistedStateError(`${label} fields are invalid`)
+  const min = safeVersion(value.min, `${label}.min`)
+  const max = safeVersion(value.max, `${label}.max`)
+  if (compareVersion(min, max) > 0) throw new PersistedStateError(`${label} is invalid`)
+  return { min, max }
+}
+
+function parseIntegerRange(value: unknown, label: string): { min: number; max: number } {
+  if (!isExactObject(value, ['min', 'max'])) throw new PersistedStateError(`${label} fields are invalid`)
+  const min = boundedPositiveInteger(value.min, `${label}.min`)
+  const max = boundedPositiveInteger(value.max, `${label}.max`)
+  if (min > max) throw new PersistedStateError(`${label} is invalid`)
+  return { min, max }
+}
+
+function persistedInventory(value: unknown, label: string): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PersistedStateError(`${label} is invalid`)
+  const entries = Object.entries(value)
+  if (entries.length < 1 || entries.length > MAX_INVENTORY_FILES) throw new PersistedStateError(`${label} size is invalid`)
+  const inventory: Record<string, string> = Object.create(null) as Record<string, string>
+  for (const [relative, digest] of entries) {
+    if (
+      !SAFE_RELATIVE_FILE_PATTERN.test(relative)
+      || relative.includes('\\')
+      || relative.split('/').includes('.')
+      || path.posix.normalize(relative) !== relative
+    ) {
+      throw new PersistedStateError(`${label} contains an unsafe relative file`)
+    }
+    inventory[relative] = persistedHash(digest, `${label}.${relative}`)
+  }
+  return inventory
+}
+
+function safePayloadDirectory(value: unknown, version: string, digest: string): string {
+  if (typeof value !== 'string' || !SAFE_SEGMENT_PATTERN.test(value) || value === '.' || value === '..' || value.includes('/') || value.includes('\\')) {
+    throw new PersistedStateError('selector payloadDirectory is invalid')
+  }
+  if (value !== `${version}-${digest}`) throw new PersistedStateError('selector payloadDirectory identity is invalid')
+  return value
+}
+
+function safeVersion(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !SAFE_VERSION_PATTERN.test(value)) throw new PersistedStateError(`${label} is invalid`)
+  return value
+}
+
+function persistedHash(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !SHA256_PATTERN.test(value)) throw new PersistedStateError(`${label} is invalid`)
+  return value
+}
+
+function boundedPositiveInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_ABI) throw new PersistedStateError(`${label} is invalid`)
+  return value as number
+}
+
+function isExactObject(value: unknown, keys: string[]): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const actual = Object.keys(value).sort()
+  return actual.join('\0') === [...keys].sort().join('\0')
+}
+
+function selectorEquals(left: ExternalChromeSelector, right: ExternalChromeSelector): boolean {
+  return stableJson(left) === stableJson(right)
+}
+
+function selectorMatchesInstall(selector: ExternalChromeSelector, install: ExternalChromeInstallRecord): boolean {
+  return selectorEquals(selector, selectorFromInstall(install))
+}
+
+function extensionIdFromPublicKeyHash(hash: string): string {
+  return hash.slice(0, 32).replace(/[0-9a-f]/g, (digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
+}
+
+function isManifestWithKey(value: unknown): value is { key: string } {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && typeof (value as { key?: unknown }).key === 'string'
 }
 
 function stableJson(value: unknown): string {
@@ -716,6 +1082,15 @@ function defaultIsProcessAlive(pid: number): boolean {
     return true
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+async function fileHasHash(fs: DeployerFileSystem, target: string, expectedHash: string): Promise<boolean> {
+  try {
+    return sha256(await fs.readFile(target)) === expectedHash
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
   }
 }
 

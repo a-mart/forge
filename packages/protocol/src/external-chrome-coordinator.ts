@@ -17,7 +17,7 @@ export type ExternalChromeAuthorityState = 'none' | 'owned' | 'other-live' | 'st
 export type ExternalChromeAuthState = 'missing' | 'secure' | 'insecure' | 'invalid'
 export type ExternalChromeRegistrationState = 'not-registered' | 'owned' | 'needs-repair' | 'conflict'
 export type ExternalChromeTrustState = 'trusted' | 'untrusted' | 'unsupported' | 'missing'
-export type ExternalChromeExtensionPathState = 'ready' | 'missing' | 'invalid'
+export type ExternalChromeExtensionPathState = 'ready' | 'missing' | 'mismatch' | 'invalid'
 
 export interface ExternalChromeComponentBuild {
   version?: string
