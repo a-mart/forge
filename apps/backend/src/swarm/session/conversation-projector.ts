@@ -882,13 +882,12 @@ function buildMemoryHistoryPage(options: {
   const maxSupplementalItems = options.countsTowardLimit
     ? Math.min(limit, Math.floor(MAX_CONVERSATION_PAGE_ITEMS / 2))
     : 0;
-  const countedLimit = Math.min(limit, MAX_CONVERSATION_PAGE_ITEMS - maxSupplementalItems);
   let countedMessages = 0;
   let supplementalItems = 0;
   let pageBytes = 0;
   let startIndex = options.endExclusive;
 
-  for (let index = options.endExclusive - 1; index >= 0 && countedMessages < countedLimit; index -= 1) {
+  for (let index = options.endExclusive - 1; index >= 0 && countedMessages < limit; index -= 1) {
     const projected = projectConversationEntryForBuilderWire(options.history[index]);
     if (options.isVisible && !options.isVisible(projected)) {
       startIndex = index;
@@ -899,13 +898,20 @@ function buildMemoryHistoryPage(options: {
       continue;
     }
     const countsTowardLimit = !options.countsTowardLimit || options.countsTowardLimit(projected);
-    if (!countsTowardLimit && supplementalItems >= maxSupplementalItems) {
+    if (
+      !countsTowardLimit &&
+      (supplementalItems >= maxSupplementalItems || messages.length >= MAX_CONVERSATION_PAGE_ITEMS)
+    ) {
       startIndex = index;
       continue;
     }
     const entryBytes = Buffer.byteLength(JSON.stringify(projected), "utf8");
     if (countsTowardLimit) {
-      while (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+      while (
+        messages.length > 0 &&
+        (messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+          pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+      ) {
         const supplementalIndex = findLastSupplementalIndex(messages, supplementalMessages);
         if (supplementalIndex < 0) break;
         const removed = messages.splice(supplementalIndex, 1)[0]!;
@@ -913,7 +919,10 @@ function buildMemoryHistoryPage(options: {
         supplementalItems -= 1;
         pageBytes -= Buffer.byteLength(JSON.stringify(removed), "utf8");
       }
-      if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) break;
+      if (
+        messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+        (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+      ) break;
       countedMessages += 1;
     } else {
       if (pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
@@ -998,10 +1007,17 @@ function buildBuilderPageVisibility(
   countsTowardLimit?: (entry: ConversationEntryEvent) => boolean;
 } {
   // Web rules do not depend on legacy manager-alias inference. Worker All is
-  // intentionally unfiltered. Manager All is safe to filter when the bounded
-  // active history supplies its alias context; cold canonical paging leaves
-  // that final product-policy pass to the same shared predicate in the UI.
-  if (view === "all" && (descriptor.role !== "manager" || history.length === 0)) return {};
+  // intentionally unfiltered. Cold manager All preserves unfiltered wire
+  // inclusion, while still treating known worker quick-look rows as
+  // supplemental to the requested canonical row count.
+  if (view === "all" && descriptor.role !== "manager") return {};
+  const knownWorkerIds = collectKnownWorkerIds(agents, descriptor.agentId);
+  if (view === "all" && history.length === 0) {
+    return {
+      countsTowardLimit: (entry) =>
+        !isWorkerQuickLookActivity(entry, descriptor.agentId, knownWorkerIds),
+    };
+  }
   const isVisibleInTimeline = createBuilderTimelineVisibilityPredicate({
     activeAgentId: descriptor.agentId,
     activeAgentRole: descriptor.role,
@@ -1011,15 +1027,16 @@ function buildBuilderPageVisibility(
   });
   if (descriptor.role !== "manager") return { isVisible: isVisibleInTimeline };
 
-  const knownWorkerIds = collectKnownWorkerIds(agents, descriptor.agentId);
+  const isWorkerQuickLook = (entry: ConversationEntryEvent) =>
+    isWorkerQuickLookActivity(entry, descriptor.agentId, knownWorkerIds);
   return {
-    isVisible: (entry) =>
-      isVisibleInTimeline(entry) ||
-      isWorkerQuickLookActivity(entry, descriptor.agentId, knownWorkerIds),
+    isVisible: (entry) => isVisibleInTimeline(entry) || isWorkerQuickLook(entry),
     // Worker quick-look hydration shares the wire page for compatibility, but
     // it must not consume the manager transcript's requested row count. The
     // page builders separately cap these supplemental rows by item/byte budget.
-    countsTowardLimit: isVisibleInTimeline,
+    countsTowardLimit: view === "all"
+      ? (entry) => !isWorkerQuickLook(entry)
+      : isVisibleInTimeline,
   };
 }
 

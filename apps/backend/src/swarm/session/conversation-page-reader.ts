@@ -205,10 +205,6 @@ function readLinesBackward(options: {
   const maxSupplementalItems = options.countsTowardLimit
     ? Math.min(options.limit, Math.floor(MAX_CONVERSATION_PAGE_ITEMS / 2))
     : 0;
-  const countedLimit = Math.min(
-    options.limit,
-    MAX_CONVERSATION_PAGE_ITEMS - maxSupplementalItems,
-  );
   let countedMessages = 0;
   let supplementalItems = 0;
   let pageBytes = 0;
@@ -228,7 +224,7 @@ function readLinesBackward(options: {
   const fileDescriptor = openSync(options.file, "r");
 
   try {
-    while (bufferStart > 0 && countedMessages < countedLimit) {
+    while (bufferStart > 0 && countedMessages < options.limit) {
       const readLength = Math.min(READ_CHUNK_BYTES, bufferStart);
       const readStart = bufferStart - readLength;
       const chunk = Buffer.allocUnsafe(readLength);
@@ -244,7 +240,7 @@ function readLinesBackward(options: {
       let right = buffer.length;
       if (right > 0 && buffer[right - 1] === 0x0a) right -= 1;
 
-      while (right > 0 && countedMessages < countedLimit) {
+      while (right > 0 && countedMessages < options.limit) {
         const newlineIndex = buffer.lastIndexOf(0x0a, right - 1);
         if (newlineIndex < 0 && bufferStart > 0) break;
 
@@ -310,10 +306,17 @@ function readLinesBackward(options: {
         ) continue;
         const countsTowardLimit =
           !options.countsTowardLimit || options.countsTowardLimit(projectedEntry);
-        if (!countsTowardLimit && supplementalItems >= maxSupplementalItems) continue;
+        if (
+          !countsTowardLimit &&
+          (supplementalItems >= maxSupplementalItems || messages.length >= MAX_CONVERSATION_PAGE_ITEMS)
+        ) continue;
         const entryBytes = Buffer.byteLength(JSON.stringify(projectedEntry), "utf8");
         if (countsTowardLimit) {
-          while (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+          while (
+            messages.length > 0 &&
+            (messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+              pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+          ) {
             const supplementalIndex = findLastSupplementalIndex(messages, supplementalMessages);
             if (supplementalIndex < 0) break;
             const removed = messages.splice(supplementalIndex, 1)[0]!;
@@ -321,7 +324,10 @@ function readLinesBackward(options: {
             supplementalItems -= 1;
             pageBytes -= Buffer.byteLength(JSON.stringify(removed), "utf8");
           }
-          if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+          if (
+            messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+            (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+          ) {
             return {
               messages,
               // The counted row did not fit this page, so the continuation
@@ -349,7 +355,7 @@ function readLinesBackward(options: {
       buffer = buffer.subarray(0, right);
       nextOffset = bufferStart + buffer.length;
 
-      if (boundedScanBytes >= MAX_CONVERSATION_PAGE_SCAN_BYTES && countedMessages < countedLimit) {
+      if (boundedScanBytes >= MAX_CONVERSATION_PAGE_SCAN_BYTES && countedMessages < options.limit) {
         if (buffer.length > 0) {
           const partialRowEnd = bufferStart + buffer.length;
           const completedRowProgress = options.startOffset - partialRowEnd;
@@ -383,7 +389,7 @@ function readLinesBackward(options: {
       }
     }
 
-    if (bufferStart === 0 && buffer.length > 0 && countedMessages < countedLimit) {
+    if (bufferStart === 0 && buffer.length > 0 && countedMessages < options.limit) {
       const oldestRowEndOffset = nextOffset;
       if (continuationRowEnd !== undefined) {
         oversizedRowClassifier.scanPreceding(buffer);
@@ -437,7 +443,11 @@ function readLinesBackward(options: {
           !options.countsTowardLimit || options.countsTowardLimit(projectedEntry);
         const entryBytes = Buffer.byteLength(JSON.stringify(projectedEntry), "utf8");
         if (countsTowardLimit) {
-          while (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+          while (
+            messages.length > 0 &&
+            (messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+              pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+          ) {
             const supplementalIndex = findLastSupplementalIndex(messages, supplementalMessages);
             if (supplementalIndex < 0) break;
             const removed = messages.splice(supplementalIndex, 1)[0]!;
@@ -445,7 +455,10 @@ function readLinesBackward(options: {
             supplementalItems -= 1;
             pageBytes -= Buffer.byteLength(JSON.stringify(removed), "utf8");
           }
-          if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+          if (
+            messages.length >= MAX_CONVERSATION_PAGE_ITEMS ||
+            (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES)
+          ) {
             return {
               messages,
               nextOffset: oldestRowEndOffset,
@@ -464,6 +477,7 @@ function readLinesBackward(options: {
           }
         } else if (
           supplementalItems < maxSupplementalItems &&
+          messages.length < MAX_CONVERSATION_PAGE_ITEMS &&
           pageBytes + entryBytes <= MAX_CONVERSATION_PAGE_BYTES
         ) {
           supplementalMessages.add(projectedEntry);
