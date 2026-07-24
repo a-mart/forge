@@ -156,6 +156,15 @@ describe('External Chrome protocol identity and negotiation', () => {
     expectFailure({ ...hello, params: { ...hello.params, features: { ...hello.params.features, resize: true } } }, 'invalid-params')
     expectFailure({ ...hello, params: { ...hello.params, operations: operations.slice(1) } }, 'invalid-params')
     expectFailure({ ...hello, params: { ...hello.params, methods: EXTERNAL_CHROME_METHODS.slice(1) } }, 'invalid-params')
+    const primitiveOnly = {
+      ...hello,
+      params: {
+        ...hello.params,
+        operations: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({ operation, supported: false, reason: 'Native execute dispatch is not qualified' })),
+        features: { ...hello.params.features, oopif: false, humanInterruption: false },
+      },
+    }
+    expect(parse(primitiveOnly)).toEqual(primitiveOnly)
   })
 })
 
@@ -210,6 +219,98 @@ describe('External Chrome routed request and response contracts', () => {
     }
   })
 
+  it.each([
+    ['forge.runtime.hello',
+      { protocolVersion: 1, desktopInstanceId: 'desktop', heartbeatMs: 1_000, maxMessageBytes: 4_096, requiredShellAbi: 1, update: { payloadVersion: 'm1', sha256: 'a'.repeat(64) } },
+      (result: any) => { result.update.unexpectedSecret = 'forbidden' },
+      (result: any) => { result.requiredShellAbi = '1' },
+      (result: any) => { result.desktopInstanceId = 'x'.repeat(129) }],
+    ['forge.runtime.ping',
+      { protocolVersion: 1, nonce: 'nonce', receivedAt: 'now' },
+      (result: any) => { result.unexpectedSecret = true },
+      (result: any) => { result.protocolVersion = '1' },
+      (result: any) => { result.nonce = 'x'.repeat(129) }],
+    ['forge.browser.listCandidates',
+      { protocolVersion: 1, extensionInstanceId: 'instance', windows: [{ windowId: 1, focused: true, groups: [], tabs: [] }] },
+      (result: any) => { result.windows[0].unexpectedSecret = true },
+      (result: any) => { result.windows[0].focused = 'true' },
+      (result: any) => { result.windows = Array.from({ length: EXTERNAL_CHROME_MAX_ARRAY_ITEMS + 1 }, () => ({ windowId: 1, focused: true, groups: [], tabs: [] })) }],
+    ['forge.browser.claim',
+      { ...lease, sessionAgentId: 'session', extensionInstanceId: 'instance', groupId: null, childPolicy: 'manual', tabs: [] },
+      (result: any) => { result.tabs = [{ windowId: 1, tabId: 1, groupId: null, title: '', url: 'https://x.test', origin: 'https://x.test', active: true, unexpectedSecret: true }] },
+      (result: any) => { result.groupId = 'none' },
+      (result: any) => { result.tabs = Array.from({ length: EXTERNAL_CHROME_MAX_CANDIDATE_TABS + 1 }, () => ({ windowId: 1, tabId: 1, groupId: null, title: '', url: 'https://x.test', origin: 'https://x.test', active: true })) }],
+    ['forge.browser.create',
+      { ...lease, sessionAgentId: 'session', extensionInstanceId: 'instance', groupId: 1, tab: { windowId: 1, tabId: 1, groupId: 1, title: '', url: 'https://x.test', origin: 'https://x.test', active: true } },
+      (result: any) => { result.tab.unexpectedSecret = true },
+      (result: any) => { result.tab.active = 'true' },
+      (result: any) => { result.tab.title = 'x'.repeat(513) }],
+    ['forge.browser.release',
+      { ...lease, releasedTabIds: [] },
+      (result: any) => { result.unexpectedSecret = true },
+      (result: any) => { result.releasedTabIds = ['1'] },
+      (result: any) => { result.releasedTabIds = Array.from({ length: EXTERNAL_CHROME_MAX_CANDIDATE_TABS + 1 }, (_, index) => index) }],
+    ['forge.browser.execute',
+      { ...lease, requestId: 'request', tabId: 1, operation: 'click', ok: true, result: { tabId: 'tab', point: { x: 1, y: 2 } } },
+      (result: any) => { result.result.point.unexpectedSecret = true },
+      (result: any) => { result.result.point.x = '1' },
+      (result: any) => { result.result.tabId = 'x'.repeat(129) }],
+    ['forge.browser.turnEnded',
+      { ...lease, turnId: 'turn', releasedTabs: [], handoffTabs: [] },
+      (result: any) => { result.unexpectedSecret = true },
+      (result: any) => { result.handoffTabs = ['1'] },
+      (result: any) => { result.releasedTabs = Array.from({ length: EXTERNAL_CHROME_MAX_CANDIDATE_TABS + 1 }, (_, index) => index) }],
+    ['forge.runtime.prepareUpdate',
+      { protocolVersion: 1, payloadVersion: 'm1', quiesced: true },
+      (result: any) => { result.unexpectedSecret = true },
+      (result: any) => { result.quiesced = false },
+      (result: any) => { result.payloadVersion = 'x'.repeat(129) }],
+    ['forge.runtime.reload',
+      { protocolVersion: 1, payloadVersion: 'm1', accepted: true },
+      (result: any) => { result.unexpectedSecret = true },
+      (result: any) => { result.accepted = false },
+      (result: any) => { result.payloadVersion = 'x'.repeat(129) }],
+  ] as const)('rejects unknown, malformed, and oversized nested %s results', (method, valid, addUnknown, malformed, oversize) => {
+    for (const mutate of [addUnknown, malformed, oversize]) {
+      const result = structuredClone(valid) as any
+      mutate(result)
+      expect(() => parse({ jsonrpc: '2.0', id: 'response', result }, { expectedResponseMethod: method, protocolVersion: 1 })).toThrow(ExternalChromeContractError)
+    }
+  })
+
+  it('validates exact nested schemas for every operation-specific success result', () => {
+    const viewportSetting = { mode: 'fill' }
+    const viewport = { width: 800, height: 600, deviceScaleFactor: 1 }
+    const tab = {
+      hostKind: 'external-chrome', tabId: 'tab', sessionAgentId: 'session', profileId: 'profile', url: 'https://x.test', title: '',
+      lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1, controller: 'agent',
+      agentCursor: null, recording: null, viewportSetting, renderedViewport: viewport, physicalVisible: true, error: null,
+      createdAt: 'now', updatedAt: 'now',
+    }
+    const cases: Array<[BrowserAutomationOperation, Record<string, unknown>, (result: any) => void]> = [
+      ['status', { available: true, host: { connected: false, hostId: null, hostGeneration: null, focused: false, capabilities: null, connectedAt: null }, panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null }, (result) => { result.host.unexpectedSecret = true }],
+      ['open', { tab, created: true, panelRevealRequested: true }, (result) => { result.tab.error = { code: 'x', message: 'x', unexpectedSecret: true } }],
+      ['navigate', { tab, readiness: 'load' }, (result) => { result.tab.unexpectedSecret = true }],
+      ['resize', { tabId: 'tab', setting: { mode: 'freeform', width: 800, height: 600 }, viewport }, (result) => { result.setting.unexpectedSecret = true }],
+      ['snapshot', { tabId: 'tab', url: 'https://x.test', title: '', loading: false, viewportSetting, viewport, visibleText: '', interactiveElements: [], accessibility: null, consoleEntries: [], networkEntries: [], actionTimeline: [], screenshot: { mimeType: 'image/png', data: '', width: 800, height: 600 } }, (result) => { result.screenshot.unexpectedSecret = true }],
+      ['click', { tabId: 'tab', point: { x: 1, y: 2 } }, (result) => { result.point.unexpectedSecret = true }],
+      ['type', { tabId: 'tab', characters: 1, cleared: false }, (result) => { result.unexpectedSecret = true }],
+      ['press', { tabId: 'tab', key: 'Enter', modifiers: ['Control'] }, (result) => { result.modifiers = ['Control', 'Control'] }],
+      ['scroll', { tabId: 'tab', deltaX: 0, deltaY: 1, scrollX: 0, scrollY: 1 }, (result) => { result.unexpectedSecret = true }],
+      ['evaluate', { tabId: 'tab', value: null, remoteObject: { type: 'object' }, serializedBytes: 4 }, (result) => { result.remoteObject.unexpectedSecret = true }],
+      ['waitFor', { tabId: 'tab', matched: true, elapsedMs: 1 }, (result) => { result.unexpectedSecret = true }],
+      ['recordingStart', { recordingId: 'recording', tabId: 'tab', recording: true, startedAt: 'now', mimeType: 'video/webm', width: 800, height: 600 }, (result) => { result.unexpectedSecret = true }],
+      ['recordingStop', { recordingId: 'recording', tabId: 'tab', path: '/tmp/a.webm', mimeType: 'video/webm', extension: '.webm', sizeBytes: 1, width: 800, height: 600, createdAt: 'now' }, (result) => { result.unexpectedSecret = true }],
+    ]
+    for (const [operation, validResult, corrupt] of cases) {
+      const envelope = { jsonrpc: '2.0', id: operation, result: { ...lease, requestId: `request-${operation}`, tabId: 1, operation, ok: true, result: validResult } }
+      expect(() => parse(envelope, { expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1 })).not.toThrow()
+      const invalid = structuredClone(envelope)
+      corrupt((invalid.result as any).result)
+      expect(() => parse(invalid, { expectedResponseMethod: 'forge.browser.execute', protocolVersion: 1 })).toThrow(ExternalChromeContractError)
+    }
+  })
+
   it('requires response context and enforces mutually exclusive execute outcomes', () => {
     expectFailure({ jsonrpc: '2.0', id: 'response-1', result: { protocolVersion: 1 } }, 'response-method-required')
     const invalid = { jsonrpc: '2.0', id: 'response-2', result: { ...lease, requestId: 'request-1', tabId: 12, operation: 'click', ok: true, result: {}, error: { code: 'timeout', message: 'x', retryable: true } } }
@@ -246,6 +347,27 @@ describe('External Chrome notification and JSON-RPC error contracts', () => {
     expect(notifications.map((notification) => parse(notification, { protocolVersion: 1 }))).toEqual(notifications)
     expect(notifications.map((notification) => notification.method)).toEqual(EXTERNAL_CHROME_NOTIFICATION_METHODS)
     for (const notification of notifications) expect(notification).not.toHaveProperty('id')
+  })
+
+  it.each([
+    ['browser.cdpEvent', { ...lease, targetId: 'target', method: 'Runtime.event', params: { value: 'ok' } },
+      (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.params = [] }, (params: any) => { params.params.value = 'x'.repeat(EXTERNAL_CHROME_MAX_STRING_LENGTH + 1) }],
+    ['browser.detached', { ...lease, reason: 'lost' },
+      (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.tabId = '1' }, (params: any) => { params.reason = 'x'.repeat(1_025) }],
+    ['browser.userControl', { ...lease, controlEpoch: 1, event: 'pointer', at: 'now' },
+      (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.event = 'mouse' }, (params: any) => { params.at = 'x'.repeat(129) }],
+    ['browser.tabChanged', { ...lease, change: { title: 'changed' } },
+      (params: any) => { params.change.unexpectedSecret = true }, (params: any) => { params.change.active = 'true' }, (params: any) => { params.change.title = 'x'.repeat(513) }],
+    ['browser.downloadChanged', { ...lease, downloadId: 1, state: 'complete', danger: 'safe', filename: 'a.txt', bytesReceived: 1, totalBytes: 1 },
+      (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.danger = 'secret' }, (params: any) => { params.filename = 'x'.repeat(2_049) }],
+    ['runtime.goodbye', { protocolVersion: 1, reason: 'quit' },
+      (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.protocolVersion = '1' }, (params: any) => { params.reason = 'x'.repeat(1_025) }],
+  ] as const)('rejects unknown, malformed, and oversized nested %s notifications', (method, valid, addUnknown, malformed, oversize) => {
+    for (const mutate of [addUnknown, malformed, oversize]) {
+      const params = structuredClone(valid) as any
+      mutate(params)
+      expect(() => parse({ jsonrpc: '2.0', method, params }, { protocolVersion: 1 })).toThrow(ExternalChromeContractError)
+    }
   })
 
   it('rejects notification IDs and empty tab changes', () => {

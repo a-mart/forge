@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { EXTERNAL_CHROME_MAX_ARRAY_ITEMS, EXTERNAL_CHROME_MAX_CANDIDATE_TABS, EXTERNAL_CHROME_MAX_LABEL_LENGTH } from '@forge/protocol'
 import { LeaseError, LeaseManager } from '../src/runtime/lease-manager.js'
 import { candidateOrigin, restrictedTargetReason } from '../src/runtime/restricted-target.js'
 import { FakeStorage, fakeChrome } from './fakes.js'
@@ -29,6 +30,23 @@ describe('candidate picker and one-session leases', () => {
     expect(JSON.stringify(windows)).not.toContain('secret')
   })
 
+  it('bounds and deterministically truncates windows, groups, tabs, and labels before transport', async () => {
+    const windows = Array.from({ length: EXTERNAL_CHROME_MAX_ARRAY_ITEMS + 10 }, (_, index) => ({
+      id: EXTERNAL_CHROME_MAX_ARRAY_ITEMS + 10 - index,
+      focused: false,
+      tabs: [{ id: 10_000 + index, windowId: EXTERNAL_CHROME_MAX_ARRAY_ITEMS + 10 - index, title: 'x'.repeat(EXTERNAL_CHROME_MAX_LABEL_LENGTH + 10), url: 'https://fixture.invalid/' }],
+    }))
+    const groups = windows.map((window, index) => ({ id: 20_000 + index, windowId: window.id, title: 'g'.repeat(EXTERNAL_CHROME_MAX_LABEL_LENGTH + 10), collapsed: false }))
+    const manager = new LeaseManager(fakeChrome({ windows, groups }), 'm1-spike.1')
+    const candidates = await manager.listCandidates()
+    expect(candidates).toHaveLength(EXTERNAL_CHROME_MAX_ARRAY_ITEMS)
+    expect(candidates.map((window) => window.windowId)).toEqual([...candidates.map((window) => window.windowId)].sort((a, b) => a - b))
+    expect(candidates.reduce((total, window) => total + window.tabs.length, 0)).toBe(EXTERNAL_CHROME_MAX_CANDIDATE_TABS)
+    expect(candidates.reduce((total, window) => total + window.groups.length, 0)).toBe(EXTERNAL_CHROME_MAX_ARRAY_ITEMS)
+    expect(candidates[0]?.tabs[0]?.title).toHaveLength(EXTERNAL_CHROME_MAX_LABEL_LENGTH)
+    expect(candidates[0]?.groups[0]?.title).toHaveLength(EXTERNAL_CHROME_MAX_LABEL_LENGTH)
+  })
+
   it('enforces compare-and-set lease/group scope and releases without closing tabs', async () => {
     const chrome = fakeChrome({ tabs: structuredClone(normalTabs), groups: [{ id: 7, windowId: 1, collapsed: false }] })
     const manager = new LeaseManager(chrome, 'm1-spike.1', () => 100)
@@ -37,6 +55,26 @@ describe('candidate picker and one-session leases', () => {
     await expect(manager.claim({ leaseId: 'lease-b', leaseEpoch: 1, sessionAgentId: 'session-b', tabIds: [3], childPolicy: 'manual' })).rejects.toMatchObject({ code: 'lease-conflict' })
     expect(await manager.release('lease-a', 1)).toEqual([3, 4])
     expect(await chrome.tabs.get(3)).toMatchObject({ title: 'Synthetic app' })
+  })
+
+  it('treats same lease ID/epoch as idempotent only for every immutable claim field and exact membership', async () => {
+    const chrome = fakeChrome({ tabs: structuredClone(normalTabs) })
+    const manager = new LeaseManager(chrome, 'm1-spike.1', () => 100)
+    const original = { leaseId: 'lease-a', leaseEpoch: 3, sessionAgentId: 'session-a', tabIds: [4, 3], groupId: 7, childPolicy: 'manual' as const }
+    const first = await manager.claim(original)
+    expect((await manager.claim({ ...original, tabIds: [3, 4] })).lease).toEqual(first.lease)
+    const mismatches = [
+      { ...original, sessionAgentId: 'session-b' },
+      { ...original, tabIds: [3] },
+      { ...original, groupId: undefined },
+      { ...original, childPolicy: 'include-opened-by-leased-tabs' as const },
+    ]
+    for (const mismatch of mismatches) {
+      await expect(manager.claim(mismatch)).rejects.toMatchObject({ code: 'lease-conflict' })
+      expect(manager.current()).toEqual(first.lease)
+    }
+    await expect(manager.claim({ ...original, tabIds: [3, 3] })).rejects.toMatchObject({ code: 'scope-mismatch' })
+    expect(manager.current()).toEqual(first.lease)
   })
 
   it('creates a Forge-named group and leases only its new tab', async () => {

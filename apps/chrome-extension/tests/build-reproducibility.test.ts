@@ -54,8 +54,17 @@ describe('deterministic MV3 package', () => {
       expect(firstFiles).toContain('extension/manifest.json')
       expect(firstFiles).toContain('package-manifest.json')
       expect(firstFiles.some((file) => file.endsWith('.map'))).toBe(false)
-      const selector = JSON.parse(await readFile(path.join(first, 'extension/current.json'), 'utf8')) as Record<string, string>
-      expect(selector.payloadDirectory).toBe(`${selector.payloadVersion}-${selector.payloadSha256}`)
+      const selector = JSON.parse(await readFile(path.join(first, 'extension/current.json'), 'utf8')) as Record<string, unknown>
+      expect(selector.payloadDirectory).toBe(`${String(selector.payloadVersion)}-${String(selector.payloadSha256)}`)
+      const payloadFiles = selector.payloadFiles as Record<string, string>
+      expect(Object.keys(payloadFiles).sort()).toEqual(['content-script.js', 'service-worker.js', 'side-panel.js'])
+      for (const [file, expectedHash] of Object.entries(payloadFiles)) {
+        const content = await readFile(path.join(first, 'extension/payloads', String(selector.payloadDirectory), file))
+        expect(createHash('sha256').update(content).digest('hex')).toBe(expectedHash)
+      }
+      const workerBootstrap = await readFile(path.join(first, 'extension/shell/service-worker-bootstrap.js'), 'utf8')
+      expect(workerBootstrap).toContain('importScripts(payloadUrl)')
+      expect(workerBootstrap).not.toMatch(/\b(?:eval|Function)\s*\(|blob:|https?:\/\//)
       const packageManifest = JSON.parse(await readFile(path.join(first, 'package-manifest.json'), 'utf8')) as Record<string, unknown>
       expect(packageManifest).toMatchObject({ capabilities: { desktopIntegration: false, testSideLoadOnly: true, resize: false, recording: false, downloadArtifacts: false, downloadOpen: false } })
       for (const relative of firstFiles) {

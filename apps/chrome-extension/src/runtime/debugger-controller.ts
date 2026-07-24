@@ -37,24 +37,23 @@ export class OopifAncestryTracker {
     const sessionId = typeof rawParams.sessionId === 'string' ? rawParams.sessionId : undefined
     const targetId = typeof targetInfo?.targetId === 'string' ? targetInfo.targetId : undefined
     const type = typeof targetInfo?.type === 'string' ? targetInfo.type : ''
-    if (sessionId === undefined || targetId === undefined || (type !== 'iframe' && type !== 'page')) return { accepted: false }
+    if (sessionId === undefined || targetId === undefined || type !== 'iframe') return { accepted: false, ...(sessionId === undefined ? {} : { sessionId }), ...(targetId === undefined ? {} : { targetId }) }
+    // Target IDs become accepted only after the Page frame tree proves exact ancestry.
+    if (!this.parentByFrame.has(targetId)) return { accepted: false, sessionId, targetId }
+    const expectedParentFrameId = this.parentByFrame.get(targetId)
+    const expectedParent = [...this.nodes.values()].find((node) => node.frameId === expectedParentFrameId)
     const parentTargetId = sourceSessionId === undefined ? this.rootTargetId : this.targetBySession.get(sourceSessionId)
-    if (parentTargetId === undefined || !this.isDescendantOrRoot(parentTargetId)) return { accepted: false, sessionId, targetId }
-    const frameId = typeof targetInfo?.targetId === 'string' && type === 'iframe' ? targetInfo.targetId : undefined
-    if (frameId !== undefined) {
-      const frameParent = this.parentByFrame.get(frameId)
-      if (frameParent !== undefined && frameParent !== null && !this.frameBelongsToKnownAncestry(frameParent)) {
-        return { accepted: false, sessionId, targetId }
-      }
+    if (expectedParent === undefined || parentTargetId !== expectedParent.targetId || !this.isDescendantOrRoot(parentTargetId)) {
+      return { accepted: false, sessionId, targetId }
     }
-    this.nodes.set(targetId, { targetId, sessionId, parentTargetId, ...(frameId === undefined ? {} : { frameId }) })
+    this.nodes.set(targetId, { targetId, sessionId, parentTargetId, frameId: targetId })
     this.targetBySession.set(sessionId, targetId)
     return { accepted: true, sessionId, targetId }
   }
 
   frameAttached(frameId: string, parentFrameId: string | null): boolean {
-    if (this.rootTargetId === null || frameId.length === 0) return false
-    if (parentFrameId !== null && !this.frameBelongsToKnownAncestry(parentFrameId)) return false
+    if (this.rootTargetId === null || frameId.length === 0 || parentFrameId === null) return false
+    if (!this.frameBelongsToKnownAncestry(parentFrameId)) return false
     this.parentByFrame.set(frameId, parentFrameId)
     return true
   }
@@ -83,6 +82,14 @@ export class OopifAncestryTracker {
   acceptsSession(sessionId: string): boolean {
     const targetId = this.targetBySession.get(sessionId)
     return targetId !== undefined && this.isDescendantOrRoot(targetId)
+  }
+
+  targetIdForSession(sessionId: string): string | undefined {
+    return this.targetBySession.get(sessionId)
+  }
+
+  rootId(): string | null {
+    return this.rootTargetId
   }
 
   ancestry(targetId: string): string[] {
@@ -165,11 +172,15 @@ export class DebuggerController {
       didAttach = true
       const tracker = new OopifAncestryTracker()
       await this.debuggerApi.sendCommand(target, 'Page.enable')
+      const targetInfoResult = record(await this.debuggerApi.sendCommand(target, 'Target.getTargetInfo'))
+      const targetInfo = record(targetInfoResult?.targetInfo)
+      const rootTargetId = typeof targetInfo?.targetId === 'string' ? targetInfo.targetId : undefined
+      if (rootTargetId === undefined) throw new Error('Chrome did not prove the root target identity')
       const frameTreeResult = record(await this.debuggerApi.sendCommand(target, 'Page.getFrameTree'))
       const frameTree = record(frameTreeResult?.frameTree)
       const rootFrame = record(frameTree?.frame)
       const rootFrameId = typeof rootFrame?.id === 'string' ? rootFrame.id : undefined
-      tracker.registerRoot(`tab:${tabId}`, rootFrameId)
+      tracker.registerRoot(rootTargetId, rootFrameId)
       if (frameTree !== null) seedFrameTree(tracker, frameTree)
       this.trackers.set(tabId, tracker)
       await this.debuggerApi.sendCommand(target, 'Target.setAutoAttach', {
@@ -188,6 +199,11 @@ export class DebuggerController {
     }
   }
 
+  async sendInput(tabId: number, method: 'Input.dispatchMouseEvent' | 'Input.dispatchKeyEvent' | 'Input.insertText' | 'Input.dispatchTouchEvent', params: Record<string, unknown>): Promise<unknown> {
+    if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger input target is not attached')
+    return this.debuggerApi.sendCommand({ tabId }, method, params)
+  }
+
   async detach(tabId: number): Promise<void> {
     const state = this.state(tabId)
     if (state === 'UNATTACHED') return
@@ -201,10 +217,15 @@ export class DebuggerController {
   }
 
   async detachAll(): Promise<void> {
-    await Promise.all([...this.states.keys()].map((tabId) => this.detach(tabId)))
+    await Promise.allSettled([...this.states.keys()].map((tabId) => this.detach(tabId)))
   }
 
-  async onEvent(source: ChromeDebuggerSession, method: string, params: unknown): Promise<{ accepted: boolean; rejectedSessionId?: string }> {
+  targetId(tabId: number, sessionId?: string): string | undefined {
+    const tracker = this.trackers.get(tabId)
+    return sessionId === undefined ? tracker?.rootId() ?? undefined : tracker?.targetIdForSession(sessionId)
+  }
+
+  async onEvent(source: ChromeDebuggerSession, method: string, params: unknown): Promise<{ accepted: boolean; rejectedSessionId?: string; targetId?: string; sessionId?: string }> {
     if (source.tabId === undefined || this.state(source.tabId) !== 'ATTACHED') return { accepted: false }
     const tracker = this.trackers.get(source.tabId)
     if (tracker === undefined) return { accepted: false }
@@ -216,7 +237,18 @@ export class DebuggerController {
         await this.debuggerApi.sendCommand({ tabId: source.tabId }, 'Target.detachFromTarget', { sessionId: result.sessionId }).catch(() => undefined)
         return { accepted: false, rejectedSessionId: result.sessionId }
       }
-      return { accepted: result.accepted }
+      if (result.accepted && result.sessionId !== undefined) {
+        await this.debuggerApi.sendCommand({ tabId: source.tabId, sessionId: result.sessionId }, 'Target.setAutoAttach', {
+          autoAttach: true,
+          waitForDebuggerOnStart: false,
+          flatten: true,
+        })
+      }
+      return {
+        accepted: result.accepted,
+        ...(result.targetId === undefined ? {} : { targetId: result.targetId }),
+        ...(result.sessionId === undefined ? {} : { sessionId: result.sessionId }),
+      }
     }
     if (method === 'Target.detachedFromTarget') {
       if (typeof payload.sessionId === 'string') tracker.detached(payload.sessionId)
@@ -232,7 +264,8 @@ export class DebuggerController {
       return { accepted: typeof payload.frameId === 'string' && tracker.frameAttached(payload.frameId, typeof payload.parentFrameId === 'string' ? payload.parentFrameId : null) }
     }
     if (source.sessionId !== undefined && !tracker.acceptsSession(source.sessionId)) return { accepted: false }
-    return { accepted: true }
+    const targetId = source.sessionId === undefined ? tracker.rootId() : tracker.targetIdForSession(source.sessionId)
+    return { accepted: true, ...(targetId === null || targetId === undefined ? {} : { targetId }) }
   }
 
   onDetach(source: ChromeDebuggerTarget, reason: string): DebuggerDetachNotice | null {

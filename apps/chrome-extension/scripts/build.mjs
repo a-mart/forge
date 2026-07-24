@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { createPackageManifest } from './package-manifest.mjs'
-import { hashTree, stableJson } from './deterministic.mjs'
+import { hashTree, sha256, stableJson } from './deterministic.mjs'
 import { verifyIdentity } from './verify-identity.mjs'
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -13,14 +13,15 @@ const extensionRoot = path.join(packageRoot, 'extension')
 const temporaryPayload = path.join(packageRoot, '.payload')
 const payloadVersion = 'm1-spike.1'
 
-async function bundle(entry, outfile) {
+async function bundle(entry, outfile, options = {}) {
   await mkdir(path.dirname(outfile), { recursive: true })
   await build({
     absWorkingDir: sourceRoot,
     bundle: true,
     charset: 'utf8',
     entryPoints: [entry],
-    format: 'esm',
+    format: options.format ?? 'esm',
+    ...(options.globalName === undefined ? {} : { globalName: options.globalName }),
     legalComments: 'none',
     logLevel: 'silent',
     minify: false,
@@ -40,13 +41,16 @@ await Promise.all([mkdir(path.join(extensionRoot, 'shell'), { recursive: true })
 await verifyIdentity(sourceRoot)
 
 await Promise.all([
-  bundle('src/shell/service-worker-bootstrap.ts', path.join(extensionRoot, 'shell/service-worker-bootstrap.js')),
+  bundle('src/shell/service-worker-bootstrap.ts', path.join(extensionRoot, 'shell/service-worker-bootstrap.js'), { format: 'iife' }),
   bundle('src/shell/side-panel-bootstrap.ts', path.join(extensionRoot, 'shell/side-panel-bootstrap.js')),
-  bundle('src/payload/service-worker/index.ts', path.join(temporaryPayload, 'service-worker.js')),
-  bundle('src/payload/content-script/index.ts', path.join(temporaryPayload, 'content-script.js')),
+  bundle('src/payload/service-worker/index.ts', path.join(temporaryPayload, 'service-worker.js'), { format: 'iife', globalName: 'ForgeExternalChromePayload' }),
+  bundle('src/payload/content-script/index.ts', path.join(temporaryPayload, 'content-script.js'), { format: 'iife' }),
   bundle('src/payload/side-panel/index.ts', path.join(temporaryPayload, 'side-panel.js')),
 ])
 
+const payloadFiles = Object.fromEntries(await Promise.all(
+  ['content-script.js', 'service-worker.js', 'side-panel.js'].map(async (file) => [file, sha256(await readFile(path.join(temporaryPayload, file)))]),
+))
 const payloadSha256 = await hashTree(temporaryPayload)
 const payloadDirectory = `${payloadVersion}-${payloadSha256}`
 const finalPayload = path.join(extensionRoot, 'payloads', payloadDirectory)
@@ -68,6 +72,7 @@ await writeFile(path.join(extensionRoot, 'current.json'), stableJson({
   payloadVersion,
   payloadSha256,
   payloadDirectory,
+  payloadFiles,
 }), { mode: 0o644 })
 
 const packageManifest = await createPackageManifest({ packageRoot, sourceRoot, payloadVersion, payloadSha256, payloadDirectory })

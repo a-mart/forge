@@ -16,6 +16,7 @@ export interface FakeChromeOptions {
   groups?: ChromeTabGroup[]
   windows?: ChromeWindow[]
   session?: FakeStorage
+  detachFailures?: Set<number>
 }
 
 export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attached: Set<number>; commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> } {
@@ -77,8 +78,16 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attac
         if (target.tabId === undefined || attached.has(target.tabId)) throw new Error('Another debugger is already attached')
         attached.add(target.tabId)
       },
-      detach: async (target) => { if (target.tabId !== undefined) attached.delete(target.tabId) },
-      sendCommand: async (target, method, params) => { commands.push({ target, method, ...(params === undefined ? {} : { params }) }); return {} },
+      detach: async (target) => {
+        if (target.tabId !== undefined && options.detachFailures?.has(target.tabId) === true) throw new Error('already detached')
+        if (target.tabId !== undefined) attached.delete(target.tabId)
+      },
+      sendCommand: async (target, method, params) => {
+        commands.push({ target, method, ...(params === undefined ? {} : { params }) })
+        if (method === 'Target.getTargetInfo') return { targetInfo: { targetId: `target-tab-${String(target.tabId)}`, type: 'page', attached: true } }
+        if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: `frame-tab-${String(target.tabId)}` } } }
+        return {}
+      },
     },
     sidePanel: { open: async () => undefined, setPanelBehavior: async () => undefined },
     alarms: { create: () => undefined, clear: async () => true },
@@ -88,13 +97,14 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attac
 export class FakePort implements ChromeRuntimePort {
   readonly name = 'native'
   readonly sent: unknown[] = []
+  disconnected = false
   private messageListener: ((message: unknown) => void) | null = null
   private disconnectListener: (() => void) | null = null
   onPost?: (message: unknown) => void
   onMessage = { addListener: (listener: (message: unknown) => void) => { this.messageListener = listener } }
   onDisconnect = { addListener: (listener: () => void) => { this.disconnectListener = listener } }
   postMessage(message: unknown): void { this.sent.push(message); this.onPost?.(message) }
-  disconnect(): void { /* Chrome emits disconnect separately in tests */ }
+  disconnect(): void { this.disconnected = true }
   emitMessage(message: unknown): void { this.messageListener?.(message) }
   emitDisconnect(): void { this.disconnectListener?.() }
 }

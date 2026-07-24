@@ -1,5 +1,16 @@
 import {
+  BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES,
+  BROWSER_AUTOMATION_MAX_EVALUATE_BYTES,
+  BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS,
+  BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
+  BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_HOST_KINDS,
+  BROWSER_VIEWPORT_MAX_AREA,
+  BROWSER_VIEWPORT_MAX_DIMENSION,
+  BROWSER_VIEWPORT_MIN_DIMENSION,
+  BROWSER_VIEWPORT_PRESETS,
   EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS,
   isBrowserAutomationOperation,
   parseBrowserAutomationInput,
@@ -694,8 +705,8 @@ function parseOperationCapabilities(value: unknown): ExternalChromeOperationCapa
     fail('invalid-params', 'params.operations must describe every browser operation exactly once', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
   }
   for (const entry of entries) {
-    const shouldSupport = (EXTERNAL_CHROME_SUPPORTED_OPERATIONS as readonly BrowserAutomationOperation[]).includes(entry.operation)
-    if (entry.supported !== shouldSupport) fail('invalid-params', `params.operations support for ${entry.operation} contradicts V1 capability`, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+    const maySupport = (EXTERNAL_CHROME_SUPPORTED_OPERATIONS as readonly BrowserAutomationOperation[]).includes(entry.operation)
+    if (entry.supported && !maySupport) fail('invalid-params', `params.operations support for ${entry.operation} contradicts V1 capability`, EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
   }
   return entries
 }
@@ -767,15 +778,26 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
     ...EXTERNAL_CHROME_EXECUTION_ERROR_CODES,
     'unavailable-host', 'session-not-found', 'tab-session-mismatch', 'host-disconnected', 'stale-host-generation',
     'malformed-response', 'artifact-path-invalid', 'recording-conflict', 'recording-requires-visible-tab', 'recording-not-found',
+    'extension-update-required',
   ]
   if (!knownCodes.includes(error.code)) fail('invalid-result', `${path}.code is unknown`)
-  const details = error.details === undefined ? undefined : validateBoundedJson(error.details, `${path}.details`)
-  if (details !== undefined && (typeof details !== 'object' || details === null || Array.isArray(details))) fail('invalid-result', `${path}.details must be an object`)
+  let details: BrowserAutomationFailure['details'] | undefined
+  if (error.details !== undefined) {
+    const rawDetails = object(error.details, `${path}.details`)
+    if (Object.keys(rawDetails).length > EXTERNAL_CHROME_MAX_OBJECT_PROPERTIES) fail('invalid-result', `${path}.details exceeds property bound`)
+    details = Object.fromEntries(Object.entries(rawDetails).map(([key, entry]) => {
+      boundedString(key, `${path}.details key`, EXTERNAL_CHROME_MAX_LABEL_LENGTH)
+      if (entry === null || typeof entry === 'boolean') return [key, entry]
+      if (typeof entry === 'string') return [key, boundedString(entry, `${path}.details.${key}`, EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH, true)]
+      if (typeof entry === 'number' && Number.isFinite(entry)) return [key, entry]
+      return fail('invalid-result', `${path}.details.${key} must be a JSON primitive`)
+    }))
+  }
   return {
     code: error.code as BrowserAutomationFailure['code'],
     message: boundedString(error.message, `${path}.message`, EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH),
     retryable: boolean(error.retryable, `${path}.retryable`),
-    ...(details === undefined ? {} : { details: details as BrowserAutomationFailure['details'] }),
+    ...(details === undefined ? {} : { details }),
   }
 }
 
@@ -866,6 +888,234 @@ function parseCandidateTab(value: unknown, path: string): ExternalChromeCandidat
   }
 }
 
+function enumeration<T extends string>(value: unknown, path: string, values: readonly T[]): T {
+  if (typeof value !== 'string' || !values.includes(value as T)) fail('invalid-result', `${path} is unknown`)
+  return value as T
+}
+
+function nullableIdentifier(value: unknown, path: string): string | null {
+  return value === null ? null : identifier(value, path)
+}
+
+function validateViewportSetting(value: unknown, path: string): void {
+  const setting = object(value, path)
+  if (setting.mode === 'fill') {
+    strictKeys(setting, path, ['mode'])
+    return
+  }
+  if (setting.mode === 'freeform') {
+    strictKeys(setting, path, ['mode', 'width', 'height'])
+  } else if (setting.mode === 'preset') {
+    strictKeys(setting, path, ['mode', 'presetId', 'orientation', 'width', 'height'])
+    enumeration(setting.presetId, `${path}.presetId`, Object.keys(BROWSER_VIEWPORT_PRESETS))
+    enumeration(setting.orientation, `${path}.orientation`, ['portrait', 'landscape'])
+  } else {
+    fail('invalid-result', `${path}.mode is unknown`)
+  }
+  const width = integer(setting.width, `${path}.width`, BROWSER_VIEWPORT_MIN_DIMENSION, BROWSER_VIEWPORT_MAX_DIMENSION)
+  const height = integer(setting.height, `${path}.height`, BROWSER_VIEWPORT_MIN_DIMENSION, BROWSER_VIEWPORT_MAX_DIMENSION)
+  if (width * height > BROWSER_VIEWPORT_MAX_AREA) fail('invalid-result', `${path} exceeds maximum viewport area`)
+}
+
+function validateRenderedViewport(value: unknown, path: string): void {
+  const viewport = object(value, path)
+  strictKeys(viewport, path, ['width', 'height', 'deviceScaleFactor'])
+  integer(viewport.width, `${path}.width`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+  integer(viewport.height, `${path}.height`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+  finiteNumber(viewport.deviceScaleFactor, `${path}.deviceScaleFactor`, Number.MIN_VALUE)
+}
+
+function validateBrowserCapabilities(value: unknown, path: string): void {
+  const capabilities = object(value, path)
+  strictKeys(capabilities, path, ['supportedOperations', 'maxResponseBytes'], [
+    'hostKind', 'protocolVersions', 'features', 'runtimeVersions', 'electronVersion', 'chromiumVersion',
+    'playwrightVersion', 'supportsSandboxedWebviews', 'supportsCapturePage', 'supportsRecording',
+  ])
+  if (capabilities.hostKind !== undefined) enumeration(capabilities.hostKind, `${path}.hostKind`, BROWSER_HOST_KINDS)
+  if (capabilities.protocolVersions !== undefined) {
+    const versions = object(capabilities.protocolVersions, `${path}.protocolVersions`)
+    strictKeys(versions, `${path}.protocolVersions`, ['minimum', 'maximum'])
+    const minimum = integer(versions.minimum, `${path}.protocolVersions.minimum`, 1)
+    const maximum = integer(versions.maximum, `${path}.protocolVersions.maximum`, 1)
+    if (minimum > maximum) fail('invalid-result', `${path}.protocolVersions is reversed`)
+  }
+  uniqueArray(boundedArray(capabilities.supportedOperations, `${path}.supportedOperations`, BROWSER_AUTOMATION_OPERATIONS.length).map((entry, index) => {
+    if (!isBrowserAutomationOperation(entry)) fail('invalid-result', `${path}.supportedOperations[${index}] is unknown`)
+    return entry
+  }), `${path}.supportedOperations`)
+  integer(capabilities.maxResponseBytes, `${path}.maxResponseBytes`, 1, EXTERNAL_CHROME_MAX_MESSAGE_BYTES)
+  if (capabilities.features !== undefined) {
+    const features = object(capabilities.features, `${path}.features`)
+    strictKeys(features, `${path}.features`, ['resize', 'recording', 'capturePage', 'downloadEvents', 'downloadArtifacts', 'downloadOpen'])
+    for (const key of Object.keys(features)) boolean(features[key], `${path}.features.${key}`)
+  }
+  if (capabilities.runtimeVersions !== undefined) {
+    const versions = object(capabilities.runtimeVersions, `${path}.runtimeVersions`)
+    strictKeys(versions, `${path}.runtimeVersions`, [], ['electron', 'chromium', 'playwright', 'chrome', 'extension'])
+    for (const [key, entry] of Object.entries(versions)) boundedString(entry, `${path}.runtimeVersions.${key}`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  }
+  for (const key of ['electronVersion', 'chromiumVersion', 'playwrightVersion'] as const) {
+    if (capabilities[key] !== undefined) boundedString(capabilities[key], `${path}.${key}`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  }
+  for (const key of ['supportsSandboxedWebviews', 'supportsCapturePage', 'supportsRecording'] as const) {
+    if (capabilities[key] !== undefined) boolean(capabilities[key], `${path}.${key}`)
+  }
+}
+
+function validateBrowserHost(value: unknown, path: string): void {
+  const host = object(value, path)
+  strictKeys(host, path, ['connected', 'hostId', 'hostGeneration', 'focused', 'capabilities', 'connectedAt'], ['hostKind'])
+  if (host.hostKind !== undefined) enumeration(host.hostKind, `${path}.hostKind`, BROWSER_HOST_KINDS)
+  boolean(host.connected, `${path}.connected`)
+  nullableIdentifier(host.hostId, `${path}.hostId`)
+  if (host.hostGeneration !== null) integer(host.hostGeneration, `${path}.hostGeneration`, 1)
+  boolean(host.focused, `${path}.focused`)
+  if (host.capabilities !== null) validateBrowserCapabilities(host.capabilities, `${path}.capabilities`)
+  if (host.connectedAt !== null) boundedString(host.connectedAt, `${path}.connectedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+}
+
+function validateBrowserTab(value: unknown, path: string): void {
+  const tab = object(value, path)
+  strictKeys(tab, path, [
+    'tabId', 'sessionAgentId', 'profileId', 'url', 'title', 'lifecycle', 'loading', 'live', 'canGoBack',
+    'canGoForward', 'zoomFactor', 'controller', 'agentCursor', 'recording', 'viewportSetting', 'renderedViewport',
+    'error', 'createdAt', 'updatedAt',
+  ], ['hostKind', 'physicalVisible'])
+  if (tab.hostKind !== undefined) enumeration(tab.hostKind, `${path}.hostKind`, BROWSER_HOST_KINDS)
+  identifier(tab.tabId, `${path}.tabId`)
+  identifier(tab.sessionAgentId, `${path}.sessionAgentId`)
+  identifier(tab.profileId, `${path}.profileId`)
+  boundedString(tab.url, `${path}.url`, EXTERNAL_CHROME_MAX_URL_LENGTH)
+  boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true)
+  enumeration(tab.lifecycle, `${path}.lifecycle`, ['restoring', 'loading', 'ready', 'failed', 'closed'])
+  for (const key of ['loading', 'live', 'canGoBack', 'canGoForward'] as const) boolean(tab[key], `${path}.${key}`)
+  finiteNumber(tab.zoomFactor, `${path}.zoomFactor`, Number.MIN_VALUE)
+  enumeration(tab.controller, `${path}.controller`, ['human', 'agent', 'none'])
+  if (tab.agentCursor !== null) {
+    const cursor = object(tab.agentCursor, `${path}.agentCursor`)
+    strictKeys(cursor, `${path}.agentCursor`, ['x', 'y', 'phase', 'sequence', 'createdAt'])
+    finiteNumber(cursor.x, `${path}.agentCursor.x`, Number.NEGATIVE_INFINITY)
+    finiteNumber(cursor.y, `${path}.agentCursor.y`, Number.NEGATIVE_INFINITY)
+    enumeration(cursor.phase, `${path}.agentCursor.phase`, ['move', 'click'])
+    integer(cursor.sequence, `${path}.agentCursor.sequence`)
+    boundedString(cursor.createdAt, `${path}.agentCursor.createdAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  }
+  if (tab.recording !== null) {
+    const recording = object(tab.recording, `${path}.recording`)
+    strictKeys(recording, `${path}.recording`, ['recordingId', 'startedAt', 'mimeType'])
+    identifier(recording.recordingId, `${path}.recording.recordingId`)
+    boundedString(recording.startedAt, `${path}.recording.startedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    boundedString(recording.mimeType, `${path}.recording.mimeType`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  }
+  validateViewportSetting(tab.viewportSetting, `${path}.viewportSetting`)
+  if (tab.renderedViewport !== null) validateRenderedViewport(tab.renderedViewport, `${path}.renderedViewport`)
+  if (tab.physicalVisible !== undefined) boolean(tab.physicalVisible, `${path}.physicalVisible`)
+  if (tab.error !== null) {
+    const error = object(tab.error, `${path}.error`)
+    strictKeys(error, `${path}.error`, ['code', 'message'])
+    identifier(error.code, `${path}.error.code`)
+    boundedString(error.message, `${path}.error.message`, EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH)
+  }
+  boundedString(tab.createdAt, `${path}.createdAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  boundedString(tab.updatedAt, `${path}.updatedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+}
+
+function validateSnapshotResult(result: Record<string, unknown>, path: string): void {
+  validateViewportSetting(result.viewportSetting, `${path}.viewportSetting`)
+  validateRenderedViewport(result.viewport, `${path}.viewport`)
+  boundedString(result.visibleText, `${path}.visibleText`, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH, true)
+  boundedArray(result.interactiveElements, `${path}.interactiveElements`, BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS).forEach((entry, index) => {
+    const elementPath = `${path}.interactiveElements[${index}]`
+    const element = object(entry, elementPath)
+    strictKeys(element, elementPath, ['tag', 'role', 'name', 'selector', 'x', 'y', 'width', 'height'])
+    boundedString(element.tag, `${elementPath}.tag`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    if (element.role !== null) boundedString(element.role, `${elementPath}.role`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    boundedString(element.name, `${elementPath}.name`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true)
+    boundedString(element.selector, `${elementPath}.selector`, EXTERNAL_CHROME_MAX_URL_LENGTH)
+    for (const key of ['x', 'y', 'width', 'height'] as const) finiteNumber(element[key], `${elementPath}.${key}`, Number.NEGATIVE_INFINITY)
+  })
+  validateBoundedJson(result.accessibility, `${path}.accessibility`)
+  boundedArray(result.consoleEntries, `${path}.consoleEntries`, BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).forEach((entry, index) => {
+    const entryPath = `${path}.consoleEntries[${index}]`
+    const consoleEntry = object(entry, entryPath)
+    strictKeys(consoleEntry, entryPath, ['level', 'text', 'timestamp'], ['source'])
+    boundedString(consoleEntry.level, `${entryPath}.level`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    boundedString(consoleEntry.text, `${entryPath}.text`, EXTERNAL_CHROME_MAX_STRING_LENGTH, true)
+    boundedString(consoleEntry.timestamp, `${entryPath}.timestamp`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    if (consoleEntry.source !== undefined) boundedString(consoleEntry.source, `${entryPath}.source`, EXTERNAL_CHROME_MAX_URL_LENGTH)
+  })
+  boundedArray(result.networkEntries, `${path}.networkEntries`, BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).forEach((entry, index) => {
+    const entryPath = `${path}.networkEntries[${index}]`
+    const network = object(entry, entryPath)
+    strictKeys(network, entryPath, ['url', 'method', 'status', 'failed', 'timestamp'], ['errorText'])
+    boundedString(network.url, `${entryPath}.url`, EXTERNAL_CHROME_MAX_URL_LENGTH)
+    boundedString(network.method, `${entryPath}.method`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    if (network.status !== null) integer(network.status, `${entryPath}.status`, 0, 999)
+    boolean(network.failed, `${entryPath}.failed`)
+    if (network.errorText !== undefined) boundedString(network.errorText, `${entryPath}.errorText`, EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH)
+    boundedString(network.timestamp, `${entryPath}.timestamp`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+  })
+  boundedArray(result.actionTimeline, `${path}.actionTimeline`, BROWSER_AUTOMATION_MAX_SAFE_ACTIONS).forEach((entry, index) => {
+    const entryPath = `${path}.actionTimeline[${index}]`
+    const action = object(entry, entryPath)
+    strictKeys(action, entryPath, ['id', 'action', 'status', 'startedAt'], ['completedAt', 'errorCode'])
+    identifier(action.id, `${entryPath}.id`)
+    boundedString(action.action, `${entryPath}.action`, EXTERNAL_CHROME_MAX_LABEL_LENGTH)
+    enumeration(action.status, `${entryPath}.status`, ['running', 'succeeded', 'failed', 'interrupted'])
+    boundedString(action.startedAt, `${entryPath}.startedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    if (action.completedAt !== undefined) boundedString(action.completedAt, `${entryPath}.completedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+    if (action.errorCode !== undefined) parseBrowserFailure({ code: action.errorCode, message: 'validation', retryable: false }, `${entryPath}.errorCode`)
+  })
+  const screenshot = object(result.screenshot, `${path}.screenshot`)
+  strictKeys(screenshot, `${path}.screenshot`, ['mimeType', 'data', 'width', 'height'])
+  if (screenshot.mimeType !== 'image/png') fail('invalid-result', `${path}.screenshot.mimeType must be image/png`)
+  boundedString(screenshot.data, `${path}.screenshot.data`, EXTERNAL_CHROME_MAX_STRING_LENGTH, true)
+  integer(screenshot.width, `${path}.screenshot.width`, 1, BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH)
+  integer(screenshot.height, `${path}.screenshot.height`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+}
+
+function validateStrictOperationResult(operation: BrowserAutomationOperation, result: Record<string, unknown>): void {
+  const path = 'result.result'
+  switch (operation) {
+    case 'status':
+      validateBrowserHost(result.host, `${path}.host`)
+      if (result.selectedTab !== null) validateBrowserTab(result.selectedTab, `${path}.selectedTab`)
+      return
+    case 'open': validateBrowserTab(result.tab, `${path}.tab`); return
+    case 'navigate': validateBrowserTab(result.tab, `${path}.tab`); return
+    case 'resize': validateViewportSetting(result.setting, `${path}.setting`); validateRenderedViewport(result.viewport, `${path}.viewport`); return
+    case 'snapshot': validateSnapshotResult(result, path); return
+    case 'press':
+      uniqueArray(boundedArray(result.modifiers, `${path}.modifiers`, 4).map((entry) => enumeration(entry, `${path}.modifiers`, ['Alt', 'Control', 'Meta', 'Shift'])), `${path}.modifiers`)
+      return
+    case 'evaluate':
+      if (result.value !== undefined) validateBoundedJson(result.value, `${path}.value`)
+      if (result.remoteObject !== undefined) {
+        const remote = object(result.remoteObject, `${path}.remoteObject`)
+        strictKeys(remote, `${path}.remoteObject`, ['type'], ['subtype', 'description', 'objectId'])
+        boundedString(remote.type, `${path}.remoteObject.type`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+        for (const key of ['subtype', 'description', 'objectId'] as const) if (remote[key] !== undefined) boundedString(remote[key], `${path}.remoteObject.${key}`, key === 'description' ? EXTERNAL_CHROME_MAX_SAFE_DETAIL_LENGTH : EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+      }
+      integer(result.serializedBytes, `${path}.serializedBytes`, 0, BROWSER_AUTOMATION_MAX_EVALUATE_BYTES)
+      return
+    case 'recordingStart':
+      boundedString(result.startedAt, `${path}.startedAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+      boundedString(result.mimeType, `${path}.mimeType`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+      integer(result.width, `${path}.width`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+      integer(result.height, `${path}.height`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+      return
+    case 'recordingStop':
+      boundedString(result.path, `${path}.path`, EXTERNAL_CHROME_MAX_URL_LENGTH)
+      boundedString(result.mimeType, `${path}.mimeType`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+      boundedString(result.extension, `${path}.extension`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+      integer(result.width, `${path}.width`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+      integer(result.height, `${path}.height`, 1, BROWSER_VIEWPORT_MAX_DIMENSION)
+      boundedString(result.createdAt, `${path}.createdAt`, EXTERNAL_CHROME_MAX_IDENTIFIER_LENGTH)
+      break
+    default: break
+  }
+}
+
 function parseOperationResult(
   operation: BrowserAutomationOperation,
   value: unknown,
@@ -875,6 +1125,7 @@ function parseOperationResult(
     return fail('invalid-result', 'result.result must be an object')
   }
   const result = bounded as Record<string, unknown>
+  validateStrictOperationResult(operation, result)
   switch (operation) {
     case 'status':
       strictKeys(result, 'result.result', ['available', 'host', 'panelVisible', 'panelRevealRequested', 'physicalTabVisible', 'selectedTab'])

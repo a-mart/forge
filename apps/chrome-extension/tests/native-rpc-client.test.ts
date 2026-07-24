@@ -27,14 +27,14 @@ class FakeScheduler implements NativeRpcScheduler {
   }
 }
 
-function welcomePort(): FakePort {
+function welcomePort(maxMessageBytes = EXTERNAL_CHROME_MAX_MESSAGE_BYTES, requiredShellAbi = 1): FakePort {
   const port = new FakePort()
   port.onPost = (message) => {
     const request = message as { id?: string; method?: string; params?: Record<string, unknown> }
     if (request.method === 'forge.runtime.hello') {
       port.emitMessage({
         jsonrpc: '2.0', id: request.id,
-        result: { protocolVersion: 1, desktopInstanceId: 'desktop-fixture', heartbeatMs: 1_000, maxMessageBytes: EXTERNAL_CHROME_MAX_MESSAGE_BYTES, requiredShellAbi: 1 },
+        result: { protocolVersion: 1, desktopInstanceId: 'desktop-fixture', heartbeatMs: 1_000, maxMessageBytes, requiredShellAbi },
       })
     } else if (request.method === 'forge.runtime.ping') {
       port.emitMessage({
@@ -62,9 +62,9 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     const hello = port.sent[0] as { params: Record<string, unknown> }
     expect(hello.params).toMatchObject({
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd',
-      features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false, oopif: true, humanInterruption: true, groups: true },
+      features: { resize: false, recording: false, downloadArtifacts: false, downloadOpen: false, oopif: false, humanInterruption: false, groups: true },
     })
-    expect(JSON.stringify(hello)).not.toContain('recordingStart","supported":true')
+    expect((hello.params.operations as Array<{ supported: boolean }>).every((entry) => !entry.supported)).toBe(true)
     scheduler.advance(1_000)
     await Promise.resolve()
     expect(port.sent).toHaveLength(2)
@@ -76,7 +76,74 @@ describe('bounded native JSON-RPC negotiation and reconnect', () => {
     const port = new FakePort()
     const client = new NativeRpcClient({ connect: () => port, extensionInstanceId: 'instance', chromeVersion: '125', randomId: () => 'fixed' })
     client.start()
-    expect(() => client.sendNotification('runtime.goodbye', { reason: 'x'.repeat(EXTERNAL_CHROME_MAX_MESSAGE_BYTES) })).toThrow('exceeds Forge bound')
+    expect(() => client.sendNotification('runtime.goodbye', { reason: 'x'.repeat(EXTERNAL_CHROME_MAX_MESSAGE_BYTES) })).toThrow('negotiated bound')
+    client.stop()
+  })
+
+  it('enforces the negotiated outbound byte limit at the exact UTF-8 boundary', async () => {
+    const limit = 512
+    const port = welcomePort(limit)
+    const client = new NativeRpcClient({ connect: () => port, extensionInstanceId: 'instance', chromeVersion: '125', randomId: () => 'fixed' })
+    client.start()
+    await Promise.resolve()
+    const envelope = { jsonrpc: '2.0', method: 'test.boundary', params: { value: '' } }
+    const overhead = new TextEncoder().encode(JSON.stringify(envelope)).byteLength
+    expect(overhead).toBeLessThan(limit)
+    expect(() => client.sendNotification('test.boundary', { value: 'x'.repeat(limit - overhead) })).not.toThrow()
+    expect(() => client.sendNotification('test.boundary', { value: 'x'.repeat(limit - overhead + 1) })).toThrow('negotiated bound')
+    client.stop()
+  })
+
+  it('enforces the negotiated inbound byte limit at the exact UTF-8 boundary', async () => {
+    const limit = 512
+    const port = welcomePort(limit)
+    const reasons: string[] = []
+    const received: unknown[] = []
+    const client = new NativeRpcClient({
+      connect: () => port, extensionInstanceId: 'instance', chromeVersion: '125', randomId: () => 'fixed',
+      onDisconnected: (reason) => reasons.push(reason), onRequest: (message) => received.push(message),
+    })
+    client.start()
+    await Promise.resolve()
+    const base = { jsonrpc: '2.0', method: 'runtime.goodbye', params: { protocolVersion: 1, reason: '' } }
+    const overhead = new TextEncoder().encode(JSON.stringify(base)).byteLength
+    port.emitMessage({ ...base, params: { ...base.params, reason: 'x'.repeat(limit - overhead) } })
+    expect(received).toHaveLength(1)
+    port.emitMessage({ ...base, params: { ...base.params, reason: 'x'.repeat(limit - overhead + 1) } })
+    expect(reasons).toEqual(['malformed or oversized native message'])
+    client.stop()
+  })
+
+  it('rejects a welcome requiring a different compiled shell ABI', async () => {
+    const scheduler = new FakeScheduler()
+    const port = welcomePort(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, 2)
+    let connected = false
+    const client = new NativeRpcClient({
+      connect: () => port, extensionInstanceId: 'instance', chromeVersion: '125', scheduler,
+      onConnected: () => { connected = true },
+    })
+    client.start()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(connected).toBe(false)
+    expect(port.disconnected).toBe(true)
+    client.stop()
+  })
+
+  it('resets negotiated limits before reconnecting', async () => {
+    const scheduler = new FakeScheduler()
+    const first = welcomePort(512)
+    const second = new FakePort()
+    let attempts = 0
+    const client = new NativeRpcClient({
+      connect: () => (++attempts === 1 ? first : second), extensionInstanceId: 'instance', chromeVersion: '125', scheduler,
+    })
+    client.start()
+    await Promise.resolve()
+    first.emitDisconnect()
+    scheduler.advance(250)
+    expect(attempts).toBe(2)
+    expect(() => client.sendNotification('test.pre-welcome', { value: 'x'.repeat(600) })).not.toThrow()
     client.stop()
   })
 

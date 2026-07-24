@@ -7,6 +7,8 @@ const chromeApi = installedChrome()
 const nonce = crypto.randomUUID()
 const port = chromeApi.runtime.connect({ name: `forge-leased-frame:${nonce}` })
 let syntheticUntil = 0
+let activeControlEpoch = 0
+let activeOperationId: string | null = null
 let controlState: 'human' | 'agent' | 'handoff' = 'human'
 
 function pointer(): HTMLDivElement {
@@ -59,7 +61,7 @@ function inputKind(event: Event): 'pointer' | 'key' | 'wheel' | 'touch' {
 function trustedInput(event: Event): void {
   if (!isTrustedHumanInterruption({ isTrusted: event.isTrusted, observedAt: performance.now(), syntheticUntil })) return
   setState('human')
-  port.postMessage({ type: 'trusted-human-input', nonce, event: inputKind(event), at: new Date().toISOString() })
+  port.postMessage({ type: 'trusted-human-input', nonce, controlEpoch: activeControlEpoch, event: inputKind(event), at: new Date().toISOString() })
 }
 
 for (const eventName of ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const) {
@@ -78,11 +80,15 @@ port.onMessage.addListener((message) => {
   if (typeof message !== 'object' || message === null || Array.isArray(message)) return
   const command = message as Record<string, unknown>
   if (command.nonce !== nonce) return
-  if (command.type === 'synthetic-start') {
+  if (command.type === 'synthetic-start' && typeof command.operationId === 'string' && Number.isSafeInteger(command.controlEpoch)) {
     syntheticUntil = performance.now() + Math.min(5_000, typeof command.durationMs === 'number' ? command.durationMs : 1_000)
+    activeOperationId = command.operationId
+    activeControlEpoch = command.controlEpoch as number
     setState('agent')
-  } else if (command.type === 'synthetic-end') {
+    port.postMessage({ type: 'synthetic-ack', nonce, operationId: activeOperationId, controlEpoch: activeControlEpoch })
+  } else if (command.type === 'synthetic-end' && command.operationId === activeOperationId && command.controlEpoch === activeControlEpoch) {
     syntheticUntil = 0
+    activeOperationId = null
   } else if (command.type === 'status' && (command.state === 'human' || command.state === 'agent' || command.state === 'handoff')) {
     setState(command.state)
   }

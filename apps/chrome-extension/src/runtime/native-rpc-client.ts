@@ -1,6 +1,8 @@
 import {
   BROWSER_AUTOMATION_OPERATIONS,
   EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
+  EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES,
+  EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES,
   EXTERNAL_CHROME_METHODS,
   EXTERNAL_CHROME_PROTOCOL_MAX_VERSION,
   EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
@@ -45,8 +47,10 @@ interface PendingRequest {
   timer: unknown
 }
 
-function messageBytes(message: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(message)).byteLength
+function serializeMessage(message: unknown): { serialized: string; bytes: number } {
+  const serialized = JSON.stringify(message)
+  if (typeof serialized !== 'string') throw new Error('message is not JSON serializable')
+  return { serialized, bytes: new TextEncoder().encode(serialized).byteLength }
 }
 
 export class NativeRpcClient {
@@ -58,6 +62,8 @@ export class NativeRpcClient {
   private reconnectTimer: unknown = null
   private heartbeatTimer: unknown = null
   private heartbeatMs = 10_000
+  private inboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES)
+  private outboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES)
   private lastInboundAt = 0
   private requestSequence = 0
   private readonly pending = new Map<string, PendingRequest>()
@@ -77,6 +83,7 @@ export class NativeRpcClient {
     this.stopped = true
     this.clearTimers()
     this.rejectPending('native port stopped')
+    this.resetNegotiatedState()
     const port = this.port
     this.port = null
     if (port !== null) port.disconnect()
@@ -104,6 +111,7 @@ export class NativeRpcClient {
     port.onDisconnect.addListener(() => {
       if (this.port !== port) return
       this.port = null
+      this.resetNegotiatedState()
       this.rejectPending('native port disconnected')
       this.options.onDisconnected?.('native port disconnected')
       this.scheduleReconnect('native port disconnected')
@@ -111,6 +119,8 @@ export class NativeRpcClient {
     void this.negotiate().catch((error: unknown) => {
       if (this.port === port) {
         this.port = null
+        this.resetNegotiatedState()
+        this.rejectPending('native negotiation failed')
         port.disconnect()
       }
       this.scheduleReconnect(error instanceof Error ? error.message : 'negotiation failed')
@@ -128,17 +138,21 @@ export class NativeRpcClient {
       chromeVersion: this.options.chromeVersion,
       methods: [...EXTERNAL_CHROME_METHODS],
       maxMessageBytes: EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
-      operations: BROWSER_AUTOMATION_OPERATIONS.map((operation) => supported.has(operation)
-        ? { operation, supported: true }
-        : { operation, supported: false, reason: 'External Chrome does not advertise resize or recording in M1' }),
+      operations: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({
+        operation,
+        supported: false,
+        reason: supported.has(operation)
+          ? 'M1 implements the lease and verified CDP primitive seams but not native execute dispatch'
+          : 'External Chrome does not qualify this operation in M1',
+      })),
       features: {
         resize: false,
         recording: false,
         downloadEvents: false,
         downloadArtifacts: false,
         downloadOpen: false,
-        oopif: true,
-        humanInterruption: true,
+        oopif: false,
+        humanInterruption: false,
         groups: true,
       },
     }
@@ -148,6 +162,11 @@ export class NativeRpcClient {
     const response = await this.request('forge.runtime.hello', this.hello())
     if (!('result' in response)) throw new Error('native hello was rejected')
     const welcome = response.result as ExternalChromeWelcomeResult
+    if (welcome.requiredShellAbi !== SHELL_ABI) {
+      throw new Error(`native host requires shell ABI ${welcome.requiredShellAbi}; extension provides ${SHELL_ABI}`)
+    }
+    this.inboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES, welcome.maxMessageBytes)
+    this.outboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES, welcome.maxMessageBytes)
     this.heartbeatMs = welcome.heartbeatMs
     this.reconnectAttempt = 0
     this.lastInboundAt = this.scheduler.now()
@@ -176,8 +195,9 @@ export class NativeRpcClient {
   private receive(raw: unknown): void {
     let serialized: string
     try {
-      serialized = JSON.stringify(raw)
-      if (new TextEncoder().encode(serialized).byteLength > EXTERNAL_CHROME_MAX_MESSAGE_BYTES) throw new Error('native message exceeds Forge bound')
+      const encoded = serializeMessage(raw)
+      serialized = encoded.serialized
+      if (encoded.bytes > this.inboundMessageLimit) throw new Error('native message exceeds negotiated bound')
     } catch {
       this.disconnectInvalid('malformed or oversized native message')
       return
@@ -204,7 +224,7 @@ export class NativeRpcClient {
   }
 
   private postBounded(message: unknown): void {
-    if (messageBytes(message) > EXTERNAL_CHROME_MAX_MESSAGE_BYTES) throw new Error('outbound native message exceeds Forge bound')
+    if (serializeMessage(message).bytes > this.outboundMessageLimit) throw new Error('outbound native message exceeds negotiated bound')
     if (this.port === null) throw new Error('native port is unavailable')
     this.port.postMessage(message)
   }
@@ -229,6 +249,7 @@ export class NativeRpcClient {
   private disconnectInvalid(reason: string): void {
     const port = this.port
     this.port = null
+    this.resetNegotiatedState()
     this.rejectPending(reason)
     if (port !== null) port.disconnect()
     this.options.onDisconnected?.(reason)
@@ -243,6 +264,13 @@ export class NativeRpcClient {
       this.reconnectTimer = null
       this.connect()
     }, delay)
+  }
+
+  private resetNegotiatedState(): void {
+    this.heartbeatMs = 10_000
+    this.inboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_INBOUND_FRAME_BYTES)
+    this.outboundMessageLimit = Math.min(EXTERNAL_CHROME_MAX_MESSAGE_BYTES, EXTERNAL_CHROME_MAX_NATIVE_OUTBOUND_FRAME_BYTES)
+    this.lastInboundAt = 0
   }
 
   private rejectPending(reason: string): void {

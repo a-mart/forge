@@ -1,4 +1,10 @@
-import { EXTERNAL_CHROME_MAX_CANDIDATE_TABS, type ExternalChromeChildPolicy } from '@forge/protocol'
+import {
+  EXTERNAL_CHROME_MAX_ARRAY_ITEMS,
+  EXTERNAL_CHROME_MAX_CANDIDATE_TABS,
+  EXTERNAL_CHROME_MAX_LABEL_LENGTH,
+  EXTERNAL_CHROME_MAX_URL_LENGTH,
+  type ExternalChromeChildPolicy,
+} from '@forge/protocol'
 import type { ChromeApi, ChromeTab } from './chrome-api.js'
 import { candidateOrigin, restrictedTargetReason } from './restricted-target.js'
 
@@ -82,35 +88,45 @@ export class LeaseManager {
   }
 
   async listCandidates(): Promise<CandidateWindow[]> {
-    const [windows, groups] = await Promise.all([
+    const [rawWindows, rawGroups] = await Promise.all([
       this.chrome.windows.getAll({ populate: true }),
       this.chrome.tabGroups.query({}),
     ])
-    return windows
-      .flatMap((window) => window.id === undefined ? [] : [{
-        windowId: window.id,
+    const windows = rawWindows.filter((window) => window.id !== undefined)
+      .sort((left, right) => (left.id as number) - (right.id as number))
+      .slice(0, EXTERNAL_CHROME_MAX_ARRAY_ITEMS)
+    const groups = rawGroups.slice().sort((left, right) => left.id - right.id)
+    let remainingTabs = EXTERNAL_CHROME_MAX_CANDIDATE_TABS
+    let remainingGroups = EXTERNAL_CHROME_MAX_ARRAY_ITEMS
+    return windows.map((window) => {
+      const windowId = window.id as number
+      const windowGroups = groups.filter((group) => group.windowId === windowId).slice(0, remainingGroups)
+      remainingGroups -= windowGroups.length
+      const tabs = (window.tabs ?? []).flatMap((tab) => {
+        const ids = requiredTabFields(tab)
+        if (ids === null) return []
+        return [{
+          ...ids,
+          groupId: tab.groupId === undefined || tab.groupId < 0 ? null : tab.groupId,
+          title: (tab.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+          origin: candidateOrigin(tab.url).slice(0, EXTERNAL_CHROME_MAX_URL_LENGTH),
+          active: tab.active === true,
+          attached: this.active?.tabIds.includes(ids.tabId) === true,
+          restricted: restrictedTargetReason(tab.url) !== null,
+        }]
+      }).sort((left, right) => left.tabId - right.tabId).slice(0, remainingTabs)
+      remainingTabs -= tabs.length
+      return {
+        windowId,
         focused: window.focused,
-        groups: groups
-          .filter((group) => group.windowId === window.id)
-          .map((group) => ({ groupId: group.id, title: group.title ?? '', collapsed: group.collapsed }))
-          .sort((left, right) => left.groupId - right.groupId),
-        tabs: (window.tabs ?? [])
-          .flatMap((tab) => {
-            const ids = requiredTabFields(tab)
-            if (ids === null) return []
-            return [{
-              ...ids,
-              groupId: tab.groupId === undefined || tab.groupId < 0 ? null : tab.groupId,
-              title: tab.title ?? '',
-              origin: candidateOrigin(tab.url),
-              active: tab.active === true,
-              attached: this.active?.tabIds.includes(ids.tabId) === true,
-              restricted: restrictedTargetReason(tab.url) !== null,
-            }]
-          })
-          .sort((left, right) => left.tabId - right.tabId),
-      }])
-      .sort((left, right) => left.windowId - right.windowId)
+        groups: windowGroups.map((group) => ({
+          groupId: group.id,
+          title: (group.title ?? '').slice(0, EXTERNAL_CHROME_MAX_LABEL_LENGTH),
+          collapsed: group.collapsed,
+        })),
+        tabs,
+      }
+    })
   }
 
   async claim(input: {
@@ -121,12 +137,23 @@ export class LeaseManager {
     groupId?: number
     childPolicy: ExternalChromeChildPolicy
   }): Promise<{ lease: LeaseRecord; tabs: ChromeTab[] }> {
-    if (this.active !== null && (this.active.leaseId !== input.leaseId || this.active.leaseEpoch !== input.leaseEpoch)) {
-      throw new LeaseError('lease-conflict', 'another local session already owns this extension instance')
-    }
     const tabIds = [...new Set(input.tabIds)].sort((left, right) => left - right)
-    if (tabIds.length === 0 || tabIds.length > EXTERNAL_CHROME_MAX_CANDIDATE_TABS) {
-      throw new LeaseError('scope-mismatch', 'claim must contain a bounded non-empty tab set')
+    if (tabIds.length === 0 || tabIds.length > EXTERNAL_CHROME_MAX_CANDIDATE_TABS || tabIds.length !== input.tabIds.length) {
+      throw new LeaseError('scope-mismatch', 'claim must contain a bounded non-empty unique tab set')
+    }
+    if (this.active !== null) {
+      if (this.active.state === 'LOST') throw new LeaseError('lease-lost', 'the existing lease has already lost debugger ownership')
+      const sameRouting = this.active.leaseId === input.leaseId && this.active.leaseEpoch === input.leaseEpoch
+      const exactClaim = sameRouting && this.active.sessionAgentId === input.sessionAgentId &&
+        this.active.groupId === (input.groupId ?? null) && this.active.childPolicy === input.childPolicy &&
+        this.active.tabIds.length === tabIds.length && this.active.tabIds.every((tabId, index) => tabId === tabIds[index])
+      if (!exactClaim) {
+        throw new LeaseError('lease-conflict', sameRouting
+          ? 'same lease ID and epoch were reused with different immutable scope'
+          : 'another local session already owns this extension instance')
+      }
+      const tabs = await Promise.all(tabIds.map((tabId) => this.chrome.tabs.get(tabId)))
+      return { lease: structuredClone(this.active), tabs }
     }
     const tabs = await Promise.all(tabIds.map(async (tabId) => {
       try {

@@ -33,7 +33,7 @@ describe('pinned offline identity and MV3 ledger', () => {
       minimum_chrome_version: '125',
       name: 'Forge External Chrome (Local Beta)',
       key: base64,
-      background: { service_worker: 'shell/service-worker-bootstrap.js', type: 'module' },
+      background: { service_worker: 'shell/service-worker-bootstrap.js' },
       action: { default_title: 'Open Forge External Chrome' },
       side_panel: { default_path: 'shell/side-panel.html' },
       host_permissions: ['<all_urls>'],

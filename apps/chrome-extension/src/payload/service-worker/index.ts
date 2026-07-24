@@ -1,6 +1,7 @@
 import type { ExternalChromeChildPolicy } from '@forge/protocol'
 import { DebuggerController } from '../../runtime/debugger-controller.js'
 import { installedChrome, type ChromeRuntimePort, type ChromeRuntimeSender, type ChromeTab } from '../../runtime/chrome-api.js'
+import { SyntheticInputSequencer, type SyntheticInputOperation } from '../../runtime/human-control.js'
 import { PAYLOAD_VERSION } from '../../runtime/identity.js'
 import { LeaseError, LeaseManager } from '../../runtime/lease-manager.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
@@ -61,6 +62,22 @@ class Runtime implements ServiceWorkerPayload {
   private readonly leases = new LeaseManager(this.chrome, PAYLOAD_VERSION)
   private readonly debuggers = new DebuggerController(this.chrome.debugger)
   private readonly contentPorts = new Map<number, Set<ContentPort>>()
+  private readonly pendingSynthetic = new Map<string, {
+    controlEpoch: number
+    expected: Set<ContentPort>
+    acknowledged: Set<ContentPort>
+    resolve: (value: { operationId: string; controlEpoch: number }) => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+  private readonly syntheticInput = new SyntheticInputSequencer({
+    beginAgentControl: (operation) => this.leases.beginAgentControl(operation.leaseId, operation.leaseEpoch, operation.tabId),
+    signalStart: (operation, operationId, controlEpoch) => this.signalSyntheticStart(operation.tabId, operationId, controlEpoch),
+    isCurrent: (operation, controlEpoch) => this.leases.isOperationCurrent(operation.leaseId, operation.leaseEpoch, controlEpoch),
+    sendCdpInput: (operation) => this.debuggers.sendInput(operation.tabId, operation.method, operation.params),
+    signalEnd: (operation, operationId, controlEpoch) => this.signalSyntheticEnd(operation.tabId, operationId, controlEpoch),
+    randomId: () => crypto.randomUUID(),
+  })
   private native: NativeRpcClient | null = null
   private directory = ''
 
@@ -196,7 +213,12 @@ class Runtime implements ServiceWorkerPayload {
     port.onMessage.addListener((message) => {
       if (typeof message !== 'object' || message === null || Array.isArray(message)) return
       const event = message as Record<string, unknown>
-      if (event.nonce !== match[1] || event.type !== 'trusted-human-input') return
+      if (event.nonce !== match[1]) return
+      if (event.type === 'synthetic-ack' && typeof event.operationId === 'string' && Number.isSafeInteger(event.controlEpoch)) {
+        this.acknowledgeSynthetic(port, event.operationId, event.controlEpoch as number)
+        return
+      }
+      if (event.type !== 'trusted-human-input') return
       void this.handleTrustedInput(tabId, event.event)
     })
     port.onDisconnect.addListener(() => {
@@ -206,6 +228,8 @@ class Runtime implements ServiceWorkerPayload {
   }
 
   private async handleTrustedInput(tabId: number, event: unknown): Promise<void> {
+    // Content scripts emit only trusted events outside the acknowledged synthetic window. Any such
+    // unmatched event interrupts, regardless of a stale observer epoch.
     const lease = await this.leases.trustedHumanInput(tabId)
     if (lease === null) return
     this.broadcastStatus([tabId], 'human')
@@ -220,6 +244,50 @@ class Runtime implements ServiceWorkerPayload {
     })
   }
 
+  /** Qualified CDP primitive seam; native execute dispatch remains deliberately unadvertised in M1. */
+  async runInputPrimitive(operation: SyntheticInputOperation): Promise<unknown> {
+    return this.syntheticInput.run(operation)
+  }
+
+  private signalSyntheticStart(tabId: number, operationId: string, controlEpoch: number): Promise<{ operationId: string; controlEpoch: number }> {
+    const expected = new Set(this.contentPorts.get(tabId) ?? [])
+    if (expected.size === 0) return Promise.reject(new Error('no verified content frame acknowledged synthetic input'))
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingSynthetic.delete(operationId)
+        reject(new Error('synthetic input acknowledgement timed out'))
+      }, 1_000)
+      this.pendingSynthetic.set(operationId, { controlEpoch, expected, acknowledged: new Set(), resolve, reject, timer })
+      for (const port of expected) {
+        const nonce = port.name.slice('forge-leased-frame:'.length)
+        port.postMessage({ type: 'synthetic-start', nonce, operationId, controlEpoch, durationMs: 1_000 })
+      }
+    })
+  }
+
+  private acknowledgeSynthetic(port: ContentPort, operationId: string, controlEpoch: number): void {
+    const pending = this.pendingSynthetic.get(operationId)
+    if (pending === undefined || pending.controlEpoch !== controlEpoch || !pending.expected.has(port)) return
+    pending.acknowledged.add(port)
+    if (pending.acknowledged.size !== pending.expected.size) return
+    clearTimeout(pending.timer)
+    this.pendingSynthetic.delete(operationId)
+    pending.resolve({ operationId, controlEpoch })
+  }
+
+  private signalSyntheticEnd(tabId: number, operationId: string, controlEpoch: number): void {
+    const pending = this.pendingSynthetic.get(operationId)
+    if (pending !== undefined) {
+      clearTimeout(pending.timer)
+      this.pendingSynthetic.delete(operationId)
+      pending.reject(new Error('synthetic input ended before acknowledgement'))
+    }
+    for (const port of this.contentPorts.get(tabId) ?? []) {
+      const nonce = port.name.slice('forge-leased-frame:'.length)
+      port.postMessage({ type: 'synthetic-end', nonce, operationId, controlEpoch })
+    }
+  }
+
   private async handleDebuggerEvent(args: unknown[]): Promise<void> {
     const source = args[0] as { tabId?: number; sessionId?: string }
     const method = typeof args[1] === 'string' ? args[1] : ''
@@ -227,13 +295,15 @@ class Runtime implements ServiceWorkerPayload {
     if (!accepted.accepted || source.tabId === undefined) return
     const lease = this.leases.current()
     if (lease === null || !lease.tabIds.includes(source.tabId)) return
+    const targetId = accepted.targetId ?? this.debuggers.targetId(source.tabId, source.sessionId)
+    if (targetId === undefined) return
     this.native?.sendNotification('browser.cdpEvent', {
       protocolVersion: 1,
       leaseId: lease.leaseId,
       leaseEpoch: lease.leaseEpoch,
       tabId: source.tabId,
-      targetId: source.sessionId ?? `tab:${source.tabId}`,
-      ...(source.sessionId === undefined ? {} : { sessionId: source.sessionId }),
+      targetId,
+      ...(accepted.sessionId === undefined && source.sessionId === undefined ? {} : { sessionId: accepted.sessionId ?? source.sessionId }),
       method,
       params: typeof args[2] === 'object' && args[2] !== null && !Array.isArray(args[2]) ? args[2] as Record<string, unknown> : {},
     })
@@ -246,6 +316,7 @@ class Runtime implements ServiceWorkerPayload {
     const lease = this.leases.current()
     if (notice === null || lease === null || !lease.tabIds.includes(notice.tabId)) return
     await this.leases.markLost()
+    await this.debuggers.detachAll()
     this.broadcastStatus(lease.tabIds, 'human')
     this.native?.sendNotification('browser.detached', {
       protocolVersion: 1,

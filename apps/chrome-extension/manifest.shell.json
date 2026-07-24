@@ -3,8 +3,7 @@
     "default_title": "Open Forge External Chrome"
   },
   "background": {
-    "service_worker": "shell/service-worker-bootstrap.js",
-    "type": "module"
+    "service_worker": "shell/service-worker-bootstrap.js"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"

@@ -1,4 +1,6 @@
-import { loadPayloadSelector } from './selector.js'
+import { loadVerifiedPayloadSelector } from './selector.js'
+
+declare function importScripts(...urls: string[]): void
 
 type Listener = (...args: unknown[]) => unknown
 
@@ -64,14 +66,16 @@ register(chromeApi.webNavigation.onCommitted, 'navigation.committed')
 register(chromeApi.downloads.onChanged, 'download.changed')
 
 async function boot(): Promise<void> {
-  const selector = await loadPayloadSelector((path) => chromeApi.runtime.getURL(path))
-  const moduleUrl = chromeApi.runtime.getURL(`payloads/${selector.payloadDirectory}/service-worker.js`)
-  const module = await import(moduleUrl) as { activateServiceWorker?: () => Promise<ServiceWorkerPayload> | ServiceWorkerPayload }
-  if (typeof module.activateServiceWorker !== 'function') throw new Error('selected payload has no service-worker activation export')
-  payload = await module.activateServiceWorker()
+  const selector = await loadVerifiedPayloadSelector((path) => chromeApi.runtime.getURL(path), 'service-worker.js')
+  const payloadUrl = chromeApi.runtime.getURL(`payloads/${selector.payloadDirectory}/service-worker.js`)
+  // Classic importScripts is intentionally delayed until all payload files have passed SHA-256 verification.
+  importScripts(payloadUrl)
+  const loaded = (globalThis as unknown as { ForgeExternalChromePayload?: { activateServiceWorker?: () => Promise<ServiceWorkerPayload> | ServiceWorkerPayload } }).ForgeExternalChromePayload
+  if (typeof loaded?.activateServiceWorker !== 'function') throw new Error('selected payload has no service-worker activation export')
+  payload = await loaded.activateServiceWorker()
   for (const event of queuedEvents.splice(0)) payload.onShellEvent(event.name, event.args)
 }
 
 void boot().catch((error: unknown) => {
-  console.error('Forge External Chrome payload failed to boot', error instanceof Error ? error.message : 'unknown error')
+  console.error('Forge External Chrome payload failed to boot', (error instanceof Error ? error.message : 'unknown error').slice(0, 256))
 })
