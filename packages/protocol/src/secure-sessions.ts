@@ -93,6 +93,15 @@ export type SecureSecretScope =
   | { kind: 'instance' }
   | { kind: 'profile'; profileId: string }
 
+/**
+ * One project may automatically grant at most this many saved secrets.
+ *
+ * This matches the bounded lease-grant operation accepted by the secure
+ * runner. Keeping the policy public lets clients disable impossible default
+ * selections before they reach the value-entry boundary.
+ */
+export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 16
+
 export interface SecureSecretSummary {
   secretId: string
   providerId: string
@@ -105,15 +114,40 @@ export interface SecureSecretSummary {
   updatedAt: string
 }
 
+/**
+ * Safe project-policy metadata. This record identifies only the project and
+ * catalog secret; it never includes provider locators or secret material.
+ */
+export interface SecureSecretProjectDefaultSummary {
+  profileId: string
+  secretId: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SecureSecretCatalog {
   revision: number
   providers: SecureSecretProviderSummary[]
   secrets: SecureSecretSummary[]
+  /**
+   * Additive project policy metadata. Older servers may omit it and clients
+   * must interpret omission as no configured project defaults.
+   */
+  projectDefaults?: SecureSecretProjectDefaultSummary[]
   updatedAt: string
 }
 
 export const SECURE_SECRET_LEASE_KINDS = ['task', 'timed', 'one_use'] as const
 export type SecureSecretLeaseKind = (typeof SECURE_SECRET_LEASE_KINDS)[number]
+
+export const SECURE_SECRET_LEASE_GRANT_SOURCES = [
+  'manual',
+  'access_request',
+  'project_default',
+] as const
+
+export type SecureSecretLeaseGrantSource =
+  (typeof SECURE_SECRET_LEASE_GRANT_SOURCES)[number]
 
 export const SECURE_SECRET_MAX_TIMED_LEASE_SECONDS = 24 * 60 * 60
 
@@ -141,6 +175,11 @@ export interface SecureSessionLeaseSummary {
   expiresAt: string | null
   lastUsedAt: string | null
   remainingUses: number | null
+  /**
+   * Safe authorization provenance. Older snapshots may omit it; current
+   * producers always provide it.
+   */
+  grantSource?: SecureSecretLeaseGrantSource
 }
 
 /**
@@ -174,6 +213,36 @@ export type SecureSessionOutputState = 'clear' | 'quarantined'
 
 export type SecureSessionOutputStateCode = 'SECURE_OUTPUT_QUARANTINED'
 
+export const SECURE_SESSION_PROJECT_DEFAULT_STATES = [
+  'configured',
+  'active',
+  'unavailable',
+  'conflict',
+] as const
+
+export type SecureSessionProjectDefaultState =
+  (typeof SECURE_SESSION_PROJECT_DEFAULT_STATES)[number]
+
+export const SECURE_SESSION_PROJECT_DEFAULT_STATUS_CODES = [
+  'ok',
+  'source_unavailable',
+  'binding_conflict',
+] as const
+
+export type SecureSessionProjectDefaultStatusCode =
+  (typeof SECURE_SESSION_PROJECT_DEFAULT_STATUS_CODES)[number]
+
+/**
+ * Runtime-only project-default status. Fixed state and status codes keep
+ * provider errors and protected values outside the public snapshot.
+ */
+export interface SecureSessionProjectDefaultStatus {
+  secretId: string
+  displayAlias: string
+  state: SecureSessionProjectDefaultState
+  statusCode: SecureSessionProjectDefaultStatusCode
+}
+
 export interface SecureSessionSnapshot {
   sessionAgentId: string
   profileId: string
@@ -189,6 +258,11 @@ export interface SecureSessionSnapshot {
   outputStateCode?: SecureSessionOutputStateCode | null
   leases: SecureSessionLeaseSummary[]
   pendingRequests: SecureAccessRequestSummary[]
+  /**
+   * Additive runtime status. Older snapshots may omit it and clients must
+   * interpret omission as no configured defaults.
+   */
+  projectDefaults?: SecureSessionProjectDefaultStatus[]
   updatedAt: string
 }
 
@@ -239,6 +313,7 @@ export interface ResolveSecureSecretAccessRequest {
   baseRevision: number
   requestId: string
   decision: SecureSecretAccessDecision
+  selectedSecretId?: string
   reason?: string
 }
 
@@ -565,10 +640,26 @@ export function parseResolveSecureSecretAccessRequest(
   value: unknown,
 ): ResolveSecureSecretAccessRequest {
   const input = recordInput(value, 'request')
-  knownKeys(input, ['baseRevision', 'requestId', 'decision', 'reason'], 'request')
+  knownKeys(
+    input,
+    ['baseRevision', 'requestId', 'decision', 'selectedSecretId', 'reason'],
+    'request',
+  )
   if (input.decision !== 'approve' && input.decision !== 'deny') {
     throw new SecureSessionsContractError('request.decision must be approve or deny')
   }
+  if (input.decision === 'deny' && input.selectedSecretId !== undefined) {
+    throw new SecureSessionsContractError(
+      'request.selectedSecretId is allowed only when approving',
+    )
+  }
+  const selectedSecretId = input.selectedSecretId === undefined
+    ? undefined
+    : boundedString(
+        input.selectedSecretId,
+        'request.selectedSecretId',
+        SECURE_SESSIONS_MAX_ID_LENGTH,
+      )
   const reason = input.reason === undefined
     ? undefined
     : boundedString(input.reason, 'request.reason', SECURE_SESSIONS_MAX_PURPOSE_LENGTH)
@@ -576,6 +667,7 @@ export function parseResolveSecureSecretAccessRequest(
     baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
     requestId: boundedString(input.requestId, 'request.requestId', SECURE_SESSIONS_MAX_ID_LENGTH),
     decision: input.decision,
+    ...(selectedSecretId === undefined ? {} : { selectedSecretId }),
     ...(reason === undefined ? {} : { reason }),
   }
 }

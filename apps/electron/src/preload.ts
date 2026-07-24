@@ -40,6 +40,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       backendWsUrl: bootstrap.backendWsUrl,
       getVersion: (): string => bootstrap.version,
       platform: bootstrap.platform,
+      secureControlToken: bootstrap.secureControlToken,
       browserAutomation: createTrustedBrowserBridge(ipcRenderer),
       browserWorkspace,
       showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>

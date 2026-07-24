@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import Database from 'better-sqlite3'
 import { AuthStorage, SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey, type ManagerProfile } from '@forge/protocol'
 import { getConversationHistoryCacheFilePath } from '../conversation-history-cache.js'
@@ -24,6 +25,7 @@ import {
   getSessionMemoryPath,
   getWorkersDir,
 } from '../data-paths.js'
+import { getSecureSessionsDbPath } from '../storage/data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({
   executeLLMMerge: vi.fn(async (..._args: any[]) => '# Swarm Memory\n\n## Decisions\n- merged by mock\n'),
@@ -58,6 +60,8 @@ import { loadOnboardingState, saveOnboardingPreferences } from '../onboarding-st
 import { AgentRuntime } from '../agent-runtime.js'
 import { modelCatalogService } from '../model-catalog-service.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
+import { runSecureSessionMigrations } from '../secure-sessions/storage/secure-session-migrations.js'
+import { SecureSessionStore } from '../secure-sessions/storage/secure-session-store.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -416,6 +420,141 @@ describe('SwarmManager', () => {
     })
     expect(manager.createdRuntimeIds).toEqual([])
     expect(manager.runtimeByAgentId.size).toBe(0)
+  })
+
+  it('reconciles secure-session orphans only after persisted profiles and sessions hydrate', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await firstBoot.boot()
+    expect(firstBoot.getAgent('cortex')).toMatchObject({
+      agentId: 'cortex',
+      profileId: 'cortex',
+    })
+    await firstBoot.closeSecureSessions()
+
+    const database = new Database(getSecureSessionsDbPath(config.paths.dataDir))
+    database.pragma('foreign_keys = ON')
+    runSecureSessionMigrations(database)
+    const store = new SecureSessionStore(database)
+    store.upsertProvider({
+      providerId: 'restart-local-provider',
+      kind: 'local_keychain',
+      displayName: 'Restart local provider',
+      enabled: true,
+      status: 'available',
+      lastStatusCode: 'ok',
+    })
+    store.createSecretWithBindings({
+      secret: {
+        secretId: 'live-project-secret',
+        providerId: 'restart-local-provider',
+        displayAlias: 'live/project',
+        scopeKind: 'profile',
+        profileId: 'cortex',
+        retention: 'saved',
+        sourceLocator: 'local',
+        encryptedMaterial: Buffer.from('live-project-material'),
+      },
+      bindings: [{
+        bindingId: 'live-project-binding',
+        deliveryKind: 'environment',
+        targetName: 'LIVE_PROJECT_SECRET',
+      }],
+    })
+    store.putProjectDefault({
+      profileId: 'cortex',
+      secretId: 'live-project-secret',
+    })
+    store.createSecretWithBindings({
+      secret: {
+        secretId: 'live-instance-secret',
+        providerId: 'restart-local-provider',
+        displayAlias: 'live/instance',
+        scopeKind: 'instance',
+        profileId: null,
+        retention: 'saved',
+        sourceLocator: 'local',
+        encryptedMaterial: Buffer.from('live-instance-material'),
+      },
+      bindings: [{
+        bindingId: 'live-instance-binding',
+        deliveryKind: 'environment',
+        targetName: 'LIVE_INSTANCE_SECRET',
+      }],
+    })
+    store.createSecretWithBindings({
+      secret: {
+        secretId: 'orphaned-project-secret',
+        providerId: 'restart-local-provider',
+        displayAlias: 'orphaned/project',
+        scopeKind: 'profile',
+        profileId: 'deleted-project',
+        retention: 'saved',
+        sourceLocator: 'local',
+        encryptedMaterial: Buffer.from('orphaned-project-material'),
+      },
+      bindings: [{
+        bindingId: 'orphaned-project-binding',
+        deliveryKind: 'environment',
+        targetName: 'ORPHANED_PROJECT_SECRET',
+      }],
+    })
+    store.putProjectDefault({
+      profileId: 'deleted-project',
+      secretId: 'orphaned-project-secret',
+    })
+    store.getOrCreateSessionState('cortex', {
+      profileId: 'cortex',
+      executionMode: 'standard',
+      environmentStatus: 'stopped',
+    })
+    store.getOrCreateSessionState('deleted-session', {
+      profileId: 'deleted-project',
+      executionMode: 'standard',
+      environmentStatus: 'stopped',
+    })
+    store.createSecretWithBindings({
+      secret: {
+        secretId: 'orphaned-session-secret',
+        providerId: 'restart-local-provider',
+        displayAlias: 'orphaned/session',
+        scopeKind: 'profile',
+        profileId: 'deleted-project',
+        retention: 'session',
+        sourceLocator: 'session:deleted-session',
+        encryptedMaterial: Buffer.from('orphaned-session-material'),
+      },
+      bindings: [{
+        bindingId: 'orphaned-session-binding',
+        deliveryKind: 'environment',
+        targetName: 'ORPHANED_SESSION_SECRET',
+      }],
+    })
+    store.close()
+
+    const restarted = new TestSwarmManager(config)
+    await restarted.boot()
+
+    const verifiedDatabase = new Database(getSecureSessionsDbPath(config.paths.dataDir))
+    verifiedDatabase.pragma('foreign_keys = ON')
+    runSecureSessionMigrations(verifiedDatabase)
+    const verified = new SecureSessionStore(verifiedDatabase)
+    expect(verified.listSecrets().map(({ secretId }) => secretId).sort()).toEqual([
+      'live-instance-secret',
+      'live-project-secret',
+    ])
+    expect(verified.listProjectDefaults()).toEqual([
+      expect.objectContaining({
+        profileId: 'cortex',
+        secretId: 'live-project-secret',
+      }),
+    ])
+    expect(verified.listSessionStates().map(({ sessionAgentId }) => sessionAgentId))
+      .toContain('cortex')
+    expect(verified.listSessionStates().map(({ sessionAgentId }) => sessionAgentId))
+      .not.toContain('deleted-session')
+    verified.close()
+    await restarted.closeSecureSessions()
   })
 
   it('recreates the Cortex root session when only review-run Cortex descriptors remain on boot', async () => {

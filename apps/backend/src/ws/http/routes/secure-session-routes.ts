@@ -1,15 +1,19 @@
 import {
+  SECURE_SECRET_RETENTIONS,
   SecureSessionsContractError,
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
   parseResolveSecureSecretAccessRequest,
   parseRevokeSecureSecretLeaseRequest,
   parseSecureSecretBinding,
+  parseSecureSecretScope,
   type GrantSecureSecretLeaseRequest,
   type GrantSecureSecretLeasesRequest,
   type ResolveSecureSecretAccessRequest,
   type SecureSecretBinding,
   type SecureSecretLeaseKind,
+  type SecureSecretRetention,
+  type SecureSecretScope,
   type SecureSessionSnapshot,
 } from "@forge/protocol";
 import type { HttpRoute } from "../shared/http-route.js";
@@ -44,6 +48,9 @@ export type FulfillSecureAccessRequestInput = {
   displayAlias: string;
   encryptedMaterial: string;
   exposures: SecureSecretBinding[];
+  retention: SecureSecretRetention;
+  scope?: SecureSecretScope;
+  makeProjectDefault?: boolean;
 } & (
   | { leaseKind: Exclude<SecureSecretLeaseKind, "timed"> }
   | { leaseKind: "timed"; durationSeconds: number }
@@ -258,7 +265,12 @@ function parseResolveInput(
   value: unknown,
 ): ResolveSecureSecretAccessRequest {
   const input = requireObject(value);
-  assertKnownKeys(input, ["baseRevision", "decision", "reason"]);
+  assertKnownKeys(input, [
+    "baseRevision",
+    "decision",
+    "reason",
+    "selectedSecretId",
+  ]);
   return parseResolveSecureSecretAccessRequest({
     ...input,
     requestId,
@@ -274,6 +286,9 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     "leaseKind",
     "durationSeconds",
     "exposures",
+    "retention",
+    "scope",
+    "makeProjectDefault",
   ]);
   const grant = parseGrantSecureSecretLeaseRequest({
     baseRevision: input.baseRevision,
@@ -286,6 +301,31 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
   });
   const displayAlias = parseDisplayAlias(input.displayAlias);
   const encryptedMaterial = parseEncryptedMaterial(input.encryptedMaterial);
+  const retention = parseRetention(input.retention);
+  const scope = input.scope === undefined
+    ? undefined
+    : parseSecureSecretScope(input.scope);
+  const makeProjectDefault = parseOptionalBoolean(
+    input.makeProjectDefault,
+    "request.makeProjectDefault",
+  );
+  if (retention === "saved" && scope === undefined) {
+    throw new SecureSessionsContractError(
+      "request.scope is required for saved secrets",
+    );
+  }
+  if (retention === "session") {
+    if (scope !== undefined && scope.kind !== "profile") {
+      throw new SecureSessionsContractError(
+        "session secrets must use the owning project scope",
+      );
+    }
+    if (makeProjectDefault === true) {
+      throw new SecureSessionsContractError(
+        "session secrets cannot be project defaults",
+      );
+    }
+  }
   return {
     baseRevision: grant.baseRevision,
     displayAlias,
@@ -293,11 +333,35 @@ function parseFulfillInput(value: unknown): FulfillSecureAccessRequestInput {
     exposures: grant.exposures.map((exposure) =>
       parseSecureSecretBinding(exposure)
     ),
+    retention,
+    ...(scope === undefined ? {} : { scope }),
+    ...(makeProjectDefault === undefined ? {} : { makeProjectDefault }),
     leaseKind: grant.leaseKind,
     ...(grant.leaseKind === "timed"
       ? { durationSeconds: grant.durationSeconds }
       : {}),
   } as FulfillSecureAccessRequestInput;
+}
+
+function parseRetention(value: unknown): SecureSecretRetention {
+  if (
+    typeof value !== "string"
+    || !(SECURE_SECRET_RETENTIONS as readonly string[]).includes(value)
+  ) {
+    throw new SecureSessionsContractError("request.retention is invalid");
+  }
+  return value as SecureSecretRetention;
+}
+
+function parseOptionalBoolean(
+  value: unknown,
+  field: string,
+): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") {
+    throw new SecureSessionsContractError(`${field} must be a boolean`);
+  }
+  return value;
 }
 
 function parseDisplayAlias(value: unknown): string {

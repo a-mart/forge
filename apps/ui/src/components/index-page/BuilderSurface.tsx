@@ -21,6 +21,7 @@ import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { type MessageInputHandle } from '@/components/chat/MessageInput'
 import type {
   SecureGrantInput,
+  SecurePrivateFulfillmentInput,
   SecureSessionAvailability,
   SecureSessionPickerConfig,
   SecureSessionRequestConfig,
@@ -66,6 +67,7 @@ import {
   grantSecureSessionLeases,
   isPrivateSecureFulfillmentAvailable,
   revokeSecureSessionLease,
+  resolveSecureSecretsForProfile,
   secureSessionUiErrorMessage,
   SecureSessionUiError,
   startSecureSession,
@@ -107,11 +109,12 @@ import { useSlashCommands } from '@/hooks/index-page/use-slash-commands'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
-import type {
-  AgentDescriptor,
-  ProjectAgentExternalDirectoryEntry,
-  RemoteUpdateAwarenessProjectSnapshot,
-  SecureSessionSnapshot,
+import {
+  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+  type AgentDescriptor,
+  type ProjectAgentExternalDirectoryEntry,
+  type RemoteUpdateAwarenessProjectSnapshot,
+  type SecureSessionSnapshot,
 } from '@forge/protocol'
 
 type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
@@ -497,8 +500,15 @@ export function BuilderSurface({
   ])
 
   const secureSecretOptions = useMemo(
-    () => toSecureSecretOptions(secureCatalog?.secrets ?? []),
-    [secureCatalog?.secrets],
+    () => toSecureSecretOptions(resolveSecureSecretsForProfile(
+      secureCatalog?.secrets ?? [],
+      secureSessionSnapshot?.profileId ?? activeAgent?.profileId,
+    )),
+    [
+      activeAgent?.profileId,
+      secureCatalog?.secrets,
+      secureSessionSnapshot?.profileId,
+    ],
   )
   const secureSessionSnapshotView = useMemo(
     () => secureSessionSnapshot
@@ -1124,7 +1134,7 @@ export function BuilderSurface({
 
   const handlePrivateSecureFulfillment = useCallback(async (
     requestId: string,
-    value: string | Uint8Array,
+    input: SecurePrivateFulfillmentInput,
   ) => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
@@ -1138,26 +1148,46 @@ export function BuilderSurface({
       || !secureSessionSnapshot
       || !request
       || isRemoteOriginActive
-    ) return
-    if (typeof value !== 'string') {
-      reportSecureMutationError(
-        client,
-        activeAgentId,
-        new SecureSessionUiError('SECURE_REQUEST_INVALID'),
-      )
-      return
+    ) {
+      throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
     }
     try {
-      const nextSnapshot = await fulfillSecureAccessRequestPrivately(
-        apiClient,
-        activeAgentId,
-        request,
-        secureSessionSnapshot.revision,
-        value,
-      )
+      let nextSnapshot
+      try {
+        nextSnapshot = await fulfillSecureAccessRequestPrivately(
+          apiClient,
+          activeAgentId,
+          request,
+          secureSessionSnapshot.revision,
+          input,
+        )
+      } catch (error) {
+        if (
+          !(error instanceof SecureSessionUiError)
+          || error.code !== 'SECURE_STALE_REVISION'
+        ) throw error
+        const refreshed = await fetchSecureSessionSnapshot(apiClient, activeAgentId)
+        applySecureMutationResult(client, refreshed)
+        const refreshedRequest = refreshed.pendingRequests.find(
+          (candidate) =>
+            candidate.requestId === requestId
+            && candidate.secretId === null,
+        )
+        if (!refreshedRequest) {
+          throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+        }
+        nextSnapshot = await fulfillSecureAccessRequestPrivately(
+          apiClient,
+          activeAgentId,
+          refreshedRequest,
+          refreshed.revision,
+          input,
+        )
+      }
       applySecureMutationResult(client, nextSnapshot)
     } catch (error) {
       reportSecureMutationError(client, activeAgentId, error)
+      throw error
     }
   }, [
     activeAgentId,
@@ -1222,6 +1252,22 @@ export function BuilderSurface({
         ? []
         : secureSessionSnapshotView?.pendingRequests ?? [],
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
+      ...(!isRemoteOriginActive && secureSessionSnapshot
+        ? {
+            project: {
+              profileId: secureSessionSnapshot.profileId,
+              displayName:
+                state.profiles.find(
+                  (profile) => profile.profileId === secureSessionSnapshot.profileId,
+                )?.displayName ?? secureSessionSnapshot.profileId,
+              projectDefaultLimitReached:
+                (secureCatalog?.projectDefaults?.filter(
+                  (projectDefault) =>
+                    projectDefault.profileId === secureSessionSnapshot.profileId,
+                ).length ?? 0) >= SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+            },
+          }
+        : {}),
       ...(isRemoteOriginActive || !secureSessionSnapshotView
         ? {}
         : {
@@ -1250,9 +1296,12 @@ export function BuilderSurface({
     isActiveManager,
     isRemoteOriginActive,
     secureCatalogLoading,
+    secureCatalog?.projectDefaults,
     secureSecretOptions,
     secureSessionAvailability,
+    secureSessionSnapshot,
     secureSessionSnapshotView,
+    state.profiles,
     state.connected,
   ])
 

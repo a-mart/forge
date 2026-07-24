@@ -14,11 +14,13 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from './settings-api-client'
 import { SettingsSecrets } from './SettingsSecrets'
+import { SECURE_SECRET_MAX_PROJECT_DEFAULTS } from '@forge/protocol'
 
 const secureSecretsApiMock = vi.hoisted(() => ({
   fetchSecureSecretsCatalog: vi.fn(),
   createLocalSecret: vi.fn(),
   updateSecureSecret: vi.fn(),
+  updateSecureSecretProjectDefault: vi.fn(),
   deleteSecureSecret: vi.fn(),
   connectBitwardenProvider: vi.fn(),
   importBitwardenSecret: vi.fn(),
@@ -38,6 +40,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.createLocalSecret(...args),
     updateSecureSecret: (...args: unknown[]) =>
       secureSecretsApiMock.updateSecureSecret(...args),
+    updateSecureSecretProjectDefault: (...args: unknown[]) =>
+      secureSecretsApiMock.updateSecureSecretProjectDefault(...args),
     deleteSecureSecret: (...args: unknown[]) =>
       secureSecretsApiMock.deleteSecureSecret(...args),
     connectBitwardenProvider: (...args: unknown[]) =>
@@ -84,10 +88,52 @@ const BITWARDEN_PROVIDER = {
   displayName: 'Bitwarden work',
 }
 
+const PROFILES = [
+  {
+    profileId: 'project-alpha',
+    displayName: 'Alpha Project',
+    defaultSessionAgentId: 'alpha-session',
+    defaultModel: { provider: 'openai', modelId: 'gpt-5', thinkingLevel: 'medium' },
+    createdAt: '2026-07-23T12:00:00.000Z',
+    updatedAt: '2026-07-23T12:00:00.000Z',
+  },
+  {
+    profileId: 'project-beta',
+    displayName: 'Beta Project',
+    defaultSessionAgentId: 'beta-session',
+    defaultModel: { provider: 'openai', modelId: 'gpt-5', thinkingLevel: 'medium' },
+    createdAt: '2026-07-23T12:00:00.000Z',
+    updatedAt: '2026-07-23T12:00:00.000Z',
+  },
+]
+
 let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
+  Object.defineProperties(HTMLElement.prototype, {
+    hasPointerCapture: {
+      configurable: true,
+      value: () => false,
+    },
+    setPointerCapture: {
+      configurable: true,
+      value: () => {},
+    },
+    releasePointerCapture: {
+      configurable: true,
+      value: () => {},
+    },
+    scrollIntoView: {
+      configurable: true,
+      value: () => {},
+    },
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(true)
@@ -103,6 +149,7 @@ afterEach(() => {
   }
   root = null
   container.remove()
+  vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
 
@@ -127,10 +174,17 @@ function makeClient(kind: 'builder' | 'collab' = 'builder'): SettingsApiClient {
   }
 }
 
-function render(client = makeClient()): void {
+function render(
+  client = makeClient(),
+  currentProfileId: string | undefined = 'project-alpha',
+): void {
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(SettingsSecrets, { apiClient: client }))
+    root?.render(createElement(SettingsSecrets, {
+      apiClient: client,
+      profiles: PROFILES,
+      ...(currentProfileId ? { currentProfileId } : {}),
+    }))
   })
 }
 
@@ -153,7 +207,9 @@ describe('SettingsSecrets', () => {
     await waitFor(() => {
       expect(getByText(container, 'Private sources')).toBeTruthy()
     })
-    expect(container.textContent).toContain('no task receives access until you grant it')
+    expect(container.textContent).toContain(
+      'Access still requires a grant unless you explicitly enable a project default',
+    )
 
     activateTab('Advanced delivery')
     expect(container.textContent).toContain('Delivery never grants task access by itself')
@@ -187,7 +243,10 @@ describe('SettingsSecrets', () => {
     expect(container.innerHTML).not.toContain(rawSecret)
     expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ material: rawSecret }),
+      expect.objectContaining({
+        material: rawSecret,
+        scope: { kind: 'profile', profileId: 'project-alpha' },
+      }),
     )
 
     resolveCreate?.(SECRET_SUMMARY)
@@ -281,12 +340,246 @@ describe('SettingsSecrets', () => {
         providerId: 'bitwarden-1',
         sourceLocator: 'provider-secret-uuid',
         displayAlias: 'database/production',
+        scope: { kind: 'profile', profileId: 'project-alpha' },
       },
     )
 
     resolveImport?.({ ...SECRET_SUMMARY, providerId: 'bitwarden-1' })
     await waitFor(() => {
       expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('defaults new local secrets to the active project and can make them project defaults', async () => {
+    secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
+    secureSecretsApiMock.updateSecureSecretProjectDefault.mockResolvedValue({
+      profileId: 'project-beta',
+      secretId: 'secret-1',
+      createdAt: '2026-07-24T12:00:00.000Z',
+      updatedAt: '2026-07-24T12:00:00.000Z',
+    })
+    render(makeClient(), 'project-beta')
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'github/work' },
+    })
+    fireEvent.change(getByLabelText(container, 'Private value'), {
+      target: { value: 'private-canary' },
+    })
+    const projectDefaultSwitch = getByRole(container, 'switch', {
+      name: 'Automatically available in this project',
+    })
+    fireEvent.click(projectDefaultSwitch)
+    await waitFor(() => {
+      expect(projectDefaultSwitch.getAttribute('aria-checked')).toBe('true')
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          scope: { kind: 'profile', profileId: 'project-beta' },
+        }),
+      )
+      expect(secureSecretsApiMock.updateSecureSecretProjectDefault).toHaveBeenCalledWith(
+        expect.anything(),
+        'project-beta',
+        'secret-1',
+        true,
+      )
+    })
+  })
+
+  it('prevents enabling a seventeenth automatic secret in one project', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [],
+      projectDefaults: Array.from(
+        { length: SECURE_SECRET_MAX_PROJECT_DEFAULTS },
+        (_, index) => ({
+          profileId: 'project-alpha',
+          secretId: `existing-secret-${index + 1}`,
+          createdAt: '2026-07-24T12:00:00.000Z',
+          updatedAt: '2026-07-24T12:00:00.000Z',
+        }),
+      ),
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    const projectDefaultSwitch = getByRole(container, 'switch', {
+      name: 'Automatically available in this project',
+    }) as HTMLButtonElement
+    expect(projectDefaultSwitch.disabled).toBe(true)
+    expect(container.textContent).toContain(
+      `This project already has ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic secrets. Disable one before enabling another.`,
+    )
+  })
+
+  it('shows project names for scope and independent project defaults', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [{
+        ...SECRET_SUMMARY,
+        scope: { kind: 'instance' as const },
+      }],
+      projectDefaults: [
+        {
+          profileId: 'project-alpha',
+          secretId: 'secret-1',
+          createdAt: '2026-07-24T12:00:00.000Z',
+          updatedAt: '2026-07-24T12:00:00.000Z',
+        },
+        {
+          profileId: 'project-beta',
+          secretId: 'secret-1',
+          createdAt: '2026-07-24T12:00:00.000Z',
+          updatedAt: '2026-07-24T12:00:00.000Z',
+        },
+      ],
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    expect(container.textContent).toContain('All projects')
+    expect(container.textContent).toContain('Default in Alpha Project')
+    expect(container.textContent).toContain('Default in Beta Project')
+  })
+
+  it('prevents an alias collision in the same project with clear safe copy', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [{
+        ...SECRET_SUMMARY,
+        scope: { kind: 'profile' as const, profileId: 'project-alpha' },
+      }],
+      projectDefaults: [],
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'github/work' },
+    })
+    fireEvent.change(getByLabelText(container, 'Private value'), {
+      target: { value: 'private-collision-canary' },
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'A secret with this alias already exists in that scope.',
+      )
+    })
+    expect(secureSecretsApiMock.createLocalSecret).not.toHaveBeenCalled()
+    expect(container.textContent).not.toContain('private-collision-canary')
+  })
+
+  it('allows an existing all-project secret to move into one selected project', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [{
+        ...SECRET_SUMMARY,
+        scope: { kind: 'instance' as const },
+      }],
+      projectDefaults: [
+        {
+          profileId: 'project-alpha',
+          secretId: 'secret-1',
+          createdAt: '2026-07-24T12:00:00.000Z',
+          updatedAt: '2026-07-24T12:00:00.000Z',
+        },
+        {
+          profileId: 'project-beta',
+          secretId: 'secret-1',
+          createdAt: '2026-07-24T12:00:00.000Z',
+          updatedAt: '2026-07-24T12:00:00.000Z',
+        },
+      ],
+    })
+    secureSecretsApiMock.updateSecureSecretProjectDefault.mockResolvedValue(null)
+    secureSecretsApiMock.updateSecureSecret.mockResolvedValue({
+      ...SECRET_SUMMARY,
+      scope: { kind: 'profile', profileId: 'project-alpha' },
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    fireEvent.click(getByRole(container, 'button', { name: 'Edit' }))
+    await chooseSelect('edit-secret-1-scope', 'Only this project')
+    fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-1',
+        expect.objectContaining({
+          scope: { kind: 'profile', profileId: 'project-alpha' },
+        }),
+      )
+      expect(secureSecretsApiMock.updateSecureSecretProjectDefault).toHaveBeenCalledWith(
+        expect.anything(),
+        'project-beta',
+        'secret-1',
+        false,
+      )
+    })
+    expect(
+      secureSecretsApiMock.updateSecureSecretProjectDefault.mock.invocationCallOrder[0],
+    ).toBeLessThan(secureSecretsApiMock.updateSecureSecret.mock.invocationCallOrder[0]!)
+  })
+
+  it('sends all-project scope when selected for a Bitwarden reference', async () => {
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER, BITWARDEN_PROVIDER],
+      secrets: [],
+      projectDefaults: [],
+    })
+    secureSecretsApiMock.importBitwardenSecret.mockResolvedValue({
+      ...SECRET_SUMMARY,
+      providerId: 'bitwarden-1',
+      scope: { kind: 'instance' },
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    await chooseSelect('bitwarden-secret-scope', 'All projects')
+    fireEvent.change(getByLabelText(container, 'Bitwarden secret ID'), {
+      target: { value: '12345678-1234-1234-1234-123456789012' },
+    })
+    fireEvent.change(getByLabelText(container, 'Forge alias'), {
+      target: { value: 'database/production' },
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Import reference' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.importBitwardenSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ scope: { kind: 'instance' } }),
+      )
     })
   })
 })
@@ -296,5 +589,25 @@ function activateTab(name: string): void {
   flushSync(() => {
     fireEvent.mouseDown(tab, { button: 0, ctrlKey: false })
     fireEvent.click(tab)
+  })
+}
+
+async function chooseSelect(id: string, option: string): Promise<void> {
+  let trigger: Element | null = null
+  await waitFor(() => {
+    trigger = container.querySelector(`#${id}`)
+    expect(trigger).toBeTruthy()
+  })
+  flushSync(() => {
+    fireEvent.keyDown(trigger!, { key: 'Enter', code: 'Enter' })
+  })
+  await waitFor(() => {
+    expect(getByRole(document.body, 'option', { name: option })).toBeTruthy()
+  })
+  flushSync(() => {
+    fireEvent.click(getByRole(document.body, 'option', { name: option }))
+  })
+  await waitFor(() => {
+    expect(container.getAttribute('aria-hidden')).not.toBe('true')
   })
 }

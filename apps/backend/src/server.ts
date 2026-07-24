@@ -187,21 +187,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   let collaborationSettingsService: CollaborationSettingsService | undefined;
 
   try {
-    if (isBuilderRuntimeTarget(config.runtimeTarget)) {
-      try {
-        const recovery = await swarmManager.initializeSecureSessions();
-        if (recovery.destroyedSandboxIds.length > 0) {
-          logger.info(
-            `[secure-sessions] Removed ${recovery.destroyedSandboxIds.length} orphaned secure execution environment(s).`,
-          );
-        }
-      } catch {
-        logger.warn(
-          "[secure-sessions] Startup orphan recovery did not complete; secure execution remains fail-closed until recovery succeeds.",
-        );
-      }
-    }
-
     await swarmManager.boot();
 
     if (isCollaborationServerRuntimeTarget(config.runtimeTarget)) {

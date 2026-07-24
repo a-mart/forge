@@ -126,8 +126,14 @@ describe("SessionLifecycleCoordinator", () => {
       "tools:forge--s2",
       "extensions.deleted",
     ]);
+    expect(
+      harness.deps.secureSessions.deleteSessionStateAfterCoreDeletion,
+    ).toHaveBeenCalledWith("forge--s2");
 
     harness.calls.length = 0;
+    vi.mocked(
+      harness.deps.secureSessions.deleteSessionStateAfterCoreDeletion,
+    ).mockClear();
     harness.deps.sessions.deleteSession = vi.fn(async () => {
       harness.calls.push("sessions.delete");
       throw new Error("disk failed");
@@ -141,6 +147,37 @@ describe("SessionLifecycleCoordinator", () => {
       "browser.cancel:forge--s2",
       "sessions.delete",
     ]);
+    expect(
+      harness.deps.secureSessions.deleteSessionStateAfterCoreDeletion,
+    ).not.toHaveBeenCalled();
+    expect(harness.deps.secureSessions.cancelLifecycleFence).toHaveBeenCalledWith(
+      "secure-fence",
+    );
+  });
+
+  it("defers post-core session cleanup for startup reconciliation", async () => {
+    const harness = createHarness();
+    harness.deps.sessions.deleteSession = vi.fn(async () => {
+      harness.calls.push("sessions.delete");
+      return { terminatedWorkerIds: [] };
+    });
+    harness.deps.secureSessions.deleteSessionStateAfterCoreDeletion = vi.fn(
+      async () => {
+        throw new Error("secure session cleanup unavailable");
+      },
+    );
+
+    await expect(
+      harness.coordinator.deleteSession("forge--s2"),
+    ).resolves.toEqual({ terminatedWorkerIds: [] });
+
+    expect(harness.calls).toContain(
+      "log:secure_session:session_cleanup:deferred",
+    );
+    expect(harness.deps.secureSessions.completeLifecycleFence).toHaveBeenCalledWith(
+      "secure-fence",
+      "deleted",
+    );
   });
 
   it("cancels continuations before stop-all and manager deletion teardown", async () => {
@@ -220,6 +257,11 @@ describe("SessionLifecycleCoordinator", () => {
     harness.deps.secureSessions.stopForLifecycle = vi.fn(async (agentId, options) => {
       harness.calls.push(`secure.stop:${agentId}:${options?.deleteState === true}`);
     });
+    harness.deps.secureSessions.prepareSessionForDeletion = vi.fn(
+      async (agentId) => {
+        harness.calls.push(`secure.prepareDelete:${agentId}`);
+      },
+    );
 
     await harness.coordinator.archiveSession("forge--s2");
     expect(harness.calls[0]).toBe("secure.stop:forge--s2:false");
@@ -230,7 +272,7 @@ describe("SessionLifecycleCoordinator", () => {
 
     harness.calls.length = 0;
     await harness.coordinator.deleteSession("forge--s2");
-    expect(harness.calls[0]).toBe("secure.stop:forge--s2:true");
+    expect(harness.calls[0]).toBe("secure.prepareDelete:forge--s2");
 
     harness.calls.length = 0;
     await harness.coordinator.archiveProfile("forge");
@@ -238,22 +280,36 @@ describe("SessionLifecycleCoordinator", () => {
       "secure.stop:forge:false",
       "secure.stop:forge--s2:false",
     ]);
+    expect(harness.deps.secureSessions.deleteProjectState).not.toHaveBeenCalled();
 
     harness.calls.length = 0;
     await harness.coordinator.stopAllAgents("forge", "forge--s2");
     expect(harness.calls[0]).toBe("secure.stop:forge--s2:false");
 
     harness.calls.length = 0;
+    harness.deps.secureSessions.deleteProjectState = vi.fn(async (profileId) => {
+      harness.calls.push(`secure.deleteProject:${profileId}`);
+    });
+    harness.deps.lifecycle.deleteManager = vi.fn(async () => {
+      harness.calls.push("lifecycle.deleteManager");
+      return { managerId: "forge", terminatedWorkerIds: [] };
+    });
     await harness.coordinator.deleteManager("forge", "forge");
     expect(harness.calls.slice(0, 2)).toEqual([
-      "secure.stop:forge:true",
-      "secure.stop:forge--s2:true",
+      "secure.prepareDelete:forge",
+      "secure.prepareDelete:forge--s2",
     ]);
+    expect(harness.calls.indexOf("secure.deleteProject:forge")).toBeGreaterThan(
+      harness.calls.indexOf("secure.prepareDelete:forge--s2"),
+    );
+    expect(harness.calls.indexOf("secure.deleteProject:forge")).toBeGreaterThan(
+      harness.calls.indexOf("lifecycle.deleteManager"),
+    );
   });
 
   it("does not mutate lifecycle state when secure teardown fails", async () => {
     const harness = createHarness();
-    harness.deps.secureSessions.stopForLifecycle = vi.fn(async () => {
+    harness.deps.secureSessions.prepareSessionForDeletion = vi.fn(async () => {
       throw new Error("secure teardown failed");
     });
 
@@ -261,7 +317,107 @@ describe("SessionLifecycleCoordinator", () => {
       "secure teardown failed",
     );
     expect(harness.deps.sessions.deleteSession).not.toHaveBeenCalled();
+    expect(harness.deps.secureSessions.cancelLifecycleFence).toHaveBeenCalledWith(
+      "secure-fence",
+    );
     expect(harness.calls).toEqual([]);
+  });
+
+  it("fences before teardown and clears archive authority only after core restore", async () => {
+    const harness = createHarness();
+    harness.deps.secureSessions.beginLifecycleFence = vi.fn(async () => {
+      harness.calls.push("secure.fence.begin");
+      return "secure-fence";
+    });
+    harness.deps.secureSessions.prepareSessionForDeletion = vi.fn(async () => {
+      harness.calls.push("secure.prepareDelete");
+    });
+    harness.deps.secureSessions.completeLifecycleFence = vi.fn(async () => {
+      harness.calls.push("secure.fence.complete");
+    });
+    harness.deps.sessions.deleteSession = vi.fn(async () => {
+      harness.calls.push("sessions.delete");
+      return { terminatedWorkerIds: [] };
+    });
+
+    await harness.coordinator.deleteSession("forge--s2");
+    expect(harness.calls[0]).toBe("secure.fence.begin");
+    expect(harness.calls.indexOf("secure.prepareDelete")).toBeLessThan(
+      harness.calls.indexOf("sessions.delete"),
+    );
+    expect(harness.calls.at(-1)).toBe("secure.fence.complete");
+
+    harness.calls.length = 0;
+    harness.deps.archive.restoreSession = vi.fn(async () => {
+      harness.calls.push("archive.restore");
+      return {
+        agentId: "forge--s2",
+        profileId: "forge",
+        openAgentId: "forge--s2",
+      };
+    });
+    harness.deps.secureSessions.clearLifecycleFenceForRestore = vi.fn(
+      async () => {
+        harness.calls.push("secure.fence.restore");
+      },
+    );
+
+    await harness.coordinator.restoreSession("forge--s2");
+    expect(harness.calls.slice(0, 3)).toEqual([
+      "archive.restore",
+      "secure.fence.restore",
+      "browser.restore:forge:forge--s2",
+    ]);
+  });
+
+  it("preserves project secret state when core manager deletion fails", async () => {
+    const harness = createHarness();
+    harness.deps.lifecycle.deleteManager = vi.fn(async () => {
+      harness.calls.push("lifecycle.deleteManager");
+      throw new Error("core manager deletion failed");
+    });
+
+    await expect(
+      harness.coordinator.deleteManager("forge", "forge"),
+    ).rejects.toThrow("core manager deletion failed");
+
+    expect(
+      harness.deps.secureSessions.prepareSessionForDeletion,
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      harness.deps.secureSessions.deleteProjectState,
+    ).not.toHaveBeenCalled();
+    expect(harness.deps.secureSessions.cancelLifecycleFence).toHaveBeenCalledWith(
+      "secure-fence",
+    );
+    expect(harness.deps.secureSessions.completeLifecycleFence).not.toHaveBeenCalled();
+  });
+
+  it("completes core deletion when secure cleanup is deferred for startup reconciliation", async () => {
+    const harness = createHarness();
+    harness.deps.lifecycle.deleteManager = vi.fn(async () => {
+      harness.calls.push("lifecycle.deleteManager");
+      return { managerId: "forge", terminatedWorkerIds: [] };
+    });
+    harness.deps.secureSessions.deleteProjectState = vi.fn(async () => {
+      harness.calls.push("secure.deleteProject");
+      throw new Error("secure project cleanup unavailable");
+    });
+
+    await expect(
+      harness.coordinator.deleteManager("forge", "forge"),
+    ).resolves.toEqual({ managerId: "forge", terminatedWorkerIds: [] });
+
+    expect(harness.calls.indexOf("secure.deleteProject")).toBeGreaterThan(
+      harness.calls.indexOf("lifecycle.deleteManager"),
+    );
+    expect(harness.calls).toContain(
+      "log:secure_session:project_cleanup:deferred",
+    );
+    expect(harness.deps.secureSessions.completeLifecycleFence).toHaveBeenCalledWith(
+      "secure-fence",
+      "deleted",
+    );
   });
 
   it("forks only active Builder sessions and sends a stable source snapshot to extensions", async () => {
@@ -490,7 +646,14 @@ function createHarness(): Harness {
       },
     },
     secureSessions: {
+      beginLifecycleFence: vi.fn(async () => "secure-fence"),
+      cancelLifecycleFence: vi.fn(async () => undefined),
+      completeLifecycleFence: vi.fn(async () => undefined),
+      clearLifecycleFenceForRestore: vi.fn(async () => undefined),
+      prepareSessionForDeletion: vi.fn(async () => undefined),
+      deleteSessionStateAfterCoreDeletion: vi.fn(async () => undefined),
       stopForLifecycle: vi.fn(async () => undefined),
+      deleteProjectState: vi.fn(async () => undefined),
     },
     events: {
       emitAgentsSnapshot: () => calls.push("events.agents"),

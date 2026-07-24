@@ -6,6 +6,7 @@ import {
   parseSecureSecretScope,
   type SecureSecretBinding,
   type SecureSecretProviderSummary,
+  type SecureSecretProjectDefaultSummary,
   type SecureSecretRetention,
   type SecureSecretScope,
   type SecureSecretSummary,
@@ -28,6 +29,8 @@ export const SECURE_ROUTE_ERROR_CODES = [
   "SECURE_SOURCE_UNAVAILABLE",
   "SECURE_PROVIDER_AUTH_REQUIRED",
   "SECURE_SECRET_NOT_FOUND",
+  "SECURE_SECRET_ALIAS_CONFLICT",
+  "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
   "SECURE_STALE_REVISION",
   "SECURE_OPERATION_FAILED",
 ] as const;
@@ -65,6 +68,8 @@ export interface ImportBitwardenSecureSecretInput {
   displayAlias: string;
   displayName?: string;
   bindings?: SecureSecretBinding[];
+  scope?: SecureSecretScope;
+  retention?: SecureSecretRetention;
 }
 
 export interface SecureSecretTransportService {
@@ -79,6 +84,13 @@ export interface SecureSecretTransportService {
     input: ImportBitwardenSecureSecretInput,
   ): Promise<SecureSecretSummary>;
   listSecureSecrets(): Promise<SecureSecretSummary[]> | SecureSecretSummary[];
+  listSecureSecretProjectDefaults(
+    profileId?: string,
+  ): Promise<SecureSecretProjectDefaultSummary[]> | SecureSecretProjectDefaultSummary[];
+  setSecureSecretProjectDefault(
+    secretId: string,
+    input: { profileId: string; enabled: boolean },
+  ): Promise<SecureSecretProjectDefaultSummary | null>;
   createLocalSecureSecret(input: CreateLocalSecureSecretInput): Promise<SecureSecretSummary>;
   updateSecureSecret(
     secretId: string,
@@ -90,7 +102,7 @@ export interface SecureSecretTransportService {
 export function createSecureSecretRoutes(options: {
   service: SecureSecretTransportService;
 }): HttpRoute[] {
-  const methods = "GET, POST, PATCH, DELETE, OPTIONS";
+  const methods = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
 
   return [{
     methods,
@@ -109,6 +121,51 @@ export function createSecureSecretRoutes(options: {
       try {
         if (request.method === "GET" && requestUrl.pathname === SECURE_SECRET_PROVIDERS_PATH) {
           sendSecureJson(response, 200, await options.service.listSecureSecretProviders());
+          return;
+        }
+
+        if (
+          request.method === "GET"
+          && requestUrl.pathname === `${SECURE_SECRETS_PATH}/project-defaults`
+        ) {
+          sendSecureJson(
+            response,
+            200,
+            await options.service.listSecureSecretProjectDefaults(),
+          );
+          return;
+        }
+
+        const projectDefaultsMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/project-defaults\/([^/]+)$/,
+        );
+        if (request.method === "GET" && projectDefaultsMatch) {
+          const profileId = parsePathId(projectDefaultsMatch[1], "profileId");
+          sendSecureJson(
+            response,
+            200,
+            await options.service.listSecureSecretProjectDefaults(profileId),
+          );
+          return;
+        }
+
+        const projectDefaultMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/project-defaults\/([^/]+)\/([^/]+)$/,
+        );
+        if (request.method === "PUT" && projectDefaultMatch) {
+          const profileId = parsePathId(projectDefaultMatch[1], "profileId");
+          const secretId = parsePathId(projectDefaultMatch[2], "secretId");
+          const input = parseSetProjectDefaultInput(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.setSecureSecretProjectDefault(secretId, {
+              profileId,
+              enabled: input.enabled,
+            }),
+          );
           return;
         }
 
@@ -354,6 +411,15 @@ function parseCreateLocalSecretInput(value: unknown): CreateLocalSecureSecretInp
   };
 }
 
+function parseSetProjectDefaultInput(value: unknown): { enabled: boolean } {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["enabled"]);
+  if (typeof input.enabled !== "boolean") {
+    throw new SecureSessionsContractError("request.enabled must be a boolean");
+  }
+  return { enabled: input.enabled };
+}
+
 function parseUpdateSecretInput(value: unknown): UpdateSecureSecretInput {
   const input = requireObject(value);
   assertKnownKeys(input, [
@@ -435,6 +501,8 @@ function parseImportBitwardenSecretInput(
     "displayAlias",
     "displayName",
     "bindings",
+    "scope",
+    "retention",
   ]);
   return {
     sourceLocator: parseLabel(input.sourceLocator, "sourceLocator"),
@@ -445,6 +513,12 @@ function parseImportBitwardenSecretInput(
     ...(input.bindings === undefined
       ? {}
       : { bindings: parseBindings(input.bindings) }),
+    ...(input.scope === undefined
+      ? {}
+      : { scope: parseSecureSecretScope(input.scope) }),
+    ...(input.retention === undefined
+      ? {}
+      : { retention: parseRetention(input.retention) }),
   };
 }
 
@@ -554,6 +628,10 @@ function mapSecureRouteError(error: unknown): {
     case "secure_session_revision_conflict":
     case "SECURE_STALE_REVISION":
       return { code: "SECURE_STALE_REVISION", statusCode: 409 };
+    case "SECURE_SECRET_ALIAS_CONFLICT":
+      return { code: "SECURE_SECRET_ALIAS_CONFLICT", statusCode: 409 };
+    case "SECURE_PROJECT_DEFAULT_LIMIT_REACHED":
+      return { code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED", statusCode: 409 };
     case "SECURE_SOURCE_UNAVAILABLE":
     case "SECURE_SOURCE_TIMEOUT":
     case "SECURE_SOURCE_RESPONSE_INVALID":

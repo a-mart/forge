@@ -1,11 +1,17 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByLabelText, getByRole } from '@testing-library/dom'
+import {
+  fireEvent,
+  getByLabelText,
+  getByRole,
+  waitFor,
+} from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SecureAccessRequestView } from '../secure-session/types'
+import { SecureSessionUiError } from '@/lib/secure-sessions-api'
 import { SecureSecretRequestCard } from './SecureSecretRequestCard'
 
 let container: HTMLDivElement
@@ -36,6 +42,7 @@ function renderCard(overrides: Record<string, unknown> = {}) {
     request,
     availability: { state: 'available' as const },
     secrets,
+    project: { profileId: 'profile-1', displayName: 'Release project' },
     onGrant: vi.fn(),
     onDeny: vi.fn(),
     onPrivateFulfill: vi.fn(),
@@ -85,15 +92,41 @@ describe('SecureSecretRequestCard', () => {
     })
   })
 
-  it('clears and unmounts a one-time private value immediately after submit', () => {
+  it('can approve a matching secret saved while an initially missing request is pending', () => {
+    const onGrant = vi.fn()
+    renderCard({
+      request: { ...request, secretId: undefined },
+      onGrant,
+    })
+
+    expect(container.textContent).toContain('Approve with saved secret')
+    expect(container.textContent).not.toContain('Add secret and approve')
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Approve' }))
+    })
+
+    expect(onGrant).toHaveBeenCalledWith({
+      requestId: 'request-1',
+      selectForMissingRequest: true,
+      secretId: 'secret-1',
+      bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
+      policy: { kind: 'one_use' },
+    })
+  })
+
+  it('saves a missing secret to the current project and approves the exact request', async () => {
     const onPrivateFulfill = vi.fn(() => {
-      expect(privateValueInputs()).toHaveLength(0)
+      expect(privateValueInputs()[0]?.value).toBe('')
       expect(document.body.textContent).not.toContain('private-value-123')
     })
-    renderCard({ request: { ...request, secretId: undefined }, onPrivateFulfill })
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      onPrivateFulfill,
+    })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Provide unsaved value' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
     })
     const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
     flushSync(() => {
@@ -102,23 +135,121 @@ describe('SecureSecretRequestCard', () => {
     expect(input.value).toBe('private-value-123')
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Approve and provide' }))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
     })
 
-    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', 'private-value-123')
-    expect(privateValueInputs()).toHaveLength(0)
+    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
+      value: 'private-value-123',
+      retention: 'saved',
+      scope: { kind: 'profile', profileId: 'profile-1' },
+    })
+    await waitFor(() => expect(privateValueInputs()).toHaveLength(0))
     expect(document.body.textContent).not.toContain('private-value-123')
     expect(Array.from(document.body.querySelectorAll('input')).some(
       (candidate) => candidate.value === 'private-value-123',
     )).toBe(false)
   })
 
-  it('clears and unmounts a one-time private value immediately on cancel', () => {
+  it('can save an all-project secret and make it automatic only in the current project', () => {
     const onPrivateFulfill = vi.fn()
-    renderCard({ request: { ...request, secretId: undefined }, onPrivateFulfill })
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      onPrivateFulfill,
+    })
 
     flushSync(() => {
-      fireEvent.click(getByRole(container, 'button', { name: 'Provide unsaved value' }))
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'shared-private-value' } })
+      fireEvent.click(getByRole(document.body, 'radio', { name: /All projects/ }))
+      fireEvent.click(getByRole(document.body, 'checkbox', {
+        name: /Automatically available in Release project/,
+      }))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
+    })
+
+    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
+      value: 'shared-private-value',
+      retention: 'saved',
+      scope: { kind: 'instance' },
+      makeProjectDefault: true,
+    })
+  })
+
+  it('keeps save-and-approve available when the project-default limit is reached', () => {
+    const onPrivateFulfill = vi.fn()
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      project: {
+        profileId: 'profile-1',
+        displayName: 'Release project',
+        projectDefaultLimitReached: true,
+      },
+      onPrivateFulfill,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const automaticCheckbox = getByRole(document.body, 'checkbox', {
+      name: /Automatically available in Release project/,
+    }) as HTMLInputElement
+    expect(automaticCheckbox.disabled).toBe(true)
+    expect(document.body.textContent).toContain(
+      'This project already has 16 automatic secrets',
+    )
+
+    const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'saved-without-default' } })
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
+    })
+
+    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
+      value: 'saved-without-default',
+      retention: 'saved',
+      scope: { kind: 'profile', profileId: 'profile-1' },
+    })
+  })
+
+  it('can use a missing value without saving it to the catalog', () => {
+    const onPrivateFulfill = vi.fn()
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      onPrivateFulfill,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'ephemeral-private-value' } })
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Use for this task only' }))
+    })
+
+    expect(onPrivateFulfill).toHaveBeenCalledWith('request-1', {
+      value: 'ephemeral-private-value',
+      retention: 'session',
+      scope: { kind: 'profile', profileId: 'profile-1' },
+    })
+  })
+
+  it('clears and unmounts a private value immediately on cancel', () => {
+    const onPrivateFulfill = vi.fn()
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      onPrivateFulfill,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
     })
     const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
     flushSync(() => {
@@ -134,6 +265,93 @@ describe('SecureSecretRequestCard', () => {
     )).toBe(false)
   })
 
+  it('removes a private value when the active task surface unmounts', () => {
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'unmounted-private-value' } })
+      root.render(createElement('div'))
+    })
+
+    expect(privateValueInputs()).toHaveLength(0)
+    expect(input.value).toBe('')
+    expect(document.body.textContent).not.toContain('unmounted-private-value')
+  })
+
+  it('keeps a failed request actionable and displays the fixed failure', async () => {
+    const onPrivateFulfill = vi.fn(async () => {
+      throw new SecureSessionUiError('SECURE_STALE_REVISION')
+    })
+    renderCard({
+      request: { ...request, secretId: undefined },
+      secrets: [],
+      onPrivateFulfill,
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'failed-private-value' } })
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
+    })
+
+    await waitFor(() => {
+      expect(getByRole(document.body, 'alert').textContent).toContain(
+        'Secure session access changed elsewhere',
+      )
+    })
+    expect(privateValueInputs()).toHaveLength(1)
+    expect(privateValueInputs()[0]?.value).toBe('')
+    expect(document.body.textContent).not.toContain('failed-private-value')
+    expect((
+      getByRole(document.body, 'button', {
+        name: 'Add secret and approve',
+      }) as HTMLButtonElement
+    ).disabled).toBe(true)
+  })
+
+  it('does not submit an enclosing chat composer while fulfilling a request', () => {
+    const composerSubmit = vi.fn((event: Event) => event.preventDefault())
+    const onPrivateFulfill = vi.fn()
+    const props = {
+      request: { ...request, secretId: undefined },
+      availability: { state: 'available' as const },
+      secrets: [],
+      project: { profileId: 'profile-1', displayName: 'Release project' },
+      onGrant: vi.fn(),
+      onDeny: vi.fn(),
+      onPrivateFulfill,
+    }
+    flushSync(() => {
+      root.render(createElement(
+        'form',
+        { onSubmit: composerSubmit },
+        createElement(SecureSecretRequestCard, props),
+      ))
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Add secret and approve' }))
+    })
+    const input = getByLabelText(document.body, 'Value for deploy-token') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'private-value-123' } })
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Add secret and approve' }))
+    })
+
+    expect(onPrivateFulfill).toHaveBeenCalledTimes(1)
+    expect(composerSubmit).not.toHaveBeenCalled()
+  })
+
   it('keeps denial available when the runtime or remote origin cannot securely fulfill', () => {
     const onDeny = vi.fn()
     renderCard({
@@ -146,7 +364,7 @@ describe('SecureSecretRequestCard', () => {
 
     expect(container.textContent).toContain('Remote origin')
     expect(container.textContent).toContain('another Forge host')
-    expect(container.textContent).not.toContain('Provide unsaved value')
+    expect(container.textContent).not.toContain('Add secret and approve')
     expect(container.querySelector('button')?.textContent).toBe('Deny')
 
     flushSync(() => {
@@ -163,7 +381,7 @@ describe('SecureSecretRequestCard', () => {
     })
 
     expect(container.textContent).toContain('Secret source unavailable')
-    expect(getByRole(container, 'button', { name: 'Provide unsaved value' })).toBeTruthy()
+    expect(getByRole(container, 'button', { name: 'Add secret and approve' })).toBeTruthy()
     expect(container.textContent).not.toContain('Approve with saved secret')
   })
 })

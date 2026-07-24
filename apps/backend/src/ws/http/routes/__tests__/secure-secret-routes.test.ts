@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type {
   SecureSecretProviderSummary,
+  SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
 } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,6 +39,13 @@ const secret: SecureSecretSummary = {
   updatedAt: "2026-07-23T00:00:00.000Z",
 };
 
+const projectDefault: SecureSecretProjectDefaultSummary = {
+  profileId: "profile-1",
+  secretId: "secret-1",
+  createdAt: "2026-07-23T00:00:00.000Z",
+  updatedAt: "2026-07-23T00:00:00.000Z",
+};
+
 function fakeService(): SecureSecretTransportService {
   return {
     listSecureSecretProviders: vi.fn(() => [provider]),
@@ -46,6 +54,10 @@ function fakeService(): SecureSecretTransportService {
     deleteSecureSecretProvider: vi.fn(async () => undefined),
     importBitwardenSecureSecret: vi.fn(async () => secret),
     listSecureSecrets: vi.fn(() => [secret]),
+    listSecureSecretProjectDefaults: vi.fn(() => [projectDefault]),
+    setSecureSecretProjectDefault: vi.fn(async (_secretId, input) =>
+      input.enabled ? projectDefault : null
+    ),
     createLocalSecureSecret: vi.fn(async () => secret),
     updateSecureSecret: vi.fn(async () => secret),
     deleteSecureSecret: vi.fn(async () => undefined),
@@ -82,12 +94,16 @@ describe("secure secret routes", () => {
       displayAlias: "DEPLOY_TOKEN",
       encryptedMaterial: materialCiphertext,
       bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-1" },
+      retention: "saved",
     });
     expect(created.status).toBe(201);
     expect(service.createLocalSecureSecret).toHaveBeenCalledWith({
       displayAlias: "DEPLOY_TOKEN",
       encryptedMaterial: materialCiphertext,
       bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-1" },
+      retention: "saved",
     });
 
     for (const response of [providers, connected, created]) {
@@ -108,6 +124,8 @@ describe("secure secret routes", () => {
         displayAlias: "DATABASE_PASSWORD",
         displayName: "Production database",
         bindings: [{ deliveryKind: "stdin" }],
+        scope: { kind: "profile", profileId: "profile-1" },
+        retention: "saved",
       },
     );
 
@@ -119,6 +137,8 @@ describe("secure secret routes", () => {
         displayAlias: "DATABASE_PASSWORD",
         displayName: "Production database",
         bindings: [{ deliveryKind: "stdin" }],
+        scope: { kind: "profile", profileId: "profile-1" },
+        retention: "saved",
       },
     );
     expect(JSON.stringify(await response.json())).not.toContain("bws-secret-uuid");
@@ -152,6 +172,61 @@ describe("secure secret routes", () => {
     expect(deleted.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("lists and strictly toggles project defaults", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+
+    const listedAll = await fetch(
+      `${server.baseUrl}/api/secure-secrets/project-defaults`,
+    );
+    const listed = await fetch(
+      `${server.baseUrl}/api/secure-secrets/project-defaults/profile-1`,
+    );
+    const enabled = await putJson(
+      `${server.baseUrl}/api/secure-secrets/project-defaults/profile-1/secret-1`,
+      { enabled: true },
+    );
+    const disabled = await putJson(
+      `${server.baseUrl}/api/secure-secrets/project-defaults/profile-1/secret-1`,
+      { enabled: false },
+    );
+    const unexpected = await putJson(
+      `${server.baseUrl}/api/secure-secrets/project-defaults/profile-1/secret-1`,
+      { enabled: true, plaintext: "forbidden" },
+    );
+    const invalid = await putJson(
+      `${server.baseUrl}/api/secure-secrets/project-defaults/profile-1/secret-1`,
+      { enabled: "true" },
+    );
+
+    expect(listedAll.status).toBe(200);
+    expect(await listedAll.json()).toEqual([projectDefault]);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual([projectDefault]);
+    expect(enabled.status).toBe(200);
+    expect(await enabled.json()).toEqual(projectDefault);
+    expect(disabled.status).toBe(200);
+    expect(await disabled.json()).toBeNull();
+    expect(unexpected.status).toBe(400);
+    expect(invalid.status).toBe(400);
+    expect(service.listSecureSecretProjectDefaults).toHaveBeenNthCalledWith(1);
+    expect(service.listSecureSecretProjectDefaults).toHaveBeenNthCalledWith(
+      2,
+      "profile-1",
+    );
+    expect(service.setSecureSecretProjectDefault).toHaveBeenNthCalledWith(
+      1,
+      "secret-1",
+      { profileId: "profile-1", enabled: true },
+    );
+    expect(service.setSecureSecretProjectDefault).toHaveBeenNthCalledWith(
+      2,
+      "secret-1",
+      { profileId: "profile-1", enabled: false },
+    );
+    expect(service.setSecureSecretProjectDefault).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects plaintext and malformed bodies before invoking the service", async () => {
     const service = fakeService();
     const server = await createRouteServer(createSecureSecretRoutes({ service }));
@@ -174,8 +249,16 @@ describe("secure secret routes", () => {
       headers: { "content-type": "application/json" },
       body: "{",
     });
+    const invalidScope = await postJson(
+      `${server.baseUrl}/api/secure-secrets/providers/provider-1/secrets`,
+      {
+        sourceLocator: "bws-secret-uuid",
+        displayAlias: "TOKEN",
+        scope: { kind: "profile", profileId: "" },
+      },
+    );
 
-    for (const response of [plaintext, rawToken, malformed]) {
+    for (const response of [plaintext, rawToken, malformed, invalidScope]) {
       expect(response.status).toBe(400);
       const body = await response.text();
       expect(body).toContain("SECURE_REQUEST_INVALID");
@@ -195,12 +278,31 @@ describe("secure secret routes", () => {
     vi.mocked(service.testSecureSecretProvider).mockRejectedValue(
       Object.assign(new Error(canary), { code: "SECURE_SOURCE_AUTH_REQUIRED" }),
     );
+    vi.mocked(service.createLocalSecureSecret).mockRejectedValue(
+      Object.assign(new Error(canary), { code: "SECURE_SECRET_ALIAS_CONFLICT" }),
+    );
+    vi.mocked(service.setSecureSecretProjectDefault).mockRejectedValue(
+      Object.assign(new Error(canary), {
+        code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+      }),
+    );
     const server = await createRouteServer(createSecureSecretRoutes({ service }));
 
     const generic = await fetch(`${server.baseUrl}/api/secure-secrets`);
     const auth = await postJson(
       `${server.baseUrl}/api/secure-secrets/providers/provider-1/test`,
       {},
+    );
+    const aliasConflict = await postJson(
+      `${server.baseUrl}/api/secure-secrets/local`,
+      {
+        displayAlias: "DUPLICATE",
+        encryptedMaterial: Buffer.from("ciphertext").toString("base64"),
+      },
+    );
+    const defaultLimit = await putJson(
+      `${server.baseUrl}/api/secure-secrets/project-defaults/profile-1/secret-1`,
+      { enabled: true },
     );
 
     expect(generic.status).toBe(500);
@@ -213,13 +315,33 @@ describe("secure secret routes", () => {
       code: "SECURE_PROVIDER_AUTH_REQUIRED",
       error: "SECURE_PROVIDER_AUTH_REQUIRED",
     });
-    expect(JSON.stringify([generic, auth])).not.toContain(canary);
+    expect(aliasConflict.status).toBe(409);
+    expect(await aliasConflict.json()).toEqual({
+      code: "SECURE_SECRET_ALIAS_CONFLICT",
+      error: "SECURE_SECRET_ALIAS_CONFLICT",
+    });
+    expect(defaultLimit.status).toBe(409);
+    expect(await defaultLimit.json()).toEqual({
+      code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+      error: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+    });
+    expect(
+      JSON.stringify([generic, auth, aliasConflict, defaultLimit]),
+    ).not.toContain(canary);
   });
 });
 
 async function postJson(url: string, body: unknown): Promise<Response> {
   return fetch(url, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function putJson(url: string, body: unknown): Promise<Response> {
+  return fetch(url, {
+    method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CheckCircle2,
   KeyRound,
@@ -28,16 +28,36 @@ import {
   deleteSecureSecret,
   importBitwardenSecret,
   updateSecureSecret,
+  updateSecureSecretProjectDefault,
+  type SecureSecretProjectDefaultSummary,
   type SecureSecretProviderSummary,
+  type SecureSecretScope,
   type SecureSecretSummary,
 } from '@/lib/secure-secrets-api'
 import { EmptyState } from './secret-ui'
 import { providerLabel } from './secret-ui-values'
+import {
+  ProjectDefaultFields,
+  SecretScopeFields,
+} from './SecretProjectAccessFields'
+import {
+  projectName,
+  scopeFor,
+  scopeLabel,
+  type SecretScopeKind,
+} from './secret-project-access-values'
+import {
+  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+  type ManagerProfile,
+} from '@forge/protocol'
 
 interface SecretCatalogPanelProps {
   apiClient: SettingsApiClient
   providers: SecureSecretProviderSummary[]
   secrets: SecureSecretSummary[]
+  projectDefaults: SecureSecretProjectDefaultSummary[]
+  profiles: ManagerProfile[]
+  initialProfileId?: string
   materialEntryAvailable: boolean
   onChanged: (message: string) => Promise<void>
   onError: (error: unknown) => void
@@ -47,27 +67,99 @@ export function SecretCatalogPanel({
   apiClient,
   providers,
   secrets,
+  projectDefaults,
+  profiles,
+  initialProfileId,
   materialEntryAvailable,
   onChanged,
   onError,
 }: SecretCatalogPanelProps) {
+  const firstProfileId = initialProfileId ?? profiles[0]?.profileId ?? ''
   const [displayAlias, setDisplayAlias] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [material, setMaterial] = useState('')
+  const [localScopeKind, setLocalScopeKind] = useState<SecretScopeKind>(
+    profiles.length > 0 ? 'profile' : 'instance',
+  )
+  const [localProfileId, setLocalProfileId] = useState(firstProfileId)
+  const [localDefaultEnabled, setLocalDefaultEnabled] = useState(false)
+  const [localDefaultProfileId, setLocalDefaultProfileId] = useState(firstProfileId)
   const [bitwardenProviderId, setBitwardenProviderId] = useState('')
   const [bitwardenLocator, setBitwardenLocator] = useState('')
   const [bitwardenAlias, setBitwardenAlias] = useState('')
   const [bitwardenName, setBitwardenName] = useState('')
+  const [bitwardenScopeKind, setBitwardenScopeKind] = useState<SecretScopeKind>(
+    profiles.length > 0 ? 'profile' : 'instance',
+  )
+  const [bitwardenProfileId, setBitwardenProfileId] = useState(firstProfileId)
+  const [bitwardenDefaultEnabled, setBitwardenDefaultEnabled] = useState(false)
+  const [bitwardenDefaultProfileId, setBitwardenDefaultProfileId] = useState(
+    firstProfileId,
+  )
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editAlias, setEditAlias] = useState('')
   const [editName, setEditName] = useState('')
   const [replacementMaterial, setReplacementMaterial] = useState('')
+  const [editScopeKind, setEditScopeKind] = useState<SecretScopeKind>('instance')
+  const [editProfileId, setEditProfileId] = useState('')
+  const [editDefaultProfileId, setEditDefaultProfileId] = useState(firstProfileId)
+  const [editDefaultProfileIds, setEditDefaultProfileIds] = useState<Set<string>>(new Set())
   const [busyKey, setBusyKey] = useState<string | null>(null)
 
   const providerById = useMemo(
     () => new Map(providers.map((provider) => [provider.providerId, provider])),
     [providers],
   )
+  const profileById = useMemo(
+    () => new Map(profiles.map((profile) => [profile.profileId, profile])),
+    [profiles],
+  )
+  const projectDefaultsBySecretId = useMemo(() => {
+    const result = new Map<string, Set<string>>()
+    for (const projectDefault of projectDefaults) {
+      const profileIds = result.get(projectDefault.secretId) ?? new Set<string>()
+      profileIds.add(projectDefault.profileId)
+      result.set(projectDefault.secretId, profileIds)
+    }
+    return result
+  }, [projectDefaults])
+  const projectDefaultCountByProfileId = useMemo(() => {
+    const result = new Map<string, number>()
+    for (const projectDefault of projectDefaults) {
+      result.set(
+        projectDefault.profileId,
+        (result.get(projectDefault.profileId) ?? 0) + 1,
+      )
+    }
+    return result
+  }, [projectDefaults])
+  const isProjectDefaultLimitReached = (
+    profileId: string,
+    secretId?: string,
+  ) => Boolean(
+    profileId
+    && (projectDefaultCountByProfileId.get(profileId) ?? 0)
+      >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
+    && (!secretId || !projectDefaultsBySecretId.get(secretId)?.has(profileId))
+  )
+  useEffect(() => {
+    const fallbackProfileId = initialProfileId ?? profiles[0]?.profileId ?? ''
+    const remainsSelectable = (profileId: string) =>
+      profiles.some((profile) => profile.profileId === profileId)
+    const recover = (current: string) =>
+      remainsSelectable(current) ? current : fallbackProfileId
+    setLocalProfileId(recover)
+    setLocalDefaultProfileId(recover)
+    setBitwardenProfileId(recover)
+    setBitwardenDefaultProfileId(recover)
+    setEditProfileId(recover)
+    setEditDefaultProfileId(recover)
+    if (profiles.length === 0) {
+      setLocalScopeKind('instance')
+      setBitwardenScopeKind('instance')
+      setEditScopeKind('instance')
+    }
+  }, [initialProfileId, profiles])
   const bitwardenProviders = useMemo(
     () => providers.filter((provider) => provider.kind === 'bitwarden_secrets_manager'),
     [providers],
@@ -82,24 +174,63 @@ export function SecretCatalogPanel({
     event.preventDefault()
     const materialForSubmission = material
     setMaterial('')
+    const scope = scopeFor(localScopeKind, localProfileId)
+    const defaultProfileId = localScopeKind === 'profile'
+      ? localProfileId
+      : localDefaultProfileId
 
-    if (!validAlias(displayAlias) || !materialForSubmission) {
+    if (
+      !validAlias(displayAlias)
+      || !materialForSubmission
+      || !scope
+      || (localDefaultEnabled && !defaultProfileId)
+    ) {
       onError(new SecureSecretsError('SECURE_REQUEST_INVALID'))
+      return
+    }
+    if (hasAliasCollision(secrets, displayAlias, scope)) {
+      onError(new SecureSecretsError('SECURE_SECRET_ALIAS_CONFLICT'))
+      return
+    }
+    if (localDefaultEnabled && isProjectDefaultLimitReached(defaultProfileId)) {
+      onError(new SecureSecretsError('SECURE_PROJECT_DEFAULT_LIMIT_REACHED'))
       return
     }
 
     setBusyKey('create')
+    let saved = false
     try {
-      await createLocalSecret(apiClient, {
+      const created = await createLocalSecret(apiClient, {
         displayAlias: displayAlias.trim(),
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         material: materialForSubmission,
+        scope,
       })
+      saved = true
       setDisplayAlias('')
       setDisplayName('')
-      await onChanged('Local secret saved. No task has access until you grant it.')
+      setLocalDefaultEnabled(false)
+      if (localDefaultEnabled) {
+        await updateSecureSecretProjectDefault(
+          apiClient,
+          defaultProfileId,
+          created.secretId,
+          true,
+        )
+      }
+      await onChanged(
+        localDefaultEnabled
+          ? 'Local secret saved and enabled for new secure sessions in the selected project.'
+          : 'Local secret saved. No task has access until you grant it.',
+      )
     } catch (error) {
-      onError(error)
+      if (saved) {
+        await onChanged(
+          'Local secret saved, but its automatic project availability could not be enabled.',
+        )
+      } else {
+        onError(error)
+      }
     } finally {
       setBusyKey(null)
     }
@@ -109,38 +240,86 @@ export function SecretCatalogPanel({
     event.preventDefault()
     const sourceLocator = bitwardenLocator.trim()
     setBitwardenLocator('')
+    const scope = scopeFor(bitwardenScopeKind, bitwardenProfileId)
+    const defaultProfileId = bitwardenScopeKind === 'profile'
+      ? bitwardenProfileId
+      : bitwardenDefaultProfileId
     if (
       !selectedBitwardenProviderId
       || !sourceLocator
       || !validAlias(bitwardenAlias)
+      || !scope
+      || (bitwardenDefaultEnabled && !defaultProfileId)
     ) {
       onError(new SecureSecretsError('SECURE_REQUEST_INVALID'))
       return
     }
+    if (hasAliasCollision(secrets, bitwardenAlias, scope)) {
+      onError(new SecureSecretsError('SECURE_SECRET_ALIAS_CONFLICT'))
+      return
+    }
+    if (
+      bitwardenDefaultEnabled
+      && isProjectDefaultLimitReached(defaultProfileId)
+    ) {
+      onError(new SecureSecretsError('SECURE_PROJECT_DEFAULT_LIMIT_REACHED'))
+      return
+    }
 
     setBusyKey('import-bitwarden')
+    let saved = false
     try {
-      await importBitwardenSecret(apiClient, {
+      const created = await importBitwardenSecret(apiClient, {
         providerId: selectedBitwardenProviderId,
         sourceLocator,
         displayAlias: bitwardenAlias.trim(),
         ...(bitwardenName.trim() ? { displayName: bitwardenName.trim() } : {}),
+        scope,
       })
+      saved = true
       setBitwardenAlias('')
       setBitwardenName('')
-      await onChanged('Bitwarden secret reference imported. No task has access until you grant it.')
+      setBitwardenDefaultEnabled(false)
+      if (bitwardenDefaultEnabled) {
+        await updateSecureSecretProjectDefault(
+          apiClient,
+          defaultProfileId,
+          created.secretId,
+          true,
+        )
+      }
+      await onChanged(
+        bitwardenDefaultEnabled
+          ? 'Bitwarden reference imported and enabled for new secure sessions in the selected project.'
+          : 'Bitwarden secret reference imported. No task has access until you grant it.',
+      )
     } catch (error) {
-      onError(error)
+      if (saved) {
+        await onChanged(
+          'Bitwarden reference saved, but its automatic project availability could not be enabled.',
+        )
+      } else {
+        onError(error)
+      }
     } finally {
       setBusyKey(null)
     }
   }
 
   const beginEdit = (secret: SecureSecretSummary) => {
+    const defaultProfileIds = new Set(projectDefaultsBySecretId.get(secret.secretId) ?? [])
     setEditingId(secret.secretId)
     setEditAlias(secret.displayAlias)
     setEditName(secret.displayName ?? '')
     setReplacementMaterial('')
+    setEditScopeKind(secret.scope.kind)
+    setEditProfileId(secret.scope.kind === 'profile' ? secret.scope.profileId : profiles[0]?.profileId ?? '')
+    setEditDefaultProfileIds(defaultProfileIds)
+    setEditDefaultProfileId(
+      secret.scope.kind === 'profile'
+        ? secret.scope.profileId
+        : defaultProfileIds.values().next().value ?? profiles[0]?.profileId ?? '',
+    )
   }
 
   const cancelEdit = () => {
@@ -148,24 +327,82 @@ export function SecretCatalogPanel({
     setEditAlias('')
     setEditName('')
     setReplacementMaterial('')
+    setEditScopeKind('instance')
+    setEditProfileId('')
+    setEditDefaultProfileId(profiles[0]?.profileId ?? '')
+    setEditDefaultProfileIds(new Set())
   }
 
   const saveEdit = async (secret: SecureSecretSummary) => {
     const materialForSubmission = replacementMaterial
     setReplacementMaterial('')
+    const scope = scopeFor(editScopeKind, editProfileId)
 
-    if (!validAlias(editAlias)) {
+    if (!validAlias(editAlias) || !scope) {
       onError(new SecureSecretsError('SECURE_REQUEST_INVALID'))
       return
     }
+    if (hasAliasCollision(secrets, editAlias, scope, secret.secretId)) {
+      onError(new SecureSecretsError('SECURE_SECRET_ALIAS_CONFLICT'))
+      return
+    }
 
+    const currentDefaultProfileIds =
+      projectDefaultsBySecretId.get(secret.secretId) ?? new Set<string>()
+    const nextDefaultProfileIds = scope.kind === 'profile'
+      ? new Set(
+          editDefaultProfileIds.has(scope.profileId) ? [scope.profileId] : [],
+        )
+      : editDefaultProfileIds
+    const incompatibleDefaultProfileIds = scope.kind === 'profile'
+      ? [...currentDefaultProfileIds].filter((profileId) => profileId !== scope.profileId)
+      : []
+    if ([...nextDefaultProfileIds].some(
+      (profileId) => isProjectDefaultLimitReached(profileId, secret.secretId),
+    )) {
+      onError(new SecureSecretsError('SECURE_PROJECT_DEFAULT_LIMIT_REACHED'))
+      return
+    }
     setBusyKey(`edit:${secret.secretId}`)
+    let metadataSaved = false
     try {
-      await updateSecureSecret(apiClient, secret.secretId, {
-        displayAlias: editAlias.trim(),
-        displayName: editName.trim() || null,
-        ...(materialForSubmission ? { material: materialForSubmission } : {}),
-      })
+      const removedDefaultProfileIds: string[] = []
+      try {
+        for (const profileId of incompatibleDefaultProfileIds) {
+          await updateSecureSecretProjectDefault(apiClient, profileId, secret.secretId, false)
+          removedDefaultProfileIds.push(profileId)
+        }
+      } catch (error) {
+        await restoreProjectDefaults(apiClient, secret.secretId, removedDefaultProfileIds)
+        throw error
+      }
+      try {
+        await updateSecureSecret(apiClient, secret.secretId, {
+          displayAlias: editAlias.trim(),
+          displayName: editName.trim() || null,
+          ...(materialForSubmission ? { material: materialForSubmission } : {}),
+          scope,
+        })
+        metadataSaved = true
+      } catch (error) {
+        await restoreProjectDefaults(
+          apiClient,
+          secret.secretId,
+          removedDefaultProfileIds,
+        )
+        throw error
+      }
+      const remainingCurrentDefaults = new Set(
+        [...currentDefaultProfileIds].filter(
+          (profileId) => !incompatibleDefaultProfileIds.includes(profileId),
+        ),
+      )
+      await reconcileProjectDefaults(
+        apiClient,
+        secret.secretId,
+        remainingCurrentDefaults,
+        nextDefaultProfileIds,
+      )
       cancelEdit()
       await onChanged(
         materialForSubmission
@@ -173,7 +410,14 @@ export function SecretCatalogPanel({
           : 'Secret metadata updated.',
       )
     } catch (error) {
-      onError(error)
+      if (metadataSaved) {
+        cancelEdit()
+        await onChanged(
+          'Secret metadata saved, but one or more project-default changes could not be completed.',
+        )
+      } else {
+        onError(error)
+      }
     } finally {
       setBusyKey(null)
     }
@@ -181,7 +425,7 @@ export function SecretCatalogPanel({
 
   const removeSecret = async (secret: SecureSecretSummary) => {
     const confirmed = typeof window === 'undefined' || window.confirm(
-      `Delete "${secret.displayAlias}" and its saved bindings? Active task grants are managed separately.`,
+      `Delete "${secret.displayAlias}", its saved bindings, and its project defaults? Any active secure use of this secret will stop.`,
     )
     if (!confirmed) return
 
@@ -245,6 +489,55 @@ export function SecretCatalogPanel({
                           />
                         </Field>
                       </div>
+                      <SecretScopeFields
+                        idPrefix={`edit-${secret.secretId}`}
+                        profiles={profiles}
+                        scopeKind={editScopeKind}
+                        profileId={editProfileId}
+                        disabled={isBusy}
+                        onScopeKindChange={(scopeKind) => {
+                          setEditScopeKind(scopeKind)
+                          if (scopeKind === 'profile') {
+                            const profileId = editProfileId || profiles[0]?.profileId || ''
+                            setEditProfileId(profileId)
+                            setEditDefaultProfileId(profileId)
+                          }
+                        }}
+                        onProfileIdChange={(profileId) => {
+                          setEditProfileId(profileId)
+                          setEditDefaultProfileId(profileId)
+                        }}
+                      />
+                      <ProjectDefaultFields
+                        idPrefix={`edit-${secret.secretId}`}
+                        profiles={profiles}
+                        scopeKind={editScopeKind}
+                        scopeProfileId={editProfileId}
+                        profileId={editDefaultProfileId}
+                        enabled={
+                          editScopeKind === 'profile'
+                            ? editDefaultProfileIds.has(editProfileId)
+                            : editDefaultProfileIds.has(editDefaultProfileId)
+                        }
+                        projectDefaultLimitReached={isProjectDefaultLimitReached(
+                          editScopeKind === 'profile' ? editProfileId : editDefaultProfileId,
+                          secret.secretId,
+                        )}
+                        disabled={isBusy}
+                        onProfileIdChange={setEditDefaultProfileId}
+                        onEnabledChange={(enabled) => {
+                          const profileId = editScopeKind === 'profile'
+                            ? editProfileId
+                            : editDefaultProfileId
+                          if (!profileId) return
+                          setEditDefaultProfileIds((current) => {
+                            const next = new Set(current)
+                            if (enabled) next.add(profileId)
+                            else next.delete(profileId)
+                            return next
+                          })
+                        }}
+                      />
                       {isLocal ? (
                         <Field
                           label="Replace private value (optional)"
@@ -306,6 +599,16 @@ export function SecretCatalogPanel({
                               <ShieldOff className="size-3" />
                               Unavailable
                             </Badge>
+                          )}
+                          <Badge variant="secondary">
+                            {scopeLabel(secret.scope, profileById)}
+                          </Badge>
+                          {[...(projectDefaultsBySecretId.get(secret.secretId) ?? [])].map(
+                            (profileId) => (
+                              <Badge key={profileId} variant="outline">
+                                Default in {projectName(profileId, profileById)}
+                              </Badge>
+                            ),
                           )}
                         </div>
                         {secret.displayName ? (
@@ -418,6 +721,41 @@ export function SecretCatalogPanel({
                 />
               </Field>
             </div>
+            <SecretScopeFields
+              idPrefix="bitwarden-secret"
+              profiles={profiles}
+              scopeKind={bitwardenScopeKind}
+              profileId={bitwardenProfileId}
+              disabled={busyKey !== null}
+              onScopeKindChange={(scopeKind) => {
+                setBitwardenScopeKind(scopeKind)
+                if (scopeKind === 'profile') {
+                  const profileId = bitwardenProfileId || profiles[0]?.profileId || ''
+                  setBitwardenProfileId(profileId)
+                  setBitwardenDefaultProfileId(profileId)
+                }
+              }}
+              onProfileIdChange={(profileId) => {
+                setBitwardenProfileId(profileId)
+                setBitwardenDefaultProfileId(profileId)
+              }}
+            />
+            <ProjectDefaultFields
+              idPrefix="bitwarden-secret"
+              profiles={profiles}
+              scopeKind={bitwardenScopeKind}
+              scopeProfileId={bitwardenProfileId}
+              profileId={bitwardenDefaultProfileId}
+              enabled={bitwardenDefaultEnabled}
+              projectDefaultLimitReached={isProjectDefaultLimitReached(
+                bitwardenScopeKind === 'profile'
+                  ? bitwardenProfileId
+                  : bitwardenDefaultProfileId,
+              )}
+              disabled={busyKey !== null}
+              onProfileIdChange={setBitwardenDefaultProfileId}
+              onEnabledChange={setBitwardenDefaultEnabled}
+            />
             <Button
               type="submit"
               size="sm"
@@ -480,6 +818,39 @@ export function SecretCatalogPanel({
               disabled={!materialEntryAvailable || busyKey !== null}
             />
           </Field>
+          <SecretScopeFields
+            idPrefix="local-secret"
+            profiles={profiles}
+            scopeKind={localScopeKind}
+            profileId={localProfileId}
+            disabled={!materialEntryAvailable || busyKey !== null}
+            onScopeKindChange={(scopeKind) => {
+              setLocalScopeKind(scopeKind)
+              if (scopeKind === 'profile') {
+                const profileId = localProfileId || profiles[0]?.profileId || ''
+                setLocalProfileId(profileId)
+                setLocalDefaultProfileId(profileId)
+              }
+            }}
+            onProfileIdChange={(profileId) => {
+              setLocalProfileId(profileId)
+              setLocalDefaultProfileId(profileId)
+            }}
+          />
+          <ProjectDefaultFields
+            idPrefix="local-secret"
+            profiles={profiles}
+            scopeKind={localScopeKind}
+            scopeProfileId={localProfileId}
+            profileId={localDefaultProfileId}
+            enabled={localDefaultEnabled}
+            projectDefaultLimitReached={isProjectDefaultLimitReached(
+              localScopeKind === 'profile' ? localProfileId : localDefaultProfileId,
+            )}
+            disabled={!materialEntryAvailable || busyKey !== null}
+            onProfileIdChange={setLocalDefaultProfileId}
+            onEnabledChange={setLocalDefaultEnabled}
+          />
           <Button
             type="submit"
             size="sm"
@@ -517,6 +888,61 @@ function Field({
       {children}
     </div>
   )
+}
+
+async function reconcileProjectDefaults(
+  apiClient: SettingsApiClient,
+  secretId: string,
+  current: Set<string>,
+  next: Set<string>,
+): Promise<void> {
+  const changes = [
+    ...[...current]
+      .filter((profileId) => !next.has(profileId))
+      .map((profileId) => ({ profileId, enabled: false })),
+    ...[...next]
+      .filter((profileId) => !current.has(profileId))
+      .map((profileId) => ({ profileId, enabled: true })),
+  ]
+  for (const change of changes) {
+    await updateSecureSecretProjectDefault(
+      apiClient,
+      change.profileId,
+      secretId,
+      change.enabled,
+    )
+  }
+}
+
+async function restoreProjectDefaults(
+  apiClient: SettingsApiClient,
+  secretId: string,
+  profileIds: string[],
+): Promise<void> {
+  for (const profileId of profileIds) {
+    await updateSecureSecretProjectDefault(apiClient, profileId, secretId, true)
+  }
+}
+
+function hasAliasCollision(
+  secrets: SecureSecretSummary[],
+  displayAlias: string,
+  scope: SecureSecretScope,
+  excludeSecretId?: string,
+): boolean {
+  const normalizedAlias = displayAlias.trim()
+  return secrets.some((secret) =>
+    secret.secretId !== excludeSecretId
+    && secret.displayAlias === normalizedAlias
+    && sameScope(secret.scope, scope)
+  )
+}
+
+function sameScope(left: SecureSecretScope, right: SecureSecretScope): boolean {
+  return left.kind === right.kind
+    && (left.kind === 'instance' || (
+      right.kind === 'profile' && left.profileId === right.profileId
+    ))
 }
 
 function validAlias(value: string): boolean {

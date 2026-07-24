@@ -9,6 +9,7 @@ import {
 } from "./external-thread-compatibility.js";
 import { reconcileInterruptedToolCallsForBoot } from "./interrupted-tool-reconciliation.js";
 import type { RestartRecoveryCoordinator } from "./restart-recovery-coordinator.js";
+import type { SecureSessionCoordinatorPort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import { normalizeOptionalAgentId } from "./swarm-manager-utils.js";
 import type { AgentDescriptor, SwarmConfig } from "./types.js";
 
@@ -76,6 +77,7 @@ export interface SwarmBootCoordinatorOptions {
   preparation: BootPreparationPort;
   domains: BootDomainPort;
   sessions: BootSessionStatePort;
+  secureSessions: Pick<SecureSessionCoordinatorPort, "initializeForBoot">;
   runtimes: BootRuntimePort;
   publication: BootPublicationPort;
   store: BootDescriptorStorePort;
@@ -133,6 +135,16 @@ export class SwarmBootCoordinator {
 
     await domains.reconcileProjectAgentMirror();
     await domains.reconcileProjectAgentSharing();
+    try {
+      const recovery = await this.options.secureSessions.initializeForBoot();
+      this.options.logDebug("boot:secure_sessions:reconciled", {
+        destroyedSandboxCount: recovery.destroyedSandboxIds.length,
+      });
+    } catch (error) {
+      this.options.logDebug("boot:secure_sessions:reconcile_error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     await sessions.ensureMemoryFiles();
     await store.save();
     await sessions.rebuildSessionManifest();

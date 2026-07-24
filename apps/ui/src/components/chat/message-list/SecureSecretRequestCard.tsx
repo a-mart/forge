@@ -11,7 +11,9 @@ import {
 import type {
   SecureAccessRequestView,
   SecureGrantInput,
+  SecurePrivateFulfillmentInput,
   SecureSessionAvailability,
+  SecureSessionProjectContext,
   SecureSecretOption,
 } from '../secure-session/types'
 
@@ -19,6 +21,7 @@ interface SecureSecretRequestCardProps {
   request: SecureAccessRequestView
   availability: SecureSessionAvailability
   secrets: SecureSecretOption[]
+  project?: SecureSessionProjectContext
   disabled?: boolean
   onGrant: (
     grant: SecureGrantInput,
@@ -26,7 +29,7 @@ interface SecureSecretRequestCardProps {
   onDeny: (requestId: string) => void | Promise<void>
   onPrivateFulfill?: (
     requestId: string,
-    value: string | Uint8Array,
+    input: SecurePrivateFulfillmentInput,
   ) => void | Promise<void>
 }
 
@@ -34,7 +37,12 @@ function matchesRequest(
   secret: SecureSecretOption,
   request: SecureAccessRequestView,
 ): boolean {
-  if (!secret.available || !request.secretId || secret.secretId !== request.secretId) return false
+  if (!secret.available) return false
+  if (request.secretId) {
+    if (secret.secretId !== request.secretId) return false
+  } else if (secret.displayAlias !== request.secretAlias) {
+    return false
+  }
   return request.requestedBindings.every((requestedBinding) => {
     const requestedBindingKey = secureBindingKey(requestedBinding)
     return secret.bindings.some((binding) => secureBindingKey(binding) === requestedBindingKey)
@@ -45,6 +53,7 @@ export function SecureSecretRequestCard({
   request,
   availability,
   secrets,
+  project,
   disabled = false,
   onGrant,
   onDeny,
@@ -74,7 +83,9 @@ export function SecureSecretRequestCard({
       : availability.reason ?? formatSecureAvailability(availability.state)
   const canPrivateFulfill =
     Boolean(onPrivateFulfill)
+    && Boolean(project)
     && !request.secretId
+    && compatibleSecrets.length === 0
     && availability.state !== 'remote_origin'
     && availability.state !== 'unsupported_runtime'
 
@@ -86,6 +97,7 @@ export function SecureSecretRequestCard({
     try {
       await onGrant({
         requestId: request.requestId,
+        ...(!request.secretId ? { selectForMissingRequest: true } : {}),
         secretId: selectedSecret.secretId,
         bindings: request.requestedBindings,
         policy: request.requestedPolicy,
@@ -188,7 +200,7 @@ export function SecureSecretRequestCard({
         </p>
 
         <div className="flex flex-wrap gap-2">
-          {availability.state === 'available' ? (
+          {availability.state === 'available' && selectedSecret ? (
             <Button
               type="button"
               size="sm"
@@ -207,11 +219,10 @@ export function SecureSecretRequestCard({
             <Button
               type="button"
               size="sm"
-              variant="secondary"
               disabled={disabled || Boolean(resolving)}
               onClick={() => setPrivateValueOpen(true)}
             >
-              Provide unsaved value
+              Add secret and approve
             </Button>
           ) : null}
           <Button
@@ -226,10 +237,13 @@ export function SecureSecretRequestCard({
         </div>
       </div>
 
-      {privateValueOpen && onPrivateFulfill ? (
+      {privateValueOpen && onPrivateFulfill && project ? (
         <PrivateSecretValueDialog
           alias={request.secretAlias}
-          onFulfill={(value) => onPrivateFulfill(request.requestId, value)}
+          project={project}
+          requestedBindings={request.requestedBindings}
+          requestedPolicy={request.requestedPolicy}
+          onFulfill={(input) => onPrivateFulfill(request.requestId, input)}
           onClose={() => setPrivateValueOpen(false)}
         />
       ) : null}

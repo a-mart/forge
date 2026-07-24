@@ -40,6 +40,20 @@ describe("secure session server transport", () => {
     );
     expect(hostileHttpResponse.status).toBe(403);
 
+    const unauthorizedDefaultMutation = await fetch(
+      `http://${config.host}:${config.port}/api/secure-secrets/project-defaults/manager/secret-1`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      },
+    );
+    expect(unauthorizedDefaultMutation.status).toBe(403);
+    expect(await unauthorizedDefaultMutation.json()).toEqual({
+      code: "SECURE_PRIVATE_API_UNAVAILABLE",
+      error: "SECURE_PRIVATE_API_UNAVAILABLE",
+    });
+
     const hostileWebSocketStatus = await rejectedWebSocketStatus(
       `ws://${config.host}:${config.port}`,
       "https://evil.example",
@@ -86,13 +100,46 @@ describe("secure session server transport", () => {
         revision: 2,
         executionMode: "secure",
         environmentStatus: "ready",
-        leases: [],
+        leases: [{
+          leaseId: "lease-1",
+          secretId: "secret-1",
+          displayAlias: "DEPLOY_TOKEN",
+          leaseKind: "task",
+          exposures: [{
+            deliveryKind: "environment",
+            targetName: "DEPLOY_TOKEN",
+          }],
+          status: "active",
+          expiresAt: null,
+          lastUsedAt: null,
+          remainingUses: null,
+          grantSource: "project_default",
+        }],
         pendingRequests: [],
+        projectDefaults: [{
+          secretId: "secret-1",
+          displayAlias: "DEPLOY_TOKEN",
+          state: "active",
+          statusCode: "ok",
+        }],
         updatedAt: "2026-07-23T00:00:00.000Z",
       } satisfies Extract<ServerEvent, { type: "secure_session_snapshot" }>);
       await waitForEvent(managerEvents, (event) =>
         event.type === "secure_session_snapshot" && event.revision === 2
       );
+      expect(managerEvents).toContainEqual(expect.objectContaining({
+        type: "secure_session_snapshot",
+        leases: [expect.objectContaining({
+          leaseId: "lease-1",
+          grantSource: "project_default",
+        })],
+        projectDefaults: [{
+          secretId: "secret-1",
+          displayAlias: "DEPLOY_TOKEN",
+          state: "active",
+          statusCode: "ok",
+        }],
+      }));
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(otherEvents.some((event) =>
         event.type === "secure_session_snapshot"

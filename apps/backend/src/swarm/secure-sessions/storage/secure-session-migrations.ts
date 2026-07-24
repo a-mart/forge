@@ -279,6 +279,79 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         VALUES (1, 0, ?)
       `).run(now);
     }
+  },
+  {
+    version: 2,
+    name: "project_secret_defaults_and_lease_grant_source",
+    up(database) {
+      database.exec(`
+        CREATE TABLE secure_session_project_default (
+          profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 256),
+          secret_id TEXT NOT NULL
+            REFERENCES secure_session_secret(secret_id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (profile_id, secret_id)
+        ) STRICT;
+
+        CREATE INDEX secure_session_project_default_secret_idx
+          ON secure_session_project_default(secret_id, profile_id);
+
+        ALTER TABLE secure_session_lease
+          ADD COLUMN grant_source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (grant_source IN ('manual', 'access_request', 'project_default'));
+
+        UPDATE secure_session_lease
+        SET grant_source = 'access_request'
+        WHERE request_id IS NOT NULL;
+
+        CREATE TABLE secure_session_audit_v2 (
+          audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_type TEXT NOT NULL CHECK (event_type IN (
+            'provider_upserted', 'provider_backend_updated', 'provider_deleted',
+            'secret_created', 'secret_updated', 'secret_deleted', 'binding_put',
+            'binding_deleted', 'project_default_put', 'project_default_deleted',
+            'session_initialized', 'fork_initialized', 'request_created',
+            'request_resolved', 'lease_created', 'lease_revoked', 'leases_expired',
+            'lease_used', 'lease_consumed', 'session_revoked', 'session_deleted',
+            'session_runtime_updated', 'exposure_opened', 'exposure_closed'
+          )),
+          session_agent_id TEXT CHECK (
+            session_agent_id IS NULL OR length(session_agent_id) BETWEEN 1 AND 256
+          ),
+          profile_id TEXT CHECK (
+            profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 256
+          ),
+          provider_id TEXT CHECK (provider_id IS NULL OR length(provider_id) BETWEEN 1 AND 256),
+          secret_id TEXT CHECK (secret_id IS NULL OR length(secret_id) BETWEEN 1 AND 256),
+          binding_id TEXT CHECK (binding_id IS NULL OR length(binding_id) BETWEEN 1 AND 256),
+          request_id TEXT CHECK (request_id IS NULL OR length(request_id) BETWEEN 1 AND 256),
+          lease_id TEXT CHECK (lease_id IS NULL OR length(lease_id) BETWEEN 1 AND 256),
+          operation_id TEXT CHECK (operation_id IS NULL OR length(operation_id) BETWEEN 1 AND 256),
+          outcome TEXT NOT NULL CHECK (outcome IN (
+            'created', 'updated', 'deleted', 'approved', 'denied', 'cancelled',
+            'revoked', 'expired', 'reserved', 'succeeded', 'failed', 'completed'
+          )),
+          occurred_at TEXT NOT NULL
+        ) STRICT;
+
+        INSERT INTO secure_session_audit_v2 (
+          audit_id, event_type, session_agent_id, profile_id, provider_id,
+          secret_id, binding_id, request_id, lease_id, operation_id, outcome,
+          occurred_at
+        )
+        SELECT audit_id, event_type, session_agent_id, NULL, provider_id,
+          secret_id, binding_id, request_id, lease_id, operation_id, outcome,
+          occurred_at
+        FROM secure_session_audit
+        ORDER BY audit_id;
+
+        DROP TABLE secure_session_audit;
+        ALTER TABLE secure_session_audit_v2 RENAME TO secure_session_audit;
+        CREATE INDEX secure_session_audit_session_idx
+          ON secure_session_audit(session_agent_id, audit_id);
+      `);
+    }
   }
 ];
 

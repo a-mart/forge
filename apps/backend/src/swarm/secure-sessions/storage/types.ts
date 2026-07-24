@@ -40,6 +40,14 @@ export type SecureSessionDeliveryKind = (typeof SECURE_SESSION_DELIVERY_KINDS)[n
 export const SECURE_SESSION_LEASE_KINDS = ["task", "timed", "one_use"] as const;
 export type SecureSessionLeaseKind = (typeof SECURE_SESSION_LEASE_KINDS)[number];
 
+export const SECURE_SESSION_LEASE_GRANT_SOURCES = [
+  "manual",
+  "access_request",
+  "project_default"
+] as const;
+export type SecureSessionLeaseGrantSource =
+  (typeof SECURE_SESSION_LEASE_GRANT_SOURCES)[number];
+
 export const SECURE_SESSION_LEASE_STATES = ["active", "consumed", "revoked", "expired"] as const;
 export type SecureSessionLeaseState = (typeof SECURE_SESSION_LEASE_STATES)[number];
 
@@ -118,6 +126,23 @@ export interface SecureSessionSecret {
   updatedAt: string;
 }
 
+export interface SecureSessionProjectDefault {
+  profileId: string;
+  secretId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PutSecureSessionProjectDefaultInput {
+  profileId: string;
+  secretId: string;
+}
+
+export interface DeleteSecureSessionProjectStateResult {
+  projectDefaultsDeleted: number;
+  secretsDeleted: number;
+}
+
 export interface SecureSessionEncryptedSecret extends SecureSessionSecret {
   /** Electron safeStorage ciphertext, never plaintext and never included in list/snapshot APIs. */
   encryptedMaterial: Buffer | null;
@@ -181,6 +206,7 @@ export interface SecureSessionLease {
   sessionAgentId: string;
   secretId: string;
   requestId: string | null;
+  grantSource: SecureSessionLeaseGrantSource;
   leaseKind: SecureSessionLeaseKind;
   state: SecureSessionLeaseState;
   bindingIds: string[];
@@ -250,6 +276,7 @@ export interface CreateSecureSessionLeaseInput {
   secretId: string;
   bindingIds: readonly string[];
   leaseKind: SecureSessionLeaseKind;
+  grantSource?: SecureSessionLeaseGrantSource;
   requestId?: string | null;
   baseRevision: number;
   expiresAt?: string | null;
@@ -260,6 +287,7 @@ export interface CreateSecureSessionLeaseGrantInput {
   secretId: string;
   bindingIds: readonly string[];
   leaseKind: SecureSessionLeaseKind;
+  grantSource?: SecureSessionLeaseGrantSource;
   requestId?: string | null;
   expiresAt?: string | null;
 }
@@ -333,6 +361,7 @@ export interface SecureSessionAuditRecord {
   auditId: number;
   eventType: string;
   sessionAgentId: string | null;
+  profileId: string | null;
   providerId: string | null;
   secretId: string | null;
   bindingId: string | null;

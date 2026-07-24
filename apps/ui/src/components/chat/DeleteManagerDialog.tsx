@@ -37,7 +37,7 @@ export function DeleteManagerDialog({
           <DialogTitle>Delete manager</DialogTitle>
           {managerToDelete ? (
             <DialogDescription>
-              {`Delete ${managerToDelete.agentId} and its nested workers? This cannot be undone.`}
+              {`Delete ${managerToDelete.agentId}, its nested workers, project-only secrets, and project secret defaults? Secrets available to all projects are kept. This cannot be undone.`}
             </DialogDescription>
           ) : null}
         </DialogHeader>

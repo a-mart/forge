@@ -451,7 +451,7 @@ function requestAccessTool(
     name: "request_secret_access",
     label: "Request Secret Access",
     description:
-      "Request user approval to use an available secret display alias in this Builder session. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
+      "Request user approval to use a secret display alias in this Builder session. If the alias is not saved yet, this proposes a new secret for the user to provide privately. Supply only the alias, a bounded purpose, lease policy, and guest exposure bindings; never supply secret material.",
     parameters: requestSecretAccessSchema,
     async execute(toolCallId, params) {
       let input: RequestSecureSecretAccessToolInput;

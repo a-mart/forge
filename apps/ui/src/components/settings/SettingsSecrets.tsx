@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Database, Link2, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,12 +12,15 @@ import {
 import { SecretBindingsPanel } from './secrets/SecretBindingsPanel'
 import { SecretCatalogPanel } from './secrets/SecretCatalogPanel'
 import { SecretSourcesPanel } from './secrets/SecretSourcesPanel'
+import type { ManagerProfile } from '@forge/protocol'
 
 interface SettingsSecretsProps {
   apiClient: SettingsApiClient
+  profiles: ManagerProfile[]
+  currentProfileId?: string
 }
 
-export function SettingsSecrets({ apiClient }: SettingsSecretsProps) {
+export function SettingsSecrets({ apiClient, profiles, currentProfileId }: SettingsSecretsProps) {
   if (apiClient.target.kind !== 'builder') {
     return (
       <div className="rounded-md border border-border bg-card/40 p-4">
@@ -34,24 +37,66 @@ export function SettingsSecrets({ apiClient }: SettingsSecretsProps) {
     )
   }
 
-  return <BuilderSecretsSettings apiClient={apiClient} />
+  return (
+    <BuilderSecretsSettings
+      apiClient={apiClient}
+      profiles={profiles}
+      currentProfileId={currentProfileId}
+    />
+  )
 }
 
-function BuilderSecretsSettings({ apiClient }: SettingsSecretsProps) {
+function BuilderSecretsSettings({
+  apiClient,
+  profiles,
+  currentProfileId,
+}: SettingsSecretsProps) {
   const [catalog, setCatalog] = useState<SecureSecretsCatalog>({
     providers: [],
     secrets: [],
+    projectDefaults: [],
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [materialEntryAvailable, setMaterialEntryAvailable] = useState(false)
+  const projectProfiles = useMemo(
+    () => profiles.filter((profile) =>
+      profile.profileType !== 'system' && !profile.archivedAt
+    ),
+    [profiles],
+  )
+  const initialProfileId = projectProfiles.some(
+    (profile) => profile.profileId === currentProfileId,
+  )
+    ? currentProfileId
+    : projectProfiles[0]?.profileId
+  const projectProfileIds = useMemo(
+    () => new Set(projectProfiles.map((profile) => profile.profileId)),
+    [projectProfiles],
+  )
+  const visibleSecrets = useMemo(
+    () => catalog.secrets.filter((secret) =>
+      secret.scope.kind === 'instance' || projectProfileIds.has(secret.scope.profileId)
+    ),
+    [catalog.secrets, projectProfileIds],
+  )
+  const visibleProjectDefaults = useMemo(
+    () => catalog.projectDefaults.filter((projectDefault) =>
+      projectProfileIds.has(projectDefault.profileId)
+    ),
+    [catalog.projectDefaults, projectProfileIds],
+  )
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      setCatalog(await fetchSecureSecretsCatalog(apiClient))
+      const nextCatalog = await fetchSecureSecretsCatalog(apiClient)
+      setCatalog({
+        ...nextCatalog,
+        projectDefaults: nextCatalog.projectDefaults ?? [],
+      })
     } catch (loadError) {
       setError(secureSecretsErrorMessage(loadError))
     } finally {
@@ -90,7 +135,8 @@ function BuilderSecretsSettings({ apiClient }: SettingsSecretsProps) {
           <h2 className="text-lg font-semibold tracking-tight">Secrets</h2>
           <p className="text-sm text-muted-foreground">
             Save private values or external references. Forge creates a safe default delivery
-            automatically, but no task receives access until you grant it.
+            automatically. Access still requires a grant unless you explicitly enable a project
+            default.
           </p>
         </div>
         <Button
@@ -158,7 +204,10 @@ function BuilderSecretsSettings({ apiClient }: SettingsSecretsProps) {
             <SecretCatalogPanel
               apiClient={apiClient}
               providers={catalog.providers}
-              secrets={catalog.secrets}
+              secrets={visibleSecrets}
+              projectDefaults={visibleProjectDefaults}
+              profiles={projectProfiles}
+              initialProfileId={initialProfileId}
               materialEntryAvailable={materialEntryAvailable}
               onChanged={handleChanged}
               onError={handleError}
@@ -167,7 +216,7 @@ function BuilderSecretsSettings({ apiClient }: SettingsSecretsProps) {
           <TabsContent value="bindings">
             <SecretBindingsPanel
               apiClient={apiClient}
-              secrets={catalog.secrets}
+              secrets={visibleSecrets}
               onChanged={handleChanged}
               onError={handleError}
             />

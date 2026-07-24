@@ -5,6 +5,8 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { runSecureSessionMigrations } from "../secure-sessions/storage/secure-session-migrations.js";
 import {
+  SecureSessionAliasConflictError,
+  SecureSessionRequestExpiredError,
   SecureSessionRevisionConflictError,
   SecureSessionStore
 } from "../secure-sessions/storage/secure-session-store.js";
@@ -85,6 +87,18 @@ describe("SecureSessionStore", () => {
       projectId: "project-1",
       encryptedAccessToken: Buffer.from("safe-storage-token-ciphertext")
     });
+    store.createSecret({
+      secretId: "bws-secret",
+      providerId: "bws",
+      displayAlias: "deploy-token",
+      scopeKind: "instance",
+      retention: "saved",
+      sourceLocator: "00000000-0000-4000-8000-000000000001"
+    });
+    store.putProjectDefault({
+      profileId: "project-a",
+      secretId: "bws-secret"
+    });
 
     expect(store.listProviders()[0]).not.toHaveProperty("encryptedAccessToken");
     expect(store.listProviders()[0]).not.toHaveProperty("serverOrigin");
@@ -97,6 +111,17 @@ describe("SecureSessionStore", () => {
     });
     expect(store.deleteProvider("bws")).toBe(true);
     expect(store.getProviderBackendConfig("bws")).toBeNull();
+    expect(store.getSecret("bws-secret")).toBeNull();
+    expect(store.listProjectDefaults("project-a")).toEqual([]);
+    expect(store.listAudit().filter(({ eventType }) =>
+      eventType === "project_default_deleted"
+    )).toEqual([
+      expect.objectContaining({
+        profileId: "project-a",
+        secretId: "bws-secret",
+        outcome: "deleted"
+      })
+    ]);
     database.close();
   });
 
@@ -415,6 +440,7 @@ describe("SecureSessionStore", () => {
     const options = { dbPath, loadDatabaseModule: async () => Database };
     const first = await SecureSessionStore.open(options, () => new Date(NOW));
     seedLocalCatalog(first);
+    first.putProjectDefault({ profileId: "profile", secretId: "secret" });
     first.getOrCreateSessionState("session", { profileId: "profile" });
     first.createRequest({
       requestId: "request",
@@ -426,22 +452,327 @@ describe("SecureSessionStore", () => {
       requestedByAgentId: "worker",
       requestedByDisplayName: "Worker"
     });
+    first.createLease({
+      leaseId: "project-default-lease",
+      sessionAgentId: "session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      grantSource: "project_default",
+      baseRevision: 1
+    });
     await first.close();
 
     const second = await SecureSessionStore.open(options, () => new Date(NOW));
     expect(second.getSnapshot("session")).toEqual(expect.objectContaining({
-      state: expect.objectContaining({ revision: 1, profileId: "profile" }),
+      state: expect.objectContaining({ revision: 2, profileId: "profile" }),
+      leases: [expect.objectContaining({
+        leaseId: "project-default-lease",
+        grantSource: "project_default"
+      })],
       requests: [expect.objectContaining({
         requestId: "request",
         secretId: null,
         requestedExposures: [expect.objectContaining({ deliveryKind: "stdin" })]
       })]
     }));
+    expect(second.listProjectDefaults("profile")).toEqual([
+      expect.objectContaining({ secretId: "secret" })
+    ]);
     await second.close();
 
     const verification = new Database(dbPath, { readonly: true });
     expect(verification.pragma("quick_check", { simple: true })).toBe("ok");
     verification.close();
+  });
+
+  it("stores project defaults with audit metadata and revokes only their automatic leases", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    const defaultRecord = store.putProjectDefault({
+      profileId: "project-a",
+      secretId: "secret"
+    });
+    expect(defaultRecord).toEqual({
+      profileId: "project-a",
+      secretId: "secret",
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    expect(store.putProjectDefault({
+      profileId: "project-a",
+      secretId: "secret"
+    })).toEqual(defaultRecord);
+
+    store.getOrCreateSessionState("session", {
+      profileId: "project-a",
+      executionMode: "secure"
+    });
+    store.createLease({
+      leaseId: "manual",
+      sessionAgentId: "session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      grantSource: "manual",
+      baseRevision: 0
+    });
+    store.createLease({
+      leaseId: "automatic",
+      sessionAgentId: "session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      grantSource: "project_default",
+      baseRevision: 1
+    });
+    expect(store.listActiveProjectDefaultLeases("project-a")).toEqual([
+      expect.objectContaining({
+        leaseId: "automatic",
+        grantSource: "project_default"
+      })
+    ]);
+
+    expect(store.deleteProjectDefault("project-a", "secret")).toBe(true);
+    expect(store.getSnapshot("session").leases).toEqual([
+      expect.objectContaining({ leaseId: "manual", state: "active" }),
+      expect.objectContaining({
+        leaseId: "automatic",
+        state: "revoked",
+        revocationReason: "policy_changed"
+      })
+    ]);
+    const projectPolicyAudit = store.listAudit().filter(({ eventType }) =>
+      eventType === "project_default_put" || eventType === "project_default_deleted"
+    );
+    expect(projectPolicyAudit).toEqual([
+      expect.objectContaining({
+        eventType: "project_default_put",
+        profileId: "project-a",
+        secretId: "secret"
+      }),
+      expect.objectContaining({
+        eventType: "project_default_deleted",
+        profileId: "project-a",
+        secretId: "secret"
+      })
+    ]);
+    expect(JSON.stringify(projectPolicyAudit)).not.toContain("safe-storage-ciphertext");
+    expect(JSON.stringify(projectPolicyAudit)).not.toContain("sourceLocator");
+    database.close();
+  });
+
+  it("enforces project ownership, prunes invalid defaults on scope changes, and cleans up projects", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    store.createSecretWithBindings({
+      secret: {
+        secretId: "project-secret",
+        providerId: "local",
+        displayAlias: "project-token",
+        scopeKind: "profile",
+        profileId: "project-a",
+        retention: "saved",
+        sourceLocator: "local:project-secret",
+        encryptedMaterial: Buffer.from("safe-storage-project-ciphertext")
+      },
+      bindings: [{
+        bindingId: "project-binding",
+        deliveryKind: "environment",
+        targetName: "PROJECT_TOKEN"
+      }]
+    });
+    store.putProjectDefault({ profileId: "project-a", secretId: "project-secret" });
+    expect(() => store.putProjectDefault({
+      profileId: "project-b",
+      secretId: "project-secret"
+    })).toThrow(/another project's secret/);
+
+    store.updateSecret({
+      secretId: "project-secret",
+      providerId: "local",
+      displayAlias: "project-token",
+      scopeKind: "profile",
+      profileId: "project-b",
+      retention: "saved",
+      sourceLocator: "local:project-secret",
+      encryptedMaterial: Buffer.from("safe-storage-project-ciphertext")
+    });
+    expect(store.listProjectDefaults()).toEqual([]);
+    store.putProjectDefault({ profileId: "project-b", secretId: "project-secret" });
+    store.putProjectDefault({ profileId: "project-b", secretId: "secret" });
+    expect(store.deleteProjectSecretState("project-b")).toEqual({
+      projectDefaultsDeleted: 2,
+      secretsDeleted: 1
+    });
+    expect(store.getSecret("project-secret")).toBeNull();
+    expect(store.getSecret("secret")).not.toBeNull();
+    expect(store.listProjectDefaults("project-b")).toEqual([]);
+    store.putProjectDefault({ profileId: "project-c", secretId: "secret" });
+    expect(store.deleteSecret("secret")).toBe(true);
+    expect(store.listProjectDefaults("project-c")).toEqual([]);
+
+    store.createSecret({
+      secretId: "session-secret",
+      providerId: "local",
+      displayAlias: "session-token",
+      scopeKind: "profile",
+      profileId: "project-b",
+      retention: "session",
+      sourceLocator: "local:session-secret",
+      encryptedMaterial: Buffer.from("safe-storage-session-ciphertext")
+    });
+    expect(() => store.putProjectDefault({
+      profileId: "project-b",
+      secretId: "session-secret"
+    })).toThrow(/Session-only secrets/);
+    database.close();
+  });
+
+  it("atomically selects an existing secret for an alias-miss request and expires stale requests", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    store.getOrCreateSessionState("session", { profileId: "project" });
+    store.createRequest({
+      requestId: "request",
+      sessionAgentId: "session",
+      displayAlias: "deploy-token",
+      requestedExposures: [{
+        deliveryKind: "environment",
+        targetName: "TOKEN"
+      }],
+      requestedLeaseKind: "task",
+      purposeSummary: "Deploy",
+      requestedByAgentId: "agent",
+      requestedByDisplayName: "Agent"
+    });
+    const granted = store.createLease({
+      leaseId: "lease",
+      sessionAgentId: "session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      requestId: "request",
+      baseRevision: 1
+    });
+    expect(granted.snapshot).toEqual(expect.objectContaining({
+      requests: [],
+      leases: [expect.objectContaining({
+        leaseId: "lease",
+        requestId: "request",
+        grantSource: "access_request"
+      })]
+    }));
+
+    store.getOrCreateSessionState("expired-session", { profileId: "project" });
+    store.createRequest({
+      requestId: "expired-request",
+      sessionAgentId: "expired-session",
+      secretId: "secret",
+      displayAlias: "deploy-token",
+      requestedExposures: [{
+        deliveryKind: "environment",
+        targetName: "TOKEN"
+      }],
+      requestedLeaseKind: "task",
+      purposeSummary: "Deploy",
+      requestedByAgentId: "agent",
+      requestedByDisplayName: "Agent",
+      expiresAt: "2026-07-23T11:59:59.000Z"
+    });
+    expect(() => store.createLease({
+      leaseId: "expired-lease",
+      sessionAgentId: "expired-session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      requestId: "expired-request",
+      baseRevision: 1
+    })).toThrow(SecureSessionRequestExpiredError);
+    expect(store.expireRequests(NOW, "expired-session")).toEqual([
+      expect.objectContaining({
+        changed: true,
+        snapshot: expect.objectContaining({ requests: [] })
+      })
+    ]);
+    database.close();
+  });
+
+  it("rolls back saved fulfillment and keeps the request pending when lease creation fails", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    store.getOrCreateSessionState("session", { profileId: "project" });
+    store.createRequest({
+      requestId: "request",
+      sessionAgentId: "session",
+      displayAlias: "new-token",
+      requestedExposures: [{
+        deliveryKind: "environment",
+        targetName: "NEW_TOKEN"
+      }],
+      requestedLeaseKind: "task",
+      purposeSummary: "Deploy",
+      requestedByAgentId: "agent",
+      requestedByDisplayName: "Agent"
+    });
+
+    expect(() => store.withTransaction(() => {
+      const created = store.createSecretWithBindings({
+        secret: {
+          secretId: "new-secret",
+          providerId: "local",
+          displayAlias: "new-token",
+          scopeKind: "profile",
+          profileId: "project",
+          retention: "saved",
+          sourceLocator: "local:new-secret",
+          encryptedMaterial: Buffer.from("safe-storage-new-ciphertext")
+        },
+        bindings: [{
+          bindingId: "new-binding",
+          deliveryKind: "environment",
+          targetName: "NEW_TOKEN"
+        }]
+      });
+      store.putProjectDefault({ profileId: "project", secretId: "new-secret" });
+      store.createLease({
+        leaseId: "new-lease",
+        sessionAgentId: "session",
+        secretId: "new-secret",
+        requestId: "request",
+        bindingIds: created.bindings.map(({ bindingId }) => bindingId),
+        leaseKind: "task",
+        baseRevision: 0
+      });
+    })).toThrow(SecureSessionRevisionConflictError);
+
+    expect(store.getSecret("new-secret")).toBeNull();
+    expect(store.listProjectDefaults("project")).toEqual([]);
+    expect(store.getSnapshot("session")).toEqual(expect.objectContaining({
+      state: expect.objectContaining({ revision: 1 }),
+      leases: [],
+      requests: [expect.objectContaining({
+        requestId: "request",
+        secretId: null,
+        state: "pending"
+      })]
+    }));
+    database.close();
+  });
+
+  it("reports a stable domain conflict for duplicate aliases in one scope", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    expect(() => store.createSecret({
+      secretId: "duplicate",
+      providerId: "local",
+      displayAlias: "deploy-token",
+      scopeKind: "instance",
+      retention: "saved",
+      sourceLocator: "local:duplicate",
+      encryptedMaterial: Buffer.from("safe-storage-duplicate-ciphertext")
+    })).toThrow(SecureSessionAliasConflictError);
+    database.close();
   });
 });
 

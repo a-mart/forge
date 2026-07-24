@@ -26,14 +26,11 @@ import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-st
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { SecretsEnvService } from "./secrets-env-service.js";
-import { type SecureSessionLifecyclePort, type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
+import { type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
+import type { SecureSessionCoordinatorPort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import type { SkillMetadata } from "./skill-metadata-service.js";
-import {
-  cleanupOldSharedConfigPaths,
-  migrateSharedConfigLayout,
-  removeRetiredPlanningArtifacts,
-} from "./shared-config-migration.js";
+import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout, removeRetiredPlanningArtifacts } from "./shared-config-migration.js";
 import { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import { SwarmBootCoordinator } from "./swarm-boot-coordinator.js";
 import { SwarmCompactionCoordinator } from "./swarm-compaction-coordinator.js";
@@ -246,7 +243,7 @@ export interface SwarmManagerRuntimeCompositionOptions {
   };
   toolHost: SwarmToolHost;
   browserAutomation: BrowserAutomationService;
-  secureSessions: SecureSessionLifecyclePort;
+  secureSessions: SecureSessionCoordinatorPort;
   descriptors: RuntimeCompositionDescriptorMutations;
   events: RuntimeCompositionEvents;
   messaging: RuntimeCompositionMessaging;
@@ -955,6 +952,7 @@ export class SwarmManagerRuntimeComposition {
         startCompactionCountBackfill: () => services.knowledge.startCompactionCountBackfill(),
         loadConversationHistories: () => services.conversation.loadConversationHistoriesFromStore(),
       },
+      secureSessions: this.options.secureSessions,
       runtimes: {
         sortedDescriptors: () => services.directory.sortedDescriptors(),
         shouldRestore: (descriptor) => lifecycle.shouldRestoreRuntimeForDescriptor(descriptor),

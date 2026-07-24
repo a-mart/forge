@@ -38,6 +38,7 @@ function formatExpiry(expiresAt: string): string {
 
 function leaseDescription(lease: SecureLeaseView): string {
   const parts = [
+    lease.grantSource === 'project_default' ? 'Project default' : '',
     formatSecurePolicy(lease.policy),
     lease.bindings.map(formatSecureBinding).join(', '),
   ]
@@ -46,6 +47,26 @@ function leaseDescription(lease: SecureLeaseView): string {
     parts.push(`${lease.remainingUses} ${lease.remainingUses === 1 ? 'use' : 'uses'} left`)
   }
   return parts.filter(Boolean).join(' · ')
+}
+
+function projectDefaultsDescription(
+  projectDefaults: NonNullable<SecureSessionPickerConfig['snapshot']>['projectDefaults'],
+): string | null {
+  if (!projectDefaults?.length) return null
+  const unavailableCount = projectDefaults.filter(
+    (entry) => entry.state === 'unavailable',
+  ).length
+  const conflictCount = projectDefaults.filter(
+    (entry) => entry.state === 'conflict',
+  ).length
+  const readyCount = projectDefaults.length - unavailableCount - conflictCount
+  const parts = [
+    `${projectDefaults.length} project ${projectDefaults.length === 1 ? 'default' : 'defaults'}`,
+    `${readyCount} ready`,
+  ]
+  if (unavailableCount > 0) parts.push(`${unavailableCount} unavailable`)
+  if (conflictCount > 0) parts.push(`${conflictCount} conflict`)
+  return parts.join(' · ')
 }
 
 function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number): {
@@ -167,6 +188,9 @@ export function SecureSessionPicker({
     [activeLeases, config.secrets],
   )
   const state = pickerState(config, activeLeases.length)
+  const projectDefaultsSummary = projectDefaultsDescription(
+    config.snapshot?.projectDefaults,
+  )
   const canGrant =
     config.availability.state === 'available'
     && config.snapshot?.executionMode === 'secure'
@@ -268,6 +292,15 @@ export function SecureSessionPicker({
                 {config.outputStateReason
                   ?? 'Forge removed protected material before it reached the agent. The Secure Session remains active.'}
               </p>
+            </div>
+          ) : null}
+
+          {projectDefaultsSummary ? (
+            <div
+              className="rounded-md border border-border/70 bg-muted/35 p-2.5 text-xs text-muted-foreground"
+              aria-label="Project default status"
+            >
+              {projectDefaultsSummary}
             </div>
           ) : null}
 

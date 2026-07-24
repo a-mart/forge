@@ -2,7 +2,9 @@ import type { SettingsApiClient } from '@/components/settings/settings-api-clien
 import type {
   SecureSecretBinding,
   SecureSecretCatalog,
+  SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
+  SecureSecretScope,
   SecureSecretSummary,
 } from '@forge/protocol'
 
@@ -10,17 +12,22 @@ export type {
   SecureSecretBinding,
   SecureSecretDeliveryKind,
   SecureSecretProviderKind,
+  SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
+  SecureSecretScope,
   SecureSecretSourceStatus,
   SecureSecretSummary,
 } from '@forge/protocol'
 
-export type SecureSecretsCatalog = Pick<SecureSecretCatalog, 'providers' | 'secrets'>
+export type SecureSecretsCatalog =
+  Pick<SecureSecretCatalog, 'providers' | 'secrets'>
+  & { projectDefaults: SecureSecretProjectDefaultSummary[] }
 
 export interface CreateLocalSecretInput {
   displayAlias: string
   displayName?: string
   material: string
+  scope: SecureSecretScope
 }
 
 export interface UpdateSecureSecretInput {
@@ -28,6 +35,7 @@ export interface UpdateSecureSecretInput {
   displayName?: string | null
   material?: string
   bindings?: SecureSecretBinding[]
+  scope?: SecureSecretScope
 }
 
 export interface ConnectBitwardenInput {
@@ -44,6 +52,7 @@ export interface ImportBitwardenSecretInput {
   displayAlias: string
   displayName?: string
   bindings?: SecureSecretBinding[]
+  scope: SecureSecretScope
 }
 
 export interface SecureSecretProviderTestResult {
@@ -77,6 +86,8 @@ export type SecureSecretsErrorCode =
   | 'SECURE_SOURCE_LOCKED'
   | 'SECURE_SOURCE_UNAVAILABLE'
   | 'SECURE_PROVIDER_AUTH_REQUIRED'
+  | 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED'
+  | 'SECURE_SECRET_ALIAS_CONFLICT'
   | 'SECURE_SECRET_NOT_FOUND'
   | 'SECURE_STALE_REVISION'
   | 'SECURE_OPERATION_FAILED'
@@ -88,6 +99,9 @@ const ERROR_MESSAGES: Record<SecureSecretsErrorCode, string> = {
   SECURE_SOURCE_LOCKED: 'The secret source is locked. Unlock it and try again.',
   SECURE_SOURCE_UNAVAILABLE: 'The secret source is currently unavailable.',
   SECURE_PROVIDER_AUTH_REQUIRED: 'The secret source needs to be connected again.',
+  SECURE_PROJECT_DEFAULT_LIMIT_REACHED:
+    'This project already has the maximum number of automatic secrets. Disable one before enabling another.',
+  SECURE_SECRET_ALIAS_CONFLICT: 'A secret with this alias already exists in that scope.',
   SECURE_SECRET_NOT_FOUND: 'That saved secret no longer exists.',
   SECURE_STALE_REVISION: 'Secret settings changed elsewhere. Refresh and try again.',
   SECURE_OPERATION_FAILED: 'The secure secrets operation could not be completed.',
@@ -129,7 +143,7 @@ export async function fetchSecureSecretsCatalog(
   apiClient: SettingsApiClient,
 ): Promise<SecureSecretsCatalog> {
   assertBuilderTarget(apiClient)
-  const [providerPayload, secretPayload] = await Promise.all([
+  const [providerPayload, secretPayload, projectDefaultPayload] = await Promise.all([
     requestJson<SecureSecretProviderSummary[] | { providers: SecureSecretProviderSummary[] }>(
       apiClient,
       '/api/secure-secrets/providers',
@@ -138,11 +152,21 @@ export async function fetchSecureSecretsCatalog(
       apiClient,
       '/api/secure-secrets',
     ),
+    requestJson<
+      SecureSecretProjectDefaultSummary[]
+      | { projectDefaults: SecureSecretProjectDefaultSummary[] }
+    >(
+      apiClient,
+      '/api/secure-secrets/project-defaults',
+    ),
   ])
 
   return {
     providers: Array.isArray(providerPayload) ? providerPayload : providerPayload.providers,
     secrets: Array.isArray(secretPayload) ? secretPayload : secretPayload.secrets,
+    projectDefaults: Array.isArray(projectDefaultPayload)
+      ? projectDefaultPayload
+      : projectDefaultPayload.projectDefaults,
   }
 }
 
@@ -159,6 +183,7 @@ export async function createLocalSecret(
       displayAlias: input.displayAlias,
       ...(input.displayName ? { displayName: input.displayName } : {}),
       encryptedMaterial,
+      scope: input.scope,
     }),
   })
 }
@@ -183,6 +208,7 @@ export async function updateSecureSecret(
         ...(input.displayAlias === undefined ? {} : { displayAlias: input.displayAlias }),
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         ...(input.bindings === undefined ? {} : { bindings: input.bindings }),
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
         ...(encryptedMaterial === undefined ? {} : { encryptedMaterial }),
       }),
     },
@@ -241,7 +267,26 @@ export async function importBitwardenSecret(
         displayAlias: input.displayAlias,
         ...(input.displayName ? { displayName: input.displayName } : {}),
         ...(input.bindings ? { bindings: input.bindings } : {}),
+        scope: input.scope,
       }),
+    },
+  )
+}
+
+export async function updateSecureSecretProjectDefault(
+  apiClient: SettingsApiClient,
+  profileId: string,
+  secretId: string,
+  enabled: boolean,
+): Promise<SecureSecretProjectDefaultSummary | null> {
+  assertBuilderTarget(apiClient)
+  return await requestJson<SecureSecretProjectDefaultSummary | null>(
+    apiClient,
+    `/api/secure-secrets/project-defaults/${encodeURIComponent(profileId)}/${encodeURIComponent(secretId)}`,
+    {
+      method: 'PUT',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ enabled }),
     },
   )
 }

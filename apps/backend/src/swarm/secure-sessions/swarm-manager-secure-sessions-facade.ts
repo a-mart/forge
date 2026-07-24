@@ -4,6 +4,7 @@ import type {
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureSecretProviderSummary,
+  SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
   SecureSessionSnapshot,
 } from "@forge/protocol";
@@ -59,6 +60,19 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   listSecureSecrets(): Promise<SecureSecretSummary[]> {
     return this.secureSessions.listSecureSecrets();
+  }
+
+  listSecureSecretProjectDefaults(
+    profileId?: string,
+  ): Promise<SecureSecretProjectDefaultSummary[]> {
+    return this.secureSessions.listSecureSecretProjectDefaults(profileId);
+  }
+
+  setSecureSecretProjectDefault(
+    secretId: string,
+    input: { profileId: string; enabled: boolean },
+  ): Promise<SecureSecretProjectDefaultSummary | null> {
+    return this.secureSessions.setSecureSecretProjectDefault(secretId, input);
   }
 
   createLocalSecureSecret(input: CreateLocalSecureSecretInput): Promise<SecureSecretSummary> {

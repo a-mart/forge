@@ -80,4 +80,79 @@ describe("secure session migrations", () => {
     `).run()).toThrow();
     database.close();
   });
+
+  it("backfills lease grant provenance and preserves the audit ledger from v1", () => {
+    const database = new Database(":memory:");
+    database.pragma("foreign_keys = ON");
+    database.exec(`
+      CREATE TABLE secure_session_schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        applied_at TEXT NOT NULL
+      ) STRICT
+    `);
+    SECURE_SESSION_MIGRATIONS[0]!.up(database);
+    database.prepare(`
+      INSERT INTO secure_session_schema_migrations (version, name, applied_at)
+      VALUES (1, ?, 't')
+    `).run(SECURE_SESSION_MIGRATIONS[0]!.name);
+    database.exec(`
+      INSERT INTO secure_session_provider (
+        provider_id, kind, display_name, enabled, status, last_status_code,
+        created_at, updated_at
+      ) VALUES ('local', 'local_keychain', 'Local', 1, 'available', 'ok', 't', 't');
+      INSERT INTO secure_session_secret (
+        secret_id, provider_id, display_alias, scope_kind, profile_id, retention,
+        source_locator, encrypted_material, created_at, updated_at
+      ) VALUES (
+        'secret', 'local', 'deploy', 'instance', NULL, 'saved', 'local',
+        x'01', 't', 't'
+      );
+      INSERT INTO secure_session_binding (
+        binding_id, secret_id, delivery_kind, target_name, created_at, updated_at
+      ) VALUES ('binding', 'secret', 'environment', 'TOKEN', 't', 't');
+      INSERT INTO secure_session_state (
+        session_agent_id, revision, profile_id, execution_mode,
+        environment_status, created_at, updated_at
+      ) VALUES ('session', 2, 'profile', 'secure', 'ready', 't', 't');
+      INSERT INTO secure_session_request (
+        request_id, session_agent_id, secret_id, display_alias,
+        requested_lease_kind, purpose_summary, requested_by_agent_id,
+        requested_by_display_name, state, requested_at, resolved_at
+      ) VALUES (
+        'request', 'session', 'secret', 'deploy', 'task', 'Deploy',
+        'agent', 'Agent', 'approved', 't', 't'
+      );
+      INSERT INTO secure_session_lease (
+        lease_id, session_agent_id, secret_id, request_id, lease_kind, state,
+        issued_revision, updated_revision, remaining_uses, created_at, updated_at
+      ) VALUES
+        ('manual', 'session', 'secret', NULL, 'task', 'active', 1, 1, NULL, 't', 't'),
+        ('requested', 'session', 'secret', 'request', 'task', 'active', 2, 2, NULL, 't', 't');
+      INSERT INTO secure_session_audit (
+        event_type, session_agent_id, secret_id, lease_id, outcome, occurred_at
+      ) VALUES ('lease_created', 'session', 'secret', 'manual', 'created', 't');
+    `);
+
+    runSecureSessionMigrations(database);
+
+    expect(database.prepare(`
+      SELECT lease_id, grant_source
+      FROM secure_session_lease
+      ORDER BY lease_id
+    `).all()).toEqual([
+      { lease_id: "manual", grant_source: "manual" },
+      { lease_id: "requested", grant_source: "access_request" }
+    ]);
+    expect(database.prepare(`
+      SELECT event_type, profile_id, secret_id
+      FROM secure_session_audit
+    `).all()).toEqual([{
+      event_type: "lease_created",
+      profile_id: null,
+      secret_id: "secret"
+    }]);
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
 });

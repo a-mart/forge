@@ -62,6 +62,21 @@ export type FulfillSecureAccessRequestInput = {
   /** Electron safeStorage ciphertext encoded as canonical base64. */
   encryptedMaterial: string;
   exposures: SecureSecretBinding[];
+  /**
+   * Session retention keeps the value ephemeral to the owning Builder
+   * session. Saved retention persists it in the selected catalog scope.
+   */
+  retention: SecureSecretRetention;
+  /**
+   * Required for saved fulfillment. Session-retained values are always
+   * constrained to the owning Builder profile regardless of renderer input.
+   */
+  scope?: SecureSecretScope;
+  /**
+   * User-authorized policy change. The backend always binds this to the
+   * owning Builder profile; callers cannot select a different project here.
+   */
+  makeProjectDefault?: boolean;
 } & (
   | { leaseKind: Exclude<SecureSecretLeaseKind, "timed"> }
   | { leaseKind: "timed"; durationSeconds: number }

@@ -81,7 +81,23 @@ export interface TerminalArchiveHooks {
 }
 
 export interface SecureSessionLifecyclePort {
+  beginLifecycleFence(
+    profileId: string,
+    sessionAgentIds: readonly string[],
+  ): Promise<string>;
+  cancelLifecycleFence(fenceId: string): Promise<void>;
+  completeLifecycleFence(
+    fenceId: string,
+    outcome: "archived" | "deleted",
+  ): Promise<void>;
+  clearLifecycleFenceForRestore(
+    profileId: string,
+    sessionAgentIds: readonly string[],
+  ): Promise<void>;
+  prepareSessionForDeletion(sessionAgentId: string): Promise<void>;
+  deleteSessionStateAfterCoreDeletion(sessionAgentId: string): Promise<void>;
   stopForLifecycle(agentId: string, options?: { deleteState?: boolean }): Promise<void>;
+  deleteProjectState(profileId: string): Promise<void>;
 }
 
 export interface SessionLifecycleCoordinatorOptions {
@@ -290,21 +306,32 @@ export class SessionLifecycleCoordinator {
 
   async archiveSession(agentId: string): Promise<ArchiveSessionResult> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
-    await this.options.secureSessions.stopForLifecycle(agentId);
-    this.options.goals.cancelScheduledContinuation(agentId);
-    this.options.browser.cancelSession(agentId);
-    await this.options.capture.run(agentId, "archive");
-    this.cleanupCodex(agentId);
-    const result = await this.options.archive.archiveSession(agentId);
-    await this.options.browser.archiveSession(descriptor.profileId, agentId);
-    this.options.activeTools.clearSession(agentId);
-    this.options.events.emitAgentsSnapshot();
-    return result;
+    return await this.withSecureLifecycleFence(
+      descriptor.profileId,
+      [agentId],
+      "archived",
+      async () => {
+        await this.options.secureSessions.stopForLifecycle(agentId);
+        this.options.goals.cancelScheduledContinuation(agentId);
+        this.options.browser.cancelSession(agentId);
+        await this.options.capture.run(agentId, "archive");
+        this.cleanupCodex(agentId);
+        const result = await this.options.archive.archiveSession(agentId);
+        await this.options.browser.archiveSession(descriptor.profileId, agentId);
+        this.options.activeTools.clearSession(agentId);
+        this.options.events.emitAgentsSnapshot();
+        return result;
+      },
+    );
   }
 
   async restoreSession(agentId: string): Promise<RestoreSessionResult> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     const result = await this.options.archive.restoreSession(agentId);
+    await this.options.secureSessions.clearLifecycleFenceForRestore(
+      descriptor.profileId,
+      [agentId],
+    );
     await this.options.browser.restoreSession(descriptor.profileId, agentId);
     this.options.events.emitAgentsSnapshot();
     return result;
@@ -320,33 +347,46 @@ export class SessionLifecycleCoordinator {
 
   async archiveProfile(profileId: string): Promise<ArchiveProfileResult> {
     const sessions = this.getSessionsForProfile(profileId);
-    for (const session of sessions) {
-      await this.options.secureSessions.stopForLifecycle(session.agentId);
-    }
-    for (const session of sessions) {
-      this.cleanupCodex(session.agentId);
-      this.options.goals.cancelScheduledContinuation(session.agentId);
-      this.options.browser.cancelSession(session.agentId);
-    }
-    const result = await this.options.archive.archiveProfile(profileId);
-    for (const session of sessions) {
-      await this.options.browser.archiveSession(profileId, session.agentId);
-      this.options.activeTools.clearSession(session.agentId);
-    }
-    await this.runTerminalHook("archive", profileId);
-    this.options.events.emitProfilesSnapshot();
-    this.options.events.emitAgentsSnapshot();
-    this.options.events.emitSessionLifecycle({
-      action: "archived",
-      sessionAgentId: profileId,
+    const sessionAgentIds = sessions.map((session) => session.agentId);
+    return await this.withSecureLifecycleFence(
       profileId,
-    });
-    return result;
+      sessionAgentIds,
+      "archived",
+      async () => {
+        for (const session of sessions) {
+          await this.options.secureSessions.stopForLifecycle(session.agentId);
+        }
+        for (const session of sessions) {
+          this.cleanupCodex(session.agentId);
+          this.options.goals.cancelScheduledContinuation(session.agentId);
+          this.options.browser.cancelSession(session.agentId);
+        }
+        const result = await this.options.archive.archiveProfile(profileId);
+        for (const session of sessions) {
+          await this.options.browser.archiveSession(profileId, session.agentId);
+          this.options.activeTools.clearSession(session.agentId);
+        }
+        await this.runTerminalHook("archive", profileId);
+        this.options.events.emitProfilesSnapshot();
+        this.options.events.emitAgentsSnapshot();
+        this.options.events.emitSessionLifecycle({
+          action: "archived",
+          sessionAgentId: profileId,
+          profileId,
+        });
+        return result;
+      },
+    );
   }
 
   async restoreProfile(profileId: string): Promise<RestoreProfileResult> {
     const result = await this.options.archive.restoreProfile(profileId);
-    for (const session of this.getSessionsForProfile(profileId)) {
+    const sessions = this.getSessionsForProfile(profileId);
+    await this.options.secureSessions.clearLifecycleFenceForRestore(
+      profileId,
+      sessions.map((session) => session.agentId),
+    );
+    for (const session of sessions) {
       await this.options.browser.restoreSession(profileId, session.agentId);
     }
     await this.runTerminalHook("restore", profileId);
@@ -390,19 +430,25 @@ export class SessionLifecycleCoordinator {
       "delete Builder sessions",
     );
     const descriptor = cloneDescriptor(requiredDescriptor);
-    await this.options.secureSessions.stopForLifecycle(agentId, {
-      deleteState: true,
-    });
-    this.cleanupCodex(agentId);
-    this.options.goals.cancelScheduledContinuation(agentId);
-    this.options.browser.cancelSession(agentId);
-    const result = await this.options.sessions.deleteSession(agentId);
-    await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
-    this.options.plans.forget(agentId);
-    this.options.goals.forget(agentId);
-    this.options.activeTools.clearSession(agentId);
-    await this.emitExtensionLifecycle("deleted", descriptor);
-    return result;
+    return await this.withSecureLifecycleFence(
+      requiredDescriptor.profileId,
+      [agentId],
+      "deleted",
+      async () => {
+        await this.options.secureSessions.prepareSessionForDeletion(agentId);
+        this.cleanupCodex(agentId);
+        this.options.goals.cancelScheduledContinuation(agentId);
+        this.options.browser.cancelSession(agentId);
+        const result = await this.options.sessions.deleteSession(agentId);
+        await this.cleanupSecureSessionStateAfterCoreDeletion(agentId);
+        await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
+        this.options.plans.forget(agentId);
+        this.options.goals.forget(agentId);
+        this.options.activeTools.clearSession(agentId);
+        await this.emitExtensionLifecycle("deleted", descriptor);
+        return result;
+      },
+    );
   }
 
   async deleteCollaborationSession(
@@ -511,28 +557,98 @@ export class SessionLifecycleCoordinator {
         sessions.push(target);
       }
     }
+    const profileId =
+      profile?.profileId
+      ?? sessions[0]?.profileId
+      ?? targetManagerId;
+    return await this.withSecureLifecycleFence(
+      profileId,
+      sessions.map((session) => session.agentId),
+      "deleted",
+      async () => {
+        for (const session of sessions) {
+          await this.options.secureSessions.prepareSessionForDeletion(
+            session.agentId,
+          );
+        }
+        for (const session of sessions) {
+          this.cleanupCodex(session.agentId);
+          this.options.goals.cancelScheduledContinuation(session.agentId);
+          this.options.browser.cancelSession(session.agentId);
+        }
+        const deleted = sessions.map((session) => cloneDescriptor(session));
+        const result = await this.options.lifecycle.deleteManager(
+          callerAgentId,
+          targetManagerId,
+        );
+        for (const session of sessions) {
+          await this.cleanupSecureSessionStateAfterCoreDeletion(session.agentId);
+        }
+        try {
+          await this.options.secureSessions.deleteProjectState(profileId);
+        } catch (error) {
+          this.options.logDebug("secure_session:project_cleanup:deferred", {
+            profileId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        for (const descriptor of deleted) {
+          await this.options.browser.deleteSession(
+            descriptor.profileId ?? targetManagerId,
+            descriptor.agentId,
+          );
+          this.options.goals.forget(descriptor.agentId);
+          await this.emitExtensionLifecycle("deleted", descriptor);
+        }
+        return result;
+      },
+    );
+  }
 
-    for (const session of sessions) {
-      await this.options.secureSessions.stopForLifecycle(session.agentId, {
-        deleteState: true,
+  private async cleanupSecureSessionStateAfterCoreDeletion(
+    sessionAgentId: string,
+  ): Promise<void> {
+    try {
+      await this.options.secureSessions.deleteSessionStateAfterCoreDeletion(
+        sessionAgentId,
+      );
+    } catch (error) {
+      this.options.logDebug("secure_session:session_cleanup:deferred", {
+        sessionAgentId,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
-    for (const session of sessions) {
-      this.cleanupCodex(session.agentId);
-      this.options.goals.cancelScheduledContinuation(session.agentId);
-      this.options.browser.cancelSession(session.agentId);
+  }
+
+  private async withSecureLifecycleFence<Result>(
+    profileId: string,
+    sessionAgentIds: readonly string[],
+    outcome: "archived" | "deleted",
+    action: () => Promise<Result>,
+  ): Promise<Result> {
+    const fenceId = await this.options.secureSessions.beginLifecycleFence(
+      profileId,
+      sessionAgentIds,
+    );
+    try {
+      const result = await action();
+      await this.options.secureSessions.completeLifecycleFence(fenceId, outcome);
+      return result;
+    } catch (error) {
+      try {
+        await this.options.secureSessions.cancelLifecycleFence(fenceId);
+      } catch (cancelError) {
+        this.options.logDebug("secure_session:lifecycle_fence_cancel:error", {
+          profileId,
+          sessionAgentIds,
+          error:
+            cancelError instanceof Error
+              ? cancelError.message
+              : String(cancelError),
+        });
+      }
+      throw error;
     }
-    const deleted = sessions.map((session) => cloneDescriptor(session));
-    const result = await this.options.lifecycle.deleteManager(callerAgentId, targetManagerId);
-    for (const descriptor of deleted) {
-      await this.options.browser.deleteSession(
-        descriptor.profileId ?? targetManagerId,
-        descriptor.agentId,
-      );
-      this.options.goals.forget(descriptor.agentId);
-      await this.emitExtensionLifecycle("deleted", descriptor);
-    }
-    return result;
   }
 
   private async stopValidatedSession(

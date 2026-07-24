@@ -94,7 +94,11 @@ describe("secure session routes", () => {
     );
     const resolved = await postJson(
       `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/resolve`,
-      { baseRevision: 6, decision: "approve" },
+      {
+        baseRevision: 6,
+        decision: "approve",
+        selectedSecretId: "secret-1",
+      },
     );
 
     expect(granted.status).toBe(200);
@@ -114,7 +118,12 @@ describe("secure session routes", () => {
     expect(service.resolveSecureAccessRequest).toHaveBeenCalledWith(
       "manager-1",
       "request-1",
-      { baseRevision: 6, requestId: "request-1", decision: "approve" },
+      {
+        baseRevision: 6,
+        requestId: "request-1",
+        decision: "approve",
+        selectedSecretId: "secret-1",
+      },
     );
   });
 
@@ -195,6 +204,7 @@ describe("secure session routes", () => {
         encryptedMaterial,
         leaseKind: "one_use",
         exposures: [{ deliveryKind: "stdin" }],
+        retention: "session",
       },
     );
 
@@ -208,6 +218,43 @@ describe("secure session routes", () => {
         encryptedMaterial,
         leaseKind: "one_use",
         exposures: [{ deliveryKind: "stdin" }],
+        retention: "session",
+      },
+    );
+    expect(JSON.stringify(await response.json())).not.toContain(encryptedMaterial);
+  });
+
+  it("strictly forwards saved project-scoped access-request fulfillment", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const encryptedMaterial = Buffer.from("ciphertext-material").toString("base64");
+    const response = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/fulfill`,
+      {
+        baseRevision: 6,
+        displayAlias: "DEPLOY_PASSWORD",
+        encryptedMaterial,
+        leaseKind: "task",
+        exposures: [{ deliveryKind: "askpass", targetName: "SSH_ASKPASS" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-1" },
+        makeProjectDefault: true,
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(service.fulfillSecureAccessRequest).toHaveBeenCalledWith(
+      "manager-1",
+      "request-1",
+      {
+        baseRevision: 6,
+        displayAlias: "DEPLOY_PASSWORD",
+        encryptedMaterial,
+        leaseKind: "task",
+        exposures: [{ deliveryKind: "askpass", targetName: "SSH_ASKPASS" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-1" },
+        makeProjectDefault: true,
       },
     );
     expect(JSON.stringify(await response.json())).not.toContain(encryptedMaterial);
@@ -226,6 +273,7 @@ describe("secure session routes", () => {
         material: canary,
         leaseKind: "one_use",
         exposures: [{ deliveryKind: "stdin" }],
+        retention: "session",
       },
     );
     const unsafeStop = await postJson(
@@ -257,6 +305,56 @@ describe("secure session routes", () => {
     });
     expect(await unsafe.text()).not.toContain(canary);
     expect(stale.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("rejects invalid saved and session fulfillment policy before the service", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const encryptedMaterial = Buffer.from("ciphertext-material").toString("base64");
+    const endpoint =
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/fulfill`;
+    const common = {
+      baseRevision: 6,
+      displayAlias: "PASSWORD",
+      encryptedMaterial,
+      leaseKind: "task",
+      exposures: [{ deliveryKind: "stdin" }],
+    };
+
+    for (const invalid of [
+      { ...common, retention: "saved" },
+      {
+        ...common,
+        retention: "session",
+        scope: { kind: "instance" },
+      },
+      {
+        ...common,
+        retention: "session",
+        makeProjectDefault: true,
+      },
+      {
+        ...common,
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-1" },
+        makeProjectDefault: "yes",
+      },
+    ]) {
+      const response = await postJson(endpoint, invalid);
+      expect(response.status).toBe(400);
+    }
+
+    const deniedWithSelection = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/access-requests/request-1/resolve`,
+      {
+        baseRevision: 6,
+        decision: "deny",
+        selectedSecretId: "secret-1",
+      },
+    );
+    expect(deniedWithSelection.status).toBe(400);
+    expect(service.fulfillSecureAccessRequest).not.toHaveBeenCalled();
+    expect(service.resolveSecureAccessRequest).not.toHaveBeenCalled();
   });
 });
 

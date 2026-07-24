@@ -104,6 +104,7 @@ describe('SecureSessionPicker', () => {
           policy: { kind: 'task' },
           status: 'active',
           bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
+          grantSource: 'project_default',
         }],
         pendingRequests: [],
         updatedAt: '2026-07-23T12:00:00.000Z',
@@ -114,12 +115,56 @@ describe('SecureSessionPicker', () => {
 
     expect(document.body.textContent).toContain('Active leases')
     expect(document.body.textContent).toContain('deploy-token')
+    expect(document.body.textContent).toContain('Project default')
     expect(document.body.textContent).toContain('Environment variable DEPLOY_TOKEN')
 
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'button', { name: 'Revoke' }))
     })
     expect(onRevoke).toHaveBeenCalledWith('lease-1')
+  })
+
+  it('summarizes project-default readiness without provider details', () => {
+    renderPicker(makeConfig({
+      snapshot: {
+        sessionAgentId: 'manager-1',
+        revision: 4,
+        executionMode: 'secure',
+        environmentStatus: 'ready',
+        leases: [],
+        pendingRequests: [],
+        projectDefaults: [
+          {
+            secretId: 'secret-ready',
+            displayAlias: 'ready-secret',
+            state: 'active',
+            statusCode: 'ok',
+          },
+          {
+            secretId: 'secret-unavailable',
+            displayAlias: 'unavailable-secret',
+            state: 'unavailable',
+            statusCode: 'source_unavailable',
+          },
+          {
+            secretId: 'secret-conflict',
+            displayAlias: 'conflicting-secret',
+            state: 'conflict',
+            statusCode: 'binding_conflict',
+          },
+        ],
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
+    }))
+
+    openPicker(/secure session ready/i)
+
+    expect(getByRole(document.body, 'generic', {
+      name: 'Project default status',
+    }).textContent).toBe(
+      '3 project defaults · 1 ready · 1 unavailable · 1 conflict',
+    )
+    expect(document.body.textContent).not.toContain('provider')
   })
 
   it('defaults to session-lifetime access and grants several saved secrets together', async () => {

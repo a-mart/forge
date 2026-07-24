@@ -27,6 +27,24 @@ const qualityRules = {
   eqeqeq: ['warn', 'always', { null: 'ignore' }],
 };
 
+const typescriptBaselineRules = {
+  ...deadCodeRules,
+  ...qualityRules,
+  'no-unused-vars': 'off',
+  'no-unused-expressions': 'off',
+  'no-throw-literal': 'off',
+  '@typescript-eslint/no-unused-vars': [
+    'warn',
+    {
+      argsIgnorePattern: '^_',
+      caughtErrorsIgnorePattern: '^_',
+      ignoreRestSiblings: true,
+    },
+  ],
+  '@typescript-eslint/no-unused-expressions': 'warn',
+  '@typescript-eslint/only-throw-error': 'warn',
+};
+
 const warnifyRules = (rules = {}) =>
   Object.fromEntries(
     Object.entries(rules).map(([ruleName, ruleValue]) => {
@@ -82,22 +100,21 @@ export default tseslint.config(
     plugins: {
       '@typescript-eslint': tseslint.plugin,
     },
+    rules: typescriptBaselineRules,
+  },
+  {
+    // Secure Sessions E2E helpers live at the repository root and are imported
+    // by backend tests, but they are not part of a build tsconfig.
+    files: ['scripts/secure-sessions-e2e/**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+    },
+    plugins: {
+      '@typescript-eslint': tseslint.plugin,
+    },
     rules: {
-      ...deadCodeRules,
-      ...qualityRules,
-      'no-unused-vars': 'off',
-      'no-unused-expressions': 'off',
-      'no-throw-literal': 'off',
-      '@typescript-eslint/no-unused-vars': [
-        'warn',
-        {
-          argsIgnorePattern: '^_',
-          caughtErrorsIgnorePattern: '^_',
-          ignoreRestSiblings: true,
-        },
-      ],
-      '@typescript-eslint/no-unused-expressions': 'warn',
-      '@typescript-eslint/only-throw-error': 'warn',
+      ...typescriptBaselineRules,
+      '@typescript-eslint/only-throw-error': 'off',
     },
   },
   {

@@ -61,7 +61,6 @@ export async function runCommand(
     const stderr: Buffer[] = [];
     let outputBytes = 0;
     let settled = false;
-    let timeout: NodeJS.Timeout | undefined;
     const finish = (error?: Error, exitCode = -1): void => {
       if (settled) {
         return;
@@ -97,7 +96,7 @@ export async function runCommand(
     child.stdin.once("error", (error) => finish(error));
     child.stdin.end(options.stdin);
 
-    timeout =
+    const timeout =
       options.timeoutMs === undefined
         ? undefined
         : setTimeout(() => {

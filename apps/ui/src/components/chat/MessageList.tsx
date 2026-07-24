@@ -1331,6 +1331,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               request={request}
               availability={secureSessionRequests.availability}
               secrets={secureSessionRequests.secrets}
+              project={secureSessionRequests.project}
               disabled={secureSessionRequests.disabled}
               onGrant={secureSessionRequests.onGrant}
               onDeny={secureSessionRequests.onDeny}

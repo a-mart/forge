@@ -2,6 +2,7 @@ import type { SettingsApiClient } from '@/components/settings/settings-api-clien
 import type {
   SecureGrantInput,
   SecureLeasePolicyView,
+  SecurePrivateFulfillmentInput,
   SecureSecretBindingView,
   SecureSecretOption,
   SecureSessionSnapshotView,
@@ -21,7 +22,9 @@ import type {
 export type SecureSessionUiErrorCode =
   | 'SECURE_BUILDER_ONLY'
   | 'SECURE_PRIVATE_API_UNAVAILABLE'
+  | 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED'
   | 'SECURE_REQUEST_INVALID'
+  | 'SECURE_SECRET_ALIAS_CONFLICT'
   | 'SECURE_SESSION_UNSUPPORTED'
   | 'SECURE_SOURCE_UNAVAILABLE'
   | 'SECURE_STALE_REVISION'
@@ -30,7 +33,11 @@ export type SecureSessionUiErrorCode =
 const ERROR_MESSAGES: Record<SecureSessionUiErrorCode, string> = {
   SECURE_BUILDER_ONLY: 'Secure Sessions are available only in the local Builder.',
   SECURE_PRIVATE_API_UNAVAILABLE: 'Private secret entry requires the Forge desktop app.',
+  SECURE_PROJECT_DEFAULT_LIMIT_REACHED:
+    'This project already has the maximum number of automatic secrets.',
   SECURE_REQUEST_INVALID: 'The secure session request is no longer valid.',
+  SECURE_SECRET_ALIAS_CONFLICT:
+    'A secret with this name was saved elsewhere. Refresh and choose the saved secret.',
   SECURE_SESSION_UNSUPPORTED: 'This runtime does not support Secure Sessions.',
   SECURE_SOURCE_UNAVAILABLE: 'The secure secret source is currently unavailable.',
   SECURE_STALE_REVISION: 'Secure session access changed elsewhere. Refresh and try again.',
@@ -137,6 +144,9 @@ export async function grantSecureSessionLease(
         body: JSON.stringify({
           baseRevision: resolution.baseRevision,
           decision: resolution.decision,
+          ...(grant.selectForMissingRequest
+            ? { selectedSecretId: grant.secretId }
+            : {}),
         }),
       },
     )
@@ -226,10 +236,21 @@ export async function fulfillSecureAccessRequestPrivately(
   sessionAgentId: string,
   request: SecureAccessRequestSummary,
   baseRevision: number,
-  value: string,
+  input: SecurePrivateFulfillmentInput,
 ): Promise<SecureSessionSnapshot> {
   assertBuilderTarget(apiClient)
-  const encryptedMaterial = await encryptPrivateValue(value)
+  let privateValue = ''
+  let encryptedMaterial: string | undefined
+  try {
+    privateValue = typeof input.value === 'string'
+      ? input.value
+      : new TextDecoder('utf-8', { fatal: true }).decode(input.value)
+    encryptedMaterial = await encryptPrivateValue(privateValue)
+  } finally {
+    if (typeof input.value !== 'string') input.value.fill(0)
+    privateValue = ''
+  }
+  if (!encryptedMaterial) throw new SecureSessionUiError('SECURE_OPERATION_FAILED')
   return requestSnapshot(
     apiClient,
     `${sessionPath(sessionAgentId)}/access-requests/${encodeURIComponent(request.requestId)}/fulfill`,
@@ -240,6 +261,9 @@ export async function fulfillSecureAccessRequestPrivately(
         baseRevision,
         displayAlias: request.displayAlias,
         encryptedMaterial,
+        retention: input.retention,
+        scope: input.scope,
+        ...(input.makeProjectDefault ? { makeProjectDefault: true } : {}),
         leaseKind: request.requestedLeaseKind,
         ...(request.requestedDurationSeconds === undefined
           ? {}
@@ -258,6 +282,26 @@ export function toSecureSecretOptions(secrets: SecureSecretSummary[]): SecureSec
     available: secret.available,
     bindings: secret.bindings.map(toBindingView),
   }))
+}
+
+export function resolveSecureSecretsForProfile(
+  secrets: SecureSecretSummary[],
+  profileId: string | null | undefined,
+): SecureSecretSummary[] {
+  if (!profileId) return secrets.filter((secret) => secret.scope.kind === 'instance')
+
+  const resolvedByAlias = new Map<string, SecureSecretSummary>()
+  for (const secret of secrets) {
+    if (secret.scope.kind === 'profile') {
+      if (secret.scope.profileId !== profileId) continue
+      resolvedByAlias.set(secret.displayAlias, secret)
+      continue
+    }
+    if (!resolvedByAlias.has(secret.displayAlias)) {
+      resolvedByAlias.set(secret.displayAlias, secret)
+    }
+  }
+  return Array.from(resolvedByAlias.values())
 }
 
 export function toSecureSessionSnapshotView(
@@ -282,6 +326,7 @@ export function toSecureSessionSnapshotView(
       ...(lease.expiresAt ? { expiresAt: lease.expiresAt } : {}),
       ...(lease.lastUsedAt ? { lastUsedAt: lease.lastUsedAt } : {}),
       ...(lease.remainingUses === null ? {} : { remainingUses: lease.remainingUses }),
+      grantSource: lease.grantSource ?? 'manual',
     })),
     pendingRequests: snapshot.pendingRequests.map((request) => ({
       requestId: request.requestId,
@@ -303,6 +348,12 @@ export function toSecureSessionSnapshotView(
             ).toISOString(),
       ),
       status: 'pending',
+    })),
+    projectDefaults: (snapshot.projectDefaults ?? []).map((projectDefault) => ({
+      secretId: projectDefault.secretId,
+      displayAlias: projectDefault.displayAlias,
+      state: projectDefault.state,
+      statusCode: projectDefault.statusCode,
     })),
     updatedAt: snapshot.updatedAt,
   }

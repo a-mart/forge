@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
   SECURE_SECRET_DELIVERY_KINDS,
+  SECURE_SECRET_LEASE_GRANT_SOURCES,
   SECURE_SECRET_LEASE_KINDS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
   SECURE_SECRET_PROVIDER_KINDS,
@@ -21,6 +22,7 @@ import {
   type SecureSecretCatalog,
   type SecureSecretCatalogChangedEvent,
   type SecureSecretProviderSummary,
+  type SecureSecretProjectDefaultSummary,
   type SecureSecretSummary,
   type SecureSessionLeaseSummary,
   type SecureSessionSnapshotEvent,
@@ -43,6 +45,11 @@ describe('Secure Sessions protocol', () => {
       'ssh_agent',
     ])
     expect(SECURE_SECRET_LEASE_KINDS).toEqual(['task', 'timed', 'one_use'])
+    expect(SECURE_SECRET_LEASE_GRANT_SOURCES).toEqual([
+      'manual',
+      'access_request',
+      'project_default',
+    ])
 
     const provider = {
       providerId: 'provider-local',
@@ -70,10 +77,20 @@ describe('Secure Sessions protocol', () => {
       revision: 3,
       providers: [provider],
       secrets: [secret],
+      projectDefaults: [{
+        profileId: 'profile-1',
+        secretId: secret.secretId,
+        createdAt: now,
+        updatedAt: now,
+      } satisfies SecureSecretProjectDefaultSummary],
       updatedAt: now,
     } satisfies SecureSecretCatalog
 
     expect(catalog.secrets[0]?.displayAlias).toBe('github/work')
+    expect(catalog.projectDefaults).toEqual([expect.objectContaining({
+      profileId: 'profile-1',
+      secretId: 'secret-api',
+    })])
     expect(parseSecureSecretScope(secret.scope)).toEqual(secret.scope)
   })
 
@@ -151,12 +168,29 @@ describe('Secure Sessions protocol', () => {
     expect(parseResolveSecureSecretAccessRequest({
       baseRevision: 5,
       requestId: 'access-1',
+      selectedSecretId: 'secret-api',
+      decision: 'approve',
+    })).toEqual({
+      baseRevision: 5,
+      requestId: 'access-1',
+      selectedSecretId: 'secret-api',
+      decision: 'approve',
+    })
+    expect(parseResolveSecureSecretAccessRequest({
+      baseRevision: 5,
+      requestId: 'access-1',
       decision: 'deny',
     })).toEqual({
       baseRevision: 5,
       requestId: 'access-1',
       decision: 'deny',
     })
+    expect(() => parseResolveSecureSecretAccessRequest({
+      baseRevision: 5,
+      requestId: 'access-1',
+      selectedSecretId: 'secret-api',
+      decision: 'deny',
+    })).toThrow(SecureSessionsContractError)
   })
 
   it('parses a strict batch of unique proactive grants', () => {
@@ -270,6 +304,7 @@ describe('Secure Sessions protocol', () => {
       expiresAt: '2026-07-23T12:05:00.000Z',
       lastUsedAt: null,
       remainingUses: null,
+      grantSource: 'project_default',
     } satisfies SecureSessionLeaseSummary
 
     const accessRequest = {
@@ -296,6 +331,12 @@ describe('Secure Sessions protocol', () => {
       outputStateCode: 'SECURE_OUTPUT_QUARANTINED',
       leases: [lease],
       pendingRequests: [accessRequest],
+      projectDefaults: [{
+        secretId: 'secret-api',
+        displayAlias: 'github/work',
+        state: 'active',
+        statusCode: 'ok',
+      }],
       updatedAt: now,
     } satisfies SecureSessionSnapshotEvent satisfies ServerEvent
 
@@ -305,6 +346,11 @@ describe('Secure Sessions protocol', () => {
     } satisfies SecureSecretCatalogChangedEvent satisfies ServerEvent
 
     expect(snapshot.leases[0]?.exposures[0]?.deliveryKind).toBe('environment')
+    expect(snapshot.leases[0]?.grantSource).toBe('project_default')
+    expect(snapshot.projectDefaults).toEqual([expect.objectContaining({
+      state: 'active',
+      statusCode: 'ok',
+    })])
     expect(snapshot.outputStateCode).toBe('SECURE_OUTPUT_QUARANTINED')
     expect(invalidation).toEqual({ type: 'secure_secret_catalog_changed', revision: 4 })
     expect(JSON.stringify(invalidation)).not.toContain('providers')

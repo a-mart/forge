@@ -41,7 +41,14 @@ Managed Browser has no environment variable and no Settings → Skills toggle. I
 
 Secure Sessions are configured through **Settings → Secrets** rather than environment
 variables. Forge Desktop encrypts local values and Bitwarden machine credentials before
-the local Builder stores them. The Docker execution backend requires the pinned
+the local Builder stores them. Saved local-vault and Bitwarden-backed aliases can be
+available to one selected project or all local projects. A project-specific alias
+overrides an all-projects alias of the same name in that project.
+
+Marking a secret automatic for one project creates task leases when that project's
+Secure Mode starts. It does not configure a host environment variable or grant
+standard Bash, prompts, workers, or terminals access. The Docker execution backend
+requires the pinned
 `forge-secure-runner:node22-v4` image, which can be built with the command in the
 [Secure Sessions guide](SECURE_SESSIONS.md#set-up-the-execution-environment). Its
 effective Docker endpoint must be a local `unix://` socket; remote Docker contexts and
@@ -49,8 +56,9 @@ remote `DOCKER_HOST` transports are rejected rather than treated as a deployment
 target.
 
 The feature is local-Builder-only and fail-closed. It does not inherit values from
-`shared/config/secrets.json`, silently fall back to host execution, or make saved
-sources available to a task without a separate lease. See
+`shared/config/secrets.json` or silently fall back to host execution. A saved source
+becomes available to a task only through an explicit lease or a configured project
+default. See
 [Secure Sessions](SECURE_SESSIONS.md) for sources, bindings, supported runtimes,
 security guarantees, and limitations.
 

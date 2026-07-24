@@ -74,6 +74,17 @@ mode; a future remote backend must have its own explicit trust and transport con
 Open **Settings → Secrets** in Forge Desktop. The browser-only UI can display metadata,
 but private value entry requires the Desktop bridge.
 
+Every saved secret has an availability scope:
+
+- **Only this project** makes the alias available to one selected local project.
+- **All projects** makes the alias available to every local project on this Forge
+  instance.
+
+Adding a secret from a project context defaults to **Only this project**. If a
+project-scoped secret and an all-projects secret use the same alias, that project uses
+its project-scoped secret. Other projects continue to use the all-projects secret.
+Scope controls where an alias can be selected; it does not grant any task access.
+
 ### Local vault
 
 Choose **Secrets**, enter an alias and value, and save it. The renderer immediately
@@ -93,13 +104,16 @@ access token before the local backend stores it.
 Forge verifies the connection before saving the source, so a displayed
 **Available** state means the configured credential was actually accepted.
 
-Under **Secrets**, import a Bitwarden secret UUID and assign a Forge alias. Forge keeps
-the UUID and encrypted machine credential backend-only. When an approved command needs
-the value, the trusted host invokes `bws` with an isolated temporary configuration
+Under **Secrets**, import a Bitwarden secret UUID, assign a Forge alias, and choose the
+same **Only this project** or **All projects** scope available to local-vault secrets.
+Project-default policy also works the same way for either source. Forge keeps the UUID
+and encrypted machine credential backend-only. When an approved command needs the
+value, the trusted host invokes `bws` with an isolated temporary configuration
 directory, captures a bounded response in memory, and removes that directory.
 
 Bitwarden is a long-lived source, not a permanent task grant. Reusing a task grant does
-not require re-entering the value, but every task still needs an explicit lease.
+not require re-entering the value. A task still needs either an explicit lease or an
+enabled project-default policy.
 
 ## Configure delivery bindings
 
@@ -130,22 +144,54 @@ task container. An `SSH_ASKPASS` binding automatically supplies the non-secret
 `DISPLAY` and `SSH_ASKPASS_REQUIRE=force` settings needed for password authentication
 without a terminal.
 
+## Project defaults
+
+A saved secret can be marked **Automatically available in this project**. This is a
+project policy, separate from the secret's availability scope:
+
+- a project-scoped secret can be a default only for its own project;
+- an all-projects secret can be a default in one project without becoming automatic
+  in every project;
+- a default receives an **Until Secure Session stops** task lease only when Secure
+  Mode starts for that project;
+- it is never injected into standard Bash, a model prompt, a worker, the integrated
+  terminal, or another project.
+
+Enabling a default while Secure Mode is already running does not silently rebuild the
+environment or attach the value. Use the current **Grant access** flow to grant it
+explicitly, or stop and restart Secure Mode to apply the configured defaults.
+Disabling a default revokes leases that were created from that policy; it does not
+remove a separate manual grant.
+
+Forge evaluates defaults independently during startup. A locked or unavailable source
+is reported as unavailable, and a delivery collision is reported as a binding
+conflict. Either problem skips that default without blocking the other defaults or the
+Secure Session itself. Public status contains only fixed states and error codes, never
+provider error text or protected material.
+
+Archiving a project preserves its project-scoped secrets and default settings so they
+remain available after restore. Permanently deleting the project removes its
+project-scoped secrets and project-default mappings. An all-projects secret itself is
+not deleted when one project's mapping is removed.
+
 ## Start, grant, reuse, and revoke
 
 1. Open a local Builder manager whose current runtime is supported.
 2. Select the shield beside **Send** and start a Secure Session.
-3. Select one or more saved aliases. Forge gives a newly saved secret a stable,
+3. Forge attaches the project's available defaults as task leases and reports any
+   default it could not activate.
+4. Select any additional saved aliases. Forge gives a newly saved secret a stable,
    generated environment delivery automatically; advanced saved bindings remain
    available when a specific askpass, file, stdin, or environment shape is needed.
-4. Choose a lease:
+5. Choose a lease:
    - **Until Secure Session stops** is the default and remains available until the
      user revokes it or stops the Secure Session.
    - **Timed** remains available for the selected duration, up to 24 hours.
    - **One use** is atomically consumed by the next Secure Bash command, whether or
      not that command actually references the binding.
-5. Continue working normally. The same task or timed lease is checked on every
+6. Continue working normally. The same task or timed lease is checked on every
    command, so a 16-command workflow does not require 16 prompts.
-6. Revoke an individual lease, or stop the Secure Session to revoke everything and
+7. Revoke an individual lease, or stop the Secure Session to revoke everything and
    destroy the environment.
 
 Every active task or timed grant is injected into every Secure Bash command and is
@@ -159,9 +205,21 @@ cannot race one-use consumption or enter the old container while the first call 
 destroying it. Different tasks can still execute in parallel.
 
 An agent can inspect safe session status and request an alias, binding, and lease
-shape. Requests appear as private approval cards outside the persisted transcript.
-Secure grants remain manager-local. Forge blocks spawning, retrying, or assigning
-workers while Secure Mode is active; stop Secure Mode before delegating work.
+shape. If the alias does not exist, the agent can propose the missing secret by alias,
+purpose, delivery, and lease only. The tool has no field for protected material.
+Forge shows **Add secret and approve**, which opens a Desktop-only private entry dialog
+that saves the value to the local vault and defaults to the current project. The
+dialog can instead save it for all projects, mark it automatic for the current
+project, or choose **Use for this task only** without keeping a reusable saved secret.
+The requested delivery and lease remain visible under the advanced review.
+
+The missing-secret dialog currently accepts local-vault material. To use Bitwarden,
+first import its reference under **Settings → Secrets**; the agent can then request and
+you can approve that saved catalog alias normally.
+
+Requests and their approval cards stay outside the persisted transcript. Secure grants
+remain manager-local. Forge blocks spawning, retrying, or assigning workers while
+Secure Mode is active; stop Secure Mode before delegating work.
 
 Revision checks prevent a stale browser from overwriting a newer approval or
 revocation. Provider failures, expired leases, missing aliases, unsupported delivery
@@ -219,6 +277,7 @@ workspace from the task. Use a dedicated worktree for untrusted or destructive w
 - Electron-encrypted local values and provider credentials;
 - backend-only provider locators;
 - delivery bindings;
+- project availability scopes and project-default mappings;
 - revisioned session state, requests, leases, reservations, and fixed-field audit
   entries.
 
@@ -279,6 +338,8 @@ still passes through the secure guard.
 | --- | --- |
 | Environment unavailable | Docker is unavailable, unsupported, or the runner image failed its contract check |
 | Source locked or unavailable | Desktop safe storage, Bitwarden authentication, or the `bws` host command is unavailable |
+| Project default unavailable | This default was skipped; fix its source and restart Secure Mode, or use **Grant access** after the source recovers |
+| Project default binding conflict | This default was skipped because its saved delivery collides with another active/default delivery |
 | Revision conflict | Another view changed the session; refresh before retrying |
 | Protected output redacted | The guard removed protected material before it reached the agent; the Secure Session can continue |
 | Unsupported runtime | The current runtime cannot guarantee Forge-owned tools before provider continuation |

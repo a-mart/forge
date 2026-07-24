@@ -53,6 +53,7 @@ describe("SwarmBootCoordinator", () => {
       "reconcileWorkerSpecialistMetadata",
       "reconcileProjectAgentMirror",
       "reconcileProjectAgentSharing",
+      "initializeSecureSessions",
       "ensureMemoryFiles",
       "saveStore",
       "rebuildSessionManifest",
@@ -287,6 +288,12 @@ function createHarness(
     preparation,
     domains,
     sessions,
+    secureSessions: {
+      initializeForBoot: async () => {
+        order.push("initializeSecureSessions");
+        return { destroyedSandboxIds: [] };
+      },
+    },
     runtimes,
     publication,
     store: {

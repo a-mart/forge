@@ -77,6 +77,7 @@ import {
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
 import { SecureSessionsService } from "./secure-sessions/secure-sessions-service.js";
+import { createSecureSessionLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import { SessionPinCoordinator } from "./session-pin-coordinator.js";
 import { SessionLifecycleCoordinator } from "./session-lifecycle-coordinator.js";
 import { TurnContextCoordinator } from "./turn-context-coordinator.js";
@@ -541,12 +542,13 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     return new SecureSessionsService({
       ...foundation,
       getDescriptor: (agentId) => this.descriptors.get(agentId),
-      requireBuilderSession: (agentId, action) => this.agentDirectory
-        .getRequiredBuilderSessionDescriptor(agentId, action),
+      hasProfile: (profileId) => this.profiles.has(profileId),
+      isProfileArchived: (profileId) => Boolean(this.profiles.get(profileId)?.archivedAt),
+      isSessionArchived: (agentId) => Boolean(this.descriptors.get(agentId)?.archivedAt),
+      requireBuilderSession: (agentId, action) => this.agentDirectory.getRequiredBuilderSessionDescriptor(agentId, action),
       emitSnapshot: (event) => this.emit("secure_session_snapshot", event),
       emitCatalogChanged: (event) => this.emit("secure_secret_catalog_changed", event),
-      applyModeRuntimeRecycle: (agentId) => this.projectExecutableTrustCoordinator
-        .applyManagerRuntimeRecyclePolicy(agentId, "secure_session_mode_change"),
+      applyModeRuntimeRecycle: (agentId) => this.projectExecutableTrustCoordinator.applyManagerRuntimeRecyclePolicy(agentId, "secure_session_mode_change"),
       now: this.now,
     });
   }
@@ -601,13 +603,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       toolHost: this,
       browserAutomation: this.browserAutomationService,
-      secureSessions: {
-        stopForLifecycle: (agentId, options) =>
-          this.secureSessionsService.stopSecureSessionForLifecycle(
-            agentId,
-            options,
-          ),
-      },
+      secureSessions: createSecureSessionLifecyclePort(this.secureSessionsService),
       descriptors: {
         upsertDescriptor: (descriptor) =>
           this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),

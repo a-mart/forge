@@ -7,6 +7,7 @@ import {
 import {
   SECURE_SESSION_DELIVERY_KINDS,
   SECURE_SESSION_EXPOSURE_OUTCOMES,
+  SECURE_SESSION_LEASE_GRANT_SOURCES,
   SECURE_SESSION_LEASE_KINDS,
   SECURE_SESSION_PROVIDER_KINDS,
   SECURE_SESSION_REQUEST_STATES,
@@ -24,7 +25,9 @@ import {
   type CreateSecureSessionLeasesInput,
   type CreateSecureSessionRequestInput,
   type CreateSecureSessionSecretInput,
+  type DeleteSecureSessionProjectStateResult,
   type InitializeSecureSessionStateInput,
+  type PutSecureSessionProjectDefaultInput,
   type PutSecureSessionSecretWithBindingsInput,
   type PutSecureSessionBindingInput,
   type ReserveSecureSessionLeaseUseInput,
@@ -40,6 +43,7 @@ import {
   type SecureSessionMutationResult,
   type SecureSessionProvider,
   type SecureSessionProviderBackendConfig,
+  type SecureSessionProjectDefault,
   type SecureSessionRequest,
   type SecureSessionRequestedExposure,
   type SecureSessionRevocationReason,
@@ -89,6 +93,24 @@ export class SecureSessionNotFoundError extends Error {
   }
 }
 
+export class SecureSessionAliasConflictError extends Error {
+  readonly code = "secure_secret_alias_conflict";
+
+  constructor() {
+    super("A secret with this alias already exists in the selected scope");
+    this.name = "SecureSessionAliasConflictError";
+  }
+}
+
+export class SecureSessionRequestExpiredError extends Error {
+  readonly code = "secure_session_request_expired";
+
+  constructor() {
+    super("Secure session access request has expired");
+    this.name = "SecureSessionRequestExpiredError";
+  }
+}
+
 export class SecureSessionStore {
   static async open(
     options: SecureSessionDatabaseOptions,
@@ -113,6 +135,14 @@ export class SecureSessionStore {
     } else if (this.database.open) {
       this.database.close();
     }
+  }
+
+  /**
+   * Composes synchronous store mutations into one SQLite transaction. Provider
+   * I/O and decryption must complete before entering this boundary.
+   */
+  withTransaction<T>(operation: () => T): T {
+    return this.database.transaction(operation)();
   }
 
   listProviders(): SecureSessionProvider[] {
@@ -319,8 +349,24 @@ export class SecureSessionStore {
     return this.database.transaction(() => {
       if (!this.getProvider(providerId)) return false;
       const now = this.timestamp();
+      const removedProjectDefaults = this.database.prepare(`
+        SELECT pd.profile_id, pd.secret_id, pd.created_at, pd.updated_at
+        FROM secure_session_project_default pd
+        JOIN secure_session_secret s ON s.secret_id = pd.secret_id
+        WHERE s.provider_id = ?
+        ORDER BY pd.profile_id, pd.secret_id
+      `).all(providerId) as ProjectDefaultRow[];
       this.revokeCatalogLeases("provider", providerId, "provider_deleted", now);
       this.database.prepare("DELETE FROM secure_session_provider WHERE provider_id = ?").run(providerId);
+      for (const projectDefault of removedProjectDefaults) {
+        this.audit({
+          eventType: "project_default_deleted",
+          profileId: projectDefault.profile_id,
+          secretId: projectDefault.secret_id,
+          outcome: "deleted",
+          occurredAt: now
+        });
+      }
       this.audit({
         eventType: "provider_deleted",
         providerId,
@@ -371,6 +417,12 @@ export class SecureSessionStore {
     const now = this.timestamp();
     return this.database.transaction(() => {
       if (this.getSecret(input.secretId)) throw new SecureSessionIdConflictError("secret");
+      this.assertSecretAliasAvailable(
+        input.displayAlias,
+        input.scopeKind,
+        normalized.profileId,
+        input.secretId
+      );
       const provider = this.requireProvider(input.providerId);
       if (provider.kind === "local_keychain" && normalized.encryptedMaterial === null) {
         throw new Error("Local keychain secrets require encrypted material");
@@ -410,7 +462,21 @@ export class SecureSessionStore {
     const now = this.timestamp();
     return this.database.transaction(() => {
       if (!this.getSecret(input.secretId)) throw new SecureSessionNotFoundError("secret");
+      this.assertSecretAliasAvailable(
+        input.displayAlias,
+        input.scopeKind,
+        normalized.profileId,
+        input.secretId
+      );
       this.revokeCatalogLeases("secret", input.secretId, "policy_changed", now);
+      const existingProjectDefaults = this.listProjectDefaultsForSecret(input.secretId);
+      const removedProjectDefaults = input.retention === "session"
+        ? existingProjectDefaults
+        : input.scopeKind === "profile"
+          ? existingProjectDefaults.filter(({ profileId }) =>
+              profileId !== normalized.profileId
+            )
+          : [];
       const provider = this.requireProvider(input.providerId);
       if (provider.kind === "local_keychain" && normalized.encryptedMaterial === null) {
         throw new Error("Local keychain secrets require encrypted material");
@@ -432,6 +498,19 @@ export class SecureSessionStore {
         now,
         input.secretId
       );
+      for (const projectDefault of removedProjectDefaults) {
+        this.database.prepare(`
+          DELETE FROM secure_session_project_default
+          WHERE profile_id = ? AND secret_id = ?
+        `).run(projectDefault.profileId, input.secretId);
+        this.audit({
+          eventType: "project_default_deleted",
+          profileId: projectDefault.profileId,
+          secretId: input.secretId,
+          outcome: "deleted",
+          occurredAt: now
+        });
+      }
       this.audit({
         eventType: "secret_updated",
         providerId: input.providerId,
@@ -450,8 +529,18 @@ export class SecureSessionStore {
       const secret = this.getSecret(secretId);
       if (!secret) return false;
       const now = this.timestamp();
+      const removedProjectDefaults = this.listProjectDefaultsForSecret(secretId);
       this.revokeCatalogLeases("secret", secretId, "secret_deleted", now);
       this.database.prepare("DELETE FROM secure_session_secret WHERE secret_id = ?").run(secretId);
+      for (const projectDefault of removedProjectDefaults) {
+        this.audit({
+          eventType: "project_default_deleted",
+          profileId: projectDefault.profileId,
+          secretId,
+          outcome: "deleted",
+          occurredAt: now
+        });
+      }
       this.audit({
         eventType: "secret_deleted",
         providerId: secret.providerId,
@@ -461,6 +550,166 @@ export class SecureSessionStore {
       });
       this.bumpCatalog(now);
       return true;
+    })();
+  }
+
+  listProjectDefaults(profileId?: string): SecureSessionProjectDefault[] {
+    if (profileId !== undefined) assertId(profileId, "profile ID");
+    const rows = profileId === undefined
+      ? this.database.prepare(`
+          SELECT profile_id, secret_id, created_at, updated_at
+          FROM secure_session_project_default
+          ORDER BY profile_id, secret_id
+        `).all()
+      : this.database.prepare(`
+          SELECT profile_id, secret_id, created_at, updated_at
+          FROM secure_session_project_default
+          WHERE profile_id = ?
+          ORDER BY secret_id
+        `).all(profileId);
+    return (rows as ProjectDefaultRow[]).map(mapProjectDefault);
+  }
+
+  putProjectDefault(
+    input: PutSecureSessionProjectDefaultInput
+  ): SecureSessionProjectDefault {
+    assertId(input.profileId, "profile ID");
+    assertId(input.secretId, "secret ID");
+    return this.database.transaction(() => {
+      const secret = this.requireSecret(input.secretId);
+      if (secret.retention !== "saved") {
+        throw new Error("Session-only secrets cannot be project defaults");
+      }
+      if (secret.scopeKind === "profile" && secret.profileId !== input.profileId) {
+        throw new Error("Project defaults cannot reference another project's secret");
+      }
+      const existing = this.getProjectDefault(input.profileId, input.secretId);
+      if (existing) return existing;
+      const now = this.timestamp();
+      this.database.prepare(`
+        INSERT INTO secure_session_project_default (
+          profile_id, secret_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?)
+      `).run(input.profileId, input.secretId, now, now);
+      this.audit({
+        eventType: "project_default_put",
+        profileId: input.profileId,
+        secretId: input.secretId,
+        outcome: "created",
+        occurredAt: now
+      });
+      this.bumpCatalog(now);
+      return this.requireProjectDefault(input.profileId, input.secretId);
+    })();
+  }
+
+  deleteProjectDefault(profileId: string, secretId: string): boolean {
+    assertId(profileId, "profile ID");
+    assertId(secretId, "secret ID");
+    return this.database.transaction(() => {
+      if (!this.getProjectDefault(profileId, secretId)) return false;
+      const now = this.timestamp();
+      this.revokeProjectDefaultLeases(profileId, [secretId], now);
+      this.database.prepare(`
+        DELETE FROM secure_session_project_default
+        WHERE profile_id = ? AND secret_id = ?
+      `).run(profileId, secretId);
+      this.audit({
+        eventType: "project_default_deleted",
+        profileId,
+        secretId,
+        outcome: "deleted",
+        occurredAt: now
+      });
+      this.bumpCatalog(now);
+      return true;
+    })();
+  }
+
+  listActiveProjectDefaultLeases(
+    profileId: string,
+    secretId?: string
+  ): SecureSessionLease[] {
+    assertId(profileId, "profile ID");
+    if (secretId !== undefined) assertId(secretId, "secret ID");
+    const rows = secretId === undefined
+      ? this.database.prepare(`
+          SELECT l.lease_id
+          FROM secure_session_lease l
+          JOIN secure_session_state ss ON ss.session_agent_id = l.session_agent_id
+          WHERE ss.profile_id = ?
+            AND l.grant_source = 'project_default'
+            AND l.state = 'active'
+          ORDER BY l.session_agent_id, l.lease_id
+        `).all(profileId)
+      : this.database.prepare(`
+          SELECT l.lease_id
+          FROM secure_session_lease l
+          JOIN secure_session_state ss ON ss.session_agent_id = l.session_agent_id
+          WHERE ss.profile_id = ?
+            AND l.secret_id = ?
+            AND l.grant_source = 'project_default'
+            AND l.state = 'active'
+          ORDER BY l.session_agent_id, l.lease_id
+        `).all(profileId, secretId);
+    return (rows as Array<{ lease_id: string }>).map(({ lease_id }) =>
+      this.requireLease(lease_id)
+    );
+  }
+
+  /**
+   * Removes every secret policy owned by a deleted project. Instance-scoped
+   * secrets survive; only their association with this project is removed.
+   */
+  deleteProjectSecretState(
+    profileId: string
+  ): DeleteSecureSessionProjectStateResult {
+    assertId(profileId, "profile ID");
+    return this.database.transaction(() => {
+      const defaultSecretIds = this.listProjectDefaults(profileId)
+        .map(({ secretId }) => secretId);
+      const scopedSecrets = this.database.prepare(`
+        SELECT secret_id, provider_id
+        FROM secure_session_secret
+        WHERE scope_kind = 'profile' AND profile_id = ?
+        ORDER BY secret_id
+      `).all(profileId) as Array<{ secret_id: string; provider_id: string }>;
+      const result = {
+        projectDefaultsDeleted: defaultSecretIds.length,
+        secretsDeleted: scopedSecrets.length
+      };
+      if (result.projectDefaultsDeleted === 0 && result.secretsDeleted === 0) {
+        return result;
+      }
+      const now = this.timestamp();
+      this.revokeProjectDefaultLeases(profileId, defaultSecretIds, now);
+      this.database.prepare(`
+        DELETE FROM secure_session_project_default WHERE profile_id = ?
+      `).run(profileId);
+      for (const secretId of defaultSecretIds) {
+        this.audit({
+          eventType: "project_default_deleted",
+          profileId,
+          secretId,
+          outcome: "deleted",
+          occurredAt: now
+        });
+      }
+      for (const secret of scopedSecrets) {
+        this.revokeCatalogLeases("secret", secret.secret_id, "secret_deleted", now);
+        this.database.prepare(`
+          DELETE FROM secure_session_secret WHERE secret_id = ?
+        `).run(secret.secret_id);
+        this.audit({
+          eventType: "secret_deleted",
+          providerId: secret.provider_id,
+          secretId: secret.secret_id,
+          outcome: "deleted",
+          occurredAt: now
+        });
+      }
+      this.bumpCatalog(now);
+      return result;
     })();
   }
 
@@ -807,6 +1056,7 @@ export class SecureSessionStore {
     );
     return this.database.transaction(() => {
       const request = this.requireRequest(input.requestId);
+      const now = this.timestamp();
       if (input.baseRevision !== undefined) {
         this.assertRevision(
           this.requireSessionState(request.sessionAgentId),
@@ -819,6 +1069,9 @@ export class SecureSessionStore {
       }
       if (request.state !== "pending") throw new SecureSessionIdConflictError("request resolution");
       if (input.state === "approved") {
+        if (request.expiresAt !== null && request.expiresAt <= now) {
+          throw new SecureSessionRequestExpiredError();
+        }
         if (!selectedSecretId) {
           throw new Error("Approved secure session requests require a selected secret");
         }
@@ -830,7 +1083,6 @@ export class SecureSessionStore {
       } else if (input.selectedSecretId !== undefined && input.selectedSecretId !== null) {
         throw new Error("Only approved requests can select a secret");
       }
-      const now = this.timestamp();
       const revision = this.incrementRevision(request.sessionAgentId, "request_resolved", null, 1, now);
       this.database.prepare(`
         UPDATE secure_session_request SET state = ?, secret_id = ?, resolved_at = ?
@@ -859,6 +1111,7 @@ export class SecureSessionStore {
         secretId: input.secretId,
         bindingIds: input.bindingIds,
         leaseKind: input.leaseKind,
+        grantSource: input.grantSource,
         requestId: input.requestId,
         expiresAt: input.expiresAt,
       }],
@@ -909,16 +1162,29 @@ export class SecureSessionStore {
         return { changed: false, revision: snapshot.state.revision, snapshot };
       }
 
+      const state = this.getOrCreateSessionState(input.sessionAgentId);
       for (const { grant, normalized: normalizedGrant } of pending) {
-        this.requireSecret(grant.secretId);
+        const secret = this.requireSecret(grant.secretId);
         this.requireBindingsForSecret(grant.secretId, normalizedGrant.bindingIds);
+        if (
+          normalizedGrant.grantSource === "project_default"
+          && !this.getProjectDefault(state.profileId, grant.secretId)
+        ) {
+          throw new Error("Project-default leases require a configured project default");
+        }
         if (!grant.requestId) continue;
         const request = this.requireRequest(grant.requestId);
         if (
           request.sessionAgentId !== input.sessionAgentId ||
-          request.secretId !== grant.secretId
+          (request.secretId !== null && request.secretId !== grant.secretId)
         ) {
           throw new SecureSessionIdConflictError("lease request");
+        }
+        if (request.displayAlias !== secret.displayAlias) {
+          throw new SecureSessionIdConflictError("lease request alias");
+        }
+        if (request.expiresAt !== null && request.expiresAt <= this.timestamp()) {
+          throw new SecureSessionRequestExpiredError();
         }
         const bindings = normalizedGrant.bindingIds.map(
           (bindingId) => this.requireBinding(bindingId),
@@ -931,7 +1197,6 @@ export class SecureSessionStore {
         }
       }
 
-      const state = this.getOrCreateSessionState(input.sessionAgentId);
       this.assertRevision(state, input.baseRevision);
       const now = this.timestamp();
       const revision = this.incrementRevision(
@@ -943,14 +1208,15 @@ export class SecureSessionStore {
       );
       const insertLease = this.database.prepare(`
         INSERT INTO secure_session_lease (
-          lease_id, session_agent_id, secret_id, request_id, lease_kind, state,
+          lease_id, session_agent_id, secret_id, request_id, grant_source, lease_kind, state,
           issued_revision, updated_revision, expires_at, last_used_at, remaining_uses,
           revoked_at, revocation_reason, one_use_operation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)
       `);
       const approveRequest = this.database.prepare(`
           UPDATE secure_session_request
-          SET state = 'approved', resolved_at = COALESCE(resolved_at, ?)
+          SET secret_id = COALESCE(secret_id, ?), state = 'approved',
+            resolved_at = COALESCE(resolved_at, ?)
           WHERE request_id = ?
       `);
       for (const { grant, normalized: normalizedGrant } of pending) {
@@ -959,6 +1225,7 @@ export class SecureSessionStore {
           input.sessionAgentId,
           grant.secretId,
           grant.requestId ?? null,
+          normalizedGrant.grantSource,
           grant.leaseKind,
           revision,
           revision,
@@ -973,7 +1240,9 @@ export class SecureSessionStore {
           grant.leaseId,
           normalizedGrant.bindingIds,
         );
-        if (grant.requestId) approveRequest.run(now, grant.requestId);
+        if (grant.requestId) {
+          approveRequest.run(grant.secretId, now, grant.requestId);
+        }
         this.audit({
           eventType: "lease_created",
           sessionAgentId: input.sessionAgentId,
@@ -1088,6 +1357,76 @@ export class SecureSessionStore {
             requestId: lease.request_id,
             leaseId: lease.lease_id,
             outcome: "expired",
+            occurredAt: at
+          });
+        }
+        return {
+          changed: true,
+          revision,
+          snapshot: this.getSnapshot(session.session_agent_id)
+        };
+      });
+    })();
+  }
+
+  expireRequests(
+    now = this.timestamp(),
+    sessionAgentId?: string
+  ): SecureSessionMutationResult[] {
+    const at = normalizeTimestamp(now, "request expiration time");
+    if (sessionAgentId !== undefined) {
+      assertId(sessionAgentId, "session agent ID");
+    }
+    return this.database.transaction(() => {
+      const sessions = (
+        sessionAgentId === undefined
+          ? this.database.prepare(`
+              SELECT session_agent_id, COUNT(*) AS request_count
+              FROM secure_session_request
+              WHERE state = 'pending' AND expires_at IS NOT NULL
+                AND expires_at <= ?
+              GROUP BY session_agent_id
+              ORDER BY session_agent_id
+            `).all(at)
+          : this.database.prepare(`
+              SELECT session_agent_id, COUNT(*) AS request_count
+              FROM secure_session_request
+              WHERE state = 'pending' AND expires_at IS NOT NULL
+                AND expires_at <= ? AND session_agent_id = ?
+              GROUP BY session_agent_id
+            `).all(at, sessionAgentId)
+      ) as Array<{ session_agent_id: string; request_count: number }>;
+      return sessions.map((session) => {
+        const requests = this.database.prepare(`
+          SELECT request_id, secret_id
+          FROM secure_session_request
+          WHERE session_agent_id = ? AND state = 'pending'
+            AND expires_at IS NOT NULL AND expires_at <= ?
+          ORDER BY request_id
+        `).all(session.session_agent_id, at) as Array<{
+          request_id: string;
+          secret_id: string | null;
+        }>;
+        const revision = this.incrementRevision(
+          session.session_agent_id,
+          "request_resolved",
+          null,
+          session.request_count,
+          at
+        );
+        this.database.prepare(`
+          UPDATE secure_session_request
+          SET state = 'cancelled', resolved_at = ?
+          WHERE session_agent_id = ? AND state = 'pending'
+            AND expires_at IS NOT NULL AND expires_at <= ?
+        `).run(at, session.session_agent_id, at);
+        for (const request of requests) {
+          this.audit({
+            eventType: "request_resolved",
+            sessionAgentId: session.session_agent_id,
+            secretId: request.secret_id,
+            requestId: request.request_id,
+            outcome: "cancelled",
             occurredAt: at
           });
         }
@@ -1404,6 +1743,27 @@ export class SecureSessionStore {
     };
   }
 
+  private assertSecretAliasAvailable(
+    displayAlias: string,
+    scopeKind: SecureSessionSecret["scopeKind"],
+    profileId: string | null,
+    excludingSecretId: string
+  ): void {
+    const conflict = scopeKind === "instance"
+      ? this.database.prepare(`
+          SELECT 1
+          FROM secure_session_secret
+          WHERE scope_kind = 'instance' AND display_alias = ? AND secret_id != ?
+        `).get(displayAlias, excludingSecretId)
+      : this.database.prepare(`
+          SELECT 1
+          FROM secure_session_secret
+          WHERE scope_kind = 'profile' AND profile_id = ?
+            AND display_alias = ? AND secret_id != ?
+        `).get(profileId, displayAlias, excludingSecretId);
+    if (conflict) throw new SecureSessionAliasConflictError();
+  }
+
   private hydrateSecret(row: SecretRow): SecureSessionSecret {
     const metadata = mapSecretMetadata(row);
     const provider = this.requireProvider(row.provider_id);
@@ -1455,11 +1815,21 @@ export class SecureSessionStore {
   private normalizeCreateLeaseGrantInput(input: CreateSecureSessionLeaseGrantInput): {
     bindingIds: string[];
     expiresAt: string | null;
+    grantSource: SecureSessionLease["grantSource"];
   } {
     assertId(input.leaseId, "lease ID");
     assertId(input.secretId, "secret ID");
     if (input.requestId !== undefined && input.requestId !== null) {
       assertId(input.requestId, "request ID");
+    }
+    const grantSource = input.grantSource
+      ?? (input.requestId ? "access_request" : "manual");
+    assertEnum(grantSource, SECURE_SESSION_LEASE_GRANT_SOURCES, "lease grant source");
+    if (grantSource === "access_request" && !input.requestId) {
+      throw new Error("Access-request leases require a request ID");
+    }
+    if (grantSource !== "access_request" && input.requestId) {
+      throw new Error("Only access-request leases can have a request ID");
     }
     const bindingIds = normalizeIds(input.bindingIds, "lease binding IDs");
     assertEnum(input.leaseKind, SECURE_SESSION_LEASE_KINDS, "lease kind");
@@ -1470,7 +1840,7 @@ export class SecureSessionStore {
     if (input.leaseKind !== "timed" && expiresAt !== null) {
       throw new Error("Only timed leases can have an expiration time");
     }
-    return { bindingIds, expiresAt };
+    return { bindingIds, expiresAt, grantSource };
   }
 
   private requireBindingsForSecret(secretId: string, bindingIds: readonly string[]): void {
@@ -1552,6 +1922,29 @@ export class SecureSessionStore {
     return row ? this.mapLease(row) : null;
   }
 
+  private getProjectDefault(
+    profileId: string,
+    secretId: string
+  ): SecureSessionProjectDefault | null {
+    const row = this.database.prepare(`
+      SELECT profile_id, secret_id, created_at, updated_at
+      FROM secure_session_project_default
+      WHERE profile_id = ? AND secret_id = ?
+    `).get(profileId, secretId) as ProjectDefaultRow | undefined;
+    return row ? mapProjectDefault(row) : null;
+  }
+
+  private listProjectDefaultsForSecret(
+    secretId: string
+  ): SecureSessionProjectDefault[] {
+    return (this.database.prepare(`
+      SELECT profile_id, secret_id, created_at, updated_at
+      FROM secure_session_project_default
+      WHERE secret_id = ?
+      ORDER BY profile_id
+    `).all(secretId) as ProjectDefaultRow[]).map(mapProjectDefault);
+  }
+
   private getUseReservation(operationId: string): SecureSessionUseReservation | null {
     const row = this.database.prepare(`
       SELECT operation_id, lease_id, session_agent_id, reserved_at, completed_at, outcome
@@ -1594,6 +1987,7 @@ export class SecureSessionStore {
       sessionAgentId: row.session_agent_id,
       secretId: row.secret_id,
       requestId: row.request_id,
+      grantSource: row.grant_source,
       leaseKind: row.lease_kind,
       state: row.state,
       bindingIds: this.listLinkIds("secure_session_lease_binding", "lease_id", row.lease_id),
@@ -1667,6 +2061,15 @@ export class SecureSessionStore {
   private requireLease(leaseId: string): SecureSessionLease {
     const record = this.getLease(leaseId);
     if (!record) throw new SecureSessionNotFoundError("lease");
+    return record;
+  }
+
+  private requireProjectDefault(
+    profileId: string,
+    secretId: string
+  ): SecureSessionProjectDefault {
+    const record = this.getProjectDefault(profileId, secretId);
+    if (!record) throw new SecureSessionNotFoundError("project default");
     return record;
   }
 
@@ -1783,6 +2186,62 @@ export class SecureSessionStore {
     }
   }
 
+  private revokeProjectDefaultLeases(
+    profileId: string,
+    secretIds: readonly string[],
+    now: string
+  ): void {
+    if (secretIds.length === 0) return;
+    const leases = this.database.prepare(`
+      SELECT l.session_agent_id, l.lease_id, l.secret_id, l.request_id
+      FROM secure_session_lease l
+      JOIN secure_session_state ss ON ss.session_agent_id = l.session_agent_id
+      WHERE ss.profile_id = ?
+        AND l.secret_id IN (${secretIds.map(() => "?").join(", ")})
+        AND l.grant_source = 'project_default'
+        AND l.state = 'active'
+      ORDER BY l.session_agent_id, l.lease_id
+    `).all(profileId, ...secretIds) as Array<{
+      session_agent_id: string;
+      lease_id: string;
+      secret_id: string;
+      request_id: string | null;
+    }>;
+    const sessions = new Map<string, typeof leases>();
+    for (const lease of leases) {
+      const entries = sessions.get(lease.session_agent_id) ?? [];
+      entries.push(lease);
+      sessions.set(lease.session_agent_id, entries);
+    }
+    for (const [sessionAgentId, entries] of sessions) {
+      const revision = this.incrementRevision(
+        sessionAgentId,
+        "session_revoked",
+        null,
+        entries.length,
+        now
+      );
+      for (const lease of entries) {
+        this.database.prepare(`
+          UPDATE secure_session_lease
+          SET state = 'revoked', updated_revision = ?, revoked_at = ?,
+            revocation_reason = 'policy_changed', updated_at = ?
+          WHERE lease_id = ? AND state = 'active'
+        `).run(revision, now, now, lease.lease_id);
+        this.audit({
+          eventType: "session_revoked",
+          sessionAgentId,
+          profileId,
+          secretId: lease.secret_id,
+          requestId: lease.request_id,
+          leaseId: lease.lease_id,
+          outcome: "revoked",
+          occurredAt: now
+        });
+      }
+    }
+  }
+
   private unreservedResult(sessionAgentId: string): ReserveSecureSessionLeaseUseResult {
     const snapshot = this.getSnapshot(sessionAgentId);
     return {
@@ -1797,6 +2256,7 @@ export class SecureSessionStore {
   private audit(input: {
     eventType: string;
     sessionAgentId?: string | null;
+    profileId?: string | null;
     providerId?: string | null;
     secretId?: string | null;
     bindingId?: string | null;
@@ -1808,12 +2268,13 @@ export class SecureSessionStore {
   }): void {
     this.database.prepare(`
       INSERT INTO secure_session_audit (
-        event_type, session_agent_id, provider_id, secret_id, binding_id,
+        event_type, session_agent_id, profile_id, provider_id, secret_id, binding_id,
         request_id, lease_id, operation_id, outcome, occurred_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.eventType,
       input.sessionAgentId ?? null,
+      input.profileId ?? null,
       input.providerId ?? null,
       input.secretId ?? null,
       input.bindingId ?? null,
@@ -1836,7 +2297,7 @@ const SECRET_SELECT = `SELECT secret_id, provider_id, display_alias, display_nam
 const BINDING_SELECT = `SELECT binding_id, secret_id, delivery_kind, target_name,
   target_path, file_mode, created_at, updated_at FROM secure_session_binding`;
 const LEASE_SELECT = `SELECT lease_id, session_agent_id, secret_id, request_id,
-  lease_kind, state, issued_revision, updated_revision, expires_at, last_used_at,
+  grant_source, lease_kind, state, issued_revision, updated_revision, expires_at, last_used_at,
   remaining_uses, revoked_at, revocation_reason, one_use_operation_id, created_at,
   updated_at FROM secure_session_lease`;
 const REQUEST_SELECT = `SELECT request_id, session_agent_id, secret_id,
@@ -1871,6 +2332,12 @@ interface EncryptedSecretRow extends SecretRow {
   source_locator: string;
   encrypted_material: Buffer | null;
 }
+interface ProjectDefaultRow {
+  profile_id: string;
+  secret_id: string;
+  created_at: string;
+  updated_at: string;
+}
 interface BindingRow {
   binding_id: string;
   secret_id: string;
@@ -1896,6 +2363,7 @@ interface LeaseRow {
   session_agent_id: string;
   secret_id: string;
   request_id: string | null;
+  grant_source: SecureSessionLease["grantSource"];
   lease_kind: SecureSessionLease["leaseKind"];
   state: SecureSessionLease["state"];
   issued_revision: number;
@@ -1957,6 +2425,7 @@ interface AuditRow {
   audit_id: number;
   event_type: string;
   session_agent_id: string | null;
+  profile_id: string | null;
   provider_id: string | null;
   secret_id: string | null;
   binding_id: string | null;
@@ -1976,6 +2445,15 @@ function mapProvider(row: ProviderRow): SecureSessionProvider {
     status: row.status,
     lastVerifiedAt: row.last_verified_at,
     lastStatusCode: row.last_status_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapProjectDefault(row: ProjectDefaultRow): SecureSessionProjectDefault {
+  return {
+    profileId: row.profile_id,
+    secretId: row.secret_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -2061,6 +2539,7 @@ function mapAudit(row: AuditRow): SecureSessionAuditRecord {
     auditId: row.audit_id,
     eventType: row.event_type,
     sessionAgentId: row.session_agent_id,
+    profileId: row.profile_id,
     providerId: row.provider_id,
     secretId: row.secret_id,
     bindingId: row.binding_id,
@@ -2146,11 +2625,16 @@ function sameLeaseGrant(
   existing: SecureSessionLease,
   sessionAgentId: string,
   input: CreateSecureSessionLeaseGrantInput,
-  normalized: { bindingIds: string[]; expiresAt: string | null }
+  normalized: {
+    bindingIds: string[];
+    expiresAt: string | null;
+    grantSource: SecureSessionLease["grantSource"];
+  }
 ): boolean {
   return existing.sessionAgentId === sessionAgentId &&
     existing.secretId === input.secretId &&
     existing.requestId === (input.requestId ?? null) &&
+    existing.grantSource === normalized.grantSource &&
     existing.leaseKind === input.leaseKind &&
     existing.expiresAt === normalized.expiresAt &&
     sameIds(existing.bindingIds, normalized.bindingIds);

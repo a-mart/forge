@@ -1,3 +1,11 @@
+import type {
+  SecureSecretLeaseGrantSource,
+  SecureSecretRetention,
+  SecureSecretScope,
+  SecureSessionProjectDefaultState,
+  SecureSessionProjectDefaultStatusCode,
+} from '@forge/protocol'
+
 export type SecureSessionAvailabilityState =
   | 'available'
   | 'unsupported_runtime'
@@ -39,6 +47,14 @@ export interface SecureLeaseView {
   expiresAt?: string
   lastUsedAt?: string
   remainingUses?: number
+  grantSource?: SecureSecretLeaseGrantSource
+}
+
+export interface SecureProjectDefaultStatusView {
+  secretId: string
+  displayAlias: string
+  state: SecureSessionProjectDefaultState
+  statusCode: SecureSessionProjectDefaultStatusCode
 }
 
 export interface SecureAccessRequestView {
@@ -62,11 +78,14 @@ export interface SecureSessionSnapshotView {
   outputStateCode?: 'SECURE_OUTPUT_QUARANTINED'
   leases: SecureLeaseView[]
   pendingRequests: SecureAccessRequestView[]
+  projectDefaults?: SecureProjectDefaultStatusView[]
   updatedAt: string
 }
 
 export interface SecureGrantInput {
   requestId?: string
+  /** Selects a newly saved catalog secret for a request that began without one. */
+  selectForMissingRequest?: boolean
   secretId: string
   bindings: SecureSecretBindingView[]
   policy: SecureLeasePolicyView
@@ -75,6 +94,26 @@ export interface SecureGrantInput {
 export interface SecureRevokeOptions {
   stopProcesses?: boolean
 }
+
+export interface SecureSessionProjectContext {
+  profileId: string
+  displayName: string
+  projectDefaultLimitReached?: boolean
+}
+
+export type SecurePrivateFulfillmentInput =
+  | {
+      value: string | Uint8Array
+      retention: 'session'
+      scope: Extract<SecureSecretScope, { kind: 'profile' }>
+      makeProjectDefault?: false
+    }
+  | {
+      value: string | Uint8Array
+      retention: Extract<SecureSecretRetention, 'saved'>
+      scope: SecureSecretScope
+      makeProjectDefault?: boolean
+    }
 
 export interface SecureSessionPickerConfig {
   /** Origin identity closes open controls when equal agent ids are viewed on another origin. */
@@ -100,6 +139,7 @@ export interface SecureSessionRequestConfig {
   availability: SecureSessionAvailability
   requests: SecureAccessRequestView[]
   secrets: SecureSecretOption[]
+  project?: SecureSessionProjectContext
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
@@ -113,6 +153,6 @@ export interface SecureSessionRequestConfig {
   ) => void | Promise<void>
   onPrivateFulfill?: (
     requestId: string,
-    value: string | Uint8Array,
+    input: SecurePrivateFulfillmentInput,
   ) => void | Promise<void>
 }

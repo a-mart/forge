@@ -11,6 +11,7 @@ import {
   importBitwardenSecret,
   secureSecretsErrorMessage,
   updateSecureSecret,
+  updateSecureSecretProjectDefault,
 } from './secure-secrets-api'
 
 const SECRET_SUMMARY = {
@@ -108,7 +109,9 @@ describe('secure secrets API', () => {
       JSON.stringify(
         path.endsWith('/providers')
           ? { providers: [PROVIDER_SUMMARY] }
-          : { secrets: [SECRET_SUMMARY] },
+          : path.endsWith('/project-defaults')
+            ? { projectDefaults: [] }
+            : { secrets: [SECRET_SUMMARY] },
       ),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ))
@@ -117,6 +120,7 @@ describe('secure secrets API', () => {
     await expect(fetchSecureSecretsCatalog(client)).resolves.toEqual({
       providers: [PROVIDER_SUMMARY],
       secrets: [SECRET_SUMMARY],
+      projectDefaults: [],
     })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-secrets/providers',
@@ -124,6 +128,10 @@ describe('secure secrets API', () => {
     )
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/secure-secrets',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-secrets/project-defaults',
       expect.objectContaining({ cache: 'no-store' }),
     )
   })
@@ -155,12 +163,14 @@ describe('secure secrets API', () => {
       displayAlias: 'github/work',
       displayName: 'GitHub work token',
       material: rawSecret,
+      scope: { kind: 'profile', profileId: 'project-alpha' },
     })
 
     const requestBody = String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Forge-Secure-Control'))
       .toBe('test-secure-control-token-that-is-long-enough')
     expect(requestBody).toContain('"encryptedMaterial":"ciphertext-only"')
+    expect(requestBody).toContain('"scope":{"kind":"profile","profileId":"project-alpha"}')
     expect(requestBody).not.toContain(rawSecret)
   })
 
@@ -200,6 +210,7 @@ describe('secure secrets API', () => {
       sourceLocator: 'source-secret-uuid',
       displayAlias: 'database/production',
       displayName: 'Production database',
+      scope: { kind: 'instance' },
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -211,6 +222,7 @@ describe('secure secrets API', () => {
         sourceLocator: 'source-secret-uuid',
         displayAlias: 'database/production',
         displayName: 'Production database',
+        scope: { kind: 'instance' },
       }),
     )
     expect(encryptLocalValue).not.toHaveBeenCalled()
@@ -236,6 +248,34 @@ describe('secure secrets API', () => {
     )
   })
 
+  it('updates one project default without sending secret material', async () => {
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => new Response(
+      JSON.stringify({
+        profileId: 'project/alpha',
+        secretId: 'secret/one',
+        createdAt: '2026-07-24T12:00:00.000Z',
+        updatedAt: '2026-07-24T12:00:00.000Z',
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    const client = makeClient(fetchMock)
+
+    await updateSecureSecretProjectDefault(
+      client,
+      'project/alpha',
+      'secret/one',
+      true,
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-secrets/project-defaults/project%2Falpha/secret%2Fone',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ enabled: true }),
+      }),
+    )
+  })
+
   it('maps untrusted server errors to fixed safe copy', async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({ error: 'failed while using raw-secret-server-detail' }),
@@ -255,5 +295,39 @@ describe('secure secrets API', () => {
       'The secret source is currently unavailable.',
     )
     expect(secureSecretsErrorMessage(caught)).not.toContain('raw-secret-server-detail')
+  })
+
+  it('surfaces alias collisions with fixed scope-aware copy', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ code: 'SECURE_SECRET_ALIAS_CONFLICT' }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    ))
+    const client = makeClient(fetchMock)
+
+    await expect(updateSecureSecret(client, 'secret-1', {
+      displayAlias: 'duplicate',
+    })).rejects.toMatchObject({
+      code: 'SECURE_SECRET_ALIAS_CONFLICT',
+      message: 'A secret with this alias already exists in that scope.',
+    })
+  })
+
+  it('surfaces the project-default limit with fixed actionable copy', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ code: 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED' }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    ))
+    const client = makeClient(fetchMock)
+
+    await expect(updateSecureSecretProjectDefault(
+      client,
+      'project-alpha',
+      'secret-17',
+      true,
+    )).rejects.toMatchObject({
+      code: 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED',
+      message:
+        'This project already has the maximum number of automatic secrets. Disable one before enabling another.',
+    })
   })
 })

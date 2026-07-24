@@ -162,13 +162,25 @@ On macOS, Windows, and Linux, the Browser toolbar can pop the same live native t
 ### Secure Sessions
 
 Secure Sessions let a supported local Builder task use saved local or Bitwarden-backed
-secrets without placing their values in chat or model-visible tool arguments. Configure
-sources and delivery bindings under **Settings → Secrets**, then use the shield beside
-**Send** to start the isolated task environment and grant task, timed, or one-use
-access.
+secrets without placing their values in chat or model-visible tool arguments. Under
+**Settings → Secrets**, choose whether an alias is available only to one project or to
+all local projects. Local-vault and Bitwarden-backed secrets use the same scope and
+project-default settings. A project-scoped alias overrides an all-projects alias with
+the same name inside that project.
+
+Use the shield beside **Send** to start the isolated task environment and grant task,
+timed, or one-use access. A secret marked **Automatically available in this project**
+receives a task lease when Secure Mode starts; it is never added to standard Bash,
+prompts, workers, or the integrated terminal. Defaults that are unavailable or have a
+binding conflict are reported and skipped without blocking the rest of the Secure
+Session.
 
 The agent keeps using ordinary Bash. One task or timed grant can support many commands;
 stopping the Secure Session revokes its leases and destroys the task container.
+The agent can also propose an alias that does not exist. Its request contains only the
+alias, purpose, delivery, and lease. **Add secret and approve** collects the value
+privately in Forge Desktop and saves it to the current project by default; **Use for
+this task only** avoids creating a reusable saved secret.
 Secure Sessions currently require Forge Desktop for private value entry, a Pi-backed
 runtime, Docker, and the Forge runner image. Read [Secure Sessions](SECURE_SESSIONS.md)
 before relying on it: software that receives a raw value can still intentionally

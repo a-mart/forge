@@ -1,12 +1,19 @@
 import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentDescriptor, SecureSessionSnapshotEvent } from "@forge/protocol";
+import {
+  SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+  type AgentDescriptor,
+  type SecureSessionSnapshotEvent,
+} from "@forge/protocol";
 import type {
   SecureExecutionBackend,
   SecureExecutionRequest,
   SecureExecutionTask,
 } from "../secure-sessions/execution/secure-execution-backend.js";
-import { SECURE_OUTPUT_QUARANTINE } from "../secure-sessions/redaction/secure-value-guard.js";
+import {
+  SECURE_OUTPUT_QUARANTINE,
+  SecureValueGuard,
+} from "../secure-sessions/redaction/secure-value-guard.js";
 import { SecureSessionsService } from "../secure-sessions/secure-sessions-service.js";
 import type { SecureVaultCipher } from "../secure-sessions/sources/electron-safe-storage-client.js";
 import {
@@ -145,6 +152,215 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("fences secure authority during lifecycle teardown and cancellation restores it", async () => {
+    const harness = createHarness();
+    const grantedSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "lifecycle-grant",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "LIFECYCLE_GRANT" }],
+    });
+    const defaultSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "lifecycle-default",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "LIFECYCLE_DEFAULT" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    await harness.service.requestSecureSecretAccess("manager-a", "lifecycle-tool", {
+      displayAlias: "lifecycle-missing",
+      exposures: [{ deliveryKind: "environment", targetName: "LIFECYCLE_MISSING" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise lifecycle fencing",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const fenceId = await harness.service.beginSecureSessionLifecycleFence(
+      "profile-a",
+      ["manager-a"],
+    );
+
+    await expect(harness.service.startSecureSession("manager-a"))
+      .rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    await expect(harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: pending.revision,
+      secretId: grantedSecret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "LIFECYCLE_GRANT" }],
+      leaseKind: "task",
+    })).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    await expect(harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "lifecycle-missing",
+        encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+        exposures: [{
+          deliveryKind: "environment",
+          targetName: "LIFECYCLE_MISSING",
+        }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        makeProjectDefault: true,
+        leaseKind: "task",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    await expect(harness.service.setSecureSecretProjectDefault(
+      defaultSecret.secretId,
+      { profileId: "profile-a", enabled: true },
+    )).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    await expect(harness.service.createLocalSecureSecret({
+      displayAlias: "lifecycle-profile-create",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      scope: { kind: "profile", profileId: "profile-a" },
+    })).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+
+    await expect(harness.service.prepareSecureSessionForDeletion("manager-a"))
+      .resolves.toBeUndefined();
+    const stopped = harness.store.getSnapshot("manager-a");
+    expect(stopped.state.environmentStatus).toBe("stopped");
+    expect(stopped.requests).toEqual([
+      expect.objectContaining({ requestId: pending.pendingRequests[0]!.requestId }),
+    ]);
+    expect(harness.execution.destroyed).toContain("manager-a");
+
+    await harness.service.cancelSecureSessionLifecycleFence(fenceId);
+    await expect(harness.service.startSecureSession("manager-a"))
+      .resolves.toEqual(expect.objectContaining({
+        executionMode: "secure",
+        environmentStatus: "ready",
+      }));
+    expect(started.executionMode).toBe("secure");
+    await harness.close();
+  });
+
+  it("uses durable archive callbacks after the transient lifecycle fence completes", async () => {
+    const harness = createHarness();
+    const fenceId = await harness.service.beginSecureSessionLifecycleFence(
+      "profile-a",
+      ["manager-a"],
+    );
+    await harness.service.completeSecureSessionLifecycleFence(
+      fenceId,
+      "archived",
+    );
+    harness.archivedSessions.add("manager-a");
+
+    await expect(harness.service.startSecureSession("manager-a"))
+      .rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    harness.archivedSessions.delete("manager-a");
+    harness.archivedProfiles.add("profile-a");
+    await expect(harness.service.startSecureSession("manager-a"))
+      .rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+
+    harness.archivedProfiles.delete("profile-a");
+    await harness.service.clearSecureSessionLifecycleFenceForRestore(
+      "profile-a",
+      ["manager-a"],
+    );
+    await expect(harness.service.startSecureSession("manager-a"))
+      .resolves.toEqual(expect.objectContaining({
+        executionMode: "secure",
+        environmentStatus: "ready",
+      }));
+    await harness.close();
+  });
+
+  it("preserves session secrets until descriptor-independent post-core cleanup", async () => {
+    const harness = createHarness();
+    await harness.service.requestSecureSecretAccess("manager-a", "delete-tool", {
+      displayAlias: "delete-session-secret",
+      exposures: [{ deliveryKind: "environment", targetName: "DELETE_SESSION_SECRET" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise deletion ordering",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    await harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "delete-session-secret",
+        encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+        exposures: [{
+          deliveryKind: "environment",
+          targetName: "DELETE_SESSION_SECRET",
+        }],
+        retention: "session",
+        leaseKind: "task",
+      },
+    );
+    const fenceId = await harness.service.beginSecureSessionLifecycleFence(
+      "profile-a",
+      ["manager-a"],
+    );
+
+    await harness.service.prepareSecureSessionForDeletion("manager-a");
+    expect(harness.store.listSecrets().some(
+      (secret) => secret.retention === "session",
+    )).toBe(true);
+    expect(harness.store.listSessionStates().some(
+      (state) => state.sessionAgentId === "manager-a",
+    )).toBe(true);
+
+    harness.descriptors.delete("manager-a");
+    await harness.service.deleteSecureSessionStateAfterCoreDeletion("manager-a");
+    await harness.service.completeSecureSessionLifecycleFence(fenceId, "deleted");
+    expect(harness.store.listSecrets().some(
+      (secret) => secret.retention === "session",
+    )).toBe(false);
+    expect(harness.store.listSessionStates().some(
+      (state) => state.sessionAgentId === "manager-a",
+    )).toBe(false);
+    await harness.close();
+  });
+
+  it("reconciles orphaned project and session secret state during startup", async () => {
+    const harness = createHarness();
+    const instanceSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "surviving-instance",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+    const projectSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "orphaned-project",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(projectSecret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    harness.store.getOrCreateSessionState("missing-session", {
+      profileId: "missing-profile",
+      executionMode: "standard",
+      environmentStatus: "stopped",
+    });
+    harness.store.createSecretWithBindings({
+      secret: {
+        secretId: "orphaned-session-secret",
+        providerId: instanceSecret.providerId,
+        displayAlias: "orphaned-session",
+        scopeKind: "profile",
+        profileId: "missing-profile",
+        retention: "session",
+        sourceLocator: "session:missing-session",
+        encryptedMaterial: Buffer.from(ALPHA),
+      },
+      bindings: [{
+        bindingId: "orphaned-session-binding",
+        deliveryKind: "environment",
+        targetName: "ORPHANED_SESSION",
+      }],
+    });
+    harness.descriptors.delete("manager-a");
+
+    await harness.service.initializeSecureSessions();
+
+    expect(harness.store.listSecrets()).toEqual([
+      expect.objectContaining({ secretId: instanceSecret.secretId }),
+    ]);
+    expect(harness.store.listProjectDefaults()).toEqual([]);
+    expect(harness.store.listSessionStates()).toEqual([]);
+    await harness.close();
+  });
+
   it("continues shutdown cleanup after one task destroy fails", async () => {
     const harness = createHarness({ destroyFailures: ["manager-a"] });
     await harness.service.startSecureSession("manager-a");
@@ -194,6 +410,7 @@ describe("SecureSessionsService", () => {
     const binding = harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )!;
+    harness.execution.destroyed.length = 0;
     const execution = binding.executeBash({
       command: "wait-for-destroy",
       cwd: "/workspace-a",
@@ -237,6 +454,7 @@ describe("SecureSessionsService", () => {
     const binding = harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
     )!;
+    harness.execution.destroyed.length = 0;
     const execution = binding.executeBash({
       command: "wait-for-destroy",
       cwd: "/workspace-a",
@@ -396,7 +614,7 @@ describe("SecureSessionsService", () => {
     harness.execution.rejectBlockedExecution("manager-a");
     await expect(execution).rejects.toThrow("SECURE_OPERATION_FAILED");
     await expect(revoking).resolves.toEqual(expect.objectContaining({
-      environmentStatus: "stopped",
+      environmentStatus: "ready",
     }));
 
     const after = await harness.service.getSecureSessionSnapshot("manager-a");
@@ -404,6 +622,13 @@ describe("SecureSessionsService", () => {
       .toBe("revoked");
     expect(after.leases.find((lease) => lease.leaseId === betaLease.leaseId)?.status)
       .toBe("active");
+    await expect(harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )?.executeBash({
+      command: "safe-beta",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
     await harness.close();
   });
 
@@ -955,6 +1180,67 @@ describe("SecureSessionsService", () => {
     await consumed.close();
   });
 
+  it("keeps remaining task authority ready when a one-use lease is consumed", async () => {
+    const harness = createHarness();
+    const taskSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "task-secret",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "TASK_TOKEN" }],
+    });
+    const oneUseSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "one-use-secret",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ONE_USE_TOKEN" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    const withTask = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: taskSecret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "TASK_TOKEN" }],
+      leaseKind: "task",
+    });
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: withTask.revision,
+      secretId: oneUseSecret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "ONE_USE_TOKEN" }],
+      leaseKind: "one_use",
+    });
+    const recycleCountBeforeUse = harness.recycles.length;
+    harness.setRecycleDisposition("deferred");
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+
+    await expect(binding.executeBash({
+      command: "safe",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+
+    const afterUse = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(afterUse.environmentStatus).toBe("ready");
+    expect(afterUse.leases).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        secretId: taskSecret.secretId,
+        status: "active",
+      }),
+      expect.objectContaining({
+        secretId: oneUseSecret.secretId,
+        status: "consumed",
+        remainingUses: 0,
+      }),
+    ]));
+    expect(harness.recycles).toHaveLength(recycleCountBeforeUse);
+    await expect(binding.executeBash({
+      command: "safe-again",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .environmentStatus).toBe("ready");
+    await harness.close();
+  });
+
   it("serializes parallel Bash calls across one-use consumption and teardown", async () => {
     const harness = createHarness();
     const secret = await harness.service.createLocalSecureSecret({
@@ -1300,6 +1586,7 @@ describe("SecureSessionsService", () => {
         displayAlias: "private-beta",
         encryptedMaterial: Buffer.from(BETA).toString("base64"),
         exposures: [{ deliveryKind: "environment", targetName: "BETA_TOKEN" }],
+        retention: "session",
         leaseKind: "one_use",
       },
     );
@@ -1309,6 +1596,874 @@ describe("SecureSessionsService", () => {
     }));
     expect(fulfilled.leases).toHaveLength(1);
     expect(harness.recycles).toEqual(["manager-a", "manager-b"]);
+    await harness.close();
+  });
+
+  it("prefers a project-scoped alias over the instance alias for agent discovery and requests", async () => {
+    const harness = createHarness();
+    const globalSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "shared",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "GLOBAL_TOKEN" }],
+    });
+    const projectSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "shared",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "PROJECT_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+
+    await expect(harness.service.getSecureSessionAgentView("manager-a")).resolves
+      .toEqual(expect.objectContaining({
+        availableSecrets: [{
+          displayAlias: "shared",
+          bindings: [{ deliveryKind: "environment", targetName: "PROJECT_TOKEN" }],
+        }],
+      }));
+    await expect(harness.service.getSecureSessionAgentView("manager-b")).resolves
+      .toEqual(expect.objectContaining({
+        availableSecrets: [{
+          displayAlias: "shared",
+          bindings: [{ deliveryKind: "environment", targetName: "GLOBAL_TOKEN" }],
+        }],
+      }));
+
+    await harness.service.requestSecureSecretAccess("manager-a", "tool-project", {
+      displayAlias: "shared",
+      exposures: [{ deliveryKind: "environment", targetName: "PROJECT_TOKEN" }],
+      leaseKind: "task",
+      purposeSummary: "Use the project-specific credential",
+    });
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .pendingRequests[0]?.secretId).toBe(projectSecret.secretId);
+    expect((await harness.service.getSecureSessionSnapshot("manager-a"))
+      .pendingRequests[0]?.secretId).not.toBe(globalSecret.secretId);
+    await harness.close();
+  });
+
+  it("rejects forged project scopes", async () => {
+    const harness = createHarness();
+    await expect(harness.service.createLocalSecureSecret({
+      displayAlias: "forged",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      scope: { kind: "profile", profileId: "missing-profile" },
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    await expect(
+      harness.service.listSecureSecretProjectDefaults("missing-profile"),
+    ).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    await harness.close();
+  });
+
+  it("enforces the shared project-default limit without mutating the 17th selection", async () => {
+    const harness = createHarness();
+    const secrets = [];
+    for (let index = 0; index <= SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
+      secrets.push(await harness.service.createLocalSecureSecret({
+        displayAlias: `bounded-default-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `BOUNDED_DEFAULT_${index}`,
+        }],
+      }));
+    }
+    for (const secret of secrets.slice(0, SECURE_SECRET_MAX_PROJECT_DEFAULTS)) {
+      await expect(harness.service.setSecureSecretProjectDefault(secret.secretId, {
+        profileId: "profile-a",
+        enabled: true,
+      })).resolves.toEqual(expect.objectContaining({ secretId: secret.secretId }));
+    }
+
+    await expect(harness.service.setSecureSecretProjectDefault(
+      secrets[SECURE_SECRET_MAX_PROJECT_DEFAULTS]!.secretId,
+      { profileId: "profile-a", enabled: true },
+    )).rejects.toMatchObject({
+      code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+    });
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toHaveLength(SECURE_SECRET_MAX_PROJECT_DEFAULTS);
+    await harness.close();
+  });
+
+  it("starts legacy over-limit projects with visible conflicts and no partial grants", async () => {
+    const harness = createHarness();
+    for (let index = 0; index <= SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
+      const secret = await harness.service.createLocalSecureSecret({
+        displayAlias: `legacy-default-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `LEGACY_DEFAULT_${index}`,
+        }],
+      });
+      harness.store.putProjectDefault({
+        profileId: "profile-a",
+        secretId: secret.secretId,
+      });
+    }
+
+    const started = await harness.service.startSecureSession("manager-a");
+    expect(started.environmentStatus).toBe("ready");
+    expect(started.leases).toEqual([]);
+    expect(started.projectDefaults).toHaveLength(
+      SECURE_SECRET_MAX_PROJECT_DEFAULTS + 1,
+    );
+    expect(started.projectDefaults).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        state: "conflict",
+        statusCode: "binding_conflict",
+      }),
+    ]));
+    expect(started.projectDefaults.every(({ state }) => state === "conflict"))
+      .toBe(true);
+    expect(harness.sourceResolutions.size).toBe(0);
+    await harness.close();
+  });
+
+  it("allows disabling a configured default hidden by a legacy project alias", async () => {
+    const harness = createHarness();
+    const globalSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "hidden-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "GLOBAL_HIDDEN" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(globalSecret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    harness.store.createSecretWithBindings({
+      secret: {
+        secretId: "legacy-project-override",
+        providerId: globalSecret.providerId,
+        displayAlias: "hidden-default",
+        scopeKind: "profile",
+        profileId: "profile-a",
+        retention: "saved",
+        sourceLocator: "local",
+        encryptedMaterial: Buffer.from(BETA),
+      },
+      bindings: [{
+        bindingId: "legacy-project-override-binding",
+        deliveryKind: "environment",
+        targetName: "PROJECT_HIDDEN",
+      }],
+    });
+
+    await expect(harness.service.setSecureSecretProjectDefault(
+      globalSecret.secretId,
+      { profileId: "profile-a", enabled: false },
+    )).resolves.toBeNull();
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toEqual([]);
+    await harness.close();
+  });
+
+  it("attaches project defaults once with task provenance and isolates other projects", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "project-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "PROJECT_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+
+    const first = await harness.service.startSecureSession("manager-a");
+    expect(first.leases).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        leaseKind: "task",
+        grantSource: "project_default",
+        status: "active",
+      }),
+    ]);
+    expect(first.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "active",
+        statusCode: "ok",
+      }),
+    ]);
+
+    const repeated = await harness.service.startSecureSession("manager-a");
+    expect(repeated.revision).toBe(first.revision);
+    expect(repeated.leases).toHaveLength(1);
+    const other = await harness.service.startSecureSession("manager-b");
+    expect(other.leases).toEqual([]);
+    expect(other.projectDefaults).toEqual([]);
+    await harness.close();
+  });
+
+  it("keeps secure startup usable when one project default source is unavailable", async () => {
+    const harness = createHarness({ failSourceResolutionAfter: 1 });
+    const alpha = await harness.service.createLocalSecureSecret({
+      displayAlias: "available-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "AVAILABLE_DEFAULT" }],
+    });
+    const beta = await harness.service.createLocalSecureSecret({
+      displayAlias: "unavailable-default",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "UNAVAILABLE_DEFAULT" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(alpha.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(beta.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+
+    const started = await harness.service.startSecureSession("manager-a");
+    expect(started.environmentStatus).toBe("ready");
+    expect(started.leases).toHaveLength(1);
+    expect(started.projectDefaults).toEqual(expect.arrayContaining([
+      expect.objectContaining({ state: "active", statusCode: "ok" }),
+      expect.objectContaining({
+        state: "unavailable",
+        statusCode: "source_unavailable",
+      }),
+    ]));
+    await harness.close();
+  });
+
+  it("never reports a project default active after startup recycle fails", async () => {
+    const harness = createHarness({ recycleDisposition: "deferred" });
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "failed-start-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "FAILED_START_DEFAULT" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+
+    await expect(harness.service.startSecureSession("manager-a"))
+      .rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+    const failed = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(failed.environmentStatus).toBe("stopped");
+    expect(failed.leases).toEqual([
+      expect.objectContaining({ status: "revoked" }),
+    ]);
+    expect(failed.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "configured",
+        statusCode: "ok",
+      }),
+    ]);
+    await harness.close();
+  });
+
+  it("never reports a project default active after fail-closed execution", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "fail-closed-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "FAIL_CLOSED_DEFAULT" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.startSecureSession("manager-a");
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    const execution = binding.executeBash({
+      command: "wait-for-release",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    });
+    await harness.execution.waitForBlockedExecution("manager-a");
+    harness.execution.rejectBlockedExecution("manager-a");
+    await expect(execution).rejects.toMatchObject({
+      code: "SECURE_OPERATION_FAILED",
+    });
+
+    const failed = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(failed.environmentStatus).toBe("failed");
+    expect(failed.leases).toEqual([
+      expect.objectContaining({ status: "revoked" }),
+    ]);
+    expect(failed.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "configured",
+        statusCode: "ok",
+      }),
+    ]);
+    await harness.close();
+  });
+
+  it("downgrades project-default status when secret rotation revokes its lease", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "rotated-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ROTATED_DEFAULT" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.startSecureSession("manager-a");
+
+    await harness.service.updateSecureSecret(secret.secretId, {
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+    });
+    const rotated = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(rotated.leases).toEqual([
+      expect.objectContaining({ status: "revoked" }),
+    ]);
+    expect(rotated.projectDefaults).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        state: "configured",
+        statusCode: "ok",
+      }),
+    ]);
+    await harness.close();
+  });
+
+  it("rejects conflicting project defaults before starting a session", async () => {
+    const harness = createHarness();
+    const alpha = await harness.service.createLocalSecureSecret({
+      displayAlias: "default-alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "SHARED_DEFAULT" }],
+    });
+    const beta = await harness.service.createLocalSecureSecret({
+      displayAlias: "default-beta",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "askpass", targetName: "SHARED_DEFAULT" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(alpha.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await expect(harness.service.setSecureSecretProjectDefault(beta.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    })).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toHaveLength(1);
+    await harness.close();
+  });
+
+  it("serializes default resolution against a project override creation", async () => {
+    const harness = createHarness({ blockSourceResolution: true });
+    const globalSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "serialized",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "SERIALIZED_TOKEN" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(globalSecret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+
+    const starting = harness.service.startSecureSession("manager-a");
+    await harness.waitForBlockedSourceResolution();
+    let overrideSettled = false;
+    const creatingOverride = harness.service.createLocalSecureSecret({
+      displayAlias: "serialized",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "PROJECT_SERIALIZED_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    }).finally(() => {
+      overrideSettled = true;
+    });
+    await Promise.resolve();
+    expect(overrideSettled).toBe(false);
+
+    harness.releaseBlockedSourceResolution();
+    await expect(starting).resolves.toEqual(expect.objectContaining({
+      leases: [expect.objectContaining({
+        secretId: globalSecret.secretId,
+        grantSource: "project_default",
+      })],
+    }));
+    await expect(creatingOverride).rejects.toMatchObject({
+      code: "SECURE_REQUEST_INVALID",
+    });
+    await harness.close();
+  });
+
+  it("serializes default disable behind an in-progress secure start", async () => {
+    const harness = createHarness({ blockSourceResolution: true });
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "disable-race",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "DISABLE_RACE" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const starting = harness.service.startSecureSession("manager-a");
+    await harness.waitForBlockedSourceResolution();
+    let disableSettled = false;
+    const disabling = harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: false,
+    }).finally(() => {
+      disableSettled = true;
+    });
+    await Promise.resolve();
+    expect(disableSettled).toBe(false);
+
+    harness.releaseBlockedSourceResolution();
+    await expect(starting).resolves.toEqual(expect.objectContaining({
+      leases: [expect.objectContaining({ status: "active" })],
+    }));
+    await expect(disabling).resolves.toBeNull();
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toEqual([]);
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.leases).toEqual([
+      expect.objectContaining({ status: "revoked" }),
+    ]);
+    expect(after.environmentStatus).toBe("stopped");
+    await harness.close();
+  });
+
+  it("keeps catalog and project-default configuration Dockerless until secure start", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "dockerless",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "DOCKERLESS_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.listSecureSecrets();
+    await harness.service.listSecureSecretProjectDefaults();
+
+    expect(harness.execution.ensured).toEqual([]);
+    expect(harness.execution.destroyed).toEqual([]);
+    expect(harness.sourceResolutions.size).toBe(0);
+    await harness.close();
+  });
+
+  it("rebuilds with a remaining manual lease when a project default is disabled", async () => {
+    const harness = createHarness();
+    const automatic = await harness.service.createLocalSecureSecret({
+      displayAlias: "automatic",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "AUTOMATIC_TOKEN" }],
+    });
+    const manual = await harness.service.createLocalSecureSecret({
+      displayAlias: "manual",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "MANUAL_TOKEN" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(automatic.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    const withManual = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: manual.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "MANUAL_TOKEN" }],
+      leaseKind: "task",
+    });
+
+    await harness.service.setSecureSecretProjectDefault(automatic.secretId, {
+      profileId: "profile-a",
+      enabled: false,
+    });
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.environmentStatus).toBe("ready");
+    expect(after.leases.find(({ secretId }) => secretId === automatic.secretId))
+      .toEqual(expect.objectContaining({ status: "revoked" }));
+    expect(after.leases.find(({ secretId }) => secretId === manual.secretId))
+      .toEqual(expect.objectContaining({
+        status: "active",
+        grantSource: "manual",
+      }));
+    expect(after.revision).toBeGreaterThan(withManual.revision);
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    );
+    await expect(binding?.executeBash({
+      command: "safe-beta",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    await harness.close();
+  });
+
+  it("rebuilds remaining authority when an active secret is updated", async () => {
+    const harness = createHarness();
+    const alpha = await harness.service.createLocalSecureSecret({
+      displayAlias: "updated-alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "UPDATED_ALPHA" }],
+    });
+    const beta = await harness.service.createLocalSecureSecret({
+      displayAlias: "remaining-beta",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "REMAINING_BETA" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    const withAlpha = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: alpha.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "UPDATED_ALPHA" }],
+      leaseKind: "task",
+    });
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: withAlpha.revision,
+      secretId: beta.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "REMAINING_BETA" }],
+      leaseKind: "task",
+    });
+
+    await harness.service.updateSecureSecret(alpha.secretId, {
+      displayName: "Rotated metadata",
+    });
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.environmentStatus).toBe("ready");
+    expect(after.leases.find(({ secretId }) => secretId === alpha.secretId))
+      .toEqual(expect.objectContaining({ status: "revoked" }));
+    expect(after.leases.find(({ secretId }) => secretId === beta.secretId))
+      .toEqual(expect.objectContaining({ status: "active" }));
+    await expect(harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )?.executeBash({
+      command: "safe-beta",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    await harness.close();
+  });
+
+  it("fulfills missing requests as session-only or saved project defaults", async () => {
+    const ephemeral = createHarness();
+    await ephemeral.service.requestSecureSecretAccess("manager-a", "ephemeral-tool", {
+      displayAlias: "ephemeral",
+      exposures: [{ deliveryKind: "environment", targetName: "EPHEMERAL_TOKEN" }],
+      leaseKind: "one_use",
+      purposeSummary: "Use an ephemeral credential",
+    });
+    const ephemeralPending = await ephemeral.service.getSecureSessionSnapshot("manager-a");
+    const ephemeralResult = await ephemeral.service.fulfillSecureAccessRequest(
+      "manager-a",
+      ephemeralPending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: ephemeralPending.revision,
+        displayAlias: "ephemeral",
+        encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+        exposures: [{ deliveryKind: "environment", targetName: "EPHEMERAL_TOKEN" }],
+        retention: "session",
+        leaseKind: "one_use",
+      },
+    );
+    expect(ephemeralResult.leases[0]).toEqual(expect.objectContaining({
+      grantSource: "access_request",
+    }));
+    expect((await ephemeral.service.listSecureSecrets())
+      .some(({ displayAlias }) => displayAlias === "ephemeral")).toBe(false);
+    await ephemeral.close();
+
+    const saved = createHarness();
+    await saved.service.requestSecureSecretAccess("manager-a", "saved-tool", {
+      displayAlias: "saved",
+      exposures: [{ deliveryKind: "environment", targetName: "SAVED_TOKEN" }],
+      leaseKind: "task",
+      purposeSummary: "Save a reusable project credential",
+    });
+    const savedPending = await saved.service.getSecureSessionSnapshot("manager-a");
+    const savedResult = await saved.service.fulfillSecureAccessRequest(
+      "manager-a",
+      savedPending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: savedPending.revision,
+        displayAlias: "saved",
+        encryptedMaterial: Buffer.from(BETA).toString("base64"),
+        exposures: [{ deliveryKind: "environment", targetName: "SAVED_TOKEN" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        makeProjectDefault: true,
+        leaseKind: "task",
+      },
+    );
+    const savedSecret = (await saved.service.listSecureSecrets())
+      .find(({ displayAlias }) => displayAlias === "saved");
+    expect(savedSecret).toEqual(expect.objectContaining({
+      scope: { kind: "profile", profileId: "profile-a" },
+      retention: "saved",
+    }));
+    expect(await saved.service.listSecureSecretProjectDefaults("profile-a"))
+      .toEqual([expect.objectContaining({ secretId: savedSecret!.secretId })]);
+    expect(savedResult.leases[0]).toEqual(expect.objectContaining({
+      secretId: savedSecret!.secretId,
+      grantSource: "access_request",
+    }));
+    await saved.close();
+  });
+
+  it("keeps fulfillment pending when guard preflight fails", async () => {
+    const harness = createHarness({ guardFailures: 1 });
+    await harness.service.requestSecureSecretAccess("manager-a", "guard-tool", {
+      displayAlias: "guarded",
+      exposures: [{ deliveryKind: "environment", targetName: "GUARDED_TOKEN" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise guard preflight",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingRequests[0]!.requestId;
+
+    await expect(harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "guarded",
+        encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+        exposures: [{ deliveryKind: "environment", targetName: "GUARDED_TOKEN" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        makeProjectDefault: true,
+        leaseKind: "task",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_OPERATION_FAILED" });
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.pendingRequests).toEqual([
+      expect.objectContaining({ requestId }),
+    ]);
+    expect(after.leases).toEqual([]);
+    expect((await harness.service.listSecureSecrets())
+      .some(({ displayAlias }) => displayAlias === "guarded")).toBe(false);
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toEqual([]);
+    await harness.close();
+  });
+
+  it("rolls back saved fulfillment atomically on an alias conflict", async () => {
+    const harness = createHarness();
+    await harness.service.requestSecureSecretAccess("manager-a", "alias-tool", {
+      displayAlias: "late-alias",
+      exposures: [{ deliveryKind: "environment", targetName: "LATE_ALIAS_TOKEN" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise transactional alias conflict",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    await harness.service.createLocalSecureSecret({
+      displayAlias: "late-alias",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "LATE_ALIAS_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+
+    await expect(harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "late-alias",
+        encryptedMaterial: Buffer.from(BETA).toString("base64"),
+        exposures: [{ deliveryKind: "environment", targetName: "LATE_ALIAS_TOKEN" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        makeProjectDefault: true,
+        leaseKind: "task",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_SECRET_ALIAS_CONFLICT" });
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.pendingRequests).toEqual([
+      expect.objectContaining({ requestId: pending.pendingRequests[0]!.requestId }),
+    ]);
+    expect(after.leases).toEqual([]);
+    expect((await harness.service.listSecureSecrets()).filter(
+      ({ displayAlias }) => displayAlias === "late-alias",
+    )).toHaveLength(1);
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toEqual([]);
+    await harness.close();
+  });
+
+  it("rejects private auto-default fulfillment at the shared limit without artifacts", async () => {
+    const harness = createHarness();
+    for (let index = 0; index < SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
+      const secret = await harness.service.createLocalSecureSecret({
+        displayAlias: `private-limit-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `PRIVATE_LIMIT_${index}`,
+        }],
+      });
+      await harness.service.setSecureSecretProjectDefault(secret.secretId, {
+        profileId: "profile-a",
+        enabled: true,
+      });
+    }
+    await harness.service.requestSecureSecretAccess("manager-a", "limit-tool", {
+      displayAlias: "private-limit-overflow",
+      exposures: [{ deliveryKind: "environment", targetName: "PRIVATE_LIMIT_OVERFLOW" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise the private default limit",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingRequests[0]!.requestId;
+
+    await expect(harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "private-limit-overflow",
+        encryptedMaterial: Buffer.from(BETA).toString("base64"),
+        exposures: [{
+          deliveryKind: "environment",
+          targetName: "PRIVATE_LIMIT_OVERFLOW",
+        }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        makeProjectDefault: true,
+        leaseKind: "task",
+      },
+    )).rejects.toMatchObject({
+      code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+    });
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.pendingRequests).toEqual([
+      expect.objectContaining({ requestId }),
+    ]);
+    expect(after.leases).toEqual([]);
+    expect((await harness.service.listSecureSecrets())
+      .some(({ displayAlias }) => displayAlias === "private-limit-overflow"))
+      .toBe(false);
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toHaveLength(SECURE_SECRET_MAX_PROJECT_DEFAULTS);
+    expect(harness.execution.ensured).toEqual([]);
+    await harness.close();
+  });
+
+  it("rejects private fulfillment that would shadow a configured instance default", async () => {
+    const harness = createHarness();
+    await harness.service.requestSecureSecretAccess("manager-a", "shadow-tool", {
+      displayAlias: "late-shadow",
+      exposures: [{ deliveryKind: "environment", targetName: "LATE_SHADOW" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise the project alias invariant",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const requestId = pending.pendingRequests[0]!.requestId;
+    const globalSecret = await harness.service.createLocalSecureSecret({
+      displayAlias: "late-shadow",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "GLOBAL_LATE_SHADOW" }],
+    });
+    await harness.service.setSecureSecretProjectDefault(globalSecret.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+
+    await expect(harness.service.fulfillSecureAccessRequest(
+      "manager-a",
+      requestId,
+      {
+        baseRevision: pending.revision,
+        displayAlias: "late-shadow",
+        encryptedMaterial: Buffer.from(BETA).toString("base64"),
+        exposures: [{ deliveryKind: "environment", targetName: "LATE_SHADOW" }],
+        retention: "saved",
+        scope: { kind: "profile", profileId: "profile-a" },
+        makeProjectDefault: true,
+        leaseKind: "task",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after.pendingRequests).toEqual([
+      expect.objectContaining({ requestId }),
+    ]);
+    expect(after.leases).toEqual([]);
+    expect((await harness.service.listSecureSecrets()).filter(
+      ({ displayAlias }) => displayAlias === "late-shadow",
+    )).toEqual([expect.objectContaining({ secretId: globalSecret.secretId })]);
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a"))
+      .toEqual([expect.objectContaining({ secretId: globalSecret.secretId })]);
+    expect(harness.execution.ensured).toEqual([]);
+    await harness.close();
+  });
+
+  it("expires pending requests before status, approval, or fulfillment", async () => {
+    let logicalNow = Date.parse(NOW);
+    const harness = createHarness({
+      now: () => new Date(logicalNow).toISOString(),
+    });
+    await harness.service.requestSecureSecretAccess("manager-a", "expiring-tool", {
+      displayAlias: "expiring",
+      exposures: [{ deliveryKind: "stdin" }],
+      leaseKind: "task",
+      purposeSummary: "Exercise request expiry",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    logicalNow += 30 * 60 * 1000;
+
+    const expired = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(expired.pendingRequests).toEqual([]);
+    expect(expired.revision).toBe(pending.revision + 1);
+    await expect(harness.service.resolveSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        requestId: pending.pendingRequests[0]!.requestId,
+        decision: "approve",
+      },
+    )).rejects.toMatchObject({ code: "SECURE_STALE_REVISION" });
+    await harness.close();
+  });
+
+  it("approves a missing-alias request with a newly saved selected secret", async () => {
+    const harness = createHarness();
+    await harness.service.requestSecureSecretAccess("manager-a", "selected-tool", {
+      displayAlias: "selected",
+      exposures: [{ deliveryKind: "environment", targetName: "SELECTED_TOKEN" }],
+      leaseKind: "task",
+      purposeSummary: "Use a separately saved reference",
+    });
+    const pending = await harness.service.getSecureSessionSnapshot("manager-a");
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "selected",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "SELECTED_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const approved = await harness.service.resolveSecureAccessRequest(
+      "manager-a",
+      pending.pendingRequests[0]!.requestId,
+      {
+        baseRevision: pending.revision,
+        requestId: pending.pendingRequests[0]!.requestId,
+        decision: "approve",
+        selectedSecretId: secret.secretId,
+      },
+    );
+    expect(approved.pendingRequests).toEqual([]);
+    expect(approved.leases).toEqual([
+      expect.objectContaining({
+        secretId: secret.secretId,
+        grantSource: "access_request",
+      }),
+    ]);
     await harness.close();
   });
 
@@ -1470,9 +2625,13 @@ async function grant(
 
 function createHarness(options: {
   blockProviderStatus?: boolean;
+  blockSourceResolution?: boolean;
   blockEnsures?: readonly string[];
   destroyFailures?: readonly string[];
   failSourceResolutionAfter?: number;
+  guardFailures?: number;
+  archivedProfiles?: readonly string[];
+  archivedSessions?: readonly string[];
   now?: () => string;
   recoveredSandboxIds?: readonly string[];
   recoveryFailures?: number;
@@ -1488,15 +2647,29 @@ function createHarness(options: {
     ["manager-a", descriptor("manager-a", "profile-a", "/workspace-a")],
     ["manager-b", descriptor("manager-b", "profile-b", "/workspace-b")],
   ]);
+  const archivedProfiles = new Set(options.archivedProfiles ?? []);
+  const archivedSessions = new Set(options.archivedSessions ?? []);
   const execution = new FakeExecutionBackend(options);
   const sourceResolutions = new Map<string, number>();
   const resolvedMaterials: HostOnlySecret[] = [];
+  let sourceResolutionStarted!: () => void;
+  let sourceResolutionRelease!: () => void;
+  const sourceResolutionStartedPromise = new Promise<void>((resolve) => {
+    sourceResolutionStarted = resolve;
+  });
+  const sourceResolutionReleasePromise = new Promise<void>((resolve) => {
+    sourceResolutionRelease = resolve;
+  });
   const localSource: SecureSecretSource & {
     testConnection(): Promise<void>;
   } = {
     kind: "local_keychain",
     async testConnection() {},
     async resolve(input) {
+      if (options.blockSourceResolution) {
+        sourceResolutionStarted();
+        await sourceResolutionReleasePromise;
+      }
       const bytes = Buffer.from(input.encryptedMaterial ?? []);
       const key = bytes.toString("utf8");
       const resolutionCount = [...sourceResolutions.values()]
@@ -1520,7 +2693,9 @@ function createHarness(options: {
   };
   const snapshots: SecureSessionSnapshotEvent[] = [];
   const recycles: string[] = [];
+  let recycleDisposition = options.recycleDisposition;
   let nextId = 0;
+  let guardFailures = options.guardFailures ?? 0;
   let providerStatusStarted!: () => void;
   let providerStatusRelease!: () => void;
   const providerStatusStartedPromise = new Promise<void>((resolve) => {
@@ -1549,6 +2724,11 @@ function createHarness(options: {
     probeBitwarden: async () => true,
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
+    hasProfile: (profileId) => [...descriptors.values()].some(
+      (descriptor) => descriptor.profileId === profileId,
+    ),
+    isProfileArchived: (profileId) => archivedProfiles.has(profileId),
+    isSessionArchived: (agentId) => archivedSessions.has(agentId),
     requireBuilderSession: (agentId) => {
       const value = descriptors.get(agentId);
       if (!value) throw new Error("missing");
@@ -1559,7 +2739,14 @@ function createHarness(options: {
     applyModeRuntimeRecycle: async (agentId) => {
       recycles.push(agentId);
       if (options.recycleThrows) throw new Error("recycle failed");
-      return options.recycleDisposition ?? "recycled";
+      return recycleDisposition ?? "recycled";
+    },
+    createValueGuard: (values) => {
+      if (guardFailures > 0) {
+        guardFailures -= 1;
+        throw new Error("guard preflight failed");
+      }
+      return new SecureValueGuard(values);
     },
     now,
     createId: () => `id-${++nextId}`,
@@ -1568,16 +2755,27 @@ function createHarness(options: {
     service,
     store,
     descriptors,
+    archivedProfiles,
+    archivedSessions,
     execution,
     sourceResolutions,
     resolvedMaterials,
     snapshots,
     recycles,
+    setRecycleDisposition(value: "recycled" | "deferred" | "none") {
+      recycleDisposition = value;
+    },
     async waitForBlockedProviderStatus() {
       await providerStatusStartedPromise;
     },
     releaseBlockedProviderStatus() {
       providerStatusRelease();
+    },
+    async waitForBlockedSourceResolution() {
+      await sourceResolutionStartedPromise;
+    },
+    releaseBlockedSourceResolution() {
+      sourceResolutionRelease();
     },
     async close() {
       await service.closeSecureSessions();
