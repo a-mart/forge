@@ -201,6 +201,76 @@ describe("BrowserAutomationService", () => {
     });
   });
 
+  it("changes host and tab selection atomically so omitted-host calls follow a managed activation", async () => {
+    const { service } = await createService();
+    const managedRequests: BrowserAutomationRequest[] = [];
+    const externalRequests: BrowserAutomationRequest[] = [];
+    for (const [hostKind, connectionId, hostId, requests] of [
+      ["managed-electron", "managed-socket", "managed-host", managedRequests],
+      ["external-chrome", "external-socket", "external-host", externalRequests],
+    ] as const) {
+      service.registerHost({
+        connectionId,
+        registration: {
+          ...registration(),
+          hostId,
+          capabilities: { ...registration().capabilities, hostKind },
+        },
+        sendRequest(request) {
+          requests.push(request);
+          queueMicrotask(() => service.acceptHostResponse(connectionId, response(request)));
+        },
+      });
+    }
+
+    await service.invoke("manager-1", "profile-1", "open", {
+      hostKind: "external-chrome", show: false, reuseExistingTab: false,
+    });
+    await service.invoke("manager-1", "profile-1", "open", {
+      hostKind: "managed-electron", show: false, reuseExistingTab: false,
+    });
+    await expect(service.activateTab("profile-1", "manager-1", "tab-1", "external-chrome")).resolves.toMatchObject({
+      hostKind: "external-chrome", activeTabId: "tab-1", defaultTabId: "tab-1",
+    });
+    await expect(service.activateTab("profile-1", "manager-1", "tab-1", "managed-electron")).resolves.toMatchObject({
+      hostKind: "managed-electron", activeTabId: "tab-1", defaultTabId: "tab-1",
+    });
+
+    await expect(service.invoke("manager-1", "profile-1", "evaluate", {
+      expression: "1 + 1", awaitPromise: true, returnByValue: true,
+    })).resolves.toMatchObject({ ok: true });
+    expect(managedRequests.at(-1)).toMatchObject({ operation: "evaluate", hostKind: "managed-electron", tabId: "tab-1" });
+    expect(externalRequests).toHaveLength(1);
+  });
+
+  it("keeps identical tab ids host-scoped when closing and selecting fallbacks", async () => {
+    const { service } = await createService();
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.hostKind = "external-chrome";
+    state.tabs = [
+      { ...tab(), hostKind: "external-chrome" },
+      { ...tab(), hostKind: "managed-electron" },
+      { ...tab("manager-1", "profile-1", "managed-2"), hostKind: "managed-electron" },
+    ];
+    state.activeTabId = "tab-1";
+    state.defaultTabId = "tab-1";
+    await service.store.save(state);
+
+    await expect(service.closeTab("profile-1", "manager-1", "tab-1", "managed-electron")).resolves.toMatchObject({
+      hostKind: "external-chrome",
+      activeTabId: "tab-1",
+      defaultTabId: "tab-1",
+      tabs: [
+        expect.objectContaining({ hostKind: "external-chrome", tabId: "tab-1" }),
+        expect.objectContaining({ hostKind: "managed-electron", tabId: "managed-2" }),
+      ],
+    });
+    await service.activateTab("profile-1", "manager-1", "managed-2", "managed-electron");
+    await expect(service.closeTab("profile-1", "manager-1", "managed-2", "managed-electron")).resolves.toMatchObject({
+      hostKind: "external-chrome", activeTabId: "tab-1", defaultTabId: "tab-1",
+    });
+  });
+
   it("enforces explicit tab ownership across loaded sessions", async () => {
     const { service } = await createService();
     const first = service.store.createEmpty("profile-1", "manager-1");

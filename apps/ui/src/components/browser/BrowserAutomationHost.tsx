@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { resolveBrowserHostKind } from '@forge/protocol'
 import type {
   BrowserAutomationErrorCode,
   BrowserAutomationRequest,
@@ -58,8 +59,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const reconcileSequenceRef = useRef(0)
     const presentationSequences = useRef(new Map<string, number>())
     const pendingTabUpdates = useRef(new Map<string, BrowserTabSnapshot>())
-    const canonicalSessions = useRef(new Map<string, BrowserSessionSnapshot>(Object.entries(state.browserSessions)))
-    const projectedSessions = useRef(new Map<string, BrowserSessionSnapshot>(Object.entries(state.browserSessions)))
+    const canonicalSessions = useRef(managedSessionMap(state.browserSessions))
+    const projectedSessions = useRef(managedSessionMap(state.browserSessions))
     const reportInFlight = useRef(false)
     const reportTimer = useRef<number | null>(null)
     const runtimeUpdateSequence = useRef(0)
@@ -78,7 +79,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       // a lower revision than the previous process. Conflict snapshots can
       // temporarily be newer than this projection when its corresponding live
       // event was dropped; those are adopted directly in flushReports below.
-      const nextProjected = new Map(Object.entries(state.browserSessions))
+      const nextProjected = managedSessionMap(state.browserSessions)
       let receivedCanonicalState = false
       for (const [sessionAgentId, session] of nextProjected) {
         if (session.tabs.some((tab) => tab.lifecycle !== 'closed')) {
@@ -94,7 +95,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         if (session.hostingState !== 'hosted') dropPendingSession(pendingTabUpdates.current, sessionAgentId)
       }
       for (const sessionAgentId of projectedSessions.current.keys()) {
-        if (!nextProjected.has(sessionAgentId) && state.browserHostHydrated) {
+        if (!nextProjected.has(sessionAgentId)
+          && (state.browserHostHydrated || state.browserSessions[sessionAgentId] !== undefined)) {
           canonicalSessions.current.delete(sessionAgentId)
           dropPendingSession(pendingTabUpdates.current, sessionAgentId)
           receivedCanonicalState = true
@@ -149,19 +151,22 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         for (const report of reports.values()) {
           const sessionResult = result.sessions.find((candidate) => candidate.sessionAgentId === report.sessionAgentId && candidate.profileId === report.profileId)
           if (!sessionResult) continue
-          if (sessionResult.snapshot) canonicalSessions.current.set(report.sessionAgentId, sessionResult.snapshot)
+          const managedSnapshot = sessionResult.snapshot ? managedSessionProjection(sessionResult.snapshot) : null
+          if (managedSnapshot) canonicalSessions.current.set(report.sessionAgentId, managedSnapshot)
           if (sessionResult.status === 'accepted') {
             for (const tab of report.tabs) {
               if (pendingTabUpdates.current.get(tab.tabId) === sent.get(tab.tabId)) pendingTabUpdates.current.delete(tab.tabId)
             }
-            rebasePendingSession(pendingTabUpdates.current, sessionResult.snapshot)
+            if (managedSnapshot) rebasePendingSession(pendingTabUpdates.current, managedSnapshot)
+            else dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
           } else if (sessionResult.status === 'revision-conflict') {
             sawConflict = true
             // A changed report base is real progress and warrants one rebased
             // attempt. An unchanged conflict waits for new canonical/runtime
             // state rather than polling the backend forever.
             if (sessionResult.snapshot.revision !== report.baseRevision) conflictMadeProgress = true
-            rebasePendingSession(pendingTabUpdates.current, sessionResult.snapshot)
+            if (managedSnapshot) rebasePendingSession(pendingTabUpdates.current, managedSnapshot)
+            else dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
           } else if (sessionResult.status === 'rejected' && sessionResult.reason !== 'invalid-report') {
             dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
           }
@@ -243,7 +248,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         hostGeneration: state.browserHost.hostGeneration ?? 0,
         updateSequence: sequence,
         workspaceEpoch: workspaceEpochRef.current,
-        sessions: Object.values(state.browserSessions),
+        sessions: [...managedSessionMap(state.browserSessions).values()],
       }).catch(() => undefined)
     }, [bridge, state.browserHost.hostGeneration, state.browserSessions])
 
@@ -257,7 +262,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     useEffect(() => {
       if (!bridge || !client) return
       return bridge.onStateChanged((tab) => {
-        const session = canonicalSessions.current.get(tab.sessionAgentId) ?? stateRef.current.browserSessions[tab.sessionAgentId]
+        if (resolveBrowserHostKind(tab.hostKind) !== 'managed-electron') return
+        const session = canonicalSessions.current.get(tab.sessionAgentId)
+          ?? managedSessionProjection(stateRef.current.browserSessions[tab.sessionAgentId])
         if (!session || session.hostingState !== 'hosted' || !session.tabs.some((candidate) => candidate.tabId === tab.tabId)) return
         pendingTabUpdates.current.set(tab.tabId, tab)
         runtimeUpdateSequence.current += 1
@@ -301,7 +308,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       if (!bridge) return
       const mode = workspaceMode
       const logicalVisible = mode === 'popped-out' || (mode !== 'opening' && mode !== 'docking' && panelVisible)
-      for (const session of Object.values(state.browserSessions)) {
+      for (const session of managedSessionMap(state.browserSessions).values()) {
         if (session.hostingState !== 'hosted') continue
         for (const tab of session.tabs) {
           if (tab.lifecycle === 'closed') continue
@@ -386,16 +393,18 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
 
     useEffect(() => {
       if (!workspace?.publish) return
-      const snapshot = selectedSessionAgentId ? state.browserSessions[selectedSessionAgentId] ?? null : null
+      const snapshot = selectedSessionAgentId
+        ? managedSessionProjection(state.browserSessions[selectedSessionAgentId])
+        : null
       void workspace.publish({
         workspaceEpoch: workspaceEpochRef.current,
-        sessionAgentId: selectedSessionAgentId,
-        profileId: selectedProfileId ?? snapshot?.profileId ?? null,
+        sessionAgentId: snapshot ? selectedSessionAgentId : null,
+        profileId: snapshot ? selectedProfileId ?? snapshot.profileId : null,
         snapshot,
         host: state.browserHost,
         mode: workspaceModeRef.current,
         popoutAvailable: workspace.capability.popoutAvailable,
-        connected: Boolean(client && state.connected && selectedSessionAgentId),
+        connected: Boolean(client && state.connected && selectedSessionAgentId && snapshot),
         publishedAt: new Date().toISOString(),
       }).catch(() => undefined)
     }, [client, selectedProfileId, selectedSessionAgentId, state.browserHost, state.browserSessions, state.connected, workspace])
@@ -408,16 +417,18 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         onWorkspaceModeChange?.(mode)
         // Native owner changed without a host generation change. Re-publish and
         // let the presentation effect verify non-empty physical bounds.
-        const session = selectedSessionRef.current ? stateRef.current.browserSessions[selectedSessionRef.current] : null
+        const session = selectedSessionRef.current
+          ? managedSessionProjection(stateRef.current.browserSessions[selectedSessionRef.current])
+          : null
         if (workspace.publish) void workspace.publish({
           workspaceEpoch: workspaceEpochRef.current,
-          sessionAgentId: selectedSessionRef.current,
-          profileId: selectedProfileRef.current,
-          snapshot: session ?? null,
+          sessionAgentId: session ? selectedSessionRef.current : null,
+          profileId: session ? selectedProfileRef.current ?? session.profileId : null,
+          snapshot: session,
           host: stateRef.current.browserHost,
           mode,
           popoutAvailable: workspace.capability.popoutAvailable,
-          connected: Boolean(clientRef.current && stateRef.current.connected && selectedSessionRef.current),
+          connected: Boolean(clientRef.current && stateRef.current.connected && selectedSessionRef.current && session),
           publishedAt: new Date().toISOString(),
         }).catch(() => undefined)
       })
@@ -453,6 +464,28 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
 )
 
 const MAX_HOST_REPORT_CONFLICT_RETRIES = 3
+
+function managedSessionProjection(session: BrowserSessionSnapshot | null | undefined): BrowserSessionSnapshot | null {
+  if (!session || resolveBrowserHostKind(session.hostKind) !== 'managed-electron') return null
+  const tabs = session.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === 'managed-electron')
+  if (tabs.length === session.tabs.length) return session
+  const tabIds = new Set(tabs.map((tab) => tab.tabId))
+  return {
+    ...session,
+    tabs,
+    activeTabId: session.activeTabId && tabIds.has(session.activeTabId) ? session.activeTabId : null,
+    defaultTabId: session.defaultTabId && tabIds.has(session.defaultTabId) ? session.defaultTabId : null,
+  }
+}
+
+function managedSessionMap(sessions: Record<string, BrowserSessionSnapshot>): Map<string, BrowserSessionSnapshot> {
+  const managed = new Map<string, BrowserSessionSnapshot>()
+  for (const [sessionAgentId, session] of Object.entries(sessions)) {
+    const projected = managedSessionProjection(session)
+    if (projected) managed.set(sessionAgentId, projected)
+  }
+  return managed
+}
 
 function scheduleReportTimer(flush: () => void | Promise<void>, timer: { current: number | null }): void {
   if (timer.current !== null) return

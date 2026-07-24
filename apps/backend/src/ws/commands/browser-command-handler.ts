@@ -1,3 +1,4 @@
+import { resolveBrowserHostKind } from "@forge/protocol";
 import type {
   BrowserClientCommand,
   BrowserServerEvent,
@@ -222,6 +223,7 @@ async function handleTabCommand(
       const before = await service.getSessionSnapshot(profileId, command.sessionAgentId);
       const previousActive = before.activeTabId;
       const previousDefault = before.defaultTabId;
+      const previousHostKind = resolveBrowserHostKind(before.hostKind);
       const result = await service.invoke(command.sessionAgentId, profileId, "open", {
         hostKind: "managed-electron",
         ...(command.url ? { url: command.url } : {}),
@@ -230,7 +232,7 @@ async function handleTabCommand(
       });
       if (!result.ok) throw new BrowserCommandFailure(result.error.code, result.error.message);
       if (command.activate === false) {
-        await service.setTabSelection(profileId, command.sessionAgentId, previousActive, previousDefault);
+        await service.setTabSelection(profileId, command.sessionAgentId, previousActive, previousDefault, previousHostKind);
       }
       const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
       sendSuccess(options, command, snapshot);
@@ -238,19 +240,21 @@ async function handleTabCommand(
     }
 
     if (command.type === "browser_tab_activate") {
-      const next = await service.activateTab(profileId, command.sessionAgentId, command.tabId);
+      const next = await service.activateTab(profileId, command.sessionAgentId, command.tabId, "managed-electron");
       sendSuccess(options, command, next);
       return;
     }
 
     if (command.type === "browser_tab_close") {
-      const next = await service.closeTab(profileId, command.sessionAgentId, command.tabId);
+      const next = await service.closeTab(profileId, command.sessionAgentId, command.tabId, "managed-electron");
       sendSuccess(options, command, next);
       return;
     }
 
     const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
-    const tab = snapshot.tabs.find((candidate) => candidate.tabId === command.tabId && candidate.lifecycle !== "closed");
+    const tab = snapshot.tabs.find((candidate) => candidate.tabId === command.tabId
+      && resolveBrowserHostKind(candidate.hostKind) === "managed-electron"
+      && candidate.lifecycle !== "closed");
     if (!tab) throw new BrowserCommandFailure("TAB_NOT_FOUND", "Browser tab was not found in the selected Forge session.");
 
     if (command.type === "browser_tab_resize") {

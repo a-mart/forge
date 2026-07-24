@@ -20,15 +20,17 @@ import type { AgentDescriptor } from "../types.js";
 
 const TOOL_TEXT_MAX_BYTES = 128 * 1_024;
 const tabId = Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Target tab id. Defaults to this Forge session's default tab." }));
+const hostKind = Type.Optional(Type.Union([Type.Literal("managed-electron"), Type.Literal("external-chrome")]));
 const timeoutMs = Type.Optional(Type.Integer({ minimum: 1, maximum: BROWSER_AUTOMATION_MAX_TIMEOUT_MS, default: 15_000 }));
 const locator = Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH });
 const selector = Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH });
 const viewportPreset = Type.Union(Object.keys(BROWSER_VIEWPORT_PRESETS).map((id) => Type.Literal(id)));
 
 const schemas: Record<BrowserAutomationOperation, TSchema> = {
-  status: Type.Object({ tabId }, { additionalProperties: false }),
+  status: Type.Object({ tabId, hostKind }, { additionalProperties: false }),
   open: Type.Object({
     tabId,
+    hostKind,
     url: Type.Optional(Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH })),
     show: Type.Optional(Type.Boolean({ default: true })),
     reuseExistingTab: Type.Optional(Type.Boolean({ default: true })),
@@ -36,12 +38,14 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
   navigate: Type.Union([
     Type.Object({
       tabId,
+      hostKind,
       url: Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH }),
       readiness: Type.Optional(Type.Union([Type.Literal("load"), Type.Literal("domContentLoaded"), Type.Literal("none")], { default: "load" })),
       timeoutMs,
     }, { additionalProperties: false }),
     Type.Object({
       tabId,
+      hostKind,
       environmentPort: Type.Integer({ minimum: 1, maximum: 65_535 }),
       environmentProtocol: Type.Optional(Type.Union([Type.Literal("http"), Type.Literal("https")])),
       path: Type.Optional(Type.String({ maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH })),
@@ -50,9 +54,10 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
     }, { additionalProperties: false }),
   ]),
   resize: Type.Union([
-    Type.Object({ tabId, mode: Type.Literal("fill"), timeoutMs }, { additionalProperties: false }),
+    Type.Object({ tabId, hostKind, mode: Type.Literal("fill"), timeoutMs }, { additionalProperties: false }),
     Type.Object({
       tabId,
+      hostKind,
       mode: Type.Literal("freeform"),
       width: Type.Integer({ minimum: BROWSER_VIEWPORT_MIN_DIMENSION, maximum: BROWSER_VIEWPORT_MAX_DIMENSION }),
       height: Type.Integer({ minimum: BROWSER_VIEWPORT_MIN_DIMENSION, maximum: BROWSER_VIEWPORT_MAX_DIMENSION }),
@@ -60,21 +65,23 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
     }, { additionalProperties: false }),
     Type.Object({
       tabId,
+      hostKind,
       mode: Type.Literal("preset"),
       presetId: viewportPreset,
       orientation: Type.Optional(Type.Union([Type.Literal("portrait"), Type.Literal("landscape")])),
       timeoutMs,
     }, { additionalProperties: false }),
   ]),
-  snapshot: Type.Object({ tabId }, { additionalProperties: false }),
+  snapshot: Type.Object({ tabId, hostKind }, { additionalProperties: false }),
   click: Type.Union([
-    Type.Object({ tabId, locator, timeoutMs }, { additionalProperties: false }),
-    Type.Object({ tabId, selector, timeoutMs }, { additionalProperties: false }),
-    Type.Object({ tabId, x: Type.Number(), y: Type.Number(), timeoutMs }, { additionalProperties: false }),
+    Type.Object({ tabId, hostKind, locator, timeoutMs }, { additionalProperties: false }),
+    Type.Object({ tabId, hostKind, selector, timeoutMs }, { additionalProperties: false }),
+    Type.Object({ tabId, hostKind, x: Type.Number(), y: Type.Number(), timeoutMs }, { additionalProperties: false }),
   ]),
   type: Type.Union([
     Type.Object({
       tabId,
+      hostKind,
       text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
       clear: Type.Optional(Type.Boolean({ default: false })),
       locator,
@@ -82,6 +89,7 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
     }, { additionalProperties: false }),
     Type.Object({
       tabId,
+      hostKind,
       text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
       clear: Type.Optional(Type.Boolean({ default: false })),
       selector,
@@ -89,6 +97,7 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
     }, { additionalProperties: false }),
     Type.Object({
       tabId,
+      hostKind,
       text: Type.String({ maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
       clear: Type.Optional(Type.Boolean({ default: false })),
       timeoutMs,
@@ -96,6 +105,7 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
   ]),
   press: Type.Object({
     tabId,
+    hostKind,
     key: Type.String({ minLength: 1, maxLength: 128 }),
     modifiers: Type.Optional(Type.Array(Type.Union([
       Type.Literal("Alt"), Type.Literal("Control"), Type.Literal("Meta"), Type.Literal("Shift"),
@@ -103,6 +113,7 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
   }, { additionalProperties: false }),
   scroll: Type.Object({
     tabId,
+    hostKind,
     deltaX: Type.Optional(Type.Number()),
     deltaY: Type.Optional(Type.Number()),
     locator: Type.Optional(locator),
@@ -110,21 +121,24 @@ const schemas: Record<BrowserAutomationOperation, TSchema> = {
   }, { additionalProperties: false }),
   evaluate: Type.Object({
     tabId,
+    hostKind,
     expression: Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_EVALUATE_BYTES }),
     awaitPromise: Type.Optional(Type.Boolean({ default: true })),
     returnByValue: Type.Optional(Type.Boolean({ default: true })),
   }, { additionalProperties: false }),
   waitFor: Type.Object({
     tabId,
+    hostKind,
     locator: Type.Optional(locator),
     selector: Type.Optional(selector),
     text: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
     urlIncludes: Type.Optional(Type.String({ minLength: 1, maxLength: BROWSER_AUTOMATION_MAX_URL_LENGTH })),
     timeoutMs,
   }, { additionalProperties: false }),
-  recordingStart: Type.Object({ tabId }, { additionalProperties: false }),
+  recordingStart: Type.Object({ tabId, hostKind }, { additionalProperties: false }),
   recordingStop: Type.Object({
     tabId,
+    hostKind,
     recordingId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   }, { additionalProperties: false }),
 };

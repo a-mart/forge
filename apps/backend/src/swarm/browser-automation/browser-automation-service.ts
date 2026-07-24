@@ -251,6 +251,11 @@ export class BrowserAutomationService {
           }
         }
 
+        if (resolveBrowserHostKind(snapshot.hostKind) !== hostKind) {
+          clearPanelReveal(snapshot);
+          snapshot.activeTabId = target.tab?.tabId ?? null;
+          snapshot.defaultTabId = target.tab?.tabId ?? null;
+        }
         snapshot.hostKind = hostKind;
         this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation], hostKind);
         if (operation === "status" && response.ok) {
@@ -484,6 +489,8 @@ export class BrowserAutomationService {
       this.assertMutable(key, generation);
       const tab = snapshot.tabs.find((candidate) => candidate.tabId === tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind && candidate.lifecycle !== "closed");
       if (!tab) throw new Error("Browser tab was not found in the selected Forge session.");
+      if (resolveBrowserHostKind(snapshot.hostKind) !== hostKind) clearPanelReveal(snapshot);
+      snapshot.hostKind = hostKind;
       snapshot.activeTabId = tabId;
       snapshot.defaultTabId = tabId;
       snapshot.panelVisible = true;
@@ -501,17 +508,32 @@ export class BrowserAutomationService {
       this.assertMutable(key, generation);
       const existing = snapshot.tabs.find((candidate) => candidate.tabId === tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind);
       if (!existing || existing.lifecycle === "closed") throw new Error("Browser tab was not found in the selected Forge session.");
+      const selectedHostKind = resolveBrowserHostKind(snapshot.hostKind);
+      const closedActiveSelection = selectedHostKind === hostKind && snapshot.activeTabId === tabId;
+      const closedDefaultSelection = selectedHostKind === hostKind && snapshot.defaultTabId === tabId;
       snapshot.tabs = snapshot.tabs.filter((candidate) => candidate !== existing);
       this.tabOwners.delete(hostTabKey(resolveBrowserHostKind(existing.hostKind), tabId));
-      if (snapshot.panelReveal?.tabId === tabId) {
+      if (selectedHostKind === hostKind && snapshot.panelReveal?.tabId === tabId) {
         snapshot.panelReveal = {
           ...snapshot.panelReveal,
           acknowledgedSequence: snapshot.panelReveal.sequence,
           tabId: null,
         };
       }
-      if (snapshot.activeTabId === tabId) snapshot.activeTabId = snapshot.tabs[0]?.tabId ?? null;
-      if (snapshot.defaultTabId === tabId) snapshot.defaultTabId = snapshot.activeTabId;
+      if (closedActiveSelection || closedDefaultSelection) {
+        const sameHostTabs = snapshot.tabs.filter((candidate) => resolveBrowserHostKind(candidate.hostKind) === selectedHostKind && candidate.lifecycle !== "closed");
+        const retainedActive = !closedActiveSelection
+          ? sameHostTabs.find((candidate) => candidate.tabId === snapshot.activeTabId)
+          : undefined;
+        const retainedDefault = !closedDefaultSelection
+          ? sameHostTabs.find((candidate) => candidate.tabId === snapshot.defaultTabId)
+          : undefined;
+        const fallback = retainedActive ?? retainedDefault ?? sameHostTabs[0]
+          ?? snapshot.tabs.find((candidate) => candidate.lifecycle !== "closed");
+        snapshot.hostKind = fallback ? resolveBrowserHostKind(fallback.hostKind) : selectedHostKind;
+        snapshot.activeTabId = retainedActive?.tabId ?? fallback?.tabId ?? null;
+        snapshot.defaultTabId = retainedDefault?.tabId ?? snapshot.activeTabId;
+      }
       await this.persistChanged(snapshot, "human-command", generation);
       return cloneSnapshot(snapshot);
     });
@@ -522,6 +544,7 @@ export class BrowserAutomationService {
     sessionAgentId: string,
     activeTabId: string | null,
     defaultTabId: string | null,
+    hostKind: BrowserHostKind,
   ): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
@@ -529,9 +552,12 @@ export class BrowserAutomationService {
       this.assertMutable(key, generation);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
-      const tabIds = new Set(snapshot.tabs.map((tab) => tab.tabId));
+      const tabIds = new Set(snapshot.tabs
+        .filter((tab) => resolveBrowserHostKind(tab.hostKind) === hostKind && tab.lifecycle !== "closed")
+        .map((tab) => tab.tabId));
       if (activeTabId !== null && !tabIds.has(activeTabId)) throw new Error("Active browser tab is missing");
       if (defaultTabId !== null && !tabIds.has(defaultTabId)) throw new Error("Default browser tab is missing");
+      snapshot.hostKind = hostKind;
       snapshot.activeTabId = activeTabId;
       snapshot.defaultTabId = defaultTabId;
       await this.persistChanged(snapshot, "human-command", generation);
@@ -847,6 +873,15 @@ export class BrowserAutomationService {
 function isPanelRevealPending(snapshot: BrowserSessionSnapshot): boolean {
   const reveal = snapshot.panelReveal;
   return Boolean(reveal && reveal.tabId !== null && reveal.sequence > reveal.acknowledgedSequence);
+}
+
+function clearPanelReveal(snapshot: BrowserSessionSnapshot): void {
+  if (!snapshot.panelReveal || snapshot.panelReveal.tabId === null) return;
+  snapshot.panelReveal = {
+    ...snapshot.panelReveal,
+    acknowledgedSequence: snapshot.panelReveal.sequence,
+    tabId: null,
+  };
 }
 
 function getResultTabId(value: unknown): string | null {

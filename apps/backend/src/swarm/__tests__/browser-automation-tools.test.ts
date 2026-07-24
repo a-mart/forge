@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Value } from "@sinclair/typebox/value";
 import { BROWSER_AUTOMATION_OPERATIONS } from "@forge/protocol";
 import { createBrowserAutomationManagerInvoker } from "../browser-automation/browser-automation-manager-adapter.js";
 import { buildBrowserAutomationTools } from "../browser-automation/browser-automation-tools.js";
@@ -55,6 +56,12 @@ const validInputs: Record<string, Record<string, unknown>> = {
   browser_recording_stop: {},
 };
 
+function schemaObjectBranches(schema: Record<string, unknown>): Array<Record<string, unknown>> {
+  const anyOf = schema.anyOf;
+  if (Array.isArray(anyOf)) return anyOf.flatMap((branch) => schemaObjectBranches(branch as Record<string, unknown>));
+  return schema.type === "object" ? [schema] : [];
+}
+
 describe("browser automation tools", () => {
   it("defines all 13 manager-native schemas and applies protocol defaults through one capability", async () => {
     const invoke = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
@@ -72,6 +79,29 @@ describe("browser automation tools", () => {
     expect(invoke).toHaveBeenCalledWith("manager-1", "open", { show: true, reuseExistingTab: true });
     expect(invoke).toHaveBeenCalledWith("manager-1", "navigate", expect.objectContaining({ readiness: "load", timeoutMs: 15_000 }));
     expect(invoke).toHaveBeenCalledWith("manager-1", "evaluate", expect.objectContaining({ awaitPromise: true, returnByValue: true }));
+  });
+
+  it("advertises hostKind in every strict schema branch and routes explicit External Chrome through a real tool", async () => {
+    const invoke = vi.fn(async (_agentId: string, operation: string) => ({ ok: true, operation, result: {} }));
+    const tools = buildBrowserAutomationTools(host(invoke), descriptor());
+    for (const tool of tools) {
+      const branches = schemaObjectBranches(tool.parameters as unknown as Record<string, unknown>);
+      expect(branches.length, tool.name).toBeGreaterThan(0);
+      for (const branch of branches) {
+        expect(branch.additionalProperties, tool.name).toBe(false);
+        expect(branch.properties, tool.name).toHaveProperty("hostKind");
+      }
+      expect(Value.Check(tool.parameters, { ...validInputs[tool.name], hostKind: "external-chrome" }), tool.name).toBe(true);
+    }
+
+    const evaluate = byName(tools, "browser_evaluate");
+    await evaluate.execute("external-call", {
+      ...validInputs.browser_evaluate,
+      hostKind: "external-chrome",
+    }, undefined, undefined, undefined as never);
+    await evaluate.execute("managed-default-call", validInputs.browser_evaluate!, undefined, undefined, undefined as never);
+    expect(invoke).toHaveBeenNthCalledWith(1, "manager-1", "evaluate", expect.objectContaining({ hostKind: "external-chrome" }));
+    expect(invoke.mock.calls[1]?.[2]).not.toHaveProperty("hostKind");
   });
 
   it("returns typed invalid-input failures without invoking the host", async () => {

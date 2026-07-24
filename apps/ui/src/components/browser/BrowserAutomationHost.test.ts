@@ -23,20 +23,22 @@ function installBridge() {
   const commitProvisional = vi.fn(async () => undefined)
   const abortProvisional = vi.fn(async () => undefined)
   const invoke = vi.fn()
+  const setTabPresentation = vi.fn(async (request: { tabId: string; visible: boolean; hostGeneration: number; sessionRevision: number; sequence: number }) => ({ applied: true, tab: { ...tab(request.tabId), hostKind: 'managed-electron' as const, physicalVisible: request.visible }, hostGeneration: request.hostGeneration, sessionRevision: request.sessionRevision, sequence: request.sequence }))
+  const publish = vi.fn(async () => undefined)
   window.electronBridge = {
     windowRole: 'main', backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
     browserAutomation: {
       capabilities: { supportedOperations: ['open', 'status'], playwrightVersion: '1.60.0', supportsRecording: true },
       reconcile, ensureProvisional, commitProvisional, abortProvisional, reportViewport: vi.fn(async () => undefined),
-      setTabPresentation: vi.fn(async (request) => ({ applied: true, tab: { ...tab(request.tabId), physicalVisible: request.visible }, hostGeneration: request.hostGeneration, sessionRevision: request.sessionRevision, sequence: request.sequence })),
+      setTabPresentation,
       captureScreenshot: vi.fn(async () => 'data:image/png;base64,a'), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke,
       onStateChanged: vi.fn((listener) => { listeners.push(listener); return () => undefined }),
     },
     browserWorkspace: {
-      capability: { popoutAvailable: true }, getSnapshot: vi.fn(), publish: vi.fn(async () => undefined), popOut: vi.fn(async () => 'popped-out' as const), dock: vi.fn(async () => 'docked' as const), bringToFront: vi.fn(async () => undefined), reportViewport: vi.fn(), onProjection: vi.fn(() => () => undefined), onModeChanged: vi.fn(() => () => undefined), onFocusChanged: vi.fn(() => () => undefined),
+      capability: { popoutAvailable: true }, getSnapshot: vi.fn(), publish, popOut: vi.fn(async () => 'popped-out' as const), dock: vi.fn(async () => 'docked' as const), bringToFront: vi.fn(async () => undefined), reportViewport: vi.fn(), onProjection: vi.fn(() => () => undefined), onModeChanged: vi.fn(() => () => undefined), onFocusChanged: vi.fn(() => () => undefined),
     },
   }
-  return { reconcile, ensureProvisional, commitProvisional, abortProvisional, invoke, listeners }
+  return { reconcile, ensureProvisional, commitProvisional, abortProvisional, invoke, listeners, setTabPresentation, publish }
 }
 
 describe('BrowserAutomationHost main-owned view controller', () => {
@@ -49,6 +51,44 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     expect(registerBrowserAutomationHost).toHaveBeenCalledOnce()
     expect(bridge.reconcile).toHaveBeenCalledWith(expect.objectContaining({ sessions: [expect.objectContaining({ sessionAgentId: 'session-1' })] }))
     expect(container.querySelector('webview')).toBeNull()
+  })
+
+  it('never projects or presents an external-only session to the Managed Browser lifecycle', async () => {
+    const bridge = installBridge()
+    const externalSession = {
+      ...session(1, [{ ...tab(), hostKind: 'external-chrome' as const }]),
+      hostKind: 'external-chrome' as const,
+    }
+    const state = {
+      ...createInitialManagerWsState('session-1'),
+      connected: true,
+      browserSessions: { 'session-1': externalSession },
+    }
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: true })); await Promise.resolve() })
+    expect(bridge.reconcile).toHaveBeenCalledWith(expect.objectContaining({ sessions: [] }))
+    expect(bridge.setTabPresentation).not.toHaveBeenCalled()
+    expect(bridge.publish).toHaveBeenCalledWith(expect.objectContaining({
+      sessionAgentId: null, profileId: null, snapshot: null, connected: false,
+    }))
+  })
+
+  it('filters a same-id external tab from a mixed managed projection', async () => {
+    const bridge = installBridge()
+    const mixed = {
+      ...session(1, [
+        { ...tab('same'), hostKind: 'external-chrome' as const, title: 'external' },
+        { ...tab('same'), hostKind: 'managed-electron' as const, title: 'managed' },
+      ]),
+      hostKind: 'managed-electron' as const,
+    }
+    const state = { ...createInitialManagerWsState('session-1'), browserSessions: { 'session-1': mixed } }
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: true })); await Promise.resolve() })
+    expect(bridge.reconcile).toHaveBeenCalledWith(expect.objectContaining({
+      sessions: [expect.objectContaining({ tabs: [expect.objectContaining({ hostKind: 'managed-electron', title: 'managed' })] })],
+    }))
+    expect(bridge.setTabPresentation).toHaveBeenCalledTimes(1)
   })
 
   it('preserves the original open envelope for every provisional lifecycle failure and tears down provisional state', async () => {

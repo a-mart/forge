@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserHostRegistration, BrowserSessionSnapshot } from '@forge/protocol'
 import { ManagerWsClient } from './ws-client'
+import type { RequestTrackerAdapter } from './ws-client/types'
 
 const registration: BrowserHostRegistration = {
   hostId: 'host-1', clientInstanceId: 'renderer-1', registeredAt: new Date(0).toISOString(),
@@ -37,6 +38,8 @@ describe('ManagerWsClient browser automation state', () => {
     vi.useFakeTimers()
     vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
     const client = new ManagerWsClient('ws://example.test', 'session-1')
+    const tracker = (client as unknown as { requestDispatcher: { tracker: RequestTrackerAdapter } }).requestDispatcher.tracker
+    const resolveRequest = vi.spyOn(tracker, 'resolve')
     const send = vi.fn()
     const socket = { readyState: 1, send, close: vi.fn() }
     ;(client as unknown as { transport: { socket: typeof socket } }).transport.socket = socket
@@ -53,6 +56,10 @@ describe('ManagerWsClient browser automation state', () => {
     expect(secondRegister.requestId).not.toBe(firstRegister.requestId)
     ingest({ type: 'browser_host_connected', requestId: secondRegister.requestId, host: { connected: true, hostId: 'host-1', hostGeneration: 2, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
     await Promise.resolve()
+    expect(resolveRequest).toHaveBeenCalledWith('browser_host_register', secondRegister.requestId, expect.objectContaining({
+      hostKind: 'managed-electron',
+      capabilities: expect.objectContaining({ hostKind: 'managed-electron' }),
+    }))
 
     const firstHydrate = JSON.parse(send.mock.calls[2]![0] as string)
     expect(firstHydrate).toMatchObject({ type: 'browser_host_hydrate', hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 2 })
@@ -69,6 +76,9 @@ describe('ManagerWsClient browser automation state', () => {
     expect(client.getState().browserSessions['session-1']).toMatchObject({
       hostKind: 'managed-electron', revision: 8,
     })
+    expect(resolveRequest).toHaveBeenCalledWith('browser_host_hydrate', secondHydrate.requestId, [expect.objectContaining({
+      hostKind: 'managed-electron',
+    })])
     expect((client as unknown as { transport: { socket: unknown } }).transport.socket).toBe(socket)
     client.destroy()
   })
@@ -118,7 +128,14 @@ describe('ManagerWsClient browser automation state', () => {
       sessions: [{ sessionAgentId: 'session-1', profileId: 'profile-1', status: 'revision-conflict' as const, snapshot: snapshot(5) }],
     }
     ingest({ type: 'browser_host_state_report_result', requestId: command.requestId, result })
-    await expect(reportPromise).resolves.toEqual(result)
+    await expect(reportPromise).resolves.toEqual({
+      ...result,
+      hostKind: 'managed-electron',
+      sessions: [{
+        ...result.sessions[0],
+        snapshot: { ...snapshot(5), hostKind: 'managed-electron', tabs: [] },
+      }],
+    })
   })
 
   it('resolves typed recording start and stop results without a client artifact path', async () => {
@@ -168,6 +185,24 @@ describe('ManagerWsClient browser automation state', () => {
 
     ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 4, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
     ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 4, sessions: [satisfied] })
+    expect(client.getState().browserPanelRevealRequest).toBeNull()
+  })
+
+  it('does not project external reveal intent into the Managed Browser even with an identical managed tab id', () => {
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    client.registerBrowserAutomationHost(registration, vi.fn())
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+    ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 4, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })
+    const reveal = snapshotWithReveal(5)
+    const external = {
+      ...reveal,
+      hostKind: 'external-chrome' as const,
+      tabs: [
+        { ...reveal.tabs[0]!, hostKind: 'managed-electron' as const },
+        { ...reveal.tabs[0]!, hostKind: 'external-chrome' as const },
+      ],
+    }
+    ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 4, sessions: [external] })
     expect(client.getState().browserPanelRevealRequest).toBeNull()
   })
 

@@ -348,6 +348,55 @@ describe('browser websocket transport', () => {
     })
   })
 
+  it('restores External Chrome host and tab ids atomically after an inactive managed open', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-inactive-host-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const canonical = service.store.createEmpty('profile-1', 'session-1')
+    canonical.hostKind = 'external-chrome'
+    canonical.tabs = [{ ...tabFor({ hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1' }, 'external-tab'), hostKind: 'external-chrome' }]
+    canonical.activeTabId = 'external-tab'
+    canonical.defaultTabId = 'external-tab'
+    await service.store.save(canonical)
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'managed-connection',
+      subscribedAgentId: 'session-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-managed', registration: registration() } })
+    sent.length = 0
+
+    const opening = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_tab_open', requestId: 'inactive-open', sessionAgentId: 'session-1', profileId: 'profile-1', activate: false },
+    })
+    const request = await nextAutomationRequest(sent, 'open')
+    const managedTab = tabFor(request, 'managed-tab')
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(request), operation: 'open', ok: true,
+      result: { tab: managedTab, created: true, panelRevealRequested: false }, elapsedMs: 1, updatedTab: managedTab,
+    } } })
+    await opening
+
+    const succeeded = sent.find((event): event is Extract<ServerEvent, { type: 'browser_tab_command_succeeded' }> =>
+      event.type === 'browser_tab_command_succeeded' && event.requestId === 'inactive-open')
+    expect(succeeded?.snapshot).toMatchObject({
+      hostKind: 'external-chrome', activeTabId: 'external-tab', defaultTabId: 'external-tab',
+      tabs: [
+        expect.objectContaining({ hostKind: 'external-chrome', tabId: 'external-tab' }),
+        expect.objectContaining({ hostKind: 'managed-electron', tabId: 'managed-tab' }),
+      ],
+    })
+  })
+
   it('persists reveal acknowledgement only from the selected current host generation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-reveal-ack-'))
     roots.push(root)
