@@ -69,6 +69,7 @@ describe('ExternalChromeDeployer', () => {
     const deployer = new ExternalChromeDeployer({ dataRoot: first.dataRoot, resourcesRoot: first.resourcesRoot, desktopVersion: '0.22.5' })
     await deployer.deploy()
     await deployer.deploy()
+    expect(await deployer.canRollback()).toBe(false)
     const stablePath = deployer.paths.extension
 
     const second = await fixture('1.1.0', 'payload-1.1.0', process.platform, process.arch, 'shell-v2')
@@ -79,6 +80,7 @@ describe('ExternalChromeDeployer', () => {
     expect(await fs.access(path.join(upgraded.paths.integrationRoot, 'extension.previous'))).toBeUndefined()
     const selected = JSON.parse(await fs.readFile(path.join(stablePath, 'current.json'), 'utf8'))
     expect(selected.payloadVersion).toBe('1.1.0')
+    expect(await upgraded.canRollback()).toBe(true)
 
     const rolledBack = await upgraded.rollback()
     expect(rolledBack.payloadVersion).toBe('1.0.0')

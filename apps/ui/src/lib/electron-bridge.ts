@@ -21,7 +21,8 @@ export interface CliInstallResult { success: boolean; installedPath: string; bin
 export type ExternalChromeControlResult = { ok: true; status: ExternalChromeCoordinatorStatus } | { ok: false; error: 'invalid-request' | 'operation-failed' }
 export interface ExternalChromeBridge {
   status(): Promise<ExternalChromeControlResult>; enable(): Promise<ExternalChromeControlResult>; disable(): Promise<ExternalChromeControlResult>
-  repair(): Promise<ExternalChromeControlResult>; remove(): Promise<ExternalChromeControlResult>
+  repair(): Promise<ExternalChromeControlResult>; rollback(): Promise<ExternalChromeControlResult>; remove(): Promise<ExternalChromeControlResult>
+  takeover(): Promise<ExternalChromeControlResult>; revealExtensionFolder(): Promise<ExternalChromeControlResult>
 }
 
 export type ElectronWindowRole = 'main' | 'managed-browser-popout'

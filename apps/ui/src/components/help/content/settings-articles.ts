@@ -6,6 +6,7 @@ import settingsCliAccessContent from './articles/settings/settings-cli-access.md
 import settingsCollaborationContent from './articles/settings/settings-collaboration.md?raw'
 import settingsEditorContent from './articles/settings/settings-editor.md?raw'
 import settingsExtensionsContent from './articles/settings/settings-extensions.md?raw'
+import settingsExternalChromeContent from './articles/settings/settings-external-chrome.md?raw'
 import settingsGeneralContent from './articles/settings/settings-general.md?raw'
 import settingsNotificationsContent from './articles/settings/settings-notifications.md?raw'
 import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
@@ -308,6 +309,26 @@ export const settingsArticles: HelpArticle[] = [
     ],
     relatedIds: ['settings-skills'],
     contextKeys: ['settings.extensions'],
+  },
+  {
+    id: 'settings-external-chrome',
+    title: 'External Chrome (Local Beta)',
+    category: 'settings',
+    summary: 'Load the pinned unpacked extension safely and manage the local native integration.',
+    content: settingsExternalChromeContent,
+    keywords: [
+      'external chrome',
+      'chrome extension',
+      'load unpacked',
+      'developer mode',
+      'native messaging',
+      'repair',
+      'rollback',
+      'dedicated profile',
+      'local beta',
+    ],
+    relatedIds: ['settings-extensions', 'chat-browser'],
+    contextKeys: ['settings.external-chrome'],
   },
   {
     id: 'settings-cli-access',

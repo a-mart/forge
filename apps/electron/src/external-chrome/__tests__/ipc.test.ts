@@ -10,8 +10,18 @@ const status = {
   registration: 'not-registered' as const,
   trust: 'missing' as const,
   platform: 'darwin' as const,
-  canEnable: false,
+  canEnable: true,
+  canDisable: true,
   canRepair: true,
+  canRollback: true,
+  canRemove: true,
+  canTakeover: true,
+  canReveal: true,
+  setup: {
+    extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' as const,
+    pathState: 'ready' as const,
+    loadUnpackedPath: '/forge-owned/external-chrome/extension',
+  },
 }
 
 describe('trusted External Chrome IPC', () => {
@@ -30,9 +40,13 @@ describe('trusted External Chrome IPC', () => {
       enable: vi.fn(async () => ({ ...status, state: 'online' as const })),
       disable: vi.fn(async () => status),
       repair: vi.fn(async () => status),
+      rollback: vi.fn(async () => status),
       remove: vi.fn(async () => status),
+      takeover: vi.fn(async () => status),
+      validatedLoadUnpackedPath: vi.fn(async () => status.setup.loadUnpackedPath),
     } as unknown as ExternalChromeHostCoordinator
-    const dispose = installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
+    const revealExtensionFolder = vi.fn(async () => undefined)
+    const dispose = installExternalChromeIpc({ ipcMain, mainWindow, coordinator, revealExtensionFolder })
     if (!handler) throw new Error('IPC handler was not installed')
     const invoke = handler as (event: IpcMainInvokeEvent, input: unknown) => Promise<unknown>
 
@@ -42,7 +56,22 @@ describe('trusted External Chrome IPC', () => {
       .resolves.toEqual({ ok: false, error: 'invalid-request' })
     const result = await invoke({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation: 'status' })
     expect(result).toEqual({ ok: true, status })
-    expect(JSON.stringify(result)).not.toMatch(/endpoint|path|pid|secret|keyId/iu)
+    expect(JSON.stringify(result)).not.toMatch(/endpoint|pid|secret|keyId/iu)
+
+    await expect(invoke({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, {
+      operation: 'reveal-extension-folder', path: '/attacker-controlled',
+    })).resolves.toEqual({ ok: false, error: 'invalid-request' })
+    await expect(invoke({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, {
+      operation: 'reveal-extension-folder',
+    })).resolves.toEqual({ ok: true, status })
+    expect(revealExtensionFolder).toHaveBeenCalledWith('/forge-owned/external-chrome/extension')
+
+    for (const operation of ['enable', 'disable', 'repair', 'rollback', 'remove', 'takeover'] as const) {
+      await expect(invoke({ sender: { id: 42 } } as unknown as IpcMainInvokeEvent, { operation }))
+        .resolves.toEqual({ ok: true, status: operation === 'enable' ? { ...status, state: 'online' } : status })
+    }
+    expect(coordinator.rollback).toHaveBeenCalledTimes(1)
+    expect(coordinator.takeover).toHaveBeenCalledTimes(1)
     dispose()
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(1)
   })

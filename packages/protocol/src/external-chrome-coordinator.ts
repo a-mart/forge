@@ -1,9 +1,14 @@
+import { EXTERNAL_CHROME_EXTENSION_ID } from './external-chrome.js'
+
 export const EXTERNAL_CHROME_COORDINATOR_OPERATIONS = [
   'status',
   'enable',
   'disable',
   'repair',
+  'rollback',
   'remove',
+  'takeover',
+  'reveal-extension-folder',
 ] as const
 
 export type ExternalChromeCoordinatorOperation = (typeof EXTERNAL_CHROME_COORDINATOR_OPERATIONS)[number]
@@ -12,8 +17,36 @@ export type ExternalChromeAuthorityState = 'none' | 'owned' | 'other-live' | 'st
 export type ExternalChromeAuthState = 'missing' | 'secure' | 'insecure' | 'invalid'
 export type ExternalChromeRegistrationState = 'not-registered' | 'owned' | 'needs-repair' | 'conflict'
 export type ExternalChromeTrustState = 'trusted' | 'untrusted' | 'unsupported' | 'missing'
+export type ExternalChromeExtensionPathState = 'ready' | 'missing' | 'invalid'
 
-/** Safe renderer projection. It intentionally excludes secrets, endpoints, paths, PIDs, and browser metadata. */
+export interface ExternalChromeComponentBuild {
+  version?: string
+  abi?: number
+  sha256: string
+}
+
+export interface ExternalChromeBuildInventory {
+  desktopVersion?: string
+  packageVersion?: string
+  shell?: ExternalChromeComponentBuild
+  payload?: ExternalChromeComponentBuild
+  nativeHost?: ExternalChromeComponentBuild
+}
+
+/**
+ * Renderer-safe setup projection. The only path is the coordinator-resolved,
+ * identity-validated unpacked extension root; callers cannot submit a path.
+ */
+export interface ExternalChromeSetupStatus {
+  extensionId: typeof EXTERNAL_CHROME_EXTENSION_ID
+  pathState: ExternalChromeExtensionPathState
+  loadUnpackedPath?: string
+  packaged?: ExternalChromeBuildInventory
+  deployed?: ExternalChromeBuildInventory
+  running?: ExternalChromeBuildInventory
+}
+
+/** Safe renderer projection. It intentionally excludes secrets, endpoints, PIDs, and browser metadata. */
 export interface ExternalChromeCoordinatorStatus {
   state: ExternalChromeCoordinatorState
   authority: ExternalChromeAuthorityState
@@ -22,7 +55,13 @@ export interface ExternalChromeCoordinatorStatus {
   trust: ExternalChromeTrustState
   platform: 'darwin' | 'linux' | 'win32' | 'unsupported'
   canEnable: boolean
+  canDisable: boolean
   canRepair: boolean
+  canRollback: boolean
+  canRemove: boolean
+  canTakeover: boolean
+  canReveal: boolean
+  setup: ExternalChromeSetupStatus
   detail?: string
 }
 

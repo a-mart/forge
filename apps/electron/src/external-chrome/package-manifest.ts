@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { EXTERNAL_CHROME_EXTENSION_ID } from '@forge/protocol'
 
-export const EXTERNAL_CHROME_EXTENSION_ID = 'fcchfcnadajoejfbiclihglkmbcfhajd'
+export { EXTERNAL_CHROME_EXTENSION_ID }
 export const EXTERNAL_CHROME_PUBLIC_KEY_SHA256 = '522752d0309e495182b876bac125709358fd32fd1d105bcd5fce42966eb25b93'
 
 export interface ExternalChromePackageManifest {

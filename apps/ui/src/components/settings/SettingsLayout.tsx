@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bell, Settings, KeyRound, Wrench, FileText, Terminal, TerminalSquare, Puzzle, UserCog, Info, Cpu, Users, FolderGit2, Palette, GitBranch } from 'lucide-react'
+import { Activity, ArrowLeft, Bell, Settings, KeyRound, Wrench, FileText, Terminal, TerminalSquare, Puzzle, UserCog, Info, Cpu, Users, FolderGit2, Palette, GitBranch, MonitorCog } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
@@ -27,6 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'project-resources', label: 'Repository Resources', icon: <FolderGit2 className="size-4" /> },
   { id: 'slash-commands', label: 'Slash Commands', icon: <Terminal className="size-4" /> },
   { id: 'extensions', label: 'Extensions', icon: <Puzzle className="size-4" /> },
+  { id: 'external-chrome', label: 'External Chrome (Local Beta)', icon: <MonitorCog className="size-4" /> },
   { id: 'cli-access', label: 'CLI Access', icon: <TerminalSquare className="size-4" /> },
   { id: 'observability', label: 'Observability', icon: <Activity className="size-4" /> },
   { id: 'collaboration', label: 'Collaboration', icon: <Users className="size-4" /> },

@@ -1,10 +1,14 @@
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  EXTERNAL_CHROME_EXTENSION_ID,
   EXTERNAL_CHROME_PROTOCOL_MAX_VERSION,
   EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
+  type ExternalChromeBuildInventory,
   type ExternalChromeCoordinatorStatus,
+  type ExternalChromeSetupStatus,
 } from '@forge/protocol'
 import {
   createCurrentUserAccessController,
@@ -20,7 +24,13 @@ import {
   type ExternalChromeEndpointAuthority,
   type ExternalChromeEndpointHandle,
 } from './endpoint.js'
-import { resolveExternalChromeDataPaths } from './data-paths.js'
+import { assertPathInside, resolveExternalChromeDataPaths, type ExternalChromeDataPaths } from './data-paths.js'
+import {
+  readExternalChromePackageManifest,
+  sha256,
+  type ExternalChromePackageManifest,
+} from './package-manifest.js'
+import type { ExternalChromeInstallRecord, ExternalChromeSelector } from './deployer.js'
 import {
   createExternalChromeNativeRegistration,
   type ExternalChromeNativeRegistration,
@@ -29,8 +39,17 @@ import {
 const DEFAULT_RENDEZVOUS_TTL_MS = 15_000
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000
 
+export interface ExternalChromeRollbackController {
+  canRollback(): Promise<boolean>
+  rollback(): Promise<unknown>
+}
+
 export interface ExternalChromeHostCoordinatorOptions {
   dataRoot: string
+  desktopVersion?: string
+  packagedManifestPath?: string
+  rollbackController?: ExternalChromeRollbackController
+  repairDeployment?: () => Promise<unknown>
   platform?: NodeJS.Platform
   pid?: number
   username?: string
@@ -61,6 +80,11 @@ export class ExternalChromeHostCoordinator {
   private readonly authority: ExternalChromeAuthorityStore
   private readonly endpoints: ExternalChromeEndpointAuthority
   private readonly registration: ExternalChromeNativeRegistration
+  private readonly paths: ExternalChromeDataPaths
+  private readonly desktopVersion?: string
+  private readonly packagedManifestPath?: string
+  private readonly rollbackController?: ExternalChromeRollbackController
+  private readonly repairDeployment?: () => Promise<unknown>
   private readonly enabledStatePath: string
   private readonly runDirectory: string
   private readonly schedule: typeof setInterval
@@ -99,9 +123,13 @@ export class ExternalChromeHostCoordinator {
       dataRoot: options.dataRoot,
       platform: this.platform,
     })
-    const paths = resolveExternalChromeDataPaths(options.dataRoot, this.platform)
-    this.enabledStatePath = path.join(paths.state, 'enabled.json')
-    this.runDirectory = paths.run
+    this.paths = resolveExternalChromeDataPaths(options.dataRoot, this.platform)
+    this.desktopVersion = options.desktopVersion
+    this.packagedManifestPath = options.packagedManifestPath
+    this.rollbackController = options.rollbackController
+    this.repairDeployment = options.repairDeployment
+    this.enabledStatePath = path.join(this.paths.state, 'enabled.json')
+    this.runDirectory = this.paths.run
   }
 
   status(): Promise<ExternalChromeCoordinatorStatus> {
@@ -110,12 +138,21 @@ export class ExternalChromeHostCoordinator {
 
   resumeIfEnabled(): Promise<void> {
     return this.serialize(async () => {
-      if (await this.readDesiredEnabled()) await this.enableUnlocked()
+      if (await this.readDesiredEnabled()) await this.enableUnlocked(true)
     })
   }
 
   enable(): Promise<ExternalChromeCoordinatorStatus> {
-    return this.serialize(() => this.enableUnlocked())
+    return this.serialize(() => this.enableUnlocked(false))
+  }
+
+  takeover(): Promise<ExternalChromeCoordinatorStatus> {
+    return this.serialize(async () => {
+      if ((await this.authority.inspect()).state !== 'stale') {
+        throw new Error('External Chrome takeover is available only for stale ownership')
+      }
+      return this.enableUnlocked(true)
+    })
   }
 
   disable(): Promise<ExternalChromeCoordinatorStatus> {
@@ -131,15 +168,38 @@ export class ExternalChromeHostCoordinator {
     return this.serialize(async () => {
       const authorityBefore = await this.authority.inspect()
       const authStatus = await this.auth.status()
+      const wasEnabled = await this.readDesiredEnabled()
+      if (this.repairDeployment) {
+        await this.stopRuntime(false)
+        await this.repairDeployment()
+      }
       if (authStatus !== 'secure' || authorityBefore.state === 'stale') {
         await this.stopRuntime(false)
         const rotated = await this.auth.rotate()
         rotated.key.fill(0)
       }
       await this.registration.repair()
-      if (await this.readDesiredEnabled()) return this.enableUnlocked()
+      if (wasEnabled) return this.enableUnlocked(true)
       return this.statusUnlocked()
     })
+  }
+
+  rollback(): Promise<ExternalChromeCoordinatorStatus> {
+    return this.serialize(async () => {
+      if (!this.rollbackController || !(await this.rollbackController.canRollback())) {
+        throw new Error('No validated External Chrome rollback is available')
+      }
+      const wasEnabled = await this.readDesiredEnabled()
+      await this.stopRuntime(false)
+      await this.rollbackController.rollback()
+      if (wasEnabled) return this.enableUnlocked(true)
+      return this.statusUnlocked()
+    })
+  }
+
+  async validatedLoadUnpackedPath(): Promise<string | null> {
+    const setup = await this.inspectSetup()
+    return setup.pathState === 'ready' ? setup.loadUnpackedPath ?? null : null
   }
 
   remove(): Promise<ExternalChromeCoordinatorStatus> {
@@ -160,7 +220,7 @@ export class ExternalChromeHostCoordinator {
       await this.stopRuntime(false)
       const rotated = await this.auth.rotate()
       rotated.key.fill(0)
-      if (wasEnabled) return this.enableUnlocked()
+      if (wasEnabled) return this.enableUnlocked(true)
       return this.statusUnlocked()
     })
   }
@@ -172,14 +232,17 @@ export class ExternalChromeHostCoordinator {
     })
   }
 
-  private async enableUnlocked(): Promise<ExternalChromeCoordinatorStatus> {
+  private async enableUnlocked(allowTakeover: boolean): Promise<ExternalChromeCoordinatorStatus> {
     if (this.endpoint) {
       this.quiesced = false
       await this.writeDesiredEnabled(true)
       return this.statusUnlocked()
     }
     const before = await this.authority.inspect()
-    if (before.state === 'other-live') return this.statusUnlocked()
+    if (before.state === 'other-live' || (before.state === 'stale' && !allowTakeover)) return this.statusUnlocked()
+    if ((await this.inspectSetup()).pathState !== 'ready') {
+      throw new Error('External Chrome unpacked extension deployment is missing or invalid')
+    }
 
     const expiresAt = this.expiry()
     const claim = await this.authority.claim(expiresAt)
@@ -217,11 +280,13 @@ export class ExternalChromeHostCoordinator {
   }
 
   private async statusUnlocked(): Promise<ExternalChromeCoordinatorStatus> {
-    const [authority, auth, registration, desiredEnabled] = await Promise.all([
+    const [authority, auth, registration, desiredEnabled, setup, canRollback] = await Promise.all([
       this.authority.inspect(),
       this.auth.status(),
       this.registration.inspect(),
       this.readDesiredEnabled(),
+      this.inspectSetup(),
+      this.rollbackController?.canRollback().catch(() => false) ?? false,
     ])
     let state: ExternalChromeCoordinatorStatus['state']
     if (this.endpoint && authority.state === 'owned') state = this.quiesced ? 'quiesced' : 'online'
@@ -233,6 +298,8 @@ export class ExternalChromeHostCoordinator {
       ? this.platform
       : 'unsupported'
     const trustAllowsEnable = registration.trust === 'trusted' || registration.trust === 'unsupported'
+    const authorityAvailable = authority.state !== 'other-live' && authority.state !== 'stale'
+    const hasInstalledState = auth !== 'missing' || registration.registration !== 'not-registered' || state !== 'disabled'
     return {
       state,
       authority: authority.state,
@@ -240,9 +307,94 @@ export class ExternalChromeHostCoordinator {
       registration: registration.registration,
       trust: registration.trust,
       platform,
-      canEnable: platform !== 'unsupported' && authority.state !== 'other-live' && registration.registration !== 'conflict' && trustAllowsEnable,
-      canRepair: platform !== 'unsupported' && authority.state !== 'other-live' && registration.registration !== 'conflict',
+      canEnable: platform !== 'unsupported' && authorityAvailable && setup.pathState === 'ready' && registration.registration !== 'conflict' && trustAllowsEnable && state !== 'online',
+      canDisable: authority.state !== 'other-live' && (state === 'online' || state === 'offline' || state === 'quiesced'),
+      canRepair: platform !== 'unsupported' && authorityAvailable && registration.registration !== 'conflict' && (trustAllowsEnable || this.repairDeployment !== undefined),
+      canRollback: authorityAvailable && canRollback,
+      canRemove: authority.state !== 'other-live' && hasInstalledState,
+      canTakeover: platform !== 'unsupported' && authority.state === 'stale' && setup.pathState === 'ready' && registration.registration !== 'conflict' && trustAllowsEnable,
+      canReveal: setup.pathState === 'ready',
+      setup,
       ...(registration.detail ? { detail: registration.detail.slice(0, 256) } : {}),
+    }
+  }
+
+  private async inspectSetup(): Promise<ExternalChromeSetupStatus> {
+    const [pathState, packaged, deployed] = await Promise.all([
+      this.validateExtensionPath(),
+      this.readPackagedInventory(),
+      this.readDeployedInventory(),
+    ])
+    return {
+      extensionId: EXTERNAL_CHROME_EXTENSION_ID,
+      pathState,
+      ...(pathState === 'ready' ? { loadUnpackedPath: this.paths.extension } : {}),
+      ...(packaged ? { packaged } : {}),
+      ...(deployed ? { deployed } : {}),
+    }
+  }
+
+  private async validateExtensionPath(): Promise<ExternalChromeSetupStatus['pathState']> {
+    try {
+      for (const directory of [
+        this.paths.dataRoot,
+        path.join(this.paths.dataRoot, 'integrations'),
+        this.paths.integrationRoot,
+        this.paths.extension,
+      ]) {
+        const info = await fs.lstat(directory)
+        if (!info.isDirectory() || info.isSymbolicLink()) return 'invalid'
+      }
+      const manifest = JSON.parse(await fs.readFile(path.join(this.paths.extension, 'manifest.json'), 'utf8')) as { key?: unknown }
+      if (typeof manifest.key !== 'string') return 'invalid'
+      const identity = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex')
+        .slice(0, 32).replace(/[0-9a-f]/g, (digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
+      if (identity !== EXTERNAL_CHROME_EXTENSION_ID) return 'invalid'
+      const selector = await this.readJson<ExternalChromeSelector>(path.join(this.paths.extension, 'current.json'))
+      if (!isSafeSelector(selector)) return 'invalid'
+      const payload = path.join(this.paths.payloads, selector.payloadDirectory)
+      assertPathInside(this.paths.payloads, payload)
+      const payloadInfo = await fs.lstat(payload)
+      if (!payloadInfo.isDirectory() || payloadInfo.isSymbolicLink()) return 'invalid'
+      return 'ready'
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid'
+    }
+  }
+
+  private async readPackagedInventory(): Promise<ExternalChromeBuildInventory | null> {
+    if (!this.packagedManifestPath) return null
+    try {
+      return inventoryFromManifest(await readExternalChromePackageManifest(this.packagedManifestPath), this.desktopVersion)
+    } catch {
+      return null
+    }
+  }
+
+  private async readDeployedInventory(): Promise<ExternalChromeBuildInventory | null> {
+    const install = await this.readJson<ExternalChromeInstallRecord>(this.paths.installState)
+    if (!isSafeInstallRecord(install)) return null
+    let nativeHash: string | null = null
+    try {
+      nativeHash = sha256(await fs.readFile(this.paths.nativeHostExecutable))
+    } catch {
+      // Missing native binary is represented by coordinator trust/registration state.
+    }
+    return {
+      ...(this.desktopVersion ? { desktopVersion: this.desktopVersion } : {}),
+      packageVersion: install.packageVersion,
+      shell: { abi: install.shellAbi, sha256: install.shellSha256 },
+      payload: { version: install.payloadVersion, sha256: install.payloadSha256 },
+      nativeHost: { ...(install.nativeVersion ? { version: install.nativeVersion } : {}), sha256: nativeHash ?? install.nativeSha256 },
+    }
+  }
+
+  private async readJson<T>(file: string): Promise<T | null> {
+    try {
+      return JSON.parse(await fs.readFile(file, 'utf8')) as T
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null
+      throw error
     }
   }
 
@@ -328,4 +480,41 @@ export class ExternalChromeHostCoordinator {
       throw error
     }
   }
+}
+
+const SHA256 = /^[a-f0-9]{64}$/u
+const SAFE_VERSION = /^[A-Za-z0-9._+-]{1,128}$/u
+const SAFE_PAYLOAD_DIRECTORY = /^[A-Za-z0-9._-]{1,256}$/u
+
+function inventoryFromManifest(
+  manifest: ExternalChromePackageManifest,
+  desktopVersion?: string,
+): ExternalChromeBuildInventory {
+  return {
+    ...(desktopVersion ? { desktopVersion } : {}),
+    packageVersion: manifest.packageVersion,
+    shell: { abi: manifest.extension.shellAbi, sha256: manifest.extension.shellSha256 },
+    payload: { version: manifest.extension.payloadVersion, sha256: manifest.extension.payloadSha256 },
+    nativeHost: { version: manifest.nativeHost.version, sha256: manifest.nativeHost.sha256 },
+  }
+}
+
+function isSafeSelector(value: ExternalChromeSelector | null): value is ExternalChromeSelector {
+  return value?.schemaVersion === 1
+    && Number.isSafeInteger(value.shellAbi) && value.shellAbi > 0
+    && SAFE_VERSION.test(value.payloadVersion)
+    && SHA256.test(value.payloadSha256)
+    && SAFE_PAYLOAD_DIRECTORY.test(value.payloadDirectory)
+    && !value.payloadDirectory.includes('..')
+}
+
+function isSafeInstallRecord(value: ExternalChromeInstallRecord | null): value is ExternalChromeInstallRecord {
+  return value?.schemaVersion === 1
+    && SAFE_VERSION.test(value.packageVersion)
+    && Number.isSafeInteger(value.shellAbi) && value.shellAbi > 0
+    && SHA256.test(value.shellSha256)
+    && SAFE_VERSION.test(value.payloadVersion)
+    && SHA256.test(value.payloadSha256)
+    && (value.nativeVersion === undefined || SAFE_VERSION.test(value.nativeVersion))
+    && SHA256.test(value.nativeSha256)
 }

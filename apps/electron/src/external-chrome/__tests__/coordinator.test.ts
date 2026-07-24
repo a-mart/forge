@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -13,6 +13,19 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 async function root(): Promise<string> {
   const value = await mkdtemp(path.join(os.tmpdir(), 'forge-external-coordinator-'))
   roots.push(value)
+  const paths = resolveExternalChromeDataPaths(value, 'linux')
+  const payloadDirectory = `payload-${'a'.repeat(64)}`
+  await mkdir(path.join(paths.payloads, payloadDirectory), { recursive: true })
+  const publicKey = (await readFile(new URL('../../../../chrome-extension/identity/production-public-key.b64', import.meta.url), 'utf8')).trim()
+  await writeFile(path.join(paths.extension, 'manifest.json'), JSON.stringify({ key: publicKey }))
+  await writeFile(path.join(paths.extension, 'current.json'), JSON.stringify({
+    schemaVersion: 1,
+    shellAbi: 1,
+    payloadVersion: '1.0.0',
+    payloadSha256: 'a'.repeat(64),
+    payloadDirectory,
+    payloadFiles: {},
+  }))
   return value
 }
 
@@ -98,12 +111,15 @@ describe('ExternalChromeHostCoordinator', () => {
     const dataRoot = await root()
     const registration = new FakeRegistration()
     const endpoints = new FakeEndpoints()
+    let deploymentRepairs = 0
     const coordinator = new ExternalChromeHostCoordinator({
       dataRoot, platform: 'linux', pid: 303, username: 'tester', uid: 501,
       instanceId: 'desktop_third_123', access, endpoints, registration, isProcessAlive: () => false,
+      repairDeployment: async () => { deploymentRepairs += 1 },
     })
     expect(await coordinator.repair()).toMatchObject({ state: 'disabled', auth: 'secure', registration: 'owned' })
     expect(registration.repairs).toBe(1)
+    expect(deploymentRepairs).toBe(1)
     await coordinator.enable()
     expect(await coordinator.remove()).toMatchObject({ state: 'disabled', auth: 'missing', registration: 'not-registered' })
     expect(registration.removes).toBe(1)
@@ -139,6 +155,33 @@ describe('ExternalChromeHostCoordinator', () => {
     await quiescing
     expect(closed).toBe(true)
     expect(await coordinator.status()).toMatchObject({ state: 'quiesced', authority: 'none' })
+  })
+
+  it('projects only the exact identity-validated unpacked path and disables it after selector tampering', async () => {
+    const dataRoot = await root()
+    const registration = new FakeRegistration()
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
+    const coordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 606, username: 'tester', uid: 501,
+      instanceId: 'desktop_sixth_123', access, endpoints: new FakeEndpoints(), registration, isProcessAlive: () => false,
+    })
+
+    expect(await coordinator.status()).toMatchObject({
+      canReveal: true,
+      setup: { pathState: 'ready', loadUnpackedPath: paths.extension, extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' },
+    })
+    expect(await coordinator.validatedLoadUnpackedPath()).toBe(paths.extension)
+
+    await writeFile(path.join(paths.extension, 'current.json'), JSON.stringify({
+      schemaVersion: 1,
+      shellAbi: 1,
+      payloadVersion: '1.0.0',
+      payloadSha256: 'a'.repeat(64),
+      payloadDirectory: '../../attacker-controlled',
+      payloadFiles: {},
+    }))
+    expect(await coordinator.status()).toMatchObject({ canReveal: false, setup: { pathState: 'invalid' } })
+    expect(await coordinator.validatedLoadUnpackedPath()).toBeNull()
   })
 
   it('fails closed when executable trust is missing', async () => {

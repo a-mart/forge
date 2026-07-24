@@ -61,12 +61,13 @@ describe('SettingsLayout', () => {
     // Desktop nav includes all maintained settings tabs.
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(16)
+    expect(buttons.length).toBe(17)
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).toContain('Appearance')
     expect(labels).toContain('Git monitoring')
     expect(labels).toContain('Repository Resources')
     expect(labels).toContain('Observability')
+    expect(labels).toContain('External Chrome (Local Beta)')
   })
 
   it('filters tabs to only availableTabs when provided', () => {
@@ -81,6 +82,7 @@ describe('SettingsLayout', () => {
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).not.toContain('Notifications')
     expect(labels).not.toContain('Repository Resources')
+    expect(labels).not.toContain('External Chrome (Local Beta)')
     expect(labels).toContain('General')
     expect(labels).toContain('Appearance')
     expect(labels).toContain('Authentication')

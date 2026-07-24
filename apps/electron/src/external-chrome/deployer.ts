@@ -28,6 +28,7 @@ export interface ExternalChromeInstallRecord {
   payloadSha256: string
   payloadDirectory: string
   payloadFiles: Record<string, string>
+  nativeVersion?: string
   nativeSha256: string
   platform: string
   architecture: string
@@ -172,6 +173,16 @@ export class ExternalChromeDeployer {
     } finally {
       await release()
     }
+  }
+
+  async canRollback(): Promise<boolean> {
+    const previous = await this.readJson<ExternalChromeSelector>(this.paths.previousState)
+    if (!previous) return false
+    if (await this.isValidPayload(previous)) return true
+    const previousShell = path.join(this.paths.integrationRoot, 'extension.previous')
+    const previousShellSelector = await this.readJson<ExternalChromeSelector>(path.join(previousShell, 'current.json'))
+    return previousShellSelector?.payloadDirectory === previous.payloadDirectory
+      && await this.isValidPayloadAt(previousShellSelector, path.join(previousShell, 'payloads'))
   }
 
   async rollback(): Promise<ExternalChromeSelector> {
@@ -644,6 +655,7 @@ function installRecordFromManifest(manifest: ExternalChromePackageManifest): Ext
     payloadSha256: manifest.extension.payloadSha256,
     payloadDirectory: manifest.extension.payloadDirectory,
     payloadFiles: manifest.extension.payloadFiles,
+    nativeVersion: manifest.nativeHost.version,
     nativeSha256: manifest.nativeHost.sha256,
     platform: manifest.nativeHost.platform,
     architecture: manifest.nativeHost.architecture,

@@ -77,6 +77,7 @@ let appProtocolRegistered = false
 let disposeBrowserHost: (() => void) | null = null
 let disposeExternalChromeIpc: (() => void) | null = null
 let externalChromeCoordinator: ExternalChromeHostCoordinator | null = null
+let externalChromeDeployer: ExternalChromeDeployer | null = null
 const browserSessions = new BrowserSessionRegistry()
 let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
 const lifecycleLog = new LifecycleLog({
@@ -645,9 +646,17 @@ if (!hasSingleInstanceLock) {
       return
     }
 
-    await deployPackagedExternalChrome()
+    externalChromeDeployer = await deployPackagedExternalChrome()
     externalChromeCoordinator = new ExternalChromeHostCoordinator({
       dataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
+      desktopVersion: app.getVersion(),
+      ...(app.isPackaged ? {
+        packagedManifestPath: path.join(process.resourcesPath, 'external-chrome', 'package-manifest.json'),
+      } : {}),
+      ...(externalChromeDeployer ? {
+        rollbackController: externalChromeDeployer,
+        repairDeployment: () => externalChromeDeployer!.deploy(),
+      } : {}),
     })
     await externalChromeCoordinator.resumeIfEnabled().catch((error) => {
       console.warn('[external-chrome] Previously enabled coordinator could not resume', error instanceof Error ? error.message : String(error))
@@ -680,6 +689,10 @@ if (!hasSingleInstanceLock) {
       ipcMain,
       mainWindow,
       coordinator: externalChromeCoordinator,
+      revealExtensionFolder: async (validatedPath) => {
+        const error = await shell.openPath(validatedPath)
+        if (error) throw new Error(error)
+      },
       onError: (error) => console.warn('[external-chrome] Coordinator operation failed', error instanceof Error ? error.message : String(error)),
     })
     browserWorkspaceIpc = installBrowserWorkspaceIpc({
@@ -1366,25 +1379,26 @@ function resolveDefaultBackendPort(): number {
   return DEFAULT_BACKEND_PORT
 }
 
-async function deployPackagedExternalChrome(): Promise<void> {
-  if (!app.isPackaged) return
+async function deployPackagedExternalChrome(): Promise<ExternalChromeDeployer | null> {
+  if (!app.isPackaged) return null
   const dataRoot = backendSupervisor.bootstrap.dataDir
   if (!dataRoot) {
     console.warn('[external-chrome] Backend did not report a canonical data root; deployment skipped for compatibility')
-    return
+    return null
   }
+  const deployer = new ExternalChromeDeployer({
+    dataRoot,
+    resourcesRoot: path.join(process.resourcesPath, 'external-chrome'),
+    desktopVersion: app.getVersion(),
+  })
   try {
-    const deployer = new ExternalChromeDeployer({
-      dataRoot,
-      resourcesRoot: path.join(process.resourcesPath, 'external-chrome'),
-      desktopVersion: app.getVersion(),
-    })
     await new ExternalChromeDeploymentRecovery(deployer).run()
     await deployer.deploy()
   } catch (error) {
     // External Chrome is optional; deployment failure must not disable Managed Browser or Desktop.
     console.warn('[external-chrome] Packaged resource deployment failed', error instanceof Error ? error.message : String(error))
   }
+  return deployer
 }
 
 function resolveLegacyForgeDataRoot(): string {
