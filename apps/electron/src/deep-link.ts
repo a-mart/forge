@@ -55,6 +55,10 @@ export function shouldRegisterExternalDeepLinkProtocol(options: {
   isPackaged: boolean
   env?: NodeJS.ProcessEnv
 }): boolean {
+  if (options.env?.FORGE_DISABLE_EXTERNAL_PROTOCOL_REGISTRATION === '1') {
+    return false
+  }
+
   if (options.isPackaged) {
     return true
   }

@@ -35,6 +35,10 @@ describe('skill import deep links', () => {
 
   it('does not register the production forge:// scheme from dev Electron unless explicitly requested', () => {
     expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: true })).toBe(true)
+    expect(shouldRegisterExternalDeepLinkProtocol({
+      isPackaged: true,
+      env: { FORGE_DISABLE_EXTERNAL_PROTOCOL_REGISTRATION: '1' },
+    })).toBe(false)
     expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: false, env: {} })).toBe(false)
     expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: false, env: { FORGE_REGISTER_DEV_PROTOCOL: '1' } })).toBe(true)
   })
