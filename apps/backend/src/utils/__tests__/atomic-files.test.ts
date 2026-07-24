@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -44,6 +44,15 @@ describe("atomic-files", () => {
   "answer": 42
 }
 `);
+  });
+
+  it("writeFileAtomic applies an explicit private file mode to the replacement", async () => {
+    const root = await createTempRoot();
+    const filePath = join(root, "private.json");
+
+    await writeFileAtomic(filePath, "private", { mode: 0o600 });
+
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 
   it("readJsonFileIfExists returns parsed data for existing files", async () => {

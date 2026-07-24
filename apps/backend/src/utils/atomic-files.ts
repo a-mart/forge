@@ -6,6 +6,7 @@ import { isEnoentError } from "./fs-errors.js";
 
 interface AtomicWriteOptions {
   createParentDir?: boolean;
+  mode?: number;
 }
 
 interface AtomicJsonUpdateOptions extends AtomicWriteOptions {
@@ -19,7 +20,10 @@ export async function writeFileAtomic(filePath: string, content: string, options
   if (options.createParentDir !== false) {
     await mkdir(targetDirectory, { recursive: true });
   }
-  await writeFile(tempPath, content, "utf8");
+  await writeFile(tempPath, content, {
+    encoding: "utf8",
+    ...(options.mode === undefined ? {} : { mode: options.mode }),
+  });
   await renameWithRetry(tempPath, filePath, { retries: 8, baseDelayMs: 15 });
 }
 

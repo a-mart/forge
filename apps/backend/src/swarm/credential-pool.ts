@@ -33,6 +33,7 @@ type PersistedPoolFile = Record<string, PersistedProviderPool>;
 
 const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const POOL_FILENAME = "credential-pool.json";
+const PRIVATE_FILE_MODE = 0o600;
 const POOLED_OAUTH_REFRESH_SKEW_MS = 5 * 60_000;
 const POOLED_OAUTH_PROVIDERS = {
   anthropic: anthropicOAuthProvider,
@@ -548,7 +549,7 @@ export class CredentialPoolService {
       oldPrimary.isPrimary = false;
     }
 
-    await writeJsonFileAtomic(this.deps.authFile, rawAuth);
+    await writeJsonFileAtomic(this.deps.authFile, rawAuth, { mode: PRIVATE_FILE_MODE });
     newPrimary.isPrimary = true;
   }
 
@@ -566,7 +567,7 @@ export class CredentialPoolService {
   }
 
   private async persist(): Promise<void> {
-    await writeJsonFileAtomic(this.poolFilePath, this.pool);
+    await writeJsonFileAtomic(this.poolFilePath, this.pool, { mode: PRIVATE_FILE_MODE });
   }
 
   private assertNoBareCredentialConflict(provider: string): void {
@@ -598,7 +599,7 @@ export class CredentialPoolService {
     delete rawAuth[newPrimaryKey];
     rawAuth[provider] = newPrimaryCred;
 
-    await writeJsonFileAtomic(this.deps.authFile, rawAuth);
+    await writeJsonFileAtomic(this.deps.authFile, rawAuth, { mode: PRIVATE_FILE_MODE });
   }
 
   private async clearProviderAuth(provider: string): Promise<void> {
@@ -611,7 +612,7 @@ export class CredentialPoolService {
       }
     }
 
-    await writeJsonFileAtomic(this.deps.authFile, rawAuth);
+    await writeJsonFileAtomic(this.deps.authFile, rawAuth, { mode: PRIVATE_FILE_MODE });
   }
 }
 
@@ -826,4 +827,3 @@ async function readAuthFileRaw(authFile: string): Promise<Record<string, unknown
   }
   return {};
 }
-

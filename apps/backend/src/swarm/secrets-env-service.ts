@@ -291,7 +291,11 @@ export class SecretsEnvService {
     const target = this.deps.config.paths.sharedSecretsFile;
     const preservedSecrets = await readReservedSecretsForPreservationFromConfig(this.deps.config);
 
-    await writeJsonFileAtomic(target, { ...preservedSecrets, ...this.secrets });
+    await writeJsonFileAtomic(
+      target,
+      { ...preservedSecrets, ...this.secrets },
+      { mode: 0o600 },
+    );
   }
 
   private async resolveAuthFileForRead(): Promise<string> {
@@ -781,4 +785,3 @@ async function pathExists(path: string): Promise<boolean> {
     throw error;
   }
 }
-

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
@@ -689,6 +689,16 @@ describe("CredentialPoolService — anthropic", () => {
 });
 
 describe("CredentialPoolService — persistence", () => {
+  it("persists credential metadata with owner-only permissions", async () => {
+    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+
+    const service = new CredentialPoolService(deps);
+    await service.listPool("openai-codex");
+
+    const info = await stat(join(authDir, "credential-pool.json"));
+    expect(info.mode & 0o777).toBe(0o600);
+  });
+
   it("persists and reloads pool state across service instances", async () => {
     await writeAuthFile({ "openai-codex": makeOAuthCredential() });
 
