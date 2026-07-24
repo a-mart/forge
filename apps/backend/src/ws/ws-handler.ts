@@ -5,6 +5,7 @@ import type {
   AgentToolCallEvent,
   ApiProxyCommand,
   BrowserClientCommand,
+  BrowserHostKind,
   BuilderTimelineChannelView,
   ChoiceRequestEvent,
   CollaborationServerEvent,
@@ -360,7 +361,7 @@ export class WsHandler {
         send: (targetSocket, event) => this.send(targetSocket, event),
         sendCritical: (targetSocket, event) => this.sendWithBackpressure(targetSocket, event),
         broadcastToSession: (sessionAgentId, event) => this.broadcastToSession(sessionAgentId, event),
-        hydrateHostSessions: () => this.hydrateBrowserHostSessions(),
+        hydrateHostSessions: (hostKind) => this.hydrateBrowserHostSessions(hostKind),
         logDebug: (message, details) => this.logDebug(message, details),
       });
       return;
@@ -772,14 +773,21 @@ export class WsHandler {
     if (connectionId) this.browserAutomationService.unregisterHost(connectionId);
   }
 
-  private async hydrateBrowserHostSessions() {
+  private async hydrateBrowserHostSessions(hostKind: BrowserHostKind = "managed-electron") {
     const sessions = new Map<string, Awaited<ReturnType<BrowserAutomationService["getSessionSnapshot"]>>>();
     await Promise.all(this.swarmManager.listAgents()
       .filter((descriptor) => descriptor.role === "manager")
       .map(async (descriptor) => {
         const profileId = descriptor.profileId ?? descriptor.agentId;
         const snapshot = await this.browserAutomationService.getSessionSnapshot(profileId, descriptor.agentId);
-        sessions.set(`${profileId}:${descriptor.agentId}`, snapshot);
+        const tabs = snapshot.tabs.filter((tab) => (tab.hostKind ?? "managed-electron") === hostKind);
+        const tabIds = new Set(tabs.map((tab) => tab.tabId));
+        sessions.set(`${profileId}:${descriptor.agentId}`, {
+          ...snapshot,
+          tabs,
+          activeTabId: snapshot.activeTabId && tabIds.has(snapshot.activeTabId) ? snapshot.activeTabId : null,
+          defaultTabId: snapshot.defaultTabId && tabIds.has(snapshot.defaultTabId) ? snapshot.defaultTabId : null,
+        });
       }));
     return [...sessions.values()];
   }

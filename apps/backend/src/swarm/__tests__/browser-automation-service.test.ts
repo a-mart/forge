@@ -64,6 +64,7 @@ function tab(sessionAgentId = "manager-1", profileId = "profile-1", tabId = "tab
 function response(request: BrowserAutomationRequest): BrowserAutomationResponse {
   const base = {
     requestId: request.requestId,
+    hostKind: request.hostKind,
     sessionAgentId: request.sessionAgentId,
     profileId: request.profileId,
     tabId: request.tabId,
@@ -76,7 +77,7 @@ function response(request: BrowserAutomationRequest): BrowserAutomationResponse 
       ...base,
       operation: "open",
       ok: true,
-      result: { tab: tab(request.sessionAgentId, request.profileId), created: true, panelRevealRequested: true },
+      result: { tab: { ...tab(request.sessionAgentId, request.profileId), hostKind: request.hostKind }, created: true, panelRevealRequested: true },
     };
   }
   if (request.operation === "evaluate") {
@@ -162,6 +163,42 @@ describe("BrowserAutomationService", () => {
     const persisted = await readFile(restarted.store.getStatePath("profile-1", "manager-1"), "utf8");
     expect(persisted).not.toContain("document.title");
     expect(persisted).not.toContain("SECRET_RESULT");
+  });
+
+  it("persists an explicit External Chrome selection and uses it as the session default", async () => {
+    const { dataDir, service } = await createService();
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: {
+        ...registration(),
+        hostId: "external-host",
+        capabilities: {
+          ...registration().capabilities,
+          hostKind: "external-chrome",
+          supportedOperations: ["status", "open", "evaluate"],
+          supportsRecording: false,
+        },
+      },
+      sendRequest(request) {
+        requests.push(request);
+        queueMicrotask(() => service.acceptHostResponse("external-socket", response(request)));
+      },
+    });
+
+    await expect(service.invoke("manager-1", "profile-1", "open", {
+      hostKind: "external-chrome", show: false, reuseExistingTab: false,
+    })).resolves.toMatchObject({ ok: true });
+    await expect(service.invoke("manager-1", "profile-1", "evaluate", {
+      expression: "1 + 1", awaitPromise: true, returnByValue: true,
+    })).resolves.toMatchObject({ ok: true });
+    expect(requests.map((request) => request.hostKind)).toEqual(["external-chrome", "external-chrome"]);
+
+    const restarted = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    await expect(restarted.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      hostKind: "external-chrome",
+      tabs: [expect.objectContaining({ hostKind: "external-chrome" })],
+    });
   });
 
   it("enforces explicit tab ownership across loaded sessions", async () => {
@@ -381,6 +418,7 @@ describe("BrowserAutomationService", () => {
       sendRequest(request) {
         const base = {
           requestId: request.requestId,
+          hostKind: request.hostKind,
           sessionAgentId: request.sessionAgentId,
           profileId: request.profileId,
           tabId: request.tabId,
@@ -561,6 +599,7 @@ describe("BrowserAutomationService", () => {
     const deletePromise = service.deleteSession("profile-1", "manager-1");
     service.acceptHostResponse("socket-1", {
       requestId: pendingRequest!.requestId,
+      hostKind: "managed-electron",
       sessionAgentId: "manager-1",
       profileId: "profile-1",
       tabId: "tab-1",

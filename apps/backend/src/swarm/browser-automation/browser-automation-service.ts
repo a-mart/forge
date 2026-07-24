@@ -1,6 +1,8 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  DEFAULT_BROWSER_HOST_KIND,
+  resolveBrowserHostKind,
   type BrowserAutomationFailure,
   type BrowserAutomationInputByOperation,
   type BrowserAutomationOperation,
@@ -8,6 +10,7 @@ import {
   type BrowserAutomationResponse,
   type BrowserAutomationResultByOperation,
   type BrowserHostConnectionSnapshot,
+  type BrowserHostKind,
   type BrowserHostRegistration,
   type BrowserHostSessionStateReport,
   type BrowserHostSessionStateReportResult,
@@ -85,15 +88,18 @@ export class BrowserAutomationService {
     return host;
   }
 
-  unregisterHost(connectionId: string, hostId?: string, hostGeneration?: number): boolean {
-    const removed = this.broker.unregister(connectionId, hostId, hostGeneration);
-    if (removed) this.onHostChanged(this.broker.getConnectionSnapshot());
+  unregisterHost(connectionId: string, hostId?: string, hostGeneration?: number, hostKind?: BrowserHostKind): boolean {
+    const removed = this.broker.unregister(connectionId, hostId, hostGeneration, hostKind);
+    if (removed) {
+      if (hostKind) this.onHostChanged(this.broker.getConnectionSnapshot(hostKind));
+      else for (const snapshot of this.broker.getConnectionSnapshots()) this.onHostChanged(snapshot);
+    }
     return removed;
   }
 
-  setHostFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean): boolean {
-    const changed = this.broker.setFocused(connectionId, hostId, hostGeneration, focused);
-    if (changed) this.onHostChanged(this.broker.getConnectionSnapshot());
+  setHostFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): boolean {
+    const changed = this.broker.setFocused(connectionId, hostId, hostGeneration, focused, hostKind);
+    if (changed) this.onHostChanged(this.broker.getConnectionSnapshot(hostKind));
     return changed;
   }
 
@@ -126,15 +132,17 @@ export class BrowserAutomationService {
           error: failure("request-cancelled", "Browser session was deleted.", true),
         };
       }
-      const target = this.resolveTarget(snapshot, operation, input as { tabId?: string; reuseExistingTab?: boolean });
+      const requestedHostKind = (input as { hostKind?: BrowserHostKind }).hostKind;
+      const hostKind = resolveBrowserHostKind(requestedHostKind ?? snapshot.hostKind);
+      const target = this.resolveTarget(snapshot, operation, input as { tabId?: string; reuseExistingTab?: boolean }, hostKind);
 
-      if (operation === "status" && !this.broker.getConnectionSnapshot().connected) {
+      if (operation === "status" && !this.broker.getConnectionSnapshot(hostKind).connected) {
         return {
           ok: true,
           operation,
           result: {
             available: false,
-            host: this.broker.getConnectionSnapshot(),
+            host: this.broker.getConnectionSnapshot(hostKind),
             panelVisible: false,
             panelRevealRequested: isPanelRevealPending(snapshot),
             physicalTabVisible: false,
@@ -171,6 +179,7 @@ export class BrowserAutomationService {
       let response: BrowserAutomationResponse;
       try {
         response = await this.broker.request({
+          hostKind,
           sessionAgentId,
           profileId,
           tabId: target.tab?.tabId ?? null,
@@ -203,8 +212,8 @@ export class BrowserAutomationService {
         }
 
         if (response.updatedTab && (
-          !isValidTabForSession(response.updatedTab, snapshot)
-          || !this.isTabIdAvailable(snapshot, response.updatedTab.tabId)
+          !isValidTabForSession(response.updatedTab, snapshot, hostKind)
+          || !this.isTabIdAvailable(snapshot, response.updatedTab.tabId, hostKind)
         )) {
           const malformed = failure("malformed-response", "Browser host returned invalid tab metadata.", false);
           await this.completeAction(snapshot, actionId, "failed", { errorCode: malformed.code, elapsedMs: response.elapsedMs });
@@ -223,8 +232,8 @@ export class BrowserAutomationService {
 
         const resultTabId = getResultTabId(response.result);
         if (
-          !isValidSuccessResult(operation, response.result, snapshot, target.tab?.tabId ?? null)
-          || (resultTabId !== null && !this.isTabIdAvailable(snapshot, resultTabId))
+          !isValidSuccessResult(operation, response.result, snapshot, target.tab?.tabId ?? null, hostKind)
+          || (resultTabId !== null && !this.isTabIdAvailable(snapshot, resultTabId, hostKind))
         ) {
           const malformed = failure("malformed-response", "Browser host returned a malformed operation result.", false);
           await this.completeAction(snapshot, actionId, "failed", { errorCode: malformed.code, elapsedMs: response.elapsedMs });
@@ -242,10 +251,11 @@ export class BrowserAutomationService {
           }
         }
 
-        this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation]);
+        snapshot.hostKind = hostKind;
+        this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation], hostKind);
         if (operation === "status" && response.ok) {
           const statusResult = response.result as BrowserAutomationResultByOperation["status"];
-          statusResult.host = this.broker.getConnectionSnapshot();
+          statusResult.host = this.broker.getConnectionSnapshot(hostKind);
           statusResult.available = statusResult.host.connected;
           // Electron owns physical visibility; durable reveal intent remains backend-owned.
           statusResult.panelRevealRequested = isPanelRevealPending(snapshot);
@@ -312,9 +322,10 @@ export class BrowserAutomationService {
     hostId: string,
     hostGeneration: number,
     reportedSessions: BrowserHostSessionStateReport[],
+    hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND,
   ): Promise<BrowserHostStateReportResult> {
-    if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration)) {
-      return { hostId, hostGeneration, status: "stale-host-generation", sessions: [] };
+    if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration, hostKind)) {
+      return { hostKind, hostId, hostGeneration, status: "stale-host-generation", sessions: [] };
     }
 
     const results: BrowserHostSessionStateReportResult[] = [];
@@ -326,6 +337,7 @@ export class BrowserAutomationService {
       if (
         typeof reported.sessionAgentId !== "string"
         || typeof reported.profileId !== "string"
+        || resolveBrowserHostKind(reported.hostKind) !== hostKind
         || !Number.isInteger(reported.baseRevision)
         || reported.baseRevision < 0
         || !Array.isArray(reported.tabs)
@@ -348,6 +360,9 @@ export class BrowserAutomationService {
           revision: reported.baseRevision,
         });
         normalizedTabs = envelope.tabs;
+        if (normalizedTabs.some((tab) => resolveBrowserHostKind(tab.hostKind) !== hostKind)) {
+          throw new Error("Host report contains a tab for another browser host kind");
+        }
       } catch (error) {
         this.logDebug("browser-automation:invalid-host-state-report", {
           error: error instanceof Error ? error.message : String(error),
@@ -356,7 +371,7 @@ export class BrowserAutomationService {
         continue;
       }
       if (normalizedTabs.some((tab) => {
-        const owner = this.tabOwners.get(tab.tabId);
+        const owner = this.tabOwners.get(hostTabKey(hostKind, tab.tabId));
         return owner !== undefined && owner !== reported.sessionAgentId;
       })) {
         results.push({ ...resultBase, status: "rejected", reason: "invalid-report" });
@@ -397,7 +412,7 @@ export class BrowserAutomationService {
         });
         continue;
       }
-      if (normalizedTabs.some((reportedTab) => !canonical.tabs.some((tab) => tab.tabId === reportedTab.tabId))) {
+      if (normalizedTabs.some((reportedTab) => !canonical.tabs.some((tab) => tab.tabId === reportedTab.tabId && resolveBrowserHostKind(tab.hostKind) === hostKind))) {
         results.push({
           ...resultBase,
           status: "rejected",
@@ -409,7 +424,7 @@ export class BrowserAutomationService {
 
       let changed = false;
       for (const reportedTab of normalizedTabs) {
-        const index = canonical.tabs.findIndex((tab) => tab.tabId === reportedTab.tabId);
+        const index = canonical.tabs.findIndex((tab) => tab.tabId === reportedTab.tabId && resolveBrowserHostKind(tab.hostKind) === hostKind);
         const merged = mergeHostOwnedTabFields(canonical.tabs[index]!, reportedTab);
         if (merged !== canonical.tabs[index]) {
           canonical.tabs[index] = merged;
@@ -434,7 +449,7 @@ export class BrowserAutomationService {
         snapshot: cloneSnapshot(canonical),
       });
     }
-    return { hostId, hostGeneration, status: "processed", sessions: results };
+    return { hostKind, hostId, hostGeneration, status: "processed", sessions: results };
   }
 
   async acknowledgePanelReveal(
@@ -460,14 +475,14 @@ export class BrowserAutomationService {
     });
   }
 
-  async activateTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+  async activateTab(profileId: string, sessionAgentId: string, tabId: string, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
     return this.withSessionMutation(key, async () => {
       this.assertMutable(key, generation);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
-      const tab = snapshot.tabs.find((candidate) => candidate.tabId === tabId && candidate.lifecycle !== "closed");
+      const tab = snapshot.tabs.find((candidate) => candidate.tabId === tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind && candidate.lifecycle !== "closed");
       if (!tab) throw new Error("Browser tab was not found in the selected Forge session.");
       snapshot.activeTabId = tabId;
       snapshot.defaultTabId = tabId;
@@ -477,17 +492,17 @@ export class BrowserAutomationService {
     });
   }
 
-  async closeTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+  async closeTab(profileId: string, sessionAgentId: string, tabId: string, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
     return this.withSessionMutation(key, async () => {
       this.assertMutable(key, generation);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
-      const existing = snapshot.tabs.find((candidate) => candidate.tabId === tabId);
+      const existing = snapshot.tabs.find((candidate) => candidate.tabId === tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind);
       if (!existing || existing.lifecycle === "closed") throw new Error("Browser tab was not found in the selected Forge session.");
-      snapshot.tabs = snapshot.tabs.filter((candidate) => candidate.tabId !== tabId);
-      this.tabOwners.delete(tabId);
+      snapshot.tabs = snapshot.tabs.filter((candidate) => candidate !== existing);
+      this.tabOwners.delete(hostTabKey(resolveBrowserHostKind(existing.hostKind), tabId));
       if (snapshot.panelReveal?.tabId === tabId) {
         snapshot.panelReveal = {
           ...snapshot.panelReveal,
@@ -602,7 +617,7 @@ export class BrowserAutomationService {
         }
       }
       if (snapshot) {
-        for (const tab of snapshot.tabs) this.tabOwners.delete(tab.tabId);
+        for (const tab of snapshot.tabs) this.tabOwners.delete(hostTabKey(resolveBrowserHostKind(tab.hostKind), tab.tabId));
         const hadState = snapshot.tabs.length > 0 || snapshot.revision > 0 || snapshot.recentActions.length > 0;
         if (hadState) {
           snapshot.hostingState = "removed";
@@ -640,11 +655,12 @@ export class BrowserAutomationService {
     snapshot: BrowserSessionSnapshot,
     operation: BrowserAutomationOperation,
     input: { tabId?: string; reuseExistingTab?: boolean },
+    hostKind: BrowserHostKind,
   ): { tab?: BrowserTabSnapshot; failure?: BrowserAutomationFailure } {
     if (input.tabId) {
-      const tab = snapshot.tabs.find((candidate) => candidate.tabId === input.tabId);
+      const tab = snapshot.tabs.find((candidate) => candidate.tabId === input.tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind);
       if (tab) return { tab };
-      const owner = this.tabOwners.get(input.tabId);
+      const owner = this.tabOwners.get(hostTabKey(hostKind, input.tabId));
       return {
         failure: owner && owner !== snapshot.sessionAgentId
           ? failure("tab-session-mismatch", "The requested browser tab belongs to another Forge session.", false)
@@ -653,7 +669,7 @@ export class BrowserAutomationService {
     }
 
     const defaultId = snapshot.defaultTabId ?? snapshot.activeTabId;
-    const defaultTab = defaultId ? snapshot.tabs.find((tab) => tab.tabId === defaultId) : undefined;
+    const defaultTab = defaultId ? snapshot.tabs.find((tab) => tab.tabId === defaultId && resolveBrowserHostKind(tab.hostKind) === hostKind) : undefined;
     if (operation === "status") return { tab: defaultTab };
     if (operation === "open") {
       return input.reuseExistingTab === false ? {} : { tab: defaultTab };
@@ -666,11 +682,12 @@ export class BrowserAutomationService {
     snapshot: BrowserSessionSnapshot,
     operation: BrowserAutomationOperation,
     result: BrowserAutomationResultByOperation[BrowserAutomationOperation],
+    hostKind: BrowserHostKind,
     options: { activate?: boolean } = {},
   ): void {
     if (operation === "open") {
       const tab = (result as BrowserAutomationResultByOperation["open"]).tab;
-      this.upsertTab(snapshot, tab);
+      this.upsertTab(snapshot, { ...tab, hostKind });
       if (options.activate !== false) {
         snapshot.activeTabId = tab.tabId;
         snapshot.defaultTabId = tab.tabId;
@@ -680,15 +697,15 @@ export class BrowserAutomationService {
       }
       return;
     }
-    if (operation === "navigate") this.upsertTab(snapshot, (result as BrowserAutomationResultByOperation["navigate"]).tab);
+    if (operation === "navigate") this.upsertTab(snapshot, { ...(result as BrowserAutomationResultByOperation["navigate"]).tab, hostKind });
     if (operation === "status") {
       const selectedTab = (result as BrowserAutomationResultByOperation["status"]).selectedTab;
-      if (selectedTab) this.upsertTab(snapshot, selectedTab);
+      if (selectedTab) this.upsertTab(snapshot, { ...selectedTab, hostKind });
     }
   }
 
-  private isTabIdAvailable(snapshot: BrowserSessionSnapshot, tabId: string): boolean {
-    const owner = this.tabOwners.get(tabId);
+  private isTabIdAvailable(snapshot: BrowserSessionSnapshot, tabId: string, hostKind: BrowserHostKind): boolean {
+    const owner = this.tabOwners.get(hostTabKey(hostKind, tabId));
     return owner === undefined || owner === snapshot.sessionAgentId;
   }
 
@@ -700,16 +717,16 @@ export class BrowserAutomationService {
       });
       return;
     }
-    const existing = snapshot.tabs.findIndex((candidate) => candidate.tabId === tab.tabId);
+    const existing = snapshot.tabs.findIndex((candidate) => candidate.tabId === tab.tabId && resolveBrowserHostKind(candidate.hostKind) === resolveBrowserHostKind(tab.hostKind));
     if (existing >= 0) snapshot.tabs[existing] = { ...tab };
     else snapshot.tabs.push({ ...tab });
-    this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
+    this.tabOwners.set(hostTabKey(resolveBrowserHostKind(tab.hostKind), tab.tabId), snapshot.sessionAgentId);
     snapshot.defaultTabId ??= tab.tabId;
     snapshot.activeTabId ??= tab.tabId;
   }
 
   private indexTabs(snapshot: BrowserSessionSnapshot): void {
-    for (const tab of snapshot.tabs) this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
+    for (const tab of snapshot.tabs) this.tabOwners.set(hostTabKey(resolveBrowserHostKind(tab.hostKind), tab.tabId), snapshot.sessionAgentId);
   }
 
   private async recordAction(
@@ -844,6 +861,7 @@ function isValidSuccessResult(
   value: unknown,
   snapshot: BrowserSessionSnapshot,
   expectedTabId: string | null,
+  hostKind: BrowserHostKind,
 ): boolean {
   if (!isRecord(value)) return false;
   const directTabId = typeof value.tabId === "string" ? value.tabId : null;
@@ -858,15 +876,15 @@ function isValidSuccessResult(
         && typeof value.physicalTabVisible === "boolean"
         && value.panelVisible === value.physicalTabVisible
         && (value.selectedTab === null || (
-          isValidTabForSession(value.selectedTab, snapshot)
+          isValidTabForSession(value.selectedTab, snapshot, hostKind)
           && (expectedTabId === null || value.selectedTab.tabId === expectedTabId)
         ));
     case "open":
       return typeof value.created === "boolean"
         && typeof value.panelRevealRequested === "boolean"
-        && isValidTabForSession(value.tab, snapshot);
+        && isValidTabForSession(value.tab, snapshot, hostKind);
     case "navigate":
-      return isValidTabForSession(value.tab, snapshot)
+      return isValidTabForSession(value.tab, snapshot, hostKind)
         && (value.readiness === "load" || value.readiness === "domContentLoaded" || value.readiness === "none");
     case "resize":
       return typeof value.tabId === "string" && isRecord(value.setting) && isRenderedViewport(value.viewport);
@@ -909,9 +927,10 @@ function isValidSuccessResult(
   }
 }
 
-function isValidTabForSession(value: unknown, snapshot: BrowserSessionSnapshot): value is BrowserTabSnapshot {
+function isValidTabForSession(value: unknown, snapshot: BrowserSessionSnapshot, hostKind: BrowserHostKind): value is BrowserTabSnapshot {
   if (!isRecord(value)) return false;
   return typeof value.tabId === "string"
+    && resolveBrowserHostKind(value.hostKind as BrowserHostKind | undefined) === hostKind
     && value.sessionAgentId === snapshot.sessionAgentId
     && value.profileId === snapshot.profileId
     && typeof value.url === "string"
@@ -974,6 +993,10 @@ function sessionKey(profileId: string, sessionAgentId: string): string {
   return `${profileId}\u0000${sessionAgentId}`;
 }
 
+function hostTabKey(hostKind: BrowserHostKind, tabId: string): string {
+  return `${hostKind}\u0000${tabId}`;
+}
+
 function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
   return structuredClone(snapshot);
 }
@@ -982,6 +1005,7 @@ function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot
 function mergeHostOwnedTabFields(canonical: BrowserTabSnapshot, reported: BrowserTabSnapshot): BrowserTabSnapshot {
   if (
     reported.tabId !== canonical.tabId
+    || resolveBrowserHostKind(reported.hostKind) !== resolveBrowserHostKind(canonical.hostKind)
     || reported.sessionAgentId !== canonical.sessionAgentId
     || reported.profileId !== canonical.profileId
   ) {

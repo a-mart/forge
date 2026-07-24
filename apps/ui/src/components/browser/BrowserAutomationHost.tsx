@@ -218,7 +218,14 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         hostId: hostIdRef.current,
         clientInstanceId: controllerInstanceIdRef.current,
         capabilities: {
+          hostKind: 'managed-electron',
+          protocolVersions: { minimum: 1, maximum: 1 },
           supportedOperations: bridge.capabilities.supportedOperations as BrowserHostRegistration['capabilities']['supportedOperations'],
+          runtimeVersions: { electron: 'desktop', chromium: 'embedded', playwright: bridge.capabilities.playwrightVersion },
+          features: {
+            resize: true, recording: bridge.capabilities.supportsRecording, capturePage: true,
+            downloadEvents: false, downloadArtifacts: false, downloadOpen: false,
+          },
           electronVersion: 'desktop', chromiumVersion: 'embedded', playwrightVersion: bridge.capabilities.playwrightVersion,
           maxResponseBytes: 8 * 1024 * 1024, supportsSandboxedWebviews: true, supportsCapturePage: true,
           supportsRecording: bridge.capabilities.supportsRecording,
@@ -491,6 +498,7 @@ function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: Browse
 function createProvisionalTab(sessionAgentId: string, profileId: string, url?: string): BrowserTabSnapshot {
   const now = new Date().toISOString()
   return {
+    hostKind: 'managed-electron',
     tabId: `tab-${randomId()}`, sessionAgentId, profileId, url: url ? normalizeUrl(url) : 'about:blank', title: 'New tab',
     lifecycle: 'restoring', loading: false, live: false, canGoBack: false, canGoForward: false, zoomFactor: 1,
     controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null,
@@ -512,7 +520,7 @@ class BrowserRendererError extends Error {
 function hostFailureResponse(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {
   const failure = error && typeof error === 'object' ? error as { code?: unknown; message?: unknown; retryable?: unknown; details?: unknown } : null
   return {
-    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId,
+    requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId,
     hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false,
     error: {
       code: typeof failure?.code === 'string' ? failure.code as BrowserAutomationErrorCode : 'execution-failed',

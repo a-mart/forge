@@ -361,7 +361,7 @@ export class ManagerWsClient {
       this.browserHydrationChunks.clear()
       await this.requestDispatcher.enqueueRequest(
         'browser_host_hydrate',
-        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!),
+        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!, registration.capabilities.hostKind ?? 'managed-electron'),
         { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
       )
     } catch {
@@ -422,7 +422,7 @@ export class ManagerWsClient {
     }
     return this.requestDispatcher.enqueueRequest(
       'browser_host_state_report',
-      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions),
+      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions, registration.capabilities.hostKind ?? 'managed-electron'),
       { timeoutMs: 15_000 },
     )
   }
@@ -431,7 +431,7 @@ export class ManagerWsClient {
     const registration = this.browserHostRegistration
     const generation = this.state.browserHost.hostGeneration
     if (!registration || generation === null || !isSocketOpen(this.socket)) return
-    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused))
+    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused, registration.capabilities.hostKind ?? 'managed-electron'))
   }
 
   acknowledgeBrowserPanelReveal(options: {
@@ -449,6 +449,7 @@ export class ManagerWsClient {
       'browser_panel_reveal_acknowledge',
       (requestId) => buildBrowserPanelRevealAcknowledgeCommand({
         requestId,
+        hostKind: registration.capabilities.hostKind ?? 'managed-electron',
         hostId: registration.hostId,
         hostGeneration,
         ...options,

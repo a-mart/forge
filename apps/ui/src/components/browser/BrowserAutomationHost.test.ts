@@ -71,7 +71,7 @@ describe('BrowserAutomationHost main-owned view controller', () => {
         bridge.invoke.mockImplementation(async (invoked: BrowserAutomationRequest) => ({ ...invoked, ok: false, error: { code: 'navigation-failed', message: 'failed', retryable: true }, elapsedMs: 1 }))
         bridge.abortProvisional.mockRejectedValue(failure)
       }
-      const request: Extract<BrowserAutomationRequest, { operation: 'open' }> = { requestId: `request-${phase}`, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null, hostId: 'host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 10_000).toISOString(), artifactDirectory: null, operation: 'open', input: { show: false, reuseExistingTab: false } }
+      const request: Extract<BrowserAutomationRequest, { operation: 'open' }> = { requestId: `request-${phase}`, hostKind: 'managed-electron', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null, hostId: 'host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 10_000).toISOString(), artifactDirectory: null, operation: 'open', input: { show: false, reuseExistingTab: false } }
       const response = await execute!(request)
       expect(response).toMatchObject({
         requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,

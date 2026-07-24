@@ -125,8 +125,8 @@ describe("browser automation tools", () => {
       getDescriptor: () => current,
       getService: () => ({ invoke } as never),
     });
-    await managerInvoke("manager-1", "status", {});
-    expect(invoke).toHaveBeenCalledWith("manager-1", "profile-1", "status", {});
+    await managerInvoke("manager-1", "status", { hostKind: "external-chrome" });
+    expect(invoke).toHaveBeenCalledWith("manager-1", "profile-1", "status", { hostKind: "external-chrome" });
 
     current = descriptor({ sessionSurface: "collab" });
     await expect(managerInvoke("manager-1", "status", {})).resolves.toMatchObject({

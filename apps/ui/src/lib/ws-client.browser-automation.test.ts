@@ -55,7 +55,7 @@ describe('ManagerWsClient browser automation state', () => {
     await Promise.resolve()
 
     const firstHydrate = JSON.parse(send.mock.calls[2]![0] as string)
-    expect(firstHydrate).toMatchObject({ type: 'browser_host_hydrate', hostId: 'host-1', hostGeneration: 2 })
+    expect(firstHydrate).toMatchObject({ type: 'browser_host_hydrate', hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 2 })
     // Drop hydration independently. The established generation must be reused.
     await vi.advanceTimersByTimeAsync(2_500)
     const secondHydrate = JSON.parse(send.mock.calls[3]![0] as string)
@@ -66,7 +66,9 @@ describe('ManagerWsClient browser automation state', () => {
     ingest({ type: 'browser_host_hydration_chunk', requestId: secondHydrate.requestId, hostId: 'host-1', hostGeneration: 2, chunkIndex: 0, chunkCount: 1, payloadBase64 })
     await Promise.resolve()
     expect(client.getState().browserHostHydrated).toBe(true)
-    expect(client.getState().browserSessions['session-1']?.revision).toBe(8)
+    expect(client.getState().browserSessions['session-1']).toMatchObject({
+      hostKind: 'managed-electron', revision: 8,
+    })
     expect((client as unknown as { transport: { socket: unknown } }).transport.socket).toBe(socket)
     client.destroy()
   })
@@ -80,7 +82,7 @@ describe('ManagerWsClient browser automation state', () => {
     ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 1, sessions: [snapshot(9)] })
     expect(client.getState().browserHostHydrated).toBe(false)
     ingest({ type: 'browser_host_state_snapshot', hostId: 'host-1', hostGeneration: 2, sessions: [snapshot(4)] })
-    expect(client.getState().browserSessions['session-1']?.revision).toBe(4)
+    expect(client.getState().browserSessions['session-1']).toMatchObject({ hostKind: 'managed-electron', revision: 4 })
 
     ingest({ type: 'browser_session_changed', snapshot: snapshot(6), reason: 'automation' })
     ingest({ type: 'browser_session_changed', snapshot: snapshot(5), reason: 'host-report' })
@@ -90,7 +92,7 @@ describe('ManagerWsClient browser automation state', () => {
     expect(client.getState().browserSessions['session-1']).toBeUndefined()
 
     ingest({ type: 'browser_session_snapshot', snapshot: snapshot(3) })
-    expect(client.getState().browserSessions['session-1']?.revision).toBe(3)
+    expect(client.getState().browserSessions['session-1']).toMatchObject({ hostKind: 'managed-electron', revision: 3 })
   })
 
   it('sends host state as a typed request and resolves its acknowledgment', async () => {
@@ -161,7 +163,7 @@ describe('ManagerWsClient browser automation state', () => {
     expect(command).toMatchObject({ type: 'browser_panel_reveal_acknowledge', hostId: 'host-1', hostGeneration: 3, sequence: 7 })
     const satisfied = snapshotWithReveal(6, 7)
     ingest({ type: 'browser_panel_reveal_acknowledged', requestId: command.requestId, snapshot: satisfied })
-    await expect(acknowledged).resolves.toEqual(satisfied)
+    await expect(acknowledged).resolves.toEqual({ ...satisfied, hostKind: 'managed-electron', tabs: satisfied.tabs.map((tab) => ({ ...tab, hostKind: 'managed-electron' })) })
     expect(client.getState().browserPanelRevealRequest).toBeNull()
 
     ingest({ type: 'browser_host_connected', host: { connected: true, hostId: 'host-1', hostGeneration: 4, focused: false, capabilities: registration.capabilities, connectedAt: new Date().toISOString() } })

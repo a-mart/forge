@@ -8,6 +8,8 @@ import {
   BROWSER_AUTOMATION_MAX_TIMEOUT_MS,
   BROWSER_AUTOMATION_MAX_URL_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_HOST_KINDS,
+  DEFAULT_BROWSER_HOST_KIND,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_PRESETS,
   BrowserAutomationContractError,
@@ -20,6 +22,7 @@ import {
   type BrowserSessionSnapshot,
   isBrowserAutomationOperation,
   parseBrowserAutomationInput,
+  resolveBrowserHostKind,
   resolveBrowserViewportPreset,
 } from '../browser-automation.js'
 import { getWsRequestContract } from '../ws-request-contract.js'
@@ -65,6 +68,16 @@ describe('browser automation operation contract', () => {
       expect(() => parseBrowserAutomationInput(operation, validInputs[operation])).not.toThrow()
     }
     expect(isBrowserAutomationOperation('launch')).toBe(false)
+  })
+
+  it('defaults old and omitted host payloads to Managed Electron without changing old tool shapes', () => {
+    expect(BROWSER_HOST_KINDS).toEqual(['managed-electron', 'external-chrome'])
+    expect(DEFAULT_BROWSER_HOST_KIND).toBe('managed-electron')
+    expect(resolveBrowserHostKind(undefined)).toBe('managed-electron')
+    expect(resolveBrowserHostKind('external-chrome')).toBe('external-chrome')
+    expect(parseBrowserAutomationInput('status', {})).toEqual({})
+    expect(parseBrowserAutomationInput('status', { hostKind: 'external-chrome' })).toEqual({ hostKind: 'external-chrome' })
+    expect(() => parseBrowserAutomationInput('status', { hostKind: 'other' })).toThrow(BrowserAutomationContractError)
   })
 
   it('applies T3-compatible defaults', () => {
@@ -176,6 +189,7 @@ describe('browser host, session, and routing wire contract', () => {
   it('requires request, session, profile, tab, host, generation, deadline, and artifact routing', () => {
     const request: BrowserAutomationRequest = {
       requestId: 'request-1',
+      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: null,
@@ -192,6 +206,7 @@ describe('browser host, session, and routing wire contract', () => {
   it('serializes mutually exclusive success and typed failure responses', () => {
     const success: BrowserAutomationResponse = {
       requestId: 'request-1',
+      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: null,
@@ -218,6 +233,7 @@ describe('browser host, session, and routing wire contract', () => {
     }
     const failure: BrowserAutomationResponse = {
       requestId: 'request-2',
+      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: 'tab-1',
@@ -236,6 +252,7 @@ describe('browser host, session, and routing wire contract', () => {
   it('exports every browser client command and server event through the unions', () => {
     const routedRequest = {
       requestId: 'request-1',
+      hostKind: 'managed-electron',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
       tabId: null,
@@ -248,6 +265,7 @@ describe('browser host, session, and routing wire contract', () => {
     } as const satisfies BrowserAutomationRequest
     const routedResponse = {
       requestId: routedRequest.requestId,
+      hostKind: routedRequest.hostKind,
       sessionAgentId: routedRequest.sessionAgentId,
       profileId: routedRequest.profileId,
       tabId: null,

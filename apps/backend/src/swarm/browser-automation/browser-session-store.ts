@@ -2,7 +2,9 @@ import { access, readFile, rename, rm } from "node:fs/promises";
 import {
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
   BROWSER_VIEWPORT_PRESETS,
+  DEFAULT_BROWSER_HOST_KIND,
   isBrowserAutomationOperation,
+  isBrowserHostKind,
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
@@ -47,6 +49,7 @@ export class BrowserSessionStore {
     const timestamp = this.now();
     return {
       schemaVersion: 1,
+      hostKind: DEFAULT_BROWSER_HOST_KIND,
       sessionAgentId,
       profileId,
       hostingState: "hosted",
@@ -154,10 +157,14 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
   }
   if (!Array.isArray(record.tabs) || record.tabs.length > MAX_TABS) throw new Error("Invalid browser tabs");
 
-  const tabs = record.tabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId));
+  const hostKind = normalizeHostKind(record.hostKind);
+  const tabs = record.tabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId, hostKind));
   const tabIds = new Set<string>();
+  const hostTabIds = new Set<string>();
   for (const tab of tabs) {
-    if (tabIds.has(tab.tabId)) throw new Error("Duplicate browser tab id");
+    const key = `${tab.hostKind ?? DEFAULT_BROWSER_HOST_KIND}\u0000${tab.tabId}`;
+    if (hostTabIds.has(key)) throw new Error("Duplicate browser tab id for host kind");
+    hostTabIds.add(key);
     tabIds.add(tab.tabId);
   }
 
@@ -173,6 +180,7 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
 
   return {
     schemaVersion: 1,
+    hostKind,
     profileId,
     sessionAgentId,
     hostingState: normalizeHostingState(record.hostingState),
@@ -205,13 +213,19 @@ function normalizePanelReveal(value: unknown): NonNullable<BrowserSessionSnapsho
   return { sequence, acknowledgedSequence, tabId };
 }
 
+function normalizeHostKind(value: unknown) {
+  if (value === undefined || value === null) return DEFAULT_BROWSER_HOST_KIND;
+  if (isBrowserHostKind(value)) return value;
+  throw new Error("Invalid browser host kind");
+}
+
 function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingState"] {
   if (value === undefined || value === null) return "hosted";
   if (value === "hosted" || value === "unhosted" || value === "removed") return value;
   throw new Error("Invalid browser session hosting state");
 }
 
-function normalizeTab(value: unknown, profileId: string, sessionAgentId: string): BrowserTabSnapshot {
+function normalizeTab(value: unknown, profileId: string, sessionAgentId: string, sessionHostKind = DEFAULT_BROWSER_HOST_KIND): BrowserTabSnapshot {
   const tab = requiredRecord(value, "browser tab");
   if (tab.profileId !== profileId || tab.sessionAgentId !== sessionAgentId) {
     throw new Error("Browser tab identity does not match its session");
@@ -224,6 +238,7 @@ function normalizeTab(value: unknown, profileId: string, sessionAgentId: string)
   if (controller !== "human" && controller !== "agent" && controller !== "none") throw new Error("Invalid browser controller");
 
   return {
+    hostKind: tab.hostKind === undefined ? sessionHostKind : normalizeHostKind(tab.hostKind),
     tabId: requiredId(tab.tabId, "tabId"),
     sessionAgentId,
     profileId,

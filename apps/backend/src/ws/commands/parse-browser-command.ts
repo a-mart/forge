@@ -1,5 +1,8 @@
 import {
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_HOST_PROTOCOL_VERSION,
+  DEFAULT_BROWSER_HOST_KIND,
+  isBrowserHostKind,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_MAX_DIMENSION,
   BROWSER_VIEWPORT_MIN_DIMENSION,
@@ -50,12 +53,14 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
+          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
         });
       case "browser_host_focus":
         return ok({
           type: command.type,
+          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           focused: boolean(value.focused, "focused"),
@@ -69,6 +74,7 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
           const tabs = array(session.tabs, `sessions[${index}].tabs`, 100);
           tabs.forEach((tab, tabIndex) => record(tab, `sessions[${index}].tabs[${tabIndex}]`));
           return {
+            hostKind: hostKind(session.hostKind ?? value.hostKind),
             sessionAgentId: identifier(session.sessionAgentId, `sessions[${index}].sessionAgentId`),
             profileId: identifier(session.profileId, `sessions[${index}].profileId`),
             baseRevision: integer(session.baseRevision, `sessions[${index}].baseRevision`, 0, Number.MAX_SAFE_INTEGER),
@@ -78,6 +84,7 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
+          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           sessions: parsed,
@@ -87,6 +94,7 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
         return ok({
           type: command.type,
           requestId: identifier(value.requestId, "requestId"),
+          hostKind: hostKind(value.hostKind),
           hostId: identifier(value.hostId, "hostId"),
           hostGeneration: generation(value.hostGeneration),
           sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
@@ -139,26 +147,81 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
 
 function parseCapabilities(value: unknown): BrowserHostCapabilities {
   const capabilities = record(value, "registration.capabilities");
+  const resolvedHostKind = hostKind(capabilities.hostKind);
   const operations = array(capabilities.supportedOperations, "registration.capabilities.supportedOperations", BROWSER_AUTOMATION_OPERATIONS.length);
   if (operations.length === 0 || operations.some((operation) => !(BROWSER_AUTOMATION_OPERATIONS as readonly unknown[]).includes(operation))) {
     throw new Error("registration.capabilities.supportedOperations contains an unsupported operation");
   }
   const maxResponseBytes = integer(capabilities.maxResponseBytes, "registration.capabilities.maxResponseBytes", 1_024, 8 * 1_024 * 1_024);
+  const versions = capabilities.protocolVersions === undefined
+    ? { minimum: BROWSER_HOST_PROTOCOL_VERSION, maximum: BROWSER_HOST_PROTOCOL_VERSION }
+    : parseProtocolVersions(capabilities.protocolVersions);
+  const legacyCapture = capabilities.supportsCapturePage === undefined ? false : boolean(capabilities.supportsCapturePage, "registration.capabilities.supportsCapturePage");
+  const legacyRecording = capabilities.supportsRecording === undefined ? false : boolean(capabilities.supportsRecording, "registration.capabilities.supportsRecording");
+  const features = capabilities.features === undefined
+    ? {
+        resize: operations.includes("resize"), recording: legacyRecording, capturePage: legacyCapture,
+        downloadEvents: false, downloadArtifacts: false, downloadOpen: false,
+      }
+    : parseFeatures(capabilities.features);
+  const runtimeVersions = capabilities.runtimeVersions === undefined
+    ? {
+        ...(typeof capabilities.electronVersion === "string" ? { electron: boundedString(capabilities.electronVersion, "registration.capabilities.electronVersion", 64) } : {}),
+        ...(typeof capabilities.chromiumVersion === "string" ? { chromium: boundedString(capabilities.chromiumVersion, "registration.capabilities.chromiumVersion", 64) } : {}),
+        ...(typeof capabilities.playwrightVersion === "string" ? { playwright: boundedString(capabilities.playwrightVersion, "registration.capabilities.playwrightVersion", 64) } : {}),
+      }
+    : parseRuntimeVersions(capabilities.runtimeVersions);
+  if (resolvedHostKind === "external-chrome" && (operations.includes("resize") || operations.includes("recordingStart") || operations.includes("recordingStop") || features.resize || features.recording)) {
+    throw new Error("External Chrome M0 cannot advertise resize or recording");
+  }
   return {
+    hostKind: resolvedHostKind,
+    protocolVersions: versions,
     supportedOperations: [...new Set(operations)] as BrowserHostCapabilities["supportedOperations"],
-    electronVersion: boundedString(capabilities.electronVersion, "registration.capabilities.electronVersion", 64),
-    chromiumVersion: boundedString(capabilities.chromiumVersion, "registration.capabilities.chromiumVersion", 64),
-    playwrightVersion: boundedString(capabilities.playwrightVersion, "registration.capabilities.playwrightVersion", 64),
     maxResponseBytes,
-    supportsSandboxedWebviews: boolean(capabilities.supportsSandboxedWebviews, "registration.capabilities.supportsSandboxedWebviews"),
-    supportsCapturePage: boolean(capabilities.supportsCapturePage, "registration.capabilities.supportsCapturePage"),
-    supportsRecording: boolean(capabilities.supportsRecording, "registration.capabilities.supportsRecording"),
+    features,
+    runtimeVersions,
+    ...(typeof capabilities.electronVersion === "string" ? { electronVersion: capabilities.electronVersion } : {}),
+    ...(typeof capabilities.chromiumVersion === "string" ? { chromiumVersion: capabilities.chromiumVersion } : {}),
+    ...(typeof capabilities.playwrightVersion === "string" ? { playwrightVersion: capabilities.playwrightVersion } : {}),
+    ...(capabilities.supportsSandboxedWebviews === undefined ? {} : { supportsSandboxedWebviews: boolean(capabilities.supportsSandboxedWebviews, "registration.capabilities.supportsSandboxedWebviews") }),
+    ...(capabilities.supportsCapturePage === undefined ? {} : { supportsCapturePage: legacyCapture }),
+    ...(capabilities.supportsRecording === undefined ? {} : { supportsRecording: legacyRecording }),
   };
+}
+
+function parseProtocolVersions(value: unknown): { minimum: number; maximum: number } {
+  const versions = record(value, "registration.capabilities.protocolVersions");
+  const minimum = integer(versions.minimum, "registration.capabilities.protocolVersions.minimum", 1, BROWSER_HOST_PROTOCOL_VERSION);
+  const maximum = integer(versions.maximum, "registration.capabilities.protocolVersions.maximum", minimum, BROWSER_HOST_PROTOCOL_VERSION);
+  return { minimum, maximum };
+}
+
+function parseFeatures(value: unknown): NonNullable<BrowserHostCapabilities["features"]> {
+  const features = record(value, "registration.capabilities.features");
+  return {
+    resize: boolean(features.resize, "registration.capabilities.features.resize"),
+    recording: boolean(features.recording, "registration.capabilities.features.recording"),
+    capturePage: boolean(features.capturePage, "registration.capabilities.features.capturePage"),
+    downloadEvents: boolean(features.downloadEvents, "registration.capabilities.features.downloadEvents"),
+    downloadArtifacts: boolean(features.downloadArtifacts, "registration.capabilities.features.downloadArtifacts"),
+    downloadOpen: boolean(features.downloadOpen, "registration.capabilities.features.downloadOpen"),
+  };
+}
+
+function parseRuntimeVersions(value: unknown): NonNullable<BrowserHostCapabilities["runtimeVersions"]> {
+  const versions = record(value, "registration.capabilities.runtimeVersions");
+  const result: NonNullable<BrowserHostCapabilities["runtimeVersions"]> = {};
+  for (const field of ["electron", "chromium", "playwright", "chrome", "extension"] as const) {
+    if (versions[field] !== undefined) result[field] = boundedString(versions[field], `registration.capabilities.runtimeVersions.${field}`, 64);
+  }
+  return result;
 }
 
 function parseResponseEnvelope(value: unknown): BrowserAutomationResponse {
   const response = record(value, "response");
   identifier(response.requestId, "response.requestId");
+  response.hostKind = hostKind(response.hostKind);
   identifier(response.sessionAgentId, "response.sessionAgentId");
   identifier(response.profileId, "response.profileId");
   if (response.tabId !== null) identifier(response.tabId, "response.tabId");
@@ -218,6 +281,11 @@ function boundedString(value: unknown, field: string, maximum: number): string {
 }
 function boolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${field} must be boolean`);
+  return value;
+}
+function hostKind(value: unknown) {
+  if (value === undefined || value === null) return DEFAULT_BROWSER_HOST_KIND;
+  if (!isBrowserHostKind(value)) throw new Error("hostKind must be managed-electron or external-chrome");
   return value;
 }
 function generation(value: unknown): number {

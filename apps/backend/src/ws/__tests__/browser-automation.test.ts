@@ -40,6 +40,40 @@ describe('browser websocket transport', () => {
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
   })
 
+  it('normalizes legacy host payloads to Managed Electron and accepts host-specific External Chrome capabilities', () => {
+    const legacy = parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_register', requestId: 'legacy', registration: registration(),
+    })))
+    expect(legacy).toMatchObject({
+      ok: true,
+      command: { registration: { capabilities: {
+        hostKind: 'managed-electron', protocolVersions: { minimum: 1, maximum: 1 },
+        features: { resize: true, recording: true, capturePage: true },
+      } } },
+    })
+    const external = parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_register', requestId: 'external', registration: {
+        hostId: 'external-host', clientInstanceId: 'external-instance', registeredAt: new Date().toISOString(),
+        capabilities: {
+          hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
+          supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'],
+          maxResponseBytes: 1_000_000,
+          features: { resize: false, recording: false, capturePage: true, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+          runtimeVersions: { chrome: '138', extension: 'm0-fake' },
+        },
+      },
+    })))
+    expect(external).toMatchObject({ ok: true, command: { registration: { capabilities: { hostKind: 'external-chrome' } } } })
+    const oldResponse = parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_response', response: {
+        requestId: 'old', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null,
+        hostId: 'host-1', hostGeneration: 1, operation: 'status', ok: false, elapsedMs: 0,
+        error: { code: 'unavailable-host', message: 'old', retryable: true },
+      },
+    })))
+    expect(oldResponse).toMatchObject({ ok: true, command: { response: { hostKind: 'managed-electron' } } })
+  })
+
   it('recovers independently dropped registration and hydration phases without changing the connection', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-browser-handshake-retry-'))
     roots.push(root)
@@ -419,7 +453,7 @@ describe('browser websocket transport', () => {
     } })
     expect(sent.at(-1)).toEqual({
       type: 'browser_host_state_report_result', requestId: 'report-stale',
-      result: { hostId: 'host-1', hostGeneration: 1, status: 'stale-host-generation', sessions: [] },
+      result: { hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 1, status: 'stale-host-generation', sessions: [] },
     })
   })
 })
@@ -427,6 +461,7 @@ describe('browser websocket transport', () => {
 function routing(request: BrowserAutomationRequest) {
   return {
     requestId: request.requestId,
+    hostKind: request.hostKind,
     sessionAgentId: request.sessionAgentId,
     profileId: request.profileId,
     tabId: request.tabId,
@@ -434,10 +469,10 @@ function routing(request: BrowserAutomationRequest) {
     hostGeneration: request.hostGeneration,
   }
 }
-function tabFor(request: Pick<BrowserAutomationRequest, 'sessionAgentId' | 'profileId'>, tabId: string) {
+function tabFor(request: Pick<BrowserAutomationRequest, 'hostKind' | 'sessionAgentId' | 'profileId'>, tabId: string) {
   const now = new Date().toISOString()
   return {
-    tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, url: 'https://example.com/', title: 'Example',
+    hostKind: request.hostKind, tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, url: 'https://example.com/', title: 'Example',
     lifecycle: 'ready' as const, loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1,
     controller: 'none' as const, agentCursor: null, recording: null, viewportSetting: { mode: 'fill' as const }, renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, error: null, createdAt: now, updatedAt: now,
   }

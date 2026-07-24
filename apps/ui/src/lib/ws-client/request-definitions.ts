@@ -3,6 +3,7 @@ import {
   MANAGER_REASONING_LEVELS,
   type AgentSessionPurpose,
   type BrowserHostRegistration,
+  type BrowserHostKind,
   type BrowserHostSessionStateReport,
   type BrowserViewportSetting,
   type BuilderTimelineChannelView,
@@ -65,12 +66,12 @@ export function buildBrowserHostRegisterCommand(requestId: string, registration:
   return { type: 'browser_host_register', requestId, registration }
 }
 
-export function buildBrowserHostHydrateCommand(requestId: string, hostId: string, hostGeneration: number): ClientCommand {
-  return { type: 'browser_host_hydrate', requestId, hostId, hostGeneration }
+export function buildBrowserHostHydrateCommand(requestId: string, hostId: string, hostGeneration: number, hostKind?: BrowserHostKind): ClientCommand {
+  return { type: 'browser_host_hydrate', requestId, hostKind, hostId, hostGeneration }
 }
 
-export function buildBrowserHostFocusCommand(hostId: string, hostGeneration: number, focused: boolean): ClientCommand {
-  return { type: 'browser_host_focus', hostId, hostGeneration, focused }
+export function buildBrowserHostFocusCommand(hostId: string, hostGeneration: number, focused: boolean, hostKind?: BrowserHostKind): ClientCommand {
+  return { type: 'browser_host_focus', hostKind, hostId, hostGeneration, focused }
 }
 
 export function buildBrowserHostResponseCommand(response: Extract<ClientCommand, { type: 'browser_host_response' }>['response']): ClientCommand {
@@ -82,12 +83,14 @@ export function buildBrowserHostStateReportCommand(
   hostId: string,
   hostGeneration: number,
   sessions: BrowserHostSessionStateReport[],
+  hostKind?: BrowserHostKind,
 ): ClientCommand {
-  return { type: 'browser_host_state_report', requestId, hostId, hostGeneration, sessions }
+  return { type: 'browser_host_state_report', requestId, hostKind, hostId, hostGeneration, sessions }
 }
 
 export function buildBrowserPanelRevealAcknowledgeCommand(options: {
   requestId: string
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
   sessionAgentId: string

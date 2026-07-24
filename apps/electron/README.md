@@ -34,7 +34,8 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 |------|---------|
 | `src/main.ts` | Main process entry point. Window management, backend lifecycle, IPC handlers |
 | `src/preload.ts` | Trusted renderer bridge, including the narrow Managed Browser IPC facade |
-| `src/browser/browser-automation-manager.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
+| `src/browser/browser-automation-manager.ts` | Host-kind routing across browser target adapters |
+| `src/browser/managed-electron-target-adapter.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
 | `src/browser/browser-ipc.ts` | Main-authority-only automation IPC handlers |
 | `src/browser/managed-browser-view-host.ts` | Epoch/sequence-guarded main-process ownership, bounds, and same-view reparenting |
 | `src/browser/browser-workspace-ipc.ts` | Narrow role-scoped pop-out projection and correlated command relay |

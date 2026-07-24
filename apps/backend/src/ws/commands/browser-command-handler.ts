@@ -1,6 +1,7 @@
 import type {
   BrowserClientCommand,
   BrowserServerEvent,
+  BrowserHostKind,
   BrowserSessionSnapshot,
   BrowserViewportSetting,
   ServerEvent,
@@ -19,7 +20,7 @@ export interface BrowserCommandHandlerOptions {
   send: (socket: WebSocket, event: ServerEvent) => void;
   sendCritical?: (socket: WebSocket, event: ServerEvent) => Promise<number | null>;
   broadcastToSession: (sessionAgentId: string, event: ServerEvent) => void;
-  hydrateHostSessions: () => Promise<BrowserSessionSnapshot[]>;
+  hydrateHostSessions: (hostKind?: BrowserHostKind) => Promise<BrowserSessionSnapshot[]>;
   logDebug?: (message: string, details?: unknown) => void;
 }
 
@@ -39,20 +40,21 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       return true;
     }
     case "browser_host_hydrate": {
-      if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) {
+      if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration, command.hostKind)) {
         sendFailure(options, command, "STALE_HOST_GENERATION", "Browser hydration requested for a stale host generation.");
         return true;
       }
-      const sessions = await options.hydrateHostSessions();
-      if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) return true;
+      const sessions = await options.hydrateHostSessions(command.hostKind);
+      if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration, command.hostKind)) return true;
       const payload = Buffer.from(JSON.stringify(sessions), "utf8");
       const chunkCount = Math.max(1, Math.ceil(payload.byteLength / MAX_BROWSER_HYDRATION_CHUNK_BYTES));
       for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-        if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) return true;
+        if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration, command.hostKind)) return true;
         const start = chunkIndex * MAX_BROWSER_HYDRATION_CHUNK_BYTES;
         const sent = await sendCritical(options, {
           type: "browser_host_hydration_chunk",
           requestId: command.requestId,
+          hostKind: command.hostKind,
           hostId: command.hostId,
           hostGeneration: command.hostGeneration,
           chunkIndex,
@@ -64,7 +66,7 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       return true;
     }
     case "browser_host_focus":
-      service.setHostFocused(connectionId, command.hostId, command.hostGeneration, command.focused);
+      service.setHostFocused(connectionId, command.hostId, command.hostGeneration, command.focused, command.hostKind);
       return true;
     case "browser_host_response": {
       const disposition = service.acceptHostResponse(connectionId, command.response);
@@ -72,7 +74,7 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
       return true;
     }
     case "browser_host_state_report": {
-      const result = await service.reportHostState(connectionId, command.hostId, command.hostGeneration, command.sessions);
+      const result = await service.reportHostState(connectionId, command.hostId, command.hostGeneration, command.sessions, command.hostKind);
       options.send(socket, {
         type: "browser_host_state_report_result",
         requestId: command.requestId,
@@ -115,7 +117,7 @@ async function handlePanelRevealAcknowledgement(
     sendFailure(options, command, "PROFILE_MISMATCH", "Browser reveal acknowledgement profile does not match the selected Forge session.");
     return;
   }
-  if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration)) {
+  if (!service.broker.isCurrentConnection(connectionId, command.hostId, command.hostGeneration, command.hostKind)) {
     sendFailure(options, command, "STALE_HOST_GENERATION", "Browser reveal acknowledgement came from a stale host generation.");
     return;
   }
@@ -160,7 +162,7 @@ async function handleRecordingCommand(
 
   try {
     if (command.type === "browser_recording_start") {
-      const outcome = await service.invoke(command.sessionAgentId, profileId, "recordingStart", { tabId: command.tabId });
+      const outcome = await service.invoke(command.sessionAgentId, profileId, "recordingStart", { tabId: command.tabId, hostKind: "managed-electron" });
       if (!outcome.ok) throw new BrowserCommandFailure(outcome.error.code, outcome.error.message);
       const snapshot = await service.getSessionSnapshot(profileId, command.sessionAgentId);
       options.send(options.socket, {
@@ -175,6 +177,7 @@ async function handleRecordingCommand(
 
     const outcome = await service.invoke(command.sessionAgentId, profileId, "recordingStop", {
       tabId: command.tabId,
+      hostKind: "managed-electron",
       recordingId: command.recordingId,
     });
     if (!outcome.ok) throw new BrowserCommandFailure(outcome.error.code, outcome.error.message);
@@ -220,6 +223,7 @@ async function handleTabCommand(
       const previousActive = before.activeTabId;
       const previousDefault = before.defaultTabId;
       const result = await service.invoke(command.sessionAgentId, profileId, "open", {
+        hostKind: "managed-electron",
         ...(command.url ? { url: command.url } : {}),
         show: false,
         reuseExistingTab: false,
@@ -250,7 +254,7 @@ async function handleTabCommand(
     if (!tab) throw new BrowserCommandFailure("TAB_NOT_FOUND", "Browser tab was not found in the selected Forge session.");
 
     if (command.type === "browser_tab_resize") {
-      const input = viewportInput(command.viewport, command.tabId);
+      const input = { ...viewportInput(command.viewport, command.tabId), hostKind: "managed-electron" as const };
       const result = await service.invoke(command.sessionAgentId, profileId, "resize", input);
       if (!result.ok) throw new BrowserCommandFailure(result.error.code, result.error.message);
       const next = await service.getSessionSnapshot(profileId, command.sessionAgentId);
