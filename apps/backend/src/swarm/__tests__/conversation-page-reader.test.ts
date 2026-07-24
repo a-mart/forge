@@ -384,6 +384,51 @@ describe("readConversationHistoryPage", () => {
     expect(page.page.hasOlder).toBe(false);
   });
 
+  it("bounds scans when supplemental activity extends beyond one canonical read budget", () => {
+    const { sessionFile } = createFixture();
+    const rows = Array.from({ length: 4_000 }, (_, index) => JSON.stringify({
+      type: "custom",
+      customType: "swarm_conversation_entry",
+      id: `activity-row-${index}`,
+      parentId: index > 0 ? `activity-row-${index - 1}` : null,
+      timestamp: new Date(index).toISOString(),
+      data: {
+        type: "agent_tool_call",
+        agentId: "manager",
+        actorAgentId: "worker-1",
+        timestamp: new Date(index).toISOString(),
+        kind: "tool_execution_start",
+        toolName: "read",
+        toolCallId: `tool-${index}`,
+        text: "x".repeat(1_024),
+      },
+    }));
+    writeFileSync(sessionFile, `${conversationRow(0)}\n${rows.join("\n")}\n`);
+
+    const first = readConversationHistoryPage({
+      sessionFile,
+      limit: 200,
+      projectionKey: "web",
+      isVisible: () => true,
+      countsTowardLimit: (entry) => entry.type === "conversation_message",
+    });
+    expect(first.page.completeness).toBe("partial_scan");
+    expect(first.page.scanBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_SCAN_BYTES);
+    expect(first.messages).toHaveLength(200);
+    expect(first.page.nextCursor).toBeDefined();
+
+    const second = readConversationHistoryPage({
+      sessionFile,
+      cursor: first.page.nextCursor,
+      limit: 200,
+      projectionKey: "web",
+      isVisible: () => true,
+      countsTowardLimit: (entry) => entry.type === "conversation_message",
+    });
+    expect(second.page.scanBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_SCAN_BYTES);
+    expect(second.page.nextCursor).not.toBe(first.page.nextCursor);
+  });
+
   it("rejects a cursor when the requested Builder view changes", () => {
     const { sessionFile } = createFixture();
     writeFileSync(sessionFile, `${Array.from({ length: 4 }, (_, index) => conversationRow(index)).join("\n")}\n`);

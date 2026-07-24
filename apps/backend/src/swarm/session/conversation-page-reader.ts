@@ -60,6 +60,8 @@ export interface ReadConversationHistoryPageOptions {
   limit?: number;
   projectionKey?: string;
   isVisible?: (entry: ConversationEntryEvent) => boolean;
+  /** Visible supplemental rows that should hydrate state without consuming the requested transcript count. */
+  countsTowardLimit?: (entry: ConversationEntryEvent) => boolean;
   /** Internal cold-load seam: retain canonical payloads before the Builder wire boundary. */
   projectForWire?: boolean;
   /** Deprecated compatibility input. Canonical JSONL is always authoritative for paging. */
@@ -143,6 +145,7 @@ export function readConversationHistoryPage(
     continuationRowEnd: decodedCursor?.oversizedRowEnd,
     skipThroughTimelineEntryId: decodedCursor?.skipThroughTimelineEntryId,
     isVisible: options.isVisible,
+    countsTowardLimit: options.countsTowardLimit,
     projectForWire: options.projectForWire,
   });
   if (parsed.seamBoundaryMissing) {
@@ -184,6 +187,7 @@ function readLinesBackward(options: {
   continuationRowEnd?: number;
   skipThroughTimelineEntryId?: string;
   isVisible?: (entry: ConversationEntryEvent) => boolean;
+  countsTowardLimit?: (entry: ConversationEntryEvent) => boolean;
   projectForWire?: boolean;
 }): {
   messages: ConversationEntryEvent[];
@@ -197,6 +201,16 @@ function readLinesBackward(options: {
 } {
   const messages: ConversationEntryEvent[] = [];
   const activitySummaryIds = new Set<string>();
+  const supplementalMessages = new Set<ConversationEntryEvent>();
+  const maxSupplementalItems = options.countsTowardLimit
+    ? Math.min(options.limit, Math.floor(MAX_CONVERSATION_PAGE_ITEMS / 2))
+    : 0;
+  const countedLimit = Math.min(
+    options.limit,
+    MAX_CONVERSATION_PAGE_ITEMS - maxSupplementalItems,
+  );
+  let countedMessages = 0;
+  let supplementalItems = 0;
   let pageBytes = 0;
   let scanBytes = 0;
   let boundedScanBytes = 0;
@@ -214,7 +228,7 @@ function readLinesBackward(options: {
   const fileDescriptor = openSync(options.file, "r");
 
   try {
-    while (bufferStart > 0 && messages.length < options.limit) {
+    while (bufferStart > 0 && countedMessages < countedLimit) {
       const readLength = Math.min(READ_CHUNK_BYTES, bufferStart);
       const readStart = bufferStart - readLength;
       const chunk = Buffer.allocUnsafe(readLength);
@@ -230,7 +244,7 @@ function readLinesBackward(options: {
       let right = buffer.length;
       if (right > 0 && buffer[right - 1] === 0x0a) right -= 1;
 
-      while (right > 0 && messages.length < options.limit) {
+      while (right > 0 && countedMessages < countedLimit) {
         const newlineIndex = buffer.lastIndexOf(0x0a, right - 1);
         if (newlineIndex < 0 && bufferStart > 0) break;
 
@@ -294,23 +308,40 @@ function readLinesBackward(options: {
           projectedEntry.type === "activity_summary" &&
           activitySummaryIds.has(projectedEntry.itemId)
         ) continue;
-        if (projectedEntry.type === "activity_summary") activitySummaryIds.add(projectedEntry.itemId);
+        const countsTowardLimit =
+          !options.countsTowardLimit || options.countsTowardLimit(projectedEntry);
+        if (!countsTowardLimit && supplementalItems >= maxSupplementalItems) continue;
         const entryBytes = Buffer.byteLength(JSON.stringify(projectedEntry), "utf8");
-        if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
-          return {
-            messages,
-            // The row did not fit this page, so the continuation must end
-            // after it. Starting at its beginning would skip it forever.
-            nextOffset: rejectedRowEndOffset,
-            pageBytes,
-            scanBytes,
-            partialScan,
-            ...(continuationRowEnd !== undefined ? { continuationRowEnd } : {}),
-            ...(skipThroughTimelineEntryId ? { skipThroughTimelineEntryId } : {}),
-            seamBoundaryMissing: false,
-          };
+        if (countsTowardLimit) {
+          while (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+            const supplementalIndex = findLastSupplementalIndex(messages, supplementalMessages);
+            if (supplementalIndex < 0) break;
+            const removed = messages.splice(supplementalIndex, 1)[0]!;
+            supplementalMessages.delete(removed);
+            supplementalItems -= 1;
+            pageBytes -= Buffer.byteLength(JSON.stringify(removed), "utf8");
+          }
+          if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+            return {
+              messages,
+              // The counted row did not fit this page, so the continuation
+              // must end after it. Starting at its beginning would skip it.
+              nextOffset: rejectedRowEndOffset,
+              pageBytes,
+              scanBytes,
+              partialScan,
+              ...(continuationRowEnd !== undefined ? { continuationRowEnd } : {}),
+              ...(skipThroughTimelineEntryId ? { skipThroughTimelineEntryId } : {}),
+              seamBoundaryMissing: false,
+            };
+          }
+          countedMessages += 1;
+        } else {
+          if (pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) continue;
+          supplementalMessages.add(projectedEntry);
+          supplementalItems += 1;
         }
-
+        if (projectedEntry.type === "activity_summary") activitySummaryIds.add(projectedEntry.itemId);
         messages.push(projectedEntry);
         pageBytes += entryBytes;
       }
@@ -318,7 +349,7 @@ function readLinesBackward(options: {
       buffer = buffer.subarray(0, right);
       nextOffset = bufferStart + buffer.length;
 
-      if (boundedScanBytes >= MAX_CONVERSATION_PAGE_SCAN_BYTES && messages.length < options.limit) {
+      if (boundedScanBytes >= MAX_CONVERSATION_PAGE_SCAN_BYTES && countedMessages < countedLimit) {
         if (buffer.length > 0) {
           const partialRowEnd = bufferStart + buffer.length;
           const completedRowProgress = options.startOffset - partialRowEnd;
@@ -352,7 +383,7 @@ function readLinesBackward(options: {
       }
     }
 
-    if (bufferStart === 0 && buffer.length > 0 && messages.length < options.limit) {
+    if (bufferStart === 0 && buffer.length > 0 && countedMessages < countedLimit) {
       const oldestRowEndOffset = nextOffset;
       if (continuationRowEnd !== undefined) {
         oversizedRowClassifier.scanPreceding(buffer);
@@ -402,22 +433,43 @@ function readLinesBackward(options: {
             seamBoundaryMissing: false,
           };
         }
+        const countsTowardLimit =
+          !options.countsTowardLimit || options.countsTowardLimit(projectedEntry);
         const entryBytes = Buffer.byteLength(JSON.stringify(projectedEntry), "utf8");
-        if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
-          return {
-            messages,
-            nextOffset: oldestRowEndOffset,
-            pageBytes,
-            scanBytes,
-            partialScan,
-            seamBoundaryMissing: false,
-          };
-        }
-        if (pageBytes + entryBytes <= MAX_CONVERSATION_PAGE_BYTES) {
+        if (countsTowardLimit) {
+          while (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+            const supplementalIndex = findLastSupplementalIndex(messages, supplementalMessages);
+            if (supplementalIndex < 0) break;
+            const removed = messages.splice(supplementalIndex, 1)[0]!;
+            supplementalMessages.delete(removed);
+            supplementalItems -= 1;
+            pageBytes -= Buffer.byteLength(JSON.stringify(removed), "utf8");
+          }
+          if (messages.length > 0 && pageBytes + entryBytes > MAX_CONVERSATION_PAGE_BYTES) {
+            return {
+              messages,
+              nextOffset: oldestRowEndOffset,
+              pageBytes,
+              scanBytes,
+              partialScan,
+              seamBoundaryMissing: false,
+            };
+          }
+          if (pageBytes + entryBytes <= MAX_CONVERSATION_PAGE_BYTES) {
+            messages.push(projectedEntry);
+            pageBytes += entryBytes;
+            countedMessages += 1;
+          } else {
+            partialScan = true;
+          }
+        } else if (
+          supplementalItems < maxSupplementalItems &&
+          pageBytes + entryBytes <= MAX_CONVERSATION_PAGE_BYTES
+        ) {
+          supplementalMessages.add(projectedEntry);
+          supplementalItems += 1;
           messages.push(projectedEntry);
           pageBytes += entryBytes;
-        } else {
-          partialScan = true;
         }
         }
       }
@@ -437,6 +489,16 @@ function readLinesBackward(options: {
   } finally {
     closeSync(fileDescriptor);
   }
+}
+
+function findLastSupplementalIndex(
+  messages: readonly ConversationEntryEvent[],
+  supplementalMessages: ReadonlySet<ConversationEntryEvent>,
+): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (supplementalMessages.has(messages[index])) return index;
+  }
+  return -1;
 }
 
 function createRetiredSourceClassifier(): {
