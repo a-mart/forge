@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     config,
     onReady: ({ port }) => {
       if (config.isDesktop) {
-        process.send?.({ type: "ready", port });
+        process.send?.({ type: "ready", port, dataDir: config.paths.dataDir });
       }
     },
   });

@@ -53,10 +53,16 @@ let triggerUpdateCheck: ((isManual: boolean) => Promise<void>) | null = null
 let triggerDownloadUpdate: (() => Promise<void>) | null = null
 let triggerInstallUpdate: (() => void) | null = null
 
+export interface UpdateQuiesceHook {
+  quiesce(reason: 'desktop-update'): Promise<void>
+}
+
 export function initAutoUpdater(options: {
   mainWindow: BrowserWindow
   getBackendBaseUrl: () => string | null
   prepareQuitForUpdate: () => Promise<void>
+  quiesceHook?: UpdateQuiesceHook
+  quiesceTimeoutMs?: number
 }): void {
   if (!app.isPackaged) {
     return
@@ -124,7 +130,7 @@ export function initAutoUpdater(options: {
   triggerInstallUpdate = (): void => {
     void (async () => {
       try {
-        await options.prepareQuitForUpdate()
+        await prepareUpdateInstall(options)
         autoUpdater.quitAndInstall()
       } catch (error) {
         console.warn('[auto-update] Failed to prepare update install', formatError(error))
@@ -228,7 +234,7 @@ export function initAutoUpdater(options: {
       }
 
       try {
-        await options.prepareQuitForUpdate()
+        await prepareUpdateInstall(options)
         autoUpdater.quitAndInstall()
       } catch (error) {
         pendingDownloadedUpdate = event
@@ -299,6 +305,24 @@ export function initAutoUpdater(options: {
   })
 
   startUpdateTimers()
+}
+
+export async function prepareUpdateInstall(options: {
+  prepareQuitForUpdate: () => Promise<void>
+  quiesceHook?: UpdateQuiesceHook
+  quiesceTimeoutMs?: number
+}): Promise<void> {
+  if (options.quiesceHook) {
+    const timeoutMs = options.quiesceTimeoutMs ?? 5_000
+    await Promise.race([
+      options.quiesceHook.quiesce('desktop-update'),
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`External Chrome update quiesce timed out after ${timeoutMs}ms`)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  }
+  await options.prepareQuitForUpdate()
 }
 
 export function checkForUpdatesManually(mainWindow?: BrowserWindow | null): Promise<void> {

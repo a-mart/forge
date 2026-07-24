@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const configPath = path.join(root, 'sea-config.json')
+const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+const nativeProtocol = { min: 1, max: 1, maxMessageBytes: 1_048_576 }
 const executableName = process.platform === 'win32'
   ? 'forge-external-chrome-native-host.exe'
   : 'forge-external-chrome-native-host'
@@ -53,6 +55,8 @@ if (result.status !== 0) {
   const manifest = {
     schemaVersion: 1,
     package: '@forge/external-chrome-native-host',
+    version: packageMetadata.version,
+    nativeProtocol,
     platform: process.platform,
     architecture: process.arch,
     nodeVersion: process.versions.node,
@@ -80,6 +84,8 @@ smoke(executablePath, platformArguments)
 const manifest = {
   schemaVersion: 1,
   package: '@forge/external-chrome-native-host',
+  version: packageMetadata.version,
+  nativeProtocol,
   platform: process.platform,
   architecture: process.arch,
   nodeVersion: process.versions.node,

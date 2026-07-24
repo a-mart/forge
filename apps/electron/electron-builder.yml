@@ -43,6 +43,10 @@ extraResources:
     to: browser-runtime
     filter:
       - '**/*'
+  - from: .stage/external-chrome
+    to: external-chrome
+    filter:
+      - '**/*'
 protocols:
   - name: Forge Skill Import
     schemes:

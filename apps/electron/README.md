@@ -25,6 +25,7 @@ Managed Browser partitions are persistent and profile-scoped. The main process o
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
 - **SQLite runtime** — `better-sqlite3` remains external to the backend bundle so its Electron-specific native binding can be staged and exercised with Electron-as-Node before packaging
 - **Managed Browser runtime** — main/trusted-preload/guest-preload bundles in `app.asar`, plus `.stage/browser-runtime/playwright-core/` and an exact staged copy of root `THIRD_PARTY_NOTICES.md` under packaged `resources/browser-runtime/`
+- **External Chrome deployment resources** — deterministic extension shell/payload, platform/architecture SEA native host, and their strict combined manifest under `.stage/external-chrome/`, packaged as `resources/external-chrome/`; release staging fails if the required SEA executable is absent
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
@@ -121,9 +122,10 @@ The packaging pipeline:
 6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
 8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
-9. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
-10. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
-11. Runs `electron-builder --publish never`
+9. Builds and validates the deterministic External Chrome shell/payload and the current platform/architecture native host, then stages their combined hash/identity/compatibility manifest into `.stage/external-chrome/`; unsupported SEA toolchains fail this packaged-release step rather than shipping a bundle-only host
+10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
+11. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
+12. Runs `electron-builder --publish never`
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
 

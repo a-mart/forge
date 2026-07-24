@@ -17,6 +17,8 @@
     "test:browser-popout-reparent": "pnpm build && node ./scripts/browser-popout-reparent-smoke.mjs",
     "test:browser-popout-product": "pnpm build && node ./scripts/managed-browser-popout-product-smoke.mjs",
     "test:browser-package": "pnpm build && node ./scripts/browser-package-content-smoke.mjs",
+    "test:external-chrome-package": "node ./scripts/external-chrome-package-content-smoke.mjs",
+    "stage:external-chrome": "node ./scripts/stage-external-chrome.mjs",
     "prepare:dev-native": "node ./scripts/prepare-dev-native.mjs",
     "dev": "pnpm prepare:dev-native && node esbuild.config.mjs && electron .",
     "start": "pnpm prepare:dev-native && electron .",

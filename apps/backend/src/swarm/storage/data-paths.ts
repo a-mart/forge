@@ -37,6 +37,90 @@ export function getSharedStateDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "state");
 }
 
+// ── Integration paths ─────────────────────────────────────────────────────────
+
+export function getIntegrationsDir(dataDir: string): string {
+  return join(dataDir, "integrations");
+}
+
+export function getExternalChromeIntegrationDir(dataDir: string): string {
+  return join(getIntegrationsDir(dataDir), "external-chrome");
+}
+
+export function getExternalChromeExtensionDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "extension");
+}
+
+export function getExternalChromeExtensionPayloadsDir(dataDir: string): string {
+  return join(getExternalChromeExtensionDir(dataDir), "payloads");
+}
+
+export function getExternalChromeExtensionCurrentPath(dataDir: string): string {
+  return join(getExternalChromeExtensionDir(dataDir), "current.json");
+}
+
+export function getExternalChromeNativeHostDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "native-host");
+}
+
+export function getExternalChromeNativeHostExecutablePath(
+  dataDir: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  return join(
+    getExternalChromeNativeHostDir(dataDir),
+    `forge-external-chrome-native-host${platform === "win32" ? ".exe" : ""}`
+  );
+}
+
+export function getExternalChromeNativeHostManifestsDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "native-host-manifests");
+}
+
+export function getExternalChromeNativeHostManifestPath(dataDir: string): string {
+  return join(getExternalChromeNativeHostManifestsDir(dataDir), "com.forge.external_chrome.json");
+}
+
+export function getExternalChromeStateDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "state");
+}
+
+export function getExternalChromeAuthDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "auth");
+}
+
+export function getExternalChromeRunDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "run");
+}
+
+export function getExternalChromeDeploymentDir(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "deployment");
+}
+
+export function getExternalChromeDeploymentLockPath(dataDir: string): string {
+  return join(getExternalChromeIntegrationDir(dataDir), "deploy.lock");
+}
+
+export function getExternalChromeInstallStatePath(dataDir: string): string {
+  return join(getExternalChromeStateDir(dataDir), "install.json");
+}
+
+export function getExternalChromePreviousStatePath(dataDir: string): string {
+  return join(getExternalChromeStateDir(dataDir), "previous.json");
+}
+
+export function getExternalChromeDeploymentJournalPath(dataDir: string): string {
+  return join(getExternalChromeDeploymentDir(dataDir), "journal.json");
+}
+
+export function getExternalChromeAuthKeyPath(dataDir: string): string {
+  return join(getExternalChromeAuthDir(dataDir), "native-messaging.key");
+}
+
+export function getExternalChromeRendezvousPath(dataDir: string): string {
+  return join(getExternalChromeRunDir(dataDir), "rendezvous.json");
+}
+
 // ── Profile-level paths ────────────────────────────────────────────────────────
 
 export function getGlobalForgeExtensionsDir(dataDir: string): string {

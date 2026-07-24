@@ -7,6 +7,7 @@ import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
 import { prepareElectronBetterSqlite3Binding } from './prepare-dev-native.mjs'
+import { stageExternalChromeResources } from './stage-external-chrome.mjs'
 
 gracefulFs.gracefulify(fs)
 
@@ -32,6 +33,7 @@ const cliStageDir = path.join(stageDir, 'cli')
 const cliStagedEntry = path.join(cliStageDir, 'cli.js')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const browserRuntimeDir = path.join(stageDir, 'browser-runtime')
+const externalChromeStageDir = path.join(stageDir, 'external-chrome')
 const stagedPlaywrightCoreDir = path.join(browserRuntimeDir, 'playwright-core')
 const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
 const stagedBuiltinArchetypesDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'archetypes', 'builtins')
@@ -147,12 +149,16 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/ui', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/cli', 'build'])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/chrome-extension', 'build'])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/external-chrome-native-host', 'package:current'])
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
 
   await stageBundledBackend()
   await stageRendererAssets()
   await stageBackendResources()
   await stageBrowserRuntime()
+  await stageExternalChromeResources({ outputRoot: externalChromeStageDir, requireExecutable: true })
+  await run(process.execPath, [path.join(electronDir, 'scripts', 'external-chrome-package-content-smoke.mjs'), externalChromeStageDir])
   await stageCliArtifact()
 
   await assertExists(backendStageBundlePath, 'staged backend bundle entry')
@@ -163,6 +169,7 @@ async function main() {
   await assertExists(cliStagedEntry, 'staged CLI entry')
   await assertExists(path.join(stagedPlaywrightCoreDir, 'lib', 'coreBundle.js'), 'staged Playwright injected runtime')
   await assertExists(path.join(browserRuntimeDir, 'THIRD_PARTY_NOTICES.md'), 'staged browser third-party notice')
+  await assertExists(path.join(externalChromeStageDir, 'package-manifest.json'), 'staged External Chrome package manifest')
 
   await validatePackagedRuntimePreflight()
   await validateStagedCliPreflight()
