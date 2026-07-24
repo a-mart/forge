@@ -4,10 +4,15 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "fixture:chrome": "node scripts/isolated-chrome-fixture.mjs",
+    "identity": "node scripts/verify-identity.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@forge/protocol": "workspace:*",
+    "esbuild": "0.25.12",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
