@@ -209,8 +209,6 @@ export const settingsArticles: HelpArticle[] = [
       'api key',
       'environment variable',
       'brave',
-      'chrome',
-      'cdp',
       'image generation',
       'managed browser',
       'browser automation',
