@@ -1,0 +1,7 @@
+{
+  "main": "dist/host.cjs",
+  "output": "dist/forge-external-chrome-native-host",
+  "disableExperimentalSEAWarning": true,
+  "useCodeCache": false,
+  "useSnapshot": false
+}

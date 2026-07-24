@@ -238,6 +238,15 @@ importers:
 
   apps/native-messaging-host:
     devDependencies:
+      '@forge/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.10.13
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

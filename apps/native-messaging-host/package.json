@@ -4,10 +4,15 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "build": "pnpm --filter @forge/protocol build && node scripts/build.mjs",
+    "package:current": "pnpm run build && node scripts/package-current.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@forge/protocol": "workspace:*",
+    "@types/node": "^24.3.0",
+    "esbuild": "0.25.12",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
