@@ -70,7 +70,6 @@ import {
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createBuilderSidebarOrderRoutes } from "./http/routes/builder-sidebar-order-routes.js";
-import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
 import { createChatArtifactRoutes } from "./http/routes/chat-artifact-routes.js";
 import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
@@ -765,7 +764,6 @@ export class SwarmWebSocketServer {
       }),
       ...createExtensionRoutes({ swarmManager: this.swarmManager }),
       ...createSkillRoutes({ swarmManager: this.swarmManager }),
-      ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createMermaidPreviewRoutes(),
       ...(options.promptRegistry
         ? createPromptRoutes({

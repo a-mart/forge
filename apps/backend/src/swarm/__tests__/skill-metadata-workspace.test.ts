@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { getProfilePiSkillsDir } from "../data-paths.js";
-import { SkillMetadataService } from "../skills/skill-metadata-service.js";
+import { REQUIRED_SKILL_NAMES, SkillMetadataService } from "../skills/skill-metadata-service.js";
 import type { SwarmConfig } from "../types.js";
 
 function createConfig(root: string): SwarmConfig {
@@ -32,6 +32,11 @@ function encodeSkillId(payload: Record<string, unknown>): string {
 }
 
 describe("SkillMetadataService workspace skills", () => {
+  it("requires agent-browser and does not require the retired chrome-cdp skill", () => {
+    expect(REQUIRED_SKILL_NAMES).toContain("agent-browser");
+    expect(REQUIRED_SKILL_NAMES).not.toContain("chrome-cdp");
+  });
+
   it("rejects direct workspace skill ID resolution without active workspace context", async () => {
     const root = await mkdtemp(join(tmpdir(), "skill-metadata-workspace-"));
     const config = createConfig(root);

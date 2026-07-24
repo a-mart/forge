@@ -537,15 +537,10 @@ Go to **Settings → Skills** to configure optional skill-backed agent capabilit
 
 - **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
 - **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is not the Forge Desktop Managed Browser.
-- **Chrome CDP** — If you're running Chrome 146+, you can enable Chrome DevTools Protocol access. This lets agents connect to tabs you have open in your browser, with access to your authenticated sessions.
 - **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills, profile/project skills, or repository `.forge/skills` skills as needed.
 - **Skill sharing** — Share a user-created global or project skill to generate a temporary bearer link from the skill share service. Recipients can open the link or a `forge://skill-import` deep link, but Forge always shows a preview first and never auto-installs. Conflicts default to reject; replacing an existing directory or installing an override requires explicit confirmation. Built-in and repository skills are not shareable in v1.
 
 Managed Browser is not configured here: it has no Skills toggle or environment variable and requires a connected Forge Desktop host.
-
-> **Chrome CDP tip:** Always set an allowlist of URLs. Without it, agents see every open tab (all 168 of them) and things get slow. And they will comment on your tab count.
-
-Chrome CDP also supports multiple Chrome profiles, which is useful for testing applications that need multiple authenticated users simultaneously.
 
 ### System Prompt Preview
 
@@ -757,7 +752,6 @@ Also be aware of prompt injection risks when agents browse the web. Malicious we
 
 **Mitigations:**
 - Keep backups of your data directory
-- Use allowlists for Chrome CDP access
 - Be cautious with agents that have broad system permissions
 - Review what agents are doing, especially early on
 

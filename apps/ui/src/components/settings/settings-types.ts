@@ -1,6 +1,4 @@
 import type {
-  ChromeCdpConfig,
-  ChromeCdpStatus,
   SettingsAuthProvider,
   SettingsAuthProviderId,
   SettingsEnvVariable,
@@ -9,11 +7,6 @@ import type {
 /* ------------------------------------------------------------------ */
 /*  Shared types for settings components                              */
 /* ------------------------------------------------------------------ */
-
-export type {
-  ChromeCdpConfig,
-  ChromeCdpStatus,
-}
 
 export type {
   SettingsAuthProvider,

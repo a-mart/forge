@@ -171,8 +171,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/settings/openrouter/models", expect: { GET: "admin", PUT: "admin", DELETE: "admin" } },
   { sample: "/api/settings/extensions", expect: { GET: "admin" } },
   { sample: "/api/settings/skills", expect: { GET: "admin", POST: "admin" } },
-  { sample: "/api/settings/chrome-cdp", expect: { GET: "admin", PUT: "admin", POST: "admin" } },
-
   // --- project resources (member project reads, R1) -------------------------
   { sample: "/api/settings/project-resources", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/settings/project-resources/override", expect: { PUT: "member" }, killSwitched: true },

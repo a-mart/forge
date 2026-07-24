@@ -224,7 +224,6 @@ Managers and workers have access to built-in skills. These are separate from the
 | Web Search | Search the web via Brave Search API | `BRAVE_API_KEY` |
 | Image Generation | Generate images with Google Gemini | `GEMINI_API_KEY` |
 | `agent-browser` | Interactive web browsing and extraction through a separate CLI/browser lifecycle | [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI |
-| Chrome CDP | Inspect and interact with explicitly configured local Chrome tabs via DevTools Protocol | Local Chrome instance |
 | Cron Scheduling | Persistent scheduled tasks with cron expressions | — |
 | Slash Commands | Create and manage prompt auto-expansion commands | — |
 | Memory | Persistent agent memory across sessions | — |

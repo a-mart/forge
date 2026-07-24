@@ -86,7 +86,6 @@ export const chatArticles: HelpArticle[] = [
       'human control',
       'unavailable host',
       'agent-browser',
-      'Chrome CDP',
       'remote projects',
       'collaboration',
     ],

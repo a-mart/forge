@@ -94,12 +94,11 @@ Managed Browser remains local to Forge Desktop and the selected local Builder ma
 
 Collaboration channel sessions do not receive Managed Browser tools or a local-host bridge. This boundary is separate from ordinary collaboration sign-in cookies in the Forge UI and from remote server-side Files, Source Control, terminal, or agent execution.
 
-## Managed Browser, `agent-browser`, and Chrome CDP
+## Managed Browser and `agent-browser`
 
 | Capability | What it controls | Identity and UI | Typical use |
 |---|---|---|---|
 | **Managed Browser** | Forge-owned Electron `WebContentsView` tabs through typed manager tools | Profile-scoped persistent Electron partition; shared human/agent Browser workspace; Forge Desktop required | Visually inspect and automate a local Builder session in a browser Forge owns. |
 | **`agent-browser` Skill** | The separately installed Vercel Labs `agent-browser` CLI and its browser sessions | External CLI lifecycle; no Forge Browser rail or managed-tab persistence contract | Command-line browsing/extraction where that Skill and its prerequisites are available. |
-| **Chrome CDP Skill** | Tabs exposed by a separately configured everyday Chrome instance | Can reach existing Chrome profiles and authenticated tabs within its configured scope/allowlist; no Forge-owned webview | Explicitly inspect or debug pages already open in Chrome. |
 
-The older README label **Browser** refers to the `agent-browser` Skill. It is not an alias for Managed Browser. Chrome CDP has a materially broader personal-browser trust boundary because it can attach to Chrome tabs you already use; Managed Browser never attaches to that profile.
+The older README label **Browser** refers to the `agent-browser` Skill. It is not an alias for Managed Browser. Managed Browser never attaches to an everyday Chrome profile. The former built-in `chrome-cdp` Skill has been retired; External Chrome is the planned path for attaching to user-owned Chrome tabs.
