@@ -178,6 +178,15 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
 
+  apps/chrome-extension:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.13)(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@2.2.0))(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.10.13)(typescript@5.9.3))(tsx@4.21.0)(yaml@2.9.0)
+
   apps/electron:
     dependencies:
       '@forge/protocol':
@@ -214,6 +223,15 @@ importers:
       tsx:
         specifier: ^4.20.3
         version: 4.21.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.13)(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@2.2.0))(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.10.13)(typescript@5.9.3))(tsx@4.21.0)(yaml@2.9.0)
+
+  apps/native-messaging-host:
+    devDependencies:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
