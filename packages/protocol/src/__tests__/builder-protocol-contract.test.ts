@@ -7,6 +7,13 @@ import type { CollaborationAuthor, CollaborationStatus } from '../collaboration.
 import type { ClientCommand } from '../client-commands.js'
 import type { ConversationMessageEvent } from '../conversation-events.js'
 import type { ProjectPresenceEvent } from '../presence.js'
+import type { ServerEvent } from '../server-events.js'
+import type {
+  BootstrapFailedEvent,
+  ConversationHistoryEvent,
+  PendingChoicesSnapshotEvent,
+  ReadyEvent,
+} from '../transport-events.js'
 import type {
   RemoteBuildSettingsEnvOverrideErrorBody,
   RemoteBuildSettingsResponse,
@@ -65,6 +72,60 @@ describe('builder protocol contract', () => {
 
     expect(withoutId.clientRequestId).toBeUndefined()
     expect(withId.clientRequestId).toBeTruthy()
+  })
+
+  it('adds optional bootstrap correlation without changing legacy subscribe or event shapes', () => {
+    const legacySubscribe = {
+      type: 'subscribe',
+      agentId: 'manager-1',
+      conversationView: 'web',
+    } satisfies Extract<ClientCommand, { type: 'subscribe' }>
+    const correlatedSubscribe = {
+      ...legacySubscribe,
+      subscriptionId: 'renderer-1:generation-7',
+    } satisfies Extract<ClientCommand, { type: 'subscribe' }>
+
+    const legacyReady = {
+      type: 'ready',
+      serverTime: '2026-07-23T00:00:00.000Z',
+      subscribedAgentId: 'manager-1',
+    } satisfies ReadyEvent
+    const correlatedReady = {
+      ...legacyReady,
+      subscriptionId: correlatedSubscribe.subscriptionId,
+      servedConversationView: 'web',
+    } satisfies ReadyEvent
+    const history = {
+      type: 'conversation_history',
+      agentId: 'manager-1',
+      messages: [],
+      subscriptionId: correlatedSubscribe.subscriptionId,
+      servedConversationView: 'web',
+    } satisfies ConversationHistoryEvent
+    const choices = {
+      type: 'pending_choices_snapshot',
+      agentId: 'manager-1',
+      choiceIds: [],
+      subscriptionId: correlatedSubscribe.subscriptionId,
+      servedConversationView: 'web',
+    } satisfies PendingChoicesSnapshotEvent
+    const failed = {
+      type: 'bootstrap_failed',
+      agentId: 'manager-1',
+      subscriptionId: correlatedSubscribe.subscriptionId,
+      servedConversationView: 'web',
+      code: 'BOOTSTRAP_FAILED',
+      message: 'Conversation bootstrap failed.',
+      retryable: true,
+      stage: 'bootstrap',
+    } satisfies BootstrapFailedEvent satisfies ServerEvent
+
+    expect(legacySubscribe.subscriptionId).toBeUndefined()
+    expect(legacyReady.subscriptionId).toBeUndefined()
+    expect([correlatedReady, history, choices]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subscriptionId: 'renderer-1:generation-7', servedConversationView: 'web' }),
+    ]))
+    expect(failed.code).toBe('BOOTSTRAP_FAILED')
   })
 
   it('conversation_message echoes clientRequestId and carries builder attribution', () => {

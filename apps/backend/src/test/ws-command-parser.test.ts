@@ -2,7 +2,10 @@ import { BROWSER_AUTOMATION_OPERATIONS, WS_REQUEST_CONTRACTS } from '@forge/prot
 import type { WsRequestContractType } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
-import { MAX_API_PROXY_REQUEST_ID_LENGTH } from '../ws/commands/parse-utility-command.js'
+import {
+  MAX_API_PROXY_REQUEST_ID_LENGTH,
+  MAX_SUBSCRIPTION_ID_LENGTH,
+} from '../ws/commands/parse-utility-command.js'
 import { MAX_CONVERSATION_PAGE_CURSOR_LENGTH } from '../ws/commands/parse-session-command.js'
 
 function parseJsonCommand(payload: unknown) {
@@ -369,6 +372,7 @@ describe('ws command parser session commands', () => {
       type: 'subscribe',
       agentId: 'manager',
       messageCount: 75,
+      subscriptionId: ' renderer:7 ',
       conversationPaging: true,
       conversationView: 'web',
       goalControlRequestId: true,
@@ -380,10 +384,47 @@ describe('ws command parser session commands', () => {
         type: 'subscribe',
         agentId: 'manager',
         messageCount: 75,
+        subscriptionId: ' renderer:7 ',
         conversationPaging: true,
         conversationView: 'web',
         goalControlRequestId: true,
       },
+    })
+  })
+
+  it('accepts a bounded non-empty subscriptionId exactly and rejects invalid values', () => {
+    const maxLengthId = ` ${'x'.repeat(MAX_SUBSCRIPTION_ID_LENGTH - 2)} `
+    expect(parseJsonCommand({ type: 'subscribe', subscriptionId: maxLengthId })).toEqual({
+      ok: true,
+      command: {
+        type: 'subscribe',
+        agentId: undefined,
+        messageCount: undefined,
+        subscriptionId: maxLengthId,
+      },
+    })
+    expect(parseJsonCommand({ type: 'subscribe' })).toEqual({
+      ok: true,
+      command: { type: 'subscribe', agentId: undefined, messageCount: undefined },
+    })
+    expect(parseJsonCommand({ type: 'subscribe', subscriptionId: '' })).toEqual({
+      ok: false,
+      error: 'subscribe.subscriptionId must be non-empty when provided',
+    })
+    expect(parseJsonCommand({ type: 'subscribe', subscriptionId: '   ' })).toEqual({
+      ok: false,
+      error: 'subscribe.subscriptionId must be non-empty when provided',
+    })
+    expect(parseJsonCommand({
+      type: 'subscribe',
+      subscriptionId: 'x'.repeat(MAX_SUBSCRIPTION_ID_LENGTH + 1),
+    })).toEqual({
+      ok: false,
+      error: `subscribe.subscriptionId must be at most ${MAX_SUBSCRIPTION_ID_LENGTH} characters`,
+    })
+    expect(parseJsonCommand({ type: 'subscribe', subscriptionId: 7 })).toEqual({
+      ok: false,
+      error: 'subscribe.subscriptionId must be a string when provided',
     })
   })
 

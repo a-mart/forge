@@ -391,6 +391,30 @@ describe('MessageList paged activity', () => {
     expect(onLoadOlder).toHaveBeenCalledTimes(1)
   })
 
+  it('never renders the ordinary empty state while a cold bootstrap is pending', () => {
+    render([], { conversationBootstrapPhase: 'pending' })
+    expect(container.textContent).toContain('Loading conversation…')
+    expect(container.textContent).not.toContain('Start a conversation')
+    expect(container.querySelector('[aria-busy="true"]')).toBeTruthy()
+  })
+
+  it('keeps stale rows visible with an accessible refresh failure and Retry', () => {
+    const onRetryBootstrap = vi.fn()
+    render([{
+      type: 'conversation_message', agentId: 'session-1', id: 'cached', role: 'assistant',
+      text: 'Previous cached row', timestamp: now, source: 'speak_to_user',
+    }], {
+      conversationBootstrapPhase: 'error',
+      hasStalePresentation: true,
+      onRetryBootstrap,
+    })
+    expect(container.textContent).toContain('Previous cached row')
+    expect(container.textContent).toContain('Couldn’t refresh. Showing previous messages.')
+    const retry = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Retry')
+    flushSync(() => retry?.click())
+    expect(onRetryBootstrap).toHaveBeenCalledOnce()
+  })
+
   it('keeps the timeline refresh action enabled after the source changes', () => {
     const onLoadOlder = vi.fn()
     render([], {

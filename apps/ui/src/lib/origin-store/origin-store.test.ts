@@ -5,6 +5,7 @@ import { OriginRegistry } from './origin-registry'
 import { LOCAL_ORIGIN_ID, compositeKey, parseCompositeKey } from './origin-key'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
+import { ConversationSnapshotCache } from '@/lib/ws-client/conversation-snapshot-cache'
 
 // ---------------------------------------------------------------------------
 // Helpers — drive stores with NO real socket via transport-agnostic ingestion
@@ -51,6 +52,38 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // Composite identity (requirement 4)
 // ---------------------------------------------------------------------------
+
+describe('conversation presentation cache lifecycle', () => {
+  it('evicts only the destroyed origin while preserving another origin', () => {
+    const cache = new ConversationSnapshotCache()
+    const registry = new OriginRegistry()
+    registry.createOrigin({
+      originId: 'remote-a', wsUrl: 'ws://127.0.0.1/remote-a', offline: true,
+      conversationSnapshotCache: cache,
+    })
+    registry.createOrigin({
+      originId: 'remote-b', wsUrl: 'ws://127.0.0.1/remote-b', offline: true,
+      conversationSnapshotCache: cache,
+    })
+    for (const originId of ['remote-a', 'remote-b']) {
+      cache.capture({
+        originId, agentId: 'manager', servedView: 'web', profileId: 'profile',
+        messages: [{
+          type: 'conversation_message', agentId: 'manager', id: `${originId}-row`,
+          role: 'assistant', text: originId, timestamp: '2026-01-01T00:00:00.000Z',
+          source: 'speak_to_user',
+        }],
+        activityMessages: [], conversationPage: null,
+      })
+    }
+
+    registry.destroyOrigin('remote-a')
+    expect(cache.get({ originId: 'remote-a', agentId: 'manager', servedView: 'web' })).toBeNull()
+    expect(cache.get({ originId: 'remote-b', agentId: 'manager', servedView: 'web' })).not.toBeNull()
+    registry.destroyAll()
+    expect(cache.size).toBe(0)
+  })
+})
 
 describe('composite (originId, id) identity', () => {
   it('builds and parses flat keys', () => {

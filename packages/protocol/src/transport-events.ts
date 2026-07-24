@@ -1,6 +1,12 @@
+import type { BuilderTimelineChannelView } from './builder-timeline-visibility.js'
 import type { ChoiceRequestEvent, ConversationEntry } from './conversation-events.js'
 
-export interface ReadyEvent {
+export interface SubscriptionCorrelation {
+  subscriptionId?: string
+  servedConversationView?: BuilderTimelineChannelView
+}
+
+export interface ReadyEvent extends SubscriptionCorrelation {
   type: 'ready'
   serverTime: string
   subscribedAgentId: string
@@ -15,7 +21,7 @@ export interface ConversationResetEvent {
   reason: 'user_new_command' | 'api_reset'
 }
 
-export interface ConversationHistoryEvent {
+export interface ConversationHistoryEvent extends SubscriptionCorrelation {
   type: 'conversation_history'
   agentId: string
   messages: ConversationEntry[]
@@ -46,11 +52,28 @@ export interface ConversationHistoryPageMetadata {
   source: ConversationHistoryPageSource
 }
 
-export interface PendingChoicesSnapshotEvent {
+export interface PendingChoicesSnapshotEvent extends SubscriptionCorrelation {
   type: 'pending_choices_snapshot'
   agentId: string
   choiceIds: string[]
   choices?: ChoiceRequestEvent[]
+}
+
+export type BootstrapFailureCode =
+  | 'UNKNOWN_AGENT'
+  | 'SUBSCRIPTION_NOT_SUPPORTED'
+  | 'BOOTSTRAP_FAILED'
+  | 'TARGET_REMOVED'
+
+export interface BootstrapFailedEvent {
+  type: 'bootstrap_failed'
+  agentId: string
+  subscriptionId: string
+  servedConversationView: BuilderTimelineChannelView
+  code: BootstrapFailureCode
+  message: string
+  retryable: boolean
+  stage?: string
 }
 
 export interface ApiProxyResponseEvent {
