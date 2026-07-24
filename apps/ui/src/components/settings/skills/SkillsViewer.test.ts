@@ -64,10 +64,6 @@ vi.mock('./SkillEnvVariables', () => ({
   SkillEnvVariables: () => createElement('div', { 'data-testid': 'skill-env-variables' }),
 }))
 
-vi.mock('../SettingsChromeCdp', () => ({
-  SettingsChromeCdp: () => null,
-}))
-
 let container: HTMLDivElement
 let root: Root | null = null
 

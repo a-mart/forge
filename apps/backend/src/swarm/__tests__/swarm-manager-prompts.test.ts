@@ -804,7 +804,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + chrome-cdp + create-skill + forge-project-resources skills', async () => {
+  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + create-skill + forge-project-resources skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -817,7 +817,7 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.path).toBe(rootSessionMemoryPath)
     expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
     expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
-    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(9)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(8)
 
     const memorySkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('memory', 'SKILL.md')))
     expect(memorySkillPath).toBeDefined()
@@ -856,11 +856,7 @@ describe('SwarmManager', () => {
     expect(slashCommandsSkill).toContain('name: slash-commands')
     expect(slashCommandsSkill).toContain('slash-commands.js create')
 
-    const chromeCdpSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))
-    expect(chromeCdpSkillPath).toBeDefined()
-    const chromeCdpSkill = await readFile(chromeCdpSkillPath!, 'utf8')
-    expect(chromeCdpSkill).toContain('name: chrome-cdp')
-    expect(chromeCdpSkill).toContain('scripts/cdp.mjs')
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(false)
 
     const createSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('create-skill', 'SKILL.md')))
     expect(createSkillPath).toBeDefined()
@@ -1194,7 +1190,7 @@ describe('SwarmManager', () => {
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('agent-browser', 'SKILL.md')))).toBe(true)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('image-generation', 'SKILL.md')))).toBe(true)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('slash-commands', 'SKILL.md')))).toBe(true)
-    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(false)
   })
 
   it('prefers repo brave-search skill override when present', async () => {
@@ -1227,7 +1223,7 @@ describe('SwarmManager', () => {
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('agent-browser', 'SKILL.md')))).toBe(true)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('image-generation', 'SKILL.md')))).toBe(true)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('slash-commands', 'SKILL.md')))).toBe(true)
-    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('chrome-cdp', 'SKILL.md')))).toBe(false)
   })
 
   it('prefers machine-local data-dir skill overrides over repo skills', async () => {

@@ -60,6 +60,7 @@ import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
+import { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -69,7 +70,6 @@ import {
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createBuilderSidebarOrderRoutes } from "./http/routes/builder-sidebar-order-routes.js";
-import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
 import { createChatArtifactRoutes } from "./http/routes/chat-artifact-routes.js";
 import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
@@ -573,6 +573,7 @@ export class SwarmWebSocketServer {
     );
     this.shouldManageControlPid =
       !this.swarmManager.getConfig().isDesktop && readDaemonizedEnv() !== "1";
+    const artifactTicketStore = new PresentedChatArtifactTicketStore();
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -589,6 +590,7 @@ export class SwarmWebSocketServer {
       isRemoteBuildEnabled: () => this.remoteBuildSettingsService.isRemoteBuildEnabled(),
       areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
       browserAutomationService: options.browserAutomationService,
+      artifactTicketStore,
       getRemoteUpdateAwarenessBootstrapEvent: this.remoteUpdateAwarenessService
         ? (projectId) => {
             try {
@@ -682,7 +684,7 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
-      ...createChatArtifactRoutes({ swarmManager: this.swarmManager }),
+      ...createChatArtifactRoutes({ swarmManager: this.swarmManager, ticketStore: artifactTicketStore }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),
@@ -762,7 +764,6 @@ export class SwarmWebSocketServer {
       }),
       ...createExtensionRoutes({ swarmManager: this.swarmManager }),
       ...createSkillRoutes({ swarmManager: this.swarmManager }),
-      ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createMermaidPreviewRoutes(),
       ...(options.promptRegistry
         ? createPromptRoutes({

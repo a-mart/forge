@@ -8,6 +8,11 @@ import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import { reconcileInterruptedToolCallsForBoot } from '../swarm/interrupted-tool-reconciliation.js'
 import { getMessageRoutingReceiptsPath } from '../swarm/session/message-routing-receipts.js'
+import {
+  MAX_CONVERSATION_PAGE_BYTES,
+  MAX_CONVERSATION_PAGE_ITEMS,
+  MAX_CONVERSATION_PAGE_SCAN_BYTES,
+} from '../swarm/session/conversation-page-reader.js'
 import { MAX_CONVERSATION_HISTORY } from '../swarm/session/history-policy.js'
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session-file-guard.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
@@ -436,6 +441,337 @@ describe('ConversationProjector session tree continuity', () => {
       itemId: `tool:${descriptor.agentId}:worker-tool`,
       actorAgentId: workerDescriptor.agentId,
     }])
+  })
+
+  it.each([
+    { canonicalCount: 500, supplementalCount: 0, expectedSupplementalCount: 0 },
+    { canonicalCount: 500, supplementalCount: 100, expectedSupplementalCount: 0 },
+    { canonicalCount: 400, supplementalCount: 250, expectedSupplementalCount: 100 },
+  ])(
+    'keeps $canonicalCount memory rows at limit 500 with $supplementalCount supplemental rows',
+    async ({ canonicalCount, supplementalCount, expectedSupplementalCount }) => {
+      const root = await mkdtemp(join(tmpdir(), 'conversation-projector-limit-500-memory-'))
+      const descriptor = makeDescriptor(join(root, 'manager.jsonl'), root)
+      const workerDescriptor: AgentDescriptor = {
+        ...makeDescriptor(join(root, 'worker.jsonl'), root),
+        agentId: 'worker-1',
+        displayName: 'Worker 1',
+        role: 'worker',
+        managerId: descriptor.agentId,
+        sessionFile: join(root, 'worker.jsonl'),
+      }
+      const canonical = Array.from(
+        { length: canonicalCount },
+        (_, index): ConversationEntryEvent => ({
+          type: 'conversation_message',
+          id: `canonical-${index}`,
+          timelineEntryId: `canonical-entry-${index}`,
+          timelineSequence: index,
+          agentId: descriptor.agentId,
+          role: 'assistant',
+          text: `canonical ${index}`,
+          timestamp: new Date(index).toISOString(),
+          source: 'assistant_output',
+        }),
+      )
+      const supplemental = Array.from({ length: supplementalCount }, (_, index): ConversationEntryEvent => ({
+        type: 'agent_tool_call',
+        timelineEntryId: `supplemental-entry-${index}`,
+        timelineSequence: canonicalCount + index,
+        agentId: descriptor.agentId,
+        actorAgentId: workerDescriptor.agentId,
+        timestamp: new Date(canonicalCount + index).toISOString(),
+        kind: 'tool_execution_start',
+        toolName: 'read',
+        toolCallId: `supplemental-${index}`,
+        text: `path-${index}`,
+      }))
+      const projector = new ConversationProjector({
+        descriptors: new Map([
+          [descriptor.agentId, descriptor],
+          [workerDescriptor.agentId, workerDescriptor],
+        ]),
+        runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+        conversationEntriesByAgentId: new Map([[descriptor.agentId, [...canonical, ...supplemental]]]),
+        now: () => FIXED_NOW,
+        emitServerEvent: () => {},
+        logDebug: () => {},
+      })
+
+      const page = projector.getConversationHistoryPage(descriptor.agentId, {
+        view: 'all',
+        limit: MAX_CONVERSATION_PAGE_ITEMS,
+      })
+
+      expect(page.messages).toHaveLength(canonicalCount + expectedSupplementalCount)
+      expect(page.messages.filter((entry) => entry.type === 'conversation_message'))
+        .toHaveLength(canonicalCount)
+      const supplementalIds = page.messages.flatMap((entry) =>
+        entry.type === 'agent_tool_call' ? [entry.toolCallId] : [],
+      )
+      expect(supplementalIds).toEqual(Array.from(
+        { length: expectedSupplementalCount },
+        (_, index) => `supplemental-${supplementalCount - expectedSupplementalCount + index}`,
+      ))
+      expect(page.page.hasOlder).toBe(false)
+      expect(page.page.pageBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_BYTES)
+    },
+  )
+
+  it('does not let newest worker quick-look rows exhaust a manager Web memory page', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-web-quick-look-memory-'))
+    const descriptor = makeDescriptor(join(root, 'manager.jsonl'), root)
+    const workerDescriptor: AgentDescriptor = {
+      ...makeDescriptor(join(root, 'worker.jsonl'), root),
+      agentId: 'worker-1',
+      displayName: 'Worker 1',
+      role: 'worker',
+      managerId: descriptor.agentId,
+      sessionFile: join(root, 'worker.jsonl'),
+    }
+    const visible = Array.from({ length: 250 }, (_, index): ConversationEntryEvent => ({
+      type: 'conversation_message',
+      id: `visible-${index}`,
+      timelineEntryId: `visible-entry-${index}`,
+      timelineSequence: index,
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: `visible ${index}`,
+      timestamp: new Date(index).toISOString(),
+      source: 'assistant_output',
+    }))
+    const quickLook = Array.from({ length: 250 }, (_, index): ConversationEntryEvent => ({
+      type: 'agent_tool_call',
+      timelineEntryId: `quick-entry-${index}`,
+      timelineSequence: visible.length + index,
+      agentId: descriptor.agentId,
+      actorAgentId: workerDescriptor.agentId,
+      timestamp: new Date(visible.length + index).toISOString(),
+      kind: 'tool_execution_start',
+      toolName: 'read',
+      toolCallId: `quick-${index}`,
+      text: `path-${index}`,
+    }))
+    const projector = new ConversationProjector({
+      descriptors: new Map([
+        [descriptor.agentId, descriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
+      runtimes: new Map([[descriptor.agentId, makeDeferredPersistenceRuntime(descriptor)]]),
+      conversationEntriesByAgentId: new Map([[descriptor.agentId, [...visible, ...quickLook]]]),
+      now: () => FIXED_NOW,
+      emitServerEvent: () => {},
+      logDebug: () => {},
+    })
+
+    const first = projector.getConversationHistoryPage(descriptor.agentId, { view: 'web' })
+    const firstVisibleIds = first.messages.flatMap((entry) =>
+      entry.type === 'conversation_message' ? [entry.id!] : [],
+    )
+    const firstQuickIds = first.messages.flatMap((entry) =>
+      entry.type === 'agent_tool_call' ? [entry.toolCallId] : [],
+    )
+    expect(firstVisibleIds).toEqual(Array.from({ length: 200 }, (_, index) => `visible-${index + 50}`))
+    expect(firstQuickIds).toEqual(Array.from({ length: 200 }, (_, index) => `quick-${index + 50}`))
+    expect(first.messages).toHaveLength(400)
+    expect(first.page.nextCursor).toBeDefined()
+    expect(first.page.pageBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_BYTES)
+    expect(first.messages.length).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_ITEMS)
+    expect(first.messages.map((entry) => entry.timelineSequence)).toEqual(
+      [...first.messages].map((entry) => entry.timelineSequence).sort((a, b) => a! - b!),
+    )
+
+    const second = projector.getConversationHistoryPage(descriptor.agentId, {
+      view: 'web',
+      cursor: first.page.nextCursor,
+    })
+    const secondVisibleIds = second.messages.flatMap((entry) =>
+      entry.type === 'conversation_message' ? [entry.id!] : [],
+    )
+    expect(secondVisibleIds).toEqual(Array.from({ length: 50 }, (_, index) => `visible-${index}`))
+    expect(second.page.nextCursor).toBeUndefined()
+    expect(new Set([...secondVisibleIds, ...firstVisibleIds]).size).toBe(250)
+
+    const all = projector.getConversationHistoryPage(descriptor.agentId, { view: 'all' })
+    expect(all.messages.filter((entry) => entry.type === 'conversation_message')).toHaveLength(200)
+    expect(all.messages.filter((entry) => entry.type === 'agent_tool_call')).toHaveLength(200)
+
+    const workerHistory = quickLook.map((entry): ConversationEntryEvent => ({
+      ...entry,
+      agentId: workerDescriptor.agentId,
+      actorAgentId: workerDescriptor.agentId,
+    }))
+    const workerProjector = makeProjector({
+      descriptor: workerDescriptor,
+      runtimes: new Map([[workerDescriptor.agentId, makeDeferredPersistenceRuntime(workerDescriptor)]]),
+      conversationEntriesByAgentId: new Map([[workerDescriptor.agentId, workerHistory]]),
+    })
+    const workerFirst = workerProjector.getConversationHistoryPage(workerDescriptor.agentId, { view: 'all' })
+    expect(workerFirst.messages).toHaveLength(200)
+    expect(workerFirst.messages[0]).toMatchObject({ type: 'agent_tool_call', toolCallId: 'quick-50' })
+    const workerSecond = workerProjector.getConversationHistoryPage(workerDescriptor.agentId, {
+      view: 'all',
+      cursor: workerFirst.page.nextCursor,
+    })
+    expect(workerSecond.messages).toHaveLength(50)
+    expect(workerSecond.messages[0]).toMatchObject({ type: 'agent_tool_call', toolCallId: 'quick-0' })
+  })
+
+  it('recovers Web-visible canonical rows behind more than 200 replayed quick-look rows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-web-quick-look-canonical-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const workerDescriptor: AgentDescriptor = {
+      ...makeDescriptor(join(root, 'worker.jsonl'), root),
+      agentId: 'worker-1',
+      displayName: 'Worker 1',
+      role: 'worker',
+      managerId: descriptor.agentId,
+      sessionFile: join(root, 'worker.jsonl'),
+    }
+    const entries: ConversationEntryEvent[] = [
+      ...Array.from({ length: 3 }, (_, index): ConversationEntryEvent => ({
+        type: 'conversation_message',
+        id: `visible-${index}`,
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: `visible ${index}`,
+        timestamp: new Date(index).toISOString(),
+        source: 'assistant_output',
+      })),
+      ...Array.from({ length: 225 }, (_, index): ConversationEntryEvent => ({
+        type: 'agent_tool_call',
+        agentId: descriptor.agentId,
+        actorAgentId: workerDescriptor.agentId,
+        timestamp: new Date(index + 3).toISOString(),
+        kind: 'tool_execution_start',
+        toolName: 'read',
+        toolCallId: `quick-${index}`,
+        text: `path-${index}`,
+      })),
+    ]
+    await writeFile(sessionFile, `${entries.map((entry, index) => JSON.stringify({
+      type: 'custom',
+      customType: 'swarm_conversation_entry',
+      id: `row-${index}`,
+      parentId: index > 0 ? `row-${index - 1}` : null,
+      timestamp: entry.timestamp,
+      data: entry,
+    })).join('\n')}\n`, 'utf8')
+    const projector = new ConversationProjector({
+      descriptors: new Map([
+        [descriptor.agentId, descriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
+      runtimes: new Map(),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: () => {},
+      logDebug: () => {},
+    })
+
+    const first = projector.getConversationHistoryPage(descriptor.agentId, { view: 'web', limit: 2 })
+    expect(first.page.source).toBe('canonical')
+    expect(first.page.scanBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_SCAN_BYTES)
+    expect(first.page.pageBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_BYTES)
+    expect(first.messages.filter((entry) => entry.type === 'conversation_message')).toMatchObject([
+      { id: 'visible-1' },
+      { id: 'visible-2' },
+    ])
+    expect(first.messages.filter((entry) => entry.type === 'agent_tool_call')).toHaveLength(2)
+
+    const second = projector.getConversationHistoryPage(descriptor.agentId, {
+      view: 'web',
+      limit: 2,
+      cursor: first.page.nextCursor,
+    })
+    expect(second.messages.filter((entry) => entry.type === 'conversation_message')).toMatchObject([
+      { id: 'visible-0' },
+    ])
+    expect(second.page.hasOlder).toBe(false)
+    const ids = [...second.messages, ...first.messages].flatMap((entry) =>
+      entry.type === 'conversation_message' ? [entry.id] : [],
+    )
+    expect(ids).toEqual(['visible-0', 'visible-1', 'visible-2'])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('recovers cold canonical All rows behind supplemental quick-look activity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-all-quick-look-canonical-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const workerDescriptor: AgentDescriptor = {
+      ...makeDescriptor(join(root, 'worker.jsonl'), root),
+      agentId: 'worker-1',
+      displayName: 'Worker 1',
+      role: 'worker',
+      managerId: descriptor.agentId,
+      sessionFile: join(root, 'worker.jsonl'),
+    }
+    const entries: ConversationEntryEvent[] = [
+      ...Array.from({ length: 3 }, (_, index): ConversationEntryEvent => ({
+        type: 'conversation_message',
+        id: `canonical-${index}`,
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: `canonical ${index}`,
+        timestamp: new Date(index).toISOString(),
+        source: 'assistant_output',
+      })),
+      ...Array.from({ length: 225 }, (_, index): ConversationEntryEvent => ({
+        type: 'agent_tool_call',
+        agentId: descriptor.agentId,
+        actorAgentId: workerDescriptor.agentId,
+        timestamp: new Date(index + 3).toISOString(),
+        kind: 'tool_execution_start',
+        toolName: 'read',
+        toolCallId: `quick-${index}`,
+        text: `path-${index}`,
+      })),
+    ]
+    await writeFile(sessionFile, `${entries.map((entry, index) => JSON.stringify({
+      type: 'custom',
+      customType: 'swarm_conversation_entry',
+      id: `row-${index}`,
+      parentId: index > 0 ? `row-${index - 1}` : null,
+      timestamp: entry.timestamp,
+      data: entry,
+    })).join('\n')}\n`, 'utf8')
+    const projector = new ConversationProjector({
+      descriptors: new Map([
+        [descriptor.agentId, descriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
+      runtimes: new Map(),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: () => {},
+      logDebug: () => {},
+    })
+
+    const first = projector.getConversationHistoryPage(descriptor.agentId, { view: 'all', limit: 2 })
+    expect(first.page.source).toBe('canonical')
+    expect(first.messages.filter((entry) => entry.type === 'conversation_message')).toMatchObject([
+      { id: 'canonical-1' },
+      { id: 'canonical-2' },
+    ])
+    expect(first.messages.filter((entry) => entry.type === 'agent_tool_call')).toHaveLength(2)
+    expect(first.page.nextCursor).toBeDefined()
+
+    const second = projector.getConversationHistoryPage(descriptor.agentId, {
+      view: 'all',
+      limit: 2,
+      cursor: first.page.nextCursor,
+    })
+    expect(second.messages.filter((entry) => entry.type === 'conversation_message')).toMatchObject([
+      { id: 'canonical-0' },
+    ])
+    expect(second.page.hasOlder).toBe(false)
+    const canonicalIds = [...second.messages, ...first.messages].flatMap((entry) =>
+      entry.type === 'conversation_message' ? [entry.id] : [],
+    )
+    expect(canonicalIds).toEqual(['canonical-0', 'canonical-1', 'canonical-2'])
+    expect(new Set(canonicalIds).size).toBe(canonicalIds.length)
   })
 
   it('writes routing receipts to the session sidecar at the conversation entry choke point', async () => {

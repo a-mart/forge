@@ -8,6 +8,7 @@ import {
   ChatArtifactError,
   MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES,
   MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES,
+  PresentedChatArtifactTicketStore,
   chatArtifactStatus,
   canonicalizeChatArtifactPath,
   canonicalizeChatArtifactPathForPlatform,
@@ -140,6 +141,195 @@ describe("presented chat artifact authorization", () => {
     expect((await securelyReadPresentedArtifact(text)).content).toHaveLength(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES - 1);
     await writeFile(text, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x61));
     expect(await errorCode(() => securelyReadPresentedArtifact(text))).toBe("file_too_large");
+  });
+
+  it("returns a UTF-8-safe bounded prefix with stable total-byte metadata", async () => {
+    const f = await fixture();
+    const target = join(f.dataDir, "large.txt");
+    const prefix = Buffer.from("abcd😀tail", "utf8");
+    const largeTotalBytes = 5 * 1024 * 1024;
+    await writeFile(target, Buffer.concat([prefix, Buffer.alloc(largeTotalBytes - prefix.length, 0x61)]));
+    await writeFile(f.sessionFile, line(message("bounded", `[x](swarm-file://${target})`)));
+
+    const result: any = await readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "bounded",
+      path: target,
+      previewBytes: 6,
+    });
+    expect(result).toMatchObject({ content: "abcd", truncated: true, totalBytes: largeTotalBytes });
+    expect(Buffer.byteLength(result.content, "utf8")).toBeLessThanOrEqual(6);
+    expect(result.content).not.toContain("�");
+    let observedReadBytes = 0;
+    await securelyReadPresentedArtifact(target, { previewBytes: 6, onRead: bytes => { observedReadBytes += bytes; } });
+    expect(observedReadBytes).toBe(6);
+    expect(await errorCode(() => securelyReadPresentedArtifact(target))).toBe("file_too_large");
+
+    await writeFile(target, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES, 0x61));
+    await expect(securelyReadPresentedArtifact(target)).resolves.toMatchObject({ contentType: "application/octet-stream" });
+    await writeFile(target, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1, 0x61));
+    expect(await errorCode(() => securelyReadPresentedArtifact(target))).toBe("file_too_large");
+    await expect(securelyReadPresentedArtifact(target, { previewBytes: 6 })).resolves.toMatchObject({ truncated: true, totalBytes: MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES + 1 });
+    expect(await errorCode(() => securelyReadPresentedArtifact(target, { previewBytes: 0 }))).toBe("invalid_request");
+  });
+
+  it("issues bounded one-use image capabilities and denies expiry, binding mismatch, and identity races", async () => {
+    if (process.platform === "win32") return;
+    const f = await fixture();
+    const image = join(f.dataDir, "ticket.png");
+    await writeFile(image, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES, 0x89));
+    await writeFile(f.sessionFile, line(message("ticket", `[image](swarm-file://${image})`)));
+    let now = 1_000;
+    let sequence = 0;
+    const store = new PresentedChatArtifactTicketStore({
+      now: () => now,
+      ttlMs: 100,
+      createToken: () => `ticket_token_${String(sequence++).padStart(4, "0")}`,
+    });
+    const issue = async (binding = "user-a") => readPresentedChatArtifact(f.source, {
+      transcriptAgentId: f.agentId,
+      messageId: "ticket",
+      path: image,
+      imageTransport: "http_ticket",
+    }, { ticketStore: store, ticketAuthBinding: binding }) as Promise<any>;
+
+    const first = await issue();
+    expect(first).toMatchObject({
+      binary: true,
+      transport: "http_ticket",
+      contentType: "image/png",
+      totalBytes: MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES,
+    });
+    expect(first).not.toHaveProperty("content");
+    const firstToken = first.ticket.url.split("/").at(-1)!;
+    await expect(store.redeem(firstToken, "user-a")).resolves.toMatchObject({ totalBytes: MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES });
+    expect(await errorCode(() => store.redeem(firstToken, "user-a"))).toBe("ticket_not_found");
+
+    const wrongBinding = await issue();
+    const wrongBindingToken = wrongBinding.ticket.url.split("/").at(-1)!;
+    expect(await errorCode(() => store.redeem(wrongBindingToken, "user-b"))).toBe("ticket_not_found");
+    await expect(store.redeem(wrongBindingToken, "user-a")).resolves.toMatchObject({ totalBytes: MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES });
+
+    const concurrent = await issue();
+    const concurrentToken = concurrent.ticket.url.split("/").at(-1)!;
+    const concurrentResults = await Promise.allSettled([
+      store.redeem(concurrentToken, "user-a"),
+      store.redeem(concurrentToken, "user-a"),
+    ]);
+    expect(concurrentResults.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const concurrentFailure = concurrentResults.find(result => result.status === "rejected") as PromiseRejectedResult;
+    expect(concurrentFailure.reason).toMatchObject({ code: "ticket_not_found" });
+
+    const expired = await issue(); now += 101;
+    expect(await errorCode(() => store.redeem(expired.ticket.url.split("/").at(-1)!, "user-a"))).toBe("ticket_expired");
+
+    now = 2_000;
+    const raced = await issue();
+    const replacement = join(f.dataDir, "replacement.png"); await writeFile(replacement, Buffer.alloc(8, 0x42)); await rename(replacement, image);
+    expect(await errorCode(() => store.redeem(raced.ticket.url.split("/").at(-1)!, "user-a"))).toBe("file_identity_changed");
+
+    await writeFile(image, Buffer.alloc(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES + 1, 0x89));
+    expect(await errorCode(() => issue())).toBe("file_too_large");
+  });
+
+  it("keeps another Collaboration principal's ticket through a deterministic 257-ticket flood", async () => {
+    const f = await fixture();
+    const image = join(f.dataDir, "fair-cap.png"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
+    let sequence = 0;
+    const store = new PresentedChatArtifactTicketStore({
+      createToken: () => `fair_cap_token_${String(sequence++).padStart(4, "0")}`,
+    });
+    const token = (issued: Awaited<ReturnType<typeof store.issue>>) => issued.ticket.url.split("/").at(-1)!;
+
+    const ownerToken = token(await store.issue(image, "owner"));
+    const flooderTokens: string[] = [];
+    for (let index = 0; index < 256; index++) flooderTokens.push(token(await store.issue(image, "flooder")));
+
+    expect(await errorCode(() => store.redeem(flooderTokens[0]!, "flooder"))).toBe("ticket_not_found");
+    await expect(store.redeem(ownerToken, "owner")).resolves.toMatchObject({ contentType: "image/png", totalBytes: 4 });
+    await expect(store.redeem(flooderTokens.at(-1)!, "flooder")).resolves.toMatchObject({ totalBytes: 4 });
+  });
+
+  it("bounds each Collaboration principal by evicting only that principal's oldest ticket", async () => {
+    const f = await fixture();
+    const image = join(f.dataDir, "principal-cap.png"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
+    let sequence = 0;
+    const store = new PresentedChatArtifactTicketStore({
+      maxTickets: 5,
+      maxTicketsPerAuthBinding: 2,
+      createToken: () => `principal_cap_${String(sequence++).padStart(4, "0")}`,
+    });
+    const token = (issued: Awaited<ReturnType<typeof store.issue>>) => issued.ticket.url.split("/").at(-1)!;
+
+    const first = token(await store.issue(image, "user-a"));
+    const second = token(await store.issue(image, "user-a"));
+    const third = token(await store.issue(image, "user-a"));
+
+    expect(await errorCode(() => store.redeem(first, "user-a"))).toBe("ticket_not_found");
+    await expect(store.redeem(second, "user-a")).resolves.toMatchObject({ totalBytes: 4 });
+    await expect(store.redeem(third, "user-a")).resolves.toMatchObject({ totalBytes: 4 });
+  });
+
+  it("applies a separate bounded FIFO policy to local Builder tickets", async () => {
+    const f = await fixture();
+    const image = join(f.dataDir, "local-cap.png"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
+    let sequence = 0;
+    const store = new PresentedChatArtifactTicketStore({
+      maxTickets: 5,
+      maxLocalTickets: 2,
+      createToken: () => `local_cap_token_${String(sequence++).padStart(4, "0")}`,
+    });
+    const token = (issued: Awaited<ReturnType<typeof store.issue>>) => issued.ticket.url.split("/").at(-1)!;
+
+    const first = token(await store.issue(image));
+    const second = token(await store.issue(image));
+    const third = token(await store.issue(image));
+
+    expect(await errorCode(() => store.redeem(first))).toBe("ticket_not_found");
+    await expect(store.redeem(second)).resolves.toMatchObject({ totalBytes: 4 });
+    await expect(store.redeem(third)).resolves.toMatchObject({ totalBytes: 4 });
+  });
+
+  it("purges expired tickets before applying capacity", async () => {
+    const f = await fixture();
+    const image = join(f.dataDir, "expiry-cap.png"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
+    let now = 1_000; let sequence = 0;
+    const store = new PresentedChatArtifactTicketStore({
+      now: () => now,
+      ttlMs: 10,
+      maxTickets: 2,
+      maxTicketsPerAuthBinding: 2,
+      createToken: () => `expiry_cap_token_${String(sequence++).padStart(4, "0")}`,
+    });
+    const token = (issued: Awaited<ReturnType<typeof store.issue>>) => issued.ticket.url.split("/").at(-1)!;
+
+    const expiredA = token(await store.issue(image, "user-a"));
+    const expiredB = token(await store.issue(image, "user-b"));
+    now += 11;
+    const current = token(await store.issue(image, "user-c"));
+
+    expect(await errorCode(() => store.redeem(expiredA, "user-a"))).toBe("ticket_not_found");
+    expect(await errorCode(() => store.redeem(expiredB, "user-b"))).toBe("ticket_not_found");
+    await expect(store.redeem(current, "user-c")).resolves.toMatchObject({ totalBytes: 4 });
+  });
+
+  it("returns a typed capacity denial when the overall hard cap has no issuer-owned slot", async () => {
+    const f = await fixture();
+    const image = join(f.dataDir, "overall-cap.png"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
+    let sequence = 0;
+    const store = new PresentedChatArtifactTicketStore({
+      maxTickets: 2,
+      maxTicketsPerAuthBinding: 2,
+      createToken: () => `overall_cap_token_${String(sequence++).padStart(4, "0")}`,
+    });
+    const token = (issued: Awaited<ReturnType<typeof store.issue>>) => issued.ticket.url.split("/").at(-1)!;
+
+    const userA = token(await store.issue(image, "user-a"));
+    const userB = token(await store.issue(image, "user-b"));
+    expect(await errorCode(() => store.issue(image, "user-c"))).toBe("ticket_capacity_exceeded");
+    expect(chatArtifactStatus("ticket_capacity_exceeded")).toBe(429);
+    await expect(store.redeem(userA, "user-a")).resolves.toMatchObject({ totalBytes: 4 });
+    await expect(store.redeem(userB, "user-b")).resolves.toMatchObject({ totalBytes: 4 });
   });
 
   it("reads a literal Darwin /tmp claim through its canonical /private/tmp target", async () => {

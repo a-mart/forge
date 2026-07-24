@@ -26,7 +26,7 @@ Managed Browser can execute arbitrary JavaScript and interact with authenticated
 
 A connected Forge Desktop browser host is required. In an ordinary web client the Browser workspace reports **Browser host unavailable** and does not attempt local browser IPC. Remote normal Builder managers may still know the typed tools, but calls return `unavailable-host`; the viewing machine's Desktop host is not forwarded to the remote server. Collaboration channels do not receive Managed Browser access.
 
-There is no Managed Browser environment variable or Settings → Skills toggle. The separate `agent-browser` and Chrome CDP Skills use different browser processes and trust boundaries.
+There is no Managed Browser environment variable or Settings → Skills toggle. The separate `agent-browser` Skill uses a different browser process and trust boundary.
 
 ## Saved state and recordings
 

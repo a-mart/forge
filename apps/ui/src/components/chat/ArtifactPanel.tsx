@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { isElectron } from '@/lib/electron-bridge'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 import { MarkdownMessage } from './MarkdownMessage'
+import type { ChatArtifactReadResponse } from '@forge/protocol'
 
 interface ArtifactPanelProps {
   artifact: ArtifactReference | null
@@ -33,8 +34,13 @@ interface ReadFileResult {
   binary?: boolean
   encoding?: string
   contentType?: string
+  truncated?: boolean
+  totalBytes?: number
+  transport?: 'http_ticket'
+  ticket?: { url: string; expiresAt: string }
 }
 
+const TRANSCRIPT_ARTIFACT_PREVIEW_BYTES = 512 * 1024
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown|mdx)$/i
 const IMAGE_FILE_PATTERN = /\.(png|jpg|jpeg|gif|webp|svg)$/i
 
@@ -46,6 +52,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const [content, setContent] = useState('')
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const [resolvedPath, setResolvedPath] = useState<string | null>(null)
+  const [previewInfo, setPreviewInfo] = useState<{ truncated: boolean; totalBytes: number } | null>(null)
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const { onPointerDown: onSelectionPointerDown } = useSelectionContainment(contentRef)
@@ -84,6 +91,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
       setContent('')
       setImagePreviewUrl(null)
       setResolvedPath(null)
+      setPreviewInfo(null)
       setError(null)
       setIsLoading(false)
       return
@@ -96,6 +104,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
       setContent('')
       setImagePreviewUrl(resolveReadFileUrl(wsUrl, artifactPath, artifactSourceAgentId ?? activeAgentId))
       setResolvedPath(artifactPath)
+      setPreviewInfo(null)
       setError(null)
       setIsLoading(false)
       return
@@ -108,6 +117,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     setContent('')
     setImagePreviewUrl(null)
     setResolvedPath(null)
+    setPreviewInfo(null)
 
     void (async () => {
       try {
@@ -131,7 +141,9 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
         }
 
         if (isImageArtifact) {
-          setImagePreviewUrl(toSafeImageDataUrl(file))
+          setImagePreviewUrl(file.transport === 'http_ticket'
+            ? resolveSafeArtifactTicketUrl(wsUrl, file)
+            : toSafeImageDataUrl(file))
           setContent('')
         } else {
           if (file.binary) {
@@ -140,6 +152,9 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
           setContent(file.content)
         }
         setResolvedPath(file.path)
+        setPreviewInfo(typeof file.truncated === 'boolean' && typeof file.totalBytes === 'number'
+          ? { truncated: file.truncated, totalBytes: file.totalBytes }
+          : null)
         setError(null)
       } catch (readError) {
         if (abortController.signal.aborted) {
@@ -368,6 +383,11 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
             )}
           >
             <div className="px-6 py-6">
+              {!isLoading && !error && !isImage && previewInfo?.truncated && (
+                <div className="mb-4 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  Showing a bounded preview of {previewInfo.totalBytes.toLocaleString()} bytes.
+                </div>
+              )}
               {isLoading ? (
                 <div className="flex items-center gap-2.5 py-12 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -382,6 +402,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                   <div className="mx-auto flex max-w-[820px] justify-center">
                     <img
                       src={imagePreviewUrl}
+                      crossOrigin="use-credentials"
                       alt={artifact?.fileName || 'Artifact image'}
                       onError={() => setError('Unable to load image preview.')}
                       className="max-h-[calc(100vh-180px)] max-w-full rounded-lg border border-border/60 bg-muted/20 object-contain"
@@ -454,16 +475,32 @@ async function readTranscriptArtifactFile({
 }): Promise<ReadFileResult> {
   return readArtifactFileResponse(
     resolveApiEndpoint(wsUrl, '/api/chat-artifacts/read'),
-    { transcriptAgentId, messageId, path },
+    {
+      transcriptAgentId,
+      messageId,
+      path,
+      previewBytes: TRANSCRIPT_ARTIFACT_PREVIEW_BYTES,
+      imageTransport: 'http_ticket',
+    },
     path,
     signal,
     true,
-  )
+  ).catch((error: unknown) => {
+    // One compatibility retry only: old Forge versions reject the two additive request fields.
+    if (!(error instanceof ArtifactReadError) || error.status !== 400 || error.code !== 'invalid_request') throw error
+    return readArtifactFileResponse(
+      resolveApiEndpoint(wsUrl, '/api/chat-artifacts/read'),
+      { transcriptAgentId, messageId, path },
+      path,
+      signal,
+      true,
+    )
+  })
 }
 
 async function readArtifactFileResponse(
   endpoint: string,
-  body: Record<string, string | undefined>,
+  body: Record<string, unknown>,
   requestedPath: string,
   signal: AbortSignal,
   includeCredentials = false,
@@ -484,7 +521,10 @@ async function readArtifactFileResponse(
       payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
         ? (payload as { error: string }).error
         : `File read failed (${response.status})`
-    throw new Error(message)
+    const code = payload && typeof payload === 'object' && typeof (payload as { code?: unknown }).code === 'string'
+      ? (payload as { code: string }).code
+      : undefined
+    throw new ArtifactReadError(message, response.status, code)
   }
 
   if (!payload || typeof payload !== 'object') {
@@ -492,13 +532,48 @@ async function readArtifactFileResponse(
   }
 
   const value = payload as Record<string, unknown>
-  return {
+  const parsed: ReadFileResult = {
     path: typeof value.path === 'string' ? value.path : requestedPath,
     content: typeof value.content === 'string' ? value.content : '',
     ...(typeof value.binary === 'boolean' ? { binary: value.binary } : {}),
     ...(typeof value.encoding === 'string' ? { encoding: value.encoding } : {}),
     ...(typeof value.contentType === 'string' ? { contentType: value.contentType } : {}),
+    ...(typeof value.truncated === 'boolean' ? { truncated: value.truncated } : {}),
+    ...(typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0 ? { totalBytes: value.totalBytes } : {}),
+    ...(value.transport === 'http_ticket' ? { transport: value.transport } : {}),
+    ...(value.ticket && typeof value.ticket === 'object' && typeof (value.ticket as { url?: unknown }).url === 'string' && typeof (value.ticket as { expiresAt?: unknown }).expiresAt === 'string'
+      ? { ticket: { url: (value.ticket as { url: string }).url, expiresAt: (value.ticket as { expiresAt: string }).expiresAt } }
+      : {}),
   }
+  return parsed as ReadFileResult & Partial<ChatArtifactReadResponse>
+}
+
+class ArtifactReadError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) { super(message) }
+}
+
+function resolveSafeArtifactTicketUrl(wsUrl: string, file: ReadFileResult): string {
+  const contentType = file.contentType?.trim().toLowerCase()
+  const expiresAt = file.ticket ? Date.parse(file.ticket.expiresAt) : Number.NaN
+  if (
+    file.binary !== true || file.transport !== 'http_ticket' || !file.ticket ||
+    !contentType || !/^image\/(?:png|jpeg|gif|webp|svg\+xml)(?:;\s*charset=utf-8)?$/.test(contentType) ||
+    typeof file.totalBytes !== 'number' || file.totalBytes < 0 || file.totalBytes > 4 * 1024 * 1024 ||
+    !Number.isFinite(expiresAt) || expiresAt <= Date.now()
+  ) {
+    throw new Error('Invalid image ticket response.')
+  }
+  const endpoint = new URL(resolveApiEndpoint(wsUrl, '/api/chat-artifacts/read'), window.location.href)
+  const ticket = new URL(file.ticket.url, endpoint)
+  if (
+    ticket.origin !== endpoint.origin ||
+    !/^https?:$/.test(ticket.protocol) ||
+    !/^\/api\/chat-artifacts\/tickets\/[A-Za-z0-9_-]{16,128}$/.test(ticket.pathname) ||
+    ticket.username || ticket.password || ticket.search || ticket.hash
+  ) {
+    throw new Error('Invalid image ticket response.')
+  }
+  return ticket.toString()
 }
 
 function toSafeImageDataUrl(file: ReadFileResult): string {

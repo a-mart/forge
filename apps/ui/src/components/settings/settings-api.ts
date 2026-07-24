@@ -7,10 +7,6 @@ import type {
   SkillInfo,
 } from './settings-types'
 import type {
-  ChromeCdpConfig,
-  ChromeCdpPreviewTab,
-  ChromeCdpProfile,
-  ChromeCdpStatus,
   SettingsAuthLoginAuthUrlEvent,
   SettingsAuthLoginCompleteEvent,
   SettingsAuthLoginDeviceCodeEvent,
@@ -473,96 +469,6 @@ export async function fetchSkillsList(client: SettingsApiClient, profileId?: str
   const payload = (await response.json()) as Partial<SkillInventoryResponse>
   if (!payload || !Array.isArray(payload.skills)) return []
   return payload.skills.filter(isSkillInfo)
-}
-
-/* ------------------------------------------------------------------ */
-/*  Chrome CDP API                                                    */
-/* ------------------------------------------------------------------ */
-
-function isChromeCdpConfig(value: unknown): value is ChromeCdpConfig {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<ChromeCdpConfig>
-  return (
-    (v.contextId === null || typeof v.contextId === 'string') &&
-    Array.isArray(v.urlAllow) &&
-    Array.isArray(v.urlBlock)
-  )
-}
-
-function isChromeCdpStatus(value: unknown): value is ChromeCdpStatus {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<ChromeCdpStatus>
-  return typeof v.connected === 'boolean'
-}
-
-function isChromeCdpProfile(value: unknown): value is ChromeCdpProfile {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<ChromeCdpProfile>
-  return (
-    typeof v.contextId === 'string' &&
-    typeof v.tabCount === 'number' &&
-    Array.isArray(v.sampleUrls) &&
-    typeof v.isDefault === 'boolean'
-  )
-}
-
-function isChromeCdpPreviewTab(value: unknown): value is ChromeCdpPreviewTab {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<ChromeCdpPreviewTab>
-  return (
-    typeof v.targetId === 'string' &&
-    typeof v.title === 'string' &&
-    typeof v.url === 'string'
-  )
-}
-
-export async function fetchChromeCdpSettings(client: SettingsApiClient): Promise<{ config: ChromeCdpConfig; status: ChromeCdpStatus }> {
-  const response = await client.fetch('/api/settings/chrome-cdp')
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isChromeCdpConfig(payload.config)) throw new Error('Invalid Chrome CDP config response from backend.')
-  if (!isChromeCdpStatus(payload.status)) throw new Error('Invalid Chrome CDP status response from backend.')
-  return { config: payload.config, status: payload.status }
-}
-
-export async function updateChromeCdpSettings(client: SettingsApiClient, config: Partial<ChromeCdpConfig>): Promise<void> {
-  const response = await client.fetch('/api/settings/chrome-cdp', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(config) })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-}
-
-export async function testChromeCdpConnection(client: SettingsApiClient): Promise<ChromeCdpStatus> {
-  const response = await client.fetch('/api/settings/chrome-cdp/test', { method: 'POST' })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as unknown
-  if (!isChromeCdpStatus(payload)) throw new Error('Invalid Chrome CDP test response from backend.')
-  return payload
-}
-
-export async function fetchChromeCdpProfiles(client: SettingsApiClient): Promise<ChromeCdpProfile[]> {
-  const response = await client.fetch('/api/settings/chrome-cdp/profiles', { method: 'POST' })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { profiles?: unknown }
-  if (!payload || !Array.isArray(payload.profiles)) return []
-  return payload.profiles.filter(isChromeCdpProfile)
-}
-
-export async function fetchChromeCdpPreview(
-  client: SettingsApiClient,
-  config: Partial<ChromeCdpConfig>,
-  signal?: AbortSignal,
-): Promise<{ tabs: ChromeCdpPreviewTab[]; totalFiltered: number; totalUnfiltered: number }> {
-  const response = await client.fetch('/api/settings/chrome-cdp/preview', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(config),
-    signal,
-  })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { tabs?: unknown; totalFiltered?: unknown; totalUnfiltered?: unknown }
-  const tabs = Array.isArray(payload.tabs) ? payload.tabs.filter(isChromeCdpPreviewTab) : []
-  const totalFiltered = typeof payload.totalFiltered === 'number' ? payload.totalFiltered : 0
-  const totalUnfiltered = typeof payload.totalUnfiltered === 'number' ? payload.totalUnfiltered : 0
-  return { tabs, totalFiltered, totalUnfiltered }
 }
 
 /* ------------------------------------------------------------------ */

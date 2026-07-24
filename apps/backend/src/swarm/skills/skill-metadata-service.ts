@@ -17,8 +17,7 @@ export const REQUIRED_SKILL_NAMES = [
   "cron-scheduling",
   "agent-browser",
   "image-generation",
-  "slash-commands",
-  "chrome-cdp"
+  "slash-commands"
 ] as const;
 
 const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));

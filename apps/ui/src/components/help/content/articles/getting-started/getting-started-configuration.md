@@ -27,7 +27,7 @@ A profile groups settings, memory, and resources for a manager. When you create 
 Profile settings include:
 
 - **System prompt** — base instructions for the manager. You can customize this or use the default.
-- **Skills** — browse and configure optional skill-backed capabilities such as Brave search, image generation, the separate `agent-browser` CLI workflow, and Chrome CDP. Forge Desktop Managed Browser is not a Skill and has no toggle here.
+- **Skills** — browse and configure optional skill-backed capabilities such as Brave search, image generation, and the separate `agent-browser` CLI workflow. Forge Desktop Managed Browser is not a Skill and has no toggle here.
 - **Delegation** — worker execution policies, behavior-mode prompts, and custom specialists.
 - **Memory** — canonical profile and session memory. This is distinct from profile-scoped Knowledge v2 entries.
 

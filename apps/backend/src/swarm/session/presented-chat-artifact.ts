@@ -1,9 +1,15 @@
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import * as path from "node:path";
 import MarkdownIt from "markdown-it";
-import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
+import {
+  CHAT_ARTIFACT_MAX_IMAGE_BYTES,
+  CHAT_ARTIFACT_MAX_TEXT_BYTES,
+  isUserVisibleAssistantConversationMessage,
+  type ChatArtifactReadResponse,
+} from "@forge/protocol";
 import type { AgentDescriptor } from "../types.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "../storage/data-paths.js";
 import { CONVERSATION_ENTRY_TYPE } from "./conversation-timeline.js";
@@ -15,12 +21,15 @@ import { resolveReadFileContentType } from "../../ws/http-utils.js";
 import { GitCli } from "../../versioning/git-cli.js";
 import { parseWorktreeListPorcelain, resolveGitCommonDirectory } from "../../versioning/git-source-control-helpers.js";
 
-// Keep document reads aligned with the existing 2 MiB text/file-reader budget. Image previews get
-// a separate 4 MiB raw-byte budget; their base64 JSON representation is therefore bounded to ~5.34 MiB.
-export const MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES = 4 * 1024 * 1024;
-export const MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES = MAX_READ_FILE_CONTENT_BYTES;
+// Keep document reads aligned with the existing 2 MiB text/file-reader budget. Images retain a
+// separate 4 MiB budget and capable clients can move those bytes over a one-use HTTP ticket.
+export const MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES = CHAT_ARTIFACT_MAX_IMAGE_BYTES;
+export const MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES = CHAT_ARTIFACT_MAX_TEXT_BYTES;
+if (MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES !== MAX_READ_FILE_CONTENT_BYTES) {
+  throw new Error("Chat artifact and generic file-reader text limits must remain aligned");
+}
 
-export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "path_outside_workspace" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported";
+export type ChatArtifactErrorCode = "invalid_request" | "invalid_path" | "invalid_transcript_owner" | "transcript_not_found" | "transcript_too_large" | "corrupt_transcript" | "transcript_read_failed" | "message_not_found" | "ambiguous_message_id" | "ineligible_message" | "path_not_presented" | "path_outside_workspace" | "file_not_found" | "unsafe_file_identity" | "file_identity_changed" | "file_too_large" | "stable_identity_unsupported" | "ticket_not_found" | "ticket_expired" | "ticket_binding_mismatch" | "ticket_capacity_exceeded";
 export class ChatArtifactError extends Error { constructor(public readonly code: ChatArtifactErrorCode) { super(code); } }
 const fail = (code: ChatArtifactErrorCode): never => { throw new ChatArtifactError(code); };
 const hasControl = (value: string) => /[\0-\x1f\x7f]/.test(value);
@@ -227,12 +236,49 @@ async function walkFile(target: string, stage: "initial" | "post"): Promise<{ id
   return { ids, finalId: ids.at(-1)!, finalSize, real: resolved };
 }
 
-export async function securelyReadPresentedArtifact(target: string, hooks?: { afterInitialWalk?: () => Promise<void> | void; afterOpen?: () => Promise<void> | void; platform?: NodeJS.Platform }) {
+type PresentedArtifactIdentitySnapshot = Awaited<ReturnType<typeof walkFile>>;
+
+function sameArtifactIdentity(a: PresentedArtifactIdentitySnapshot, b: PresentedArtifactIdentitySnapshot): boolean {
+  return a.real === b.real && a.finalId === b.finalId && a.finalSize === b.finalSize &&
+    a.ids.length === b.ids.length && a.ids.every((id, index) => id === b.ids[index]);
+}
+
+function validatePreviewBytes(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES) fail("invalid_request");
+  return value as number;
+}
+
+export async function securelyInspectPresentedArtifact(target: string): Promise<{
+  contentType: string;
+  totalBytes: number;
+  identity: PresentedArtifactIdentitySnapshot;
+}> {
   const contentType = resolveReadFileContentType(target);
-  const maxBytes = contentType.startsWith("image/")
-    ? MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES
-    : MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES;
+  if (!contentType.startsWith("image/")) fail("invalid_request");
+  const identity = await walkFile(target, "initial");
+  if (identity.finalSize > BigInt(MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES)) fail("file_too_large");
+  return { contentType, totalBytes: Number(identity.finalSize), identity };
+}
+
+export async function securelyReadPresentedArtifact(target: string, hooks?: {
+  afterInitialWalk?: () => Promise<void> | void;
+  afterOpen?: () => Promise<void> | void;
+  /** Test-only observation seam proving bounded reads never consume the discarded tail. */
+  onRead?: (bytesRead: number) => void;
+  platform?: NodeJS.Platform;
+  previewBytes?: number;
+  expectedIdentity?: PresentedArtifactIdentitySnapshot;
+  rawImage?: boolean;
+}): Promise<ChatArtifactReadResponse | { contentType: string; content: Buffer; totalBytes: number }> {
+  const contentType = resolveReadFileContentType(target);
+  const isImage = contentType.startsWith("image/");
+  const maxBytes = isImage ? MAX_PRESENTED_CHAT_ARTIFACT_IMAGE_BYTES : MAX_PRESENTED_CHAT_ARTIFACT_TEXT_BYTES;
+  const previewBytes = validatePreviewBytes(hooks?.previewBytes);
+  const boundedTextRead = !isImage && previewBytes !== undefined;
   const initial = await walkFile(target, "initial");
+  if (hooks?.expectedIdentity && !sameArtifactIdentity(initial, hooks.expectedIdentity)) fail("file_identity_changed");
+  if ((!boundedTextRead && initial.finalSize > BigInt(maxBytes)) || initial.finalSize > BigInt(Number.MAX_SAFE_INTEGER)) fail("file_too_large");
   await hooks?.afterInitialWalk?.();
   const platform = hooks?.platform ?? process.platform;
   // POSIX retains the kernel no-follow guarantee. Windows lacks O_NOFOLLOW, so it opens a handle
@@ -251,7 +297,7 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
     const verifyHandle = async () => {
       const checked = await openedHandle.stat({ bigint: true }).catch(() => fail("transcript_read_failed"));
       if (!checked.isFile() || stableFileIdentity(checked) !== initial.finalId) fail("file_identity_changed");
-      if (checked.size > BigInt(maxBytes)) fail("file_too_large");
+      if ((!boundedTextRead && checked.size > BigInt(maxBytes)) || checked.size > BigInt(Number.MAX_SAFE_INTEGER)) fail("file_too_large");
       if (checked.size !== initial.finalSize) fail("file_identity_changed");
       return checked;
     };
@@ -260,25 +306,137 @@ export async function securelyReadPresentedArtifact(target: string, hooks?: { af
     const opened = await verifyHandle();
     const verifyPath = async () => {
       const post = await walkFile(target, "post");
-      if (post.real !== initial.real || post.ids.length !== initial.ids.length || post.ids.some((id, i) => id !== initial.ids[i]) || post.finalId !== stableFileIdentity(opened)) fail("file_identity_changed");
-      if (post.finalSize > BigInt(maxBytes)) fail("file_too_large");
-      if (post.finalSize !== initial.finalSize) fail("file_identity_changed");
+      if (!sameArtifactIdentity(post, initial) || post.finalId !== stableFileIdentity(opened)) fail("file_identity_changed");
+      if ((!boundedTextRead && post.finalSize > BigInt(maxBytes)) || post.finalSize > BigInt(Number.MAX_SAFE_INTEGER)) fail("file_too_large");
     };
     await verifyPath();
-    const buffer = Buffer.alloc(maxBytes + 1); let offset = 0;
+    const totalBytes = Number(opened.size);
+    const requestedReadBytes = !isImage && previewBytes !== undefined ? Math.min(previewBytes, totalBytes) : totalBytes;
+    const buffer = Buffer.alloc(requestedReadBytes); let offset = 0;
     while (offset < buffer.length) {
       let bytesRead = 0;
       try { ({ bytesRead } = await openedHandle.read(buffer, offset, buffer.length - offset, offset)); } catch { fail("transcript_read_failed"); }
       if (!bytesRead) break;
+      hooks?.onRead?.(bytesRead);
       offset += bytesRead;
     }
-    if (offset > maxBytes) fail("file_too_large");
+    if (offset !== requestedReadBytes) fail("file_identity_changed");
     await verifyHandle();
     await verifyPath();
     const content = buffer.subarray(0, offset);
-    const binary = contentType.startsWith("image/") || content.subarray(0, 4000).some((b) => b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13));
-    return binary ? { path: target, binary: true, encoding: "base64", contentType, content: content.toString("base64") } : { path: target, content: content.toString("utf8"), contentType };
+    const binary = isImage || content.subarray(0, 4000).some((b) => b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 13));
+    if (hooks?.rawImage) {
+      if (!isImage) fail("invalid_request");
+      return { contentType, content, totalBytes };
+    }
+    if (binary) {
+      if (previewBytes !== undefined && !isImage) fail("invalid_request");
+      return { path: target, binary: true, encoding: "base64", contentType, content: content.toString("base64") };
+    }
+    if (previewBytes !== undefined) {
+      const truncated = totalBytes > offset;
+      const decoder = new StringDecoder("utf8");
+      const text = decoder.write(content) + (truncated ? "" : decoder.end());
+      return { path: target, content: text, contentType, truncated, totalBytes };
+    }
+    return { path: target, content: content.toString("utf8"), contentType };
   } finally { await openedHandle.close(); }
+}
+
+export const PRESENTED_CHAT_ARTIFACT_TICKET_TTL_MS = 30_000;
+const MAX_PRESENTED_CHAT_ARTIFACT_TICKETS = 256;
+const MAX_PRESENTED_CHAT_ARTIFACT_TICKETS_PER_AUTH_BINDING = 64;
+// Builder is one deliberate local principal and retains the pre-existing full-store allowance.
+const MAX_LOCAL_PRESENTED_CHAT_ARTIFACT_TICKETS = MAX_PRESENTED_CHAT_ARTIFACT_TICKETS;
+const CHAT_ARTIFACT_TICKET_PATH_PREFIX = "/api/chat-artifacts/tickets/";
+
+type PresentedChatArtifactTicketRecord = {
+  target: string;
+  identity: PresentedArtifactIdentitySnapshot;
+  contentType: string;
+  totalBytes: number;
+  expiresAtMs: number;
+  authBinding?: string;
+};
+
+/** In-memory, bounded, one-use capability store. No local path is placed in the capability URL. */
+export class PresentedChatArtifactTicketStore {
+  private readonly tickets = new Map<string, PresentedChatArtifactTicketRecord>();
+  constructor(private readonly options: {
+    now?: () => number;
+    createToken?: () => string;
+    ttlMs?: number;
+    /** Test seam that may lower, but never raise, the production hard cap. */
+    maxTickets?: number;
+    maxTicketsPerAuthBinding?: number;
+    maxLocalTickets?: number;
+  } = {}) {}
+
+  async issue(target: string, authBinding?: string) {
+    const inspected = await securelyInspectPresentedArtifact(target);
+    const token = this.options.createToken?.() ?? randomBytes(32).toString("base64url");
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(token) || this.tickets.has(token)) fail("transcript_read_failed");
+    const now = this.now();
+    this.purgeExpired(now);
+    this.reserveIssuerOwnedSlot(authBinding);
+    const expiresAtMs = now + (this.options.ttlMs ?? PRESENTED_CHAT_ARTIFACT_TICKET_TTL_MS);
+    this.tickets.set(token, { target, ...inspected, expiresAtMs, ...(authBinding !== undefined ? { authBinding } : {}) });
+    return {
+      contentType: inspected.contentType,
+      totalBytes: inspected.totalBytes,
+      ticket: { url: `${CHAT_ARTIFACT_TICKET_PATH_PREFIX}${token}`, expiresAt: new Date(expiresAtMs).toISOString() },
+    };
+  }
+
+  async redeem(token: string, authBinding?: string) {
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) fail("ticket_not_found");
+    const ticket = this.tickets.get(token);
+    if (!ticket) throw new ChatArtifactError("ticket_not_found");
+    // A binding mismatch is indistinguishable from an unknown token and never consumes the owner's ticket.
+    if (ticket.authBinding !== authBinding) fail("ticket_not_found");
+    if (ticket.expiresAtMs <= this.now()) {
+      this.tickets.delete(token);
+      fail("ticket_expired");
+    }
+    // This synchronous delete is the final operation before the first awaited I/O. Concurrent valid
+    // redeems therefore still have exactly one winner while validation failures leave the token intact.
+    this.tickets.delete(token);
+    const readResult = await securelyReadPresentedArtifact(ticket.target, {
+      expectedIdentity: ticket.identity,
+      rawImage: true,
+    });
+    if (!("content" in readResult) || !Buffer.isBuffer(readResult.content) || !("totalBytes" in readResult)) fail("transcript_read_failed");
+    const result = readResult as { contentType: string; content: Buffer; totalBytes: number };
+    if (result.contentType !== ticket.contentType || result.totalBytes !== ticket.totalBytes) fail("file_identity_changed");
+    return result;
+  }
+
+  private boundedLimit(value: number | undefined, fallback: number, ceiling: number) {
+    const requested = value === undefined || Number.isNaN(value) ? fallback : value;
+    return Math.min(ceiling, Math.max(1, Math.floor(requested)));
+  }
+
+  private reserveIssuerOwnedSlot(authBinding: string | undefined) {
+    const overallLimit = this.boundedLimit(this.options.maxTickets, MAX_PRESENTED_CHAT_ARTIFACT_TICKETS, MAX_PRESENTED_CHAT_ARTIFACT_TICKETS);
+    const issuerLimit = authBinding === undefined
+      ? this.boundedLimit(this.options.maxLocalTickets, MAX_LOCAL_PRESENTED_CHAT_ARTIFACT_TICKETS, overallLimit)
+      : this.boundedLimit(this.options.maxTicketsPerAuthBinding, MAX_PRESENTED_CHAT_ARTIFACT_TICKETS_PER_AUTH_BINDING, overallLimit);
+    const issuerTokens = [...this.tickets]
+      .filter(([, ticket]) => ticket.authBinding === authBinding)
+      .map(([token]) => token);
+
+    if (issuerTokens.length >= issuerLimit) this.tickets.delete(issuerTokens.shift()!);
+    if (this.tickets.size < overallLimit) return;
+
+    const issuerOwnedToken = issuerTokens[0];
+    if (!issuerOwnedToken) fail("ticket_capacity_exceeded");
+    this.tickets.delete(issuerOwnedToken);
+  }
+
+  private now() { return this.options.now?.() ?? Date.now(); }
+  private purgeExpired(now = this.now()) {
+    for (const [token, ticket] of this.tickets) if (ticket.expiresAtMs <= now) this.tickets.delete(token);
+  }
 }
 
 export interface PresentedArtifactOwnerSource { getAgent(id: string): AgentDescriptor | undefined; listProfiles(): Array<{ profileId: string; archivedAt?: string }>; getConfig(): { paths: { dataDir: string } }; }
@@ -337,20 +495,24 @@ export async function findUniquePresentedConversationMessage(
 
 export async function readPresentedChatArtifact(
   source: PresentedArtifactOwnerSource,
-  claim: { transcriptAgentId: unknown; messageId: unknown; path: unknown },
+  claim: { transcriptAgentId: unknown; messageId: unknown; path: unknown; previewBytes?: unknown; imageTransport?: unknown },
   options?: {
     securityPlatform?: NodeJS.Platform;
     targetResolution?: PresentedArtifactTargetResolutionHooks;
     transcriptRead?: { afterOpen?: () => Promise<void> | void };
+    ticketStore?: PresentedChatArtifactTicketStore;
+    ticketAuthBinding?: string;
   },
-) {
-  const raw = claim as { transcriptAgentId?: unknown; messageId?: unknown; path?: unknown };
+): Promise<ChatArtifactReadResponse> {
+  const raw = claim as Record<string, unknown>;
   if (
-    Object.keys(raw).some(key => key !== "transcriptAgentId" && key !== "messageId" && key !== "path") ||
+    Object.keys(raw).some(key => !["transcriptAgentId", "messageId", "path", "previewBytes", "imageTransport"].includes(key)) ||
     typeof raw.transcriptAgentId !== "string" ||
     typeof raw.messageId !== "string" ||
-    typeof raw.path !== "string"
+    typeof raw.path !== "string" ||
+    (raw.imageTransport !== undefined && raw.imageTransport !== "http_ticket")
   ) fail("invalid_request");
+  const previewBytes = validatePreviewBytes(raw.previewBytes);
   const pathValue = raw.path as string; const transcriptAgentId = raw.transcriptAgentId as string; const messageId = raw.messageId as string;
   const target = canonicalizeChatArtifactPath(pathValue); const descriptor = resolveActiveBuilderTranscriptDescriptor(source, transcriptAgentId.trim());
   const workspace: PresentedArtifactWorkspaceSnapshot = {
@@ -365,8 +527,18 @@ export async function readPresentedChatArtifact(
   if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
   if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
   const authorizedTarget = await resolveCanonicalPresentedArtifactTarget(workspace, target, options?.targetResolution);
-  const result = await securelyReadPresentedArtifact(authorizedTarget, { platform: options?.securityPlatform ?? process.platform });
-  return { ...result, path: pathValue };
+  if (raw.imageTransport === "http_ticket" && resolveReadFileContentType(authorizedTarget).startsWith("image/")) {
+    const ticketStore = options?.ticketStore;
+    if (!ticketStore) throw new ChatArtifactError("invalid_request");
+    const issued = await ticketStore.issue(authorizedTarget, options?.ticketAuthBinding);
+    return { path: pathValue, binary: true, transport: "http_ticket", ...issued };
+  }
+  const result = await securelyReadPresentedArtifact(authorizedTarget, {
+    platform: options?.securityPlatform ?? process.platform,
+    ...(previewBytes !== undefined ? { previewBytes } : {}),
+  });
+  if ("content" in result && Buffer.isBuffer(result.content)) fail("transcript_read_failed");
+  return { ...result, path: pathValue } as ChatArtifactReadResponse;
 }
 
-export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "stable_identity_unsupported") return 501; return 500; }
+export function chatArtifactStatus(code: ChatArtifactErrorCode): number { if (["invalid_request", "invalid_path"].includes(code)) return 400; if (["invalid_transcript_owner", "path_not_presented", "path_outside_workspace", "ineligible_message", "unsafe_file_identity", "ticket_binding_mismatch"].includes(code)) return 403; if (["transcript_not_found", "message_not_found", "file_not_found", "ticket_not_found"].includes(code)) return 404; if (["ambiguous_message_id", "corrupt_transcript", "file_identity_changed"].includes(code)) return 409; if (code === "ticket_expired") return 410; if (["transcript_too_large", "file_too_large"].includes(code)) return 413; if (code === "ticket_capacity_exceeded") return 429; if (code === "stable_identity_unsupported") return 501; return 500; }
