@@ -11,6 +11,7 @@ import {
 // Request IDs are reflected into api_proxy_response events. Bounding their character count keeps
 // even maximally JSON-escaped IDs small enough for an explicit response under MAX_WS_EVENT_BYTES.
 export const MAX_API_PROXY_REQUEST_ID_LENGTH = 1024;
+export const MAX_SUBSCRIPTION_ID_LENGTH = 128;
 
 export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
   if (maybe.type === "ping") {
@@ -34,6 +35,16 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
     if (maybeMessageCount !== undefined && !isSafeMessageCount(maybeMessageCount)) {
       return fail("subscribe.messageCount must be a positive finite integer");
     }
+    const subscriptionId = (maybe as { subscriptionId?: unknown }).subscriptionId;
+    if (subscriptionId !== undefined && typeof subscriptionId !== "string") {
+      return fail("subscribe.subscriptionId must be a string when provided");
+    }
+    if (typeof subscriptionId === "string" && subscriptionId.trim().length === 0) {
+      return fail("subscribe.subscriptionId must be non-empty when provided");
+    }
+    if (typeof subscriptionId === "string" && subscriptionId.length > MAX_SUBSCRIPTION_ID_LENGTH) {
+      return fail(`subscribe.subscriptionId must be at most ${MAX_SUBSCRIPTION_ID_LENGTH} characters`);
+    }
     const conversationPaging = (maybe as { conversationPaging?: unknown }).conversationPaging;
     if (conversationPaging !== undefined && conversationPaging !== true) {
       return fail("subscribe.conversationPaging must be true when provided");
@@ -51,6 +62,7 @@ export function parseUtilityCommand(maybe: ClientCommandCandidate): ParsedClient
       type: "subscribe",
       agentId: maybe.agentId,
       messageCount: normalizeMessageCount(maybeMessageCount),
+      ...(subscriptionId !== undefined ? { subscriptionId } : {}),
       ...(conversationPaging === true ? { conversationPaging: true as const } : {}),
       ...(conversationView ? { conversationView } : {}),
       ...(goalControlRequestId === true ? { goalControlRequestId: true as const } : {}),

@@ -46,6 +46,8 @@ export type ClientCommand =
       type: 'subscribe'
       agentId?: string
       messageCount?: number
+      /** Correlates this request with its conversation bootstrap snapshots. */
+      subscriptionId?: string
       /** New clients advertise this so older clients retain the legacy bootstrap contract. */
       conversationPaging?: true
       /** Paging view is cursor-bound; switching views starts a fresh replace bootstrap. */

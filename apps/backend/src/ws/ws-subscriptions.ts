@@ -3,6 +3,7 @@ import {
   isSystemProfile,
   isVisibleInBuilderTimeline,
   isWorkerQuickLookActivity,
+  type BootstrapFailureCode,
   type BuilderTimelineChannelView,
   type ProjectPresenceViewer,
   type ServerEvent,
@@ -43,6 +44,7 @@ interface SocketBootstrapRequest {
   supportsConversationPaging: boolean;
   conversationView: BuilderTimelineChannelView;
   supportsGoalControlRequestId: boolean;
+  subscriptionId?: string;
 }
 
 interface SocketBootstrapControllerState {
@@ -60,6 +62,7 @@ export class WsSubscriptions {
   private readonly conversationViews = new Map<WebSocket, BuilderTimelineChannelView>();
   private readonly conversationPagingCapabilities = new Map<WebSocket, boolean>();
   private readonly goalControlRequestIdCapabilities = new Map<WebSocket, boolean>();
+  private readonly subscriptionCorrelationCapabilities = new Set<WebSocket>();
 
   private readonly swarmManager: SwarmManager;
   private readonly allowNonManagerSubscriptions: boolean;
@@ -113,6 +116,7 @@ export class WsSubscriptions {
     this.deliveredSnapshotVersions.clear();
     this.conversationPagingCapabilities.clear();
     this.goalControlRequestIdCapabilities.clear();
+    this.subscriptionCorrelationCapabilities.clear();
     for (const socket of this.bootstrapControllers.keys()) {
       this.cancelBootstrapController(socket);
     }
@@ -174,6 +178,7 @@ export class WsSubscriptions {
     this.conversationViews.delete(socket);
     this.conversationPagingCapabilities.delete(socket);
     this.goalControlRequestIdCapabilities.delete(socket);
+    this.subscriptionCorrelationCapabilities.delete(socket);
     this.deliveredSnapshotVersions.delete(socket);
     this.cancelBootstrapController(socket);
   }
@@ -373,7 +378,12 @@ export class WsSubscriptions {
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId?: string,
   ): Promise<void> {
+    if (subscriptionId !== undefined) {
+      this.subscriptionCorrelationCapabilities.add(socket);
+    }
+
     const managerId = this.resolveConfiguredManagerId();
     const targetAgentId =
       requestedAgentId ?? this.resolvePreferredManagerSubscriptionId() ?? this.resolveDefaultSubscriptionAgentId();
@@ -382,11 +392,25 @@ export class WsSubscriptions {
       : undefined;
 
     if (!this.allowNonManagerSubscriptions && managerId && targetAgentId !== managerId) {
-      this.send(socket, {
-        type: "error",
-        code: "SUBSCRIPTION_NOT_SUPPORTED",
-        message: `Subscriptions are currently limited to ${managerId}.`
-      });
+      const message = `Subscriptions are currently limited to ${managerId}.`;
+      if (subscriptionId !== undefined) {
+        this.cancelBootstrapController(socket);
+        await this.sendBootstrapFailure(socket, {
+          agentId: targetAgentId,
+          subscriptionId,
+          conversationView,
+          code: "SUBSCRIPTION_NOT_SUPPORTED",
+          message,
+          retryable: false,
+          stage: "subscription_validation",
+        });
+      } else {
+        this.send(socket, {
+          type: "error",
+          code: "SUBSCRIPTION_NOT_SUPPORTED",
+          message,
+        });
+      }
       return;
     }
 
@@ -397,11 +421,25 @@ export class WsSubscriptions {
       (managerId ? requestedAgentId === managerId : requestedAgentId === undefined);
 
     if (!targetDescriptor && requestedAgentId && !canBootstrapSubscription) {
-      this.send(socket, {
-        type: "error",
-        code: "UNKNOWN_AGENT",
-        message: `Agent ${targetAgentId} does not exist.`
-      });
+      const message = `Agent ${targetAgentId} does not exist.`;
+      if (subscriptionId !== undefined) {
+        this.cancelBootstrapController(socket);
+        await this.sendBootstrapFailure(socket, {
+          agentId: targetAgentId,
+          subscriptionId,
+          conversationView,
+          code: "UNKNOWN_AGENT",
+          message,
+          retryable: false,
+          stage: "subscription_validation",
+        });
+      } else {
+        this.send(socket, {
+          type: "error",
+          code: "UNKNOWN_AGENT",
+          message,
+        });
+      }
       return;
     }
 
@@ -441,6 +479,7 @@ export class WsSubscriptions {
       supportsConversationPaging,
       conversationView,
       supportsGoalControlRequestId,
+      subscriptionId,
     );
     this.emitProjectPresence(targetAgentId);
   }
@@ -453,6 +492,14 @@ export class WsSubscriptions {
 
     if (this.swarmManager.getAgent(subscribedAgentId)) {
       return subscribedAgentId;
+    }
+
+    if (this.subscriptionCorrelationCapabilities.has(socket)) {
+      this.failRemovedBootstrapTarget(socket, subscribedAgentId);
+      this.cancelBootstrapController(socket);
+      this.resetDeliveredSnapshotVersions(socket);
+      this.subscriptions.set(socket, BOOTSTRAP_SUBSCRIPTION_AGENT_ID);
+      return BOOTSTRAP_SUBSCRIPTION_AGENT_ID;
     }
 
     const fallbackAgentId = this.resolvePreferredManagerSubscriptionId();
@@ -536,8 +583,15 @@ export class WsSubscriptions {
         continue;
       }
 
-      const fallbackAgentId = this.resolvePreferredManagerSubscriptionId();
       this.resetDeliveredSnapshotVersions(socket);
+      if (this.subscriptionCorrelationCapabilities.has(socket)) {
+        this.failRemovedBootstrapTarget(socket, subscribedAgentId);
+        this.cancelBootstrapController(socket);
+        this.subscriptions.set(socket, BOOTSTRAP_SUBSCRIPTION_AGENT_ID);
+        continue;
+      }
+
+      const fallbackAgentId = this.resolvePreferredManagerSubscriptionId();
       if (!fallbackAgentId) {
         this.cancelBootstrapController(socket);
         this.subscriptions.set(socket, BOOTSTRAP_SUBSCRIPTION_AGENT_ID);
@@ -563,6 +617,7 @@ export class WsSubscriptions {
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId?: string,
   ): Promise<void> {
     const messageCount = normalizeSubscribeMessageCount(requestedMessageCount);
     let state = this.bootstrapControllers.get(socket);
@@ -584,6 +639,7 @@ export class WsSubscriptions {
       supportsConversationPaging,
       conversationView,
       supportsGoalControlRequestId,
+      subscriptionId,
     )) {
       return state.activePromise ?? Promise.resolve();
     }
@@ -597,6 +653,7 @@ export class WsSubscriptions {
       supportsConversationPaging,
       conversationView,
       supportsGoalControlRequestId,
+      subscriptionId,
     };
 
     this.ensureBootstrapControllerDrain(socket, state);
@@ -609,13 +666,32 @@ export class WsSubscriptions {
     }
 
     const activePromise = this.runBootstrapControllerDrain(socket, state)
-      .catch((error) => {
+      .catch(async (error) => {
         const failedRequest = state.activeRequest ?? state.latestRequest;
+        if (!failedRequest || this.getBootstrapRequestDisposition(state, failedRequest) !== "current") {
+          return;
+        }
+
         console.warn("[swarm] ws:subscription_bootstrap_failed", {
-          targetAgentId: failedRequest?.targetAgentId ?? null,
-          requestedMessageCount: failedRequest?.messageCount ?? null,
-          error: error instanceof Error ? error.message : String(error),
+          targetAgentId: failedRequest.targetAgentId,
+          requestedMessageCount: failedRequest.messageCount ?? null,
+          subscriptionId: failedRequest.subscriptionId ?? null,
+          servedConversationView: failedRequest.conversationView,
+          stage: "bootstrap",
+          code: "BOOTSTRAP_FAILED",
+          errorType: error instanceof Error ? error.name : typeof error,
         });
+        if (failedRequest.subscriptionId !== undefined) {
+          await this.sendBootstrapFailure(socket, {
+            agentId: failedRequest.targetAgentId,
+            subscriptionId: failedRequest.subscriptionId,
+            conversationView: failedRequest.conversationView,
+            code: "BOOTSTRAP_FAILED",
+            message: "Conversation bootstrap failed.",
+            retryable: true,
+            stage: "bootstrap",
+          });
+        }
       })
       .finally(() => {
         if (state.activePromise !== activePromise) {
@@ -663,6 +739,7 @@ export class WsSubscriptions {
           request.supportsConversationPaging,
           request.conversationView,
           request.supportsGoalControlRequestId,
+          request.subscriptionId,
           shouldContinue,
         );
       } catch (error) {
@@ -685,6 +762,7 @@ export class WsSubscriptions {
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId?: string,
     shouldContinue?: () => boolean,
   ): Promise<void> {
     const currentAgentsSnapshotVersion = this.swarmManager.getAgentsSnapshotVersion();
@@ -703,6 +781,7 @@ export class WsSubscriptions {
       supportsConversationPaging,
       conversationView,
       supportsGoalControlRequestId,
+      subscriptionId,
       swarmManager: this.swarmManager,
       terminalService: this.terminalService,
       listTerminalsForSession: this.listTerminalsForSession,
@@ -753,6 +832,55 @@ export class WsSubscriptions {
     }
   }
 
+  private failRemovedBootstrapTarget(socket: WebSocket, removedAgentId: string): void {
+    const request = this.bootstrapControllers.get(socket)?.latestRequest;
+    if (request?.subscriptionId === undefined || request.targetAgentId !== removedAgentId) {
+      return;
+    }
+
+    void this.sendBootstrapFailure(socket, {
+      agentId: removedAgentId,
+      subscriptionId: request.subscriptionId,
+      conversationView: request.conversationView,
+      code: "TARGET_REMOVED",
+      message: `Agent ${removedAgentId} was removed during bootstrap.`,
+      retryable: false,
+      stage: "target_resolution",
+    });
+  }
+
+  private async sendBootstrapFailure(socket: WebSocket, options: {
+    agentId: string;
+    subscriptionId: string;
+    conversationView: BuilderTimelineChannelView;
+    code: BootstrapFailureCode;
+    message: string;
+    retryable: boolean;
+    stage?: string;
+  }): Promise<void> {
+    try {
+      await this.sendBootstrapCritical(socket, {
+        type: "bootstrap_failed",
+        agentId: options.agentId,
+        subscriptionId: options.subscriptionId,
+        servedConversationView: options.conversationView,
+        code: options.code,
+        message: options.message,
+        retryable: options.retryable,
+        ...(options.stage ? { stage: options.stage } : {}),
+      });
+    } catch (error) {
+      console.warn("[swarm] ws:subscription_bootstrap_failure_send_failed", {
+        targetAgentId: options.agentId,
+        subscriptionId: options.subscriptionId,
+        servedConversationView: options.conversationView,
+        stage: options.stage ?? null,
+        code: options.code,
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  }
+
   private canJoinActiveBootstrap(
     state: SocketBootstrapControllerState,
     targetAgentId: string,
@@ -760,6 +888,7 @@ export class WsSubscriptions {
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId?: string,
   ): boolean {
     const activeRequest = state.activeRequest;
     const latestRequest = state.latestRequest;
@@ -774,6 +903,7 @@ export class WsSubscriptions {
       activeRequest.supportsConversationPaging === supportsConversationPaging
       && activeRequest.conversationView === conversationView
       && activeRequest.supportsGoalControlRequestId === supportsGoalControlRequestId
+      && activeRequest.subscriptionId === subscriptionId
     );
   }
 

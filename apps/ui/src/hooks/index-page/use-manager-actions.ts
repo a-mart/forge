@@ -459,7 +459,7 @@ export function useManagerActions({
         const manager = result.manager
 
         navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
-        client.subscribeToAgent(manager.agentId)
+        client.subscribeToAgent(manager.agentId, { reason: 'create' })
 
         if (scaffoldForgeResources) {
           const profileId = manager.profileId ?? manager.agentId
@@ -524,7 +524,7 @@ export function useManagerActions({
       })
 
       navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
-      client.subscribeToAgent(manager.agentId)
+      client.subscribeToAgent(manager.agentId, { reason: 'create' })
 
       // Seed .forge project resources if the user opted in (non-blocking)
       if (scaffoldForgeResources) {

@@ -371,6 +371,7 @@ export class WsHandler {
         command.conversationPaging === true,
         command.conversationView,
         command.goalControlRequestId === true,
+        command.subscriptionId,
       );
       return;
     }
@@ -661,6 +662,7 @@ export class WsHandler {
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId?: string,
   ): Promise<void> {
     await this.subscriptionManager.handleSubscribe(
       socket,
@@ -669,6 +671,7 @@ export class WsHandler {
       supportsConversationPaging,
       conversationView,
       supportsGoalControlRequestId,
+      subscriptionId,
     );
   }
 

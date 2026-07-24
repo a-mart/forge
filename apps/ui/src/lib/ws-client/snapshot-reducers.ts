@@ -124,6 +124,7 @@ export function reduceAgentsSnapshot(input: {
   const currentTargetStillExists = currentTarget ? mergedAgentIds.has(currentTarget) && !currentTargetArchived : false
   const currentTargetIsIntentionalWorkerSubscription = Boolean(
     currentTarget &&
+      currentTargetAgent?.role === 'worker' &&
       currentTarget === state.subscribedAgentId &&
       !currentTargetArchived &&
       !visibleAgents.some((agent) => agent.agentId === currentTarget && isManagerAgent(agent)),
