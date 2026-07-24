@@ -30,6 +30,7 @@ function fakeService(): SecureSessionsTransportService {
     startSecureSession: vi.fn(async () => snapshot),
     stopSecureSession: vi.fn(async () => snapshot),
     grantSecureSessionLease: vi.fn(async () => snapshot),
+    grantSecureSessionLeases: vi.fn(async () => snapshot),
     revokeSecureSessionLease: vi.fn(async () => snapshot),
     resolveSecureAccessRequest: vi.fn(async () => snapshot),
     fulfillSecureAccessRequest: vi.fn(async () => snapshot),
@@ -115,6 +116,71 @@ describe("secure session routes", () => {
       "request-1",
       { baseRevision: 6, requestId: "request-1", decision: "approve" },
     );
+  });
+
+  it("forwards one strict atomic batch grant request", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const grants = [
+      {
+        secretId: "secret-1",
+        exposures: [{ deliveryKind: "environment", targetName: "TOKEN" }],
+        leaseKind: "task",
+      },
+      {
+        secretId: "secret-2",
+        exposures: [{ deliveryKind: "ssh_agent" }],
+        leaseKind: "timed",
+        durationSeconds: 600,
+      },
+    ] as const;
+
+    const granted = await postJson(
+      `${server.baseUrl}/api/secure-sessions/manager-1/leases/batch`,
+      { baseRevision: 4, grants },
+    );
+
+    expect(granted.status).toBe(200);
+    expect(service.grantSecureSessionLeases).toHaveBeenCalledTimes(1);
+    expect(service.grantSecureSessionLeases).toHaveBeenCalledWith("manager-1", {
+      baseRevision: 4,
+      grants,
+    });
+
+    for (const invalid of [
+      { baseRevision: 4, grants: [] },
+      {
+        baseRevision: 4,
+        grants: [
+          {
+            secretId: "duplicate",
+            exposures: [{ deliveryKind: "stdin" }],
+            leaseKind: "task",
+          },
+          {
+            secretId: "duplicate",
+            exposures: [{ deliveryKind: "ssh_agent" }],
+            leaseKind: "one_use",
+          },
+        ],
+      },
+      {
+        baseRevision: 4,
+        grants: [{
+          secretId: "secret-1",
+          exposures: [{ deliveryKind: "stdin" }],
+          leaseKind: "task",
+          plaintext: "forbidden",
+        }],
+      },
+    ]) {
+      const response = await postJson(
+        `${server.baseUrl}/api/secure-sessions/manager-1/leases/batch`,
+        invalid,
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(service.grantSecureSessionLeases).toHaveBeenCalledTimes(1);
   });
 
   it("fulfills an access request with ciphertext and never serializes it back", async () => {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { KeyRound, ShieldAlert } from 'lucide-react'
+import { KeyRound, Loader2, ShieldAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PrivateSecretValueDialog } from '../secure-session/PrivateSecretValueDialog'
 import {
@@ -20,7 +20,9 @@ interface SecureSecretRequestCardProps {
   availability: SecureSessionAvailability
   secrets: SecureSecretOption[]
   disabled?: boolean
-  onGrant: (grant: SecureGrantInput) => void | Promise<void>
+  onGrant: (
+    grant: SecureGrantInput,
+  ) => boolean | void | Promise<boolean | void>
   onDeny: (requestId: string) => void | Promise<void>
   onPrivateFulfill?: (
     requestId: string,
@@ -59,6 +61,7 @@ export function SecureSecretRequestCard({
     suggestedSecret?.secretId ?? compatibleSecrets[0]?.secretId ?? '',
   )
   const [privateValueOpen, setPrivateValueOpen] = useState(false)
+  const [resolving, setResolving] = useState<'approve' | 'deny' | null>(null)
   const effectiveSecretId = compatibleSecrets.some((secret) => secret.secretId === secretId)
     ? secretId
     : suggestedSecret?.secretId ?? compatibleSecrets[0]?.secretId ?? ''
@@ -77,14 +80,29 @@ export function SecureSecretRequestCard({
 
   if (request.status !== 'pending') return null
 
-  const approveSavedSecret = () => {
-    if (!selectedSecret || availability.state !== 'available') return
-    void onGrant({
-      requestId: request.requestId,
-      secretId: selectedSecret.secretId,
-      bindings: request.requestedBindings,
-      policy: request.requestedPolicy,
-    })
+  const approveSavedSecret = async () => {
+    if (!selectedSecret || availability.state !== 'available' || resolving) return
+    setResolving('approve')
+    try {
+      await onGrant({
+        requestId: request.requestId,
+        secretId: selectedSecret.secretId,
+        bindings: request.requestedBindings,
+        policy: request.requestedPolicy,
+      })
+    } finally {
+      setResolving(null)
+    }
+  }
+
+  const denyRequest = async () => {
+    if (resolving) return
+    setResolving('deny')
+    try {
+      await onDeny(request.requestId)
+    } finally {
+      setResolving(null)
+    }
   }
 
   return (
@@ -174,10 +192,15 @@ export function SecureSecretRequestCard({
             <Button
               type="button"
               size="sm"
-              disabled={disabled || !selectedSecret}
-              onClick={approveSavedSecret}
+              disabled={disabled || Boolean(resolving) || !selectedSecret}
+              onClick={() => void approveSavedSecret()}
             >
-              Approve
+              {resolving === 'approve' ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Approving…
+                </>
+              ) : 'Approve'}
             </Button>
           ) : null}
           {canPrivateFulfill ? (
@@ -185,7 +208,7 @@ export function SecureSecretRequestCard({
               type="button"
               size="sm"
               variant="secondary"
-              disabled={disabled}
+              disabled={disabled || Boolean(resolving)}
               onClick={() => setPrivateValueOpen(true)}
             >
               Provide unsaved value
@@ -195,8 +218,8 @@ export function SecureSecretRequestCard({
             type="button"
             size="sm"
             variant="ghost"
-            disabled={disabled}
-            onClick={() => void onDeny(request.requestId)}
+            disabled={disabled || Boolean(resolving)}
+            onClick={() => void denyRequest()}
           >
             Deny
           </Button>

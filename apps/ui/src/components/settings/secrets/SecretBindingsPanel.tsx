@@ -106,10 +106,11 @@ export function SecretBindingsPanel({
     <div className="space-y-6">
       <section className="space-y-3">
         <div>
-          <h3 className="text-base font-semibold">Saved bindings</h3>
+          <h3 className="text-base font-semibold">Advanced delivery bindings</h3>
           <p className="text-sm text-muted-foreground">
-            Bindings describe how a saved source can be delivered after a separate task-scoped
-            grant. They do not give a task access by themselves.
+            Every saved secret already has a generated environment delivery. Add or replace
+            bindings here only when a tool needs a specific askpass, file, stdin, or environment
+            shape. Bindings never grant task access by themselves.
           </p>
         </div>
 

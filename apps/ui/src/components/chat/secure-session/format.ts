@@ -39,7 +39,7 @@ export function formatSecurePolicy(policy: SecureLeasePolicyView): string {
     case 'one_use':
       return 'Next Secure Bash command'
     case 'task':
-      return 'Current task'
+      return 'Until Secure Session stops'
     case 'timed': {
       const minutes = Math.max(1, Math.round(policy.durationSeconds / 60))
       return minutes >= 60 && minutes % 60 === 0

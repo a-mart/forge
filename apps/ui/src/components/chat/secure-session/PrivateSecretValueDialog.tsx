@@ -42,6 +42,7 @@ export function PrivateSecretValueDialog({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    event.stopPropagation()
     if (!value) return
 
     const privateValue = value

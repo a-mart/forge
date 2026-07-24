@@ -180,7 +180,7 @@ dockerSuite(
       await removeManagedImage(runnerImage);
     }, 60_000);
 
-    it("contains all delivery channels and encoded reflections across seventeen persistent commands", async () => {
+    it("contains all delivery channels and encoded reflections across eighteen persistent commands", async () => {
       const canary = makeCanary();
       const needles = canaryNeedles(canary);
       const temporaryRoot = await mkdtemp(
@@ -348,6 +348,16 @@ dockerSuite(
         },
         {
           command: {
+            executable: "sh",
+            args: [
+              "-c",
+              "getent passwd \"$(id -u)\" >/dev/null && getent group \"$(id -g)\" >/dev/null && ssh -G forge-secure.invalid >/dev/null && printf identity-ok",
+            ],
+          },
+          expectedOutput: "identity-ok",
+        },
+        {
+          command: {
             executable: "node",
             args: [
               "-e",
@@ -391,7 +401,7 @@ dockerSuite(
         },
       ];
 
-      expect(executions).toHaveLength(17);
+      expect(executions).toHaveLength(18);
       for (const [index, execution] of executions.entries()) {
         const result = await executeGuarded(
           backend,

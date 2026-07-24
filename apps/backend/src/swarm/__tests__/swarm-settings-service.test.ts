@@ -114,6 +114,7 @@ function createService(options: {
   profileDefaultModel?: AgentDescriptor["model"];
   profiles?: Map<string, ManagerProfile>;
   applyManagerRuntimeRecyclePolicy?: ReturnType<typeof vi.fn>;
+  hasActiveSecureSession?: ReturnType<typeof vi.fn>;
   stopSecureSessionForLifecycle?: ReturnType<typeof vi.fn>;
   saveStore?: ReturnType<typeof vi.fn>;
   transactionDescriptors?: (callback: any) => Promise<any>;
@@ -137,6 +138,7 @@ function createService(options: {
     resolveAndValidateCwd: async (cwd) => cwd,
     assertCanChangeManagerCwd: () => {},
     applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy ?? vi.fn(async () => "none"),
+    hasActiveSecureSession: options.hasActiveSecureSession ?? vi.fn(() => false),
     stopSecureSessionForLifecycle:
       options.stopSecureSessionForLifecycle ?? vi.fn(async () => undefined),
     now: options.now,
@@ -170,31 +172,64 @@ function createOpenAICodexOAuthSecretsEnvService(): any {
 }
 
 describe("SwarmSettingsService.updateManagerModel", () => {
-  it("blocks model mutation before continuity persistence when secure teardown fails", async () => {
+  it("preserves Secure Session authority while recycling the model runtime", async () => {
     const root = await createTempRoot();
     const session = createSession(root, "manager");
-    const originalModel = { ...session.model };
     const saveStore = vi.fn(async () => undefined);
     const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
-    const stopSecureSessionForLifecycle = vi.fn(async () => {
-      throw new Error("secure teardown failed");
-    });
+    const hasActiveSecureSession = vi.fn(() => true);
+    const stopSecureSessionForLifecycle = vi.fn(async () => undefined);
     const service = createService({
       rootDir: root,
       sessions: [session],
       saveStore,
       applyManagerRuntimeRecyclePolicy,
+      hasActiveSecureSession,
+      stopSecureSessionForLifecycle,
+    });
+
+    await service.updateManagerModel("manager", "pi-5.4", "high");
+
+    expect(stopSecureSessionForLifecycle).not.toHaveBeenCalled();
+    expect(hasActiveSecureSession).toHaveBeenCalledWith(session.agentId);
+    expect(session.model).toMatchObject({ modelId: "gpt-5.4", thinkingLevel: "high" });
+    expect(saveStore).toHaveBeenCalled();
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(
+      session.agentId,
+      "model_change",
+    );
+  });
+
+  it("rejects an unsupported runtime before persisting or recycling an active Secure Session", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager");
+    const originalModel = { ...session.model };
+    const saveStore = vi.fn(async () => undefined);
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const hasActiveSecureSession = vi.fn(() => true);
+    const stopSecureSessionForLifecycle = vi.fn(async () => undefined);
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      saveStore,
+      applyManagerRuntimeRecyclePolicy,
+      hasActiveSecureSession,
       stopSecureSessionForLifecycle,
     });
 
     await expect(
-      service.updateManagerModel("manager", "pi-5.4", "high"),
-    ).rejects.toThrow("secure teardown failed");
+      service.updateManagerModel(session.agentId, "cursor-composer", "high"),
+    ).rejects.toThrow("Secure Sessions are not supported by this runtime provider.");
 
-    expect(stopSecureSessionForLifecycle).toHaveBeenCalledWith("manager");
+    expect(hasActiveSecureSession).toHaveBeenCalledWith(session.agentId);
+    expect(stopSecureSessionForLifecycle).not.toHaveBeenCalled();
     expect(session.model).toEqual(originalModel);
+    expect(session.modelOrigin).toBe("profile_default");
     expect(saveStore).not.toHaveBeenCalled();
     expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+    await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("allows exact model selection with pooled-only OpenAI Codex OAuth availability", async () => {

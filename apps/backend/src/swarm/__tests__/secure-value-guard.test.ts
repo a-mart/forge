@@ -147,6 +147,7 @@ describe("SecureValueGuard byte streams", () => {
     expect(Buffer.concat(stderr.map(Buffer.from))).toEqual(
       Buffer.from("safe error", "utf8"),
     );
+    expect(guardOutput.didQuarantine()).toBe(true);
   });
 
   it("quarantines a value split across stdout and stderr in emission order", () => {
@@ -182,6 +183,7 @@ describe("SecureValueGuard byte streams", () => {
     expect(Buffer.concat(output.map(Buffer.from))).toEqual(
       Buffer.concat([Buffer.from("safe/", "utf8"), MARKER]),
     );
+    expect(guardOutput.didQuarantine()).toBe(true);
   });
 
   it("quarantines a value split across final stdout and stderr chunks", () => {
@@ -202,6 +204,7 @@ describe("SecureValueGuard byte streams", () => {
     ];
 
     expect(Buffer.concat(output.map(Buffer.from))).toEqual(MARKER);
+    expect(guardOutput.didQuarantine()).toBe(true);
   });
 
   it("deduplicates values and protects the longest overlapping prefix", () => {
@@ -272,6 +275,7 @@ describe("SecureValueGuard byte streams", () => {
     expect(Buffer.concat(output.map(Buffer.from))).toEqual(
       Buffer.from("safe stdoutsafe stderr", "utf8"),
     );
+    expect(guardOutput.didQuarantine()).toBe(false);
 
     const matchingGuard = guard.createOutputGuard<"stdout" | "stderr">();
     const matching = [
@@ -292,6 +296,19 @@ describe("SecureValueGuard byte streams", () => {
       }),
     ];
     expect(Buffer.concat(matching.map(Buffer.from))).toEqual(MARKER);
+    expect(matchingGuard.didQuarantine()).toBe(true);
+  });
+
+  it("does not infer redaction from ordinary output equal to the public marker", () => {
+    const guard = new SecureValueGuard([SELECTIVE_VALUE]);
+    const guardOutput = guard.createOutputGuard<"stdout" | "stderr">();
+    const output = [
+      guardOutput({ stream: "stdout", bytes: MARKER, final: true }),
+      guardOutput({ stream: "stderr", bytes: Buffer.alloc(0), final: true }),
+    ];
+
+    expect(Buffer.concat(output.map(Buffer.from))).toEqual(MARKER);
+    expect(guardOutput.didQuarantine()).toBe(false);
   });
 
   it("accepts NUL and invalid UTF-8 as exact raw byte values", () => {

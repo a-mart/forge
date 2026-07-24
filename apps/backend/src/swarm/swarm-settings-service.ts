@@ -40,8 +40,10 @@ import {
   appendModelChangeContinuityRequest,
   createModelChangeContinuityRequest,
   findLatestUnappliedModelChangeContinuityRequestForSession,
+  inferModelChangeContinuityRuntimeKind,
   loadModelChangeContinuityState
 } from "./runtime/model-change-continuity.js";
+import { SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE } from "./secure-sessions/runtime/secure-runtime-binding.js";
 import {
   getManagedModelProviderCredentialAvailability,
   type SecretsEnvService
@@ -97,6 +99,7 @@ export interface SwarmSettingsServiceOptions {
     agentId: string,
     reason: ManagerRuntimeRecycleReason
   ) => Promise<ManagerRuntimeRecycleDisposition>;
+  hasActiveSecureSession(agentId: string): boolean;
   stopSecureSessionForLifecycle(agentId: string): Promise<void>;
   now?: () => string;
   transactionDescriptors?: <T>(callback: (store: SettingsDescriptorTransactionStore) => T | Promise<T>) => Promise<T>;
@@ -1017,9 +1020,12 @@ export class SwarmSettingsService {
       (mutation) => !sameModelDescriptor(mutation.session.model, mutation.targetModel)
     );
     for (const mutation of effectiveModelMutations) {
-      await this.options.stopSecureSessionForLifecycle(
-        mutation.session.agentId
-      );
+      if (
+        this.options.hasActiveSecureSession(mutation.session.agentId)
+        && inferModelChangeContinuityRuntimeKind(mutation.targetModel) !== "pi"
+      ) {
+        throw new Error(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
+      }
     }
     const originalSessionStates = mutations.map((mutation) => ({
       session: mutation.session,

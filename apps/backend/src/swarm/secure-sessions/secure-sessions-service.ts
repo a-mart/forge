@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentDescriptor,
+  GrantSecureSecretLeaseInput,
   GrantSecureSecretLeaseRequest,
+  GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureSecretBinding,
   SecureSecretCatalogChangedEvent,
@@ -151,6 +153,15 @@ export class SecureSessionsService {
         });
         catalogChanged = this.deleteSessionSecrets(store, state.sessionAgentId) || catalogChanged;
       }
+      for (const secret of store.listSecrets()) {
+        if (store.listBindings(secret.secretId).length > 0) continue;
+        const binding = normalizeBindings(
+          [defaultSecureSecretBinding(secret.secretId, secret.displayAlias)],
+          this.id.bind(this),
+        )[0]!;
+        store.putBinding({ ...binding, secretId: secret.secretId });
+        catalogChanged = true;
+      }
       if (catalogChanged) this.emitCatalog(store);
 
       const result = await this.options.execution.recoverOrphans([]);
@@ -276,18 +287,25 @@ export class SecureSessionsService {
     const store = await this.store();
     try {
       this.ensureLocalProvider(store);
+      const secretId = this.id();
+      const displayAlias = bounded(input.displayAlias, 256);
       const result = store.createSecretWithBindings({
         secret: {
-          secretId: this.id(),
+          secretId,
           providerId: LOCAL_PROVIDER_ID,
-          displayAlias: bounded(input.displayAlias, 256),
+          displayAlias,
           displayName: optionalBounded(input.displayName, 256),
           ...toStoredScope(input.scope),
           retention: input.retention ?? "saved",
           sourceLocator: "local",
           encryptedMaterial,
         },
-        bindings: normalizeBindings(input.bindings ?? [], this.id.bind(this)),
+        bindings: normalizeBindings(
+          input.bindings?.length
+            ? input.bindings
+            : [defaultSecureSecretBinding(secretId, displayAlias)],
+          this.id.bind(this),
+        ),
       });
       this.emitCatalog(store);
       return this.toSecretSummary(store, result.secret);
@@ -311,18 +329,25 @@ export class SecureSessionsService {
       throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
     }
     try {
+      const secretId = this.id();
+      const displayAlias = bounded(input.displayAlias, 256);
       const result = store.createSecretWithBindings({
         secret: {
-          secretId: this.id(),
+          secretId,
           providerId,
-          displayAlias: bounded(input.displayAlias, 256),
+          displayAlias,
           displayName: optionalBounded(input.displayName, 256),
           ...toStoredScope(input.scope),
           retention: input.retention ?? "saved",
           sourceLocator: input.sourceLocator,
           encryptedMaterial: null,
         },
-        bindings: normalizeBindings(input.bindings ?? [], this.id.bind(this)),
+        bindings: normalizeBindings(
+          input.bindings?.length
+            ? input.bindings
+            : [defaultSecureSecretBinding(secretId, displayAlias)],
+          this.id.bind(this),
+        ),
       });
       this.emitCatalog(store);
       return this.toSecretSummary(store, result.secret);
@@ -348,14 +373,24 @@ export class SecureSessionsService {
           ? existing.encryptedMaterial
           : decodeCiphertext(input.encryptedMaterial);
         const affected = this.captureAffectedLeases(store, [secretId]);
+        const nextDisplayAlias = input.displayAlias === undefined
+          ? existing.displayAlias
+          : bounded(input.displayAlias, 256);
+        const existingBindings = store.listBindings(secretId);
+        const nextBindings = input.bindings === undefined && existingBindings.length > 0
+          ? existingBindings.map(toBindingInput)
+          : normalizeBindings(
+              input.bindings?.length
+                ? input.bindings
+                : [defaultSecureSecretBinding(secretId, nextDisplayAlias)],
+              this.id.bind(this),
+            );
         try {
           const result = store.updateSecretWithBindings({
             secret: {
               secretId,
               providerId: existing.providerId,
-              displayAlias: input.displayAlias === undefined
-                ? existing.displayAlias
-                : bounded(input.displayAlias, 256),
+              displayAlias: nextDisplayAlias,
               displayName: input.displayName === undefined
                 ? existing.displayName
                 : optionalBounded(input.displayName, 256),
@@ -364,9 +399,7 @@ export class SecureSessionsService {
               sourceLocator: existing.sourceLocator,
               encryptedMaterial,
             },
-            bindings: input.bindings === undefined
-              ? store.listBindings(secretId).map(toBindingInput)
-              : normalizeBindings(input.bindings, this.id.bind(this)),
+            bindings: nextBindings,
           });
           this.releaseLeases(affected.leaseIds);
           await this.deactivateAffectedSessions(store, affected.sessionIds);
@@ -447,6 +480,7 @@ export class SecureSessionsService {
   private async startSecureSessionUnlocked(
     sessionAgentId: string,
     input: StartSecureSessionInput,
+    options: { emitSnapshot?: boolean } = {},
   ): Promise<PublicSecureSessionSnapshot> {
     const descriptor = this.requireBuilder(sessionAgentId);
     const store = await this.store();
@@ -493,7 +527,9 @@ export class SecureSessionsService {
       this.scheduleLeaseExpiry(store, sessionAgentId);
       const snapshot = this.toPublicSnapshot(store, result.snapshot);
       if (result.changed || !bindingWasActive) {
-        this.options.emitSnapshot(toSnapshotEvent(snapshot));
+        if (options.emitSnapshot !== false) {
+          this.options.emitSnapshot(toSnapshotEvent(snapshot));
+        }
         await this.options.applyModeRuntimeRecycle(sessionAgentId);
       }
       return snapshot;
@@ -623,48 +659,98 @@ export class SecureSessionsService {
     sessionAgentId: string,
     input: GrantSecureSecretLeaseRequest,
   ): Promise<PublicSecureSessionSnapshot> {
+    const { baseRevision, ...grant } = input;
+    return await this.grantSecureSessionLeases(sessionAgentId, {
+      baseRevision,
+      grants: [grant],
+    });
+  }
+
+  async grantSecureSessionLeases(
+    sessionAgentId: string,
+    input: GrantSecureSecretLeasesRequest,
+  ): Promise<PublicSecureSessionSnapshot> {
     return await this.withAuthorityMutation(async () =>
       await this.withSessionMutation(sessionAgentId, async () =>
-        await this.grantSecureSessionLeaseUnlocked(sessionAgentId, input)
+        await this.grantSecureSessionLeasesUnlocked(sessionAgentId, input)
       )
     );
   }
 
-  private async grantSecureSessionLeaseUnlocked(
+  private async grantSecureSessionLeasesUnlocked(
     sessionAgentId: string,
-    input: GrantSecureSecretLeaseRequest,
+    input: GrantSecureSecretLeasesRequest,
   ): Promise<PublicSecureSessionSnapshot> {
     const descriptor = this.requireBuilder(sessionAgentId);
     const store = await this.store();
-    await this.expireAndPublish(store, sessionAgentId);
-    const secret = store.getSecret(input.secretId);
-    if (!secret || !isVisibleTo(secret, requireProfileId(descriptor))) {
-      throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+    if (
+      !Array.isArray(input.grants)
+      || input.grants.length < 1
+      || input.grants.length > 16
+      || new Set(input.grants.map(({ secretId }) => secretId)).size
+        !== input.grants.length
+    ) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
-    const bindingIds = matchBindingIds(store.listBindings(secret.secretId), input.exposures);
-    const state = store.getOrCreateSessionState(sessionAgentId, {
-      profileId: requireProfileId(descriptor),
-      executionMode: "standard",
-      environmentStatus: "stopped",
-    });
-    requireRevision(state.revision, input.baseRevision);
-    assertSessionBindingCompatibility(store, store.getSnapshot(sessionAgentId), bindingIds);
-    const requiresCleanEnvironment = this.activeSessions.has(sessionAgentId);
-    await this.ensureSecureEnvironment(store, descriptor);
+    const initialState = store.listSessionStates().find(
+      (state) => state.sessionAgentId === sessionAgentId,
+    );
+    requireRevision(initialState?.revision ?? 0, input.baseRevision);
+    const profileId = requireProfileId(descriptor);
+    const now = this.now();
+    const grants = input.grants.map((grant) =>
+      this.prepareLeaseGrant(store, profileId, grant, now)
+    );
+    assertSessionBindingCompatibilityForBatch(
+      store,
+      initialState ? store.getSnapshot(sessionAgentId) : undefined,
+      grants.map(({ bindingIds }) => bindingIds),
+    );
+
+    const proposedMaterials: HostOnlySecret[] = [];
+    let materialsTransferred = false;
     try {
+      for (const grant of grants) {
+        proposedMaterials.push(
+          await this.resolveSecretMaterial(store, grant.secret.secretId),
+        );
+      }
+
+      await this.expireAndPublish(store, sessionAgentId);
+      const refreshedState = store.listSessionStates().find(
+        (state) => state.sessionAgentId === sessionAgentId,
+      );
+      requireRevision(refreshedState?.revision ?? 0, input.baseRevision);
+      store.getOrCreateSessionState(sessionAgentId, {
+        profileId,
+        executionMode: "standard",
+        environmentStatus: "stopped",
+      });
+      const requiresCleanEnvironment = this.activeSessions.has(sessionAgentId);
+      await this.ensureSecureEnvironment(store, descriptor, { emitSnapshot: false });
       if (requiresCleanEnvironment) {
         await this.rebuildEnvironmentForNewLease(store, descriptor);
       }
       const current = store.getSnapshot(sessionAgentId);
-      const result = store.createLease({
-        leaseId: this.id(),
+      const leaseGrants = grants.map(
+        ({ secret, bindingIds, leaseKind, expiresAt: expiry }) => ({
+          leaseId: this.id(),
+          secretId: secret.secretId,
+          bindingIds,
+          leaseKind,
+          expiresAt: expiry,
+        }),
+      );
+      const result = store.createLeases({
         sessionAgentId,
-        secretId: secret.secretId,
-        bindingIds,
-        leaseKind: input.leaseKind,
         baseRevision: current.state.revision,
-        expiresAt: expiresAt(input, this.now()),
+        grants: leaseGrants,
       });
+      leaseGrants.forEach(({ leaseId }, index) => {
+        this.cachedLeaseSecrets.set(leaseId, proposedMaterials[index]!);
+        this.cachedLeaseOwners.set(leaseId, sessionAgentId);
+      });
+      materialsTransferred = true;
       try {
         await this.ensureGuardForActiveLeases(store, sessionAgentId);
       } catch (error) {
@@ -677,7 +763,43 @@ export class SecureSessionsService {
       return snapshot;
     } catch (error) {
       throw this.publicError(error);
+    } finally {
+      if (!materialsTransferred) {
+        for (const material of proposedMaterials) material.release();
+      }
     }
+  }
+
+  private prepareLeaseGrant(
+    store: SecureSessionStore,
+    profileId: string,
+    input: GrantSecureSecretLeaseInput,
+    now: string,
+  ): {
+    secret: SecureSessionSecret;
+    bindingIds: string[];
+    leaseKind: GrantSecureSecretLeaseInput["leaseKind"];
+    expiresAt: string | null;
+  } {
+    const secret = store.getSecret(input.secretId);
+    if (!secret || !isVisibleTo(secret, profileId)) {
+      throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+    }
+    if (
+      !["task", "timed", "one_use"].includes(input.leaseKind)
+      || (input.leaseKind !== "timed" && "durationSeconds" in input)
+    ) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    return {
+      secret,
+      bindingIds: matchBindingIds(
+        store.listBindings(secret.secretId),
+        input.exposures,
+      ),
+      leaseKind: input.leaseKind,
+      expiresAt: expiresAt(input, now),
+    };
   }
 
   async revokeSecureSessionLease(
@@ -1156,8 +1278,6 @@ export class SecureSessionsService {
   ): Promise<{ exitCode: number | null }> {
     const sessionAgentId = descriptor.agentId;
     const { store, reserved, resolved, guard, active } = prepared;
-    const quarantineMarker = Buffer.from(SECURE_OUTPUT_QUARANTINE, "utf8");
-    let outputQuarantined = false;
     try {
       const delivery = createExecutionDeliveryFromBindings(resolved);
       const rawOutputGuard = guard.createOutputGuard();
@@ -1169,23 +1289,16 @@ export class SecureSessionsService {
           cwd: request.cwd,
         },
         delivery,
-        guardOutput: (input) => {
-          const guarded = rawOutputGuard(input);
-          if (containsBytes(guarded, quarantineMarker)) {
-            outputQuarantined = true;
-          }
-          return guarded;
-        },
+        guardOutput: (input) => rawOutputGuard(input),
         onOutput: ({ bytes }) => request.onData(bytes),
         signal: request.signal,
         timeoutMs: request.timeoutMs,
       });
-      if (outputQuarantined) {
+      if (rawOutputGuard.didQuarantine()) {
         this.outputStates.set(sessionAgentId, {
           outputState: "quarantined",
           outputStateCode: "SECURE_OUTPUT_QUARANTINED",
         });
-        throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
       }
       const consumedOneUseLease = this.completeReservations(
         store,
@@ -1221,7 +1334,6 @@ export class SecureSessionsService {
       throw this.publicError(error);
     } finally {
       for (const item of resolved) item.value.fill(0);
-      quarantineMarker.fill(0);
     }
   }
 
@@ -1258,7 +1370,14 @@ export class SecureSessionsService {
     store: SecureSessionStore,
     lease: SecureSessionLease,
   ): Promise<HostOnlySecret> {
-    const secret = store.getEncryptedSecret(lease.secretId);
+    return await this.resolveSecretMaterial(store, lease.secretId);
+  }
+
+  private async resolveSecretMaterial(
+    store: SecureSessionStore,
+    secretId: string,
+  ): Promise<HostOnlySecret> {
+    const secret = store.getEncryptedSecret(secretId);
     if (!secret) throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
     const provider = store.getProvider(secret.providerId);
     if (!provider || !provider.enabled) {
@@ -1915,6 +2034,7 @@ export class SecureSessionsService {
   private async ensureSecureEnvironment(
     store: SecureSessionStore,
     descriptor: AgentDescriptor,
+    options: { emitSnapshot?: boolean } = {},
   ): Promise<void> {
     const state = store.getSnapshot(descriptor.agentId).state;
     const active = this.activeSessions.get(descriptor.agentId);
@@ -1930,7 +2050,7 @@ export class SecureSessionsService {
     }
     await this.startSecureSessionUnlocked(descriptor.agentId, {
       baseRevision: state.revision,
-    });
+    }, options);
   }
 
   private async store(): Promise<SecureSessionStore> {
@@ -2071,6 +2191,25 @@ function toPublicScope(secret: Pick<SecureSessionSecret, "scopeKind" | "profileI
     : { kind: "profile", profileId: secret.profileId ?? "" };
 }
 
+function defaultSecureSecretBinding(
+  secretId: string,
+  displayAlias: string,
+): SecureSecretBinding {
+  const readableAlias = displayAlias
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || "VALUE";
+  const stableSuffix = secretId
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(-10) || "SECRET";
+  return {
+    deliveryKind: "environment",
+    targetName: `FORGE_SECRET_${readableAlias}_${stableSuffix}`,
+  };
+}
+
 function normalizeBindings(
   bindings: readonly SecureSecretBinding[],
   id: () => string,
@@ -2206,8 +2345,16 @@ function assertSessionBindingCompatibility(
   snapshot: StoredSnapshot,
   requestedBindingIds: readonly string[],
 ): void {
+  assertSessionBindingCompatibilityForBatch(store, snapshot, [requestedBindingIds]);
+}
+
+function assertSessionBindingCompatibilityForBatch(
+  store: SecureSessionStore,
+  snapshot: StoredSnapshot | undefined,
+  requestedBindingGroups: readonly (readonly string[])[],
+): void {
   const activeKeys = new Set<string>();
-  for (const lease of snapshot.leases) {
+  for (const lease of snapshot?.leases ?? []) {
     if (lease.state !== "active") continue;
     for (const bindingId of lease.bindingIds) {
       const binding = store.getBinding(bindingId);
@@ -2216,12 +2363,15 @@ function assertSessionBindingCompatibility(
       }
     }
   }
-  for (const bindingId of requestedBindingIds) {
-    const binding = store.getBinding(bindingId);
-    if (!binding) throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
-    const key = bindingCollisionKey(toPublicBinding(binding));
-    if (activeKeys.has(key)) {
-      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  for (const requestedBindingIds of requestedBindingGroups) {
+    for (const bindingId of requestedBindingIds) {
+      const binding = store.getBinding(bindingId);
+      if (!binding) throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+      const key = bindingCollisionKey(toPublicBinding(binding));
+      if (activeKeys.has(key)) {
+        throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+      }
+      activeKeys.add(key);
     }
   }
 }
@@ -2322,15 +2472,4 @@ function providerStatusForError(error: unknown): {
     }
   }
   return { status: "unreachable", lastStatusCode: "provider_error" };
-}
-
-function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
-  if (needle.byteLength === 0 || needle.byteLength > haystack.byteLength) return false;
-  outer: for (let offset = 0; offset <= haystack.byteLength - needle.byteLength; offset += 1) {
-    for (let index = 0; index < needle.byteLength; index += 1) {
-      if (haystack[offset + index] !== needle[index]) continue outer;
-    }
-    return true;
-  }
-  return false;
 }

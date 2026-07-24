@@ -4,21 +4,16 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     openssh-client \
     openssh-server \
+    libnss-wrapper \
     postgresql-client \
   && rm -rf /var/lib/apt/lists/* \
+  && nss_wrapper="$(dpkg-query -L libnss-wrapper | grep '/libnss_wrapper\.so$' | head -n 1)" \
+  && test -f "$nss_wrapper" \
+  && mkdir -p /usr/local/lib/forge \
+  && ln -s "$nss_wrapper" /usr/local/lib/forge/libnss_wrapper.so \
   && corepack install --global pnpm@10.30.1
 
 FROM tools AS runner
-
-ARG FORGE_RUN_UID=65532
-ARG FORGE_RUN_GID=65532
-RUN if ! getent group "${FORGE_RUN_GID}" >/dev/null; then \
-      groupadd --gid "${FORGE_RUN_GID}" forge-runner; \
-    fi \
-  && if ! getent passwd "${FORGE_RUN_UID}" >/dev/null; then \
-      useradd --uid "${FORGE_RUN_UID}" --gid "${FORGE_RUN_GID}" \
-        --create-home --shell /bin/sh forge-runner; \
-    fi
 
 ENTRYPOINT []
 CMD ["node"]

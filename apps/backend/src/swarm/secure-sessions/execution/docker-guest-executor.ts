@@ -15,6 +15,7 @@ const MAX_FRAME_BYTES = 17 * 1024 * 1024;
 const ROOT = "/run/forge-secure/executions";
 const MATERIAL_ROOT = "/run/forge-secure/bindings";
 const ASKPASS_ROOT = "/tmp/forge-secure-askpass";
+const NSS_WRAPPER_LIBRARY = "/usr/local/lib/forge/libnss_wrapper.so";
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EXECUTION_ID = /^[a-f0-9]{24}$/;
 
@@ -67,6 +68,98 @@ function cleanEnvironment(tmpDirectory) {
     LC_ALL: "C.UTF-8",
     TMPDIR: tmpDirectory,
   };
+}
+
+function databaseEntry(database, idIndex, id) {
+  const expected = String(id);
+  for (const line of database.split("\n")) {
+    const fields = line.split(":");
+    if (fields[idIndex] === expected) {
+      return fields;
+    }
+  }
+  return undefined;
+}
+
+function unusedDatabaseName(database, preferred) {
+  const names = new Set(
+    database
+      .split("\n")
+      .map((line) => line.split(":")[0])
+      .filter(Boolean),
+  );
+  if (!names.has(preferred)) {
+    return preferred;
+  }
+  let suffix = 1;
+  while (names.has(preferred + "-" + String(suffix))) {
+    suffix += 1;
+  }
+  return preferred + "-" + String(suffix);
+}
+
+function appendDatabaseEntry(database, entry) {
+  return (
+    database +
+    (database.length === 0 || database.endsWith("\n") ? "" : "\n") +
+    entry +
+    "\n"
+  );
+}
+
+function ensureExecutionIdentity(executionRoot, environment) {
+  const uid = process.getuid();
+  const gid = process.getgid();
+  const passwd = fs.readFileSync("/etc/passwd", "utf8");
+  const group = fs.readFileSync("/etc/group", "utf8");
+  const passwdEntry = databaseEntry(passwd, 2, uid);
+  const groupEntry = databaseEntry(group, 2, gid);
+
+  if (passwdEntry && groupEntry) {
+    environment.USER = passwdEntry[0];
+    environment.LOGNAME = passwdEntry[0];
+    return;
+  }
+  if (!fs.existsSync(NSS_WRAPPER_LIBRARY)) {
+    return;
+  }
+
+  const identityRoot = path.join(executionRoot, "identity");
+  fs.mkdirSync(identityRoot, { mode: 0o700 });
+  const userName =
+    passwdEntry?.[0] || unusedDatabaseName(passwd, "forge-secure");
+  const groupName =
+    groupEntry?.[0] || unusedDatabaseName(group, "forge-secure");
+  const wrappedPasswd = passwdEntry
+    ? passwd
+    : appendDatabaseEntry(
+        passwd,
+        userName +
+          ":x:" +
+          String(uid) +
+          ":" +
+          String(gid) +
+          ":Forge Secure Runner:/tmp/forge-secure-home:/bin/sh",
+      );
+  const wrappedGroup = groupEntry
+    ? group
+    : appendDatabaseEntry(
+        group,
+        groupName + ":x:" + String(gid) + ":",
+      );
+  const passwdPath = path.join(identityRoot, "passwd");
+  const groupPath = path.join(identityRoot, "group");
+  fs.writeFileSync(passwdPath, wrappedPasswd, { flag: "wx", mode: 0o600 });
+  fs.writeFileSync(groupPath, wrappedGroup, { flag: "wx", mode: 0o600 });
+
+  // The wrapper is fixed in the read-only runner image. Per-execution NSS
+  // databases preserve the image's system identities and add only the mapped
+  // host UID/GID when those numeric identities are otherwise unknown.
+  environment.LD_PRELOAD = NSS_WRAPPER_LIBRARY;
+  environment.NSS_WRAPPER_PASSWD = passwdPath;
+  environment.NSS_WRAPPER_GROUP = groupPath;
+  environment.USER = userName;
+  environment.LOGNAME = userName;
 }
 
 function ensureDirectory(pathValue) {
@@ -260,6 +353,7 @@ async function main(frame) {
   try {
     materializeFiles(frame, state, header, environment, createdFiles);
     materializeAskpass(frame, state, header, executionRoot, environment);
+    ensureExecutionIdentity(executionRoot, environment);
     const childStdin = takeMaterial(frame, state, header.stdinByteLength);
     if (state.offset !== frame.byteLength) {
       childStdin.fill(0);

@@ -116,6 +116,7 @@ export interface SwarmConfigurationCoordinatorOptions {
   skillFileService: SkillFileService;
   secretsEnvService: SecretsEnvService;
   secureSessions: {
+    hasActiveSession(agentId: string): boolean;
     stopForLifecycle(agentId: string): Promise<void>;
   };
   sessions: SwarmConfigurationSessionIndex;
@@ -175,6 +176,8 @@ export class SwarmConfigurationCoordinator {
       assertCanChangeManagerCwd: (profileId, sessions) =>
         this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy,
+      hasActiveSecureSession: (agentId) =>
+        options.secureSessions.hasActiveSession(agentId),
       now: options.now,
       transactionDescriptors: options.persistence.transactionDescriptors,
       saveStore: options.persistence.saveStore,

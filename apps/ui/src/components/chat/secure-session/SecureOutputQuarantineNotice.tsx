@@ -13,6 +13,9 @@ export function SecureOutputQuarantineNotice({
   onStopProcessesAndRevoke,
 }: SecureOutputQuarantineNoticeProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+
+  if (dismissed) return null
 
   return (
     <>
@@ -22,21 +25,31 @@ export function SecureOutputQuarantineNotice({
       >
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <ShieldAlert className="size-4 text-destructive" aria-hidden="true" />
-          <span>Secure output quarantined</span>
+          <span>Protected output redacted</span>
         </div>
         <p className="text-sm text-muted-foreground">
-          {reason ?? 'Output was withheld because it may contain protected secret material.'}
+          {reason ?? 'Forge removed protected material before it reached the agent. The command completed and the Secure Session can continue.'}
         </p>
-        {onStopProcessesAndRevoke ? (
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
-            variant="destructive"
-            onClick={() => setConfirmOpen(true)}
+            variant="secondary"
+            onClick={() => setDismissed(true)}
           >
-            Stop processes and revoke
+            Dismiss
           </Button>
-        ) : null}
+          {onStopProcessesAndRevoke ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              onClick={() => setConfirmOpen(true)}
+            >
+              Stop Secure Session
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {onStopProcessesAndRevoke ? (

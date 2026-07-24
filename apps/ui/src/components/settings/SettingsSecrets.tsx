@@ -89,8 +89,8 @@ function BuilderSecretsSettings({ apiClient }: SettingsSecretsProps) {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold tracking-tight">Secrets</h2>
           <p className="text-sm text-muted-foreground">
-            Configure private sources and reusable delivery bindings. Saving a source here does not
-            grant it to any task.
+            Save private values or external references. Forge creates a safe default delivery
+            automatically, but no task receives access until you grant it.
           </p>
         </div>
         <Button
@@ -141,7 +141,7 @@ function BuilderSecretsSettings({ apiClient }: SettingsSecretsProps) {
             <TabsTrigger value="secrets">Secrets</TabsTrigger>
             <TabsTrigger value="bindings" className="gap-1.5">
               <Link2 className="size-3.5" />
-              Bindings
+              Advanced delivery
             </TabsTrigger>
           </TabsList>
 

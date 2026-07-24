@@ -255,6 +255,21 @@ export interface CreateSecureSessionLeaseInput {
   expiresAt?: string | null;
 }
 
+export interface CreateSecureSessionLeaseGrantInput {
+  leaseId: string;
+  secretId: string;
+  bindingIds: readonly string[];
+  leaseKind: SecureSessionLeaseKind;
+  requestId?: string | null;
+  expiresAt?: string | null;
+}
+
+export interface CreateSecureSessionLeasesInput {
+  sessionAgentId: string;
+  baseRevision: number;
+  grants: readonly CreateSecureSessionLeaseGrantInput[];
+}
+
 export interface RevokeSecureSessionLeaseInput {
   leaseId: string;
   sessionAgentId: string;

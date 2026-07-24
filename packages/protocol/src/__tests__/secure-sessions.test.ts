@@ -9,6 +9,7 @@ import {
   isSecureSecretBinding,
   isSecureSecretLeaseSpec,
   parseGrantSecureSecretLeaseRequest,
+  parseGrantSecureSecretLeasesRequest,
   parseRequestSecureSecretAccessRequest,
   parseResolveSecureSecretAccessRequest,
   parseRevokeSecureSecretLeaseRequest,
@@ -156,6 +157,76 @@ describe('Secure Sessions protocol', () => {
       requestId: 'access-1',
       decision: 'deny',
     })
+  })
+
+  it('parses a strict batch of unique proactive grants', () => {
+    expect(parseGrantSecureSecretLeasesRequest({
+      baseRevision: 4,
+      grants: [
+        {
+          secretId: 'secret-api',
+          exposures: [{ deliveryKind: 'environment', targetName: 'SERVICE_TOKEN' }],
+          leaseKind: 'task',
+        },
+        {
+          secretId: 'secret-ssh',
+          exposures: [{ deliveryKind: 'ssh_agent' }],
+          leaseKind: 'timed',
+          durationSeconds: 300,
+        },
+      ],
+    })).toEqual({
+      baseRevision: 4,
+      grants: [
+        {
+          secretId: 'secret-api',
+          exposures: [{ deliveryKind: 'environment', targetName: 'SERVICE_TOKEN' }],
+          leaseKind: 'task',
+        },
+        {
+          secretId: 'secret-ssh',
+          exposures: [{ deliveryKind: 'ssh_agent' }],
+          leaseKind: 'timed',
+          durationSeconds: 300,
+        },
+      ],
+    })
+
+    for (const grants of [
+      [],
+      Array.from({ length: 17 }, (_, index) => ({
+        secretId: `secret-${index}`,
+        exposures: [{ deliveryKind: 'stdin' }],
+        leaseKind: 'task',
+      })),
+      [
+        {
+          secretId: 'duplicate',
+          exposures: [{ deliveryKind: 'stdin' }],
+          leaseKind: 'task',
+        },
+        {
+          secretId: 'duplicate',
+          exposures: [{ deliveryKind: 'ssh_agent' }],
+          leaseKind: 'one_use',
+        },
+      ],
+    ]) {
+      expect(() => parseGrantSecureSecretLeasesRequest({
+        baseRevision: 4,
+        grants,
+      })).toThrow(SecureSessionsContractError)
+    }
+
+    expect(() => parseGrantSecureSecretLeasesRequest({
+      baseRevision: 4,
+      grants: [{
+        secretId: 'secret-api',
+        exposures: [{ deliveryKind: 'stdin' }],
+        leaseKind: 'task',
+        sourceLocator: 'forbidden',
+      }],
+    })).toThrow(SecureSessionsContractError)
   })
 
   it('rejects unknown fields at every secret-bearing input boundary', () => {

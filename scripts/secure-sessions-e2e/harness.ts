@@ -119,22 +119,12 @@ export async function buildFixtureImages(
     ["runner", runnerImage],
     ["target", targetImage],
   ] as const) {
-    const buildArgs =
-      target === "runner"
-        ? [
-            "--build-arg",
-            `FORGE_RUN_UID=${process.getuid?.() ?? 65_532}`,
-            "--build-arg",
-            `FORGE_RUN_GID=${process.getgid?.() ?? 65_532}`,
-          ]
-        : [];
     const result = await runCommand(
       "docker",
       [
         "build",
         "--target",
         target,
-        ...buildArgs,
         "--tag",
         image,
         context,

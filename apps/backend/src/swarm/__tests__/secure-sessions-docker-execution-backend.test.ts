@@ -209,6 +209,32 @@ afterEach(async () => {
 dockerSuite(
   `Docker secure execution conformance [${dockerAvailability.code}]`,
   () => {
+    it("resolves an arbitrary mapped UID and GID for common tools", async () => {
+      const backend = new DockerSecureExecutionBackend({
+        scope: uniqueScope("mapped-identity"),
+        runAsUser: { uid: 42_420, gid: 42_421 },
+      });
+      const secureTask = task("mapped-identity");
+      cleanupOperations.push(async () => await backend.destroyTask(secureTask));
+
+      const result = await backend.execute({
+        task: secureTask,
+        command: {
+          executable: "sh",
+          args: [
+            "-c",
+            "ssh -G forge-secure.invalid >/dev/null && printf '%s:%s:%s:%s' \"$(id -u)\" \"$(id -g)\" \"$(id -un)\" \"$(id -gn)\"",
+          ],
+        },
+        guardOutput: passThroughGuard(),
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(Buffer.from(result.stdout).toString("utf8")).toBe(
+        "42420:42421:forge-secure:forge-secure",
+      );
+    }, 30_000);
+
     it("reuses one hardened same-path task sandbox for sixteen commands", async () => {
       const backend = new DockerSecureExecutionBackend({
         scope: uniqueScope("reuse"),
@@ -294,7 +320,7 @@ dockerSuite(
           executable: "sh",
           args: [
             "-c",
-            "for tool in bash cc curl git jq node npm pnpm psql python3 rsync script ssh; do command -v \"$tool\" >/dev/null || exit 9; done",
+            "for tool in bash cc curl git jq node npm pnpm psql python3 rsync script ssh; do command -v \"$tool\" >/dev/null || exit 9; done; getent passwd \"$(id -u)\" >/dev/null && getent group \"$(id -g)\" >/dev/null && ssh -G forge-secure.invalid >/dev/null",
           ],
         },
         guardOutput: passThroughGuard(),

@@ -9,6 +9,7 @@ import type {
 import { fetchSecureSecretsCatalog, type SecureSecretsCatalog } from './secure-secrets-api'
 import type {
   GrantSecureSecretLeaseRequest,
+  GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureAccessRequestSummary,
   SecureSecretBinding,
@@ -145,6 +146,36 @@ export async function grantSecureSessionLease(
     method: 'POST',
     headers: jsonHeaders(),
     body: JSON.stringify(lease),
+  })
+}
+
+export async function grantSecureSessionLeases(
+  apiClient: SettingsApiClient,
+  sessionAgentId: string,
+  baseRevision: number,
+  grants: SecureGrantInput[],
+): Promise<SecureSessionSnapshot> {
+  if (
+    grants.length === 0
+    || grants.some((grant) => grant.requestId !== undefined)
+  ) {
+    throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+  }
+  const input: GrantSecureSecretLeasesRequest = {
+    baseRevision,
+    grants: grants.map((grant) => {
+      const { baseRevision: _baseRevision, ...lease } = toLeaseRequest(
+        baseRevision,
+        grant,
+      )
+      void _baseRevision
+      return lease
+    }),
+  }
+  return requestSnapshot(apiClient, `${sessionPath(sessionAgentId)}/leases/batch`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(input),
   })
 }
 

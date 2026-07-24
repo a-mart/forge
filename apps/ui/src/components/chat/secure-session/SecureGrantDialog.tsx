@@ -1,4 +1,5 @@
-import { useId, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -9,10 +10,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { formatSecureBinding, secureBindingKey } from './format'
+import { formatSecureBinding } from './format'
 import type {
   SecureGrantInput,
   SecureLeasePolicyView,
+  SecureSecretBindingView,
   SecureSecretOption,
 } from './types'
 
@@ -30,7 +32,7 @@ const POLICY_OPTIONS: Array<{
   },
   {
     value: 'task',
-    label: 'Current task',
+    label: 'Until Secure Session stops',
     description: 'Injected into every Secure Bash command and its child processes until you revoke it or stop the session.',
     policy: { kind: 'task' },
   },
@@ -48,9 +50,20 @@ const POLICY_OPTIONS: Array<{
   },
 ]
 
+function selectDefaultBinding(
+  bindings: SecureSecretBindingView[],
+): SecureSecretBindingView | undefined {
+  return bindings.find((binding) => (
+    binding.kind === 'env'
+    && binding.variable.startsWith('FORGE_SECRET_')
+  )) ?? bindings[0]
+}
+
 interface SecureGrantDialogProps {
   secrets: SecureSecretOption[]
-  onGrant: (grant: SecureGrantInput) => void | Promise<void>
+  onGrant: (
+    grants: SecureGrantInput[],
+  ) => boolean | void | Promise<boolean | void>
   onClose: () => void
 }
 
@@ -63,90 +76,120 @@ export function SecureGrantDialog({
     () => secrets.filter((secret) => secret.available && secret.bindings.length > 0),
     [secrets],
   )
-  const [secretId, setSecretId] = useState(availableSecrets[0]?.secretId ?? '')
-  const selectedSecret = availableSecrets.find((secret) => secret.secretId === secretId)
-  const [bindingKey, setBindingKey] = useState(
-    selectedSecret?.bindings[0] ? secureBindingKey(selectedSecret.bindings[0]) : '',
+  const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>(
+    availableSecrets[0] ? [availableSecrets[0].secretId] : [],
   )
-  const [policyKey, setPolicyKey] = useState('one_use')
+  const [policyKey, setPolicyKey] = useState('task')
+  const [submitting, setSubmitting] = useState(false)
   const selectedPolicy = POLICY_OPTIONS.find((candidate) => candidate.value === policyKey)
-  const aliasId = useId()
-  const bindingId = useId()
   const scopeId = useId()
 
-  const handleSecretChange = (nextSecretId: string) => {
-    const nextSecret = availableSecrets.find((secret) => secret.secretId === nextSecretId)
-    setSecretId(nextSecretId)
-    setBindingKey(
-      nextSecret?.bindings[0] ? secureBindingKey(nextSecret.bindings[0]) : '',
-    )
+  useEffect(() => {
+    const availableIds = new Set(availableSecrets.map((secret) => secret.secretId))
+    setSelectedSecretIds((current) => {
+      const retained = current.filter((secretId) => availableIds.has(secretId))
+      return retained.length === current.length ? current : retained
+    })
+  }, [availableSecrets])
+
+  const toggleSecret = (secretId: string, selected: boolean) => {
+    setSelectedSecretIds((current) => selected
+      ? [...current, secretId]
+      : current.filter((candidate) => candidate !== secretId))
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const binding = selectedSecret?.bindings.find(
-      (candidate) => secureBindingKey(candidate) === bindingKey,
-    )
+    event.stopPropagation()
     const policy = POLICY_OPTIONS.find((candidate) => candidate.value === policyKey)?.policy
-    if (!selectedSecret || !binding || !policy) return
+    if (!policy || selectedSecretIds.length === 0 || submitting) return
 
-    void onGrant({
-      secretId: selectedSecret.secretId,
-      bindings: [binding],
-      policy,
+    const grants = selectedSecretIds.flatMap((secretId) => {
+      const secret = availableSecrets.find((candidate) => candidate.secretId === secretId)
+      const binding = secret ? selectDefaultBinding(secret.bindings) : undefined
+      return secret && binding
+        ? [{
+            secretId: secret.secretId,
+            bindings: [binding],
+            policy,
+          }]
+        : []
     })
-    onClose()
+    if (grants.length !== selectedSecretIds.length) {
+      setSelectedSecretIds(grants.map((grant) => grant.secretId))
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const result = await onGrant(grants)
+      if (result !== false) onClose()
+    } catch {
+      // The owner reports the actionable error; keep this reviewed selection open.
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <Dialog open onOpenChange={(open) => {
-      if (!open) onClose()
+      if (!open && !submitting) onClose()
     }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <form className="space-y-5" onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Grant a secret</DialogTitle>
+            <DialogTitle>Grant secrets</DialogTitle>
             <DialogDescription>
-              Choose the alias, binding, and lease scope. Secret values are never added to chat.
+              Choose one or more saved secrets and how long this task may use them.
+              Secret values are never added to chat.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor={aliasId}>Secret alias</Label>
-              <select
-                id={aliasId}
-                value={secretId}
-                onChange={(event) => handleSecretChange(event.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {availableSecrets.map((secret) => (
-                  <option key={secret.secretId} value={secret.secretId}>
-                    {secret.displayName
-                      ? `${secret.displayName} (${secret.displayAlias})`
-                      : secret.displayAlias}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor={bindingId}>Binding</Label>
-              <select
-                id={bindingId}
-                value={bindingKey}
-                onChange={(event) => setBindingKey(event.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {selectedSecret?.bindings.map((binding) => {
-                  const key = secureBindingKey(binding)
+            <div className="space-y-2">
+              <Label>Saved secrets</Label>
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                {availableSecrets.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                    No unleased saved secrets are available yet.
+                  </p>
+                ) : null}
+                {availableSecrets.map((secret) => {
+                  const checked = selectedSecretIds.includes(secret.secretId)
+                  const selectedBinding = selectDefaultBinding(secret.bindings)
                   return (
-                    <option key={key} value={key}>
-                      {formatSecureBinding(binding)}
-                    </option>
+                    <div
+                      key={secret.secretId}
+                      className="rounded-md border border-border/70 p-3"
+                    >
+                      <label className="flex cursor-pointer items-start gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={submitting}
+                          onChange={(event) => toggleSecret(secret.secretId, event.target.checked)}
+                          className="mt-0.5 size-4"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium">
+                            {secret.displayName ?? secret.displayAlias}
+                          </span>
+                          {secret.displayName ? (
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {secret.displayAlias}
+                            </span>
+                          ) : null}
+                        </span>
+                      </label>
+                      {checked && selectedBinding ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Available to commands as {formatSecureBinding(selectedBinding)}
+                        </p>
+                      ) : null}
+                    </div>
                   )
                 })}
-              </select>
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -154,6 +197,7 @@ export function SecureGrantDialog({
               <select
                 id={scopeId}
                 value={policyKey}
+                disabled={submitting}
                 onChange={(event) => setPolicyKey(event.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
               >
@@ -169,21 +213,30 @@ export function SecureGrantDialog({
             </div>
 
             <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-              The selected binding is available to the whole command process, not only
+              Each selected secret is available to the whole command process, not only
               to the action you intend. Secure Session output filtering helps with
               accidental echoes, but authorized code can still use or transform the value.
             </div>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="ghost" disabled={submitting} onClick={onClose}>
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={!selectedSecret || !bindingKey || !policyKey}
+              disabled={selectedSecretIds.length === 0 || !policyKey || submitting}
             >
-              Grant access
+              {submitting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Granting…
+                </>
+              ) : (
+                `Grant ${selectedSecretIds.length === 1
+                  ? '1 secret'
+                  : `${selectedSecretIds.length} secrets`}`
+              )}
             </Button>
           </DialogFooter>
         </form>

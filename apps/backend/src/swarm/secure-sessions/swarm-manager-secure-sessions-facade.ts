@@ -1,6 +1,7 @@
 import type {
   AgentDescriptor,
   GrantSecureSecretLeaseRequest,
+  GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureSecretProviderSummary,
   SecureSecretSummary,
@@ -98,6 +99,13 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     input: GrantSecureSecretLeaseRequest,
   ): Promise<SecureSessionSnapshot> {
     return this.secureSessions.grantSecureSessionLease(sessionAgentId, input);
+  }
+
+  grantSecureSessionLeases(
+    sessionAgentId: string,
+    input: GrantSecureSecretLeasesRequest,
+  ): Promise<SecureSessionSnapshot> {
+    return this.secureSessions.grantSecureSessionLeases(sessionAgentId, input);
   }
 
   revokeSecureSessionLease(

@@ -210,10 +210,18 @@ interface SecureSecretUseRequestBase {
   exposures: SecureSecretBinding[]
 }
 
-export type GrantSecureSecretLeaseRequest =
+export type GrantSecureSecretLeaseInput =
   & SecureSecretUseRequestBase
-  & { baseRevision: number }
   & SecureSecretLeaseSpec
+
+export type GrantSecureSecretLeaseRequest =
+  & GrantSecureSecretLeaseInput
+  & { baseRevision: number }
+
+export interface GrantSecureSecretLeasesRequest {
+  baseRevision: number
+  grants: GrantSecureSecretLeaseInput[]
+}
 
 export interface RevokeSecureSecretLeaseRequest {
   baseRevision: number
@@ -245,6 +253,7 @@ const SECURE_SESSIONS_MAX_ID_LENGTH = 256
 const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
+const SECURE_SESSIONS_MAX_GRANTS = 16
 
 function isOneOf<const Values extends readonly string[]>(
   values: Values,
@@ -453,23 +462,67 @@ function leaseSpecFromRequest(input: Record<string, unknown>): SecureSecretLease
   })
 }
 
-export function parseGrantSecureSecretLeaseRequest(
+function parseGrantSecureSecretLeaseInput(
   value: unknown,
-): GrantSecureSecretLeaseRequest {
-  const input = recordInput(value, 'request')
+  field: string,
+): GrantSecureSecretLeaseInput {
+  const input = recordInput(value, field)
   const lease = leaseSpecFromRequest(input)
   knownKeys(
     input,
     lease.leaseKind === 'timed'
-      ? ['baseRevision', 'secretId', 'exposures', 'leaseKind', 'durationSeconds']
-      : ['baseRevision', 'secretId', 'exposures', 'leaseKind'],
+      ? ['secretId', 'exposures', 'leaseKind', 'durationSeconds']
+      : ['secretId', 'exposures', 'leaseKind'],
+    field,
+  )
+  return {
+    secretId: boundedString(input.secretId, `${field}.secretId`, SECURE_SESSIONS_MAX_ID_LENGTH),
+    exposures: parseExposures(input.exposures),
+    ...lease,
+  }
+}
+
+export function parseGrantSecureSecretLeaseRequest(
+  value: unknown,
+): GrantSecureSecretLeaseRequest {
+  const input = recordInput(value, 'request')
+  const grant = parseGrantSecureSecretLeaseInput(
+    Object.fromEntries(
+      Object.entries(input).filter(([key]) => key !== 'baseRevision'),
+    ),
     'request',
   )
   return {
     baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
-    secretId: boundedString(input.secretId, 'request.secretId', SECURE_SESSIONS_MAX_ID_LENGTH),
-    exposures: parseExposures(input.exposures),
-    ...lease,
+    ...grant,
+  }
+}
+
+export function parseGrantSecureSecretLeasesRequest(
+  value: unknown,
+): GrantSecureSecretLeasesRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(input, ['baseRevision', 'grants'], 'request')
+  if (
+    !Array.isArray(input.grants)
+    || input.grants.length === 0
+    || input.grants.length > SECURE_SESSIONS_MAX_GRANTS
+  ) {
+    throw new SecureSessionsContractError(
+      `request.grants must contain 1 to ${SECURE_SESSIONS_MAX_GRANTS} grants`,
+    )
+  }
+  const grants = input.grants.map((grant, index) =>
+    parseGrantSecureSecretLeaseInput(grant, `request.grants[${index}]`)
+  )
+  if (new Set(grants.map(({ secretId }) => secretId)).size !== grants.length) {
+    throw new SecureSessionsContractError(
+      'request.grants must contain unique secret IDs',
+    )
+  }
+  return {
+    baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
+    grants,
   }
 }
 

@@ -41,7 +41,7 @@ the pinned runner image from the repository root:
 
 ```bash
 docker build \
-  --tag forge-secure-runner:node22-v3 \
+  --tag forge-secure-runner:node22-v4 \
   --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner \
   apps/backend/src/swarm/secure-sessions/execution
 ```
@@ -129,9 +129,12 @@ without a terminal.
 
 1. Open a local Builder manager whose current runtime is supported.
 2. Select the shield beside **Send** and start a Secure Session.
-3. Grant a saved alias with one or more bindings.
+3. Select one or more saved aliases. Forge gives a newly saved secret a stable,
+   generated environment delivery automatically; advanced saved bindings remain
+   available when a specific askpass, file, stdin, or environment shape is needed.
 4. Choose a lease:
-   - **Task** remains available until the Secure Session stops.
+   - **Until Secure Session stops** is the default and remains available until the
+     user revokes it or stops the Secure Session.
    - **Timed** remains available for the selected duration, up to 24 hours.
    - **One use** is atomically consumed by the next Secure Bash command, whether or
      not that command actually references the binding.
@@ -173,8 +176,11 @@ Secure Sessions make the following concrete promises for supported paths:
 - output is matched as raw bytes across arbitrary chunk boundaries, including common
   Base64, Base64url, hexadecimal, URL, and JSON encodings;
 - low-entropy values are buffered until command completion; harmless output is
-  released, while an exact match quarantines the result without revealing position;
+  released, while an exact match is replaced by a fixed redaction marker without
+  revealing its position;
 - a final structured guard protects runtime events and provider context;
+- successful output redaction completes the command normally, consumes a one-use
+  lease when applicable, and leaves task or timed leases available for later commands;
 - stopping or failing a secure operation destroys the task container when safe
   filtering or process control cannot be guaranteed.
 
@@ -268,7 +274,7 @@ still passes through the secure guard.
 | Environment unavailable | Docker is unavailable, unsupported, or the runner image failed its contract check |
 | Source locked or unavailable | Desktop safe storage, Bitwarden authentication, or the `bws` host command is unavailable |
 | Revision conflict | Another view changed the session; refresh before retrying |
-| Output quarantined | The guard observed a protected value or could not safely process output |
+| Protected output redacted | The guard removed protected material before it reached the agent; the Secure Session can continue |
 | Unsupported runtime | The current runtime cannot guarantee Forge-owned tools before provider continuation |
 
 Do not diagnose these failures by placing a value in chat, a shell command, an

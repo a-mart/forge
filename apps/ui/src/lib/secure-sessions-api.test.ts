@@ -7,6 +7,7 @@ import {
   fetchSecureSessionSnapshot,
   fulfillSecureAccessRequestPrivately,
   grantSecureSessionLease,
+  grantSecureSessionLeases,
   toProtocolBindings,
   toSecureSessionSnapshotView,
 } from './secure-sessions-api'
@@ -88,6 +89,45 @@ describe('Secure Sessions API', () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       baseRevision: 4,
       decision: 'approve',
+    })
+  })
+
+  it('posts a reviewed multi-secret grant as one batch request', async () => {
+    const fetch = vi.fn(async (_path: string, _init?: RequestInit) =>
+      new Response(JSON.stringify(snapshot(5)), { status: 200 }))
+
+    await grantSecureSessionLeases(makeClient(fetch), 'manager-1', 4, [
+      {
+        secretId: 'secret-1',
+        bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
+        policy: { kind: 'task' },
+      },
+      {
+        secretId: 'secret-2',
+        bindings: [{ kind: 'askpass', variable: 'SSH_ASKPASS' }],
+        policy: { kind: 'timed', durationSeconds: 900 },
+      },
+    ])
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      '/api/secure-sessions/manager-1/leases/batch',
+    )
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      baseRevision: 4,
+      grants: [
+        {
+          secretId: 'secret-1',
+          exposures: [{ deliveryKind: 'environment', targetName: 'DEPLOY_TOKEN' }],
+          leaseKind: 'task',
+        },
+        {
+          secretId: 'secret-2',
+          exposures: [{ deliveryKind: 'askpass', targetName: 'SSH_ASKPASS' }],
+          leaseKind: 'timed',
+          durationSeconds: 900,
+        },
+      ],
     })
   })
 

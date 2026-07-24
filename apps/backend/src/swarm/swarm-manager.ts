@@ -836,6 +836,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       skillFileService: this.skillFileService,
       secretsEnvService: this.secretsEnvService,
       secureSessions: {
+        hasActiveSession: (agentId) => this.secureSessionsService.getSecureRuntimeBinding(this.descriptors.get(agentId)!) !== undefined,
         stopForLifecycle: (agentId) =>
           this.secureSessionsService.stopSecureSessionForLifecycle(agentId),
       },

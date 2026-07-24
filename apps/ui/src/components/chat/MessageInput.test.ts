@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByLabelText } from '@testing-library/dom'
+import { fireEvent, getByLabelText, getByRole } from '@testing-library/dom'
 import { createElement, createRef, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -626,6 +626,48 @@ describe('MessageInput', () => {
       await flush()
 
       expect(getByLabelText(container, 'Start a secure session.')).toBeTruthy()
+    })
+
+    it('does not submit or clear a draft when granting saved secrets', async () => {
+      const onSend = vi.fn()
+      const onGrant = vi.fn(async () => true)
+      renderMessageInput({
+        onSend,
+        secureSessionPicker: {
+          availability: { state: 'available' },
+          snapshot: {
+            sessionAgentId: 'manager-1',
+            revision: 2,
+            executionMode: 'secure',
+            environmentStatus: 'ready',
+            leases: [],
+            pendingRequests: [],
+            updatedAt: '2026-07-23T12:00:00.000Z',
+          },
+          secrets: [{
+            secretId: 'secret-1',
+            displayAlias: 'ssh-password',
+            displayName: 'SSH password',
+            available: true,
+            bindings: [{ kind: 'askpass', variable: 'SSH_ASKPASS' }],
+          }],
+          onGrant,
+          onRevoke: vi.fn(),
+        },
+      })
+      await flush()
+
+      typeInTextarea('Keep this secure-session draft unsent')
+      fireEvent.click(getByLabelText(container, /secure session ready/i))
+      await flush()
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
+      await flush()
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant 1 secret' }))
+      await flush()
+
+      expect(onGrant).toHaveBeenCalled()
+      expect(onSend).not.toHaveBeenCalled()
+      expect(getTextarea().value).toBe('Keep this secure-session draft unsent')
     })
   })
 

@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import { fireEvent, getByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -439,7 +440,7 @@ describe('MessageList Secure Session attention', () => {
     expect(container.querySelector('[data-row-id]')).toBeNull()
   })
 
-  it('renders quarantined output outside the transcript with an explicit stop action', () => {
+  it('renders redacted output outside the transcript with dismiss and optional stop actions', () => {
     const onRevoke = vi.fn()
     render([], {
       secureSessionRequests: {
@@ -454,8 +455,15 @@ describe('MessageList Secure Session attention', () => {
       },
     })
 
-    expect(container.textContent).toContain('Secure output quarantined')
+    expect(container.textContent).toContain('Protected output redacted')
     expect(container.textContent).toContain('Potential protected material was withheld.')
+    expect(getByRole(container, 'button', { name: 'Dismiss' })).toBeTruthy()
+    expect(getByRole(container, 'button', { name: 'Stop Secure Session' })).toBeTruthy()
     expect(container.querySelector('[data-row-id]')).toBeNull()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Dismiss' }))
+    })
+    expect(container.textContent).not.toContain('Protected output redacted')
   })
 })

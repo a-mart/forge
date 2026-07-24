@@ -153,11 +153,11 @@ describe('SettingsSecrets', () => {
     await waitFor(() => {
       expect(getByText(container, 'Private sources')).toBeTruthy()
     })
-    expect(container.textContent).toContain('Saving a source here does not grant it to any task')
+    expect(container.textContent).toContain('no task receives access until you grant it')
 
-    activateTab('Bindings')
-    expect(container.textContent).toContain('They do not give a task access by themselves')
-    expect(container.textContent).toContain('task-scoped grant')
+    activateTab('Advanced delivery')
+    expect(container.textContent).toContain('Bindings never grant task access by themselves')
+    expect(container.textContent).toContain('generated environment delivery')
   })
 
   it('clears submitted local material immediately and leaves no secret value in the DOM', async () => {

@@ -172,6 +172,101 @@ describe("SecureSessionStore", () => {
     database.close();
   });
 
+  it("creates a multi-secret grant in one revision and rolls back deterministic failures", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    store.createSecretWithBindings({
+      secret: {
+        secretId: "secret-2",
+        providerId: "local",
+        displayAlias: "deploy-key",
+        scopeKind: "instance",
+        retention: "saved",
+        sourceLocator: "local:secret-2",
+        encryptedMaterial: Buffer.from("safe-storage-ciphertext-2")
+      },
+      bindings: [{
+        bindingId: "binding-2",
+        deliveryKind: "file",
+        targetPath: "/run/forge-secure/bindings/deploy-key",
+        fileMode: 0o400
+      }]
+    });
+    store.getOrCreateSessionState("session", {
+      profileId: "profile",
+      executionMode: "secure",
+      environmentStatus: "ready"
+    });
+
+    const granted = store.createLeases({
+      sessionAgentId: "session",
+      baseRevision: 0,
+      grants: [
+        {
+          leaseId: "lease-1",
+          secretId: "secret",
+          bindingIds: ["binding"],
+          leaseKind: "task"
+        },
+        {
+          leaseId: "lease-2",
+          secretId: "secret-2",
+          bindingIds: ["binding-2"],
+          leaseKind: "one_use"
+        }
+      ]
+    });
+
+    expect(granted).toEqual(expect.objectContaining({
+      changed: true,
+      revision: 1
+    }));
+    expect(granted.snapshot.leases).toHaveLength(2);
+    expect(database.prepare(`
+      SELECT event_type, lease_id, affected_count
+      FROM secure_session_revision
+      WHERE session_agent_id = ? AND revision = 1
+    `).get("session")).toEqual({
+      event_type: "lease_created",
+      lease_id: null,
+      affected_count: 2
+    });
+    expect(store.listAudit("session").filter(({ eventType }) =>
+      eventType === "lease_created"
+    )).toHaveLength(2);
+
+    const auditCount = store.listAudit("session").length;
+    expect(() => store.createLeases({
+      sessionAgentId: "session",
+      baseRevision: 1,
+      grants: [
+        {
+          leaseId: "lease-3",
+          secretId: "secret",
+          bindingIds: ["binding"],
+          leaseKind: "task"
+        },
+        {
+          leaseId: "lease-4",
+          secretId: "secret-2",
+          bindingIds: ["missing-binding"],
+          leaseKind: "task"
+        }
+      ]
+    })).toThrow(/bindings must all belong/);
+    expect(store.getSnapshot("session")).toEqual(expect.objectContaining({
+      state: expect.objectContaining({ revision: 1 }),
+      leases: expect.arrayContaining([
+        expect.objectContaining({ leaseId: "lease-1" }),
+        expect.objectContaining({ leaseId: "lease-2" })
+      ])
+    }));
+    expect(store.getLease("lease-3")).toBeNull();
+    expect(store.getLease("lease-4")).toBeNull();
+    expect(store.listAudit("session")).toHaveLength(auditCount);
+    database.close();
+  });
+
   it("allows only one one-use claim across independent SQLite connections", async () => {
     const directory = await mkdtemp(join(tmpdir(), "forge-secure-store-cas-"));
     const dbPath = join(directory, "secure-sessions.db");

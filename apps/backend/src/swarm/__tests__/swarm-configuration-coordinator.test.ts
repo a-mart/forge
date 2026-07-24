@@ -138,6 +138,7 @@ async function setup(input?: {
     skillFileService: new SkillFileService(),
     secretsEnvService,
     secureSessions: {
+      hasActiveSession: () => false,
       stopForLifecycle: late,
     },
     sessions: {

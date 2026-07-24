@@ -85,8 +85,10 @@ export interface SecureSessionPickerConfig {
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
-  onStart?: () => void | Promise<void>
-  onGrant: (grant: SecureGrantInput) => void | Promise<void>
+  onStart?: () => boolean | void | Promise<boolean | void>
+  onGrant: (
+    grants: SecureGrantInput[],
+  ) => boolean | void | Promise<boolean | void>
   onRevoke: (
     leaseId?: string,
     options?: SecureRevokeOptions,
@@ -101,7 +103,9 @@ export interface SecureSessionRequestConfig {
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
-  onGrant: (grant: SecureGrantInput) => void | Promise<void>
+  onGrant: (
+    grant: SecureGrantInput,
+  ) => boolean | void | Promise<boolean | void>
   onDeny: (requestId: string) => void | Promise<void>
   onRevoke?: (
     leaseId?: string,

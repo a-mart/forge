@@ -1,10 +1,12 @@
 import {
   SecureSessionsContractError,
   parseGrantSecureSecretLeaseRequest,
+  parseGrantSecureSecretLeasesRequest,
   parseResolveSecureSecretAccessRequest,
   parseRevokeSecureSecretLeaseRequest,
   parseSecureSecretBinding,
   type GrantSecureSecretLeaseRequest,
+  type GrantSecureSecretLeasesRequest,
   type ResolveSecureSecretAccessRequest,
   type SecureSecretBinding,
   type SecureSecretLeaseKind,
@@ -62,6 +64,10 @@ export interface SecureSessionsTransportService {
   grantSecureSessionLease(
     sessionAgentId: string,
     input: GrantSecureSecretLeaseRequest,
+  ): Promise<SecureSessionSnapshot>;
+  grantSecureSessionLeases(
+    sessionAgentId: string,
+    input: GrantSecureSecretLeasesRequest,
   ): Promise<SecureSessionSnapshot>;
   revokeSecureSessionLease(
     sessionAgentId: string,
@@ -144,6 +150,28 @@ export function createSecureSessionRoutes(options: {
             response,
             200,
             await options.service.grantSecureSessionLease(sessionAgentId, input),
+          );
+          return;
+        }
+
+        const batchLeasesMatch = requestUrl.pathname.match(
+          /^\/api\/secure-sessions\/([^/]+)\/leases\/batch$/,
+        );
+        if (request.method === "POST" && batchLeasesMatch) {
+          const sessionAgentId = parsePathId(
+            batchLeasesMatch[1],
+            "sessionAgentId",
+          );
+          const input = parseGrantSecureSecretLeasesRequest(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.grantSecureSessionLeases(
+              sessionAgentId,
+              input,
+            ),
           );
           return;
         }

@@ -63,6 +63,7 @@ import {
   fetchSecureSessionSnapshot,
   fulfillSecureAccessRequestPrivately,
   grantSecureSessionLease,
+  grantSecureSessionLeases,
   isPrivateSecureFulfillmentAvailable,
   revokeSecureSessionLease,
   secureSessionUiErrorMessage,
@@ -74,6 +75,9 @@ import {
 } from '@/lib/secure-sessions-api'
 import type { SecureSecretsCatalog } from '@/lib/secure-secrets-api'
 import { hydrateSessionWorkers } from './worker-hydration'
+import {
+  reconcileSecureBatchGrantFailure,
+} from './secure-batch-grant-reconciliation'
 import {
   LOCAL_ORIGIN_ID,
   forgeOriginManager,
@@ -260,7 +264,6 @@ export function BuilderSurface({
   // Keep local sidebar action handlers bound to the current local-origin client
   // during render so callbacks created below do not observe a stale ref when the
   // active origin changes.
-  // eslint-disable-next-line -- deliberate render-time assignment; see comment above
   localClientRef.current = localClient
   const setLocalState = useCallback((update: SetStateAction<ManagerWsState>) => {
     const target = originRegistry.getOrigin(LOCAL_ORIGIN_ID)
@@ -645,7 +648,6 @@ export function BuilderSurface({
   // effect.  Assigned during render (after panels creates the coordinator) so it
   // is visible to every effect on the next commit, matching the original
   // in-component ordering where the ref always held the live coordinator.
-  // eslint-disable-next-line -- deliberate render-time assignment (see comment above); matches original in-component ordering
   fileEditorCoordinatorRef.current = panels.fileEditorCoordinator
 
   const browserSessionAgentId = !isRemoteOriginActive ? activeManagerAgent?.agentId ?? null : null
@@ -897,15 +899,17 @@ export function BuilderSurface({
   const handleStartSecureSession = useCallback(async () => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
-    if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return
+    if (!apiClient || !client || !activeAgentId || isRemoteOriginActive) return false
     try {
       applySecureMutationResult(client, await startSecureSession(
         apiClient,
         activeAgentId,
         secureSessionSnapshot?.revision,
       ))
+      return true
     } catch (error) {
       reportSecureMutationError(client, activeAgentId, error)
+      return false
     }
   }, [
     activeAgentId,
@@ -926,16 +930,95 @@ export function BuilderSurface({
       || !activeAgentId
       || !secureSessionSnapshot
       || isRemoteOriginActive
-    ) return
+    ) return false
     try {
-      applySecureMutationResult(client, await grantSecureSessionLease(
+      let baseRevision = secureSessionSnapshot.revision
+      let nextSnapshot
+      try {
+        nextSnapshot = await grantSecureSessionLease(
+          apiClient,
+          activeAgentId,
+          baseRevision,
+          grant,
+        )
+      } catch (error) {
+        if (!(error instanceof SecureSessionUiError)) throw error
+        if (
+          error.code !== 'SECURE_STALE_REVISION'
+          && error.code !== 'SECURE_REQUEST_INVALID'
+        ) throw error
+        const refreshed = await fetchSecureSessionSnapshot(apiClient, activeAgentId)
+        applySecureMutationResult(client, refreshed)
+        if (error.code === 'SECURE_REQUEST_INVALID') throw error
+        if (
+          grant.requestId
+          && !refreshed.pendingRequests.some(
+            (request) => request.requestId === grant.requestId,
+          )
+        ) {
+          throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+        }
+        baseRevision = refreshed.revision
+        nextSnapshot = await grantSecureSessionLease(
+          apiClient,
+          activeAgentId,
+          baseRevision,
+          grant,
+        )
+      }
+      applySecureMutationResult(client, nextSnapshot)
+      return true
+    } catch (error) {
+      reportSecureMutationError(client, activeAgentId, error)
+      return false
+    }
+  }, [
+    activeAgentId,
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+    secureSessionSnapshot,
+  ])
+
+  const handleGrantSecureSessions = useCallback(async (
+    grants: SecureGrantInput[],
+  ) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    if (
+      !apiClient
+      || !client
+      || !activeAgentId
+      || !secureSessionSnapshot
+      || isRemoteOriginActive
+      || grants.length === 0
+    ) return false
+
+    try {
+      const nextSnapshot = await grantSecureSessionLeases(
         apiClient,
         activeAgentId,
         secureSessionSnapshot.revision,
-        grant,
-      ))
+        grants,
+      )
+      applySecureMutationResult(client, nextSnapshot)
+      return true
     } catch (error) {
-      reportSecureMutationError(client, activeAgentId, error)
+      let reportedError = error
+      const reconciliation = await reconcileSecureBatchGrantFailure(
+        error,
+        grants,
+        () => fetchSecureSessionSnapshot(apiClient, activeAgentId),
+      )
+      if (reconciliation) {
+        applySecureMutationResult(client, reconciliation.snapshot)
+        if (reconciliation.confirmed) return true
+        reportedError = new SecureSessionUiError('SECURE_STALE_REVISION')
+      }
+      reportSecureMutationError(client, activeAgentId, reportedError)
+      return false
     }
   }, [
     activeAgentId,
@@ -996,12 +1079,36 @@ export function BuilderSurface({
       || isRemoteOriginActive
     ) return
     try {
-      applySecureMutationResult(client, await denySecureAccessRequest(
-        apiClient,
-        activeAgentId,
-        requestId,
-        secureSessionSnapshot.revision,
-      ))
+      let nextSnapshot
+      try {
+        nextSnapshot = await denySecureAccessRequest(
+          apiClient,
+          activeAgentId,
+          requestId,
+          secureSessionSnapshot.revision,
+        )
+      } catch (error) {
+        if (!(error instanceof SecureSessionUiError)) throw error
+        if (
+          error.code !== 'SECURE_STALE_REVISION'
+          && error.code !== 'SECURE_REQUEST_INVALID'
+        ) throw error
+        const refreshed = await fetchSecureSessionSnapshot(apiClient, activeAgentId)
+        applySecureMutationResult(client, refreshed)
+        if (
+          error.code === 'SECURE_REQUEST_INVALID'
+          || !refreshed.pendingRequests.some(
+            (request) => request.requestId === requestId,
+          )
+        ) throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
+        nextSnapshot = await denySecureAccessRequest(
+          apiClient,
+          activeAgentId,
+          requestId,
+          refreshed.revision,
+        )
+      }
+      applySecureMutationResult(client, nextSnapshot)
     } catch (error) {
       reportSecureMutationError(client, activeAgentId, error)
     }
@@ -1076,7 +1183,7 @@ export function BuilderSurface({
             ...(secureSessionSnapshotView.outputState === 'quarantined'
               ? {
                   outputStateReason:
-                    'Potential protected material was withheld. The secure session was stopped.',
+                    'Forge removed protected material before it reached the agent. The Secure Session remains active.',
                 }
               : {}),
           }),
@@ -1087,13 +1194,13 @@ export function BuilderSurface({
           || state.secureSessionSnapshotLoadingSessionId === activeAgentId
         )),
       ...(isRemoteOriginActive ? {} : { onStart: handleStartSecureSession }),
-      onGrant: handleGrantSecureSession,
+      onGrant: handleGrantSecureSessions,
       onRevoke: handleRevokeSecureSession,
     }
   }, [
     activeAgentId,
     activeOriginId,
-    handleGrantSecureSession,
+    handleGrantSecureSessions,
     handleRevokeSecureSession,
     handleStartSecureSession,
     isActiveManager,
@@ -1122,7 +1229,7 @@ export function BuilderSurface({
             ...(secureSessionSnapshotView.outputState === 'quarantined'
               ? {
                   outputStateReason:
-                    'Potential protected material was withheld. The secure session was stopped.',
+                    'Forge removed protected material before it reached the agent. The Secure Session remains active.',
                 }
               : {}),
           }),

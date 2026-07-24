@@ -1,6 +1,6 @@
 FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
 
-LABEL com.forge.secure-execution.runner-contract="3"
+LABEL com.forge.secure-execution.runner-contract="4"
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -10,11 +10,16 @@ RUN apt-get update \
       curl \
       git \
       jq \
+      libnss-wrapper \
       openssh-client \
       postgresql-client \
       python3 \
       rsync \
     && rm -rf /var/lib/apt/lists/* \
+    && nss_wrapper="$(dpkg-query -L libnss-wrapper | grep '/libnss_wrapper\.so$' | head -n 1)" \
+    && test -f "$nss_wrapper" \
+    && mkdir -p /usr/local/lib/forge \
+    && ln -s "$nss_wrapper" /usr/local/lib/forge/libnss_wrapper.so \
     && corepack enable pnpm \
     && corepack install --global pnpm@10.30.1 \
     && for tool in bash cc curl git jq node npm pnpm psql python3 rsync script ssh; do \

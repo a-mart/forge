@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { inspect } from "node:util";
 
-export const SECURE_OUTPUT_QUARANTINE = "[secure output quarantined]" as const;
+export const SECURE_OUTPUT_QUARANTINE = "[secret redacted by Forge]" as const;
 
 const DEFAULT_MAX_VALUE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_REGISTERED_BYTES = 8 * 1024 * 1024;
@@ -90,9 +90,10 @@ export interface SecureOutputGuardInput<Stream extends string = string> {
   final: boolean;
 }
 
-export type SecureOutputGuard<Stream extends string = string> = (
-  input: SecureOutputGuardInput<Stream>,
-) => Uint8Array;
+export interface SecureOutputGuard<Stream extends string = string> {
+  (input: SecureOutputGuardInput<Stream>): Uint8Array;
+  didQuarantine(): boolean;
+}
 
 interface NormalizedOptions {
   maxValueBytes: number;
@@ -490,16 +491,6 @@ function quarantineBytes(): Buffer {
   return Buffer.from(QUARANTINE_BYTES);
 }
 
-function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
-  return Buffer.from(
-    haystack.buffer,
-    haystack.byteOffset,
-    haystack.byteLength,
-  ).includes(
-    Buffer.from(needle.buffer, needle.byteOffset, needle.byteLength),
-  );
-}
-
 function containsRegisteredValue(matcher: PatternMatcher, bytes: Uint8Array): boolean {
   const cursor = matcher.createCursor();
   try {
@@ -516,6 +507,7 @@ export class SecureValueStreamGuard {
   private bufferedBytes = 0;
   private state: StreamState = "open";
   private markerEmitted = false;
+  private quarantined = false;
 
   constructor(
     matcher: PatternMatcher,
@@ -582,6 +574,10 @@ export class SecureValueStreamGuard {
     throw new SecureValueGuardError("SECURE_VALUE_SERIALIZATION_BLOCKED");
   }
 
+  didQuarantine(): boolean {
+    return this.quarantined;
+  }
+
   [inspect.custom](): string {
     return "[SecureValueStreamGuard]";
   }
@@ -637,6 +633,7 @@ export class SecureValueStreamGuard {
   }
 
   private quarantine(prefix: Uint8Array): Uint8Array {
+    this.quarantined = true;
     this.state = "quarantined";
     this.pending.fill(0);
     this.pending = Buffer.alloc(0);
@@ -712,7 +709,8 @@ export class SecureValueGuard {
     const finalizationOrder: Stream[] = [];
     let combinedQuarantined = false;
     let bufferedMarkerEmitted = false;
-    return ({ stream, bytes, final }) => {
+    let outputQuarantined = false;
+    const outputGuard = (({ stream, bytes, final }) => {
       this.assertUsable();
       if (combinedQuarantined) {
         return Buffer.alloc(0);
@@ -721,11 +719,10 @@ export class SecureValueGuard {
         throw new SecureValueGuardError("SECURE_VALUE_STREAM_CLOSED");
       }
 
-      const combinedOutput = bytes.byteLength === 0
-        ? Buffer.alloc(0)
-        : combined.write(bytes);
-      if (containsBytes(combinedOutput, QUARANTINE_BYTES)) {
+      if (bytes.byteLength > 0) combined.write(bytes);
+      if (combined.didQuarantine()) {
         combinedQuarantined = true;
+        outputQuarantined = true;
         combined.dispose();
         for (const existing of streams.values()) existing.dispose();
         streams.clear();
@@ -741,6 +738,7 @@ export class SecureValueGuard {
         streams.set(stream, guarded);
       }
       let output = guarded.write(bytes);
+      if (guarded.didQuarantine()) outputQuarantined = true;
       if (final) {
         finalized.add(stream);
         finalizationOrder.push(stream);
@@ -752,16 +750,20 @@ export class SecureValueGuard {
           finalized.has("stdout" as Stream)
           && finalized.has("stderr" as Stream)
         ) {
-          const combinedTail = combined.end();
-          if (containsBytes(combinedTail, QUARANTINE_BYTES)) {
+          combined.end();
+          if (combined.didQuarantine()) {
             combinedQuarantined = true;
+            outputQuarantined = true;
             for (const existing of streams.values()) existing.dispose();
             streams.clear();
             return quarantineBytes();
           }
           const tails = finalizationOrder.map((name) => {
             const existing = streams.get(name);
-            return existing ? existing.end() : Buffer.alloc(0);
+            if (!existing) return Buffer.alloc(0);
+            const tail = existing.end();
+            if (existing.didQuarantine()) outputQuarantined = true;
+            return tail;
           });
           output = Buffer.concat([Buffer.from(output), ...tails.map(Buffer.from)]);
         }
@@ -778,7 +780,9 @@ export class SecureValueGuard {
       }
       bufferedMarkerEmitted = true;
       return output;
-    };
+    }) as SecureOutputGuard<Stream>;
+    outputGuard.didQuarantine = () => outputQuarantined;
+    return outputGuard;
   }
 
   /**

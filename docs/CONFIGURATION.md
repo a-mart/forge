@@ -42,7 +42,7 @@ Managed Browser has no environment variable and no Settings → Skills toggle. I
 Secure Sessions are configured through **Settings → Secrets** rather than environment
 variables. Forge Desktop encrypts local values and Bitwarden machine credentials before
 the local Builder stores them. The Docker execution backend requires the pinned
-`forge-secure-runner:node22-v3` image, which can be built with the command in the
+`forge-secure-runner:node22-v4` image, which can be built with the command in the
 [Secure Sessions guide](SECURE_SESSIONS.md#set-up-the-execution-environment). Its
 effective Docker endpoint must be a local `unix://` socket; remote Docker contexts and
 remote `DOCKER_HOST` transports are rejected rather than treated as a deployment

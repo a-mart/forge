@@ -19,7 +19,9 @@ import {
   type BeginSecureSessionExposureInput,
   type CloseSecureSessionExposureInput,
   type CompleteSecureSessionLeaseUseInput,
+  type CreateSecureSessionLeaseGrantInput,
   type CreateSecureSessionLeaseInput,
+  type CreateSecureSessionLeasesInput,
   type CreateSecureSessionRequestInput,
   type CreateSecureSessionSecretInput,
   type InitializeSecureSessionStateInput,
@@ -849,27 +851,78 @@ export class SecureSessionStore {
   }
 
   createLease(input: CreateSecureSessionLeaseInput): SecureSessionMutationResult {
-    const normalized = this.normalizeCreateLeaseInput(input);
+    return this.createLeases({
+      sessionAgentId: input.sessionAgentId,
+      baseRevision: input.baseRevision,
+      grants: [{
+        leaseId: input.leaseId,
+        secretId: input.secretId,
+        bindingIds: input.bindingIds,
+        leaseKind: input.leaseKind,
+        requestId: input.requestId,
+        expiresAt: input.expiresAt,
+      }],
+    });
+  }
+
+  createLeases(input: CreateSecureSessionLeasesInput): SecureSessionMutationResult {
+    assertId(input.sessionAgentId, "session agent ID");
+    assertRevision(input.baseRevision);
+    if (
+      !Array.isArray(input.grants)
+      || input.grants.length < 1
+      || input.grants.length > MAX_BINDINGS
+    ) {
+      throw new Error(`Lease grants must contain between 1 and ${MAX_BINDINGS} entries`);
+    }
+    const normalized = input.grants.map((grant) => ({
+      grant,
+      normalized: this.normalizeCreateLeaseGrantInput(grant),
+    }));
+    if (new Set(input.grants.map(({ leaseId }) => leaseId)).size !== input.grants.length) {
+      throw new Error("Lease grants must contain unique lease IDs");
+    }
+    if (new Set(input.grants.map(({ secretId }) => secretId)).size !== input.grants.length) {
+      throw new Error("Lease grants must contain unique secret IDs");
+    }
     return this.database.transaction(() => {
-      const existing = this.getLease(input.leaseId);
-      if (existing) {
-        if (!sameLease(existing, input, normalized)) throw new SecureSessionIdConflictError("lease");
+      const pending: typeof normalized = [];
+      for (const item of normalized) {
+        const existing = this.getLease(item.grant.leaseId);
+        if (existing) {
+          if (
+            !sameLeaseGrant(
+              existing,
+              input.sessionAgentId,
+              item.grant,
+              item.normalized,
+            )
+          ) {
+            throw new SecureSessionIdConflictError("lease");
+          }
+        } else {
+          pending.push(item);
+        }
+      }
+      if (pending.length === 0) {
         const snapshot = this.getSnapshot(input.sessionAgentId);
         return { changed: false, revision: snapshot.state.revision, snapshot };
       }
-      const state = this.getOrCreateSessionState(input.sessionAgentId);
-      this.assertRevision(state, input.baseRevision);
-      this.requireSecret(input.secretId);
-      this.requireBindingsForSecret(input.secretId, normalized.bindingIds);
-      if (input.requestId) {
-        const request = this.requireRequest(input.requestId);
+
+      for (const { grant, normalized: normalizedGrant } of pending) {
+        this.requireSecret(grant.secretId);
+        this.requireBindingsForSecret(grant.secretId, normalizedGrant.bindingIds);
+        if (!grant.requestId) continue;
+        const request = this.requireRequest(grant.requestId);
         if (
           request.sessionAgentId !== input.sessionAgentId ||
-          request.secretId !== input.secretId
+          request.secretId !== grant.secretId
         ) {
           throw new SecureSessionIdConflictError("lease request");
         }
-        const bindings = normalized.bindingIds.map((bindingId) => this.requireBinding(bindingId));
+        const bindings = normalizedGrant.bindingIds.map(
+          (bindingId) => this.requireBinding(bindingId),
+        );
         if (!sameExposureDescriptors(request.requestedExposures, bindings)) {
           throw new SecureSessionIdConflictError("lease request exposures");
         }
@@ -877,44 +930,60 @@ export class SecureSessionStore {
           throw new Error("Secure session request is not grantable");
         }
       }
+
+      const state = this.getOrCreateSessionState(input.sessionAgentId);
+      this.assertRevision(state, input.baseRevision);
       const now = this.timestamp();
-      const revision = this.incrementRevision(input.sessionAgentId, "lease_created", input.leaseId, 1, now);
-      this.database.prepare(`
+      const revision = this.incrementRevision(
+        input.sessionAgentId,
+        "lease_created",
+        pending.length === 1 ? pending[0]!.grant.leaseId : null,
+        pending.length,
+        now,
+      );
+      const insertLease = this.database.prepare(`
         INSERT INTO secure_session_lease (
           lease_id, session_agent_id, secret_id, request_id, lease_kind, state,
           issued_revision, updated_revision, expires_at, last_used_at, remaining_uses,
           revoked_at, revocation_reason, one_use_operation_id, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)
-      `).run(
-        input.leaseId,
-        input.sessionAgentId,
-        input.secretId,
-        input.requestId ?? null,
-        input.leaseKind,
-        revision,
-        revision,
-        normalized.expiresAt,
-        input.leaseKind === "one_use" ? 1 : null,
-        now,
-        now
-      );
-      this.insertBindingLinks("secure_session_lease_binding", "lease_id", input.leaseId, normalized.bindingIds);
-      if (input.requestId) {
-        this.database.prepare(`
+      `);
+      const approveRequest = this.database.prepare(`
           UPDATE secure_session_request
           SET state = 'approved', resolved_at = COALESCE(resolved_at, ?)
           WHERE request_id = ?
-        `).run(now, input.requestId);
+      `);
+      for (const { grant, normalized: normalizedGrant } of pending) {
+        insertLease.run(
+          grant.leaseId,
+          input.sessionAgentId,
+          grant.secretId,
+          grant.requestId ?? null,
+          grant.leaseKind,
+          revision,
+          revision,
+          normalizedGrant.expiresAt,
+          grant.leaseKind === "one_use" ? 1 : null,
+          now,
+          now,
+        );
+        this.insertBindingLinks(
+          "secure_session_lease_binding",
+          "lease_id",
+          grant.leaseId,
+          normalizedGrant.bindingIds,
+        );
+        if (grant.requestId) approveRequest.run(now, grant.requestId);
+        this.audit({
+          eventType: "lease_created",
+          sessionAgentId: input.sessionAgentId,
+          secretId: grant.secretId,
+          requestId: grant.requestId ?? null,
+          leaseId: grant.leaseId,
+          outcome: "created",
+          occurredAt: now,
+        });
       }
-      this.audit({
-        eventType: "lease_created",
-        sessionAgentId: input.sessionAgentId,
-        secretId: input.secretId,
-        requestId: input.requestId ?? null,
-        leaseId: input.leaseId,
-        outcome: "created",
-        occurredAt: now
-      });
       return {
         changed: true,
         revision,
@@ -1383,19 +1452,17 @@ export class SecureSessionStore {
     };
   }
 
-  private normalizeCreateLeaseInput(input: CreateSecureSessionLeaseInput): {
+  private normalizeCreateLeaseGrantInput(input: CreateSecureSessionLeaseGrantInput): {
     bindingIds: string[];
     expiresAt: string | null;
   } {
     assertId(input.leaseId, "lease ID");
-    assertId(input.sessionAgentId, "session agent ID");
     assertId(input.secretId, "secret ID");
     if (input.requestId !== undefined && input.requestId !== null) {
       assertId(input.requestId, "request ID");
     }
     const bindingIds = normalizeIds(input.bindingIds, "lease binding IDs");
     assertEnum(input.leaseKind, SECURE_SESSION_LEASE_KINDS, "lease kind");
-    assertRevision(input.baseRevision);
     const expiresAt = normalizeOptionalTimestamp(input.expiresAt, "lease expiration time");
     if (input.leaseKind === "timed" && expiresAt === null) {
       throw new Error("Timed leases require an expiration time");
@@ -2075,12 +2142,13 @@ function sameRequest(
     sameExposureDescriptors(existing.requestedExposures, normalized.requestedExposures);
 }
 
-function sameLease(
+function sameLeaseGrant(
   existing: SecureSessionLease,
-  input: CreateSecureSessionLeaseInput,
+  sessionAgentId: string,
+  input: CreateSecureSessionLeaseGrantInput,
   normalized: { bindingIds: string[]; expiresAt: string | null }
 ): boolean {
-  return existing.sessionAgentId === input.sessionAgentId &&
+  return existing.sessionAgentId === sessionAgentId &&
     existing.secretId === input.secretId &&
     existing.requestId === (input.requestId ?? null) &&
     existing.leaseKind === input.leaseKind &&

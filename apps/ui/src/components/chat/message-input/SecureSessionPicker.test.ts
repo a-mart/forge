@@ -26,6 +26,17 @@ const availableSecret = {
   bindings: [
     { kind: 'env' as const, variable: 'DEPLOY_TOKEN' },
     { kind: 'stdin' as const },
+    { kind: 'env' as const, variable: 'FORGE_SECRET_DEPLOY_TOKEN_A1B2C3' },
+  ],
+}
+
+const secondAvailableSecret = {
+  secretId: 'secret-2',
+  displayAlias: 'ssh-password',
+  displayName: 'SSH password',
+  available: true,
+  bindings: [
+    { kind: 'askpass' as const, variable: 'SSH_ASKPASS' },
   ],
 }
 
@@ -111,31 +122,126 @@ describe('SecureSessionPicker', () => {
     expect(onRevoke).toHaveBeenCalledWith('lease-1')
   })
 
-  it('collects only alias, binding, and scope metadata for proactive grants', () => {
+  it('defaults to session-lifetime access and grants several saved secrets together', async () => {
     const onGrant = vi.fn()
-    renderPicker(makeConfig({ onGrant }))
+    renderPicker(makeConfig({
+      onGrant,
+      secrets: [availableSecret, secondAvailableSecret],
+    }))
 
     openPicker(/secure session ready/i)
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant a secret' }))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
     })
 
-    expect(getByLabelText(document.body, 'Secret alias')).toBeTruthy()
-    expect(getByLabelText(document.body, 'Binding')).toBeTruthy()
+    expect(getByLabelText(document.body, /Deploy token/)).toBeTruthy()
+    expect(getByLabelText(document.body, /SSH password/)).toBeTruthy()
     expect(getByLabelText(document.body, 'Scope')).toBeTruthy()
     expect(document.body.querySelector('input[type="password"]')).toBeNull()
-    expect(document.body.textContent).toContain('next Secure Bash command')
+    expect((getByLabelText(document.body, 'Scope') as HTMLSelectElement).value).toBe('task')
+    expect(getByRole(document.body, 'option', {
+      name: 'Until Secure Session stops',
+    })).toBeTruthy()
     expect(document.body.textContent).toContain('whole command process')
 
     flushSync(() => {
-      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant access' }))
+      fireEvent.click(getByLabelText(document.body, /SSH password/))
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant 2 secrets' }))
     })
 
-    expect(onGrant).toHaveBeenCalledWith({
-      secretId: 'secret-1',
-      bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
-      policy: { kind: 'one_use' },
+    expect(onGrant).toHaveBeenCalledWith([
+      {
+        secretId: 'secret-1',
+        bindings: [{
+          kind: 'env',
+          variable: 'FORGE_SECRET_DEPLOY_TOKEN_A1B2C3',
+        }],
+        policy: { kind: 'task' },
+      },
+      {
+        secretId: 'secret-2',
+        bindings: [{ kind: 'askpass', variable: 'SSH_ASKPASS' }],
+        policy: { kind: 'task' },
+      },
+    ])
+  })
+
+  it('removes selections that become ungrantable while review remains open', async () => {
+    const onGrant = vi.fn(async () => false)
+    const config = makeConfig({
+      onGrant,
+      secrets: [availableSecret, secondAvailableSecret],
     })
+    renderPicker(config)
+
+    openPicker(/secure session ready/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByLabelText(document.body, /SSH password/))
+    })
+    expect(getByRole(document.body, 'button', { name: 'Grant 2 secrets' })).toBeTruthy()
+
+    renderPicker({
+      ...config,
+      snapshot: {
+        ...config.snapshot!,
+        revision: 4,
+        leases: [{
+          leaseId: 'lease-2',
+          secretId: 'secret-2',
+          displayAlias: 'ssh-password',
+          policy: { kind: 'task' },
+          status: 'active',
+          bindings: [{ kind: 'askpass', variable: 'SSH_ASKPASS' }],
+        }],
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(getByRole(document.body, 'button', { name: 'Grant 1 secret' })).toBeTruthy()
+      expect(document.body.textContent).not.toContain('SSH password')
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant 1 secret' }))
+    })
+    await vi.waitFor(() => {
+      expect(onGrant).toHaveBeenCalledWith([{
+        secretId: 'secret-1',
+        bindings: [{
+          kind: 'env',
+          variable: 'FORGE_SECRET_DEPLOY_TOKEN_A1B2C3',
+        }],
+        policy: { kind: 'task' },
+      }])
+    })
+  })
+
+  it('opens the grant dialog immediately after starting successfully', async () => {
+    const onStart = vi.fn(async () => true)
+    renderPicker(makeConfig({
+      onStart,
+      snapshot: {
+        sessionAgentId: 'manager-1',
+        revision: 1,
+        executionMode: 'standard',
+        environmentStatus: 'stopped',
+        leases: [],
+        pendingRequests: [],
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
+    }))
+
+    openPicker(/start a secure session/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Start secure session' }))
+    })
+    await onStart.mock.results[0]?.value
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getByRole(document.body, 'heading', { name: 'Grant secrets' })).toBeTruthy()
   })
 
   it('requires explicit confirmation before stopping processes and revoking all leases', () => {
@@ -146,7 +252,7 @@ describe('SecureSessionPicker', () => {
       outputStateReason: 'Potential secret material was withheld.',
     }))
 
-    openPicker(/output quarantined/i)
+    openPicker(/protected output redacted/i)
     expect(document.body.textContent).toContain('Potential secret material was withheld.')
     flushSync(() => {
       fireEvent.click(getByRole(document.body, 'button', { name: 'Stop processes and revoke' }))

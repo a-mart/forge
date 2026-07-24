@@ -22,6 +22,51 @@ const ALPHA = "alpha-secret-3f4d2c";
 const BETA = "beta-secret-8e7a1b";
 
 describe("SecureSessionsService", () => {
+  it("creates a stable automatic delivery for secrets saved without bindings", async () => {
+    const harness = createHarness();
+    const created = await harness.service.createLocalSecureSecret({
+      displayAlias: "server/password",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+
+    expect(created.bindings).toEqual([expect.objectContaining({
+      deliveryKind: "environment",
+      targetName: expect.stringMatching(/^FORGE_SECRET_SERVER_PASSWORD_[A-Z0-9]+$/),
+    })]);
+    const originalBinding = created.bindings[0];
+
+    const renamed = await harness.service.updateSecureSecret(created.secretId, {
+      displayAlias: "renamed/password",
+    });
+    expect(renamed.bindings).toEqual([originalBinding]);
+    await harness.close();
+  });
+
+  it("backfills a default delivery for legacy secrets that have no bindings", async () => {
+    const harness = createHarness();
+    const created = await harness.service.createLocalSecureSecret({
+      displayAlias: "legacy/password",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+    const [existingBinding] = harness.store.listBindings(created.secretId);
+    expect(existingBinding).toBeDefined();
+    harness.store.deleteBinding(existingBinding!.bindingId);
+    expect(harness.store.listBindings(created.secretId)).toEqual([]);
+
+    await harness.service.initializeSecureSessions();
+
+    const backfilledBindings = harness.store.listBindings(created.secretId);
+    expect(backfilledBindings).toEqual([
+      expect.objectContaining({
+        deliveryKind: "environment",
+        targetName: expect.stringMatching(/^FORGE_SECRET_LEGACY_PASSWORD_[A-Z0-9]+$/),
+      }),
+    ]);
+    await harness.service.initializeSecureSessions();
+    expect(harness.store.listBindings(created.secretId)).toEqual(backfilledBindings);
+    await harness.close();
+  });
+
   it("recovers every stale sandbox once before authorizing secure execution", async () => {
     const harness = createHarness({ recoveredSandboxIds: ["stale-a", "stale-b"] });
 
@@ -427,6 +472,186 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("grants several proactive secrets with one rebuild, revision, and final snapshot", async () => {
+    const harness = createHarness();
+    const alpha = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+    });
+    const beta = await harness.service.createLocalSecureSecret({
+      displayAlias: "beta",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{
+        deliveryKind: "file",
+        targetPath: "/run/forge-secure/bindings/beta",
+        fileMode: 0o400,
+      }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    const snapshotsBefore = harness.snapshots.length;
+    const destroysBefore = harness.execution.destroyed.length;
+    const ensuresBefore = harness.execution.ensured.length;
+
+    const result = await harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: [
+        {
+          secretId: alpha.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+          leaseKind: "task",
+        },
+        {
+          secretId: beta.secretId,
+          exposures: [{
+            deliveryKind: "file",
+            targetPath: "/run/forge-secure/bindings/beta",
+            fileMode: 0o400,
+          }],
+          leaseKind: "timed",
+          durationSeconds: 300,
+        },
+      ],
+    });
+
+    expect(result.revision).toBe(started.revision + 1);
+    expect(result.leases).toEqual([
+      expect.objectContaining({ secretId: alpha.secretId, status: "active" }),
+      expect.objectContaining({ secretId: beta.secretId, status: "active" }),
+    ]);
+    expect(harness.execution.destroyed).toHaveLength(destroysBefore + 1);
+    expect(harness.execution.ensured).toHaveLength(ensuresBefore + 1);
+    expect(harness.snapshots).toHaveLength(snapshotsBefore + 1);
+    const stored = harness.store.getSnapshot("manager-a");
+    expect(new Set(stored.leases.map(({ issuedRevision }) => issuedRevision)))
+      .toEqual(new Set([result.revision]));
+    expect(harness.store.listAudit("manager-a").filter(({ eventType }) =>
+      eventType === "lease_created"
+    )).toHaveLength(2);
+    expect(harness.sourceResolutions.get(ALPHA)).toBe(1);
+    expect(harness.sourceResolutions.get(BETA)).toBe(1);
+    expect(harness.resolvedMaterials).toHaveLength(2);
+    expect(harness.resolvedMaterials.every(({ released }) => !released)).toBe(true);
+    await harness.close();
+  });
+
+  it("rejects cross-batch binding collisions before rebuilding or creating any lease", async () => {
+    const harness = createHarness();
+    const alpha = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "SHARED_TOKEN" }],
+    });
+    const beta = await harness.service.createLocalSecureSecret({
+      displayAlias: "beta",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "SHARED_TOKEN" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    const snapshotsBefore = harness.snapshots.length;
+    const destroysBefore = harness.execution.destroyed.length;
+    const ensuresBefore = harness.execution.ensured.length;
+    const auditsBefore = harness.store.listAudit("manager-a").length;
+
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: started.revision,
+      grants: [
+        {
+          secretId: alpha.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "SHARED_TOKEN" }],
+          leaseKind: "task",
+        },
+        {
+          secretId: beta.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "SHARED_TOKEN" }],
+          leaseKind: "one_use",
+        },
+      ],
+    })).rejects.toThrow("SECURE_REQUEST_INVALID");
+
+    expect(harness.store.getSnapshot("manager-a")).toEqual(expect.objectContaining({
+      state: expect.objectContaining({ revision: started.revision }),
+      leases: [],
+    }));
+    expect(harness.store.listAudit("manager-a")).toHaveLength(auditsBefore);
+    expect(harness.execution.destroyed).toHaveLength(destroysBefore);
+    expect(harness.execution.ensured).toHaveLength(ensuresBefore);
+    expect(harness.snapshots).toHaveLength(snapshotsBefore);
+    await harness.close();
+  });
+
+  it("releases a pre-resolved batch on source failure without disturbing existing authority", async () => {
+    const harness = createHarness({ failSourceResolutionAfter: 2 });
+    const existing = await harness.service.createLocalSecureSecret({
+      displayAlias: "existing",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "EXISTING_TOKEN" }],
+    });
+    const proposed = await harness.service.createLocalSecureSecret({
+      displayAlias: "proposed",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "PROPOSED_TOKEN" }],
+    });
+    const failing = await harness.service.createLocalSecureSecret({
+      displayAlias: "failing",
+      encryptedMaterial: Buffer.from("failing-secret").toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "FAILING_TOKEN" }],
+    });
+    await grant(harness, "manager-a", existing.secretId, "existing");
+    const before = await harness.service.getSecureSessionSnapshot("manager-a");
+    const existingMaterial = harness.resolvedMaterials[0]!;
+    const destroysBefore = harness.execution.destroyed.length;
+    const ensuresBefore = harness.execution.ensured.length;
+    const leaseAuditsBefore = harness.store.listAudit("manager-a").filter(
+      ({ eventType }) => eventType === "lease_created",
+    ).length;
+
+    await expect(harness.service.grantSecureSessionLeases("manager-a", {
+      baseRevision: before.revision,
+      grants: [
+        {
+          secretId: proposed.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "PROPOSED_TOKEN" }],
+          leaseKind: "task",
+        },
+        {
+          secretId: failing.secretId,
+          exposures: [{ deliveryKind: "environment", targetName: "FAILING_TOKEN" }],
+          leaseKind: "task",
+        },
+      ],
+    })).rejects.toThrow("SECURE_SOURCE_UNAVAILABLE");
+
+    const after = await harness.service.getSecureSessionSnapshot("manager-a");
+    expect(after).toEqual(expect.objectContaining({
+      revision: before.revision,
+      environmentStatus: "ready",
+      leases: [expect.objectContaining({
+        leaseId: before.leases[0]!.leaseId,
+        secretId: existing.secretId,
+        status: "active",
+      })],
+    }));
+    expect(harness.execution.destroyed).toHaveLength(destroysBefore);
+    expect(harness.execution.ensured).toHaveLength(ensuresBefore);
+    expect(harness.store.listAudit("manager-a").filter(
+      ({ eventType }) => eventType === "lease_created",
+    )).toHaveLength(leaseAuditsBefore);
+    expect(existingMaterial.released).toBe(false);
+    expect(harness.resolvedMaterials[1]?.released).toBe(true);
+
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+    await expect(binding.executeBash({
+      command: "safe-existing",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+    expect(harness.sourceResolutions.get(ALPHA)).toBe(1);
+    await harness.close();
+  });
+
   it("makes secret rotation authoritative over an admitted execution", async () => {
     const harness = createHarness();
     const secret = await harness.service.createLocalSecureSecret({
@@ -794,7 +1019,7 @@ describe("SecureSessionsService", () => {
     harness.execution.releaseBlockedExecution("manager-a");
 
     await expect(execution).resolves.toEqual({ exitCode: 0 });
-    await expect(granting).rejects.toThrow("SECURE_OPERATION_FAILED");
+    await expect(granting).rejects.toThrow("SECURE_STALE_REVISION");
     const afterRace = await harness.service.getSecureSessionSnapshot("manager-a");
     expect(afterRace.environmentStatus).toBe("stopped");
     expect(afterRace.leases.some((lease) =>
@@ -1094,7 +1319,7 @@ describe("SecureSessionsService", () => {
     await failedRecycle.close();
   });
 
-  it("fails closed on quarantined output and emits only fixed state metadata", async () => {
+  it("redacts protected output, preserves task leases, and emits only fixed state metadata", async () => {
     const harness = createHarness();
     const secret = await harness.service.createLocalSecureSecret({
       displayAlias: "alpha",
@@ -1104,21 +1329,92 @@ describe("SecureSessionsService", () => {
     await grant(harness, "manager-a", secret.secretId, "alpha");
     const binding = harness.service.getSecureRuntimeBinding(harness.descriptors.get("manager-a")!)!;
     const output: string[] = [];
+    const destroyedBeforeReflection = harness.execution.destroyed.length;
     await expect(binding.executeBash({
       command: "emit-own-canary",
       cwd: "/workspace-a",
       onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
-    })).rejects.toThrow("SECURE_OPERATION_FAILED");
+    })).resolves.toEqual({ exitCode: 0 });
 
     expect(output.join("")).toBe(SECURE_OUTPUT_QUARANTINE);
-    expect(harness.execution.destroyed).toContain("manager-a");
+    expect(harness.execution.destroyed).toHaveLength(destroyedBeforeReflection);
+    const safeOutput: string[] = [];
+    await expect(binding.executeBash({
+      command: "emit-safe-output",
+      cwd: "/workspace-a",
+      onData: (bytes) => safeOutput.push(Buffer.from(bytes).toString("utf8")),
+    })).resolves.toEqual({ exitCode: 0 });
+    expect(safeOutput.join("")).toBe("safe");
     const eventJson = JSON.stringify(harness.snapshots);
     expect(eventJson).not.toContain(ALPHA);
     expect(harness.snapshots.at(-1)).toEqual(expect.objectContaining({
-      environmentStatus: "failed",
+      environmentStatus: "ready",
       outputState: "quarantined",
       outputStateCode: "SECURE_OUTPUT_QUARANTINED",
+      leases: [expect.objectContaining({ status: "active" })],
     }));
+    await harness.close();
+  });
+
+  it("does not treat the public redaction marker as proof that a secret matched", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+    });
+    await grant(harness, "manager-a", secret.secretId, "alpha");
+    const binding = harness.service.getSecureRuntimeBinding(harness.descriptors.get("manager-a")!)!;
+    const output: string[] = [];
+
+    await expect(binding.executeBash({
+      command: "emit-public-marker",
+      cwd: "/workspace-a",
+      onData: (bytes) => output.push(Buffer.from(bytes).toString("utf8")),
+    })).resolves.toEqual({ exitCode: 0 });
+
+    expect(output.join("")).toBe(SECURE_OUTPUT_QUARANTINE);
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({
+        environmentStatus: "ready",
+        outputState: "clear",
+      }),
+    );
+    await harness.close();
+  });
+
+  it("consumes a one-use lease after redacting the credentialed command output", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+    });
+    const started = await harness.service.startSecureSession("manager-a");
+    await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: secret.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
+      leaseKind: "one_use",
+    });
+    const binding = harness.service.getSecureRuntimeBinding(harness.descriptors.get("manager-a")!)!;
+
+    await expect(binding.executeBash({
+      command: "emit-own-canary",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({
+        environmentStatus: "stopped",
+        outputState: "quarantined",
+        leases: [expect.objectContaining({
+          status: "consumed",
+          remainingUses: 0,
+        })],
+      }),
+    );
     await harness.close();
   });
 });
@@ -1162,6 +1458,7 @@ function createHarness(options: {
   ]);
   const execution = new FakeExecutionBackend(options);
   const sourceResolutions = new Map<string, number>();
+  const resolvedMaterials: HostOnlySecret[] = [];
   const localSource: SecureSecretSource & {
     testConnection(): Promise<void>;
   } = {
@@ -1180,8 +1477,10 @@ function createHarness(options: {
         throw new SecureSourceError("SECURE_SOURCE_UNAVAILABLE");
       }
       sourceResolutions.set(key, (sourceResolutions.get(key) ?? 0) + 1);
+      const material = new HostOnlySecret(bytes);
+      resolvedMaterials.push(material);
       return {
-        material: new HostOnlySecret(bytes),
+        material,
         sourceVersion: null,
         resolvedAt: NOW,
       };
@@ -1238,6 +1537,7 @@ function createHarness(options: {
     descriptors,
     execution,
     sourceResolutions,
+    resolvedMaterials,
     snapshots,
     recycles,
     async waitForBlockedProviderStatus() {
@@ -1328,6 +1628,8 @@ class FakeExecutionBackend implements SecureExecutionBackend {
     const raw = Buffer.from(
       command === "emit-alpha-canary" || command === "emit-own-canary"
         ? ALPHA
+        : command === "emit-public-marker"
+          ? SECURE_OUTPUT_QUARANTINE
         : "safe",
     );
     const stdout = await request.guardOutput({

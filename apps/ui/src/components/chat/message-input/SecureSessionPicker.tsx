@@ -56,8 +56,8 @@ function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number
 } {
   if (config.outputState === 'quarantined') {
     return {
-      label: 'Output held',
-      ariaLabel: 'Secure session: output quarantined. Review secure session.',
+      label: 'Output redacted',
+      ariaLabel: 'Secure session: protected output redacted. Review secure session.',
       tone: 'warning',
       icon: 'alert',
     }
@@ -148,6 +148,7 @@ export function SecureSessionPicker({
   const [open, setOpen] = useState(false)
   const [grantOpen, setGrantOpen] = useState(false)
   const [stopOpen, setStopOpen] = useState(false)
+  const [starting, setStarting] = useState(false)
   const sessionAgentId = config.snapshot?.sessionAgentId
 
   useEffect(() => {
@@ -160,12 +161,17 @@ export function SecureSessionPicker({
     () => config.snapshot?.leases.filter((lease) => lease.status === 'active') ?? [],
     [config.snapshot?.leases],
   )
+  const grantableSecrets = useMemo(
+    () => config.secrets.filter((secret) =>
+      !activeLeases.some((lease) => lease.secretId === secret.secretId)),
+    [activeLeases, config.secrets],
+  )
   const state = pickerState(config, activeLeases.length)
   const canGrant =
     config.availability.state === 'available'
     && config.snapshot?.executionMode === 'secure'
     && config.snapshot.environmentStatus === 'ready'
-    && config.secrets.some((secret) => secret.available && secret.bindings.length > 0)
+    && grantableSecrets.some((secret) => secret.available && secret.bindings.length > 0)
   const shouldOfferStart =
     config.availability.state === 'available'
     && (
@@ -180,6 +186,18 @@ export function SecureSessionPicker({
       config.snapshot?.executionMode === 'secure'
       && config.snapshot.environmentStatus !== 'stopped'
     )
+
+  const startAndOpenGrant = async () => {
+    if (!config.onStart || starting) return
+    setOpen(false)
+    setStarting(true)
+    try {
+      const result = await config.onStart()
+      if (result !== false) setGrantOpen(true)
+    } finally {
+      setStarting(false)
+    }
+  }
 
   const unavailableDescription =
     config.availability.state === 'available'
@@ -245,10 +263,10 @@ export function SecureSessionPicker({
 
           {config.outputState === 'quarantined' ? (
             <div className="rounded-md border border-destructive/35 bg-destructive/5 p-3 text-xs">
-              <p className="font-medium text-destructive">Secure output quarantined</p>
+              <p className="font-medium text-destructive">Protected output redacted</p>
               <p className="mt-1 text-muted-foreground">
                 {config.outputStateReason
-                  ?? 'Output was withheld because it may contain protected secret material.'}
+                  ?? 'Forge removed protected material before it reached the agent. The Secure Session remains active.'}
               </p>
             </div>
           ) : null}
@@ -301,13 +319,15 @@ export function SecureSessionPicker({
               <Button
                 type="button"
                 size="sm"
-                disabled={config.disabled || !config.onStart}
-                onClick={() => {
-                  setOpen(false)
-                  void config.onStart?.()
-                }}
+                disabled={config.disabled || !config.onStart || starting}
+                onClick={() => void startAndOpenGrant()}
               >
-                Start secure session
+                {starting ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Starting…
+                  </>
+                ) : 'Start secure session'}
               </Button>
             ) : null}
             {config.availability.state === 'available' && !shouldOfferStart ? (
@@ -321,7 +341,7 @@ export function SecureSessionPicker({
                   setGrantOpen(true)
                 }}
               >
-                Grant a secret
+                Grant secrets
               </Button>
             ) : null}
             {shouldOfferStop ? (
@@ -344,7 +364,7 @@ export function SecureSessionPicker({
 
       {grantOpen ? (
         <SecureGrantDialog
-          secrets={config.secrets}
+          secrets={grantableSecrets}
           onGrant={config.onGrant}
           onClose={() => setGrantOpen(false)}
         />
