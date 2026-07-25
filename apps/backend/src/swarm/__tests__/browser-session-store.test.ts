@@ -106,6 +106,23 @@ describe("BrowserSessionStore", () => {
     });
   });
 
+  it("never persists External Chrome titles, full URLs, origins, or action copies", async () => {
+    const dataDir = await root();
+    const store = new BrowserSessionStore({ dataDir, now });
+    const state = snapshot(store);
+    state.hostKind = "external-chrome";
+    state.tabs = [{ ...tab(), hostKind: "external-chrome", url: "https://private.invalid/path?secret=yes", title: "Private title" }];
+    state.recentActions = [{
+      id: "external-action", operation: "navigate", tabId: "tab-1", status: "succeeded",
+      url: "https://private.invalid/path?secret=yes", title: "Private title", startedAt: now(),
+    }];
+    await store.save(state);
+    const persisted = await readFile(store.getStatePath("profile-1", "manager-1"), "utf8");
+    expect(persisted).not.toContain("private.invalid");
+    expect(persisted).not.toContain("Private title");
+    expect(JSON.parse(persisted)).toMatchObject({ tabs: [{ url: "", title: "" }], recentActions: [{ id: "external-action" }] });
+  });
+
   it("persists only canonical metadata and omits screenshot, page, evaluate, and diagnostic payloads", async () => {
     const dataDir = await root();
     const store = new BrowserSessionStore({ dataDir, now });

@@ -199,6 +199,11 @@ export class DebuggerController {
     }
   }
 
+  async sendCommand(tabId: number, method: string, params?: Record<string, unknown>): Promise<unknown> {
+    if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger target is not attached')
+    return this.debuggerApi.sendCommand({ tabId }, method, params)
+  }
+
   async sendInput(tabId: number, method: 'Input.dispatchMouseEvent' | 'Input.dispatchKeyEvent' | 'Input.insertText' | 'Input.dispatchTouchEvent', params: Record<string, unknown>): Promise<unknown> {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger input target is not attached')
     return this.debuggerApi.sendCommand({ tabId }, method, params)

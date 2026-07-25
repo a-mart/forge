@@ -1,3 +1,4 @@
+import { resolveBrowserHostKind } from '@forge/protocol'
 import type { CodexElicitationDecision, CodexElicitationPersistScope, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
 import {
@@ -206,6 +207,11 @@ export class ManagerWsClient {
   private browserHandshakeInFlight = false
   private readonly browserHydrationChunks = new Map<string, { chunkCount: number; chunks: Array<Uint8Array | undefined> }>()
   private browserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
+  private secondaryBrowserHostRegistration: BrowserHostRegistration | null = null
+  private secondaryBrowserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
+  private secondaryBrowserHostGeneration: number | null = null
+  private secondaryBrowserHandshakeTimer: ReturnType<typeof setTimeout> | null = null
+  private secondaryBrowserHandshakeEpoch = 0
   private readonly repositoryProjectProgressListeners = new Map<
     string,
     (event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>) => void
@@ -324,6 +330,53 @@ export class ManagerWsClient {
         this.stopBrowserHandshake()
       }
     }
+  }
+
+  registerSecondaryBrowserAutomationHost(
+    registration: BrowserHostRegistration,
+    handleRequest: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>,
+  ): () => void {
+    if ((registration.capabilities.hostKind ?? 'managed-electron') === 'managed-electron') {
+      throw new Error('The secondary browser host must use a non-default host kind')
+    }
+    this.secondaryBrowserHostRegistration = registration
+    this.secondaryBrowserAutomationRequestHandler = handleRequest
+    this.restartSecondaryBrowserHandshake()
+    return () => {
+      if (this.secondaryBrowserHostRegistration?.hostId !== registration.hostId) return
+      this.secondaryBrowserHostRegistration = null
+      this.secondaryBrowserAutomationRequestHandler = null
+      this.secondaryBrowserHostGeneration = null
+      this.stopSecondaryBrowserHandshake()
+    }
+  }
+
+  private restartSecondaryBrowserHandshake(): void {
+    this.stopSecondaryBrowserHandshake()
+    const registration = this.secondaryBrowserHostRegistration
+    if (!registration || !isSocketOpen(this.socket)) return
+    const epoch = this.secondaryBrowserHandshakeEpoch
+    this.secondaryBrowserHandshakeTimer = setTimeout(() => {
+      this.secondaryBrowserHandshakeTimer = null
+      void this.requestDispatcher.enqueueRequest(
+        'browser_host_register',
+        (requestId) => buildBrowserHostRegisterCommand(requestId, { ...registration, registeredAt: new Date().toISOString() }),
+        { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
+      ).then((host) => {
+        if (epoch === this.secondaryBrowserHandshakeEpoch && this.secondaryBrowserHostRegistration === registration) {
+          this.secondaryBrowserHostGeneration = host.hostGeneration
+        }
+      }).catch(() => {
+        if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration || !isSocketOpen(this.socket)) return
+        this.secondaryBrowserHandshakeTimer = setTimeout(() => this.restartSecondaryBrowserHandshake(), BROWSER_HANDSHAKE_RETRY_MS)
+      })
+    }, 0)
+  }
+
+  private stopSecondaryBrowserHandshake(): void {
+    this.secondaryBrowserHandshakeEpoch += 1
+    if (this.secondaryBrowserHandshakeTimer) clearTimeout(this.secondaryBrowserHandshakeTimer)
+    this.secondaryBrowserHandshakeTimer = null
   }
 
   private restartBrowserHandshake(): void {
@@ -1257,6 +1310,7 @@ export class ManagerWsClient {
 
     this.send(buildSubscribeCommand(this.desiredAgentId, this.conversationView))
     this.restartBrowserHandshake()
+    this.restartSecondaryBrowserHandshake()
   }
 
   private handleTransportClose(event?: CloseEvent): void {
@@ -1266,6 +1320,8 @@ export class ManagerWsClient {
     this.rejectedExplicitAgentSelectionId = null
     this.bootstrapBuffer.clear()
     this.stopBrowserHandshake()
+    this.stopSecondaryBrowserHandshake()
+    this.secondaryBrowserHostGeneration = null
 
     // Keep `loadedSessionIds` — see handleTransportOpen.
     this.updateState({
@@ -1310,6 +1366,36 @@ export class ManagerWsClient {
     })
   }
 
+  private handleSecondaryBrowserEvent(event: ServerEvent): boolean {
+    const registration = this.secondaryBrowserHostRegistration
+    if (!registration) return false
+    const hostKind = registration.capabilities.hostKind ?? 'managed-electron'
+    if (event.type === 'browser_host_connected') {
+      if ((event.host.hostKind ?? event.host.capabilities?.hostKind ?? 'managed-electron') !== hostKind ||
+        (event.host.hostId !== null && event.host.hostId !== registration.hostId)) return false
+      if (event.requestId && this.requestDispatcher.tracker.getPendingRequestType(event.requestId) === 'browser_host_register') {
+        this.secondaryBrowserHostGeneration = event.host.hostGeneration
+        this.requestDispatcher.tracker.resolve('browser_host_register', event.requestId, event.host)
+      }
+      return true
+    }
+    if (event.type !== 'browser_automation_request') return false
+    const request = { ...event.request, hostKind: resolveBrowserHostKind(event.request.hostKind) } as BrowserAutomationRequest
+    if (request.hostKind !== hostKind || request.hostId !== registration.hostId ||
+      request.hostGeneration !== this.secondaryBrowserHostGeneration || !this.secondaryBrowserAutomationRequestHandler) return false
+    void this.secondaryBrowserAutomationRequestHandler(request).then(
+      (response) => this.send(buildBrowserHostResponseCommand(response)),
+      (error: unknown) => this.send(buildBrowserHostResponseCommand({
+        requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+        profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+        operation: request.operation, ok: false,
+        error: { code: 'host-disconnected', message: error instanceof Error ? error.message : 'External Chrome host failed.', retryable: true },
+        elapsedMs: 0,
+      } as BrowserAutomationResponse)),
+    )
+    return true
+  }
+
   private handleServerEvent(parsed: unknown): void {
     const event = parsed as ServerEvent
 
@@ -1341,6 +1427,8 @@ export class ManagerWsClient {
       const consumed = this.bootstrapBuffer.handleEvent(event)
       if (consumed) return
     }
+
+    if (this.handleSecondaryBrowserEvent(event)) return
 
     if (handleBrowserEvent(event, {
       state: this.state,

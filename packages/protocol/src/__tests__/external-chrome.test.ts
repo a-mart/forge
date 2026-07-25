@@ -90,10 +90,10 @@ describe('External Chrome protocol identity and negotiation', () => {
     expect(EXTERNAL_CHROME_PROTOCOL_VERSIONS).toEqual([1])
     expect([EXTERNAL_CHROME_PROTOCOL_MIN_VERSION, EXTERNAL_CHROME_PROTOCOL_MAX_VERSION]).toEqual([1, 1])
     expect(EXTERNAL_CHROME_REQUEST_METHODS).toHaveLength(10)
-    expect(EXTERNAL_CHROME_NOTIFICATION_METHODS).toHaveLength(6)
+    expect(EXTERNAL_CHROME_NOTIFICATION_METHODS).toHaveLength(7)
     expect(EXTERNAL_CHROME_METHODS).toEqual([...EXTERNAL_CHROME_REQUEST_METHODS, ...EXTERNAL_CHROME_NOTIFICATION_METHODS])
-    expect(EXTERNAL_CHROME_SUPPORTED_OPERATIONS).toEqual(['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'])
-    expect(EXTERNAL_CHROME_UNSUPPORTED_OPERATIONS).toEqual(['resize', 'recordingStart', 'recordingStop'])
+    expect(EXTERNAL_CHROME_SUPPORTED_OPERATIONS).toEqual(['status', 'open', 'navigate'])
+    expect(EXTERNAL_CHROME_UNSUPPORTED_OPERATIONS).toEqual(['resize', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor', 'recordingStart', 'recordingStop'])
     expect([...EXTERNAL_CHROME_SUPPORTED_OPERATIONS, ...EXTERNAL_CHROME_UNSUPPORTED_OPERATIONS]).toHaveLength(BROWSER_AUTOMATION_OPERATIONS.length)
     expect(EXTERNAL_CHROME_TRANSPORT_ERROR_CODES).toContain('authentication-failed')
     expect(EXTERNAL_CHROME_PROTOCOL_ERROR_CODES).toContain('protocol-version-unsupported')
@@ -204,7 +204,7 @@ describe('External Chrome routed request and response contracts', () => {
     const selectedTab = { windowId: 2, tabId: 12, groupId: 8, title: 'Synthetic', url: 'https://example.test/path', origin: 'https://example.test', active: true }
     const responses = [
       ['forge.runtime.ping', { protocolVersion: 1, nonce: 'nonce-1', receivedAt: '2026-07-24T00:00:00.100Z' }],
-      ['forge.browser.listCandidates', { protocolVersion: 1, extensionInstanceId: 'instance-1', profileAlias: 'Chrome profile 1', windows: [{ windowId: 2, focused: true, groups: [{ groupId: 8, title: 'Forge', collapsed: false }], tabs: [{ windowId: 2, tabId: 12, groupId: 8, title: 'Synthetic', origin: 'https://example.test', active: true, attached: false, restricted: false }] }] }],
+      ['forge.browser.listCandidates', { protocolVersion: 1, extensionInstanceId: 'instance-1', profileAlias: 'Chrome profile 1', windows: [{ windowId: 2, focused: true, groups: [{ groupId: 8, title: 'Forge', collapsed: false }], tabs: [{ windowId: 2, tabId: 12, groupId: 8, title: 'Synthetic', origin: 'https://example.test', active: true, attached: false, restricted: false, debuggerConflict: false }] }] }],
       ['forge.browser.claim', { ...lease, sessionAgentId: 'session-1', extensionInstanceId: 'instance-1', groupId: 8, childPolicy: 'manual', tabs: [selectedTab] }],
       ['forge.browser.create', { ...lease, sessionAgentId: 'session-1', extensionInstanceId: 'instance-1', groupId: 8, tab: selectedTab }],
       ['forge.browser.release', { ...lease, releasedTabIds: [12] }],
@@ -322,7 +322,7 @@ describe('External Chrome routed request and response contracts', () => {
   })
 
   it('keeps unselected candidates URL-free and rejects unknown candidate fields', () => {
-    const candidate = { windowId: 2, tabId: 12, groupId: null, title: 'Synthetic', origin: 'https://example.test', active: true, attached: false, restricted: false }
+    const candidate = { windowId: 2, tabId: 12, groupId: null, title: 'Synthetic', origin: 'https://example.test', active: true, attached: false, restricted: false, debuggerConflict: false }
     const response = { jsonrpc: '2.0', id: 'list-1', result: { protocolVersion: 1, extensionInstanceId: 'instance-1', windows: [{ windowId: 2, focused: true, groups: [], tabs: [{ ...candidate, url: 'https://example.test/private' }] }] } }
     try {
       parse(response, { expectedResponseMethod: 'forge.browser.listCandidates', protocolVersion: 1 })
@@ -342,6 +342,7 @@ describe('External Chrome notification and JSON-RPC error contracts', () => {
       { jsonrpc: '2.0', method: 'browser.userControl', params: { ...lease, controlEpoch: 3, event: 'pointer', at: '2026-07-24T00:00:00.000Z' } },
       { jsonrpc: '2.0', method: 'browser.tabChanged', params: { ...lease, change: { title: 'Changed', active: true } } },
       { jsonrpc: '2.0', method: 'browser.downloadChanged', params: { ...lease, downloadId: 7, state: 'complete', danger: 'safe', filename: 'synthetic.txt', bytesReceived: 10, totalBytes: 10 } },
+      { jsonrpc: '2.0', method: 'browser.leaseChanged', params: { protocolVersion: 1, leaseId: 'lease-1', leaseEpoch: 4, state: 'claimed', tabIds: [12], groupId: null, childPolicy: 'manual' } },
       { jsonrpc: '2.0', method: 'runtime.goodbye', params: { protocolVersion: 1, reason: 'desktop-quit' } },
     ]
     expect(notifications.map((notification) => parse(notification, { protocolVersion: 1 }))).toEqual(notifications)
@@ -360,6 +361,8 @@ describe('External Chrome notification and JSON-RPC error contracts', () => {
       (params: any) => { params.change.unexpectedSecret = true }, (params: any) => { params.change.active = 'true' }, (params: any) => { params.change.title = 'x'.repeat(513) }],
     ['browser.downloadChanged', { ...lease, downloadId: 1, state: 'complete', danger: 'safe', filename: 'a.txt', bytesReceived: 1, totalBytes: 1 },
       (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.danger = 'secret' }, (params: any) => { params.filename = 'x'.repeat(2_049) }],
+    ['browser.leaseChanged', { protocolVersion: 1, leaseId: 'lease-1', leaseEpoch: 4, state: 'claimed', tabIds: [12], groupId: null, childPolicy: 'manual' },
+      (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.state = 'unknown' }, (params: any) => { params.tabIds = Array.from({ length: 129 }, (_, index) => index) }],
     ['runtime.goodbye', { protocolVersion: 1, reason: 'quit' },
       (params: any) => { params.unexpectedSecret = true }, (params: any) => { params.protocolVersion = '1' }, (params: any) => { params.reason = 'x'.repeat(1_025) }],
   ] as const)('rejects unknown, malformed, and oversized nested %s notifications', (method, valid, addUnknown, malformed, oversize) => {
@@ -415,7 +418,7 @@ describe('External Chrome deterministic bounds and malformed-input behavior', ()
     const tooMany = Array.from({ length: EXTERNAL_CHROME_MAX_ARRAY_ITEMS + 1 }, (_, index) => index)
     expectFailure({ jsonrpc: '2.0', method: 'browser.cdpEvent', params: { protocolVersion: 1, leaseId: 'lease-1', leaseEpoch: 1, tabId: 1, targetId: 'target-1', method: 'Runtime.event', params: { values: tooMany } } }, 'invalid-envelope')
 
-    const tabs = Array.from({ length: EXTERNAL_CHROME_MAX_CANDIDATE_TABS + 1 }, (_, tabId) => ({ windowId: 1, tabId, groupId: null, title: '', origin: 'https://example.test', active: false, attached: false, restricted: false }))
+    const tabs = Array.from({ length: EXTERNAL_CHROME_MAX_CANDIDATE_TABS + 1 }, (_, tabId) => ({ windowId: 1, tabId, groupId: null, title: '', origin: 'https://example.test', active: false, attached: false, restricted: false, debuggerConflict: false }))
     const response = { jsonrpc: '2.0', id: 'list-1', result: { protocolVersion: 1, extensionInstanceId: 'instance-1', windows: [{ windowId: 1, focused: true, groups: [], tabs }] } }
     try {
       parse(response, { expectedResponseMethod: 'forge.browser.listCandidates', protocolVersion: 1 })

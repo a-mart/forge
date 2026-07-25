@@ -9,7 +9,7 @@ const port = chromeApi.runtime.connect({ name: `forge-leased-frame:${nonce}` })
 let syntheticUntil = 0
 let activeControlEpoch = 0
 let activeOperationId: string | null = null
-let controlState: 'human' | 'agent' | 'handoff' = 'human'
+let controlState: 'human' | 'agent' | 'handoff' | 'detached' = 'human'
 
 function pointer(): HTMLDivElement {
   let element = document.getElementById(ROOT_ID) as HTMLDivElement | null
@@ -27,7 +27,7 @@ function pointer(): HTMLDivElement {
 }
 
 function statusSvg(state: typeof controlState): string {
-  const color = state === 'agent' ? '#5b5cf0' : state === 'handoff' ? '#f0a64b' : '#48b77b'
+  const color = state === 'agent' ? '#5b5cf0' : state === 'handoff' ? '#f0a64b' : state === 'detached' ? '#777777' : '#48b77b'
   return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="${color}"/><path fill="white" d="M9 7h15v5H14v3h8v5h-8v6H9z"/></svg>`)}`
 }
 
@@ -45,6 +45,11 @@ function markFavicon(state: typeof controlState): void {
 
 function setState(state: typeof controlState): void {
   controlState = state
+  if (state === 'detached') {
+    document.head.querySelector<HTMLLinkElement>(`link[${FAVICON_MARK}]`)?.remove()
+    document.getElementById(ROOT_ID)?.remove()
+    return
+  }
   markFavicon(state)
   const element = pointer()
   element.style.boxShadow = `0 0 0 2px ${state === 'agent' ? '#5b5cf0' : state === 'handoff' ? '#f0a64b' : '#48b77b'}`
@@ -89,7 +94,7 @@ port.onMessage.addListener((message) => {
   } else if (command.type === 'synthetic-end' && command.operationId === activeOperationId && command.controlEpoch === activeControlEpoch) {
     syntheticUntil = 0
     activeOperationId = null
-  } else if (command.type === 'status' && (command.state === 'human' || command.state === 'agent' || command.state === 'handoff')) {
+  } else if (command.type === 'status' && (command.state === 'human' || command.state === 'agent' || command.state === 'handoff' || command.state === 'detached')) {
     setState(command.state)
   }
 })

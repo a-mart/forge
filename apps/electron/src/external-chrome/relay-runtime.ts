@@ -1,0 +1,650 @@
+import { createHmac, hkdfSync, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import * as fs from 'node:fs/promises'
+import type { Socket } from 'node:net'
+import path from 'node:path'
+import {
+  EXTERNAL_CHROME_EXTENSION_ORIGIN,
+  EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
+  EXTERNAL_CHROME_PROTOCOL_MAX_VERSION,
+  EXTERNAL_CHROME_PROTOCOL_MIN_VERSION,
+  parseExternalChromeJsonRpcFrame,
+  type BrowserAutomationFailure,
+  type BrowserAutomationRequest,
+  type BrowserAutomationResultByOperation,
+  type BrowserTabSnapshot,
+  type ExternalChromeChildPolicy,
+  type ExternalChromeHelloParams,
+  type ExternalChromeJsonRpcMessage,
+  type ExternalChromeLeaseChangedParams,
+  type ExternalChromeRequestMethod,
+  type ExternalChromeRequestParamsByMethod,
+  type ExternalChromeResultByMethod,
+} from '@forge/protocol'
+import type { ExternalChromeTransport, ExternalChromeTransportResult } from '../browser/external-chrome-target-adapter.js'
+
+const MAX_RELAY_RECORD_BYTES = 384 * 1_024
+const MAX_CONNECTIONS = 16
+const MAX_PENDING_REQUESTS = 64
+const HEARTBEAT_MS = 5_000
+const CHECKPOINT_TTL_MS = 15 * 60_000
+
+interface RelayContext {
+  epoch: string
+  desktopInstanceId: string
+  keyId: string
+  secret: Buffer
+}
+
+export interface ExternalChromeRuntimeInventory {
+  extensionInstanceId: string
+  profileAlias?: string
+  chromeVersion: string
+  payloadVersion: string
+  connectedAt: string
+}
+
+export interface ExternalChromeLeaseCheckpoint {
+  extensionInstanceId: string
+  sessionAgentId: string
+  profileId: string
+  leaseId: string
+  leaseEpoch: number
+  tabIds: number[]
+  groupId: number | null
+  childPolicy: ExternalChromeChildPolicy
+  expiresAt: number
+}
+
+interface PersistedCheckpoints {
+  schemaVersion: 1
+  leases: ExternalChromeLeaseCheckpoint[]
+}
+
+class LeaseCheckpointStore {
+  private checkpoints: ExternalChromeLeaseCheckpoint[] = []
+  private loaded = false
+  private operation: Promise<void> = Promise.resolve()
+  constructor(private readonly file: string, private readonly now: () => number) {}
+
+  all(): Promise<ExternalChromeLeaseCheckpoint[]> {
+    return this.serialize(async () => {
+      await this.load()
+      this.checkpoints = this.checkpoints.filter((lease) => lease.expiresAt > this.now())
+      return structuredClone(this.checkpoints)
+    })
+  }
+
+  put(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
+    return this.serialize(async () => {
+      await this.load()
+      this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== checkpoint.leaseId)
+      this.checkpoints.push(structuredClone(checkpoint))
+      if (this.checkpoints.length > 128) this.checkpoints.splice(0, this.checkpoints.length - 128)
+      await this.persist()
+    })
+  }
+
+  remove(leaseId: string, leaseEpoch: number): Promise<void> {
+    return this.serialize(async () => {
+      await this.load()
+      this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch)
+      await this.persist()
+    })
+  }
+
+  removePendingForExtension(extensionInstanceId: string): Promise<void> {
+    return this.serialize(async () => {
+      await this.load()
+      this.checkpoints = this.checkpoints.filter((lease) => lease.extensionInstanceId !== extensionInstanceId || lease.sessionAgentId !== '__local_pending__')
+      await this.persist()
+    })
+  }
+
+  private serialize<Value>(work: () => Promise<Value>): Promise<Value> {
+    const result = this.operation.then(work, work)
+    this.operation = result.then(() => undefined, () => undefined)
+    return result
+  }
+
+  private async load(): Promise<void> {
+    if (this.loaded) return
+    this.loaded = true
+    try {
+      const raw = await fs.readFile(this.file, 'utf8')
+      if (Buffer.byteLength(raw) > 64 * 1_024) return
+      const value = JSON.parse(raw) as Partial<PersistedCheckpoints>
+      if (value.schemaVersion !== 1 || !Array.isArray(value.leases)) return
+      this.checkpoints = value.leases.filter(validCheckpoint).slice(-128)
+    } catch { this.checkpoints = [] }
+  }
+
+  private async persist(): Promise<void> {
+    await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
+    const temporary = `${this.file}.new-${process.pid}-${randomUUID()}`
+    const value: PersistedCheckpoints = { schemaVersion: 1, leases: this.checkpoints }
+    await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: 'wx' })
+    await fs.rename(temporary, this.file)
+    if (process.platform !== 'win32') await fs.chmod(this.file, 0o600)
+  }
+}
+
+function validCheckpoint(value: unknown): value is ExternalChromeLeaseCheckpoint {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Partial<ExternalChromeLeaseCheckpoint>
+  return typeof record.extensionInstanceId === 'string' && typeof record.sessionAgentId === 'string' &&
+    typeof record.profileId === 'string' && typeof record.leaseId === 'string' && Number.isSafeInteger(record.leaseEpoch) &&
+    Array.isArray(record.tabIds) && record.tabIds.length <= 128 && record.tabIds.every(Number.isSafeInteger) &&
+    (record.groupId === null || Number.isSafeInteger(record.groupId)) &&
+    (record.childPolicy === 'manual' || record.childPolicy === 'include-opened-by-leased-tabs') && Number.isFinite(record.expiresAt)
+}
+
+class FramedSocketPeer {
+  private buffer = Buffer.alloc(0)
+  private readonly queue: Record<string, unknown>[] = []
+  private readonly waiters: Array<{ resolve: (value: Record<string, unknown> | null) => void; reject: (error: Error) => void }> = []
+  private ended = false
+  private queuedBytes = 0
+
+  constructor(private readonly socket: Socket) {
+    socket.on('data', (chunk: Buffer) => this.push(chunk))
+    socket.once('error', (error) => this.fail(error))
+    socket.once('end', () => this.finish())
+    socket.once('close', () => this.finish())
+  }
+
+  receive(): Promise<Record<string, unknown> | null> {
+    const value = this.queue.shift()
+    if (value) {
+      this.queuedBytes -= Buffer.byteLength(JSON.stringify(value))
+      return Promise.resolve(value)
+    }
+    if (this.ended) return Promise.resolve(null)
+    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }))
+  }
+
+  async send(value: Record<string, unknown>): Promise<void> {
+    const payload = Buffer.from(JSON.stringify(value), 'utf8')
+    if (payload.byteLength > MAX_RELAY_RECORD_BYTES) throw new Error('relay record exceeds bound')
+    const frame = Buffer.allocUnsafe(payload.byteLength + 4)
+    frame.writeUInt32LE(payload.byteLength, 0)
+    payload.copy(frame, 4)
+    await new Promise<void>((resolve, reject) => this.socket.write(frame, (error) => error ? reject(error) : resolve()))
+  }
+
+  close(): void { this.finish(); this.socket.destroy() }
+
+  private push(chunk: Buffer): void {
+    if (this.ended) return
+    this.buffer = Buffer.concat([this.buffer, chunk])
+    try {
+      while (this.buffer.byteLength >= 4) {
+        const length = this.buffer.readUInt32LE(0)
+        if (length === 0 || length > MAX_RELAY_RECORD_BYTES) throw new Error('invalid relay frame length')
+        if (this.buffer.byteLength < length + 4) break
+        const payload = this.buffer.subarray(4, length + 4)
+        this.buffer = this.buffer.subarray(length + 4)
+        const parsed = JSON.parse(payload.toString('utf8')) as unknown
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('relay record must be an object')
+        this.deliver(parsed as Record<string, unknown>, payload.byteLength)
+      }
+      if (this.buffer.byteLength > MAX_RELAY_RECORD_BYTES + 4) throw new Error('relay frame buffer exceeded bound')
+    } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))) }
+  }
+
+  private deliver(value: Record<string, unknown>, bytes: number): void {
+    const waiter = this.waiters.shift()
+    if (waiter) { waiter.resolve(value); return }
+    if (this.queue.length >= 32 || this.queuedBytes + bytes > 2 * 1_024 * 1_024) {
+      this.fail(new Error('relay receive queue exceeded bound'))
+      return
+    }
+    this.queue.push(value)
+    this.queuedBytes += bytes
+  }
+
+  private finish(): void {
+    if (this.ended) return
+    this.ended = true
+    for (const waiter of this.waiters.splice(0)) waiter.resolve(null)
+  }
+
+  private fail(error: Error): void {
+    if (this.ended) return
+    this.ended = true
+    for (const waiter of this.waiters.splice(0)) waiter.reject(error)
+    this.socket.destroy()
+  }
+}
+
+class RuntimeConnection {
+  inventory: ExternalChromeRuntimeInventory | null = null
+  private outboundSequence = 2
+  private readonly pending = new Map<string, {
+    method: ExternalChromeRequestMethod
+    resolve: (value: ExternalChromeJsonRpcMessage) => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+  private requestSequence = 0
+  private closed = false
+
+  constructor(
+    private readonly peer: FramedSocketPeer,
+    private readonly sessionKey: Buffer,
+    private readonly context: Omit<RelayContext, 'secret'>,
+    private readonly clientNonce: string,
+    private readonly serverNonce: string,
+    readonly maxMessageBytes: number,
+    private readonly onHello: (connection: RuntimeConnection, hello: ExternalChromeHelloParams) => Promise<void>,
+    private readonly onLeaseChanged: (connection: RuntimeConnection, change: ExternalChromeLeaseChangedParams) => Promise<void>,
+    private readonly onClose: (connection: RuntimeConnection) => void,
+  ) { void this.readLoop() }
+
+  async request<Method extends ExternalChromeRequestMethod>(
+    method: Method,
+    params: ExternalChromeRequestParamsByMethod[Method],
+  ): Promise<ExternalChromeResultByMethod[Method]> {
+    if (this.closed) throw new Error('extension runtime is disconnected')
+    if (this.pending.size >= MAX_PENDING_REQUESTS) throw new Error('extension request queue is full')
+    const id = `desktop-${++this.requestSequence}-${randomUUID()}`.slice(0, 128)
+    const response = await new Promise<ExternalChromeJsonRpcMessage>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`${method} timed out`))
+      }, 10_000)
+      timer.unref?.()
+      this.pending.set(id, { method, resolve, reject, timer })
+      void this.sendPayload({ jsonrpc: '2.0', id, method, params }).catch((error) => {
+        clearTimeout(timer)
+        this.pending.delete(id)
+        reject(error)
+      })
+    })
+    if ('error' in response) throw new Error(response.error.data?.code ?? response.error.message)
+    if (!('result' in response)) throw new Error('extension returned an invalid response')
+    return response.result as ExternalChromeResultByMethod[Method]
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    this.peer.close()
+    this.sessionKey.fill(0)
+    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('extension runtime disconnected')) }
+    this.pending.clear()
+    this.onClose(this)
+  }
+
+  private async readLoop(): Promise<void> {
+    let inboundSequence = 2
+    try {
+      while (!this.closed) {
+        const raw = await this.peer.receive()
+        if (raw === null) break
+        const record = verifyRecord(raw, this.sessionKey)
+        if (record.type !== 'relay' || record.direction !== 'extension-to-desktop' || record.sequence !== inboundSequence++ ||
+          record.epoch !== this.context.epoch || record.desktopInstanceId !== this.context.desktopInstanceId ||
+          record.extensionOrigin !== EXTERNAL_CHROME_EXTENSION_ORIGIN || record.clientNonce !== this.clientNonce ||
+          record.serverNonce !== this.serverNonce || record.protocolVersion !== 1 || typeof record.payload !== 'object' ||
+          record.payload === null || Array.isArray(record.payload)) throw new Error('authenticated relay routing mismatch')
+        await this.handlePayload(record.payload as Record<string, unknown>)
+      }
+    } catch { /* fail closed below */ }
+    this.close()
+  }
+
+  private async handlePayload(payload: Record<string, unknown>): Promise<void> {
+    const serialized = JSON.stringify(payload)
+    if (Buffer.byteLength(serialized) > this.maxMessageBytes) throw new Error('extension payload exceeds negotiated bound')
+    const id = typeof payload.id === 'string' ? payload.id : undefined
+    const pending = id ? this.pending.get(id) : undefined
+    const parsed = parseExternalChromeJsonRpcFrame(serialized, pending ? { expectedResponseMethod: pending.method, protocolVersion: 1 } : { protocolVersion: 1 })
+    if (pending && !('method' in parsed)) {
+      clearTimeout(pending.timer)
+      this.pending.delete(id!)
+      pending.resolve(parsed)
+      return
+    }
+    if ('method' in parsed && !('id' in parsed)) {
+      if (parsed.method === 'browser.leaseChanged') await this.onLeaseChanged(this, parsed.params)
+      return
+    }
+    if (!('method' in parsed) || !('id' in parsed)) return
+    if (parsed.method === 'forge.runtime.hello') {
+      const hello = parsed.params as ExternalChromeHelloParams
+      if (this.inventory !== null) throw new Error('duplicate runtime hello')
+      if (hello.shellAbi !== 1 || hello.extensionId !== 'fcchfcnadajoejfbiclihglkmbcfhajd') throw new Error('runtime identity mismatch')
+      this.inventory = {
+        extensionInstanceId: hello.extensionInstanceId,
+        ...(hello.profileAlias ? { profileAlias: hello.profileAlias } : {}),
+        chromeVersion: hello.chromeVersion,
+        payloadVersion: hello.payloadVersion,
+        connectedAt: new Date().toISOString(),
+      }
+      await this.onHello(this, hello)
+      await this.sendPayload({ jsonrpc: '2.0', id: parsed.id, result: {
+        protocolVersion: 1, desktopInstanceId: this.context.desktopInstanceId, heartbeatMs: HEARTBEAT_MS,
+        maxMessageBytes: this.maxMessageBytes, requiredShellAbi: 1,
+      } })
+      return
+    }
+    if (parsed.method === 'forge.runtime.ping') {
+      await this.sendPayload({ jsonrpc: '2.0', id: parsed.id, result: {
+        protocolVersion: 1, nonce: parsed.params.nonce, receivedAt: new Date().toISOString(),
+      } })
+      return
+    }
+    await this.sendPayload({ jsonrpc: '2.0', id: parsed.id, error: { code: -32601, message: 'Desktop does not accept this extension request' } })
+  }
+
+  private async sendPayload(payload: Record<string, unknown>): Promise<void> {
+    if (Buffer.byteLength(JSON.stringify(payload)) > this.maxMessageBytes) throw new Error('Desktop payload exceeds negotiated bound')
+    const unsigned = {
+      type: 'relay', direction: 'desktop-to-extension', epoch: this.context.epoch,
+      desktopInstanceId: this.context.desktopInstanceId, extensionOrigin: EXTERNAL_CHROME_EXTENSION_ORIGIN,
+      sequence: this.outboundSequence++, clientNonce: this.clientNonce, serverNonce: this.serverNonce,
+      protocolVersion: 1, payload,
+    }
+    await this.peer.send(authenticateRecord(unsigned, this.sessionKey))
+  }
+}
+
+export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
+  readonly maxResponseBytes = EXTERNAL_CHROME_MAX_MESSAGE_BYTES
+  private context: RelayContext | null = null
+  private readonly handshaking = new Set<FramedSocketPeer>()
+  private readonly allConnections = new Set<RuntimeConnection>()
+  private readonly connections = new Map<string, RuntimeConnection>()
+  private readonly checkpoints: LeaseCheckpointStore
+
+  constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
+    this.checkpoints = new LeaseCheckpointStore(checkpointFile, now)
+  }
+
+  activate(input: { epoch: string; desktopInstanceId: string; keyId: string; secret: Uint8Array }): void {
+    this.deactivate()
+    this.context = { ...input, secret: Buffer.from(input.secret) }
+  }
+
+  deactivate(): void {
+    for (const peer of this.handshaking) peer.close()
+    this.handshaking.clear()
+    for (const connection of [...this.allConnections]) connection.close()
+    this.allConnections.clear()
+    this.connections.clear()
+    this.context?.secret.fill(0)
+    this.context = null
+  }
+
+  accept(socket: Socket): void {
+    if (!this.context || this.handshaking.size + this.allConnections.size >= MAX_CONNECTIONS) { socket.destroy(); return }
+    const peer = new FramedSocketPeer(socket)
+    this.handshaking.add(peer)
+    void this.handshake(peer, this.context).catch(() => peer.close()).finally(() => this.handshaking.delete(peer))
+  }
+
+  inventory(): ExternalChromeRuntimeInventory[] {
+    return [...this.connections.values()].flatMap((connection) => connection.inventory ? [structuredClone(connection.inventory)] : [])
+      .sort((left, right) => left.extensionInstanceId.localeCompare(right.extensionInstanceId))
+      .map((entry, index) => ({ ...entry, profileAlias: entry.profileAlias ?? `Chrome profile ${index + 1}` }))
+  }
+
+  async listCandidates(extensionInstanceId: string, sessionAgentId: string): Promise<ExternalChromeResultByMethod['forge.browser.listCandidates']> {
+    return this.connection(extensionInstanceId).request('forge.browser.listCandidates', { protocolVersion: 1, sessionAgentId })
+  }
+
+  async claim(input: {
+    extensionInstanceId: string; sessionAgentId: string; profileId: string; leaseId: string; leaseEpoch: number;
+    tabIds: number[]; groupId?: number; childPolicy: ExternalChromeChildPolicy
+  }): Promise<ExternalChromeResultByMethod['forge.browser.claim']> {
+    const result = await this.connection(input.extensionInstanceId).request('forge.browser.claim', {
+      protocolVersion: 1, sessionAgentId: input.sessionAgentId, leaseId: input.leaseId, leaseEpoch: input.leaseEpoch,
+      tabIds: input.tabIds, ...(input.groupId === undefined ? {} : { groupId: input.groupId }), childPolicy: input.childPolicy,
+    })
+    const expectedTabs = [...input.tabIds].sort((a, b) => a - b)
+    const returnedTabs = result.tabs.map((tab) => tab.tabId).sort((a, b) => a - b)
+    if (result.extensionInstanceId !== input.extensionInstanceId || result.sessionAgentId !== input.sessionAgentId ||
+      result.leaseId !== input.leaseId || result.leaseEpoch !== input.leaseEpoch || result.groupId !== (input.groupId ?? null) ||
+      result.childPolicy !== input.childPolicy || canonical(expectedTabs) !== canonical(returnedTabs)) {
+      throw new Error('extension claim response did not match the authorized compare-and-set scope')
+    }
+    await this.checkpoints.put({
+      extensionInstanceId: input.extensionInstanceId, sessionAgentId: input.sessionAgentId, profileId: input.profileId,
+      leaseId: input.leaseId, leaseEpoch: input.leaseEpoch, tabIds: [...input.tabIds].sort((a, b) => a - b),
+      groupId: input.groupId ?? null, childPolicy: input.childPolicy, expiresAt: this.now() + CHECKPOINT_TTL_MS,
+    })
+    return result
+  }
+
+  async release(extensionInstanceId: string, leaseId: string, leaseEpoch: number, reason = 'released'): Promise<void> {
+    const result = await this.connection(extensionInstanceId).request('forge.browser.release', { protocolVersion: 1, leaseId, leaseEpoch, reason })
+    if (result.leaseId !== leaseId || result.leaseEpoch !== leaseEpoch) throw new Error('extension release response changed lease routing')
+    await this.checkpoints.remove(leaseId, leaseEpoch)
+  }
+
+  async execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
+    if (request.operation === 'status') return this.statusResult(request)
+    if (request.operation === 'open') return this.openResult(request)
+    if (request.operation === 'navigate') return this.navigateResult(request)
+    return failure('unsupported-operation', `External Chrome M3 does not support ${request.operation}.`, false)
+  }
+
+  private async statusResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
+    const leases = await this.checkpoints.all()
+    const checkpoint = request.tabId ? findCheckpoint(leases, request.tabId, request.sessionAgentId, request.profileId) : undefined
+    const selectedTab = checkpoint && request.tabId ? checkpointTab(checkpoint, request.tabId, request, '', 'External Chrome tab') : null
+    const result: BrowserAutomationResultByOperation['status'] = {
+      available: this.connections.size > 0,
+      host: {
+        hostKind: 'external-chrome', connected: this.connections.size > 0, hostId: request.hostId,
+        hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: this.inventory()[0]?.connectedAt ?? null,
+      },
+      panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab,
+    }
+    return { ok: true, result, ...(selectedTab ? { updatedTab: selectedTab } : {}) }
+  }
+
+  private async openResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
+    const leases = await this.checkpoints.all()
+    if (request.tabId) {
+      const existing = findCheckpoint(leases, request.tabId, request.sessionAgentId, request.profileId)
+      if (!existing) return failure('attachment-required', 'A pre-existing Chrome tab requires an explicit local lease.', false)
+      const tab = checkpointTab(existing, request.tabId, request, '', 'External Chrome tab')
+      return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
+    }
+    const input = request.input as { url?: string; reuseExistingTab: boolean }
+    const mapped = leases.find((lease) => lease.sessionAgentId === request.sessionAgentId && lease.profileId === request.profileId)
+    if (mapped && input.reuseExistingTab && mapped.tabIds[0] !== undefined && this.connections.has(mapped.extensionInstanceId)) {
+      return this.openCheckpoint(request, mapped, mapped.tabIds[0], input.url)
+    }
+    const local = leases.filter((lease) => lease.sessionAgentId === '__local_pending__' && lease.profileId === '__local_pending__' && this.connections.has(lease.extensionInstanceId))
+    if (input.reuseExistingTab && local.length === 1 && local[0]!.tabIds[0] !== undefined) {
+      const adopted = { ...local[0]!, sessionAgentId: request.sessionAgentId, profileId: request.profileId, expiresAt: this.now() + CHECKPOINT_TTL_MS }
+      await this.checkpoints.put(adopted)
+      return this.openCheckpoint(request, adopted, adopted.tabIds[0]!, input.url)
+    }
+    const candidates = mapped ? [mapped.extensionInstanceId] : [...this.connections.keys()]
+    const unique = [...new Set(candidates)].filter((id) => this.connections.has(id))
+    if (unique.length !== 1) return failure('attachment-required', 'Choose a Chrome profile in the local side panel before creating a tab.', false)
+    const extensionInstanceId = unique[0]!
+    const leaseId = randomUUID()
+    const leaseEpoch = Math.max(0, ...leases.filter((lease) => lease.extensionInstanceId === extensionInstanceId).map((lease) => lease.leaseEpoch)) + 1
+    const created = await this.connection(extensionInstanceId).request('forge.browser.create', {
+      protocolVersion: 1, sessionAgentId: request.sessionAgentId, leaseId, leaseEpoch,
+      ...(input.url ? { url: input.url } : {}), groupTitle: `Forge · ${request.sessionAgentId}`.slice(0, 512),
+    })
+    if (created.extensionInstanceId !== extensionInstanceId || created.sessionAgentId !== request.sessionAgentId ||
+      created.leaseId !== leaseId || created.leaseEpoch !== leaseEpoch || created.tab.groupId !== created.groupId) {
+      throw new Error('extension create response did not match the authorized compare-and-set scope')
+    }
+    const checkpoint: ExternalChromeLeaseCheckpoint = {
+      extensionInstanceId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, leaseId, leaseEpoch,
+      tabIds: [created.tab.tabId], groupId: created.groupId, childPolicy: 'manual', expiresAt: this.now() + CHECKPOINT_TTL_MS,
+    }
+    await this.checkpoints.put(checkpoint)
+    const opaqueTabId = encodeTabId(extensionInstanceId, created.tab.tabId)
+    const tab = checkpointTab(checkpoint, opaqueTabId, request, created.tab.url, created.tab.title)
+    return { ok: true, result: { tab, created: true, panelRevealRequested: false }, updatedTab: tab }
+  }
+
+  private async openCheckpoint(request: BrowserAutomationRequest, checkpoint: ExternalChromeLeaseCheckpoint, tabId: number, url?: string): Promise<ExternalChromeTransportResult> {
+    const opaqueTabId = encodeTabId(checkpoint.extensionInstanceId, tabId)
+    if (url) {
+      const navigated = await this.navigateResult({
+        ...request, operation: 'navigate', tabId: opaqueTabId,
+        input: { hostKind: 'external-chrome', tabId: opaqueTabId, url, readiness: 'load', timeoutMs: 30_000 },
+      } as BrowserAutomationRequest)
+      if (!navigated.ok) return navigated
+      const tab = navigated.updatedTab!
+      return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
+    }
+    const tab = checkpointTab(checkpoint, opaqueTabId, request, '', 'External Chrome tab')
+    return { ok: true, result: { tab, created: false, panelRevealRequested: false }, updatedTab: tab }
+  }
+
+  private async navigateResult(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
+    if (!request.tabId) return failure('attachment-required', 'Navigation requires an explicitly leased tab.', false)
+    const checkpoint = findCheckpoint(await this.checkpoints.all(), request.tabId, request.sessionAgentId, request.profileId)
+    if (!checkpoint) return failure('lease-lost', 'The External Chrome lease is missing or stale.', true)
+    const decoded = decodeTabId(request.tabId)
+    if (!decoded || decoded.extensionInstanceId !== checkpoint.extensionInstanceId || !checkpoint.tabIds.includes(decoded.tabId)) {
+      return failure('lease-lost', 'The tab is outside the authorized lease.', false)
+    }
+    const rawInput = request.input as Record<string, unknown>
+    const { hostKind: _hostKind, tabId: _tabId, ...input } = rawInput
+    void _hostKind; void _tabId
+    const response = await this.connection(checkpoint.extensionInstanceId).request('forge.browser.execute', {
+      protocolVersion: 1, requestId: request.requestId, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
+      tabId: decoded.tabId, operation: 'navigate', input: input as { url?: string; environmentPort?: number; environmentProtocol?: 'http' | 'https'; path?: string; readiness: 'load' | 'domContentLoaded' | 'none'; timeoutMs: number }, deadlineAt: request.deadlineAt,
+    })
+    if (response.requestId !== request.requestId || response.leaseId !== checkpoint.leaseId ||
+      response.leaseEpoch !== checkpoint.leaseEpoch || response.tabId !== decoded.tabId || response.operation !== 'navigate') {
+      return failure('lease-lost', 'Extension response changed authorized lease routing.', false)
+    }
+    if (!response.ok) return { ok: false, error: response.error }
+    const raw = response.result as BrowserAutomationResultByOperation['navigate']
+    const tab = { ...raw.tab, hostKind: 'external-chrome' as const, tabId: request.tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId }
+    return { ok: true, result: { ...raw, tab }, updatedTab: tab }
+  }
+
+  private connection(extensionInstanceId: string): RuntimeConnection {
+    const connection = this.connections.get(extensionInstanceId)
+    if (!connection) throw new Error('requested extension instance is disconnected')
+    return connection
+  }
+
+  private async handshake(peer: FramedSocketPeer, context: RelayContext): Promise<void> {
+    const hello = await peer.receive()
+    if (!hello || hello.type !== 'hello' || hello.sequence !== 0 || hello.epoch !== context.epoch ||
+      hello.desktopInstanceId !== context.desktopInstanceId || hello.extensionOrigin !== EXTERNAL_CHROME_EXTENSION_ORIGIN ||
+      typeof hello.clientNonce !== 'string' || hello.clientProtocolMin !== 1 || hello.clientProtocolMax !== 1 ||
+      hello.desktopProtocolMin !== EXTERNAL_CHROME_PROTOCOL_MIN_VERSION || hello.desktopProtocolMax !== EXTERNAL_CHROME_PROTOCOL_MAX_VERSION ||
+      typeof hello.maxMessageBytes !== 'number') throw new Error('relay hello did not match rendezvous')
+    const maxMessageBytes = Math.min(256 * 1_024, hello.maxMessageBytes)
+    if (!Number.isSafeInteger(maxMessageBytes) || maxMessageBytes < 1) throw new Error('invalid relay message bound')
+    const serverNonce = randomBytes(32).toString('base64url')
+    const challengeFields = {
+      type: 'challenge', sequence: 0, epoch: context.epoch, desktopInstanceId: context.desktopInstanceId,
+      extensionOrigin: EXTERNAL_CHROME_EXTENSION_ORIGIN, clientNonce: hello.clientNonce, serverNonce,
+      clientProtocolMin: 1, clientProtocolMax: 1, desktopProtocolMin: 1, desktopProtocolMax: 1,
+      protocolVersion: 1, maxMessageBytes,
+    }
+    await peer.send({ ...challengeFields, proof: handshakeProof('desktop-challenge', challengeFields, context.secret) })
+    const authentication = await peer.receive()
+    if (!authentication) throw new Error('relay authentication missing')
+    const { proof, ...authenticationFields } = authentication
+    const expectedAuthentication = { ...challengeFields, type: 'authenticate', sequence: 1 }
+    if (canonical(authenticationFields) !== canonical(expectedAuthentication)) throw new Error('relay authentication transcript mismatch')
+    verifyProof(proof, handshakeProof('native-host-authenticate', expectedAuthentication, context.secret))
+    const sessionKey = deriveSessionKey(challengeFields, context.secret)
+    try {
+      await peer.send(authenticateRecord({
+        type: 'ready', epoch: context.epoch, desktopInstanceId: context.desktopInstanceId,
+        extensionOrigin: EXTERNAL_CHROME_EXTENSION_ORIGIN, sequence: 1, clientNonce: hello.clientNonce,
+        serverNonce, protocolVersion: 1, maxMessageBytes,
+      }, sessionKey))
+      const connection = new RuntimeConnection(peer, sessionKey, {
+        epoch: context.epoch, desktopInstanceId: context.desktopInstanceId, keyId: context.keyId,
+      }, hello.clientNonce, serverNonce, maxMessageBytes,
+        async (connection, runtimeHello) => {
+          const previous = this.connections.get(runtimeHello.extensionInstanceId)
+          if (previous && previous !== connection) previous.close()
+          this.connections.set(runtimeHello.extensionInstanceId, connection)
+          await this.checkpoints.removePendingForExtension(runtimeHello.extensionInstanceId)
+        },
+        async (connection, change) => {
+          const extensionInstanceId = connection.inventory?.extensionInstanceId
+          if (!extensionInstanceId || !change.leaseId.startsWith('side-panel-')) return
+          if (change.state === 'released') {
+            await this.checkpoints.remove(change.leaseId, change.leaseEpoch)
+            return
+          }
+          await this.checkpoints.put({
+            extensionInstanceId, sessionAgentId: '__local_pending__', profileId: '__local_pending__',
+            leaseId: change.leaseId, leaseEpoch: change.leaseEpoch, tabIds: [...change.tabIds].sort((a, b) => a - b),
+            groupId: change.groupId, childPolicy: change.childPolicy, expiresAt: this.now() + CHECKPOINT_TTL_MS,
+          })
+        },
+        (connection) => {
+          this.allConnections.delete(connection)
+          const id = connection.inventory?.extensionInstanceId
+          if (id && this.connections.get(id) === connection) this.connections.delete(id)
+        })
+      this.allConnections.add(connection)
+    } catch (error) { sessionKey.fill(0); throw error }
+  }
+}
+
+function encodeTabId(extensionInstanceId: string, tabId: number): string { return `ext.${extensionInstanceId}.${tabId}` }
+function decodeTabId(value: string): { extensionInstanceId: string; tabId: number } | null {
+  const match = /^ext\.([A-Za-z0-9_-]{1,128})\.([0-9]+)$/u.exec(value)
+  if (!match) return null
+  const tabId = Number(match[2])
+  return Number.isSafeInteger(tabId) ? { extensionInstanceId: match[1]!, tabId } : null
+}
+function findCheckpoint(leases: ExternalChromeLeaseCheckpoint[], opaqueTabId: string, sessionAgentId: string, profileId: string): ExternalChromeLeaseCheckpoint | undefined {
+  const decoded = decodeTabId(opaqueTabId)
+  return decoded ? leases.find((lease) => lease.extensionInstanceId === decoded.extensionInstanceId && lease.tabIds.includes(decoded.tabId) && lease.sessionAgentId === sessionAgentId && lease.profileId === profileId) : undefined
+}
+function checkpointTab(_checkpoint: ExternalChromeLeaseCheckpoint, opaqueTabId: string, request: BrowserAutomationRequest, url: string, title: string): BrowserTabSnapshot {
+  const now = new Date().toISOString()
+  return {
+    hostKind: 'external-chrome', tabId: opaqueTabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+    url, title, lifecycle: 'ready', loading: false, live: true, canGoBack: false, canGoForward: false,
+    zoomFactor: 1, controller: 'human', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' },
+    renderedViewport: null, physicalVisible: false, error: null, createdAt: now, updatedAt: now,
+  }
+}
+function failure(code: BrowserAutomationFailure['code'], message: string, retryable: boolean): ExternalChromeTransportResult {
+  return { ok: false, error: { code, message, retryable } }
+}
+
+function canonical(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string' || typeof value === 'number') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (typeof value === 'object') return `{${Object.keys(value as object).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(',')}}`
+  throw new Error('non-JSON relay value')
+}
+function hmac(key: Uint8Array, domain: string, value: Record<string, unknown>): string {
+  return createHmac('sha256', key).update(domain).update('\0').update(canonical(value)).digest('base64url')
+}
+function handshakeProof(role: string, fields: Record<string, unknown>, key: Uint8Array): string { return hmac(key, `forge-external-chrome/handshake/v1/${role}`, fields) }
+function verifyProof(actual: unknown, expected: string): void {
+  if (typeof actual !== 'string') throw new Error('missing authentication proof')
+  const left = Buffer.from(actual, 'base64url'); const right = Buffer.from(expected, 'base64url')
+  if (left.byteLength !== right.byteLength || !timingSafeEqual(left, right)) throw new Error('authentication failed')
+}
+function deriveSessionKey(challenge: Record<string, unknown>, secret: Uint8Array): Buffer {
+  const transcript = Buffer.from(canonical(challenge))
+  const salt = createHmac('sha256', secret).update('forge-external-chrome/session-salt/v1\0').update(transcript).digest()
+  try { return Buffer.from(hkdfSync('sha256', secret, salt, Buffer.from('forge-external-chrome/relay-record-key/v1'), 32)) }
+  finally { transcript.fill(0); salt.fill(0) }
+}
+function authenticateRecord(record: Record<string, unknown>, key: Uint8Array): Record<string, unknown> {
+  return { ...record, mac: hmac(key, 'forge-external-chrome/relay-record/v1', record) }
+}
+function verifyRecord(record: Record<string, unknown>, key: Uint8Array): Record<string, unknown> {
+  const { mac, ...unsigned } = record
+  verifyProof(mac, hmac(key, 'forge-external-chrome/relay-record/v1', unsigned))
+  return record
+}

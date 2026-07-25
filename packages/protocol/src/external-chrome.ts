@@ -11,7 +11,7 @@ import {
   BROWSER_VIEWPORT_MAX_DIMENSION,
   BROWSER_VIEWPORT_MIN_DIMENSION,
   BROWSER_VIEWPORT_PRESETS,
-  EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS,
   isBrowserAutomationOperation,
   parseBrowserAutomationInput,
   type BrowserAutomationFailure,
@@ -77,6 +77,7 @@ export const EXTERNAL_CHROME_NOTIFICATION_METHODS = [
   'browser.userControl',
   'browser.tabChanged',
   'browser.downloadChanged',
+  'browser.leaseChanged',
   'runtime.goodbye',
 ] as const
 
@@ -89,9 +90,16 @@ export type ExternalChromeRequestMethod = (typeof EXTERNAL_CHROME_REQUEST_METHOD
 export type ExternalChromeNotificationMethod = (typeof EXTERNAL_CHROME_NOTIFICATION_METHODS)[number]
 export type ExternalChromeMethod = (typeof EXTERNAL_CHROME_METHODS)[number]
 
-export const EXTERNAL_CHROME_SUPPORTED_OPERATIONS = EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS
+export const EXTERNAL_CHROME_SUPPORTED_OPERATIONS = EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS
 export const EXTERNAL_CHROME_UNSUPPORTED_OPERATIONS = [
   'resize',
+  'snapshot',
+  'click',
+  'type',
+  'press',
+  'scroll',
+  'evaluate',
+  'waitFor',
   'recordingStart',
   'recordingStop',
 ] as const satisfies readonly BrowserAutomationOperation[]
@@ -244,6 +252,7 @@ export interface ExternalChromeCandidateTab {
   active: boolean
   attached: boolean
   restricted: boolean
+  debuggerConflict: boolean
 }
 
 export interface ExternalChromeCandidateGroup {
@@ -437,6 +446,13 @@ export interface ExternalChromeDownloadChangedParams extends ExternalChromeLease
   totalBytes: number
 }
 
+export interface ExternalChromeLeaseChangedParams extends ExternalChromeLeaseRouting {
+  state: 'claimed' | 'released'
+  tabIds: number[]
+  groupId: number | null
+  childPolicy: ExternalChromeChildPolicy
+}
+
 export interface ExternalChromeGoodbyeParams {
   protocolVersion: ExternalChromeProtocolVersion
   reason: string
@@ -474,6 +490,7 @@ export interface ExternalChromeNotificationParamsByMethod {
   'browser.userControl': ExternalChromeUserControlParams
   'browser.tabChanged': ExternalChromeTabChangedParams
   'browser.downloadChanged': ExternalChromeDownloadChangedParams
+  'browser.leaseChanged': ExternalChromeLeaseChangedParams
   'runtime.goodbye': ExternalChromeGoodbyeParams
 }
 
@@ -892,13 +909,14 @@ function parseRequestParams(method: ExternalChromeRequestMethod, value: unknown,
 
 function parseCandidateTab(value: unknown, path: string): ExternalChromeCandidateTab {
   const tab = object(value, path)
-  strictKeys(tab, path, ['windowId', 'tabId', 'groupId', 'title', 'origin', 'active', 'attached', 'restricted'])
+  strictKeys(tab, path, ['windowId', 'tabId', 'groupId', 'title', 'origin', 'active', 'attached', 'restricted', 'debuggerConflict'])
   return {
     windowId: integer(tab.windowId, `${path}.windowId`), tabId: integer(tab.tabId, `${path}.tabId`),
     groupId: tab.groupId === null ? null : integer(tab.groupId, `${path}.groupId`),
     title: boundedString(tab.title, `${path}.title`, EXTERNAL_CHROME_MAX_LABEL_LENGTH, true),
     origin: boundedString(tab.origin, `${path}.origin`, EXTERNAL_CHROME_MAX_URL_LENGTH),
     active: boolean(tab.active, `${path}.active`), attached: boolean(tab.attached, `${path}.attached`), restricted: boolean(tab.restricted, `${path}.restricted`),
+    debuggerConflict: boolean(tab.debuggerConflict, `${path}.debuggerConflict`),
   }
 }
 
@@ -1350,6 +1368,16 @@ function parseNotificationParams(method: ExternalChromeNotificationMethod, value
       if (params.state !== 'in-progress' && params.state !== 'complete' && params.state !== 'interrupted') fail('invalid-params', 'params.state is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       if (params.danger !== 'safe' && params.danger !== 'dangerous' && params.danger !== 'unknown') fail('invalid-params', 'params.danger is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
       return { ...parseLeaseRouting(params, expected), tabId: integer(params.tabId, 'params.tabId'), downloadId: integer(params.downloadId, 'params.downloadId'), state: params.state, danger: params.danger, ...(params.filename === undefined ? {} : { filename: boundedString(params.filename, 'params.filename', EXTERNAL_CHROME_MAX_URL_LENGTH) }), bytesReceived: finiteNumber(params.bytesReceived, 'params.bytesReceived'), totalBytes: finiteNumber(params.totalBytes, 'params.totalBytes') }
+    }
+    case 'browser.leaseChanged': {
+      strictKeys(params, 'params', ['protocolVersion', 'leaseId', 'leaseEpoch', 'state', 'tabIds', 'groupId', 'childPolicy'])
+      if (params.state !== 'claimed' && params.state !== 'released') fail('invalid-params', 'params.state is unknown', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+      return {
+        ...parseLeaseRouting(params, expected), state: params.state,
+        tabIds: parseNumericIdArray(params.tabIds, 'params.tabIds', params.state === 'released'),
+        groupId: params.groupId === null ? null : integer(params.groupId, 'params.groupId'),
+        childPolicy: parseChildPolicy(params.childPolicy, 'params.childPolicy'),
+      }
     }
     case 'runtime.goodbye': {
       strictKeys(params, 'params', ['protocolVersion', 'reason'])

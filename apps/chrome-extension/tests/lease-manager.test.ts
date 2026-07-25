@@ -22,12 +22,27 @@ describe('candidate picker and one-session leases', () => {
       focused: true,
       groups: [{ groupId: 7, title: 'Forge · fixture', collapsed: false }],
       tabs: [
-        { windowId: 1, tabId: 3, groupId: 7, title: 'Synthetic app', origin: 'https://fixture.invalid', active: true, attached: false, restricted: false },
-        { windowId: 1, tabId: 4, groupId: 7, title: 'Second tab', origin: 'https://other.invalid', active: false, attached: false, restricted: false },
+        { windowId: 1, tabId: 3, groupId: 7, title: 'Synthetic app', origin: 'https://fixture.invalid', active: true, attached: false, restricted: false, debuggerConflict: false },
+        { windowId: 1, tabId: 4, groupId: 7, title: 'Second tab', origin: 'https://other.invalid', active: false, attached: false, restricted: false, debuggerConflict: false },
       ],
     }])
     expect(JSON.stringify(windows)).not.toContain('/path')
     expect(JSON.stringify(windows)).not.toContain('secret')
+  })
+
+  it('distinguishes exact restricted-scheme and foreign-debugger conflicts for picker badges', async () => {
+    const chrome = fakeChrome({
+      tabs: [
+        { id: 1, windowId: 1, url: 'chrome://settings/' },
+        { id: 2, windowId: 1, url: 'https://conflict.invalid/' },
+      ],
+      debuggerTargets: [{ tabId: 2, attached: true, extensionId: 'some-other-debugger' }],
+    })
+    const tabs = (await new LeaseManager(chrome, 'm1-spike.1').listCandidates())[0]!.tabs
+    expect(tabs).toEqual([
+      expect.objectContaining({ tabId: 1, restricted: true, debuggerConflict: false }),
+      expect.objectContaining({ tabId: 2, restricted: false, debuggerConflict: true }),
+    ])
   })
 
   it('bounds and deterministically truncates windows, groups, tabs, and labels before transport', async () => {
@@ -75,6 +90,25 @@ describe('candidate picker and one-session leases', () => {
     }
     await expect(manager.claim({ ...original, tabIds: [3, 3] })).rejects.toMatchObject({ code: 'scope-mismatch' })
     expect(manager.current()).toEqual(first.lease)
+  })
+
+  it('keeps child tabs manual by default and includes only proven opener children when opted in', async () => {
+    const tabs = [
+      ...structuredClone(normalTabs),
+      { id: 5, windowId: 1, groupId: -1, openerTabId: 3, url: 'https://child.invalid/' },
+      { id: 6, windowId: 1, groupId: -1, openerTabId: 999, url: 'https://unrelated.invalid/' },
+    ]
+    const chrome = fakeChrome({ tabs, groups: [{ id: 7, windowId: 1, collapsed: false }] })
+    const manual = new LeaseManager(chrome, 'm1-spike.1')
+    await manual.claim({ leaseId: 'manual', leaseEpoch: 1, sessionAgentId: 'session', tabIds: [3], groupId: 7, childPolicy: 'manual' })
+    expect(await manual.includeChild(5, 3)).toBeNull()
+    await manual.release('manual', 1)
+
+    const optedIn = new LeaseManager(chrome, 'm1-spike.1')
+    await optedIn.claim({ leaseId: 'children', leaseEpoch: 2, sessionAgentId: 'session', tabIds: [3], groupId: 7, childPolicy: 'include-opened-by-leased-tabs' })
+    expect(await optedIn.includeChild(5, 3)).toMatchObject({ tabIds: [3, 5], groupId: 7 })
+    expect(await optedIn.includeChild(6, 3)).toBeNull()
+    expect(await chrome.tabs.get(5)).toMatchObject({ groupId: 7 })
   })
 
   it('creates a Forge-named group and leases only its new tab', async () => {

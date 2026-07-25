@@ -104,7 +104,7 @@ export class BrowserSessionStore {
     const normalized = this.normalize(snapshot);
     const path = this.getStatePath(normalized.profileId, normalized.sessionAgentId);
     const previous = this.writeChains.get(path) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => writeJsonFileAtomic(path, normalized));
+    const current = previous.catch(() => undefined).then(() => writeJsonFileAtomic(path, privacyBoundSnapshot(normalized)));
     this.writeChains.set(path, current);
     try {
       await current;
@@ -147,6 +147,20 @@ export class BrowserSessionStore {
       }
     }
   }
+}
+
+function privacyBoundSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
+  if (snapshot.hostKind !== 'external-chrome' && snapshot.tabs.every((tab) => tab.hostKind !== 'external-chrome')) return snapshot;
+  return {
+    ...snapshot,
+    tabs: snapshot.tabs.map((tab) => tab.hostKind === 'external-chrome' ? { ...tab, url: '', title: '' } : tab),
+    recentActions: snapshot.recentActions.map((action) => {
+      if (action.tabId === null || !snapshot.tabs.some((tab) => tab.hostKind === 'external-chrome' && tab.tabId === action.tabId)) return action;
+      const { url: _url, title: _title, ...safe } = action;
+      void _url; void _title;
+      return safe;
+    }),
+  };
 }
 
 function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: string): BrowserSessionSnapshot {

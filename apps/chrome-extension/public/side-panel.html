@@ -10,14 +10,15 @@
   <main>
     <header>
       <span class="mark" aria-hidden="true">F</span>
-      <div><h1>External Chrome</h1><p>Local beta · test side-load</p></div>
+      <div><h1>External Chrome</h1><p>Local beta · local Desktop relay</p></div>
     </header>
     <p class="warning">Only tabs you select below can be leased. DevTools or trusted human input interrupts agent control.</p>
     <div class="status" data-forge-status>Starting local payload…</div>
     <form data-forge-picker>
       <fieldset><legend>Local tab candidates</legend><div data-forge-candidates></div></fieldset>
-      <label>Session label <input data-forge-session value="M1 spike" maxlength="64"></label>
-      <div class="actions"><button type="submit">Claim selected</button><button type="button" data-forge-release>Detach now</button></div>
+      <label>Session label <input data-forge-session value="Forge session" maxlength="64"></label>
+      <label><input type="checkbox" data-forge-child-policy> Include tabs opened by leased tabs in this group</label>
+      <div class="actions"><button type="submit">Claim selected</button><button type="button" data-forge-create>Create grouped tab</button><button type="button" data-forge-release>Detach now</button></div>
     </form>
     <p class="truth">Resize, recording, download artifacts, and download-open are not supported.</p>
   </main>

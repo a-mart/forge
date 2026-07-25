@@ -2,8 +2,8 @@ import { isSea } from 'node:sea'
 import { HOST_CONNECT_MAX_ATTEMPTS, HOST_EXTENSION_ORIGIN } from './constants.js'
 import { runNativeHost } from './host.js'
 import { assertSupportedPlatform } from './platform.js'
+import { createInstalledRelayDependencies } from './installed-discovery.js'
 import { AuthenticatedRelayClient } from './relay-client.js'
-import { DesktopUnavailableError } from './transport.js'
 
 async function main(): Promise<void> {
   assertSupportedPlatform(process.platform)
@@ -16,24 +16,11 @@ async function main(): Promise<void> {
     platform,
     launchArguments,
     connectRelay: async () => AuthenticatedRelayClient.connect({
-      rendezvous: {
-        read: async () => {
-          throw new DesktopUnavailableError('Desktop rendezvous injection is not configured in the M1 spike')
-        },
-      },
-      secrets: {
-        getSecret: async () => {
-          throw new DesktopUnavailableError('Desktop secret injection is not configured in the M1 spike')
-        },
-      },
-      connector: {
-        connect: async () => {
-          throw new DesktopUnavailableError('Desktop socket injection is not configured in the M1 spike')
-        },
-      },
-      expectedUserScope: 'unconfigured-m1-spike',
-      expectedExtensionOrigin: HOST_EXTENSION_ORIGIN,
-      platform,
+      ...createInstalledRelayDependencies({
+        executable: process.execPath,
+        platform,
+        extensionOrigin: HOST_EXTENSION_ORIGIN,
+      }),
       maxAttempts: HOST_CONNECT_MAX_ATTEMPTS,
     }),
   })

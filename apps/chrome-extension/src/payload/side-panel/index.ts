@@ -40,22 +40,40 @@ function renderCandidates(windows: CandidateWindow[]): void {
   const container = query<HTMLElement>('[data-forge-candidates]')
   container.replaceChildren()
   groupByTab.clear()
-  for (const window of windows) for (const tab of window.tabs) {
-    groupByTab.set(tab.tabId, tab.groupId)
-    const label = document.createElement('label')
-    label.className = `candidate${tab.restricted || tab.attached ? ' restricted' : ''}`
-    const checkbox = document.createElement('input')
-    checkbox.type = 'checkbox'
-    checkbox.name = 'tabId'
-    checkbox.value = String(tab.tabId)
-    checkbox.disabled = tab.restricted || tab.attached
-    const text = document.createElement('span')
-    text.textContent = tab.title || 'Untitled tab'
-    const detail = document.createElement('small')
-    detail.textContent = tab.restricted ? `${tab.origin || 'Restricted'} · unavailable` : `${tab.origin} · window ${window.windowId}${tab.groupId === null ? '' : ` · group ${tab.groupId}`}`
-    text.append(detail)
-    label.append(checkbox, text)
-    container.append(label)
+  for (const window of windows) {
+    const heading = document.createElement('strong')
+    heading.textContent = `Window ${window.windowId}${window.focused ? ' · focused' : ''}`
+    container.append(heading)
+    let renderedGroup: number | null | undefined
+    const orderedTabs = [...window.tabs].sort((left, right) => (left.groupId ?? -1) - (right.groupId ?? -1) || left.tabId - right.tabId)
+    for (const tab of orderedTabs) {
+      if (renderedGroup !== tab.groupId) {
+        renderedGroup = tab.groupId
+        const groupHeading = document.createElement('small')
+        const group = tab.groupId === null ? undefined : window.groups.find((candidate) => candidate.groupId === tab.groupId)
+        groupHeading.textContent = tab.groupId === null ? 'Ungrouped tabs' : group?.title || `Group ${tab.groupId}`
+        container.append(groupHeading)
+      }
+      groupByTab.set(tab.tabId, tab.groupId)
+      const label = document.createElement('label')
+      label.className = `candidate${tab.restricted || tab.attached || tab.debuggerConflict ? ' restricted' : ''}`
+      const checkbox = document.createElement('input')
+      checkbox.type = 'checkbox'
+      checkbox.name = 'tabId'
+      checkbox.value = String(tab.tabId)
+      checkbox.disabled = tab.restricted || tab.attached || tab.debuggerConflict
+      const text = document.createElement('span')
+      text.textContent = tab.title || 'Untitled tab'
+      const detail = document.createElement('small')
+      detail.textContent = tab.restricted
+        ? `${tab.origin || 'Restricted'} · restricted scheme`
+        : tab.debuggerConflict
+          ? `${tab.origin} · DevTools or another debugger is attached`
+          : `${tab.origin} · window ${window.windowId}${tab.groupId === null ? '' : ` · group ${tab.groupId}`}`
+      text.append(detail)
+      label.append(checkbox, text)
+      container.append(label)
+    }
   }
   if (container.childElementCount === 0) container.textContent = 'No local tab candidates.'
 }
@@ -64,7 +82,8 @@ async function refresh(): Promise<void> {
   const state = await request<PickerState>({ kind: 'picker.list' })
   activeLease = state.lease
   renderCandidates(state.windows)
-  status(activeLease === null ? 'Ready — choose one or more local tabs.' : `Attached · ${activeLease.tabIds.length} tab(s) · ${activeLease.state}`)
+  const control = activeLease?.state === 'CONTROLLING_AGENT' ? 'Agent' : activeLease?.state === 'LOST' ? 'Detached / lost' : 'Human'
+  status(activeLease === null ? 'Detached · choose one or more local tabs.' : `Attached · ${activeLease.tabIds.length} tab(s) · ${control}`)
 }
 
 async function claim(event: SubmitEvent): Promise<void> {
@@ -80,10 +99,26 @@ async function claim(event: SubmitEvent): Promise<void> {
   status('Claiming and attaching Chrome debugger…')
   const result = await request<{ lease: LeaseRecord }>({
     kind: 'picker.claim', leaseId, leaseEpoch, sessionAgentId: `local:${sessionLabel}`.slice(0, 128), tabIds,
-    ...(groupId === undefined ? {} : { groupId }), childPolicy: 'manual',
+    ...(groupId === undefined ? {} : { groupId }),
+    childPolicy: query<HTMLInputElement>('[data-forge-child-policy]').checked ? 'include-opened-by-leased-tabs' : 'manual',
   })
   activeLease = result.lease
   status(`Attached · ${result.lease.tabIds.length} tab(s) · human control`)
+  await refresh()
+}
+
+async function createGroupedTab(): Promise<void> {
+  if (activeLease !== null) {
+    status('Detach the current lease before creating another grouped tab.', true)
+    return
+  }
+  const sessionLabel = query<HTMLInputElement>('[data-forge-session]').value.trim() || 'Forge session'
+  const result = await request<{ lease: LeaseRecord }>({
+    kind: 'picker.create', leaseId, leaseEpoch, sessionAgentId: `local:${sessionLabel}`.slice(0, 128),
+    groupTitle: `Forge · ${sessionLabel}`.slice(0, 512),
+  })
+  activeLease = result.lease
+  status('Attached · Forge-owned grouped tab · human control')
   await refresh()
 }
 
@@ -102,6 +137,9 @@ async function release(): Promise<void> {
 export function activateSidePanel(): void {
   query<HTMLFormElement>('[data-forge-picker]').addEventListener('submit', (event) => {
     void claim(event).catch((error: unknown) => status(error instanceof Error ? error.message : 'Claim failed', true))
+  })
+  query<HTMLButtonElement>('[data-forge-create]').addEventListener('click', () => {
+    void createGroupedTab().catch((error: unknown) => status(error instanceof Error ? error.message : 'Create failed', true))
   })
   query<HTMLButtonElement>('[data-forge-release]').addEventListener('click', () => {
     void release().catch((error: unknown) => status(error instanceof Error ? error.message : 'Detach failed', true))

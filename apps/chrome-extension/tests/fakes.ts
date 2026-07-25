@@ -17,6 +17,7 @@ export interface FakeChromeOptions {
   windows?: ChromeWindow[]
   session?: FakeStorage
   detachFailures?: Set<number>
+  debuggerTargets?: ChromeDebuggerSession[]
 }
 
 export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attached: Set<number>; commands: Array<{ target: ChromeDebuggerSession; method: string; params?: Record<string, unknown> }> } {
@@ -74,6 +75,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attac
     storage: { local, session },
     scripting: { executeScript: async () => [] },
     debugger: {
+      getTargets: async () => structuredClone(options.debuggerTargets ?? tabs.flatMap((tab) => tab.id === undefined ? [] : [{ tabId: tab.id, attached: attached.has(tab.id), extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' }])),
       attach: async (target) => {
         if (target.tabId === undefined || attached.has(target.tabId)) throw new Error('Another debugger is already attached')
         attached.add(target.tabId)

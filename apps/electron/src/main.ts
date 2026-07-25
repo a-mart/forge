@@ -24,6 +24,7 @@ import { LifecycleLog } from './lifecycle-log.js'
 import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
 import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
+import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
 import { installExternalChromeIpc } from './external-chrome/ipc.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
@@ -675,6 +676,7 @@ if (!hasSingleInstanceLock) {
           mainWindow.webContents.send(channel, payload)
         }
       },
+      externalChromeAdapter: new ExternalChromeTargetAdapter(externalChromeCoordinator.transport()),
     })
     browserViewHost = new ManagedBrowserViewHost({
       manager: browserManager,

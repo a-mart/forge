@@ -1,5 +1,5 @@
 import {
-  EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS,
   type BrowserAutomationFailure,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
@@ -22,7 +22,7 @@ export type ExternalChromeTransportResult =
       elapsedMs?: number
     }
 
-/** Bounded M0 transport seam. The only implementation in M0 is a deterministic test fake. */
+/** Bounded transport implemented by the authenticated Desktop relay; tests may inject a fake. */
 export interface ExternalChromeTransport {
   readonly maxResponseBytes: number
   execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult>
@@ -30,7 +30,7 @@ export interface ExternalChromeTransport {
 
 export class ExternalChromeTargetAdapter implements BrowserTargetAdapter {
   readonly hostKind = 'external-chrome' as const
-  readonly supportedOperations = EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS
+  readonly supportedOperations = EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS
 
   constructor(
     private readonly transport: ExternalChromeTransport,
@@ -47,7 +47,7 @@ export class ExternalChromeTargetAdapter implements BrowserTargetAdapter {
     if (!(this.supportedOperations as readonly string[]).includes(request.operation)) {
       return this.failure(request, {
         code: 'unsupported-operation',
-        message: `External Chrome M0 does not support ${request.operation}.`,
+        message: `External Chrome M3 does not support ${request.operation}.`,
         retryable: false,
         details: { operation: request.operation, hostKind: this.hostKind },
       }, started)
@@ -62,7 +62,7 @@ export class ExternalChromeTargetAdapter implements BrowserTargetAdapter {
     } catch (error) {
       return this.failure(request, {
         code: 'host-disconnected',
-        message: error instanceof Error ? error.message : 'External Chrome test transport disconnected.',
+        message: error instanceof Error ? error.message : 'External Chrome transport disconnected.',
         retryable: true,
       }, started)
     }

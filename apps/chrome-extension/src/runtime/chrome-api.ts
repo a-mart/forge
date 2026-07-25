@@ -31,6 +31,7 @@ export interface ChromeDebuggerTarget {
   tabId?: number
   targetId?: string
   extensionId?: string
+  attached?: boolean
 }
 
 export interface ChromeDebuggerSession extends ChromeDebuggerTarget {
@@ -38,6 +39,7 @@ export interface ChromeDebuggerSession extends ChromeDebuggerTarget {
 }
 
 export interface ChromeDebuggerApi {
+  getTargets(): Promise<ChromeDebuggerTarget[]>
   attach(target: ChromeDebuggerTarget, requiredVersion: string): Promise<void>
   detach(target: ChromeDebuggerTarget): Promise<void>
   sendCommand(target: ChromeDebuggerSession, method: string, commandParams?: Record<string, unknown>): Promise<unknown>

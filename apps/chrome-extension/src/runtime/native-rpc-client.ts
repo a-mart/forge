@@ -33,11 +33,12 @@ export interface NativeRpcClientOptions {
   connect: (hostName: string) => ChromeRuntimePort
   extensionInstanceId: string
   chromeVersion: string
+  profileAlias?: string
   scheduler?: NativeRpcScheduler
   randomId?: () => string
   onConnected?: (welcome: ExternalChromeWelcomeResult) => void
   onDisconnected?: (reason: string) => void
-  onRequest?: (message: ExternalChromeJsonRpcMessage) => void
+  onRequest?: (message: ExternalChromeJsonRpcMessage) => unknown | Promise<unknown>
 }
 
 interface PendingRequest {
@@ -135,15 +136,14 @@ export class NativeRpcClient {
       payloadVersion: PAYLOAD_VERSION,
       extensionId: EXTERNAL_CHROME_EXTENSION_ID,
       extensionInstanceId: this.options.extensionInstanceId,
+      ...(this.options.profileAlias ? { profileAlias: this.options.profileAlias } : {}),
       chromeVersion: this.options.chromeVersion,
       methods: [...EXTERNAL_CHROME_METHODS],
       maxMessageBytes: EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
       operations: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({
         operation,
-        supported: false,
-        reason: supported.has(operation)
-          ? 'M1 implements the lease and verified CDP primitive seams but not native execute dispatch'
-          : 'External Chrome does not qualify this operation in M1',
+        supported: supported.has(operation),
+        ...(supported.has(operation) ? {} : { reason: 'External Chrome does not qualify this operation in M3' }),
       })),
       features: {
         resize: false,
@@ -152,7 +152,7 @@ export class NativeRpcClient {
         downloadArtifacts: false,
         downloadOpen: false,
         oopif: false,
-        humanInterruption: false,
+        humanInterruption: true,
         groups: true,
       },
     }
@@ -218,6 +218,23 @@ export class NativeRpcClient {
       this.pending.delete(id)
       this.scheduler.clearTimeout(pending.timer)
       pending.resolve(parsed)
+      return
+    }
+    if ('method' in parsed && 'id' in parsed) {
+      const handler = this.options.onRequest
+      if (handler === undefined) {
+        this.postBounded({ jsonrpc: '2.0', id: parsed.id, error: { code: -32601, message: 'Extension method is unavailable' } })
+        return
+      }
+      void Promise.resolve(handler(parsed)).then(
+        (result) => this.postBounded({ jsonrpc: '2.0', id: parsed.id, result }),
+        (error: unknown) => this.postBounded({
+          jsonrpc: '2.0', id: parsed.id, error: {
+            code: -32050,
+            message: error instanceof Error ? error.message.slice(0, 256) : 'Extension request failed',
+          },
+        }),
+      ).catch(() => this.disconnectInvalid('failed to send extension response'))
       return
     }
     this.options.onRequest?.(parsed)

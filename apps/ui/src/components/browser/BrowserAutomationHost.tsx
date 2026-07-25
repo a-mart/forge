@@ -54,6 +54,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const selectedSessionRef = useRef(selectedSessionAgentId)
     const selectedProfileRef = useRef(selectedProfileId ?? null)
     const hostIdRef = useRef(`forge-browser-${randomId()}`)
+    const externalHostIdRef = useRef(`forge-external-chrome-${randomId()}`)
     const controllerInstanceIdRef = useRef(`renderer-${randomId()}`)
     const workspaceEpochRef = useRef(Date.now())
     const reconcileSequenceRef = useRef(0)
@@ -197,7 +198,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       let invoked = request
       let provisional: BrowserTabSnapshot | null = null
       try {
-        if (request.operation === 'open' && request.tabId === null) {
+        if (request.hostKind === 'managed-electron' && request.operation === 'open' && request.tabId === null) {
           provisional = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
           await currentBridge.ensureProvisional({ tab: provisional, visible: false, created: true, workspaceEpoch: workspaceEpochRef.current })
           invoked = { ...request, tabId: provisional.tabId, input: { ...request.input, tabId: provisional.tabId } } as BrowserAutomationRequest
@@ -238,6 +239,26 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         registeredAt: new Date().toISOString(),
       }
       return client.registerBrowserAutomationHost(registration, executeRequest)
+    }, [bridge, client, executeRequest])
+
+    useEffect(() => {
+      if (!client || !bridge || typeof client.registerSecondaryBrowserAutomationHost !== 'function') return
+      const registration: BrowserHostRegistration = {
+        hostId: externalHostIdRef.current,
+        clientInstanceId: controllerInstanceIdRef.current,
+        capabilities: {
+          hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
+          supportedOperations: ['status', 'open', 'navigate'], maxResponseBytes: 1024 * 1024,
+          runtimeVersions: { chrome: 'external', extension: 'm3-runtime' },
+          features: {
+            resize: false, recording: false, capturePage: false, downloadEvents: false,
+            downloadArtifacts: false, downloadOpen: false,
+          },
+          supportsSandboxedWebviews: false, supportsCapturePage: false, supportsRecording: false,
+        },
+        registeredAt: new Date().toISOString(),
+      }
+      return client.registerSecondaryBrowserAutomationHost(registration, executeRequest)
     }, [bridge, client, executeRequest])
 
     useEffect(() => {

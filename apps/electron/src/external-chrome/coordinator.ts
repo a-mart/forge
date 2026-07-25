@@ -36,6 +36,7 @@ import {
   createExternalChromeNativeRegistration,
   type ExternalChromeNativeRegistration,
 } from './registration.js'
+import { ExternalChromeRelayRuntime } from './relay-runtime.js'
 
 const DEFAULT_RENDEZVOUS_TTL_MS = 15_000
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000
@@ -82,6 +83,7 @@ export class ExternalChromeHostCoordinator {
   private readonly authority: ExternalChromeAuthorityStore
   private readonly endpoints: ExternalChromeEndpointAuthority
   private readonly registration: ExternalChromeNativeRegistration
+  private readonly relay: ExternalChromeRelayRuntime
   private readonly paths: ExternalChromeDataPaths
   private readonly desktopVersion?: string
   private readonly packagedManifestPath?: string
@@ -121,12 +123,13 @@ export class ExternalChromeHostCoordinator {
       options.isProcessAlive,
       this.now,
     )
-    this.endpoints = options.endpoints ?? new NodeExternalChromeEndpointAuthority(this.access)
+    this.paths = resolveExternalChromeDataPaths(options.dataRoot, this.platform)
+    this.relay = new ExternalChromeRelayRuntime(path.join(this.paths.state, 'leases.json'), this.now)
+    this.endpoints = options.endpoints ?? new NodeExternalChromeEndpointAuthority(this.access, this.relay)
     this.registration = options.registration ?? createExternalChromeNativeRegistration({
       dataRoot: options.dataRoot,
       platform: this.platform,
     })
-    this.paths = resolveExternalChromeDataPaths(options.dataRoot, this.platform)
     this.desktopVersion = options.desktopVersion
     this.packagedManifestPath = options.packagedManifestPath
     this.rollbackController = options.rollbackController
@@ -138,6 +141,11 @@ export class ExternalChromeHostCoordinator {
 
   status(): Promise<ExternalChromeCoordinatorStatus> {
     return this.statusUnlocked()
+  }
+
+  /** Real authenticated relay transport used by the External Chrome target adapter. */
+  transport(): ExternalChromeRelayRuntime {
+    return this.relay
   }
 
   resumeIfEnabled(): Promise<void> {
@@ -260,6 +268,7 @@ export class ExternalChromeHostCoordinator {
       }
       await this.registration.repair()
       const epoch = createRendezvousEpoch()
+      this.relay.activate({ epoch, desktopInstanceId: this.instanceId, keyId: keyRecord.keyId, secret: keyRecord.key })
       const endpoint = await this.endpoints.listen({
         runDirectory: this.runDirectory,
         platform: this.platform,
@@ -394,6 +403,7 @@ export class ExternalChromeHostCoordinator {
     this.epoch = null
     this.keyId = null
     if (endpoint) await endpoint.close()
+    this.relay.deactivate()
     await this.authority.withdraw()
     this.quiesced = markQuiesced
   }

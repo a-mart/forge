@@ -41,6 +41,7 @@ export interface CandidateTab {
   active: boolean
   attached: boolean
   restricted: boolean
+  debuggerConflict: boolean
 }
 
 export interface CandidateWindow {
@@ -88,10 +89,12 @@ export class LeaseManager {
   }
 
   async listCandidates(): Promise<CandidateWindow[]> {
-    const [rawWindows, rawGroups] = await Promise.all([
+    const [rawWindows, rawGroups, debuggerTargets] = await Promise.all([
       this.chrome.windows.getAll({ populate: true }),
       this.chrome.tabGroups.query({}),
+      this.chrome.debugger.getTargets(),
     ])
+    const conflictingTabs = new Set(debuggerTargets.filter((target) => target.attached === true && target.extensionId !== this.chrome.runtime.id).flatMap((target) => target.tabId === undefined ? [] : [target.tabId]))
     const windows = rawWindows.filter((window) => window.id !== undefined)
       .sort((left, right) => (left.id as number) - (right.id as number))
       .slice(0, EXTERNAL_CHROME_MAX_ARRAY_ITEMS)
@@ -113,6 +116,7 @@ export class LeaseManager {
           active: tab.active === true,
           attached: this.active?.tabIds.includes(ids.tabId) === true,
           restricted: restrictedTargetReason(tab.url) !== null,
+          debuggerConflict: conflictingTabs.has(ids.tabId),
         }]
       }).sort((left, right) => left.tabId - right.tabId).slice(0, remainingTabs)
       remainingTabs -= tabs.length
@@ -137,6 +141,10 @@ export class LeaseManager {
     groupId?: number
     childPolicy: ExternalChromeChildPolicy
   }): Promise<{ lease: LeaseRecord; tabs: ChromeTab[] }> {
+    if (!input.leaseId || input.leaseId.length > 128 || !Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1 ||
+      !input.sessionAgentId || input.sessionAgentId.length > 128) {
+      throw new LeaseError('scope-mismatch', 'lease routing fields are invalid')
+    }
     const tabIds = [...new Set(input.tabIds)].sort((left, right) => left - right)
     if (tabIds.length === 0 || tabIds.length > EXTERNAL_CHROME_MAX_CANDIDATE_TABS || tabIds.length !== input.tabIds.length) {
       throw new LeaseError('scope-mismatch', 'claim must contain a bounded non-empty unique tab set')
@@ -186,11 +194,29 @@ export class LeaseManager {
     return { lease: structuredClone(lease), tabs }
   }
 
+  async includeChild(tabId: number, openerTabId: number): Promise<LeaseRecord | null> {
+    const lease = this.active
+    if (lease === null || lease.state === 'LOST' || lease.childPolicy !== 'include-opened-by-leased-tabs' ||
+      !lease.tabIds.includes(openerTabId) || lease.groupId === null || lease.tabIds.includes(tabId)) return null
+    if (lease.tabIds.length >= EXTERNAL_CHROME_MAX_CANDIDATE_TABS) throw new LeaseError('scope-mismatch', 'lease tab bound reached')
+    let tab: ChromeTab
+    try { tab = await this.chrome.tabs.get(tabId) } catch { return null }
+    if (tab.openerTabId !== openerTabId || restrictedTargetReason(tab.url) !== null) return null
+    await this.chrome.tabs.group({ tabIds: [tabId], groupId: lease.groupId })
+    this.active = { ...lease, tabIds: [...lease.tabIds, tabId].sort((left, right) => left - right) }
+    await this.persist()
+    return structuredClone(this.active)
+  }
+
   async create(input: { leaseId: string; leaseEpoch: number; sessionAgentId: string; url?: string; groupTitle: string }): Promise<{ lease: LeaseRecord; tab: ChromeTab }> {
+    if (!input.leaseId || input.leaseId.length > 128 || !Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1 ||
+      !input.sessionAgentId || input.sessionAgentId.length > 128 || !input.groupTitle || input.groupTitle.length > EXTERNAL_CHROME_MAX_LABEL_LENGTH) {
+      throw new LeaseError('scope-mismatch', 'create routing fields are invalid')
+    }
     if (input.url !== undefined && restrictedTargetReason(input.url) !== null) {
       throw new LeaseError('restricted-target', 'the requested URL cannot be controlled')
     }
-    const tab = await this.chrome.tabs.create({ ...(input.url === undefined ? {} : { url: input.url }), active: true })
+    const tab = await this.chrome.tabs.create({ url: input.url ?? 'https://forge.invalid/', active: true })
     if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return the created tab ID')
     const groupId = await this.chrome.tabs.group({ tabIds: [tab.id], ...(tab.windowId === undefined ? {} : { createProperties: { windowId: tab.windowId } }) })
     await this.chrome.tabGroups.update(groupId, { title: input.groupTitle, color: 'blue', collapsed: false })

@@ -34,6 +34,57 @@ afterEach(() => {
 })
 
 describe('ManagerWsClient browser automation state', () => {
+  it('registers and routes a secondary External Chrome host without replacing Managed Browser state', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    const send = vi.fn()
+    const socket = { readyState: 1, send, close: vi.fn() }
+    ;(client as unknown as { transport: { socket: typeof socket } }).transport.socket = socket
+    const externalRegistration: BrowserHostRegistration = {
+      hostId: 'external-host', clientInstanceId: 'renderer-1', registeredAt: new Date(0).toISOString(),
+      capabilities: {
+        hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
+        supportedOperations: ['status', 'open', 'navigate'], maxResponseBytes: 1024 * 1024,
+        runtimeVersions: { chrome: 'external', extension: 'm3-runtime' },
+        features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+        supportsSandboxedWebviews: false, supportsCapturePage: false, supportsRecording: false,
+      },
+    }
+    const handleRequest = vi.fn(async (request) => ({
+      requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+      profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+      operation: request.operation, ok: false as const,
+      error: { code: 'attachment-required' as const, message: 'Select a local tab.', retryable: false }, elapsedMs: 1,
+    }))
+    client.registerSecondaryBrowserAutomationHost(externalRegistration, handleRequest)
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+
+    await vi.advanceTimersByTimeAsync(0)
+    const register = JSON.parse(send.mock.calls[0]![0] as string)
+    expect(register).toMatchObject({ type: 'browser_host_register', registration: { hostId: 'external-host', capabilities: { hostKind: 'external-chrome' } } })
+    ingest({ type: 'browser_host_connected', requestId: register.requestId, host: {
+      connected: true, hostKind: 'external-chrome', hostId: 'external-host', hostGeneration: 8,
+      focused: false, capabilities: externalRegistration.capabilities, connectedAt: new Date().toISOString(),
+    } })
+    await Promise.resolve()
+    expect(client.getState().browserHost.connected).toBe(false)
+    expect(client.getState().browserHost.hostKind).not.toBe('external-chrome')
+
+    ingest({ type: 'browser_automation_request', request: {
+      requestId: 'external-request', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1',
+      tabId: null, operation: 'status', input: {}, hostId: 'external-host', hostGeneration: 8,
+      deadlineAt: new Date(Date.now() + 1_000).toISOString(), artifactDirectory: null,
+    } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(handleRequest).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'external-request', hostKind: 'external-chrome' }))
+    expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({
+      type: 'browser_host_response', response: { requestId: 'external-request', hostKind: 'external-chrome', error: { code: 'attachment-required' } },
+    })
+    client.destroy()
+  })
+
   it('retries dropped registration and hydration phases on the same open transport', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })

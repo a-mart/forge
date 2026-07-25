@@ -48,6 +48,13 @@ export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
   'waitFor',
 ] as const satisfies readonly BrowserAutomationOperation[]
 
+/** Operations qualified by the production M3 lease runtime. M4 operations stay fail-closed. */
+export const EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS = [
+  'status',
+  'open',
+  'navigate',
+] as const satisfies readonly BrowserAutomationOperation[]
+
 export const BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000
 export const BROWSER_AUTOMATION_MAX_TIMEOUT_MS = 60_000
 export const BROWSER_AUTOMATION_MAX_URL_LENGTH = 2_048

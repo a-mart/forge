@@ -1,6 +1,6 @@
 # Forge External Chrome native messaging host
 
-This M1 spike is a narrow Node single-executable-application (SEA) capable relay. It owns:
+This package is a narrow Node single-executable-application (SEA) relay. It owns:
 
 - binary native-messaging stdio framing with Forge bounds below Chrome's transport limits;
 - exact launch-origin validation for the pinned Forge extension;
@@ -10,7 +10,7 @@ This M1 spike is a narrow Node single-executable-application (SEA) capable relay
 
 The long-lived 256-bit per-user secret authenticates only the challenge exchange. The exact challenge transcript binds both protocol ranges and the selected version, pinned extension origin, Desktop instance ID, rendezvous epoch, client/server nonces, and negotiated message limit. Challenge and client-response proofs are domain-separated HMAC-SHA-256 values. Ready and relay records never use that long-lived key: both peers derive a per-connection 256-bit key with HKDF-SHA-256, using a domain-separated transcript HMAC as salt and `forge-external-chrome/relay-record-key/v1` as HKDF info. Secret copies are zeroed after the handshake, and the derived key is zeroed on every connection close or failure.
 
-It deliberately contains **no browser automation or browser-control policy**, localhost listener, Chrome profile reads, real authentication key, production rendezvous discovery, OS registration, installer, or UI. The executable currently returns one bounded `desktop-unavailable` native message until Forge Desktop injects the rendezvous, secret provider, and socket connector. Secrets exist only behind an injectable interface and in test fixtures. They are never sent to the extension or included in diagnostics.
+It deliberately contains **no browser automation or browser-control policy**, localhost listener, Chrome profile reads, OS registration, installer, or UI. The deployed executable derives only its Forge-owned integration siblings, validates the private rendezvous/key files, and connects the advertised Unix socket or Windows named pipe. Secrets are never sent to the extension or included in diagnostics.
 
 ## Development
 
