@@ -1,15 +1,15 @@
 # Docker secure runner
 
-The Docker execution proof defaults to `forge-secure-runner:node22-v4`. It
+The Docker execution proof defaults to `forge-secure-runner:node22-v5`. It
 requires image contract label
-`com.forge.secure-execution.runner-contract=4` and refuses to start when the
+`com.forge.secure-execution.runner-contract=5` and refuses to start when the
 image is absent or does not carry that label.
 
 Build the pinned Node 22 runner from the repository root:
 
 ```bash
 docker build \
-  --tag forge-secure-runner:node22-v4 \
+  --tag forge-secure-runner:node22-v5 \
   --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner \
   apps/backend/src/swarm/secure-sessions/execution
 ```
@@ -19,9 +19,13 @@ OpenSSH client, PostgreSQL client, rsync, jq, Python 3, the `script` PTY helper,
 and the Debian build toolchain. The Docker backend mounts the live workspace at
 the same absolute path, supplies its own clean child environment, and does not
 import image or host environment variables into executed commands.
-Contract v4 also supplies per-execution passwd/group views when the mapped host
+Contract v5 also supplies per-execution passwd/group views when the mapped host
 UID or GID is absent from the image, so NSS-dependent tools such as OpenSSH work
-without running the container as root.
+without running the container as root. It includes the immutable
+`/usr/local/bin/forge-env-askpass` bridge so an automatically generated
+environment delivery can authenticate OpenSSH without writing or compiling a
+temporary helper. Set `FORGE_ASKPASS_ENV` to the exact granted environment
+target name and set `SSH_ASKPASS` to that fixed path.
 
 The backend requires the effective Docker endpoint to be a local `unix://`
 socket and pins that endpoint into every later CLI invocation. Remote contexts

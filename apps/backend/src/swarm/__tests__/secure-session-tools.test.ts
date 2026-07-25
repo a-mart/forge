@@ -204,6 +204,19 @@ describe("secure session agent tools", () => {
     );
   });
 
+  it("teaches agents binding-free SSH use without exposing or deriving values", () => {
+    const status = toolByName(
+      buildSwarmTools(host(), manager()),
+      "secure_session_status",
+    );
+
+    expect(status.description).toContain("exact targetName");
+    expect(status.description).toContain(
+      "SSH_ASKPASS=/usr/local/bin/forge-env-askpass",
+    );
+    expect(status.description).toContain("never print, measure, hash, encode");
+  });
+
   it("excludes Collaboration while treating legacy unspecified surfaces as Builder", () => {
     const collabManager = manager({ sessionSurface: "collab" });
     const collabHost = host({ listAgents: () => [collabManager] });

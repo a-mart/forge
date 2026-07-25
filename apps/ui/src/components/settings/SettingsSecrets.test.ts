@@ -274,7 +274,7 @@ describe('SettingsSecrets', () => {
     }))
     await waitFor(() => {
       expect(clipboardWriteText).toHaveBeenCalledWith(
-        'docker build --tag forge-secure-runner:node22-v4 --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner apps/backend/src/swarm/secure-sessions/execution',
+        'docker build --tag forge-secure-runner:node22-v5 --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner apps/backend/src/swarm/secure-sessions/execution',
       )
     })
     fireEvent.click(getByRole(container, 'button', {

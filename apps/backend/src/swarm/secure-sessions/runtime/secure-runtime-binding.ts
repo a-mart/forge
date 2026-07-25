@@ -1,4 +1,5 @@
 import type { AgentDescriptor } from "../../types.js";
+import { SecureExecutionError } from "../execution/secure-execution-error.js";
 
 export const SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE =
   "Secure Sessions are not supported by this runtime provider.";
@@ -70,6 +71,17 @@ export function guardSecureRuntimeError(
   binding: SecureRuntimeBinding,
   error: unknown,
 ): Error {
+  // SecureExecutionError is constructed only from Forge-owned codes whose
+  // messages are fixed and value-free. Preserve that diagnostic even after a
+  // timeout, abort, or backend failure has invalidated the binding; attempting
+  // to guard it through the now-revoked binding would replace the real cause
+  // with the misleading generic output-filter failure.
+  if (error instanceof SecureExecutionError) {
+    const safeError = new SecureExecutionError(error.code);
+    safeError.stack = undefined;
+    return safeError;
+  }
+
   const unsafeDetails =
     error instanceof Error
       ? {

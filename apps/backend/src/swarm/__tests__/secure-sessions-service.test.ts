@@ -10,6 +10,7 @@ import type {
   SecureExecutionRequest,
   SecureExecutionTask,
 } from "../secure-sessions/execution/secure-execution-backend.js";
+import { SecureExecutionError } from "../secure-sessions/execution/secure-execution-error.js";
 import {
   SECURE_OUTPUT_QUARANTINE,
   SecureValueGuard,
@@ -3565,6 +3566,80 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("reports a worker timeout accurately and tears down only that principal", async () => {
+    const harness = createHarness();
+    const workerA = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-a",
+    );
+    const workerB = workerDescriptor(
+      "worker-b",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-b",
+    );
+    harness.descriptors.set("worker-a", workerA);
+    harness.descriptors.set("worker-b", workerB);
+    await harness.service.startSecureSession("manager-a");
+
+    await expect(
+      harness.service.getSecureRuntimeBinding(workerA)!.executeBash({
+        command: "throw-execution-timeout",
+        cwd: "/workspace-a",
+        onData: () => undefined,
+      }),
+    ).rejects.toMatchObject({
+      code: "EXECUTION_TIMEOUT",
+      message: "Secure execution timed out.",
+    });
+
+    expect(await harness.service.getSecureSessionSnapshot("worker-a")).toEqual(
+      expect.objectContaining({ environmentStatus: "failed" }),
+    );
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({ environmentStatus: "ready" }),
+    );
+    expect(await harness.service.getSecureSessionSnapshot("worker-b")).toEqual(
+      expect.objectContaining({ environmentStatus: "ready" }),
+    );
+    expect(harness.execution.destroyed).toContain("worker-a::assignment-a");
+    expect(harness.execution.destroyed).not.toContain("manager-a");
+    expect(harness.execution.destroyed).not.toContain("worker-b::assignment-b");
+    await expect(
+      harness.service.getSecureRuntimeBinding(workerB)!.executeBash({
+        command: "safe-sibling",
+        cwd: "/workspace-a",
+        onData: () => undefined,
+      }),
+    ).resolves.toEqual({ exitCode: 0 });
+    await harness.close();
+  });
+
+  it("suppresses arbitrary backend failure details while failing closed", async () => {
+    const harness = createHarness();
+    await harness.service.startSecureSession("manager-a");
+    const binding = harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!;
+
+    await expect(binding.executeBash({
+      command: "throw-unsafe-backend-error",
+      cwd: "/workspace-a",
+      onData: () => undefined,
+    })).rejects.toMatchObject({
+      code: "SECURE_OPERATION_FAILED",
+      message: "SECURE_OPERATION_FAILED",
+    });
+    expect(
+      await harness.service.getSecureSessionSnapshot("manager-a"),
+    ).toEqual(expect.objectContaining({ environmentStatus: "failed" }));
+    await harness.close();
+  });
+
   it("keeps worker requests and output quarantine on the exact worker principal", async () => {
     const harness = createHarness();
     const worker = workerDescriptor(
@@ -4126,6 +4201,12 @@ class FakeExecutionBackend implements SecureExecutionBackend {
     this.executed.push(request.task.taskId);
     this.lastDeliveryValue = request.delivery?.environment?.[0]?.value;
     const command = request.command.args.at(-1);
+    if (command === "throw-execution-timeout") {
+      throw new SecureExecutionError("EXECUTION_TIMEOUT");
+    }
+    if (command === "throw-unsafe-backend-error") {
+      throw new Error(`unsafe-backend-detail:${ALPHA}`);
+    }
     if (command === "wait-for-destroy" || command === "wait-for-release") {
       await new Promise<void>((resolve, reject) => {
         this.blockedExecutions.set(request.task.taskId, { resolve, reject });

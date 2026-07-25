@@ -113,19 +113,23 @@ function makeCanary(label: string): Buffer {
 }
 
 async function buildRunnerFixtureImage(): Promise<void> {
+  const runnerContext = resolve(
+    repositoryRoot,
+    "apps/backend/src/swarm/secure-sessions/execution",
+  );
   const built = await runCommand("docker", [
     "build",
-    "--target",
-    "runner",
     "--tag",
     runnerImage,
-    resolve(repositoryRoot, "scripts/secure-sessions-e2e"),
+    "--file",
+    resolve(runnerContext, "Dockerfile.secure-runner"),
+    runnerContext,
   ], {
     cwd: repositoryRoot,
     timeoutMs: 180_000,
   });
   if (built.exitCode !== 0) {
-    throw new Error("failed to build secure-session worker runner image");
+    throw new Error("failed to build production secure-session worker runner image");
   }
 }
 
@@ -1032,7 +1036,8 @@ dockerSuite(
         const fencedOutcome = await inFlightOldAssignment;
         expect(fencedOutcome.execution).toBeNull();
         expect(fencedOutcome.error).toMatchObject({
-          code: "SECURE_OPERATION_FAILED",
+          code: "TASK_REVOKED",
+          message: "The secure task sandbox has been revoked.",
         });
         expect(await fileExists(inFlightReleasePath)).toBe(false);
         expect(await fileExists(inFlightCompletedPath)).toBe(false);

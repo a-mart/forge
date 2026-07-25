@@ -357,6 +357,26 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     expect(harness.ledgerPending[0]).toMatchObject({ turnId: "turn-1" });
   });
 
+  it("rejects required secure reassignment before persistence or delivery", async () => {
+    const harness = createHarness();
+
+    await expect(harness.dispatcher.sendMessage(
+      "manager-1",
+      "worker-1",
+      "Use the granted SSH credential",
+      "auto",
+      { requiresSecureRuntime: true },
+    )).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(harness.secureWorkerCalls).toEqual([
+      { operation: "prepare", workerAgentId: "worker-1" },
+    ]);
+    expect(harness.worker.workerParentContext).toBeUndefined();
+    expect(harness.runtimeCreationOptions).toEqual([]);
+    expect(harness.runtimeInputs).toEqual([]);
+    expect(harness.ledgerPending).toEqual([]);
+  });
+
   it("prepares a secure worker before runtime creation and advances the persisted assignment before send", async () => {
     const harness = createHarness();
     harness.setSecureWorkerPrepared(true);

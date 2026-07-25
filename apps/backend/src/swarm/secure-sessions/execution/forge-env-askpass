@@ -1,0 +1,14 @@
+#!/bin/sh
+
+# OpenSSH invokes this image-owned helper with a public prompt argument. The
+# selected environment-variable name is public command metadata; the value is
+# resolved only inside the already-authorized secure execution process.
+selector=${FORGE_ASKPASS_ENV-}
+
+case "$selector" in
+  ""|[0-9]*|*[!A-Za-z0-9_]*)
+    exit 64
+    ;;
+esac
+
+exec /usr/bin/printenv "$selector"

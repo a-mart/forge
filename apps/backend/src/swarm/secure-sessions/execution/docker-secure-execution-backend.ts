@@ -48,10 +48,10 @@ import {
   type SecureExecutionErrorCode,
 } from "./secure-execution-error.js";
 
-const DEFAULT_IMAGE = "forge-secure-runner:node22-v4";
+const DEFAULT_IMAGE = "forge-secure-runner:node22-v5";
 const RUNNER_CONTRACT_LABEL =
   "com.forge.secure-execution.runner-contract";
-const RUNNER_CONTRACT_VERSION = "4";
+const RUNNER_CONTRACT_VERSION = "5";
 const SECRET_ROOT = "/run/forge-secure";
 const HOST_HEARTBEAT_TARGET = DOCKER_HEARTBEAT_PATH;
 const MANAGED_LABEL = "com.forge.secure-execution.managed";

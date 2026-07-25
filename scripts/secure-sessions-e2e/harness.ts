@@ -113,26 +113,41 @@ export async function buildFixtureImages(
 ): Promise<FixtureImages> {
   assertManagedName(runnerImage);
   assertManagedName(targetImage);
-  const context = resolve(repositoryRoot, "scripts/secure-sessions-e2e");
-  for (const [target, image] of [
-    ["runner", runnerImage],
-    ["target", targetImage],
-  ] as const) {
-    const result = await runCommand(
-      "docker",
-      [
-        "build",
-        "--target",
-        target,
-        "--tag",
-        image,
-        context,
-      ],
-      { cwd: repositoryRoot, timeoutMs: 180_000 },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(`failed to build secure-session e2e ${target} image`);
-    }
+  const runnerContext = resolve(
+    repositoryRoot,
+    "apps/backend/src/swarm/secure-sessions/execution",
+  );
+  const runnerResult = await runCommand(
+    "docker",
+    [
+      "build",
+      "--tag",
+      runnerImage,
+      "--file",
+      resolve(runnerContext, "Dockerfile.secure-runner"),
+      runnerContext,
+    ],
+    { cwd: repositoryRoot, timeoutMs: 180_000 },
+  );
+  if (runnerResult.exitCode !== 0) {
+    throw new Error("failed to build production secure-session e2e runner image");
+  }
+
+  const fixtureContext = resolve(repositoryRoot, "scripts/secure-sessions-e2e");
+  const targetResult = await runCommand(
+    "docker",
+    [
+      "build",
+      "--target",
+      "target",
+      "--tag",
+      targetImage,
+      fixtureContext,
+    ],
+    { cwd: repositoryRoot, timeoutMs: 180_000 },
+  );
+  if (targetResult.exitCode !== 0) {
+    throw new Error("failed to build secure-session e2e target image");
   }
   return { runner: runnerImage, target: targetImage };
 }

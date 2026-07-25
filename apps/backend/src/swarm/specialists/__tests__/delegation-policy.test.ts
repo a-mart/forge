@@ -20,6 +20,7 @@ describe("resolveManagerDelegation", () => {
         policyControlledModel: true,
         planStep: undefined,
         cwd: undefined,
+        requiresSecureRuntime: undefined,
       },
     });
   });
@@ -78,6 +79,22 @@ describe("resolveManagerDelegation", () => {
         specialist: "payments-expert",
         planStep: "Inspect payments",
         cwd: undefined,
+        requiresSecureRuntime: undefined,
+      },
+    });
+  });
+
+  it("propagates a fail-closed Secure Sessions requirement", () => {
+    expect(resolveManagerDelegation({
+      agentId: "secure-worker",
+      initialMessage: "Use the granted SSH credential.",
+      executionPolicy: "support",
+      requiresSecureRuntime: true,
+    })).toMatchObject({
+      requestedExecutionPolicy: "support",
+      spawnInput: {
+        tier: "fast",
+        requiresSecureRuntime: true,
       },
     });
   });

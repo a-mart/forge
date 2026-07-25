@@ -19,7 +19,10 @@ import {
   formatWorkerStopTimeoutNotice,
   MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
 } from "../manual-stop-notice.js";
-import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "../secure-sessions/runtime/secure-runtime-binding.js";
+import {
+  SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
+  SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE,
+} from "../secure-sessions/runtime/secure-runtime-binding.js";
 
 const NOW = "2026-04-20T12:00:00.000Z";
 
@@ -2558,6 +2561,116 @@ describe("SwarmAgentLifecycleService", () => {
       }),
     );
     expect(order).toEqual(["secure:prepare", "message:send"]);
+  });
+
+  it("selects the configured secure fallback before dispatching required secure work", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "secure-manager",
+      role: "manager",
+      managerId: "secure-manager",
+      profileId: "secure-manager",
+      status: "idle",
+      cwd: "/proj",
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const sendMessage = vi.fn(async () => ({ delivered: true }) as never);
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        secureWorkers: {
+          isTeamSecureMode: () => true,
+          prepareWorkerForSecureTeam: vi.fn(async () => true),
+          advanceWorkerSecureAssignment: vi.fn(async () => {}),
+          abortWorkerSecureAssignment: vi.fn(async () => {}),
+          teardownWorkerSecurePrincipal: vi.fn(async () => {}),
+        },
+        sendMessage,
+      }),
+    );
+
+    const spawned = await svc.spawnAgent(manager.agentId, {
+      agentId: "secure-support",
+      tier: "fast",
+      policyControlledModel: true,
+      requiresSecureRuntime: true,
+      initialMessage: "Use the granted SSH credential.",
+    });
+
+    expect(spawned.model).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+    });
+    expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back instead of dispatching required secure work without Team Secure Mode", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "manager",
+      status: "idle",
+      cwd: "/proj",
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const sendMessage = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        sendMessage,
+      }),
+    );
+
+    await expect(svc.spawnAgent(manager.agentId, {
+      agentId: "must-be-secure",
+      tier: "standard",
+      policyControlledModel: true,
+      requiresSecureRuntime: true,
+      initialMessage: "Use a granted secret.",
+    })).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(descriptors.has("must-be-secure")).toBe(false);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects required secure work when neither primary nor fallback is compatible", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "manager",
+      role: "manager",
+      managerId: "manager",
+      profileId: "manager",
+      status: "idle",
+      cwd: "/proj",
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        resolveSpecialistRosterForProfile: vi.fn(async () => [{
+          specialistId: "cursor-only",
+          displayName: "Cursor Only",
+          color: "#000000",
+          enabled: true,
+          whenToUse: "Cursor work",
+          modelId: "composer-2.5",
+          provider: "cursor-sdk",
+          promptBody: "Do work",
+          available: true,
+        }]),
+        normalizeSpecialistHandle: vi.fn(async () => "cursor-only"),
+      }),
+    );
+
+    await expect(svc.spawnAgent(manager.agentId, {
+      agentId: "unsupported-secure",
+      specialist: "cursor-only",
+      requiresSecureRuntime: true,
+    })).rejects.toThrow(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
+    expect(descriptors.has("unsupported-secure")).toBe(false);
   });
 
   it("spawnAgent composes tier and lens into model, prompt, and composite specialist metadata", async () => {

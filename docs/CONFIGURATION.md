@@ -55,7 +55,7 @@ principal inherits another's lease or resolved material. Use **Apply now** in th
 shield to apply or retry configured defaults without restarting. This policy does not
 configure a host environment variable or grant standard Bash, prompts, terminals, or
 unsupported worker runtimes access. The Docker execution backend requires the pinned
-`forge-secure-runner:node22-v4` image, which can be built with the command in the
+`forge-secure-runner:node22-v5` image, which can be built with the command in the
 [Secure Sessions guide](SECURE_SESSIONS.md#set-up-the-execution-environment). Its
 effective Docker endpoint must be a local `unix://` socket on macOS/Linux or Docker
 Desktop's exact local named pipe on Windows; remote Docker contexts and transports

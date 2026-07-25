@@ -418,7 +418,7 @@ function statusTool(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefin
     name: "secure_session_status",
     label: "Secure Session Status",
     description:
-      "Inspect this Builder session's safe Secure Sessions metadata, including active lease state and the available display aliases and guest bindings. Secret values and provider locators are never returned.",
+      "Inspect this Builder session's safe Secure Sessions metadata, including active lease state and the available display aliases and guest bindings. Use each exposure's exact targetName; do not guess an alias-derived environment name. For SSH with an environment delivery, set FORGE_ASKPASS_ENV to that exact targetName and SSH_ASKPASS=/usr/local/bin/forge-env-askpass with DISPLAY=forge-secure and SSH_ASKPASS_REQUIRE=force. Check only fixed success/presence outcomes—never print, measure, hash, encode, or otherwise derive information from a value. Secret values and provider locators are never returned.",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_toolCallId, params) {
       if (!isRecord(params) || Object.keys(params).length > 0) {

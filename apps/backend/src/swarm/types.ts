@@ -185,6 +185,11 @@ export interface SpawnAgentInput {
   lens?: string;
   /** Internal marker set by the manager-facing mode/policy adapter. */
   policyControlledModel?: boolean;
+  /**
+   * Fail closed unless this worker is provisioned with a Secure Sessions
+   * runtime before its initial assignment is dispatched.
+   */
+  requiresSecureRuntime?: boolean;
   archetypeId?: AgentArchetypeId;
   systemPrompt?: string;
   model?: SwarmModelPreset;

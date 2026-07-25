@@ -13,6 +13,7 @@ import {
   createSecurePiCodingTools,
   guardSecureRuntimeTools,
 } from "../secure-sessions/runtime/pi-secure-tools.js";
+import { SecureExecutionError } from "../secure-sessions/execution/secure-execution-error.js";
 import { installPiProviderContextImageResize } from "../runtime/pi/pi-runtime-creator.js";
 
 const SECRET = "secure-canary-value";
@@ -186,6 +187,59 @@ describe("Secure Pi runtime interception", () => {
     await expect(
       failingTool.execute("call-2", {}, undefined, undefined, {} as never),
     ).rejects.toThrow("failure:[guarded]");
+  });
+
+  it("preserves fixed execution causes after fail-closed binding invalidation", async () => {
+    const binding = createBinding({
+      executeBash: vi.fn(async () => {
+        throw new SecureExecutionError("EXECUTION_TIMEOUT");
+      }),
+      guardValue: () => {
+        throw new Error("binding revoked");
+      },
+    });
+    const bash = createSecurePiCodingTools({
+      cwd: "/tmp/forge-secure-runtime-test",
+      binding,
+    }).find((tool) => tool.name === "bash")!;
+
+    await expect(
+      bash.execute(
+        "call-timeout",
+        { command: "sleep 60", timeout: 1 },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ).rejects.toMatchObject({
+      code: "EXECUTION_TIMEOUT",
+      message: "Secure execution timed out.",
+      name: "SecureExecutionError",
+    });
+  });
+
+  it("does not preserve arbitrary errors after binding invalidation", async () => {
+    const binding = createBinding({
+      guardValue: () => {
+        throw new Error("binding revoked");
+      },
+    });
+    const failingTool = guardSecureRuntimeTools(
+      [{
+        name: "test",
+        label: "test",
+        description: "test",
+        parameters: {} as never,
+        async execute() {
+          throw new Error(`unsafe:${SECRET}`);
+        },
+      }],
+      binding,
+    )[0]!;
+
+    await expect(
+      failingTool.execute("call-unsafe", {}, undefined, undefined, {} as never),
+    ).rejects.toThrow(SECURE_RUNTIME_GUARD_FAILURE_MESSAGE);
   });
 
   it("suppresses file-backed extensions while retaining Forge inline factories", () => {

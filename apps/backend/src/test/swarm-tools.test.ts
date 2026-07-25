@@ -671,6 +671,7 @@ describe('buildSwarmTools', () => {
         initialMessage: 'Review the implementation for correctness.',
         mode: 'correctness-review',
         executionPolicy: 'deep',
+        requiresSecureRuntime: true,
       },
       undefined,
       undefined,
@@ -682,6 +683,7 @@ describe('buildSwarmTools', () => {
       initialMessage: 'Review the implementation for correctness.',
       tier: 'deep',
       lens: 'code-reviewer',
+      requiresSecureRuntime: true,
     })
     expect(result.details).toMatchObject({
       agentId: 'worker-gpt54',
@@ -728,6 +730,43 @@ describe('buildSwarmTools', () => {
       initialMessage: 'Implement the focused change.',
     })
     expect(receivedInput?.lens).toBeUndefined()
+  })
+
+  it('forwards the fail-closed secure requirement when reassigning a worker', async () => {
+    let receivedOptions: Parameters<SwarmToolHost['sendMessage']>[4]
+    const baseHost = makeHost(async () => makeWorkerDescriptor('worker'))
+    const host: SwarmToolHost = {
+      ...baseHost,
+      async sendMessage(_from, targetAgentId, _message, _delivery, options) {
+        receivedOptions = options
+        return {
+          targetAgentId,
+          deliveryId: 'secure-delivery',
+          acceptedMode: 'prompt',
+        }
+      },
+    }
+
+    const sendTool = buildSwarmTools(host, makeManagerDescriptor())
+      .find((tool) => tool.name === 'send_message_to_agent')!
+    await sendTool.execute(
+      'tool-call',
+      {
+        targetAgentId: 'worker-1',
+        message: 'Use the granted SSH credential.',
+        requiresSecureRuntime: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(receivedOptions).toMatchObject({
+      requiresSecureRuntime: true,
+      observabilityParentTool: {
+        toolName: 'send_message_to_agent',
+      },
+    })
   })
 
   it('routes custom specialists without mode or policy', async () => {

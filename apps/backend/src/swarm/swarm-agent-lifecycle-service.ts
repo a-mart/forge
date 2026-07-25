@@ -34,7 +34,11 @@ import {
   formatWorkerStopTimeoutNotice,
   MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
 } from "./manual-stop-notice.js";
-import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "./secure-sessions/runtime/secure-runtime-binding.js";
+import {
+  SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
+  SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE,
+} from "./secure-sessions/runtime/secure-runtime-binding.js";
+import { supportsSecureRuntimeProvider } from "./secure-sessions/runtime/secure-runtime-provider-policy.js";
 import {
   buildModelCapacityBlockKey,
   cloneDescriptor,
@@ -275,6 +279,7 @@ export interface SwarmAgentLifecycleServiceOptions {
       attachments?: ConversationAttachment[];
       planStep?: string;
       planAssignmentSource?: "spawn_agent" | "send_message_to_agent";
+      requiresSecureRuntime?: boolean;
     }
   ) => Promise<SendMessageReceipt>;
   sendManagerBootstrapMessage: (managerId: string) => Promise<void>;
@@ -775,6 +780,21 @@ export class SwarmAgentLifecycleService {
       webSearch = input.webSearch === true;
     }
 
+    if (
+      input.requiresSecureRuntime
+      && !supportsSecureRuntimeProvider(model.provider)
+    ) {
+      if (
+        specialistFallbackModel
+        && supportsSecureRuntimeProvider(specialistFallbackModel.provider)
+      ) {
+        model = { ...specialistFallbackModel };
+        specialistFallbackModel = undefined;
+      } else {
+        throw new Error(SECURE_RUNTIME_PROVIDER_UNSUPPORTED_MESSAGE);
+      }
+    }
+
     const descriptor: AgentDescriptor = {
       agentId,
       displayName: agentId,
@@ -850,6 +870,9 @@ export class SwarmAgentLifecycleService {
     try {
       secureWorkerPrepared =
         await this.options.secureWorkers.prepareWorkerForSecureTeam(agentId);
+      if (input.requiresSecureRuntime && !secureWorkerPrepared) {
+        throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+      }
       if (secureWorkerPrepared) {
         this.options.emitStatus(agentId, descriptor.status, 0);
         this.options.emitAgentsSnapshot();
@@ -949,6 +972,9 @@ export class SwarmAgentLifecycleService {
         origin: "internal",
         ...(input.planStep ? { planStep: input.planStep } : {}),
         planAssignmentSource: "spawn_agent",
+        ...(input.requiresSecureRuntime
+          ? { requiresSecureRuntime: true }
+          : {}),
       });
     }
 

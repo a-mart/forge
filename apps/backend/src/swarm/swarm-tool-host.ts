@@ -74,6 +74,7 @@ export interface SwarmToolHost {
         toolName?: string;
       };
       planStep?: string;
+      requiresSecureRuntime?: boolean;
     }
   ): Promise<SendMessageReceipt>;
   createSessionFromAgent(

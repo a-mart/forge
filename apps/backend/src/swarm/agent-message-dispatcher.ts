@@ -21,6 +21,7 @@ import { normalizeArchetypeId } from "./prompt-registry.js";
 import type { ExternalProjectAgentDeliveryAuthorization } from "./project-agent-sharing-service.js";
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";
 import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
+import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "./secure-sessions/runtime/secure-runtime-binding.js";
 import type {
   RuntimeAcquisitionRequirements,
   RuntimeImageAttachment,
@@ -66,6 +67,7 @@ export interface AgentMessageSendOptions {
   skipTurnLedger?: boolean;
   planStep?: string;
   planAssignmentSource?: "spawn_agent" | "send_message_to_agent";
+  requiresSecureRuntime?: boolean;
 }
 
 export interface AgentMessageAttachmentPort {
@@ -588,6 +590,9 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
             input.target.agentId,
           )
         : false;
+    if (input.sendOptions?.requiresSecureRuntime && !secureWorkerPrepared) {
+      throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+    }
     let modelMessage = await this.prepareModelInboundMessage(
       input.target.agentId,
       { text: input.message, attachments: input.attachments },

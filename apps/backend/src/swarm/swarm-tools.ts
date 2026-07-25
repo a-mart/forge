@@ -312,14 +312,18 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "send_message_to_agent",
       label: "Send Message To Agent",
       description:
-        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass that step's exact text in planStep.",
+        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer. When assigning or reassigning a worker to one current plan step, pass that step's exact text in planStep. Set requiresSecureRuntime=true when this assignment needs granted Secure Sessions material; Forge fails closed before delivery if the target cannot use the secure boundary.",
       parameters: Type.Object({
         targetAgentId: Type.String({ description: "Agent id to receive the message." }),
         message: Type.String({ description: "Message text to deliver." }),
         delivery: Type.Optional(deliveryModeSchema),
         planStep: Type.Optional(Type.String({
           description: "Exact text of the current plan step this worker assignment supports. Omit for general or cross-cutting work."
-        }))
+        })),
+        requiresSecureRuntime: Type.Optional(Type.Boolean({
+          description:
+            "Require Secure Sessions for this assignment and reject it before delivery if the target worker cannot use a secure runtime.",
+        })),
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
@@ -327,6 +331,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           message: string;
           delivery?: RequestedDeliveryMode;
           planStep?: string;
+          requiresSecureRuntime?: boolean;
         };
 
         const receipt = await host.sendMessage(
@@ -341,6 +346,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
               toolName: "send_message_to_agent",
             },
             ...(parsed.planStep ? { planStep: parsed.planStep } : {}),
+            ...(parsed.requiresSecureRuntime
+              ? { requiresSecureRuntime: true }
+              : {}),
           }
         );
         recordToolSideEffect(host, descriptor, {
@@ -354,6 +362,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             acceptedMode: receipt.acceptedMode,
             deliveryId: receipt.deliveryId,
             planStep: parsed.planStep,
+            requiresSecureRuntime: parsed.requiresSecureRuntime,
           },
         });
 
@@ -450,7 +459,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Delegate a concrete task to an independent worker. Choose a behavior mode for the output contract and an execution policy for model cost/capability. Defaults are mode=general and executionPolicy=routine; plan and review modes default to deep, but any mode can use support for bounded low-risk work. Use customSpecialist only for a saved custom specialist, without mode or executionPolicy. The call returns after the assignment is accepted.",
+        "Delegate a concrete task to an independent worker. Choose a behavior mode for the output contract and an execution policy for model cost/capability. Defaults are mode=general and executionPolicy=routine; plan and review modes default to deep, but any mode can use support for bounded low-risk work. Set requiresSecureRuntime=true when the assignment must use granted Secure Sessions material; Forge selects a compatible configured fallback and fails closed rather than dispatching insecurely. Use customSpecialist only for a saved custom specialist, without mode or executionPolicy. The call returns after the assignment is accepted.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -467,6 +476,12 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and executionPolicy." })
         ),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
+        requiresSecureRuntime: Type.Optional(
+          Type.Boolean({
+            description:
+              "Require Secure Sessions for this worker's initial assignment. Fails closed if Team Secure Mode or a compatible secure runtime is unavailable.",
+          }),
+        ),
         initialMessage: Type.String({ description: "Concrete task and expected outcome for the worker." }),
       }),
       async execute(_toolCallId, params) {
@@ -477,6 +492,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           executionPolicy?: "support" | "routine" | "deep";
           customSpecialist?: string;
           cwd?: string;
+          requiresSecureRuntime?: boolean;
           initialMessage: string;
         };
 

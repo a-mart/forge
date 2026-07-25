@@ -45,6 +45,15 @@ that assignment without the secure boundary. Claude SDK, Cursor SDK, Cursor ACP,
 Remote Projects, Collaboration channels, Codex plugin/external-thread workers, and
 ordinary integrated terminals are not Secure Sessions execution paths.
 
+Managers mark secret-dependent delegation with
+`spawn_agent(..., requiresSecureRuntime=true)`. Forge selects a compatible configured
+fallback when an execution policy's primary runtime is unsupported. If Team Secure
+Mode, the worker sandbox, or a compatible runtime cannot be prepared, Forge rolls the
+new worker back before delivering its initial assignment. Ordinary non-secret
+delegation remains unchanged. Reassigning an existing worker uses the same
+`requiresSecureRuntime=true` flag on `send_message_to_agent`; an ineligible target is
+rejected before the message is delivered.
+
 ## Set up the execution environment
 
 Secure Sessions currently use Docker as a replaceable first execution backend. Build
@@ -52,7 +61,7 @@ the pinned runner image from the repository root:
 
 ```bash
 docker build \
-  --tag forge-secure-runner:node22-v4 \
+  --tag forge-secure-runner:node22-v5 \
   --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner \
   apps/backend/src/swarm/secure-sessions/execution
 ```
@@ -62,6 +71,29 @@ OpenSSH client, PostgreSQL client, Python 3, rsync, npm, the repository's pinned
 the `script` PTY helper, and a Debian build toolchain. Forge checks the runner contract
 label before offering the environment. It does not silently fall back to host
 execution if Docker or the image is unavailable.
+
+For an SSH password saved with Forge's automatic environment delivery, use the
+image-owned askpass bridge instead of creating a helper in the command:
+
+```bash
+FORGE_ASKPASS_ENV=FORGE_SECRET_EXACT_TARGET \
+SSH_ASKPASS=/usr/local/bin/forge-env-askpass \
+DISPLAY=forge-secure \
+SSH_ASKPASS_REQUIRE=force \
+setsid ssh -o BatchMode=no user@example.internal
+```
+
+`FORGE_SECRET_EXACT_TARGET` is the exact public `targetName` reported by
+`secure_session_status`; the value is never put in the command. The helper has
+no authority beyond the environment variables already granted to that command.
+An advanced `SSH_ASKPASS` binding remains available for tools that require that
+specific delivery shape.
+
+Agents should report only fixed presence/success outcomes and command results. They
+must not print, count, hash, encode, or otherwise derive metadata from a secret value.
+After a worker completes a credentialed action, the manager accepts the worker's safe
+evidence or performs a non-secret state check rather than repeating the credentialed
+action in its own container.
 
 The container has a read-only root filesystem, dropped Linux capabilities,
 `no-new-privileges`, no Docker socket, and a bounded process count. The selected

@@ -58,6 +58,7 @@ export interface ManagerDelegationInput {
   customSpecialist?: string;
   planStep?: string;
   cwd?: string;
+  requiresSecureRuntime?: boolean;
 }
 
 export interface ResolvedManagerDelegation {
@@ -99,6 +100,7 @@ export function resolveManagerDelegation(input: ManagerDelegationInput): Resolve
         specialist: customSpecialist,
         planStep: input.planStep,
         cwd: input.cwd,
+        requiresSecureRuntime: input.requiresSecureRuntime,
       },
     };
   }
@@ -130,6 +132,7 @@ export function resolveManagerDelegation(input: ManagerDelegationInput): Resolve
       policyControlledModel: true,
       planStep: input.planStep,
       cwd: input.cwd,
+      requiresSecureRuntime: input.requiresSecureRuntime,
     },
   };
 }

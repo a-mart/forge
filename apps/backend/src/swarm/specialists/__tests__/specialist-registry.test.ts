@@ -1493,6 +1493,19 @@ describe("specialist-registry", () => {
     expect(markdown).toContain("`support`");
     expect(markdown).toContain("[codex/gpt-5.5 high");
     expect(markdown).toContain("-> fb codex/gpt-5.5 medium]");
+    expect(markdown).toContain("[Secure Sessions]");
+    expect(markdown).toContain("`requiresSecureRuntime=true`");
+  });
+
+  it("identifies secure fallback routing in execution policy rows", () => {
+    const markdown = generateRosterBlock([], [{
+      ...DEFAULT_TIER_CONFIGS.fast,
+      provider: "cursor-sdk",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+    }]);
+
+    expect(markdown).toContain("[Secure Sessions via fallback]");
   });
 
   it("adds a web search tag to roster entries when enabled", () => {

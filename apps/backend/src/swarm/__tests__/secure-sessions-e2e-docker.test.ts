@@ -183,7 +183,7 @@ dockerSuite(
       await removeManagedImage(runnerImage);
     }, 60_000);
 
-    it("contains all delivery channels and encoded reflections across eighteen persistent commands", async () => {
+    it("contains all delivery channels and encoded reflections across nineteen persistent commands", async () => {
       const canary = makeCanary();
       const needles = canaryNeedles(canary);
       const temporaryRoot = await mkdtemp(
@@ -354,6 +354,30 @@ dockerSuite(
             executable: "sh",
             args: [
               "-c",
+              [
+                "FORGE_ASKPASS_ENV=FORGE_E2E_CANARY",
+                "SSH_ASKPASS=/usr/local/bin/forge-env-askpass",
+                "DISPLAY=forge-secure",
+                "SSH_ASKPASS_REQUIRE=force",
+                "setsid ssh",
+                "-o BatchMode=no",
+                "-o StrictHostKeyChecking=no",
+                "-o UserKnownHostsFile=/dev/null",
+                "-o LogLevel=ERROR",
+                "-o ConnectTimeout=5",
+                `forge@${target.ipAddress}`,
+                "'printf ssh-env-askpass-ok'",
+              ].join(" "),
+            ],
+          },
+          delivery: environmentDelivery(canary),
+          expectedOutput: "ssh-env-askpass-ok",
+        },
+        {
+          command: {
+            executable: "sh",
+            args: [
+              "-c",
               "getent passwd \"$(id -u)\" >/dev/null && getent group \"$(id -g)\" >/dev/null && ssh -G forge-secure.invalid >/dev/null && printf identity-ok",
             ],
           },
@@ -404,7 +428,7 @@ dockerSuite(
         },
       ];
 
-      expect(executions).toHaveLength(18);
+      expect(executions).toHaveLength(19);
       for (const [index, execution] of executions.entries()) {
         const result = await executeGuarded(
           backend,

@@ -31,8 +31,10 @@ import type {
   SecureOrphanRecoveryResult,
   SecureExecutionTask,
 } from "./execution/secure-execution-backend.js";
+import { SecureExecutionError } from "./execution/secure-execution-error.js";
 import { SECURE_OUTPUT_QUARANTINE, SecureValueGuard } from "./redaction/secure-value-guard.js";
 import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
+import { supportsSecureRuntimeProvider } from "./runtime/secure-runtime-provider-policy.js";
 import type {
   FulfillSecureAccessRequestInput,
   ApplySecureSessionProjectDefaultsInput,
@@ -3969,9 +3971,7 @@ export class SecureSessionsService {
       || !descriptor.profileId
       || isExternalThreadDescriptor(descriptor)
       || isCodexPluginWorkerDescriptor(descriptor)
-      || ["claude-sdk", "cursor-sdk", "cursor-acp"].includes(
-        descriptor.model.provider,
-      )
+      || !supportsSecureRuntimeProvider(descriptor.model.provider)
     ) {
       return false;
     }
@@ -4395,7 +4395,10 @@ export class SecureSessionsService {
     return this.options.createValueGuard?.(values) ?? new SecureValueGuard(values);
   }
 
-  private publicError(error: unknown): SecureSessionsServiceError {
+  private publicError(
+    error: unknown,
+  ): SecureSessionsServiceError | SecureExecutionError {
+    if (error instanceof SecureExecutionError) return error;
     if (error instanceof SecureSessionsServiceError) return error;
     if (error instanceof SecureSessionRevisionConflictError) {
       return new SecureSessionsServiceError("SECURE_STALE_REVISION");

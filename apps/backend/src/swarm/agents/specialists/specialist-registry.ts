@@ -25,6 +25,7 @@ import {
   getSessionSpecialistsDir,
   getSharedSpecialistsDir,
 } from "../../specialists/specialist-paths.js";
+import { supportsSecureRuntimeProvider } from "../../secure-sessions/runtime/secure-runtime-provider-policy.js";
 
 const FRONTMATTER_BLOCK_PATTERN = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
@@ -475,12 +476,25 @@ export function generateTierLensRosterBlock(
   for (const policyConfig of EXECUTION_POLICY_CONFIGS) {
     const config = configsByTier.get(policyConfig.tier) ?? DEFAULT_TIER_CONFIGS[policyConfig.tier];
     const primary = `${compactProvider(config.provider)}/${config.modelId}${config.reasoningLevel ? ` ${config.reasoningLevel}` : ""}`;
+    const fallbackProvider = config.fallbackModelId
+      ? config.fallbackProvider ?? inferProviderFromModelId(config.fallbackModelId)
+      : undefined;
     const fallback = config.fallbackModelId
-      ? ` -> fb ${compactProvider(config.fallbackProvider ?? "unknown")}/${config.fallbackModelId}${
+      ? ` -> fb ${compactProvider(fallbackProvider ?? "unknown")}/${config.fallbackModelId}${
           config.fallbackReasoningLevel ? ` ${config.fallbackReasoningLevel}` : ""
         }`
       : "";
-    lines.push(`- \`${policyConfig.policy}\`: ${policyConfig.description} [${primary}${fallback}]`);
+    const secureRoute =
+      supportsSecureRuntimeProvider(config.provider)
+        ? " [Secure Sessions]"
+        : config.fallbackModelId
+          && fallbackProvider
+          && supportsSecureRuntimeProvider(fallbackProvider)
+          ? " [Secure Sessions via fallback]"
+          : " [no Secure Sessions runtime]";
+    lines.push(
+      `- \`${policyConfig.policy}\`: ${policyConfig.description} [${primary}${fallback}]${secureRoute}`,
+    );
   }
 
   // Shipped mode handles contribute prompts only; their persisted model fields
@@ -519,6 +533,7 @@ export function generateTierLensRosterBlock(
     "",
     "Routing guidance:",
     "- Match policy to task difficulty and risk; model availability fallback is automatic.",
+    "- For work that needs granted secrets, set `requiresSecureRuntime=true`; Forge selects a compatible configured fallback and rejects the assignment if it cannot preserve the secure boundary.",
     "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
     "- Mode defaults are guidance, not a capability floor. A bounded plan or review may use `support`; raise the policy when ambiguity or risk warrants it.",
   );
