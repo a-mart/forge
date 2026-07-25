@@ -44,13 +44,7 @@ export function applySecureSessionSnapshot(
   context: ManagerWsConversationEventContext,
 ): void {
   const targetAgentId = context.state.targetAgentId
-  const ownerManagerAgentId =
-    snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId
-  const appliesToTarget = snapshot.principalKind === 'worker'
-    ? targetAgentId === snapshot.sessionAgentId
-      || targetAgentId === ownerManagerAgentId
-    : targetAgentId === snapshot.sessionAgentId
-  if (!appliesToTarget) return
+  if (!isSecureSessionSnapshotForTarget(snapshot, targetAgentId)) return
 
   const current = context.state.secureSessionSnapshots[snapshot.sessionAgentId]
   if (current && snapshot.revision < current.revision) return
@@ -64,6 +58,19 @@ export function applySecureSessionSnapshot(
       ? { secureSessionSnapshotLoadingSessionId: null }
       : {}),
   })
+}
+
+export function isSecureSessionSnapshotForTarget(
+  snapshot: SecureSessionSnapshot,
+  targetAgentId: string | null,
+): boolean {
+  if (!targetAgentId) return false
+  const ownerManagerAgentId =
+    snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId
+  return snapshot.principalKind === 'worker'
+    ? targetAgentId === snapshot.sessionAgentId
+      || targetAgentId === ownerManagerAgentId
+    : targetAgentId === snapshot.sessionAgentId
 }
 
 function isChoiceEventForTarget(
@@ -505,7 +512,6 @@ export function handleConversationEvent(
         activityMessages: [],
         planSnapshots: {},
         goalSnapshots: {},
-        secureSessionSnapshots: {},
         modelCacheObservations: [],
         pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),

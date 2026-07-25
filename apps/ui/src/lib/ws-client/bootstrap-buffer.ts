@@ -5,6 +5,7 @@ import {
   BOOTSTRAP_COALESCIBLE_EVENT_TYPES,
   BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES,
   handleConversationEvent,
+  isSecureSessionSnapshotForTarget,
 } from './event-handlers/conversation-event-handlers'
 
 /** Default inactivity timeout before the buffer auto-flushes (ms). */
@@ -160,7 +161,7 @@ export class BootstrapBuffer {
       return event.sessionAgentId === targetAgentId
     }
     if (event.type === 'secure_session_snapshot') {
-      return event.sessionAgentId === targetAgentId
+      return isSecureSessionSnapshotForTarget(event, targetAgentId)
     }
     // unread_counts_snapshot is global — always accepted.
     return true

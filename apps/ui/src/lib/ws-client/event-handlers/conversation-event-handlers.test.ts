@@ -239,6 +239,21 @@ describe('handleConversationEvent conversation history merge', () => {
     const beforeReset = {
       ...createInitialManagerWsState('manager'),
       activityMessages: [makeActivitySummary()],
+      secureSessionSnapshots: {
+        manager: {
+          sessionAgentId: 'manager',
+          profileId: 'manager',
+          principalKind: 'manager' as const,
+          ownerManagerAgentId: null,
+          workerAssignmentId: null,
+          revision: 4,
+          executionMode: 'secure' as const,
+          environmentStatus: 'ready' as const,
+          leases: [],
+          pendingRequests: [],
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
       conversationPageLoading: true,
       conversationPageRequestId: 'stale-page',
       conversationPage: {
@@ -258,6 +273,7 @@ describe('handleConversationEvent conversation history merge', () => {
     expect(reset.conversationPage).toBeNull()
     expect(reset.conversationPageLoading).toBe(false)
     expect(reset.conversationPageRequestId).toBeNull()
+    expect(reset.secureSessionSnapshots.manager?.revision).toBe(4)
 
     const afterDelayedPage = runHandler(reset, {
       type: 'conversation_page',

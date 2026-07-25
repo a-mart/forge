@@ -363,6 +363,51 @@ describe('SecureSessionPicker', () => {
     expect(getByRole(document.body, 'heading', { name: 'Grant secrets' })).toBeTruthy()
   })
 
+  it('does not reopen a grant dialog when a start finishes after the selected session changes', async () => {
+    let resolveStart: ((value: boolean) => void) | undefined
+    const onStart = vi.fn(() => new Promise<boolean>((resolve) => {
+      resolveStart = resolve
+    }))
+    renderPicker(makeConfig({
+      originId: 'project-a',
+      onStart,
+      snapshot: {
+        sessionAgentId: 'manager-a',
+        principalKind: 'manager',
+        revision: 1,
+        executionMode: 'standard',
+        environmentStatus: 'stopped',
+        leases: [],
+        pendingRequests: [],
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
+    }))
+
+    openPicker(/start a secure session/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Start secure session' }))
+    })
+
+    renderPicker(makeConfig({
+      originId: 'project-b',
+      snapshot: {
+        sessionAgentId: 'manager-b',
+        principalKind: 'manager',
+        revision: 2,
+        executionMode: 'secure',
+        environmentStatus: 'ready',
+        leases: [],
+        pendingRequests: [],
+        updatedAt: '2026-07-23T12:00:01.000Z',
+      },
+    }))
+    resolveStart?.(true)
+    await onStart.mock.results[0]?.value
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
   it('routes an empty grant dialog directly to project secrets', async () => {
     const onReviewProjectSecrets = vi.fn()
     renderPicker(makeConfig({

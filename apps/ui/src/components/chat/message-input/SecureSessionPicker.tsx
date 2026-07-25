@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   KeyRound,
@@ -196,11 +196,15 @@ export function SecureSessionPicker({
   const [starting, setStarting] = useState(false)
   const [applyingProjectDefaults, setApplyingProjectDefaults] = useState(false)
   const sessionAgentId = config.snapshot?.sessionAgentId
+  const configIdentity = `${config.originId ?? ''}\u0000${sessionAgentId ?? ''}`
+  const configIdentityRef = useRef(configIdentity)
+  configIdentityRef.current = configIdentity
 
   useEffect(() => {
     setOpen(false)
     setGrantOpen(false)
     setStopOpen(false)
+    setStarting(false)
     setApplyingProjectDefaults(false)
   }, [config.originId, sessionAgentId])
 
@@ -256,13 +260,21 @@ export function SecureSessionPicker({
 
   const startAndOpenGrant = async () => {
     if (!config.onStart || starting) return
+    const startIdentity = configIdentity
     setOpen(false)
     setStarting(true)
     try {
       const result = await config.onStart()
-      if (result !== false) setGrantOpen(true)
+      if (
+        result !== false
+        && configIdentityRef.current === startIdentity
+      ) {
+        setGrantOpen(true)
+      }
     } finally {
-      setStarting(false)
+      if (configIdentityRef.current === startIdentity) {
+        setStarting(false)
+      }
     }
   }
 
