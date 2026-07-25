@@ -143,8 +143,8 @@ function BuilderSecretsSettings({
         <h2 className="text-lg font-semibold tracking-tight">Secrets</h2>
         <p className="text-sm text-muted-foreground">
           Save private values or external references. Forge creates a safe default delivery
-          automatically. Access still requires a grant unless you explicitly enable a project
-          default.
+          automatically. Catalog availability does not grant access; choose projects under
+          Automatically grant in only when access should begin with Team Secure Mode.
         </p>
       </div>
 
@@ -172,9 +172,22 @@ function BuilderSecretsSettings({
         privateEntryAvailable={materialEntryAvailable}
         providers={catalog.providers}
         configuredProjectDefaultCount={contextualProfileId
-          ? catalog.projectDefaults.filter(
-              (projectDefault) => projectDefault.profileId === contextualProfileId,
-            ).length
+          ? new Set([
+              ...catalog.projectDefaults
+                .filter((projectDefault) =>
+                  projectDefault.profileId === contextualProfileId
+                )
+                .map((projectDefault) => projectDefault.secretId),
+              ...catalog.secrets
+                .filter((secret) =>
+                  secret.automaticGrantPolicy?.kind === 'all_projects'
+                  || (
+                    secret.automaticGrantPolicy?.kind === 'projects'
+                    && secret.automaticGrantPolicy.profileIds.includes(contextualProfileId)
+                  )
+                )
+                .map((secret) => secret.secretId),
+            ]).size
           : undefined}
         onRefresh={refresh}
       />

@@ -14,6 +14,7 @@ import {
   secureSecretsErrorMessage,
   testSecureSecretProvider,
   updateSecureSecret,
+  updateSecureSecretAutomaticGrant,
   updateSecureSecretProjectDefault,
 } from './secure-secrets-api'
 
@@ -349,6 +350,44 @@ describe('secure secrets API', () => {
     )
   })
 
+  it('atomically replaces the automatic grant policy without sending secret material', async () => {
+    const updated = {
+      ...SECRET_SUMMARY,
+      automaticGrantPolicy: {
+        kind: 'projects' as const,
+        profileIds: ['project/alpha', 'project/beta'],
+      },
+    }
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) =>
+      new Response(JSON.stringify(updated), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      }))
+    const client = makeClient(fetchMock)
+
+    await expect(updateSecureSecretAutomaticGrant(
+      client,
+      'secret/one',
+      updated.automaticGrantPolicy,
+    )).resolves.toEqual(updated)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-secrets/secret%2Fone/automatic-grant',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          policy: {
+            kind: 'projects',
+            profileIds: ['project/alpha', 'project/beta'],
+          },
+        }),
+      }),
+    )
+    const requestBody = String(fetchMock.mock.calls[0]?.[1]?.body)
+    expect(requestBody).not.toContain('encryptedMaterial')
+    expect(requestBody).not.toContain('raw-secret')
+  })
+
   it('maps untrusted server errors to fixed safe copy', async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({ error: 'failed while using raw-secret-server-detail' }),
@@ -400,7 +439,7 @@ describe('secure secrets API', () => {
     )).rejects.toMatchObject({
       code: 'SECURE_PROJECT_DEFAULT_LIMIT_REACHED',
       message:
-        'This project already has the maximum number of automatic secrets. Disable one before enabling another.',
+        'One or more selected projects already have the maximum number of automatic grants. Remove one before adding another.',
     })
   })
 })

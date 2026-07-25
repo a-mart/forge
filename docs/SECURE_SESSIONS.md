@@ -19,7 +19,7 @@ While it is active:
 
 - the manager and each assigned eligible worker run Pi Bash in separate reusable,
   principal-owned Linux containers;
-- an eligible worker without an assignment can hold its own project-default policy
+- an eligible worker without an assignment can hold its own automatic-grant policy
   while stopped; Forge provisions its container only when work is assigned;
 - the workspace is mounted directly into the container (at the same path on
   macOS/Linux and at `/workspace` on Windows);
@@ -120,14 +120,14 @@ Forge verifies the connection before saving the source, so a displayed
 
 Under **Secrets**, import a Bitwarden secret UUID, assign a Forge alias, and choose the
 same **Only this project** or **All projects** scope available to local-vault secrets.
-Project-default policy also works the same way for either source. Forge keeps the UUID
+Automatic-grant policy also works the same way for either source. Forge keeps the UUID
 and encrypted machine credential backend-only. When an approved command needs the
 value, the trusted host invokes `bws` with an isolated temporary configuration
 directory, captures a bounded response in memory, and removes that directory.
 
 Bitwarden is a long-lived source, not a permanent task grant. Reusing a task grant does
 not require re-entering the value. A task still needs either an explicit lease or an
-enabled project-default policy.
+enabled automatic-grant policy.
 
 ## Configure delivery bindings
 
@@ -158,38 +158,43 @@ task container. An `SSH_ASKPASS` binding automatically supplies the non-secret
 `DISPLAY` and `SSH_ASKPASS_REQUIRE=force` settings needed for password authentication
 without a terminal.
 
-## Project defaults
+## Automatic grants
 
-A saved secret can be marked **Automatically available in this project**. This is a
-project policy, separate from the secret's availability scope:
+Under **Automatically grant in**, a saved secret can be assigned to one or more
+projects. An all-projects secret can instead use **Every project**, which is a durable
+rule that includes current projects and projects created later. This policy is
+separate from the secret's catalog availability scope:
 
-- a project-scoped secret can be a default only for its own project;
-- an all-projects secret can be a default in one project without becoming automatic
-  in every project;
-- when Team Secure Mode starts, Forge evaluates the default independently for the
+- a project-scoped secret can be granted automatically only in its own project;
+- an all-projects secret can be granted automatically in any combination of projects
+  without becoming automatic elsewhere;
+- **Every project** is available only for an all-projects secret;
+- each project may have at most 16 effective automatic grants;
+- when Team Secure Mode starts, Forge evaluates each applicable policy independently for the
   manager and every eligible worker principal;
 - each eligible principal receives its own **Until Secure Session stops** lease and
   resolves its own material; no value or lease is copied from the manager;
-- workers that join the secure team later receive their own applicable defaults
+- workers that join the secure team later receive their own applicable automatic grants
   during secure preparation;
-- a default is never injected into standard Bash, a model prompt, the integrated
+- an automatic grant is never injected into standard Bash, a model prompt, the integrated
   terminal, another project, or an unsupported worker runtime.
 
-Enabling a default while Team Secure Mode is active marks it **Configured**. Choose
-**Apply now** in the shield to apply or retry non-active defaults for every eligible
-team principal without restarting. Disabling a default revokes only the independent
+Changing an automatic-grant policy while Team Secure Mode is active marks it
+**Configured**. Choose **Apply now** in the shield to apply or retry non-active
+automatic grants for every eligible team principal without restarting. Disabling a
+policy revokes only the independent
 leases created from that policy; it does not remove a separate manual grant.
 
-Forge evaluates every principal and default independently. A locked or unavailable
+Forge evaluates every principal and automatic grant independently. A locked or unavailable
 source is reported as unavailable, and a delivery collision is reported as a binding
-conflict. Either problem skips that principal's default without blocking other
-defaults or principals. Public status contains only fixed states and error codes,
+conflict. Either problem skips that principal's automatic grant without blocking other
+policies or principals. Public status contains only fixed states and error codes,
 never provider error text or protected material.
 
-Archiving a project preserves its project-scoped secrets and default settings so they
+Archiving a project preserves its project-scoped secrets and automatic-grant settings so they
 remain available after restore. Permanently deleting the project removes its
-project-scoped secrets and project-default mappings. An all-projects secret itself is
-not deleted when one project's mapping is removed.
+project-scoped secrets and project-specific automatic-grant mappings. An all-projects
+secret and its **Every project** policy are not deleted with any one project.
 
 ## Start, grant, reuse, and revoke
 
@@ -198,9 +203,9 @@ not deleted when one project's mapping is removed.
    manager and every eligible current worker as separate principals. If a worker is
    actively streaming, startup fails instead of changing its execution boundary
    underneath a command.
-3. Forge applies the project's available defaults independently and reports any
-   principal/default pair it could not activate. Use **Apply now** to apply newly
-   configured defaults or retry recovered sources without restarting.
+3. Forge applies the project's configured automatic grants independently and reports
+   any principal/secret pair it could not activate. Use **Apply now** to apply newly
+   configured policies or retry recovered sources without restarting.
 4. Choose a team agent, then select any additional saved aliases. Forge gives a newly
    saved secret a stable, generated environment delivery automatically; advanced
    saved bindings remain available when a specific askpass, file, stdin, or
@@ -318,7 +323,7 @@ separate Git worktrees instead of relying on the secret boundary for file isolat
 - Electron-encrypted local values and provider credentials;
 - backend-only provider locators;
 - delivery bindings;
-- project availability scopes and project-default mappings;
+- project availability scopes and automatic-grant policies;
 - revisioned session state, requests, leases, reservations, and fixed-field audit
   entries.
 
@@ -383,8 +388,8 @@ still passes through the secure guard.
 | --- | --- |
 | Environment unavailable | Docker is unavailable, unsupported, or the runner image failed its contract check |
 | Source locked or unavailable | Desktop safe storage, Bitwarden authentication, or the `bws` host command is unavailable |
-| Project default unavailable | This principal's default was skipped; fix its source and choose **Apply now** after it recovers |
-| Project default binding conflict | This default was skipped because its saved delivery collides with another active/default delivery |
+| Automatic grant unavailable | This principal's automatic grant was skipped; fix its source and choose **Apply now** after it recovers |
+| Automatic grant binding conflict | This automatic grant was skipped because its saved delivery collides with another active or automatic delivery |
 | Revision conflict | Another view changed the session; refresh before retrying |
 | Protected output redacted | The guard removed protected material before it reached the agent; that principal is quarantined but can continue, or you can stop its secure processes |
 | Unsupported runtime | This manager or worker cannot guarantee Forge-owned tools before provider continuation and fails closed |
@@ -398,20 +403,20 @@ can contain sensitive response bodies.
 
 The **Settings → Secrets** readiness panel checks the local Secure Bash backend,
 private-entry bridge, and configured sources. **Copy safe diagnostics** includes only
-bounded fixed execution/source codes and configured-default state. It never includes
+bounded fixed execution/source codes and configured automatic-grant state. It never includes
 secret values, ciphertext, provider responses, raw stderr, credentials, provider
 locators, or catalog aliases.
 
 When a Forge data directory is copied to another machine, aliases, bindings, scopes,
-and project-default policy can remain useful, but local-vault ciphertext and the
+and automatic-grant policy can remain useful, but local-vault ciphertext and the
 encrypted Bitwarden machine-account token remain bound to the original operating
 system encryption context. Recover those sources under **Sources**:
 
 - Choose **Test vault**. If saved local values cannot be decrypted, Forge lists the
   affected aliases and offers them one at a time. **Save and continue** replaces only
-  that value while preserving its alias, bindings, scope, and default policy. You can
+  that value while preserving its alias, bindings, scope, and automatic-grant policy. You can
   also skip or delete the alias.
 - When a Bitwarden source reports **Reconnect required**, choose **Reconnect** and
   enter a new machine-account token. Forge verifies it before replacing only the
   encrypted credential; the connection and its imported aliases, bindings, scopes,
-  and defaults stay in place.
+  and automatic-grant policies stay in place.

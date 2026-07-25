@@ -23,8 +23,8 @@ the current draft.
 ## Add a local secret
 
 Open Forge Desktop, choose **Secrets**, and enter an alias, optional display name, and
-value. Choose its project scope and optionally mark it **Automatically available in
-this project**. Desktop encrypts the value with the operating-system-backed secure
+value. Choose its project scope and, when appropriate, select projects under
+**Automatically grant in**. Desktop encrypts the value with the operating-system-backed secure
 storage service before the local Builder stores it. Forge never displays the value
 again.
 
@@ -40,25 +40,30 @@ reference** to map a Bitwarden secret UUID to a Forge alias.
 The machine token and Bitwarden UUID stay outside chat and public settings responses.
 Forge retrieves a value only while preparing an approved use. A Bitwarden connection
 removes repeated value entry. Bitwarden references support the same project scope and
-project-default policy as local-vault secrets.
+automatic-grant policy as local-vault secrets.
 
-## Make a secret a project default
+## Grant a secret automatically
 
-**Automatically available in this project** gives the secret an **Until Secure
-Session stops** lease for each eligible team principal when Team Secure Mode starts.
+Under **Automatically grant in**, select one or more projects. An all-projects secret
+can instead use **Every project**, which covers current projects and projects created
+later. A project-only secret can be granted automatically only in its own project.
+Catalog availability alone never grants access.
+
+Each selected policy gives the secret an **Until Secure Session stops** lease for
+each eligible team principal when Team Secure Mode starts.
 Each manager or worker resolves its own value; a worker never inherits the manager's
 lease or material. The policy does not put the value in standard Bash, a model prompt,
 the integrated terminal, another project, or an unsupported worker runtime.
 
 Changing this setting while Team Secure Mode is active marks it **Configured**. Choose
-**Apply now** in the shield to apply or retry non-active defaults across eligible team
+**Apply now** in the shield to apply or retry non-active automatic grants across eligible team
 principals without restarting. An unavailable source or conflicting delivery skips
-only that principal's default and reports a fixed status without blocking other
-defaults or principals.
+only that principal's automatic grant and reports a fixed status without blocking
+other grants or principals. Each project supports at most 16 effective automatic grants.
 
-Archiving a project preserves its project-only secrets and defaults. Permanently
-deleting the project removes its project-only secrets and default mappings, but does
-not delete an all-projects secret.
+Archiving a project preserves its project-only secrets and automatic-grant mappings.
+Permanently deleting the project removes those project-only entries, but does not
+delete an all-projects secret or its **Every project** policy.
 
 ## Bind a delivery shape
 
@@ -141,14 +146,14 @@ Non-interactive commands that only require TTY descriptors can use the runner's
 
 The readiness panel checks Secure Bash, private entry, and configured sources.
 **Copy safe diagnostics** includes bounded fixed status codes and
-configured-default state only. It never includes values, ciphertext, provider output,
+configured automatic-grant state only. It never includes values, ciphertext, provider output,
 raw errors, credentials, locators, or aliases.
 
 After copying a Forge data directory to another machine, aliases and configuration can
 remain valid while operating-system-sealed values cannot. Under **Sources**:
 
 - **Test vault** identifies affected local aliases and offers them one at a time.
-  Re-entering a value preserves its bindings, scope, and project defaults. You can
+  Re-entering a value preserves its bindings, scope, and automatic-grant policy. You can
   also skip or delete it.
 - **Reconnect** on a Bitwarden source verifies and replaces only its machine-account
   token. The connection and imported secret references stay in place.

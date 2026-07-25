@@ -1,6 +1,7 @@
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type {
   SecureSecretBinding,
+  SecureSecretAutomaticGrantPolicy,
   SecureSecretCatalog,
   SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
@@ -12,6 +13,7 @@ import type {
 
 export type {
   SecureSecretBinding,
+  SecureSecretAutomaticGrantPolicy,
   SecureSecretDeliveryKind,
   SecureSecretProviderKind,
   SecureSecretProjectDefaultSummary,
@@ -100,7 +102,7 @@ const ERROR_MESSAGES: Record<SecureSecretsErrorCode, string> = {
   SECURE_SOURCE_UNAVAILABLE: 'The secret source is currently unavailable.',
   SECURE_PROVIDER_AUTH_REQUIRED: 'The secret source needs to be connected again.',
   SECURE_PROJECT_DEFAULT_LIMIT_REACHED:
-    'This project already has the maximum number of automatic secrets. Disable one before enabling another.',
+    'One or more selected projects already have the maximum number of automatic grants. Remove one before adding another.',
   SECURE_SECRET_ALIAS_CONFLICT: 'A secret with this alias already exists in that scope.',
   SECURE_SECRET_NOT_FOUND: 'That saved secret no longer exists.',
   SECURE_STALE_REVISION: 'Secret settings changed elsewhere. Refresh and try again.',
@@ -315,6 +317,23 @@ export async function updateSecureSecretProjectDefault(
       method: 'PUT',
       headers: jsonHeaders(),
       body: JSON.stringify({ enabled }),
+    },
+  )
+}
+
+export async function updateSecureSecretAutomaticGrant(
+  apiClient: SettingsApiClient,
+  secretId: string,
+  policy: SecureSecretAutomaticGrantPolicy,
+): Promise<SecureSecretSummary> {
+  assertBuilderTarget(apiClient)
+  return await requestJson<SecureSecretSummary>(
+    apiClient,
+    `/api/secure-secrets/${encodeURIComponent(secretId)}/automatic-grant`,
+    {
+      method: 'PUT',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ policy }),
     },
   )
 }

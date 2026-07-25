@@ -4,6 +4,7 @@ import type {
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureSecretProviderSummary,
+  SecureSecretAutomaticGrantPolicy,
   SecureSecretProviderTestResult,
   SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
@@ -92,6 +93,16 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     input: { profileId: string; enabled: boolean },
   ): Promise<SecureSecretProjectDefaultSummary | null> {
     return this.secureSessions.setSecureSecretProjectDefault(secretId, input);
+  }
+
+  replaceSecureSecretAutomaticGrantPolicy(
+    secretId: string,
+    policy: SecureSecretAutomaticGrantPolicy,
+  ): Promise<SecureSecretSummary> {
+    return this.secureSessions.replaceSecureSecretAutomaticGrantPolicy(
+      secretId,
+      policy,
+    );
   }
 
   createLocalSecureSecret(input: CreateLocalSecureSecretInput): Promise<SecureSecretSummary> {

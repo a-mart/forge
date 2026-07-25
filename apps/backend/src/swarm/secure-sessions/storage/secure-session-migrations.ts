@@ -763,6 +763,72 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         }
       }
     }
+  },
+  {
+    version: 4,
+    name: "all_project_automatic_secret_grants",
+    up(database) {
+      database.exec(`
+        CREATE TABLE secure_session_all_project_default (
+          secret_id TEXT PRIMARY KEY
+            REFERENCES secure_session_secret(secret_id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        DROP TRIGGER secure_session_project_default_lease_insert_guard;
+        DROP TRIGGER secure_session_project_default_lease_update_guard;
+
+        CREATE TRIGGER secure_session_project_default_lease_insert_guard
+        BEFORE INSERT ON secure_session_lease
+        WHEN NEW.grant_source = 'project_default'
+          AND NOT (
+            EXISTS (
+              SELECT 1
+              FROM secure_session_state state
+              JOIN secure_session_project_default project_default
+                ON project_default.profile_id = state.profile_id
+               AND project_default.secret_id = NEW.secret_id
+              WHERE state.session_agent_id = NEW.session_agent_id
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM secure_session_state state
+              JOIN secure_session_all_project_default all_project_default
+                ON all_project_default.secret_id = NEW.secret_id
+              WHERE state.session_agent_id = NEW.session_agent_id
+            )
+          )
+        BEGIN
+          SELECT RAISE(ABORT, 'project-default lease policy mismatch');
+        END;
+
+        CREATE TRIGGER secure_session_project_default_lease_update_guard
+        BEFORE UPDATE OF grant_source, secret_id, session_agent_id
+        ON secure_session_lease
+        WHEN NEW.grant_source = 'project_default'
+          AND NOT (
+            EXISTS (
+              SELECT 1
+              FROM secure_session_state state
+              JOIN secure_session_project_default project_default
+                ON project_default.profile_id = state.profile_id
+               AND project_default.secret_id = NEW.secret_id
+              WHERE state.session_agent_id = NEW.session_agent_id
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM secure_session_state state
+              JOIN secure_session_all_project_default all_project_default
+                ON all_project_default.secret_id = NEW.secret_id
+              WHERE state.session_agent_id = NEW.session_agent_id
+            )
+          )
+        BEGIN
+          SELECT RAISE(ABORT, 'project-default lease policy mismatch');
+        END;
+      `);
+    }
   }
 ];
 

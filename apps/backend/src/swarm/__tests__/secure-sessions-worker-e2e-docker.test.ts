@@ -514,6 +514,7 @@ async function createDockerHarness() {
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
     listDescriptors: () => [...descriptors.values()],
+    listProfiles: () => [{ profileId: PROFILE }],
     hasProfile: (profileId) => profileId === PROFILE,
     isProfileArchived: () => false,
     isSessionArchived: () => false,

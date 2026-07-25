@@ -641,6 +641,78 @@ describe("SecureSessionStore", () => {
     database.close();
   });
 
+  it("persists all-project policy for future projects and revokes only automatic leases on replacement", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    expect(store.replaceAutomaticGrantPolicy({
+      secretId: "secret",
+      policy: { kind: "all_projects" },
+    })).toEqual({ kind: "all_projects" });
+    expect(store.listProjectDefaults()).toEqual([]);
+    expect(store.listEffectiveProjectDefaults("future-project")).toEqual([
+      expect.objectContaining({
+        profileId: "future-project",
+        secretId: "secret",
+      }),
+    ]);
+
+    store.getOrCreateSessionState("future-session", {
+      profileId: "future-project",
+      executionMode: "secure",
+    });
+    store.createLease({
+      leaseId: "manual",
+      sessionAgentId: "future-session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      grantSource: "manual",
+      baseRevision: 0,
+    });
+    store.createLease({
+      leaseId: "automatic",
+      sessionAgentId: "future-session",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      grantSource: "project_default",
+      baseRevision: 1,
+    });
+
+    expect(store.replaceAutomaticGrantPolicy({
+      secretId: "secret",
+      policy: { kind: "projects", profileIds: ["project-a", "project-b"] },
+    })).toEqual({
+      kind: "projects",
+      profileIds: ["project-a", "project-b"],
+    });
+    expect(store.getSnapshot("future-session").leases).toEqual([
+      expect.objectContaining({ leaseId: "manual", state: "active" }),
+      expect.objectContaining({
+        leaseId: "automatic",
+        state: "revoked",
+        revocationReason: "policy_changed",
+      }),
+    ]);
+    expect(store.listEffectiveProjectDefaults("project-a")).toEqual([
+      expect.objectContaining({ secretId: "secret" }),
+    ]);
+    expect(store.listEffectiveProjectDefaults("future-project")).toEqual([]);
+
+    store.replaceAutomaticGrantPolicy({
+      secretId: "secret",
+      policy: { kind: "all_projects" },
+    });
+    expect(store.deleteProjectSecretState("project-a")).toEqual({
+      projectDefaultsDeleted: 0,
+      secretsDeleted: 0,
+    });
+    expect(store.getAutomaticGrantPolicy("secret")).toEqual({
+      kind: "all_projects",
+    });
+    database.close();
+  });
+
   it("enforces project ownership, prunes invalid defaults on scope changes, and cleans up projects", () => {
     const { database, store } = createMemoryStore();
     seedLocalCatalog(store);

@@ -1882,6 +1882,225 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("applies a durable all-project policy to current and future projects", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "global-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{
+        deliveryKind: "environment",
+        targetName: "GLOBAL_DEFAULT",
+      }],
+    });
+
+    await expect(
+      harness.service.replaceSecureSecretAutomaticGrantPolicy(
+        secret.secretId,
+        { kind: "all_projects" },
+      ),
+    ).resolves.toEqual(expect.objectContaining({
+      secretId: secret.secretId,
+      automaticGrantPolicy: { kind: "all_projects" },
+    }));
+    expect(await harness.service.listSecureSecretProjectDefaults()).toEqual([]);
+    await expect(harness.service.startSecureSession("manager-a")).resolves
+      .toEqual(expect.objectContaining({
+        leases: [expect.objectContaining({
+          secretId: secret.secretId,
+          grantSource: "project_default",
+        })],
+      }));
+    await expect(harness.service.startSecureSession("manager-b")).resolves
+      .toEqual(expect.objectContaining({
+        leases: [expect.objectContaining({
+          secretId: secret.secretId,
+          grantSource: "project_default",
+        })],
+      }));
+
+    harness.descriptors.set(
+      "manager-c",
+      descriptor("manager-c", "profile-c", "/workspace-c"),
+    );
+    await expect(harness.service.startSecureSession("manager-c")).resolves
+      .toEqual(expect.objectContaining({
+        leases: [expect.objectContaining({
+          secretId: secret.secretId,
+          grantSource: "project_default",
+        })],
+      }));
+    await harness.close();
+  });
+
+  it("never projects or applies all-project defaults to system profiles", async () => {
+    const harness = createHarness({ systemProfiles: ["profile-system"] });
+    harness.descriptors.set(
+      "manager-system",
+      descriptor("manager-system", "profile-system", "/workspace-system"),
+    );
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "user-project-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+    await harness.service.replaceSecureSecretAutomaticGrantPolicy(
+      secret.secretId,
+      { kind: "all_projects" },
+    );
+
+    const started = await harness.service.startSecureSession("manager-system");
+    expect(started.leases).toEqual([]);
+    expect(started.projectDefaults).toEqual([]);
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-system",
+      { baseRevision: started.revision },
+    );
+    expect(applied.leases).toEqual([]);
+    expect(applied.projectDefaults).toEqual([]);
+    expect(harness.sourceResolutions.size).toBe(0);
+    await expect(harness.service.setSecureSecretProjectDefault(
+      secret.secretId,
+      { profileId: "profile-system", enabled: true },
+    )).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    await harness.close();
+  });
+
+  it("rejects excluding one project through the legacy endpoint without downgrading all-project policy", async () => {
+    const harness = createHarness();
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "global-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+    await harness.service.replaceSecureSecretAutomaticGrantPolicy(
+      secret.secretId,
+      { kind: "all_projects" },
+    );
+
+    await expect(harness.service.setSecureSecretProjectDefault(
+      secret.secretId,
+      { profileId: "profile-a", enabled: false },
+    )).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(harness.store.getAutomaticGrantPolicy(secret.secretId)).toEqual({
+      kind: "all_projects",
+    });
+    await harness.close();
+  });
+
+  it("can set global policy and clear stale mappings when another project is archived", async () => {
+    const harness = createHarness({ archivedProfiles: ["profile-a"] });
+    const secret = await harness.service.createLocalSecureSecret({
+      displayAlias: "archive-safe-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+    harness.store.putProjectDefault({
+      profileId: "profile-a",
+      secretId: secret.secretId,
+    });
+
+    await expect(
+      harness.service.replaceSecureSecretAutomaticGrantPolicy(
+        secret.secretId,
+        { kind: "none" },
+      ),
+    ).resolves.toEqual(expect.objectContaining({
+      automaticGrantPolicy: { kind: "none" },
+    }));
+    await expect(
+      harness.service.replaceSecureSecretAutomaticGrantPolicy(
+        secret.secretId,
+        { kind: "all_projects" },
+      ),
+    ).resolves.toEqual(expect.objectContaining({
+      automaticGrantPolicy: { kind: "all_projects" },
+    }));
+    await harness.close();
+  });
+
+  it("validates global policy conflicts even before any project exists", async () => {
+    const harness = createHarness();
+    const first = await harness.service.createLocalSecureSecret({
+      displayAlias: "future-global-a",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "FUTURE_TOKEN" }],
+    });
+    const conflicting = await harness.service.createLocalSecureSecret({
+      displayAlias: "future-global-b",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "FUTURE_TOKEN" }],
+    });
+    harness.descriptors.clear();
+
+    await harness.service.replaceSecureSecretAutomaticGrantPolicy(
+      first.secretId,
+      { kind: "all_projects" },
+    );
+    await expect(
+      harness.service.replaceSecureSecretAutomaticGrantPolicy(
+        conflicting.secretId,
+        { kind: "all_projects" },
+      ),
+    ).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+    expect(harness.store.getAutomaticGrantPolicy(conflicting.secretId)).toEqual({
+      kind: "none",
+    });
+    await harness.close();
+  });
+
+  it("rejects all-project limits and binding collisions inherited by archived projects", async () => {
+    const harness = createHarness({ archivedProfiles: ["profile-a"] });
+    const conflicting = await harness.service.createLocalSecureSecret({
+      displayAlias: "archived-conflict",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ARCHIVED_ONLY" }],
+    });
+    harness.store.putProjectDefault({
+      profileId: "profile-a",
+      secretId: conflicting.secretId,
+    });
+    const proposed = await harness.service.createLocalSecureSecret({
+      displayAlias: "global-conflict",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "ARCHIVED_ONLY" }],
+    });
+
+    await expect(
+      harness.service.replaceSecureSecretAutomaticGrantPolicy(
+        proposed.secretId,
+        { kind: "all_projects" },
+      ),
+    ).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+
+    harness.store.replaceAutomaticGrantPolicy({
+      secretId: conflicting.secretId,
+      policy: { kind: "none" },
+    });
+    for (let index = 0; index < SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
+      const defaultSecret = await harness.service.createLocalSecureSecret({
+        displayAlias: `archived-limit-${index}`,
+        encryptedMaterial: Buffer.from(`${ALPHA}-${index}`).toString("base64"),
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: `ARCHIVED_LIMIT_${index}`,
+        }],
+      });
+      harness.store.putProjectDefault({
+        profileId: "profile-a",
+        secretId: defaultSecret.secretId,
+      });
+    }
+    await expect(
+      harness.service.replaceSecureSecretAutomaticGrantPolicy(
+        proposed.secretId,
+        { kind: "all_projects" },
+      ),
+    ).rejects.toMatchObject({
+      code: "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+    });
+    expect(harness.store.getAutomaticGrantPolicy(proposed.secretId)).toEqual({
+      kind: "none",
+    });
+    await harness.close();
+  });
+
   it("starts legacy over-limit projects with visible conflicts and no partial grants", async () => {
     const harness = createHarness();
     for (let index = 0; index <= SECURE_SECRET_MAX_PROJECT_DEFAULTS; index += 1) {
@@ -3638,6 +3857,7 @@ function createHarness(options: {
   probeThrows?: boolean;
   guardFailures?: number;
   archivedProfiles?: readonly string[];
+  systemProfiles?: readonly string[];
   archivedSessions?: readonly string[];
   now?: () => string;
   recoveredSandboxIds?: readonly string[];
@@ -3655,6 +3875,7 @@ function createHarness(options: {
     ["manager-b", descriptor("manager-b", "profile-b", "/workspace-b")],
   ]);
   const archivedProfiles = new Set(options.archivedProfiles ?? []);
+  const systemProfiles = new Set(options.systemProfiles ?? []);
   const archivedSessions = new Set(options.archivedSessions ?? []);
   const execution = new FakeExecutionBackend(options);
   const sourceResolutions = new Map<string, number>();
@@ -3764,6 +3985,15 @@ function createHarness(options: {
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
     listDescriptors: () => [...descriptors.values()],
+    listProfiles: () => [...new Set(
+      [...descriptors.values()].flatMap((descriptor) =>
+        descriptor.profileId ? [descriptor.profileId] : []
+      ),
+    )].map((profileId) => ({
+      profileId,
+      ...(archivedProfiles.has(profileId) ? { archivedAt: NOW } : {}),
+      ...(systemProfiles.has(profileId) ? { profileType: "system" as const } : {}),
+    })),
     hasProfile: (profileId) => [...descriptors.values()].some(
       (descriptor) => descriptor.profileId === profileId,
     ),

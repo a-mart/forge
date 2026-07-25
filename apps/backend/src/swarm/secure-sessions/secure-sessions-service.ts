@@ -6,6 +6,7 @@ import type {
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureSecretBinding,
+  SecureSecretAutomaticGrantPolicy,
   SecureSecretCatalogChangedEvent,
   SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
@@ -68,6 +69,7 @@ import type {
   SecureSessionBinding as StoredBinding,
   SecureSessionLease,
   SecureSessionProvider,
+  SecureSessionProjectDefault,
   SecureSessionRequest,
   SecureSessionRequestedExposure,
   SecureSessionSecret,
@@ -95,6 +97,11 @@ interface SecureSessionsServiceOptions {
   execution: SecureExecutionBackend;
   getDescriptor: (agentId: string) => AgentDescriptor | undefined;
   listDescriptors: () => Iterable<AgentDescriptor>;
+  listProfiles: () => Iterable<{
+    profileId: string;
+    archivedAt?: string;
+    profileType?: "user" | "system";
+  }>;
   hasProfile: (profileId: string) => boolean;
   isProfileArchived: (profileId: string) => boolean;
   isSessionArchived: (agentId: string) => boolean;
@@ -927,63 +934,193 @@ export class SecureSessionsService {
       if (
         typeof input.enabled !== "boolean"
         || !this.options.hasProfile(normalizedProfileId)
+        || !this.isAllProjectAutomaticGrantEligible(normalizedProfileId)
       ) {
         throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
       }
       const store = await this.store();
-      this.assertProfileLifecycleAvailable(normalizedProfileId);
-      const existingDefault = store.listProjectDefaults(normalizedProfileId)
-        .find((projectDefault) => projectDefault.secretId === normalizedSecretId);
       const secret = resolveVisibleSavedSecrets(store, normalizedProfileId)
         .find((candidate) => candidate.secretId === normalizedSecretId);
-      if (!secret && !(input.enabled === false && existingDefault)) {
+      const current = store.getAutomaticGrantPolicy(normalizedSecretId);
+      if (!secret && current.kind === "none") {
         throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
       }
-      if (input.enabled) {
-        if (
-          !existingDefault
-          && store.listProjectDefaults(normalizedProfileId).length
-            >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
-        ) {
-          throw new SecureSessionsServiceError(
-            "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
-          );
+      if (current.kind === "all_projects") {
+        if (!input.enabled) {
+          throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
         }
-        assertProjectDefaultBindingCompatibility(
+        const effective = this.listEffectiveProjectDefaultsForProfile(
           store,
           normalizedProfileId,
-          normalizedSecretId,
-          store.listBindings(normalizedSecretId).map(toPublicBinding),
-        );
-        const created = store.putProjectDefault({
-          profileId: normalizedProfileId,
-          secretId: normalizedSecretId,
-        });
-        this.emitCatalog(store);
-        return toProjectDefaultSummary(created);
+        )
+          .find((projectDefault) => projectDefault.secretId === normalizedSecretId);
+        return effective ? toProjectDefaultSummary(effective) : null;
       }
-
-      const affected = captureProjectDefaultLeases(
+      const currentProfileIds = current.kind === "projects"
+        ? current.profileIds
+        : [];
+      const nextProfileIds = input.enabled
+        ? [...new Set([...currentProfileIds, normalizedProfileId])]
+        : currentProfileIds.filter((profileId) => profileId !== normalizedProfileId);
+      await this.replaceSecureSecretAutomaticGrantPolicyUnlocked(
+        normalizedSecretId,
+        nextProfileIds.length === 0
+          ? { kind: "none" }
+          : { kind: "projects", profileIds: nextProfileIds },
+      );
+      if (!input.enabled) return null;
+      const effective = this.listEffectiveProjectDefaultsForProfile(
         store,
         normalizedProfileId,
-        [normalizedSecretId],
+      )
+        .find((projectDefault) => projectDefault.secretId === normalizedSecretId);
+      return effective ? toProjectDefaultSummary(effective) : null;
+    });
+  }
+
+  async replaceSecureSecretAutomaticGrantPolicy(
+    secretId: string,
+    policy: SecureSecretAutomaticGrantPolicy,
+  ): Promise<SecureSecretSummary> {
+    return await this.withAuthorityMutation(() =>
+      this.replaceSecureSecretAutomaticGrantPolicyUnlocked(secretId, policy)
+    );
+  }
+
+  private async replaceSecureSecretAutomaticGrantPolicyUnlocked(
+    secretId: string,
+    policy: SecureSecretAutomaticGrantPolicy,
+  ): Promise<SecureSecretSummary> {
+    const normalizedSecretId = bounded(secretId, 256);
+    const store = await this.store();
+    const secret = store.getSecret(normalizedSecretId);
+    if (!secret || secret.retention !== "saved") {
+      throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+    }
+    const profiles = [...this.options.listProfiles()];
+    const knownProfiles = new Map(
+      profiles.map((profile) => [
+        profile.profileId,
+        profile,
+      ]),
+    );
+      const userProjectProfiles = profiles.filter((profile) =>
+        profile.profileType !== "system"
       );
-      return await this.withSessionMutations(affected.sessionIds, async () => {
-        if (!store.deleteProjectDefault(normalizedProfileId, normalizedSecretId)) {
-          return null;
-        }
-        this.releaseLeases(affected.leaseIds);
-        for (const sessionAgentId of affected.sessionIds) {
-          this.projectDefaultStatuses.get(sessionAgentId)?.delete(normalizedSecretId);
-        }
-        await this.reconcileAfterLeaseLoss(
-          store,
-          affected.sessionIds,
+      const activeProjectProfiles = userProjectProfiles.filter((profile) =>
+        !profile.archivedAt
+      );
+    const requestedProfileIds = policy.kind === "projects"
+      ? [...new Set(policy.profileIds)].sort()
+      : [];
+    if (
+      policy.kind === "projects"
+      && (
+        requestedProfileIds.length !== policy.profileIds.length
+        || requestedProfileIds.some((profileId) => {
+          const profile = knownProfiles.get(profileId);
+          return !profile || Boolean(profile.archivedAt)
+            || profile.profileType === "system";
+        })
+      )
+    ) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    const normalizedPolicy: SecureSecretAutomaticGrantPolicy =
+      policy.kind === "projects" && requestedProfileIds.length === 0
+        ? { kind: "none" }
+        : policy.kind === "projects"
+          ? { kind: "projects", profileIds: requestedProfileIds }
+          : policy;
+    if (
+      JSON.stringify(store.getAutomaticGrantPolicy(normalizedSecretId))
+      === JSON.stringify(normalizedPolicy)
+    ) {
+      return this.toSecretSummary(store, secret);
+    }
+    if (
+      secret.scopeKind === "profile"
+      && (
+        policy.kind === "all_projects"
+        || requestedProfileIds.length > 1
+        || (
+          requestedProfileIds.length === 1
+          && requestedProfileIds[0] !== secret.profileId
+        )
+      )
+    ) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
+    const targetProfileIds = policy.kind === "all_projects"
+      ? userProjectProfiles.map(({ profileId }) => profileId)
+      : requestedProfileIds;
+    if (policy.kind === "all_projects") {
+      if (
+        store.listAllProjectDefaults()
+          .filter((projectDefault) =>
+            projectDefault.secretId !== normalizedSecretId
+          ).length >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
+      ) {
+        throw new SecureSessionsServiceError(
+          "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
         );
-        this.emitCatalog(store);
-        this.emitSessionSnapshots(store, affected.sessionIds);
-        return null;
-      });
+      }
+      assertProjectDefaultBindingCompatibility(
+        store,
+        "__all_projects_policy__",
+        normalizedSecretId,
+        store.listBindings(normalizedSecretId).map(toPublicBinding),
+      );
+    }
+    for (const profileId of targetProfileIds) {
+      const effectiveWithoutSecret = this.listEffectiveProjectDefaultsForProfile(
+        store,
+        profileId,
+      )
+        .filter((projectDefault) => projectDefault.secretId !== normalizedSecretId);
+      if (effectiveWithoutSecret.length >= SECURE_SECRET_MAX_PROJECT_DEFAULTS) {
+        throw new SecureSessionsServiceError(
+          "SECURE_PROJECT_DEFAULT_LIMIT_REACHED",
+        );
+      }
+      assertProjectDefaultBindingCompatibility(
+        store,
+        profileId,
+        normalizedSecretId,
+        store.listBindings(normalizedSecretId).map(toPublicBinding),
+        this.listEffectiveProjectDefaultsForProfile(store, profileId),
+      );
+    }
+    if (policy.kind === "projects") {
+      for (const profileId of targetProfileIds) {
+        this.assertProfileLifecycleAvailable(profileId);
+      }
+    } else {
+      for (const { profileId } of activeProjectProfiles) {
+        this.assertProfileLifecycleAvailable(profileId);
+      }
+    }
+    const affected = captureProjectDefaultLeasesForSecret(
+      store,
+      normalizedSecretId,
+    );
+    return await this.withSessionMutations(affected.sessionIds, async () => {
+      try {
+        store.replaceAutomaticGrantPolicy({
+          secretId: normalizedSecretId,
+          policy: normalizedPolicy,
+        });
+      } catch (error) {
+        throw this.publicError(error);
+      }
+      this.releaseLeases(affected.leaseIds);
+      for (const sessionAgentId of affected.sessionIds) {
+        this.projectDefaultStatuses.get(sessionAgentId)?.delete(normalizedSecretId);
+      }
+      await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
+      this.emitCatalog(store);
+      this.emitSessionSnapshots(store, affected.sessionIds);
+      return this.toSecretSummary(store, store.getSecret(normalizedSecretId)!);
     });
   }
 
@@ -996,7 +1133,10 @@ export class SecureSessionsService {
             secret.scopeKind === "profile" && secret.profileId === normalizedProfileId
           )
           .map((secret) => secret.secretId);
-      const defaultSecretIds = store.listProjectDefaults(normalizedProfileId)
+      const defaultSecretIds = this.listEffectiveProjectDefaultsForProfile(
+        store,
+        normalizedProfileId,
+      )
         .map((projectDefault) => projectDefault.secretId);
       const affectedDefaults = captureProjectDefaultLeases(
         store,
@@ -1024,6 +1164,7 @@ export class SecureSessionsService {
         if (
           result.projectDefaultsDeleted === 0
           && result.secretsDeleted === 0
+          && affected.leaseIds.length === 0
         ) {
           return;
         }
@@ -1049,7 +1190,15 @@ export class SecureSessionsService {
         const scope = toStoredScope(input.scope);
         this.requireExistingProfileScope(scope);
         this.assertScopeLifecycleAvailable(scope);
-        assertDoesNotShadowConfiguredDefault(store, scope, displayAlias);
+        assertDoesNotShadowConfiguredDefault(
+          store,
+          scope,
+          displayAlias,
+          undefined,
+          scope.profileId
+            ? this.isAllProjectAutomaticGrantEligible(scope.profileId)
+            : true,
+        );
         const result = store.createSecretWithBindings({
           secret: {
             secretId,
@@ -1097,7 +1246,15 @@ export class SecureSessionsService {
         const scope = toStoredScope(input.scope);
         this.requireExistingProfileScope(scope);
         this.assertScopeLifecycleAvailable(scope);
-        assertDoesNotShadowConfiguredDefault(store, scope, displayAlias);
+        assertDoesNotShadowConfiguredDefault(
+          store,
+          scope,
+          displayAlias,
+          undefined,
+          scope.profileId
+            ? this.isAllProjectAutomaticGrantEligible(scope.profileId)
+            : true,
+        );
         const result = store.createSecretWithBindings({
           secret: {
             secretId,
@@ -1153,6 +1310,9 @@ export class SecureSessionsService {
           nextScope,
           nextDisplayAlias,
           secretId,
+          nextScope.profileId
+            ? this.isAllProjectAutomaticGrantEligible(nextScope.profileId)
+            : true,
         );
         const existingBindings = store.listBindings(secretId);
         const nextBindings = input.bindings === undefined && existingBindings.length > 0
@@ -1164,9 +1324,23 @@ export class SecureSessionsService {
               this.id.bind(this),
             );
         const nextRetention = input.retention ?? existing.retention;
-        const projectDefaults = store.listProjectDefaults()
-          .filter((projectDefault) => projectDefault.secretId === secretId);
+        const policy = store.getAutomaticGrantPolicy(secretId);
+        const projectDefaults = policy.kind === "all_projects"
+          ? [...this.options.listProfiles()]
+              .filter((profile) => profile.profileType !== "system")
+              .map(({ profileId }) => ({ profileId }))
+          : policy.kind === "projects"
+            ? policy.profileIds.map((profileId) => ({ profileId }))
+            : [];
         if (nextRetention === "saved") {
+          if (policy.kind === "all_projects" && nextScope.scopeKind === "instance") {
+            assertProjectDefaultBindingCompatibility(
+              store,
+              "__all_projects_policy__",
+              secretId,
+              nextBindings.map(bindingInputToPublicBinding),
+            );
+          }
           for (const { profileId } of projectDefaults.filter(({ profileId }) =>
             nextScope.scopeKind === "instance" || nextScope.profileId === profileId
           )) {
@@ -1175,6 +1349,7 @@ export class SecureSessionsService {
               profileId,
               secretId,
               nextBindings.map(bindingInputToPublicBinding),
+              this.listEffectiveProjectDefaultsForProfile(store, profileId),
             );
           }
         }
@@ -2326,10 +2501,14 @@ export class SecureSessionsService {
       store,
       scope,
       request.displayAlias,
+      undefined,
+      scope.profileId
+        ? this.isAllProjectAutomaticGrantEligible(scope.profileId)
+        : true,
     );
     if (
       input.makeProjectDefault === true
-      && store.listProjectDefaults(profileId).length
+      && this.listEffectiveProjectDefaultsForProfile(store, profileId).length
         >= SECURE_SECRET_MAX_PROJECT_DEFAULTS
     ) {
       throw new SecureSessionsServiceError(
@@ -2349,6 +2528,7 @@ export class SecureSessionsService {
         profileId,
         secretId,
         input.exposures,
+        this.listEffectiveProjectDefaultsForProfile(store, profileId),
       );
     }
     let material: HostOnlySecret | null = null;
@@ -2876,7 +3056,7 @@ export class SecureSessionsService {
   ): Promise<PreparedProjectDefault[]> {
     const sessionAgentId = descriptor.agentId;
     const profileId = requireProfileId(descriptor);
-    const configured = store.listProjectDefaults(profileId);
+    const configured = this.listEffectiveProjectDefaultsForProfile(store, profileId);
     const effectiveSecretIds = new Set(
       resolveVisibleSavedSecrets(store, profileId).map((secret) => secret.secretId),
     );
@@ -3636,7 +3816,10 @@ export class SecureSessionsService {
         createdAt: request.requestedAt,
         expiresAt: request.expiresAt,
       })),
-      projectDefaults: store.listProjectDefaults(snapshot.state.profileId)
+      projectDefaults: this.listEffectiveProjectDefaultsForProfile(
+        store,
+        snapshot.state.profileId,
+      )
         .map((projectDefault) => {
           const secret = store.getSecret(projectDefault.secretId);
           const recorded = this.projectDefaultStatuses
@@ -3688,6 +3871,7 @@ export class SecureSessionsService {
       scope: toPublicScope(secret),
       retention: secret.retention,
       bindings: store.listBindings(secret.secretId).map(toPublicBinding),
+      automaticGrantPolicy: store.getAutomaticGrantPolicy(secret.secretId),
       available: Boolean(provider?.enabled && provider.status === "available"),
       updatedAt: secret.updatedAt,
     };
@@ -3976,6 +4160,23 @@ export class SecureSessionsService {
     }
   }
 
+  private listEffectiveProjectDefaultsForProfile(
+    store: SecureSessionStore,
+    profileId: string,
+  ): SecureSessionProjectDefault[] {
+    const profile = [...this.options.listProfiles()]
+      .find((candidate) => candidate.profileId === profileId);
+    return profile && profile.profileType !== "system"
+      ? store.listEffectiveProjectDefaults(profileId)
+      : store.listProjectDefaults(profileId);
+  }
+
+  private isAllProjectAutomaticGrantEligible(profileId: string): boolean {
+    const profile = [...this.options.listProfiles()]
+      .find((candidate) => candidate.profileId === profileId);
+    return Boolean(profile && profile.profileType !== "system");
+  }
+
   private assertSecretMutationLifecycleAvailable(
     store: SecureSessionStore,
     secretIds: readonly string[],
@@ -3991,6 +4192,15 @@ export class SecureSessionsService {
     for (const projectDefault of store.listProjectDefaults()) {
       if (wanted.has(projectDefault.secretId)) {
         profileIds.add(projectDefault.profileId);
+      }
+    }
+    if (
+      store.listAllProjectDefaults()
+        .some((projectDefault) => wanted.has(projectDefault.secretId))
+    ) {
+      for (const { profileId, archivedAt, profileType } of this.options.listProfiles()) {
+        if (archivedAt || profileType === "system") continue;
+        profileIds.add(profileId);
       }
     }
     for (const profileId of profileIds) {
@@ -4671,9 +4881,11 @@ function assertProjectDefaultBindingCompatibility(
   profileId: string,
   proposedSecretId: string,
   proposedBindings: readonly SecureSecretBinding[],
+  configuredDefaults: readonly SecureSessionProjectDefault[] =
+    store.listEffectiveProjectDefaults(profileId),
 ): void {
   const occupied = new Set<string>();
-  for (const projectDefault of store.listProjectDefaults(profileId)) {
+  for (const projectDefault of configuredDefaults) {
     if (projectDefault.secretId === proposedSecretId) continue;
     const secret = store.getSecret(projectDefault.secretId);
     if (!secret || secret.retention !== "saved" || !isVisibleTo(secret, profileId)) {
@@ -4710,6 +4922,28 @@ function captureProjectDefaultLeases(
         lease.state !== "active"
         || !wanted.has(lease.secretId)
         || (!options.includeAllSecretLeases && lease.grantSource !== "project_default")
+      ) {
+        continue;
+      }
+      leaseIds.push(lease.leaseId);
+      sessionIds.add(state.sessionAgentId);
+    }
+  }
+  return { leaseIds, sessionIds: [...sessionIds] };
+}
+
+function captureProjectDefaultLeasesForSecret(
+  store: SecureSessionStore,
+  secretId: string,
+): { leaseIds: string[]; sessionIds: string[] } {
+  const leaseIds: string[] = [];
+  const sessionIds = new Set<string>();
+  for (const state of store.listSessionStates()) {
+    for (const lease of store.getSnapshot(state.sessionAgentId).leases) {
+      if (
+        lease.state !== "active"
+        || lease.secretId !== secretId
+        || lease.grantSource !== "project_default"
       ) {
         continue;
       }
@@ -4799,6 +5033,7 @@ function assertDoesNotShadowConfiguredDefault(
   scope: { scopeKind: "instance" | "profile"; profileId: string | null },
   displayAlias: string,
   excludedSecretId?: string,
+  allProjectsEligible = true,
 ): void {
   if (scope.scopeKind !== "profile" || !scope.profileId) return;
   const shadowed = store.listSecrets().find((secret) =>
@@ -4809,7 +5044,11 @@ function assertDoesNotShadowConfiguredDefault(
   );
   if (
     shadowed
-    && store.listProjectDefaults(scope.profileId)
+    && (
+      allProjectsEligible
+        ? store.listEffectiveProjectDefaults(scope.profileId)
+        : store.listProjectDefaults(scope.profileId)
+    )
       .some((projectDefault) => projectDefault.secretId === shadowed.secretId)
   ) {
     throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");

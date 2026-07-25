@@ -49,9 +49,7 @@ import { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
 import { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import { SwarmRuntimeController } from "./swarm-runtime-controller.js";
-import {
-  SwarmRuntimeLifecycleCoordinator,
-} from "./swarm-runtime-lifecycle-coordinator.js";
+import { SwarmRuntimeLifecycleCoordinator } from "./swarm-runtime-lifecycle-coordinator.js";
 import { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 import { appendTurnLedgerRecord } from "./turn-ledger.js";
 import {
@@ -543,6 +541,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       ...foundation,
       getDescriptor: (agentId) => this.descriptors.get(agentId),
       listDescriptors: () => Array.from(this.descriptors.values()),
+      listProfiles: () => this.agentDirectory.listProfiles(),
       hasProfile: (profileId) => this.profiles.has(profileId),
       isProfileArchived: (profileId) => Boolean(this.profiles.get(profileId)?.archivedAt),
       isSessionArchived: (agentId) => Boolean(this.descriptors.get(agentId)?.archivedAt),

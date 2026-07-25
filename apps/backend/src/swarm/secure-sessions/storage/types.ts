@@ -1,3 +1,5 @@
+import type { SecureSecretAutomaticGrantPolicy } from "@forge/protocol";
+
 export const SECURE_SESSION_PROVIDER_KINDS = ["local_keychain", "bitwarden_secrets_manager"] as const;
 export type SecureSessionProviderKind = (typeof SECURE_SESSION_PROVIDER_KINDS)[number];
 
@@ -146,6 +148,17 @@ export interface SecureSessionProjectDefault {
 export interface PutSecureSessionProjectDefaultInput {
   profileId: string;
   secretId: string;
+}
+
+export interface SecureSessionAllProjectDefault {
+  secretId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplaceSecureSessionAutomaticGrantPolicyInput {
+  secretId: string;
+  policy: SecureSecretAutomaticGrantPolicy;
 }
 
 export interface DeleteSecureSessionProjectStateResult {

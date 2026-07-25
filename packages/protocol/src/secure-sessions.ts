@@ -139,6 +139,16 @@ export type SecureSecretScope =
  */
 export const SECURE_SECRET_MAX_PROJECT_DEFAULTS = 16
 
+/**
+ * Projects where a saved secret is granted automatically when Team Secure
+ * Mode starts. `all_projects` is a durable rule and therefore also applies to
+ * projects created after the policy is saved.
+ */
+export type SecureSecretAutomaticGrantPolicy =
+  | { kind: 'none' }
+  | { kind: 'projects'; profileIds: string[] }
+  | { kind: 'all_projects' }
+
 export interface SecureSecretSummary {
   secretId: string
   providerId: string
@@ -147,6 +157,11 @@ export interface SecureSecretSummary {
   scope: SecureSecretScope
   retention: SecureSecretRetention
   bindings: SecureSecretBinding[]
+  /**
+   * Additive automatic-grant metadata. Older servers may omit it; clients
+   * must interpret omission as `{ kind: 'none' }`.
+   */
+  automaticGrantPolicy?: SecureSecretAutomaticGrantPolicy
   available: boolean
   updatedAt: string
 }
@@ -388,6 +403,7 @@ export class SecureSessionsContractError extends Error {
 }
 
 const SECURE_SESSIONS_MAX_ID_LENGTH = 256
+const SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS = 4096
 const SECURE_SESSIONS_MAX_TARGET_LENGTH = 4_096
 const SECURE_SESSIONS_MAX_PURPOSE_LENGTH = 2_000
 const SECURE_SESSIONS_MAX_EXPOSURES = 16
@@ -672,6 +688,45 @@ export function parseApplySecureSessionProjectDefaultsRequest(
   return {
     baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
   }
+}
+
+export function parseSecureSecretAutomaticGrantPolicy(
+  value: unknown,
+): SecureSecretAutomaticGrantPolicy {
+  const input = recordInput(value, 'policy')
+  if (input.kind === 'none' || input.kind === 'all_projects') {
+    knownKeys(input, ['kind'], 'policy')
+    return { kind: input.kind }
+  }
+  if (input.kind !== 'projects') {
+    throw new SecureSessionsContractError(
+      'policy.kind must be none, projects, or all_projects',
+    )
+  }
+  knownKeys(input, ['kind', 'profileIds'], 'policy')
+  if (
+    !Array.isArray(input.profileIds)
+    || input.profileIds.length > SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS
+  ) {
+    throw new SecureSessionsContractError(
+      `policy.profileIds must contain at most ${SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS} project IDs`,
+    )
+  }
+  const profileIds = input.profileIds.map((profileId, index) =>
+    boundedString(
+      profileId,
+      `policy.profileIds[${index}]`,
+      SECURE_SESSIONS_MAX_ID_LENGTH,
+    )
+  )
+  if (new Set(profileIds).size !== profileIds.length) {
+    throw new SecureSessionsContractError(
+      'policy.profileIds must contain unique project IDs',
+    )
+  }
+  return profileIds.length === 0
+    ? { kind: 'none' }
+    : { kind: 'projects', profileIds }
 }
 
 export function parseRevokeSecureSecretLeaseRequest(

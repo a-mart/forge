@@ -66,6 +66,7 @@ function fakeService(): SecureSecretTransportService {
     setSecureSecretProjectDefault: vi.fn(async (_secretId, input) =>
       input.enabled ? projectDefault : null
     ),
+    replaceSecureSecretAutomaticGrantPolicy: vi.fn(async () => secret),
     createLocalSecureSecret: vi.fn(async () => secret),
     updateSecureSecret: vi.fn(async () => secret),
     deleteSecureSecret: vi.fn(async () => undefined),
@@ -261,6 +262,33 @@ describe("secure secret routes", () => {
       { profileId: "profile-1", enabled: false },
     );
     expect(service.setSecureSecretProjectDefault).toHaveBeenCalledTimes(2);
+  });
+
+  it("atomically replaces an automatic-grant policy", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSecretRoutes({ service }));
+
+    const response = await putJson(
+      `${server.baseUrl}/api/secure-secrets/secret-1/automatic-grant`,
+      { policy: { kind: "projects", profileIds: ["profile-1", "profile-2"] } },
+    );
+    const invalid = await putJson(
+      `${server.baseUrl}/api/secure-secrets/secret-1/automatic-grant`,
+      {
+        policy: { kind: "all_projects" },
+        plaintext: "must-not-be-accepted",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(secret);
+    expect(invalid.status).toBe(400);
+    expect(
+      service.replaceSecureSecretAutomaticGrantPolicy,
+    ).toHaveBeenCalledExactlyOnceWith("secret-1", {
+      kind: "projects",
+      profileIds: ["profile-1", "profile-2"],
+    });
   });
 
   it("rejects plaintext and malformed bodies before invoking the service", async () => {

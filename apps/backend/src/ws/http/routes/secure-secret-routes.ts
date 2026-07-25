@@ -3,7 +3,9 @@ import {
   SECURE_SECRET_RETENTIONS,
   SecureSessionsContractError,
   parseSecureSecretBinding,
+  parseSecureSecretAutomaticGrantPolicy,
   parseSecureSecretScope,
+  type SecureSecretAutomaticGrantPolicy,
   type SecureSecretBinding,
   type SecureSecretProviderSummary,
   type SecureSecretProviderTestResult,
@@ -100,6 +102,10 @@ export interface SecureSecretTransportService {
     secretId: string,
     input: { profileId: string; enabled: boolean },
   ): Promise<SecureSecretProjectDefaultSummary | null>;
+  replaceSecureSecretAutomaticGrantPolicy(
+    secretId: string,
+    policy: SecureSecretAutomaticGrantPolicy,
+  ): Promise<SecureSecretSummary>;
   createLocalSecureSecret(input: CreateLocalSecureSecretInput): Promise<SecureSecretSummary>;
   updateSecureSecret(
     secretId: string,
@@ -174,6 +180,26 @@ export function createSecureSecretRoutes(options: {
               profileId,
               enabled: input.enabled,
             }),
+          );
+          return;
+        }
+
+        const automaticGrantMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/([^/]+)\/automatic-grant$/,
+        );
+        if (request.method === "PUT" && automaticGrantMatch) {
+          const secretId = parsePathId(automaticGrantMatch[1], "secretId");
+          const input = requireObject(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          assertKnownKeys(input, ["policy"]);
+          sendSecureJson(
+            response,
+            200,
+            await options.service.replaceSecureSecretAutomaticGrantPolicy(
+              secretId,
+              parseSecureSecretAutomaticGrantPolicy(input.policy),
+            ),
           );
           return;
         }

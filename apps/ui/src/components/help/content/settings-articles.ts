@@ -234,7 +234,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-secrets',
     title: 'Secrets and Secure Sessions',
     category: 'settings',
-    summary: 'Scope local or Bitwarden secrets by project, configure team defaults, and approve principal-bound agent requests.',
+    summary: 'Scope local or Bitwarden secrets by project, configure automatic grants, and approve principal-bound agent requests.',
     content: settingsSecretsContent,
     keywords: [
       'secure session',
@@ -252,7 +252,7 @@ export const settingsArticles: HelpArticle[] = [
       'redaction',
       'project secret',
       'all projects',
-      'project default',
+      'automatic grant',
       'automatic',
       'team secure mode',
       'worker',

@@ -213,7 +213,7 @@ export function SecureSessionsReadinessPanel({
         ))}
         {configuredProjectDefaultCount !== undefined ? (
           <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-2.5">
-            <span className="text-muted-foreground">Configured project defaults</span>
+            <span className="text-muted-foreground">Configured automatic grants</span>
             <Badge variant="outline">{configuredProjectDefaultCount}</Badge>
           </div>
         ) : null}

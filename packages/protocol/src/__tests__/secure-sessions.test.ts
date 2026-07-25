@@ -17,6 +17,7 @@ import {
   parseResolveSecureSecretAccessRequest,
   parseRevokeSecureSecretLeaseRequest,
   parseSecureSecretBinding,
+  parseSecureSecretAutomaticGrantPolicy,
   parseSecureSecretLeaseSpec,
   parseSecureSecretScope,
   type ApplySecureSessionProjectDefaultsRequest,
@@ -382,6 +383,25 @@ describe('Secure Sessions protocol', () => {
     expect(invalidation).toEqual({ type: 'secure_secret_catalog_changed', revision: 4 })
     expect(JSON.stringify(invalidation)).not.toContain('providers')
     expect(JSON.stringify(invalidation)).not.toContain('secrets')
+  })
+
+  it('parses automatic-grant policies independently of the 16-secret limit', () => {
+    const profileIds = Array.from({ length: 17 }, (_, index) => `profile-${index}`)
+    expect(parseSecureSecretAutomaticGrantPolicy({
+      kind: 'projects',
+      profileIds,
+    })).toEqual({ kind: 'projects', profileIds })
+    expect(parseSecureSecretAutomaticGrantPolicy({
+      kind: 'projects',
+      profileIds: [],
+    })).toEqual({ kind: 'none' })
+    expect(parseSecureSecretAutomaticGrantPolicy({
+      kind: 'all_projects',
+    })).toEqual({ kind: 'all_projects' })
+    expect(() => parseSecureSecretAutomaticGrantPolicy({
+      kind: 'projects',
+      profileIds: ['profile-1', 'profile-1'],
+    })).toThrow(SecureSessionsContractError)
   })
 
   it('has no public representation for secret material or source locators', () => {

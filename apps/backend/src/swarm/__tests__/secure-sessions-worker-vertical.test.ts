@@ -1104,6 +1104,11 @@ function createHarness() {
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
     listDescriptors: () => [...descriptors.values()],
+    listProfiles: () => [...new Set(
+      [...descriptors.values()].flatMap((descriptor) =>
+        descriptor.profileId ? [descriptor.profileId] : []
+      ),
+    )].map((profileId) => ({ profileId })),
     hasProfile: (profileId) => [...descriptors.values()]
       .some((descriptor) => descriptor.profileId === profileId),
     isProfileArchived: () => false,

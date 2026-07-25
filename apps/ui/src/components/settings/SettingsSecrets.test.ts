@@ -21,6 +21,7 @@ const secureSecretsApiMock = vi.hoisted(() => ({
   fetchSecureSessionReadiness: vi.fn(),
   createLocalSecret: vi.fn(),
   updateSecureSecret: vi.fn(),
+  updateSecureSecretAutomaticGrant: vi.fn(),
   updateSecureSecretProjectDefault: vi.fn(),
   deleteSecureSecret: vi.fn(),
   connectBitwardenProvider: vi.fn(),
@@ -44,6 +45,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.createLocalSecret(...args),
     updateSecureSecret: (...args: unknown[]) =>
       secureSecretsApiMock.updateSecureSecret(...args),
+    updateSecureSecretAutomaticGrant: (...args: unknown[]) =>
+      secureSecretsApiMock.updateSecureSecretAutomaticGrant(...args),
     updateSecureSecretProjectDefault: (...args: unknown[]) =>
       secureSecretsApiMock.updateSecureSecretProjectDefault(...args),
     deleteSecureSecret: (...args: unknown[]) =>
@@ -229,7 +232,7 @@ describe('SettingsSecrets', () => {
       expect(getByText(container, 'Private sources')).toBeTruthy()
     })
     expect(container.textContent).toContain(
-      'Access still requires a grant unless you explicitly enable a project default',
+      'Catalog availability does not grant access',
     )
 
     activateTab('Advanced delivery')
@@ -594,6 +597,9 @@ describe('SettingsSecrets', () => {
 
     const locatorInput = getByLabelText(container, 'Bitwarden secret ID') as HTMLInputElement
     const aliasInput = getByLabelText(container, 'Forge alias') as HTMLInputElement
+    fireEvent.click(
+      container.querySelector('#bitwarden-secret-automatic-project-alpha')!,
+    )
     fireEvent.change(locatorInput, { target: { value: 'provider-secret-uuid' } })
     fireEvent.change(aliasInput, { target: { value: 'database/production' } })
     fireEvent.click(getByRole(container, 'button', { name: 'Import reference' }))
@@ -613,18 +619,18 @@ describe('SettingsSecrets', () => {
 
     resolveImport?.({ ...SECRET_SUMMARY, providerId: 'bitwarden-1' })
     await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-1',
+        { kind: 'projects', profileIds: ['project-alpha'] },
+      )
       expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
     })
   })
 
-  it('defaults new local secrets to the active project and can make them project defaults', async () => {
+  it('scopes new local secrets to the active project and can grant them automatically there', async () => {
     secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
-    secureSecretsApiMock.updateSecureSecretProjectDefault.mockResolvedValue({
-      profileId: 'project-beta',
-      secretId: 'secret-1',
-      createdAt: '2026-07-24T12:00:00.000Z',
-      updatedAt: '2026-07-24T12:00:00.000Z',
-    })
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue(SECRET_SUMMARY)
     render(makeClient(), 'project-beta')
 
     await waitFor(() => {
@@ -638,12 +644,12 @@ describe('SettingsSecrets', () => {
     fireEvent.change(getByLabelText(container, 'Private value'), {
       target: { value: 'private-canary' },
     })
-    const projectDefaultSwitch = getByRole(container, 'switch', {
-      name: 'Automatically available in this project',
+    const automaticGrantCheckbox = getByRole(container, 'checkbox', {
+      name: 'Automatically grant in Beta Project',
     })
-    fireEvent.click(projectDefaultSwitch)
+    fireEvent.click(automaticGrantCheckbox)
     await waitFor(() => {
-      expect(projectDefaultSwitch.getAttribute('aria-checked')).toBe('true')
+      expect(automaticGrantCheckbox.getAttribute('data-state')).toBe('checked')
     })
     fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
 
@@ -654,11 +660,99 @@ describe('SettingsSecrets', () => {
           scope: { kind: 'profile', profileId: 'project-beta' },
         }),
       )
-      expect(secureSecretsApiMock.updateSecureSecretProjectDefault).toHaveBeenCalledWith(
+      expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledWith(
         expect.anything(),
-        'project-beta',
         'secret-1',
-        true,
+        { kind: 'projects', profileIds: ['project-beta'] },
+      )
+    })
+  })
+
+  it('sets one atomic multi-project automatic grant policy for a new local secret', async () => {
+    secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    await chooseSelect('local-secret-scope', 'All projects')
+
+    fireEvent.click(getByRole(container, 'checkbox', {
+      name: 'Automatically grant in Alpha Project',
+    }))
+    fireEvent.click(getByRole(container, 'checkbox', {
+      name: 'Automatically grant in Beta Project',
+    }))
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'github/work' },
+    })
+    fireEvent.change(getByLabelText(container, 'Private value'), {
+      target: { value: 'private-canary' },
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledTimes(1)
+      expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-1',
+        {
+          kind: 'projects',
+          profileIds: ['project-alpha', 'project-beta'],
+        },
+      )
+    })
+  })
+
+  it('offers every current and future project only to all-project secrets', async () => {
+    secureSecretsApiMock.createLocalSecret.mockResolvedValue(SECRET_SUMMARY)
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue(SECRET_SUMMARY)
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+
+    expect(queryByRole(container, 'checkbox', {
+      name: 'Every project, including future projects',
+    })).toBeNull()
+    expect(getByRole(container, 'checkbox', {
+      name: 'Automatically grant in Alpha Project',
+    })).toBeTruthy()
+    expect(queryByRole(container, 'checkbox', {
+      name: 'Automatically grant in Beta Project',
+    })).toBeNull()
+
+    await chooseSelect('local-secret-scope', 'All projects')
+    const everyProject = getByRole(container, 'checkbox', {
+      name: 'Every project, including future projects',
+    })
+    fireEvent.click(everyProject)
+    expect(container.textContent).toContain(
+      'Includes current projects and projects created later.',
+    )
+    await waitFor(() => {
+      expect((getByRole(container, 'checkbox', {
+        name: 'Automatically grant in Alpha Project',
+      }) as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    fireEvent.change(getByLabelText(container, 'Alias'), {
+      target: { value: 'github/work' },
+    })
+    fireEvent.change(getByLabelText(container, 'Private value'), {
+      target: { value: 'private-canary' },
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-1',
+        { kind: 'all_projects' },
       )
     })
   })
@@ -684,16 +778,16 @@ describe('SettingsSecrets', () => {
     })
     activateTab('Secrets')
 
-    const projectDefaultSwitch = getByRole(container, 'switch', {
-      name: 'Automatically available in this project',
+    const automaticGrantCheckbox = getByRole(container, 'checkbox', {
+      name: 'Automatically grant in Alpha Project',
     }) as HTMLButtonElement
-    expect(projectDefaultSwitch.disabled).toBe(true)
+    expect(automaticGrantCheckbox.disabled).toBe(true)
     expect(container.textContent).toContain(
-      `This project already has ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic secrets. Disable one before enabling another.`,
+      `A project with ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic grants cannot receive another until one is removed.`,
     )
   })
 
-  it('shows project names for scope and independent project defaults', async () => {
+  it('shows project names for scope and independent automatic grants', async () => {
     secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
       providers: [LOCAL_PROVIDER],
       secrets: [{
@@ -723,8 +817,8 @@ describe('SettingsSecrets', () => {
     activateTab('Secrets')
 
     expect(container.textContent).toContain('All projects')
-    expect(container.textContent).toContain('Default in Alpha Project')
-    expect(container.textContent).toContain('Default in Beta Project')
+    expect(container.textContent).toContain('Automatically granted in Alpha Project')
+    expect(container.textContent).toContain('Automatically granted in Beta Project')
   })
 
   it('prevents an alias collision in the same project with clear safe copy', async () => {
@@ -781,10 +875,17 @@ describe('SettingsSecrets', () => {
         },
       ],
     })
-    secureSecretsApiMock.updateSecureSecretProjectDefault.mockResolvedValue(null)
     secureSecretsApiMock.updateSecureSecret.mockResolvedValue({
       ...SECRET_SUMMARY,
       scope: { kind: 'profile', profileId: 'project-alpha' },
+    })
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue({
+      ...SECRET_SUMMARY,
+      scope: { kind: 'profile', profileId: 'project-alpha' },
+      automaticGrantPolicy: {
+        kind: 'projects',
+        profileIds: ['project-alpha'],
+      },
     })
     render()
 
@@ -804,16 +905,17 @@ describe('SettingsSecrets', () => {
           scope: { kind: 'profile', profileId: 'project-alpha' },
         }),
       )
-      expect(secureSecretsApiMock.updateSecureSecretProjectDefault).toHaveBeenCalledWith(
+      expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledWith(
         expect.anything(),
-        'project-beta',
         'secret-1',
-        false,
+        { kind: 'projects', profileIds: ['project-alpha'] },
       )
     })
     expect(
-      secureSecretsApiMock.updateSecureSecretProjectDefault.mock.invocationCallOrder[0],
-    ).toBeLessThan(secureSecretsApiMock.updateSecureSecret.mock.invocationCallOrder[0]!)
+      secureSecretsApiMock.updateSecureSecret.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      secureSecretsApiMock.updateSecureSecretAutomaticGrant.mock.invocationCallOrder[0]!,
+    )
   })
 
   it('sends all-project scope when selected for a Bitwarden reference', async () => {
