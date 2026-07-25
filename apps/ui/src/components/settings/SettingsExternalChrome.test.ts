@@ -172,7 +172,14 @@ describe('SettingsExternalChrome', () => {
       const dialog = await screen.findByRole('alertdialog')
       if (buttonName === 'Take over stale owner') {
         expect(dialog.textContent).toContain('coordinator and native-host ownership')
-        expect(dialog.textContent).toContain('does not take over Chrome profiles or tabs')
+        expect(dialog.textContent).toContain('quiesced/non-live')
+        expect(dialog.textContent).toContain('exact durable registration authorization')
+        expect(dialog.textContent).toContain('rotates local authentication')
+        expect(dialog.textContent).toContain('restores the authenticated listener')
+        expect(dialog.textContent).toContain('preserves any local durable checkpoint')
+        expect(dialog.textContent).toContain('exact-instance reconnect/reconciliation')
+        expect(dialog.textContent).toContain('never takes over or attaches Chrome profiles or tabs')
+        expect(dialog.textContent).not.toContain('after release is proven')
       }
       if (buttonName === 'Roll back') {
         expect(dialog.textContent).toContain('Compatible connected profiles auto-reload')

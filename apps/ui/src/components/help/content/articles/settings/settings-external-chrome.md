@@ -18,14 +18,14 @@ Repeat this ceremony separately in every Chrome profile you intend to use:
 6. Confirm Chrome shows extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`. If it differs, remove that extension and do not enable the integration.
 7. Enable the local coordinator in Forge only after the path, ID, native-host state, versions, and hashes look correct.
 
-After every Forge Desktop update, compare the packaged and deployed inventory, then click **Reload** on the extension card in each Chrome profile. Chrome does not perform that reload for this unpacked Local Beta.
+Forge prepares compatible extension updates and asks connected Chrome profiles to reload automatically. If Settings reports **Manual extension reload required**, open `chrome://extensions`, find Forge External Chrome, and click **Reload** for that profile.
 
 ## Status and repair
 
 The Settings pane reports coordinator ownership, local authentication, native registration/trust, the validated unpacked path, and packaged/deployed component versions and SHA-256 values when available. It does not guess running Chrome versions before an authenticated runtime connection reports them.
 
 - **Repair native host** repairs Forge-owned registration and may rotate local authentication. It does not inspect or change Chrome profiles.
-- **Roll back** selects the last validated payload/native host when one exists. Reload the extension manually afterward.
+- **Roll back** selects the last validated payload/native host when one exists. Compatible rollback uses the same automatic reload path. Reload the unpacked extension manually only when Settings prompts you to do so.
 - **Take over stale owner** is available only when an earlier Forge Desktop ownership record is stale. Do not use it while another instance is running.
 - **Remove integration** disables and unregisters Forge's native integration. Remove the unpacked extension manually from every Chrome profile.
 

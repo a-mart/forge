@@ -54,7 +54,7 @@ const CONFIRMATIONS = {
   },
   takeover: {
     title: 'Take over stale Forge ownership?',
-    description: 'This transfers stale Forge coordinator and native-host ownership for this data directory. It does not take over Chrome profiles or tabs. Quiesce External Chrome in the currently owning Forge Desktop/data directory first. Confirmation never interrupts a live authority and rotates local authentication only after release is proven.',
+    description: 'This transfers stale Forge coordinator and native-host ownership for this data directory only when the prior Forge authority is quiesced/non-live and exact durable registration authorization is present. It rotates local authentication, restores the authenticated listener, and preserves any local durable checkpoint for exact-instance reconnect/reconciliation and later lifecycle release. It never takes over or attaches Chrome profiles or tabs.',
     action: 'Confirm takeover',
   },
 } as const
