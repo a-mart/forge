@@ -11,6 +11,7 @@ import { installedChrome, type ChromeRuntimePort, type ChromeRuntimeSender, type
 import { SyntheticInputSequencer, type SyntheticInputOperation } from '../../runtime/human-control.js'
 import { PAYLOAD_VERSION } from '../../runtime/identity.js'
 import { LeaseError, LeaseManager } from '../../runtime/lease-manager.js'
+import { restrictedTargetReason } from '../../runtime/restricted-target.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
 import type { ServiceWorkerPayload, ShellEventName } from '../../shell/service-worker-bootstrap.js'
 
@@ -103,20 +104,6 @@ class Runtime implements ServiceWorkerPayload {
     const profileAlias = typeof aliasState[PROFILE_ALIAS_KEY] === 'string' ? String(aliasState[PROFILE_ALIAS_KEY]).slice(0, 512) : undefined
     await this.chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
     this.chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 })
-    this.native = new NativeRpcClient({
-      connect: (hostName) => this.chrome.runtime.connectNative(hostName),
-      extensionInstanceId,
-      chromeVersion: chromeVersion(),
-      ...(profileAlias ? { profileAlias } : {}),
-      onConnected: () => {
-        void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM)
-        const lease = this.leases.current()
-        if (lease?.leaseId.startsWith('side-panel-')) this.notifyLocalLease(lease, 'claimed')
-      },
-      onDisconnected: () => { this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: 0.1 }) },
-      onRequest: (message) => this.handleDesktopRequest(message),
-    })
-    this.native.start()
     const recovered = await this.leases.recover()
     if (recovered !== null) {
       try {
@@ -126,6 +113,22 @@ class Runtime implements ServiceWorkerPayload {
         await this.leases.release(recovered.leaseId, recovered.leaseEpoch)
       }
     }
+    this.native = new NativeRpcClient({
+      connect: (hostName) => this.chrome.runtime.connectNative(hostName),
+      extensionInstanceId,
+      chromeVersion: chromeVersion(),
+      ...(profileAlias ? { profileAlias } : {}),
+      onConnected: () => {
+        void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM)
+        const lease = this.leases.current()
+        if (lease !== null) this.notifyLocalLease(lease, 'claimed')
+      },
+      onDisconnected: () => { this.chrome.alarms.create(TRANSPORT_GRACE_ALARM, { delayInMinutes: 0.1 }) },
+      onRequest: (message) => this.handleDesktopRequest(message),
+    })
+    // Recovery and debugger reattachment complete before native hello. Desktop may now
+    // reconcile its durable checkpoint without a hello deleting recoverable authority.
+    this.native.start()
   }
 
   onShellEvent(name: ShellEventName, args: unknown[]): unknown {
@@ -144,9 +147,12 @@ class Runtime implements ServiceWorkerPayload {
       case 'tab.updated': void this.handleUpdatedTab(args); return undefined
       case 'alarm': {
         const alarm = args[0] as { name?: string } | undefined
-        if (alarm?.name === HEARTBEAT_ALARM && this.native !== null && !this.native.isConnected()) {
-          this.native.stop()
-          this.native.start()
+        if (alarm?.name === HEARTBEAT_ALARM) {
+          void this.expireLeaseIfNeeded()
+          if (this.native !== null && !this.native.isConnected()) {
+            this.native.stop()
+            this.native.start()
+          }
         }
         if (alarm?.name === TRANSPORT_GRACE_ALARM && this.native?.isConnected() !== true) void this.handleTransportLoss()
         return undefined
@@ -185,8 +191,12 @@ class Runtime implements ServiceWorkerPayload {
         leaseId: message.leaseId, leaseEpoch: message.leaseEpoch as number, sessionAgentId: message.sessionAgentId,
         ...(message.url ? { url: message.url } : {}), groupTitle: message.groupTitle,
       })
-      try { await this.attachTab(created.tab.id as number) } catch (error) {
-        await this.leases.release(created.lease.leaseId, created.lease.leaseEpoch)
+      try {
+        await this.attachTab(created.tab.id as number)
+        this.leases.assertScope(created.lease.leaseId, created.lease.leaseEpoch, created.tab.id as number)
+      } catch (error) {
+        await this.debuggers.detach(created.tab.id as number).catch(() => undefined)
+        await this.leases.rollbackCreatedTab(created.tab.id as number, created.lease.leaseId, created.lease.leaseEpoch)
         throw error
       }
       this.notifyLocalLease(created.lease, 'claimed')
@@ -207,7 +217,10 @@ class Runtime implements ServiceWorkerPayload {
         childPolicy: message.childPolicy,
       })
       try {
-        for (const tabId of claimed.lease.tabIds) await this.attachTab(tabId)
+        for (const tabId of claimed.lease.tabIds) {
+          await this.attachTab(tabId)
+          this.leases.assertScope(claimed.lease.leaseId, claimed.lease.leaseEpoch, tabId)
+        }
       } catch (error) {
         await this.debuggers.detachAll()
         await this.leases.release(claimed.lease.leaseId, claimed.lease.leaseEpoch)
@@ -252,7 +265,10 @@ class Runtime implements ServiceWorkerPayload {
       case 'forge.browser.claim': {
         const claimed = await this.leases.claim(request.params)
         try {
-          for (const tabId of claimed.lease.tabIds) await this.attachTab(tabId)
+          for (const tabId of claimed.lease.tabIds) {
+            await this.attachTab(tabId)
+            this.leases.assertScope(claimed.lease.leaseId, claimed.lease.leaseEpoch, tabId)
+          }
         } catch (error) {
           await this.debuggers.detachAll()
           await this.leases.release(claimed.lease.leaseId, claimed.lease.leaseEpoch)
@@ -266,8 +282,12 @@ class Runtime implements ServiceWorkerPayload {
       }
       case 'forge.browser.create': {
         const created = await this.leases.create(request.params)
-        try { await this.attachTab(created.tab.id as number) } catch (error) {
-          await this.leases.release(created.lease.leaseId, created.lease.leaseEpoch)
+        try {
+          await this.attachTab(created.tab.id as number)
+          this.leases.assertScope(created.lease.leaseId, created.lease.leaseEpoch, created.tab.id as number)
+        } catch (error) {
+          await this.debuggers.detach(created.tab.id as number).catch(() => undefined)
+          await this.leases.rollbackCreatedTab(created.tab.id as number, created.lease.leaseId, created.lease.leaseEpoch)
           throw new LeaseError('lease-lost', error instanceof Error ? error.message : 'debugger attach failed')
         }
         return {
@@ -308,17 +328,39 @@ class Runtime implements ServiceWorkerPayload {
         error: { code: 'timeout', message: 'Navigation deadline elapsed.', retryable: true },
       }
     }
-    const input = params.input as { url?: string; readiness: 'load' | 'domContentLoaded' | 'none' }
-    if (!input.url) {
+    const input = params.input as { url?: string; environmentPort?: number; environmentProtocol?: 'http' | 'https'; path?: string; readiness: 'load' | 'domContentLoaded' | 'none'; timeoutMs: number }
+    const targetUrl = externalChromeNavigationUrl(input)
+    if (targetUrl === null) {
       return {
         protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
         tabId: params.tabId, operation: 'navigate', ok: false,
-        error: { code: 'invalid-url', message: 'External Chrome navigation requires a URL.', retryable: false },
+        error: { code: input.url || input.environmentPort ? 'restricted-target' : 'invalid-url', message: 'External Chrome navigation target is missing or restricted.', retryable: false },
       }
     }
     const controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId)
     this.broadcastStatus([params.tabId], 'agent')
-    await this.debuggers.sendCommand(params.tabId, 'Page.navigate', { url: input.url })
+    const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + input.timeoutMs)
+    try {
+      await this.debuggers.navigateAndWait(
+        params.tabId,
+        targetUrl,
+        input.readiness,
+        deadline,
+        () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
+      )
+    } catch (error) {
+      const interrupted = !this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)
+      const timedOut = Date.now() >= deadline || /timed out/u.test(error instanceof Error ? error.message : String(error))
+      return {
+        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        tabId: params.tabId, operation: 'navigate', ok: false,
+        error: interrupted
+          ? { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true }
+          : timedOut
+            ? { code: 'timeout', message: `Navigation did not reach ${input.readiness} readiness.`, retryable: true }
+            : { code: 'navigation-failed', message: 'Chrome navigation failed.', retryable: true },
+      }
+    }
     if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
       return {
         protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
@@ -327,6 +369,13 @@ class Runtime implements ServiceWorkerPayload {
       }
     }
     const tab = await this.chrome.tabs.get(params.tabId)
+    if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
+      return {
+        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+        tabId: params.tabId, operation: 'navigate', ok: false,
+        error: { code: 'control-interrupted', message: 'Lease authority changed before navigation completed.', retryable: true },
+      }
+    }
     const result: BrowserAutomationResultByOperation['navigate'] = {
       tab: this.browserTabSnapshot(tab, lease.sessionAgentId), readiness: input.readiness,
     }
@@ -515,9 +564,17 @@ class Runtime implements ServiceWorkerPayload {
   private async includeChild(tabId: number, openerTabId: number): Promise<void> {
     const lease = await this.leases.includeChild(tabId, openerTabId)
     if (lease === null) return
-    try { await this.attachTab(tabId) } catch {
-      await this.leases.markLost()
-      await this.debuggers.detachAll()
+    try {
+      await this.attachTab(tabId)
+      this.leases.assertScope(lease.leaseId, lease.leaseEpoch, tabId)
+    } catch {
+      const current = this.leases.current()
+      if (current?.leaseId === lease.leaseId && current.leaseEpoch === lease.leaseEpoch && current.tabIds.includes(tabId)) {
+        await this.leases.markLost()
+        await this.debuggers.detachAll()
+      } else {
+        await this.debuggers.detach(tabId).catch(() => undefined)
+      }
       return
     }
     this.native?.sendNotification('browser.tabChanged', {
@@ -534,6 +591,14 @@ class Runtime implements ServiceWorkerPayload {
     await this.leases.markLost()
     await this.debuggers.detachAll()
     this.broadcastStatus(lease.tabIds, 'detached')
+  }
+
+  private async expireLeaseIfNeeded(): Promise<void> {
+    const lease = await this.leases.expireIfNeeded()
+    if (lease === null) return
+    for (const tabId of lease.tabIds) await this.debuggers.detach(tabId)
+    this.broadcastStatus(lease.tabIds, 'detached')
+    this.notifyLocalLease(lease, 'released')
   }
 
   private async handleTransportLoss(): Promise<void> {
@@ -555,6 +620,18 @@ class Runtime implements ServiceWorkerPayload {
     if (error instanceof LeaseError) return { code: error.code, message: error.message.slice(0, 256), retryable: error.code === 'target-not-found' }
     return { code: 'debugger-unavailable', message: error instanceof Error ? error.message.slice(0, 256) : 'Chrome operation failed', retryable: true }
   }
+}
+
+export function externalChromeNavigationUrl(input: {
+  url?: string
+  environmentPort?: number
+  environmentProtocol?: 'http' | 'https'
+  path?: string
+}): string | null {
+  const url = input.url ?? (Number.isSafeInteger(input.environmentPort) && input.environmentPort! >= 1 && input.environmentPort! <= 65_535
+    ? `${input.environmentProtocol ?? 'http'}://127.0.0.1:${input.environmentPort}${input.path ?? ''}`
+    : '')
+  return restrictedTargetReason(url) === null ? url : null
 }
 
 export async function activateServiceWorker(): Promise<ServiceWorkerPayload> {

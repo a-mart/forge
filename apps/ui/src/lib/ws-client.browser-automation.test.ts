@@ -95,6 +95,31 @@ describe('ManagerWsClient browser automation state', () => {
     client.destroy()
   })
 
+  it('communicates session host selection and detach confirmation through canonical live/bootstrap state', async () => {
+    vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })
+    const client = new ManagerWsClient('ws://example.test', 'session-1')
+    const send = vi.fn()
+    const socket = { readyState: 1, send, close: vi.fn() }
+    ;(client as unknown as { transport: { socket: typeof socket } }).transport.socket = socket
+    const ingest = (event: unknown) => (client as unknown as { handleServerEvent(event: unknown): void }).handleServerEvent(event)
+    ingest({ type: 'browser_session_snapshot', snapshot: { ...snapshot(1), hostKind: 'external-chrome' } })
+    expect(client.getState().browserSessions['session-1']).toMatchObject({ hostKind: 'external-chrome' })
+
+    const selected = client.selectBrowserHost('session-1', 'profile-1', 'managed-electron')
+    const selectCommand = JSON.parse(send.mock.calls.at(-1)![0] as string)
+    expect(selectCommand).toMatchObject({ type: 'browser_host_select', sessionAgentId: 'session-1', profileId: 'profile-1', hostKind: 'managed-electron' })
+    ingest({ type: 'browser_session_command_succeeded', requestId: selectCommand.requestId, commandType: 'browser_host_select', snapshot: { ...snapshot(2), hostKind: 'managed-electron' } })
+    await expect(selected).resolves.toMatchObject({ hostKind: 'managed-electron' })
+    expect(client.getState().browserSessions['session-1']).toMatchObject({ hostKind: 'managed-electron', revision: 2 })
+
+    const detached = client.confirmExternalChromeDetached('session-1', 'profile-1')
+    const detachCommand = JSON.parse(send.mock.calls.at(-1)![0] as string)
+    expect(detachCommand).toMatchObject({ type: 'browser_external_chrome_detach_confirmed' })
+    ingest({ type: 'browser_session_command_succeeded', requestId: detachCommand.requestId, commandType: 'browser_external_chrome_detach_confirmed', snapshot: { ...snapshot(3), hostKind: 'managed-electron' } })
+    await expect(detached).resolves.toMatchObject({ revision: 3 })
+    client.destroy()
+  })
+
   it('retries dropped registration and hydration phases on the same open transport', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('WebSocket', class { static readonly OPEN = 1 })

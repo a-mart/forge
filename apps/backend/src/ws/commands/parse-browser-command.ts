@@ -23,6 +23,8 @@ const TYPES = new Set([
   "browser_host_response",
   "browser_host_state_report",
   "browser_panel_reveal_acknowledge",
+  "browser_host_select",
+  "browser_external_chrome_detach_confirmed",
   "browser_tab_open",
   "browser_tab_activate",
   "browser_tab_close",
@@ -102,6 +104,21 @@ export function parseBrowserCommand(command: ClientCommandCandidate): ParsedClie
           profileId: identifier(value.profileId, "profileId"),
           tabId: identifier(value.tabId, "tabId"),
           sequence: integer(value.sequence, "sequence", 1, Number.MAX_SAFE_INTEGER),
+        });
+      case "browser_host_select":
+        return ok({
+          type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
+          sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
+          profileId: identifier(value.profileId, "profileId"),
+          hostKind: hostKind(value.hostKind),
+        });
+      case "browser_external_chrome_detach_confirmed":
+        return ok({
+          type: command.type,
+          requestId: identifier(value.requestId, "requestId"),
+          sessionAgentId: identifier(value.sessionAgentId, "sessionAgentId"),
+          profileId: identifier(value.profileId, "profileId"),
         });
       case "browser_tab_open": {
         const url = optionalString(value.url, "url", 2_048);

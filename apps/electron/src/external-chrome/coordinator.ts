@@ -267,6 +267,9 @@ export class ExternalChromeHostCoordinator {
         throw new Error('External Chrome native host is missing or is not trusted by this platform')
       }
       await this.registration.repair()
+      // Durable lease authority is loaded before the endpoint can accept native hello.
+      // Host registration/replacement and IPC recovery therefore cannot bypass checkpoints.
+      await this.relay.ready()
       const epoch = createRendezvousEpoch()
       this.relay.activate({ epoch, desktopInstanceId: this.instanceId, keyId: keyRecord.keyId, secret: keyRecord.key })
       const endpoint = await this.endpoints.listen({

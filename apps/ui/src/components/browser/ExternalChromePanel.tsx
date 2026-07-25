@@ -7,12 +7,13 @@ import type {
   ExternalChromeRuntimeInstance,
 } from '@/lib/electron-bridge'
 import { cn } from '@/lib/utils'
+import type { ManagerWsClient } from '@/lib/ws-client'
 
-interface ExternalChromePanelProps { sessionAgentId: string; profileId: string }
+interface ExternalChromePanelProps { sessionAgentId: string; profileId: string; client?: ManagerWsClient | null }
 
 type Phase = 'loading' | 'ready' | 'candidates' | 'confirming' | 'working'
 
-export function ExternalChromePanel({ sessionAgentId, profileId }: ExternalChromePanelProps) {
+export function ExternalChromePanel({ sessionAgentId, profileId, client = null }: ExternalChromePanelProps) {
   const bridge = window.electronBridge?.windowRole === 'main' ? window.electronBridge.externalChrome : undefined
   const [status, setStatus] = useState<ExternalChromeLocalStatus | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -69,6 +70,14 @@ export function ExternalChromePanel({ sessionAgentId, profileId }: ExternalChrom
   const detach = async (): Promise<void> => {
     if (!bridge) return
     setPhase('working'); setError(null)
+    try {
+      await client?.confirmExternalChromeDetached(sessionAgentId, profileId)
+    } catch {
+      setError('operation-failed'); setPhase('ready'); return
+    }
+    // If no canonical tab existed yet, the backend transaction is a no-op and this
+    // releases the local-only pending lease. Otherwise lifecycle IPC already released it;
+    // explicit detach is idempotent.
     const result = await bridge.detach!(sessionAgentId, profileId)
     if (!result.ok) { setError(result.error); setPhase('ready'); return }
     setStatus(result.status); setPhase('ready')

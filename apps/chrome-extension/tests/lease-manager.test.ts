@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { EXTERNAL_CHROME_MAX_ARRAY_ITEMS, EXTERNAL_CHROME_MAX_CANDIDATE_TABS, EXTERNAL_CHROME_MAX_LABEL_LENGTH } from '@forge/protocol'
 import { LeaseError, LeaseManager } from '../src/runtime/lease-manager.js'
+import { externalChromeNavigationUrl } from '../src/payload/service-worker/index.js'
 import { candidateOrigin, restrictedTargetReason } from '../src/runtime/restricted-target.js'
 import { FakeStorage, fakeChrome } from './fakes.js'
 
@@ -92,6 +93,33 @@ describe('candidate picker and one-session leases', () => {
     expect(manager.current()).toEqual(first.lease)
   })
 
+  it('serializes parallel conflicting claims as one compare-and-set winner', async () => {
+    const chrome = fakeChrome({ tabs: structuredClone(normalTabs) })
+    const manager = new LeaseManager(chrome, 'm1-spike.1')
+    const [first, second] = await Promise.allSettled([
+      manager.claim({ leaseId: 'lease-a', leaseEpoch: 1, sessionAgentId: 'session-a', tabIds: [3], childPolicy: 'manual' }),
+      manager.claim({ leaseId: 'lease-b', leaseEpoch: 1, sessionAgentId: 'session-b', tabIds: [4], childPolicy: 'manual' }),
+    ])
+    expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected'])
+    expect(manager.current()?.leaseId).toBe(first.status === 'fulfilled' ? 'lease-a' : 'lease-b')
+  })
+
+  it('does not let a child mutation resurrect a lease released while Chrome work is pending', async () => {
+    const chrome = fakeChrome({ tabs: [...structuredClone(normalTabs), { id: 5, windowId: 1, groupId: -1, openerTabId: 3, url: 'https://child.invalid/' }] })
+    const manager = new LeaseManager(chrome, 'm1-spike.1')
+    await manager.claim({ leaseId: 'children', leaseEpoch: 1, sessionAgentId: 'session', tabIds: [3], groupId: 7, childPolicy: 'include-opened-by-leased-tabs' })
+    let continueGet!: () => void
+    const originalGet = chrome.tabs.get
+    chrome.tabs.get = async (tabId) => { if (tabId === 5) await new Promise<void>((resolve) => { continueGet = resolve }); return originalGet(tabId) }
+    const include = manager.includeChild(5, 3)
+    await Promise.resolve()
+    const release = manager.release('children', 1)
+    continueGet()
+    await expect(include).resolves.toMatchObject({ tabIds: [3, 5] })
+    await expect(release).resolves.toEqual([3, 5])
+    expect(manager.current()).toBeNull()
+  })
+
   it('keeps child tabs manual by default and includes only proven opener children when opted in', async () => {
     const tabs = [
       ...structuredClone(normalTabs),
@@ -109,6 +137,24 @@ describe('candidate picker and one-session leases', () => {
     expect(await optedIn.includeChild(5, 3)).toMatchObject({ tabIds: [3, 5], groupId: 7 })
     expect(await optedIn.includeChild(6, 3)).toBeNull()
     expect(await chrome.tabs.get(5)).toMatchObject({ groupId: 7 })
+  })
+
+  it('creates a Forge-owned child in the matching lease without a conflicting root claim', async () => {
+    const chrome = fakeChrome({ tabs: structuredClone(normalTabs), groups: [{ id: 7, windowId: 1, title: 'Forge · existing', collapsed: false }] })
+    const manager = new LeaseManager(chrome, 'm1-spike.1')
+    await manager.claim({ leaseId: 'lease-existing', leaseEpoch: 4, sessionAgentId: 'session', tabIds: [3], groupId: 7, childPolicy: 'manual' })
+    const created = await manager.create({ leaseId: 'lease-existing', leaseEpoch: 4, sessionAgentId: 'session', url: 'https://child.invalid/', groupTitle: 'ignored' })
+    expect(created.lease).toMatchObject({ leaseId: 'lease-existing', leaseEpoch: 4, groupId: 7, tabIds: [3, 5] })
+    expect(created.tab).toMatchObject({ id: 5, groupId: 7 })
+  })
+
+  it('removes a created tab and group when a root claim cannot complete', async () => {
+    const chrome = fakeChrome({ tabs: [], groups: [] })
+    chrome.storage.session.set = async () => { throw new Error('persistence failed') }
+    const manager = new LeaseManager(chrome, 'm1-spike.1')
+    await expect(manager.create({ leaseId: 'lease-created', leaseEpoch: 1, sessionAgentId: 'session', url: 'https://fixture.invalid/', groupTitle: 'Forge · fixture' })).rejects.toThrow('persistence failed')
+    expect(await chrome.tabs.query({})).toEqual([])
+    expect(await chrome.tabGroups.query({})).toEqual([])
   })
 
   it('creates a Forge-named group and leases only its new tab', async () => {
@@ -135,6 +181,18 @@ describe('candidate picker and one-session leases', () => {
     await expect(manager.claim({ leaseId: 'a', leaseEpoch: 1, sessionAgentId: 's', tabIds: [3], groupId: 9, childPolicy: 'manual' })).rejects.toMatchObject({ code: 'scope-mismatch' })
   })
 
+  it('atomically expires authority without closing user tabs', async () => {
+    let now = 100
+    const chrome = fakeChrome({ tabs: structuredClone(normalTabs) })
+    const manager = new LeaseManager(chrome, 'm1-spike.1', () => now, 5_000)
+    await manager.claim({ leaseId: 'lease-expiring', leaseEpoch: 1, sessionAgentId: 'session', tabIds: [3], childPolicy: 'manual' })
+    expect(await manager.expireIfNeeded()).toBeNull()
+    now = 5_101
+    expect(await manager.expireIfNeeded()).toMatchObject({ leaseId: 'lease-expiring', tabIds: [3] })
+    expect(manager.current()).toBeNull()
+    expect(await chrome.tabs.get(3)).toMatchObject({ title: 'Synthetic app' })
+  })
+
   it('recovers a worker suspension only for exact live payload/tab/epoch state', async () => {
     const session = new FakeStorage()
     const chrome = fakeChrome({ tabs: structuredClone(normalTabs), session })
@@ -156,6 +214,15 @@ describe('candidate picker and one-session leases', () => {
     expect(interrupted).toMatchObject({ state: 'LEASED_HUMAN', controlEpoch: operationEpoch + 1 })
     expect(manager.isOperationCurrent('lease-a', 1, operationEpoch)).toBe(false)
     expect(await manager.trustedHumanInput(999)).toBeNull()
+  })
+})
+
+describe('External Chrome navigation target construction', () => {
+  it('rejects restricted schemes before CDP and constructs loopback environment URLs', () => {
+    expect(externalChromeNavigationUrl({ url: 'chrome://settings/' })).toBeNull()
+    expect(externalChromeNavigationUrl({ url: 'javascript:alert(1)' })).toBeNull()
+    expect(externalChromeNavigationUrl({ environmentPort: 4173, environmentProtocol: 'https', path: '/ready?q=1' }))
+      .toBe('https://127.0.0.1:4173/ready?q=1')
   })
 })
 

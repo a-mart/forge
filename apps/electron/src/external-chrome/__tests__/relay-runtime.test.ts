@@ -15,7 +15,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function connectedRuntime(instanceId = 'instance_profile_a'): Promise<{
+async function connectedRuntime(instanceId = 'instance_profile_a', now: () => number = () => 1_000): Promise<{
   runtime: ExternalChromeRelayRuntime
   client: AuthenticatedRelayClient
   root: string
@@ -24,7 +24,7 @@ async function connectedRuntime(instanceId = 'instance_profile_a'): Promise<{
   roots.push(root)
   const endpoint = path.join(root, 'relay.sock')
   const key = Buffer.alloc(32, 0x44)
-  const runtime = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'), () => 1_000)
+  const runtime = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'), now)
   runtime.activate({ epoch: 'epoch_1234567890abcdef', desktopInstanceId: 'desktop_1234567890abcdef', keyId: 'key-test', secret: key })
   const server = createServer((socket) => runtime.accept(socket))
   servers.push(server)
@@ -65,12 +65,13 @@ function request(operation: 'open' | 'navigate' | 'status', tabId: string | null
   } as BrowserAutomationRequest
 }
 
-async function fakeExtensionLoop(client: AuthenticatedRelayClient): Promise<void> {
+async function fakeExtensionLoop(client: AuthenticatedRelayClient, requests: Array<{ method: string; params: Record<string, unknown> }> = []): Promise<void> {
   while (true) {
     const message = await client.receive()
     if (!message) return
     if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
     const params = message.params as Record<string, unknown>
+    requests.push({ method: message.method, params })
     if (message.method === 'forge.browser.claim') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
@@ -82,6 +83,10 @@ async function fakeExtensionLoop(client: AuthenticatedRelayClient): Promise<void
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
         extensionInstanceId: 'instance_profile_a', groupId: 9,
         tab: { windowId: 2, tabId: 41, groupId: 9, title: 'Created', url: 'https://fixture.invalid/', origin: 'https://fixture.invalid', active: true },
+      } })
+    } else if (message.method === 'forge.browser.release') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: [40, 41],
       } })
     } else if (message.method === 'forge.browser.execute') {
       const now = new Date(0).toISOString()
@@ -133,6 +138,57 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     await loop
   })
 
+  it('reloads durable lease authority before a restarted Desktop accepts reconciliation', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-restart', leaseEpoch: 5, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    runtime.deactivate(); client.close(); await loop
+    const restarted = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'), () => 2_000)
+    await restarted.ready()
+    await expect(restarted.leaseCheckpoints()).resolves.toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', leaseId: 'lease-restart', tabIds: [40],
+    })])
+  })
+
+  it('creates reuseExistingTab:false children inside the matching lease without a conflicting root claim', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-existing', leaseEpoch: 9, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    await expect(runtime.execute(request('open', null, { show: false, reuseExistingTab: false, url: 'https://child.invalid/' })))
+      .resolves.toMatchObject({ ok: true, result: { created: true, tab: { tabId: 'ext.instance_profile_a.41' } } })
+    expect(requests.find((entry) => entry.method === 'forge.browser.create')?.params).toMatchObject({ leaseId: 'lease-existing', leaseEpoch: 9 })
+    const checkpoint = await readFile(path.join(root, 'state', 'leases.json'), 'utf8')
+    expect(JSON.parse(checkpoint).leases[0].tabIds).toEqual([40, 41])
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('retains acknowledged expiry routing until backend lifecycle release', async () => {
+    let now = 1_000
+    const { runtime, client, root } = await connectedRuntime('instance_profile_a', () => now)
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-expiring', leaseEpoch: 1, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    now += 15 * 60_000 + 1
+    expect(await runtime.leaseCheckpoints()).toEqual([expect.objectContaining({ leaseId: 'lease-expiring', leaseEpoch: 1, releasedAt: now })])
+    expect(requests.find((entry) => entry.method === 'forge.browser.release')?.params).toMatchObject({ leaseId: 'lease-expiring', reason: 'lease-expired' })
+    expect(await readFile(path.join(root, 'state', 'leases.json'), 'utf8')).toContain('lease-expiring')
+    await runtime.leaseCheckpoints()
+    expect(requests.filter((entry) => entry.method === 'forge.browser.release')).toHaveLength(1)
+    await runtime.release('instance_profile_a', 'lease-expiring', 1, 'lifecycle-detach')
+    expect(await readFile(path.join(root, 'state', 'leases.json'), 'utf8')).not.toContain('lease-expiring')
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it('adopts only authenticated side-panel leases without persisting candidate tab metadata', async () => {
     const { runtime, client, root } = await connectedRuntime()
     await client.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
@@ -147,7 +203,8 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
       protocolVersion: 1, leaseId: 'side-panel-local-lease', leaseEpoch: 7, state: 'released',
       tabIds: [73], groupId: 4, childPolicy: 'manual',
     } })
-    await waitForCheckpoint(root, (contents) => !contents.includes('side-panel-local-lease'))
+    const tombstone = await waitForCheckpoint(root, (contents) => contents.includes('side-panel-local-lease') && contents.includes('releasedAt'))
+    expect(tombstone).toContain('"sessionAgentId":"session-a"')
     runtime.deactivate()
     client.close()
   })

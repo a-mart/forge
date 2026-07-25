@@ -67,7 +67,7 @@ export interface ExternalChromeLifecycleReleaseInput {
   sessionAgentId: string
   profileId: string
   tabId: string
-  reason: 'stop' | 'archive' | 'delete' | 'host-replaced'
+  reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced'
 }
 
 export interface ExternalChromeAttachInput {
@@ -83,6 +83,7 @@ export interface ExternalChromeAttachInput {
 interface LocalLease extends ExternalChromeLocalAttachment {
   leaseId: string
   leaseEpoch: number
+  expiresAt: number
 }
 
 export function installExternalChromeIpc(options: {
@@ -140,14 +141,34 @@ export function installExternalChromeIpc(options: {
   const leases = new Map<string, LocalLease>()
   const leaseEpochs = new Map<string, number>()
   const key = (sessionAgentId: string, profileId: string): string => `${sessionAgentId}\u0000${profileId}`
+  const transportForRecovery = options.coordinator.transport()
+  const recoveryReady = (typeof transportForRecovery.leaseCheckpoints === 'function'
+    ? transportForRecovery.leaseCheckpoints()
+    : Promise.resolve([])).then((checkpoints) => {
+    for (const checkpoint of checkpoints) {
+      leaseEpochs.set(checkpoint.extensionInstanceId, Math.max(leaseEpochs.get(checkpoint.extensionInstanceId) ?? 0, checkpoint.leaseEpoch))
+      if (checkpoint.sessionAgentId === '__local_pending__' || checkpoint.profileId === '__local_pending__') continue
+      const attachedAt = new Date(Math.max(0, checkpoint.expiresAt - 15 * 60_000)).toISOString()
+      leases.set(key(checkpoint.sessionAgentId, checkpoint.profileId), {
+        sessionAgentId: checkpoint.sessionAgentId, profileId: checkpoint.profileId,
+        extensionInstanceId: checkpoint.extensionInstanceId, profileAlias: 'Chrome profile',
+        groupId: checkpoint.groupId, childPolicy: checkpoint.childPolicy,
+        tabs: checkpoint.tabIds.map((tabId) => ({ windowId: 0, tabId, groupId: checkpoint.groupId, title: '', origin: '', active: false })),
+        state: 'recovering', attachedAt, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
+        expiresAt: checkpoint.expiresAt,
+      })
+    }
+  })
   const status = async (sessionAgentId: string, profileId: string): Promise<ExternalChromeLocalStatus> => {
+    await recoveryReady
     const coordinator = await options.coordinator.status()
-    const instances = options.coordinator.transport().inventory()
+    const transport = options.coordinator.transport()
+    const instances = transport.inventory()
     const stored = leases.get(key(sessionAgentId, profileId))
     let attachment: ExternalChromeLocalAttachment | null = null
     if (stored) {
       const connected = instances.some((instance) => instance.extensionInstanceId === stored.extensionInstanceId)
-      attachment = publicAttachment({ ...stored, state: connected ? 'attached' : coordinator.state === 'online' ? 'recovering' : 'lost' })
+      attachment = publicAttachment({ ...stored, state: connected && stored.expiresAt > Date.now() ? 'attached' : coordinator.state === 'online' ? 'recovering' : 'lost' })
     }
     return { coordinator, instances, attachment }
   }
@@ -156,6 +177,7 @@ export function installExternalChromeIpc(options: {
     const request = parseAttachRequest(input)
     if (!request) return { ok: false, error: 'invalid-request' }
     try {
+      await recoveryReady
       if (request.operation === 'status') return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
       const coordinator = await options.coordinator.status()
       if (coordinator.state !== 'online' || coordinator.setup.pathState !== 'ready') return { ok: false, error: 'setup-required' }
@@ -213,6 +235,7 @@ export function installExternalChromeIpc(options: {
         attachedAt: new Date().toISOString(),
         leaseId,
         leaseEpoch,
+        expiresAt: Date.now() + 15 * 60_000,
       }
       leases.set(attachmentKey, local)
       return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
@@ -271,7 +294,7 @@ function parseAttachRequest(value: unknown): ParsedAttachRequest | null {
     if (!exactKeys(value, keys) || !identifier(value.requestId) || !identifier(value.hostId) ||
       !Number.isSafeInteger(value.hostGeneration) || (value.hostGeneration as number) < 1 ||
       typeof value.tabId !== 'string' || decodeOpaqueExternalTabId(value.tabId) === null ||
-      (reason !== 'stop' && reason !== 'archive' && reason !== 'delete' && reason !== 'host-replaced') ||
+      (reason !== 'stop' && reason !== 'archive' && reason !== 'delete' && reason !== 'detach' && reason !== 'host-replaced') ||
       !value.requestId.startsWith(`external-chrome-release:${reason}:`)) return null
     return { operation: 'lifecycle-release', requestId: value.requestId, hostId: value.hostId, hostGeneration: value.hostGeneration as number, sessionAgentId: value.sessionAgentId, profileId: value.profileId, tabId: value.tabId, reason }
   }
@@ -290,8 +313,8 @@ function parseAttachRequest(value: unknown): ParsedAttachRequest | null {
 }
 
 function publicAttachment(lease: LocalLease): ExternalChromeLocalAttachment {
-  const { leaseId: _leaseId, leaseEpoch: _leaseEpoch, ...attachment } = lease
-  void _leaseId; void _leaseEpoch
+  const { leaseId: _leaseId, leaseEpoch: _leaseEpoch, expiresAt: _expiresAt, ...attachment } = lease
+  void _leaseId; void _leaseEpoch; void _expiresAt
   return structuredClone(attachment)
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }

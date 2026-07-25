@@ -130,4 +130,28 @@ describe('trusted External Chrome IPC', () => {
     await expect(timedOut).resolves.toEqual({ ok: false, error: 'operation-failed' })
     vi.useRealTimers()
   })
+
+  it('reconciles IPC detach authority from durable relay checkpoints after Desktop restart', async () => {
+    const handlers = new Map<string, (event: IpcMainInvokeEvent, input: unknown) => Promise<any>>()
+    const ipcMain = { handle: vi.fn((channel: string, handler: any) => handlers.set(channel, handler)), removeHandler: vi.fn() } as unknown as IpcMain
+    const mainWindow = { isDestroyed: () => false, webContents: { id: 42 } } as unknown as BrowserWindow
+    const release = vi.fn(async () => undefined)
+    const transport = {
+      leaseCheckpoints: vi.fn(async () => [{
+        extensionInstanceId: 'profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', leaseId: 'lease-before-restart',
+        leaseEpoch: 8, tabIds: [7], groupId: 9, childPolicy: 'manual', expiresAt: Date.now() + 60_000,
+      }]),
+      inventory: vi.fn(() => [{ extensionInstanceId: 'profile_a', profileAlias: 'Work', chromeVersion: '125', payloadVersion: '1', connectedAt: 'now' }]),
+      release,
+    }
+    const coordinator = { status: vi.fn(async () => ({ ...status, state: 'online' as const })), transport: vi.fn(() => transport) } as unknown as ExternalChromeHostCoordinator
+    installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
+    const invoke = handlers.get('forge:external-chrome-attach')!
+    const event = { sender: { id: 42 } } as unknown as IpcMainInvokeEvent
+    await expect(invoke(event, { operation: 'status', sessionAgentId: 'session-a', profileId: 'profile-a' }))
+      .resolves.toMatchObject({ ok: true, status: { attachment: { extensionInstanceId: 'profile_a', tabs: [{ tabId: 7 }], state: 'attached' } } })
+    await expect(invoke(event, { operation: 'detach', sessionAgentId: 'session-a', profileId: 'profile-a' }))
+      .resolves.toMatchObject({ ok: true, status: { attachment: null } })
+    expect(release).toHaveBeenCalledWith('profile_a', 'lease-before-restart', 8, 'detached-from-forge')
+  })
 })

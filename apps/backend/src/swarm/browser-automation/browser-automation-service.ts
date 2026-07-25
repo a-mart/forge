@@ -31,7 +31,7 @@ export type BrowserAutomationInvocationResult<Operation extends BrowserAutomatio
   | { ok: true; operation: Operation; result: BrowserAutomationResultByOperation[Operation] }
   | { ok: false; operation: Operation; error: BrowserAutomationFailure };
 
-export type BrowserLifecycleReleaseReason = "stop" | "archive" | "delete" | "host-replaced";
+export type BrowserLifecycleReleaseReason = "stop" | "archive" | "delete" | "detach" | "host-replaced";
 
 export class BrowserLifecycleReleaseError extends Error {
   constructor(readonly failure: BrowserAutomationFailure) {
@@ -107,20 +107,33 @@ export class BrowserAutomationService {
     connectionId: string;
     registration: BrowserHostRegistration;
     sendRequest: (request: BrowserAutomationRequest) => void | Promise<void>;
+    hydrateSessionsForReplacement?: () => Promise<BrowserSessionSnapshot[]>;
   }): Promise<BrowserHostConnectionSnapshot> {
     const hostKind = resolveBrowserHostKind(options.registration.capabilities.hostKind);
     return this.withHostRegistration(hostKind, async () => {
+      if (hostKind !== "external-chrome") return this.registerHost(options);
+      // Load every persisted session before deciding what must be released. This is the
+      // replacement readiness barrier: unloaded and concurrently hydrating snapshots
+      // cannot evade exact-generation lifecycle release.
+      await options.hydrateSessionsForReplacement?.();
       const current = this.broker.getConnectionSnapshot(hostKind);
-      if (hostKind === "external-chrome" && current.connected) {
+      const releaseAll = async (): Promise<void> => {
         for (const snapshot of this.getLoadedSessionSnapshots()) {
-          await this.releaseSessionForLifecycle(
-            snapshot.profileId,
-            snapshot.sessionAgentId,
-            "host-replaced",
-          );
+          await this.releaseSessionForLifecycle(snapshot.profileId, snapshot.sessionAgentId, "host-replaced");
         }
+      };
+      if (current.connected) {
+        await releaseAll();
+        return this.registerHost(options);
       }
-      return this.registerHost(options);
+      const registered = this.registerHost(options);
+      try {
+        await releaseAll();
+        return registered;
+      } catch (error) {
+        this.unregisterHost(options.connectionId, registered.hostId ?? undefined, registered.hostGeneration ?? undefined, hostKind);
+        throw error;
+      }
     });
   }
 
@@ -297,7 +310,9 @@ export class BrowserAutomationService {
         if (operation === "status" && response.ok) {
           const statusResult = response.result as BrowserAutomationResultByOperation["status"];
           statusResult.host = this.broker.getConnectionSnapshot(hostKind);
-          statusResult.available = statusResult.host.connected;
+          // Renderer transport connectivity cannot upgrade a runtime-declared unavailable host.
+          // External Chrome remains unavailable when relay/native/extension readiness is false.
+          statusResult.available = statusResult.available && statusResult.host.connected;
           // Electron owns physical visibility; durable reveal intent remains backend-owned.
           statusResult.panelRevealRequested = isPanelRevealPending(snapshot);
         }
@@ -601,6 +616,27 @@ export class BrowserAutomationService {
     });
   }
 
+  async selectHost(profileId: string, sessionAgentId: string, hostKind: BrowserHostKind): Promise<BrowserSessionSnapshot> {
+    const key = sessionKey(profileId, sessionAgentId);
+    const generation = this.getGeneration(key);
+    return this.withSessionMutation(key, async () => {
+      this.assertMutable(key, generation);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      if (resolveBrowserHostKind(snapshot.hostKind) === hostKind) return cloneSnapshot(snapshot);
+      const fallback = snapshot.tabs.find((tab) => resolveBrowserHostKind(tab.hostKind) === hostKind && tab.lifecycle !== "closed");
+      snapshot.hostKind = hostKind;
+      snapshot.activeTabId = fallback?.tabId ?? null;
+      snapshot.defaultTabId = fallback?.tabId ?? null;
+      if (hostKind !== "managed-electron") {
+        snapshot.panelVisible = false;
+        clearPanelReveal(snapshot);
+      }
+      await this.persistChanged(snapshot, "human-command", generation);
+      return cloneSnapshot(snapshot);
+    });
+  }
+
   async setTabSelection(
     profileId: string,
     sessionAgentId: string,
@@ -660,7 +696,7 @@ export class BrowserAutomationService {
         .filter((tabId): tabId is string => tabId !== null)
         .map((tabId) => externalTabs.find((tab) => tab.tabId === tabId))
         .find((tab): tab is BrowserTabSnapshot => tab !== undefined)
-        ?? (externalTabs.length === 1 ? externalTabs[0] : undefined);
+        ?? externalTabs.slice().sort((left, right) => left.tabId.localeCompare(right.tabId))[0];
       if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) {
         throw lifecycleReleaseError("malformed-response", false);
       }

@@ -151,6 +151,7 @@ export interface DebuggerDetachNotice {
 export class DebuggerController {
   private readonly states = new Map<number, DebuggerState>()
   private readonly trackers = new Map<number, OopifAncestryTracker>()
+  private readonly navigationSignals = new Map<number, Set<(method: string) => void>>()
 
   constructor(private readonly debuggerApi: ChromeDebuggerApi) {}
 
@@ -204,6 +205,50 @@ export class DebuggerController {
     return this.debuggerApi.sendCommand({ tabId }, method, params)
   }
 
+  async navigateAndWait(
+    tabId: number,
+    url: string,
+    readiness: 'load' | 'domContentLoaded' | 'none',
+    deadlineAt: number,
+    isAuthorized: () => boolean,
+  ): Promise<void> {
+    if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger target is not attached')
+    if (!isAuthorized()) throw new Error('lease authority was interrupted')
+    if (readiness === 'none') {
+      await this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url })
+      if (!isAuthorized()) throw new Error('lease authority was interrupted')
+      return
+    }
+    const expected = readiness === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired'
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        clearInterval(authorityTimer)
+        clearTimeout(deadlineTimer)
+        const signals = this.navigationSignals.get(tabId)
+        signals?.delete(onSignal)
+        if (signals?.size === 0) this.navigationSignals.delete(tabId)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onSignal = (method: string): void => {
+        if (method === expected) finish()
+        else if (method === 'Debugger.detached') finish(new Error('debugger detached during navigation'))
+      }
+      const signals = this.navigationSignals.get(tabId) ?? new Set<(method: string) => void>()
+      signals.add(onSignal)
+      this.navigationSignals.set(tabId, signals)
+      const remaining = Math.max(0, deadlineAt - Date.now())
+      const deadlineTimer = setTimeout(() => finish(new Error(`navigation readiness ${readiness} timed out`)), remaining)
+      const authorityTimer = setInterval(() => { if (!isAuthorized()) finish(new Error('lease authority was interrupted')) }, Math.min(25, Math.max(1, remaining)))
+      void this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url }).then(() => {
+        if (!isAuthorized()) finish(new Error('lease authority was interrupted'))
+      }, (error) => finish(error instanceof Error ? error : new Error(String(error))))
+    })
+  }
+
   async sendInput(tabId: number, method: 'Input.dispatchMouseEvent' | 'Input.dispatchKeyEvent' | 'Input.insertText' | 'Input.dispatchTouchEvent', params: Record<string, unknown>): Promise<unknown> {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger input target is not attached')
     return this.debuggerApi.sendCommand({ tabId }, method, params)
@@ -236,6 +281,7 @@ export class DebuggerController {
     if (tracker === undefined) return { accepted: false }
     const payload = record(params)
     if (payload === null) return { accepted: false }
+    if (source.sessionId === undefined) for (const signal of this.navigationSignals.get(source.tabId) ?? []) signal(method)
     if (method === 'Target.attachedToTarget') {
       const result = tracker.attached(source.sessionId, payload)
       if (!result.accepted && result.sessionId !== undefined) {
@@ -275,6 +321,8 @@ export class DebuggerController {
 
   onDetach(source: ChromeDebuggerTarget, reason: string): DebuggerDetachNotice | null {
     if (source.tabId === undefined) return null
+    for (const signal of this.navigationSignals.get(source.tabId) ?? []) signal('Debugger.detached')
+    this.navigationSignals.delete(source.tabId)
     this.states.set(source.tabId, 'LOST')
     this.trackers.delete(source.tabId)
     const normalized = reason.toLowerCase()

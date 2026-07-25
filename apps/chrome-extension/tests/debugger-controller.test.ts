@@ -55,6 +55,32 @@ describe('Chrome debugger ownership with unadvertised OOPIF ancestry hardening',
     })).toEqual({ accepted: false, rejectedSessionId: 'session-child' })
   })
 
+  it('waits for the requested navigation readiness signal instead of echoing it early', async () => {
+    const chrome = fakeChrome()
+    const controller = new DebuggerController(chrome.debugger)
+    await controller.attach(9)
+    let settled = false
+    const navigation = controller.navigateAndWait(9, 'https://fixture.invalid/', 'domContentLoaded', Date.now() + 1_000, () => true)
+      .then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    await controller.onEvent({ tabId: 9 }, 'Page.domContentEventFired', {})
+    await navigation
+    expect(settled).toBe(true)
+    expect(chrome.commands).toContainEqual({ target: { tabId: 9 }, method: 'Page.navigate', params: { url: 'https://fixture.invalid/' } })
+  })
+
+  it('times out readiness and continuously rejects interrupted lease authority', async () => {
+    const chrome = fakeChrome()
+    const controller = new DebuggerController(chrome.debugger)
+    await controller.attach(10)
+    await expect(controller.navigateAndWait(10, 'https://fixture.invalid/', 'load', Date.now() + 5, () => true)).rejects.toThrow(/timed out/u)
+    let authorized = true
+    const interrupted = controller.navigateAndWait(10, 'https://fixture.invalid/next', 'load', Date.now() + 1_000, () => authorized)
+    authorized = false
+    await expect(interrupted).rejects.toThrow(/authority was interrupted/u)
+  })
+
   it('fails cleanly on debugger contention and reports DevTools detach as LOST', async () => {
     const chrome = fakeChrome()
     chrome.attached.add(7)

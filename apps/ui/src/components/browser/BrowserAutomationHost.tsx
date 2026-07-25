@@ -70,6 +70,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const revealAcknowledgements = useRef(new Set<string>())
     const automaticEmptyOpenAttempts = useRef(new Set<string>())
     const [workspaceMode, setWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(workspace?.capability.popoutAvailable ? 'docked' : 'unavailable')
+    const [externalRuntimeAvailable, setExternalRuntimeAvailable] = useState(false)
     const workspaceModeRef = useRef<ManagedBrowserWorkspaceMode>(workspaceMode)
 
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
@@ -265,7 +266,28 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [bridge, client, executeRequest])
 
     useEffect(() => {
-      if (!client || !bridge || typeof client.registerSecondaryBrowserAutomationHost !== 'function') return
+      const external = typeof window !== 'undefined' && window.electronBridge?.windowRole === 'main'
+        ? window.electronBridge.externalChrome
+        : undefined
+      if (!external?.localStatus || !selectedSessionAgentId || !selectedProfileId) return
+      let disposed = false
+      const inspect = async (): Promise<void> => {
+        try {
+          const result = await external.localStatus!(selectedSessionAgentId, selectedProfileId)
+          const ready = result.ok && result.status.coordinator.state === 'online'
+            && result.status.coordinator.setup.pathState === 'ready' && result.status.instances.length > 0
+          // Once registered, retain the handler across runtime loss so status can report
+          // available:false immediately instead of leaving a stale broker registration to time out.
+          if (!disposed && ready) setExternalRuntimeAvailable(true)
+        } catch { /* initial registration remains gated; an existing handler stays live */ }
+      }
+      void inspect()
+      const timer = window.setInterval(() => void inspect(), 3_000)
+      return () => { disposed = true; window.clearInterval(timer) }
+    }, [selectedProfileId, selectedSessionAgentId])
+
+    useEffect(() => {
+      if (!client || !bridge || !externalRuntimeAvailable || typeof client.registerSecondaryBrowserAutomationHost !== 'function') return
       const registration: BrowserHostRegistration = {
         hostId: externalHostIdRef.current,
         clientInstanceId: controllerInstanceIdRef.current,
@@ -282,7 +304,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         registeredAt: new Date().toISOString(),
       }
       return client.registerSecondaryBrowserAutomationHost(registration, executeRequest)
-    }, [bridge, client, executeRequest])
+    }, [bridge, client, executeRequest, externalRuntimeAvailable])
 
     useEffect(() => {
       if (!bridge) return
@@ -607,9 +629,9 @@ function hostFailureResponse(request: BrowserAutomationRequest, error: unknown):
     }, elapsedMs: 0,
   }
 }
-function externalLifecycleReleaseReason(request: BrowserAutomationRequest): 'stop' | 'archive' | 'delete' | 'host-replaced' | null {
+function externalLifecycleReleaseReason(request: BrowserAutomationRequest): 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced' | null {
   if (request.hostKind !== 'external-chrome' || request.operation !== 'status' || request.tabId === null) return null
-  const match = /^external-chrome-release:(stop|archive|delete|host-replaced):[A-Za-z0-9._-]{1,80}$/u.exec(request.requestId)
-  return match ? match[1] as 'stop' | 'archive' | 'delete' | 'host-replaced' : null
+  const match = /^external-chrome-release:(stop|archive|delete|detach|host-replaced):[A-Za-z0-9._-]{1,80}$/u.exec(request.requestId)
+  return match ? match[1] as 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced' : null
 }
 function randomId(): string { try { return crypto.randomUUID() } catch { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` } }

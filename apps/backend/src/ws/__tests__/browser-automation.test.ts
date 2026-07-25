@@ -33,9 +33,13 @@ describe('browser websocket transport', () => {
     })
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_response', response: { requestId: 1 } }))).ok).toBe(false)
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] }))).ok).toBe(false)
+    expect(parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_select', requestId: 'select-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostKind: 'external-chrome',
+    })))).toMatchObject({ ok: true, command: { type: 'browser_host_select', hostKind: 'external-chrome' } })
     for (const type of [
       'browser_host_register', 'browser_host_hydrate', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
-      'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
+      'browser_panel_reveal_acknowledge', 'browser_host_select', 'browser_external_chrome_detach_confirmed',
+      'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
       'browser_recording_start', 'browser_recording_stop',
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
   })

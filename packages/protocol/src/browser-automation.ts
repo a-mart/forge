@@ -713,6 +713,21 @@ export interface BrowserPanelRevealAcknowledgeCommand {
   sequence: number
 }
 
+export interface BrowserHostSelectCommand {
+  type: 'browser_host_select'
+  requestId: string
+  sessionAgentId: string
+  profileId: string
+  hostKind: BrowserHostKind
+}
+
+export interface BrowserExternalChromeDetachConfirmedCommand {
+  type: 'browser_external_chrome_detach_confirmed'
+  requestId: string
+  sessionAgentId: string
+  profileId: string
+}
+
 export interface BrowserTabOpenCommand {
   type: 'browser_tab_open'
   requestId: string
@@ -766,6 +781,8 @@ export type BrowserClientCommand =
   | BrowserHostResponseCommand
   | BrowserHostStateReportCommand
   | BrowserPanelRevealAcknowledgeCommand
+  | BrowserHostSelectCommand
+  | BrowserExternalChromeDetachConfirmedCommand
   | BrowserTabOpenCommand
   | BrowserTabActivateCommand
   | BrowserTabCloseCommand
@@ -832,6 +849,13 @@ export interface BrowserPanelRevealAcknowledgedEvent {
   snapshot: BrowserSessionSnapshot
 }
 
+export interface BrowserSessionCommandSucceededEvent {
+  type: 'browser_session_command_succeeded'
+  requestId: string
+  commandType: 'browser_host_select' | 'browser_external_chrome_detach_confirmed'
+  snapshot: BrowserSessionSnapshot
+}
+
 export interface BrowserTabCommandSucceededEvent {
   type: 'browser_tab_command_succeeded'
   requestId: string
@@ -864,6 +888,7 @@ export type BrowserServerEvent =
   | BrowserSessionSnapshotEvent
   | BrowserSessionChangedEvent
   | BrowserPanelRevealAcknowledgedEvent
+  | BrowserSessionCommandSucceededEvent
   | BrowserTabCommandSucceededEvent
   | BrowserRecordingCommandSucceededEvent
 

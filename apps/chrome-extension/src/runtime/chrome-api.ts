@@ -73,6 +73,7 @@ export interface ChromeApi {
     query(queryInfo: Record<string, unknown>): Promise<ChromeTab[]>
     get(tabId: number): Promise<ChromeTab>
     create(createProperties: { url?: string; active?: boolean }): Promise<ChromeTab>
+    remove(tabIds: number | number[]): Promise<void>
     group(options: { tabIds: number[]; groupId?: number; createProperties?: { windowId?: number } }): Promise<number>
   }
   tabGroups: {

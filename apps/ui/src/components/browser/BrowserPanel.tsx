@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Circle, ExternalLink, Globe2, PanelTopClose, Plus, RefreshCw, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   BROWSER_VIEWPORT_PRESETS,
+  resolveBrowserHostKind,
   resolveBrowserViewportPreset,
   type BrowserHostConnectionSnapshot,
   type BrowserSessionSnapshot,
@@ -63,12 +64,37 @@ export function BrowserPanel({
 }: BrowserPanelProps) {
   const preferenceKey = `forge.browser.host.v1:${sessionAgentId}`
   const [selectedHost, setSelectedHost] = useState<'managed-electron' | 'external-chrome'>(() => readHostPreference(preferenceKey))
+  const [externalAvailable, setExternalAvailable] = useState(false)
   useEffect(() => setSelectedHost(readHostPreference(preferenceKey)), [preferenceKey])
+  useEffect(() => {
+    const bridge = window.electronBridge?.windowRole === 'main' ? window.electronBridge.externalChrome : undefined
+    if (!bridge?.localStatus) { setExternalAvailable(false); return }
+    let disposed = false
+    const inspect = async (): Promise<void> => {
+      try {
+        const result = await bridge.localStatus!(sessionAgentId, profileId)
+        if (!disposed) setExternalAvailable(result.ok && result.status.coordinator.state === 'online'
+          && result.status.coordinator.setup.pathState === 'ready' && result.status.instances.length > 0)
+      } catch { if (!disposed) setExternalAvailable(false) }
+    }
+    void inspect()
+    const timer = window.setInterval(() => void inspect(), 3_000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [profileId, sessionAgentId])
   const selectHost = (value: 'managed-electron' | 'external-chrome'): void => {
     setSelectedHost(value)
     try { sessionStorage.setItem(preferenceKey, value) } catch { /* session-only fallback remains in component state */ }
+    void client?.selectBrowserHost(sessionAgentId, profileId, value).catch(() => {
+      if (snapshot) setSelectedHost(resolveBrowserHostKind(snapshot.hostKind))
+    })
   }
-  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed')
+  useEffect(() => {
+    if (!snapshot) return
+    const canonicalHost = resolveBrowserHostKind(snapshot.hostKind)
+    setSelectedHost(canonicalHost)
+    try { sessionStorage.setItem(preferenceKey, canonicalHost) } catch { /* canonical state remains in component state */ }
+  }, [preferenceKey, snapshot])
+  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed' && resolveBrowserHostKind(tab.hostKind) === 'managed-electron')
   const hasOpenTab = openTabs.length > 0
   const activeTab = openTabs.find((tab) => tab.tabId === snapshot?.activeTabId) ?? openTabs[0] ?? null
   const [address, setAddress] = useState(activeTab?.url ?? '')
@@ -98,7 +124,8 @@ export function BrowserPanel({
 
   const managedBrowserSurface = window.electronBridge?.windowRole === 'main' || window.electronBridge?.windowRole === 'managed-browser-popout'
   const emptyAuthorityIdentity = `${sessionAgentId}:${profileId}`
-  const emptyAuthorityKey = selectedHost === 'managed-electron' && managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
+  const emptyAuthorityKey = selectedHost === 'managed-electron' && resolveBrowserHostKind(snapshot?.hostKind) === 'managed-electron'
+    && managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
     ? emptyBrowserOpenAttemptKey(sessionAgentId, profileId, host, snapshot)
     : null
 
@@ -135,9 +162,9 @@ export function BrowserPanel({
 
   const resize = (viewport: BrowserViewportSetting): void => { if (activeTab) void run(() => commands.resize(activeTab.tabId, viewport)) }
   const popped = mode === 'popped-out' || mode === 'opening'
-  const selector = <BrowserHostSelector selected={selectedHost} onSelect={selectHost} externalAvailable={Boolean(window.electronBridge?.windowRole === 'main' && window.electronBridge.externalChrome)} />
+  const selector = <BrowserHostSelector selected={selectedHost} onSelect={selectHost} externalAvailable={externalAvailable || selectedHost === 'external-chrome'} />
 
-  if (selectedHost === 'external-chrome') return <div className="flex min-h-0 flex-1 flex-col">{selector}<ExternalChromePanel sessionAgentId={sessionAgentId} profileId={profileId} /></div>
+  if (selectedHost === 'external-chrome') return <div className="flex min-h-0 flex-1 flex-col">{selector}<ExternalChromePanel sessionAgentId={sessionAgentId} profileId={profileId} client={client} /></div>
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

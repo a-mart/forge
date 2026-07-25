@@ -161,6 +161,12 @@ export function handleBrowserEvent(event: ServerEvent, context: BrowserEventCont
         .catch((error) => context.sendHostResponse(failureResponse(request, error)))
       return true
     }
+    case 'browser_session_command_succeeded': {
+      const snapshot = normalizeSnapshotHostKinds(event.snapshot)
+      updateSessionFromCommand(context, snapshot)
+      context.requestTracker.resolve(event.commandType, event.requestId, snapshot)
+      return true
+    }
     case 'browser_tab_command_succeeded': {
       const snapshot = normalizeSnapshotHostKinds(event.snapshot)
       updateSessionFromCommand(context, snapshot)

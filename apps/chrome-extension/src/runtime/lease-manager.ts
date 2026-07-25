@@ -76,6 +76,7 @@ function assertLeaseRecord(value: unknown): LeaseRecord | null {
 
 export class LeaseManager {
   private active: LeaseRecord | null = null
+  private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly chrome: ChromeApi,
@@ -133,7 +134,18 @@ export class LeaseManager {
     })
   }
 
-  async claim(input: {
+  claim(input: {
+    leaseId: string
+    leaseEpoch: number
+    sessionAgentId: string
+    tabIds: number[]
+    groupId?: number
+    childPolicy: ExternalChromeChildPolicy
+  }): Promise<{ lease: LeaseRecord; tabs: ChromeTab[] }> {
+    return this.mutate(() => this.claimUnlocked(input))
+  }
+
+  private async claimUnlocked(input: {
     leaseId: string
     leaseEpoch: number
     sessionAgentId: string
@@ -194,7 +206,11 @@ export class LeaseManager {
     return { lease: structuredClone(lease), tabs }
   }
 
-  async includeChild(tabId: number, openerTabId: number): Promise<LeaseRecord | null> {
+  includeChild(tabId: number, openerTabId: number): Promise<LeaseRecord | null> {
+    return this.mutate(() => this.includeChildUnlocked(tabId, openerTabId))
+  }
+
+  private async includeChildUnlocked(tabId: number, openerTabId: number): Promise<LeaseRecord | null> {
     const lease = this.active
     if (lease === null || lease.state === 'LOST' || lease.childPolicy !== 'include-opened-by-leased-tabs' ||
       !lease.tabIds.includes(openerTabId) || lease.groupId === null || lease.tabIds.includes(tabId)) return null
@@ -208,7 +224,11 @@ export class LeaseManager {
     return structuredClone(this.active)
   }
 
-  async create(input: { leaseId: string; leaseEpoch: number; sessionAgentId: string; url?: string; groupTitle: string }): Promise<{ lease: LeaseRecord; tab: ChromeTab }> {
+  create(input: { leaseId: string; leaseEpoch: number; sessionAgentId: string; url?: string; groupTitle: string }): Promise<{ lease: LeaseRecord; tab: ChromeTab }> {
+    return this.mutate(() => this.createUnlocked(input))
+  }
+
+  private async createUnlocked(input: { leaseId: string; leaseEpoch: number; sessionAgentId: string; url?: string; groupTitle: string }): Promise<{ lease: LeaseRecord; tab: ChromeTab }> {
     if (!input.leaseId || input.leaseId.length > 128 || !Number.isSafeInteger(input.leaseEpoch) || input.leaseEpoch < 1 ||
       !input.sessionAgentId || input.sessionAgentId.length > 128 || !input.groupTitle || input.groupTitle.length > EXTERNAL_CHROME_MAX_LABEL_LENGTH) {
       throw new LeaseError('scope-mismatch', 'create routing fields are invalid')
@@ -216,13 +236,56 @@ export class LeaseManager {
     if (input.url !== undefined && restrictedTargetReason(input.url) !== null) {
       throw new LeaseError('restricted-target', 'the requested URL cannot be controlled')
     }
+    const existing = this.active
+    if (existing !== null && existing.tabIds.length >= EXTERNAL_CHROME_MAX_CANDIDATE_TABS) {
+      throw new LeaseError('scope-mismatch', 'lease tab bound reached')
+    }
+    if (existing !== null && (existing.state === 'LOST' || existing.leaseId !== input.leaseId ||
+      existing.leaseEpoch !== input.leaseEpoch || existing.sessionAgentId !== input.sessionAgentId || existing.groupId === null)) {
+      throw new LeaseError(existing.state === 'LOST' ? 'lease-lost' : 'lease-conflict', 'created tabs must use the matching active lease and Forge-owned group')
+    }
     const tab = await this.chrome.tabs.create({ url: input.url ?? 'https://forge.invalid/', active: true })
     if (tab.id === undefined) throw new LeaseError('target-not-found', 'Chrome did not return the created tab ID')
-    const groupId = await this.chrome.tabs.group({ tabIds: [tab.id], ...(tab.windowId === undefined ? {} : { createProperties: { windowId: tab.windowId } }) })
-    await this.chrome.tabGroups.update(groupId, { title: input.groupTitle, color: 'blue', collapsed: false })
-    tab.groupId = groupId
-    const claimed = await this.claim({ ...input, tabIds: [tab.id], groupId, childPolicy: 'manual' })
-    return { lease: claimed.lease, tab }
+    try {
+      if (existing !== null) {
+        await this.chrome.tabs.group({ tabIds: [tab.id], groupId: existing.groupId as number })
+        tab.groupId = existing.groupId as number
+        this.active = { ...existing, tabIds: [...existing.tabIds, tab.id].sort((left, right) => left - right) }
+        await this.persist()
+        return { lease: structuredClone(this.active), tab }
+      }
+      const groupId = await this.chrome.tabs.group({ tabIds: [tab.id], ...(tab.windowId === undefined ? {} : { createProperties: { windowId: tab.windowId } }) })
+      await this.chrome.tabGroups.update(groupId, { title: input.groupTitle, color: 'blue', collapsed: false })
+      tab.groupId = groupId
+      const claimed = await this.claimUnlocked({ ...input, tabIds: [tab.id], groupId, childPolicy: 'manual' })
+      return { lease: claimed.lease, tab }
+    } catch (error) {
+      if (this.active?.leaseId === input.leaseId && this.active.leaseEpoch === input.leaseEpoch && this.active.tabIds.includes(tab.id)) {
+        const remaining = this.active.tabIds.filter((id) => id !== tab.id)
+        this.active = remaining.length === 0 ? null : { ...this.active, tabIds: remaining }
+        if (this.active === null) await this.chrome.storage.session.remove(SESSION_LEASE_KEY).catch(() => undefined)
+        else await this.persist().catch(() => undefined)
+      }
+      await this.chrome.tabs.remove(tab.id).catch(() => undefined)
+      throw error
+    }
+  }
+
+  rollbackCreatedTab(tabId: number, leaseId: string, leaseEpoch: number): Promise<void> {
+    return this.mutate(async () => {
+      const lease = this.active
+      if (lease?.leaseId === leaseId && lease.leaseEpoch === leaseEpoch && lease.tabIds.includes(tabId)) {
+        const remaining = lease.tabIds.filter((id) => id !== tabId)
+        if (remaining.length === 0) {
+          this.active = null
+          await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
+        } else {
+          this.active = { ...lease, tabIds: remaining }
+          await this.persist()
+        }
+      }
+      await this.chrome.tabs.remove(tabId).catch(() => undefined)
+    })
   }
 
   assertScope(leaseId: string, leaseEpoch: number, tabId: number): LeaseRecord {
@@ -234,40 +297,62 @@ export class LeaseManager {
     return structuredClone(lease)
   }
 
-  async beginAgentControl(leaseId: string, leaseEpoch: number, tabId: number): Promise<number> {
-    const lease = this.assertScope(leaseId, leaseEpoch, tabId)
-    this.active = { ...lease, state: 'CONTROLLING_AGENT' }
-    await this.persist()
-    return lease.controlEpoch
+  beginAgentControl(leaseId: string, leaseEpoch: number, tabId: number): Promise<number> {
+    return this.mutate(async () => {
+      const lease = this.assertScope(leaseId, leaseEpoch, tabId)
+      this.active = { ...lease, state: 'CONTROLLING_AGENT' }
+      await this.persist()
+      return lease.controlEpoch
+    })
   }
 
-  async trustedHumanInput(tabId: number): Promise<LeaseRecord | null> {
-    if (this.active === null || !this.active.tabIds.includes(tabId)) return null
-    this.active = { ...this.active, state: 'LEASED_HUMAN', controlEpoch: this.active.controlEpoch + 1 }
-    await this.persist()
-    return structuredClone(this.active)
+  trustedHumanInput(tabId: number): Promise<LeaseRecord | null> {
+    return this.mutate(async () => {
+      if (this.active === null || !this.active.tabIds.includes(tabId)) return null
+      this.active = { ...this.active, state: 'LEASED_HUMAN', controlEpoch: this.active.controlEpoch + 1 }
+      await this.persist()
+      return structuredClone(this.active)
+    })
   }
 
   isOperationCurrent(leaseId: string, leaseEpoch: number, controlEpoch: number): boolean {
     return this.active?.leaseId === leaseId && this.active.leaseEpoch === leaseEpoch && this.active.controlEpoch === controlEpoch && this.active.state === 'CONTROLLING_AGENT'
   }
 
-  async markLost(): Promise<void> {
-    if (this.active === null) return
-    this.active = { ...this.active, state: 'LOST' }
-    await this.persist()
+  markLost(): Promise<void> {
+    return this.mutate(async () => {
+      if (this.active === null) return
+      this.active = { ...this.active, state: 'LOST' }
+      await this.persist()
+    })
   }
 
-  async release(leaseId: string, leaseEpoch: number): Promise<number[]> {
-    if (this.active === null) return []
-    if (this.active.leaseId !== leaseId || this.active.leaseEpoch !== leaseEpoch) throw new LeaseError('lease-lost', 'cannot release a stale lease epoch')
-    const released = [...this.active.tabIds]
-    this.active = null
-    await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
-    return released
+  release(leaseId: string, leaseEpoch: number): Promise<number[]> {
+    return this.mutate(async () => {
+      if (this.active === null) return []
+      if (this.active.leaseId !== leaseId || this.active.leaseEpoch !== leaseEpoch) throw new LeaseError('lease-lost', 'cannot release a stale lease epoch')
+      const released = [...this.active.tabIds]
+      this.active = null
+      await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
+      return released
+    })
   }
 
-  async recover(): Promise<LeaseRecord | null> {
+  expireIfNeeded(): Promise<LeaseRecord | null> {
+    return this.mutate(async () => {
+      if (this.active === null || this.active.expiresAt > this.now()) return null
+      const expired = structuredClone(this.active)
+      this.active = null
+      await this.chrome.storage.session.remove(SESSION_LEASE_KEY)
+      return expired
+    })
+  }
+
+  recover(): Promise<LeaseRecord | null> {
+    return this.mutate(() => this.recoverUnlocked())
+  }
+
+  private async recoverUnlocked(): Promise<LeaseRecord | null> {
     const stored = await this.chrome.storage.session.get(SESSION_LEASE_KEY)
     const lease = assertLeaseRecord(stored[SESSION_LEASE_KEY])
     if (lease === null || lease.payloadVersion !== this.payloadVersion || lease.expiresAt <= this.now() || lease.state === 'LOST') {
@@ -289,5 +374,11 @@ export class LeaseManager {
 
   private async persist(): Promise<void> {
     if (this.active !== null) await this.chrome.storage.session.set({ [SESSION_LEASE_KEY]: this.active })
+  }
+
+  private mutate<Value>(operation: () => Promise<Value>): Promise<Value> {
+    const result = this.mutationTail.then(operation, operation)
+    this.mutationTail = result.then(() => undefined, () => undefined)
+    return result
   }
 }

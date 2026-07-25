@@ -38,6 +38,9 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
             const sent = await sendCritical(options, { type: "browser_automation_request", request });
             if (sent === null) throw new Error("Browser automation request could not be delivered");
           },
+          ...(command.registration.capabilities.hostKind === "external-chrome"
+            ? { hydrateSessionsForReplacement: () => options.hydrateHostSessions("external-chrome") }
+            : {}),
         });
       } catch {
         sendFailure(
@@ -100,6 +103,10 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
     case "browser_panel_reveal_acknowledge":
       await handlePanelRevealAcknowledgement(options, command);
       return true;
+    case "browser_host_select":
+    case "browser_external_chrome_detach_confirmed":
+      await handleSessionBrowserCommand(options, command);
+      return true;
     case "browser_recording_start":
     case "browser_recording_stop":
       await handleRecordingCommand(options, command);
@@ -110,6 +117,42 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
     case "browser_tab_resize":
       await handleTabCommand(options, command);
       return true;
+  }
+}
+
+async function handleSessionBrowserCommand(
+  options: BrowserCommandHandlerOptions,
+  command: Extract<BrowserClientCommand, { type: "browser_host_select" | "browser_external_chrome_detach_confirmed" }>,
+): Promise<void> {
+  const managerSessionId = options.subscribedAgentId
+    ? options.resolveManagerContextAgentId(options.subscribedAgentId)
+    : undefined;
+  if (managerSessionId !== command.sessionAgentId) {
+    sendFailure(options, command, "SUBSCRIPTION_MISMATCH", "Browser host selection must target the selected Forge session.");
+    return;
+  }
+  if (options.resolveProfileIdForAgent(command.sessionAgentId) !== command.profileId) {
+    sendFailure(options, command, "PROFILE_MISMATCH", "Browser host selection profile does not match the selected Forge session.");
+    return;
+  }
+  try {
+    let snapshot: BrowserSessionSnapshot;
+    if (command.type === "browser_host_select") {
+      snapshot = await options.browserAutomationService.selectHost(command.profileId, command.sessionAgentId, command.hostKind);
+    } else {
+      // Backend owns the transaction: exact host-generation IPC release is acknowledged
+      // before the canonical External Chrome snapshot is removed.
+      await options.browserAutomationService.releaseSessionForLifecycle(command.profileId, command.sessionAgentId, "detach");
+      snapshot = await options.browserAutomationService.selectHost(command.profileId, command.sessionAgentId, "managed-electron");
+    }
+    options.send(options.socket, {
+      type: "browser_session_command_succeeded",
+      requestId: command.requestId,
+      commandType: command.type,
+      snapshot: cloneSnapshot(snapshot),
+    } satisfies BrowserServerEvent);
+  } catch (error) {
+    sendFailure(options, command, "FAILED", error instanceof Error ? error.message : String(error));
   }
 }
 

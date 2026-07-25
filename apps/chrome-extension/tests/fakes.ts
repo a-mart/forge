@@ -53,6 +53,11 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & { attac
         tabs.push(tab)
         return structuredClone(tab)
       },
+      remove: async (tabIds) => {
+        const removed = new Set(Array.isArray(tabIds) ? tabIds : [tabIds])
+        for (let index = tabs.length - 1; index >= 0; index -= 1) if (tabs[index]?.id !== undefined && removed.has(tabs[index]!.id!)) tabs.splice(index, 1)
+        for (let index = groups.length - 1; index >= 0; index -= 1) if (!tabs.some((tab) => tab.groupId === groups[index]!.id)) groups.splice(index, 1)
+      },
       group: async ({ tabIds, groupId }) => {
         const selectedGroup = groupId ?? nextGroupId++
         for (const tab of tabs) if (tab.id !== undefined && tabIds.includes(tab.id)) tab.groupId = selectedGroup

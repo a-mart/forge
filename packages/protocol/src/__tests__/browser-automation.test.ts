@@ -287,6 +287,8 @@ describe('browser host, session, and routing wire contract', () => {
         tabs: session.tabs,
       }] },
       { type: 'browser_panel_reveal_acknowledge', requestId: 'reveal-1', hostId: host.hostId, hostGeneration: 4, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 1 },
+      { type: 'browser_host_select', requestId: 'select-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostKind: 'external-chrome' },
+      { type: 'browser_external_chrome_detach_confirmed', requestId: 'detach-1', sessionAgentId: 'session-1', profileId: 'profile-1' },
       { type: 'browser_tab_open', requestId: '1', sessionAgentId: 'session-1', profileId: 'profile-1' },
       { type: 'browser_tab_activate', requestId: '2', sessionAgentId: 'session-1', tabId: 'tab-1' },
       { type: 'browser_tab_close', requestId: '3', sessionAgentId: 'session-1', tabId: 'tab-1' },
@@ -302,15 +304,16 @@ describe('browser host, session, and routing wire contract', () => {
       { type: 'browser_session_snapshot', snapshot: session },
       { type: 'browser_session_changed', snapshot: session, reason: 'recovery' },
       { type: 'browser_panel_reveal_acknowledged', requestId: 'reveal-1', snapshot: session },
+      { type: 'browser_session_command_succeeded', requestId: 'select-1', commandType: 'browser_host_select', snapshot: session },
       { type: 'browser_tab_command_succeeded', requestId: '1', commandType: 'browser_tab_open', snapshot: session },
       { type: 'browser_recording_command_succeeded', requestId: '5', commandType: 'browser_recording_start', result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: host.registeredAt, mimeType: 'video/webm', width: 1000, height: 700 }, snapshot: session },
     ] satisfies ServerEvent[]
-    expect(commands).toHaveLength(11)
-    expect(events).toHaveLength(9)
+    expect(commands).toHaveLength(13)
+    expect(events).toHaveLength(10)
   })
 
   it('makes browser state reports and human tab mutations required wire requests', () => {
-    for (const commandType of ['browser_host_state_report', 'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
+    for (const commandType of ['browser_host_state_report', 'browser_panel_reveal_acknowledge', 'browser_host_select', 'browser_external_chrome_detach_confirmed', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
       expect(getWsRequestContract(commandType)).toMatchObject({
         commandType,
         requestId: { ui: 'required', wire: 'required' },
@@ -318,6 +321,8 @@ describe('browser host, session, and routing wire contract', () => {
           ? 'browser_host_state_report_result'
           : commandType === 'browser_panel_reveal_acknowledge'
             ? 'browser_panel_reveal_acknowledged'
+            : commandType === 'browser_host_select' || commandType === 'browser_external_chrome_detach_confirmed'
+              ? 'browser_session_command_succeeded'
             : commandType.startsWith('browser_recording_')
             ? 'browser_recording_command_succeeded'
             : 'browser_tab_command_succeeded'],

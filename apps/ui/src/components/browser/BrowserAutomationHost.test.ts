@@ -188,7 +188,13 @@ describe('BrowserAutomationHost main-owned view controller', () => {
       coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
       instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
     } }))
-    window.electronBridge!.externalChrome = { releaseForLifecycle } as never
+    window.electronBridge!.externalChrome = {
+      releaseForLifecycle,
+      localStatus: vi.fn(async () => ({ ok: true as const, status: {
+        coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+        instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
+      } })),
+    } as never
     const state = createInitialManagerWsState('session-1')
     let executeSecondary: ((request: BrowserAutomationRequest) => Promise<any>) | null = null
     const client = {
@@ -201,6 +207,19 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     const response = await executeSecondary!(request)
     expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, reason: 'archive', tabId: 'ext.profile_a.7' }))
     expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true })
+  })
+
+  it('does not advertise External Chrome when coordinator setup exists but no extension runtime is ready', async () => {
+    installBridge()
+    window.electronBridge!.externalChrome = { localStatus: vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [], attachment: null,
+    } })) } as never
+    const state = createInitialManagerWsState('session-1')
+    const registerSecondaryBrowserAutomationHost = vi.fn()
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), registerSecondaryBrowserAutomationHost, reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve(); await Promise.resolve() })
+    expect(registerSecondaryBrowserAutomationHost).not.toHaveBeenCalled()
   })
 
   it('publishes only the selected local projection and never renders a second host surface', async () => {

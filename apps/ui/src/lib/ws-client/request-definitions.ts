@@ -101,6 +101,14 @@ export function buildBrowserPanelRevealAcknowledgeCommand(options: {
   return { type: 'browser_panel_reveal_acknowledge', ...options }
 }
 
+export function buildBrowserHostSelectCommand(sessionAgentId: string, profileId: string, hostKind: BrowserHostKind, requestId: string): ClientCommand {
+  return { type: 'browser_host_select', requestId, sessionAgentId, profileId, hostKind }
+}
+
+export function buildBrowserExternalChromeDetachConfirmedCommand(sessionAgentId: string, profileId: string, requestId: string): ClientCommand {
+  return { type: 'browser_external_chrome_detach_confirmed', requestId, sessionAgentId, profileId }
+}
+
 export function buildBrowserTabOpenCommand(
   sessionAgentId: string,
   profileId: string,

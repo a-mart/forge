@@ -6,6 +6,8 @@ import {
   assertReconnectableSocket,
   buildBrowserHostFocusCommand,
   buildBrowserHostHydrateCommand,
+  buildBrowserHostSelectCommand,
+  buildBrowserExternalChromeDetachConfirmedCommand,
   buildBrowserHostRegisterCommand,
   buildBrowserHostResponseCommand,
   buildBrowserHostStateReportCommand,
@@ -150,6 +152,7 @@ import type {
   BrowserAutomationResponse,
   BrowserHostRegistration,
   BrowserHostSessionStateReport,
+  BrowserHostKind,
   BrowserHostStateReportResult,
   BrowserSessionSnapshot,
   BrowserViewportSetting,
@@ -509,6 +512,18 @@ export class ManagerWsClient {
       }),
       { timeoutMs: 15_000 },
     )
+  }
+
+  selectBrowserHost(sessionAgentId: string, profileId: string, hostKind: BrowserHostKind): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_host_select', (requestId) =>
+      buildBrowserHostSelectCommand(sessionAgentId, profileId, hostKind, requestId))
+  }
+
+  confirmExternalChromeDetached(sessionAgentId: string, profileId: string): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_external_chrome_detach_confirmed', (requestId) =>
+      buildBrowserExternalChromeDetachConfirmedCommand(sessionAgentId, profileId, requestId))
   }
 
   openBrowserTab(sessionAgentId: string, profileId: string, options?: { url?: string; activate?: boolean }): Promise<BrowserSessionSnapshot> {

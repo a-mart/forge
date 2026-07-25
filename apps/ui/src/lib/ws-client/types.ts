@@ -148,6 +148,8 @@ export type WsRequestResultMap = {
   browser_host_hydrate: BrowserSessionSnapshot[]
   browser_host_state_report: import('@forge/protocol').BrowserHostStateReportResult
   browser_panel_reveal_acknowledge: BrowserSessionSnapshot
+  browser_host_select: BrowserSessionSnapshot
+  browser_external_chrome_detach_confirmed: BrowserSessionSnapshot
   browser_tab_open: BrowserSessionSnapshot
   browser_tab_activate: BrowserSessionSnapshot
   browser_tab_close: BrowserSessionSnapshot

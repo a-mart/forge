@@ -150,6 +150,8 @@ describe('ManagerWsClient', () => {
       'browser_host_register',
       'browser_host_hydrate',
       'browser_panel_reveal_acknowledge',
+      'browser_host_select',
+      'browser_external_chrome_detach_confirmed',
       'browser_host_state_report',
       'browser_recording_start',
       'browser_recording_stop',
