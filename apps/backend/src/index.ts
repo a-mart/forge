@@ -16,6 +16,7 @@ import { startServer, type StartedServer } from "./server.js";
 import { readServerVersion } from "./stats/stats-git.js";
 import { checkDataDirMigration } from "./startup-migration.js";
 import { assertNodeEngineFloor } from "./node-engine-floor.js";
+import { readDesktopSecureControlTokenFromFd } from "./desktop-secure-control-token.js";
 
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(backendRoot, "..", "..");
@@ -33,9 +34,13 @@ async function main(): Promise<void> {
     process.env.FORGE_APP_VERSION = await readServerVersion(config.paths.rootDir);
   }
   await waitForRestartParentToExit(config.isDesktop);
+  const secureControlToken = config.isDesktop
+    ? await readDesktopSecureControlTokenFromFd()
+    : undefined;
 
   const server = await startServer({
     config,
+    secureControlToken,
     onReady: ({ port }) => {
       if (config.isDesktop) {
         process.send?.({ type: "ready", port });

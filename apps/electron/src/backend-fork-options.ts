@@ -9,7 +9,6 @@ interface CreateBackendForkOptionsInput {
   appVersion: string
   electronVersion: string
   execArgv: string[]
-  secureControlToken: string
   devBetterSqlite3Binding?: string
 }
 
@@ -22,7 +21,6 @@ export function createBackendForkOptions({
   appVersion,
   electronVersion,
   execArgv,
-  secureControlToken,
   devBetterSqlite3Binding,
 }: CreateBackendForkOptionsInput): ForkOptions {
   if (!isPackaged && !devBetterSqlite3Binding) {
@@ -38,9 +36,9 @@ export function createBackendForkOptions({
     FORGE_RESOURCES_DIR: resourcesDir,
     FORGE_APP_VERSION: appVersion,
     FORGE_ELECTRON_VERSION: electronVersion,
-    FORGE_SECURE_CONTROL_TOKEN: secureControlToken,
   }
 
+  delete env.FORGE_SECURE_CONTROL_TOKEN
   delete env.FORGE_BETTER_SQLITE3_NATIVE_BINDING
   if (!isPackaged) {
     env.FORGE_BETTER_SQLITE3_NATIVE_BINDING = devBetterSqlite3Binding
@@ -49,7 +47,9 @@ export function createBackendForkOptions({
   return {
     cwd: runtimeRoot,
     env,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    // fd 4 is a one-shot parent-to-backend capability pipe. Keeping the
+    // value out of argv and env prevents runtime children from inheriting it.
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc', 'pipe'],
     execArgv,
     // Intentionally omit execPath. Electron must fork the backend with its
     // embedded Node runtime so provider and desktop behavior stay unchanged.

@@ -13,6 +13,7 @@ import { SwarmWebSocketServer } from "../server.js";
 describe("secure session server transport", () => {
   it("fans worker snapshots only to the worker and owning manager", async () => {
     const port = await getAvailablePort();
+    const secureControlToken = "s".repeat(43);
     const config = await makeWsServerTempConfig(port, true);
     const manager = new WsServerTestSwarmManager(config);
     await bootWsServerTestManager(manager, config);
@@ -26,6 +27,7 @@ describe("secure session server transport", () => {
       host: config.host,
       port: config.port,
       allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      secureControlToken,
     });
 
     expect(server.listRegisteredHttpRoutes().some((route) =>
@@ -55,6 +57,19 @@ describe("secure session server transport", () => {
       code: "SECURE_PRIVATE_API_UNAVAILABLE",
       error: "SECURE_PRIVATE_API_UNAVAILABLE",
     });
+
+    const authorizedMissingSecretMutation = await fetch(
+      `http://${config.host}:${config.port}/api/secure-secrets/project-defaults/manager/secret-1`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-forge-secure-control": secureControlToken,
+        },
+        body: JSON.stringify({ enabled: true }),
+      },
+    );
+    expect(authorizedMissingSecretMutation.status).not.toBe(403);
 
     const hostileWebSocketStatus = await rejectedWebSocketStatus(
       `ws://${config.host}:${config.port}`,

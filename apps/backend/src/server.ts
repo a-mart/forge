@@ -51,6 +51,7 @@ export interface StartServerOptions {
   config?: SwarmConfig;
   logger?: Partial<ServerLogger>;
   onReady?: (info: ServerReadyInfo) => Promise<void> | void;
+  secureControlToken?: string;
 }
 
 export interface StartedServer extends ServerReadyInfo {
@@ -378,6 +379,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       collaborationSettingsService,
       collaborationReadinessService,
       browserAutomationService,
+      secureControlToken: options.secureControlToken,
     });
 
     server = new BackendServer({

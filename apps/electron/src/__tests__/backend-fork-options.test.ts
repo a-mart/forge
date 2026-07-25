@@ -7,6 +7,7 @@ function createInput() {
     inheritedEnv: {
       PATH: '/bin',
       FORGE_BETTER_SQLITE3_NATIVE_BINDING: '/stale/binding.node',
+      FORGE_SECURE_CONTROL_TOKEN: 'stale-inherited-capability',
     },
     isPackaged: false,
     backendPort: 47287,
@@ -14,7 +15,6 @@ function createInput() {
     appVersion: '0.22.0',
     electronVersion: '37.10.3',
     execArgv: ['--import', 'tsx'],
-    secureControlToken: 'test-secure-control-token-that-is-long-enough',
     devBetterSqlite3Binding: '/repo/.dev-native/better_sqlite3.node',
   }
 }
@@ -32,8 +32,9 @@ describe('createBackendForkOptions', () => {
       FORGE_ELECTRON_DEV: '1',
       FORGE_PORT: '47287',
       FORGE_BETTER_SQLITE3_NATIVE_BINDING: '/repo/.dev-native/better_sqlite3.node',
-      FORGE_SECURE_CONTROL_TOKEN: 'test-secure-control-token-that-is-long-enough',
     })
+    expect(options.env).not.toHaveProperty('FORGE_SECURE_CONTROL_TOKEN')
+    expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe', 'ipc', 'pipe'])
   })
 
   it('does not expose the development binding to packaged backends', () => {

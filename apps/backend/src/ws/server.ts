@@ -190,6 +190,7 @@ export class SwarmWebSocketServer {
   private readonly httpRoutes: HttpRoute[];
   private readonly controlPidFile: string;
   private readonly shouldManageControlPid: boolean;
+  private readonly secureControlToken: string;
 
   private statsRefreshInterval: NodeJS.Timeout | null = null;
   private tokenAnalyticsRefreshInterval: NodeJS.Timeout | null = null;
@@ -513,10 +514,12 @@ export class SwarmWebSocketServer {
     feedbackService?: FeedbackService;
     remoteUpdateAwarenessService?: LocalRemoteUpdateAwarenessService;
     browserAutomationService?: BrowserAutomationService;
+    secureControlToken?: string;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
+    this.secureControlToken = options.secureControlToken ?? "";
     const isBuilder = isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget);
     const cortexEnabled = this.swarmManager.getConfig().cortexEnabled;
     this.cortexAutoReviewSettingsService = new CortexAutoReviewSettingsService({
@@ -1170,7 +1173,10 @@ export class SwarmWebSocketServer {
           request.method !== "GET"
           && request.method !== "HEAD"
           && request.method !== "OPTIONS"
-          && !validateSecureBuilderControlCapability(request)
+          && !validateSecureBuilderControlCapability(
+            request,
+            this.secureControlToken,
+          )
         ) {
           sendJson(response, 403, {
             code: "SECURE_PRIVATE_API_UNAVAILABLE",

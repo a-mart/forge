@@ -5,7 +5,7 @@ export const SECURE_CONTROL_HEADER = "x-forge-secure-control";
 
 export function validateSecureBuilderControlCapability(
   request: IncomingMessage,
-  expectedToken = process.env.FORGE_SECURE_CONTROL_TOKEN ?? "",
+  expectedToken = "",
 ): boolean {
   const supplied = request.headers[SECURE_CONTROL_HEADER];
   if (

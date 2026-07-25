@@ -245,7 +245,6 @@ class BackendSupervisor {
       appVersion: app.getVersion(),
       electronVersion: process.versions.electron ?? '',
       execArgv,
-      secureControlToken: this.secureControlToken,
       devBetterSqlite3Binding,
     })
 
@@ -255,6 +254,12 @@ class BackendSupervisor {
       const child = fork(backendEntry, [], forkOptions)
 
       this.child = child
+      const secureControlPipe = child.stdio[4]
+      if (!secureControlPipe || !('end' in secureControlPipe)) {
+        child.kill()
+        reject(new Error('Backend secure control capability pipe is unavailable'))
+        return
+      }
       installSecureVaultChildBridge({
         child,
         safeStorage,
@@ -266,9 +271,13 @@ class BackendSupervisor {
       let ready = false
       let settled = false
 
+      const handleSecureControlPipeError = (error: Error): void => {
+        finalizeReject(new Error(`Backend secure control capability pipe failed: ${error.message}`))
+      }
       const cleanup = (): void => {
         child.off('message', handleMessage)
         child.off('error', handleError)
+        secureControlPipe.off('error', handleSecureControlPipeError)
       }
 
       const finalizeReject = (error: Error): void => {
@@ -309,6 +318,8 @@ class BackendSupervisor {
 
       child.on('message', handleMessage)
       child.on('error', handleError)
+      secureControlPipe.once('error', handleSecureControlPipeError)
+      secureControlPipe.end(this.secureControlToken)
       child.once('exit', (code, signal) => {
         this.flushOutputRemainders()
         lifecycleLog.record('backend_exited', {
