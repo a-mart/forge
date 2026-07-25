@@ -6,6 +6,8 @@ import type {
   SecureSecretProviderSummary,
   SecureSecretScope,
   SecureSecretSummary,
+  SecureSecretProviderTestResult,
+  SecureSessionReadiness,
 } from '@forge/protocol'
 
 export type {
@@ -14,9 +16,12 @@ export type {
   SecureSecretProviderKind,
   SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
+  SecureSecretProviderTestResult,
   SecureSecretScope,
   SecureSecretSourceStatus,
   SecureSecretSummary,
+  SecureSessionReadiness,
+  SecureSessionReadinessCode,
 } from '@forge/protocol'
 
 export type SecureSecretsCatalog =
@@ -53,11 +58,6 @@ export interface ImportBitwardenSecretInput {
   displayName?: string
   bindings?: SecureSecretBinding[]
   scope: SecureSecretScope
-}
-
-export interface SecureSecretProviderTestResult {
-  ok: boolean
-  provider: SecureSecretProviderSummary
 }
 
 type SecureVaultErrorCode =
@@ -170,6 +170,16 @@ export async function fetchSecureSecretsCatalog(
   }
 }
 
+export async function fetchSecureSessionReadiness(
+  apiClient: SettingsApiClient,
+): Promise<SecureSessionReadiness> {
+  assertBuilderTarget(apiClient)
+  return requestJson<SecureSessionReadiness>(
+    apiClient,
+    '/api/secure-sessions/readiness',
+  )
+}
+
 export async function createLocalSecret(
   apiClient: SettingsApiClient,
   input: CreateLocalSecretInput,
@@ -251,6 +261,24 @@ export async function connectBitwardenProvider(
   )
 }
 
+export async function reconnectBitwardenProvider(
+  apiClient: SettingsApiClient,
+  providerId: string,
+  accessToken: string,
+): Promise<SecureSecretProviderSummary> {
+  assertBuilderTarget(apiClient)
+  const encryptedAccessToken = await encryptMaterial(accessToken)
+  return requestJson<SecureSecretProviderSummary>(
+    apiClient,
+    `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/credential`,
+    {
+      method: 'PATCH',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ encryptedAccessToken }),
+    },
+  )
+}
+
 export async function importBitwardenSecret(
   apiClient: SettingsApiClient,
   input: ImportBitwardenSecretInput,
@@ -296,16 +324,11 @@ export async function testSecureSecretProvider(
   providerId: string,
 ): Promise<SecureSecretProviderTestResult> {
   assertBuilderTarget(apiClient)
-  const payload = await requestJson<
-    SecureSecretProviderTestResult | SecureSecretProviderSummary
-  >(
+  return await requestJson<SecureSecretProviderTestResult>(
     apiClient,
     `/api/secure-secrets/providers/${encodeURIComponent(providerId)}/test`,
     { method: 'POST' },
   )
-  return 'provider' in payload
-    ? payload
-    : { ok: payload.status === 'available', provider: payload }
 }
 
 export async function disconnectSecureSecretProvider(

@@ -7,9 +7,12 @@ import {
   checkSecureMaterialEntryAvailability,
   connectBitwardenProvider,
   createLocalSecret,
+  fetchSecureSessionReadiness,
   fetchSecureSecretsCatalog,
   importBitwardenSecret,
+  reconnectBitwardenProvider,
   secureSecretsErrorMessage,
+  testSecureSecretProvider,
   updateSecureSecret,
   updateSecureSecretProjectDefault,
 } from './secure-secrets-api'
@@ -136,6 +139,26 @@ describe('secure secrets API', () => {
     )
   })
 
+  it('loads only the fixed Secure Sessions readiness contract', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      available: false,
+      code: 'image_unavailable',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const client = makeClient(fetchMock)
+
+    await expect(fetchSecureSessionReadiness(client)).resolves.toEqual({
+      available: false,
+      code: 'image_unavailable',
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-sessions/readiness',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
   it('rejects remote targets before making a request', async () => {
     const fetchMock = vi.fn()
     const client = makeClient(fetchMock, 'collab')
@@ -191,6 +214,56 @@ describe('secure secrets API', () => {
     const requestBody = String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)
     expect(requestBody).toContain('"encryptedAccessToken":"encrypted-envelope"')
     expect(requestBody).not.toContain(rawToken)
+  })
+
+  it('reconnects Bitwarden by replacing only its encrypted credential', async () => {
+    const rawToken = 'replacement-bws-raw-access-token'
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) =>
+      new Response(JSON.stringify(PROVIDER_SUMMARY), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    const client = makeClient(fetchMock)
+
+    await reconnectBitwardenProvider(client, 'bitwarden/one', rawToken)
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/secure-secrets/providers/bitwarden%2Fone/credential',
+    )
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      method: 'PATCH',
+    }))
+    const requestBody = String(fetchMock.mock.calls[0]?.[1]?.body)
+    expect(JSON.parse(requestBody)).toEqual({
+      encryptedAccessToken: 'encrypted-envelope',
+    })
+    expect(requestBody).not.toContain(rawToken)
+  })
+
+  it('returns only fixed local recovery metadata from provider tests', async () => {
+    const result = {
+      provider: {
+        ...PROVIDER_SUMMARY,
+        providerId: 'local',
+        kind: 'local_keychain' as const,
+      },
+      code: 'local_secret_decrypt_failed' as const,
+      affectedSecrets: [{
+        secretId: 'secret-1',
+        displayAlias: 'github/work',
+      }],
+    }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const client = makeClient(fetchMock)
+
+    await expect(testSecureSecretProvider(client, 'local/one')).resolves.toEqual(result)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/secure-secrets/providers/local%2Fone/test',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('imports a Bitwarden reference through its provider without material entry', async () => {

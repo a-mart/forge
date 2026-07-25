@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Database, Link2, Loader2, RefreshCw } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { AlertTriangle, Database, Link2, Loader2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { SettingsApiClient } from './settings-api-client'
 import {
   checkSecureMaterialEntryAvailability,
   fetchSecureSecretsCatalog,
+  fetchSecureSessionReadiness,
   secureSecretsErrorMessage,
   type SecureSecretsCatalog,
+  type SecureSessionReadiness,
 } from '@/lib/secure-secrets-api'
 import { SecretBindingsPanel } from './secrets/SecretBindingsPanel'
 import { SecretCatalogPanel } from './secrets/SecretCatalogPanel'
 import { SecretSourcesPanel } from './secrets/SecretSourcesPanel'
+import { SecureSessionsReadinessPanel } from './secrets/SecureSessionsReadinessPanel'
 import type { ManagerProfile } from '@forge/protocol'
 
 interface SettingsSecretsProps {
@@ -60,6 +62,7 @@ function BuilderSecretsSettings({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [materialEntryAvailable, setMaterialEntryAvailable] = useState(false)
+  const [readiness, setReadiness] = useState<SecureSessionReadiness | null>(null)
   const projectProfiles = useMemo(
     () => profiles.filter((profile) =>
       profile.profileType !== 'system' && !profile.archivedAt
@@ -71,6 +74,11 @@ function BuilderSecretsSettings({
   )
     ? currentProfileId
     : projectProfiles[0]?.profileId
+  const contextualProfileId = projectProfiles.some(
+    (profile) => profile.profileId === currentProfileId,
+  )
+    ? currentProfileId
+    : undefined
   const projectProfileIds = useMemo(
     () => new Set(projectProfiles.map((profile) => profile.profileId)),
     [projectProfiles],
@@ -91,32 +99,33 @@ function BuilderSecretsSettings({
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
-    try {
-      const nextCatalog = await fetchSecureSecretsCatalog(apiClient)
+    const [catalogResult, readinessResult, materialEntryResult] =
+      await Promise.allSettled([
+        fetchSecureSecretsCatalog(apiClient),
+        fetchSecureSessionReadiness(apiClient),
+        checkSecureMaterialEntryAvailability(),
+      ])
+    if (catalogResult.status === 'fulfilled') {
+      const nextCatalog = catalogResult.value
       setCatalog({
         ...nextCatalog,
         projectDefaults: nextCatalog.projectDefaults ?? [],
       })
-    } catch (loadError) {
-      setError(secureSecretsErrorMessage(loadError))
-    } finally {
-      setLoading(false)
+    } else {
+      setError(secureSecretsErrorMessage(catalogResult.reason))
     }
+    setReadiness(readinessResult.status === 'fulfilled'
+      ? readinessResult.value
+      : { available: false, code: 'backend_unavailable' })
+    setMaterialEntryAvailable(
+      materialEntryResult.status === 'fulfilled' && materialEntryResult.value,
+    )
+    setLoading(false)
   }, [apiClient])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
-
-  useEffect(() => {
-    let current = true
-    void checkSecureMaterialEntryAvailability().then((available) => {
-      if (current) setMaterialEntryAvailable(available)
-    })
-    return () => {
-      current = false
-    }
-  }, [])
 
   const handleChanged = useCallback(async (message: string) => {
     setNotice(message)
@@ -130,28 +139,13 @@ function BuilderSecretsSettings({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold tracking-tight">Secrets</h2>
-          <p className="text-sm text-muted-foreground">
-            Save private values or external references. Forge creates a safe default delivery
-            automatically. Access still requires a grant unless you explicitly enable a project
-            default.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="shrink-0 gap-1.5"
-          onClick={() => void refresh()}
-          disabled={loading}
-        >
-          {loading
-            ? <Loader2 className="size-3.5 animate-spin" />
-            : <RefreshCw className="size-3.5" />}
-          Refresh
-        </Button>
+      <div className="space-y-1">
+        <h2 className="text-lg font-semibold tracking-tight">Secrets</h2>
+        <p className="text-sm text-muted-foreground">
+          Save private values or external references. Forge creates a safe default delivery
+          automatically. Access still requires a grant unless you explicitly enable a project
+          default.
+        </p>
       </div>
 
       {error ? (
@@ -171,6 +165,19 @@ function BuilderSecretsSettings({
           {notice}
         </div>
       ) : null}
+
+      <SecureSessionsReadinessPanel
+        readiness={readiness}
+        loading={loading}
+        privateEntryAvailable={materialEntryAvailable}
+        providers={catalog.providers}
+        configuredProjectDefaultCount={contextualProfileId
+          ? catalog.projectDefaults.filter(
+              (projectDefault) => projectDefault.profileId === contextualProfileId,
+            ).length
+          : undefined}
+        onRefresh={refresh}
+      />
 
       {loading && catalog.providers.length === 0 && catalog.secrets.length === 0 ? (
         <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">

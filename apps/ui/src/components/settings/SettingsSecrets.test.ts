@@ -18,11 +18,13 @@ import { SECURE_SECRET_MAX_PROJECT_DEFAULTS } from '@forge/protocol'
 
 const secureSecretsApiMock = vi.hoisted(() => ({
   fetchSecureSecretsCatalog: vi.fn(),
+  fetchSecureSessionReadiness: vi.fn(),
   createLocalSecret: vi.fn(),
   updateSecureSecret: vi.fn(),
   updateSecureSecretProjectDefault: vi.fn(),
   deleteSecureSecret: vi.fn(),
   connectBitwardenProvider: vi.fn(),
+  reconnectBitwardenProvider: vi.fn(),
   importBitwardenSecret: vi.fn(),
   testSecureSecretProvider: vi.fn(),
   disconnectSecureSecretProvider: vi.fn(),
@@ -36,6 +38,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
     ...original,
     fetchSecureSecretsCatalog: (...args: unknown[]) =>
       secureSecretsApiMock.fetchSecureSecretsCatalog(...args),
+    fetchSecureSessionReadiness: (...args: unknown[]) =>
+      secureSecretsApiMock.fetchSecureSessionReadiness(...args),
     createLocalSecret: (...args: unknown[]) =>
       secureSecretsApiMock.createLocalSecret(...args),
     updateSecureSecret: (...args: unknown[]) =>
@@ -46,6 +50,8 @@ vi.mock('@/lib/secure-secrets-api', async (importOriginal) => {
       secureSecretsApiMock.deleteSecureSecret(...args),
     connectBitwardenProvider: (...args: unknown[]) =>
       secureSecretsApiMock.connectBitwardenProvider(...args),
+    reconnectBitwardenProvider: (...args: unknown[]) =>
+      secureSecretsApiMock.reconnectBitwardenProvider(...args),
     importBitwardenSecret: (...args: unknown[]) =>
       secureSecretsApiMock.importBitwardenSecret(...args),
     testSecureSecretProvider: (...args: unknown[]) =>
@@ -109,6 +115,7 @@ const PROFILES = [
 
 let container: HTMLDivElement
 let root: Root | null = null
+const clipboardWriteText = vi.fn(async (_value: string) => undefined)
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class {
@@ -136,7 +143,21 @@ beforeEach(() => {
   })
   container = document.createElement('div')
   document.body.appendChild(container)
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: clipboardWriteText },
+  })
   secureSecretsApiMock.checkSecureMaterialEntryAvailability.mockResolvedValue(true)
+  secureSecretsApiMock.fetchSecureSessionReadiness.mockResolvedValue({
+    available: true,
+    code: 'available',
+  })
+  secureSecretsApiMock.testSecureSecretProvider.mockReset()
+  secureSecretsApiMock.testSecureSecretProvider.mockResolvedValue({
+    provider: LOCAL_PROVIDER,
+    code: 'ok',
+    affectedSecrets: [],
+  })
   secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
     providers: [LOCAL_PROVIDER],
     secrets: [],
@@ -216,6 +237,85 @@ describe('SettingsSecrets', () => {
     expect(container.textContent).toContain('generated environment delivery')
   })
 
+  it('shows fixed readiness actions and copies only bounded safe diagnostics', async () => {
+    secureSecretsApiMock.fetchSecureSessionReadiness.mockResolvedValue({
+      available: false,
+      code: 'image_unavailable',
+      unsafeException: 'docker-command-output-canary',
+    })
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [{
+        ...BITWARDEN_PROVIDER,
+        status: 'auth_required',
+        lastStatusCode: 'provider_auth_required',
+        serverOrigin: 'https://provider-detail-canary.example',
+        organizationId: 'organization-detail-canary',
+      }],
+      secrets: [],
+      projectDefaults: [{
+        profileId: 'project-alpha',
+        secretId: 'secret-id-canary',
+        createdAt: '2026-07-24T12:00:00.000Z',
+        updatedAt: '2026-07-24T12:00:00.000Z',
+      }],
+    })
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Secure Sessions readiness')).toBeTruthy()
+      expect(container.textContent).toContain('Secure image unavailable')
+      expect(container.textContent).toContain('Reconnect the affected source below.')
+    })
+    fireEvent.click(getByRole(container, 'button', {
+      name: 'Copy build command',
+    }))
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledWith(
+        'docker build --tag forge-secure-runner:node22-v4 --file apps/backend/src/swarm/secure-sessions/execution/Dockerfile.secure-runner apps/backend/src/swarm/secure-sessions/execution',
+      )
+    })
+    fireEvent.click(getByRole(container, 'button', {
+      name: 'Copy safe diagnostics',
+    }))
+
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledTimes(2)
+    })
+    const serialized = String(clipboardWriteText.mock.calls[1]?.[0])
+    const diagnostics = JSON.parse(serialized)
+    expect(diagnostics).toMatchObject({
+      schemaVersion: 1,
+      execution: { code: 'image_unavailable' },
+      privateEntry: { available: true },
+      sources: [{
+        kind: 'bitwarden_secrets_manager',
+        status: 'auth_required',
+        statusCode: 'provider_auth_required',
+      }],
+      projectDefaults: [{ state: 'configured', statusCode: 'ok' }],
+    })
+    expect(Object.keys(diagnostics).sort()).toEqual([
+      'checkedAt',
+      'execution',
+      'privateEntry',
+      'projectDefaults',
+      'schemaVersion',
+      'sources',
+    ])
+    for (const forbidden of [
+      'bitwarden-1',
+      'Bitwarden work',
+      'provider-detail-canary',
+      'organization-detail-canary',
+      'project-alpha',
+      'secret-id-canary',
+      'docker-command-output-canary',
+      'docker build',
+    ]) {
+      expect(serialized).not.toContain(forbidden)
+    }
+  })
+
   it('clears submitted local material immediately and leaves no secret value in the DOM', async () => {
     let resolveCreate: ((value: typeof SECRET_SUMMARY) => void) | undefined
     secureSecretsApiMock.createLocalSecret.mockImplementation(() => new Promise((resolve) => {
@@ -290,6 +390,173 @@ describe('SettingsSecrets', () => {
       lastVerifiedAt: null,
       lastStatusCode: null,
     })
+    await waitFor(() => {
+      expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('recovers unreadable local values one alias at a time and retests when done', async () => {
+    let resolveUpdate: ((value: typeof SECRET_SUMMARY) => void) | undefined
+    secureSecretsApiMock.testSecureSecretProvider
+      .mockResolvedValueOnce({
+        provider: LOCAL_PROVIDER,
+        code: 'local_secret_decrypt_failed',
+        affectedSecrets: [
+          { secretId: 'secret-1', displayAlias: 'github/work' },
+          { secretId: 'secret-2', displayAlias: 'database/staging' },
+          { secretId: 'secret-3', displayAlias: 'service/retired' },
+        ],
+      })
+    secureSecretsApiMock.updateSecureSecret.mockImplementation(() =>
+      new Promise((resolve) => {
+        resolveUpdate = resolve
+      }))
+    secureSecretsApiMock.deleteSecureSecret.mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'button', { name: 'Test vault' })).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Test vault' }))
+    await waitFor(() => {
+      expect(getByRole(container, 'button', {
+        name: 'Re-enter values on this machine',
+      })).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', {
+      name: 'Re-enter values on this machine',
+    }))
+    const firstValue = await waitFor(() =>
+      getByLabelText(container, 'Private value for github/work') as HTMLInputElement)
+    const rawValue = 'local-recovery-value-canary'
+    fireEvent.change(firstValue, { target: { value: rawValue } })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save and continue' }))
+
+    await waitFor(() => {
+      expect(firstValue.value).toBe('')
+      expect(secureSecretsApiMock.updateSecureSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-1',
+        { material: rawValue },
+      )
+    })
+    expect(container.innerHTML).not.toContain(rawValue)
+
+    resolveUpdate?.(SECRET_SUMMARY)
+    await waitFor(() => {
+      expect(getByLabelText(
+        container,
+        'Private value for database/staging',
+      )).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Skip' }))
+    await waitFor(() => {
+      expect(getByLabelText(
+        container,
+        'Private value for service/retired',
+      )).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.deleteSecureSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-3',
+      )
+      expect(secureSecretsApiMock.testSecureSecretProvider).toHaveBeenCalledTimes(1)
+      expect(container.textContent).not.toContain('Re-enter values on this machine')
+    })
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'Recovery paused. Skipped local values remain unavailable.',
+      )
+    })
+  })
+
+  it('retests the local vault after recovery completes without a skipped value', async () => {
+    secureSecretsApiMock.testSecureSecretProvider
+      .mockResolvedValueOnce({
+        provider: LOCAL_PROVIDER,
+        code: 'local_secret_decrypt_failed',
+        affectedSecrets: [
+          { secretId: 'secret-1', displayAlias: 'github/work' },
+        ],
+      })
+      .mockResolvedValueOnce({
+        provider: LOCAL_PROVIDER,
+        code: 'ok',
+        affectedSecrets: [],
+      })
+    secureSecretsApiMock.deleteSecureSecret.mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'button', { name: 'Test vault' })).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Test vault' }))
+    await waitFor(() => {
+      expect(getByRole(container, 'button', {
+        name: 'Re-enter values on this machine',
+      })).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', {
+      name: 'Re-enter values on this machine',
+    }))
+    await waitFor(() => {
+      expect(getByRole(container, 'button', { name: 'Delete' })).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.testSecureSecretProvider).toHaveBeenCalledTimes(2)
+      expect(container.textContent).not.toContain('Re-enter values on this machine')
+    })
+  })
+
+  it('reconnects Bitwarden inline and clears the token before awaiting', async () => {
+    let resolveReconnect: ((value: typeof BITWARDEN_PROVIDER) => void) | undefined
+    const reconnectProvider = {
+      ...BITWARDEN_PROVIDER,
+      status: 'auth_required' as const,
+      lastStatusCode: 'provider_auth_required' as const,
+    }
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER, reconnectProvider],
+      secrets: [],
+      projectDefaults: [],
+    })
+    secureSecretsApiMock.reconnectBitwardenProvider.mockImplementation(() =>
+      new Promise((resolve) => {
+        resolveReconnect = resolve
+      }))
+    render()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'button', { name: 'Reconnect' })).toBeTruthy()
+    })
+    fireEvent.click(getByRole(container, 'button', { name: 'Reconnect' }))
+    const token = await waitFor(() => getByLabelText(
+      container,
+      'New machine account access token',
+    ) as HTMLInputElement)
+    const rawToken = 'bitwarden-reconnect-token-canary'
+    fireEvent.change(token, { target: { value: rawToken } })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save token' }))
+
+    await waitFor(() => {
+      expect(token.value).toBe('')
+      expect(secureSecretsApiMock.reconnectBitwardenProvider).toHaveBeenCalledWith(
+        expect.anything(),
+        'bitwarden-1',
+        rawToken,
+      )
+    })
+    expect(container.innerHTML).not.toContain(rawToken)
+    expect(container.textContent).toContain('Bitwarden work')
+
+    resolveReconnect?.(BITWARDEN_PROVIDER)
     await waitFor(() => {
       expect(secureSecretsApiMock.fetchSecureSecretsCatalog).toHaveBeenCalledTimes(2)
     })
