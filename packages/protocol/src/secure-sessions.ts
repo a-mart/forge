@@ -196,6 +196,10 @@ export interface SecureAccessRequestSummary {
   purposeSummary: string
   requestedByAgentId: string
   requestedByDisplayName: string
+  /**
+   * Captured worker assignment generation. Manager requests always use null.
+   */
+  workerAssignmentId: string | null
   createdAt: string
   expiresAt: string | null
 }
@@ -212,6 +216,11 @@ export type SecureSessionEnvironmentStatus =
 export type SecureSessionOutputState = 'clear' | 'quarantined'
 
 export type SecureSessionOutputStateCode = 'SECURE_OUTPUT_QUARANTINED'
+
+export const SECURE_SESSION_PRINCIPAL_KINDS = ['manager', 'worker'] as const
+
+export type SecureSessionPrincipalKind =
+  (typeof SECURE_SESSION_PRINCIPAL_KINDS)[number]
 
 export const SECURE_SESSION_PROJECT_DEFAULT_STATES = [
   'configured',
@@ -246,6 +255,15 @@ export interface SecureSessionProjectDefaultStatus {
 export interface SecureSessionSnapshot {
   sessionAgentId: string
   profileId: string
+  /** The executing principal that owns this snapshot's leases and requests. */
+  principalKind: SecureSessionPrincipalKind
+  /** Null for managers; the owning manager principal for workers. */
+  ownerManagerAgentId: string | null
+  /**
+   * Null for managers. Workers use the assignment identifier as a
+   * stale-request and sandbox-generation boundary.
+   */
+  workerAssignmentId: string | null
   revision: number
   executionMode: SecureSessionExecutionMode
   environmentStatus: SecureSessionEnvironmentStatus

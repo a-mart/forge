@@ -9,6 +9,7 @@ import {
   SECURE_SESSION_EXPOSURE_OUTCOMES,
   SECURE_SESSION_LEASE_GRANT_SOURCES,
   SECURE_SESSION_LEASE_KINDS,
+  SECURE_SESSION_PRINCIPAL_KINDS,
   SECURE_SESSION_PROVIDER_KINDS,
   SECURE_SESSION_REQUEST_STATES,
   SECURE_SESSION_RESERVATION_OUTCOMES,
@@ -26,6 +27,7 @@ import {
   type CreateSecureSessionRequestInput,
   type CreateSecureSessionSecretInput,
   type DeleteSecureSessionProjectStateResult,
+  type InitializeSecureSessionPrincipalInput,
   type InitializeSecureSessionStateInput,
   type PutSecureSessionProjectDefaultInput,
   type PutSecureSessionSecretWithBindingsInput,
@@ -54,6 +56,7 @@ import {
   type SecureSessionUseReservation,
   type UpdateSecureSessionSecretInput,
   type UpdateSecureSessionRuntimeStateInput,
+  type UpdateSecureSessionWorkerAssignmentInput,
   type UpsertSecureSessionProviderBackendConfigInput,
   type UpsertSecureSessionProviderInput
 } from "./types.js";
@@ -834,27 +837,74 @@ export class SecureSessionStore {
     sessionAgentId: string,
     input?: InitializeSecureSessionStateInput
   ): SecureSessionState {
-    assertId(sessionAgentId, "session agent ID");
-    const profileId = input?.profileId ?? sessionAgentId;
-    assertId(profileId, "profile ID");
-    const executionMode = input?.executionMode ?? "standard";
-    const environmentStatus = input?.environmentStatus ?? "stopped";
-    assertEnum(executionMode, ["standard", "secure"], "execution mode");
-    assertEnum(
-      environmentStatus,
-      ["stopped", "starting", "ready", "degraded", "failed"],
-      "environment status"
-    );
+    const existing = this.getSessionState(sessionAgentId);
+    if (existing) {
+      if (!input) return existing;
+      const principalKind = input.principalKind ?? existing.principalKind;
+      const reusesExistingKind = principalKind === existing.principalKind;
+      return this.initializePrincipalState(sessionAgentId, {
+        profileId: input.profileId,
+        principalKind,
+        ownerManagerAgentId:
+          input.ownerManagerAgentId === undefined
+            ? (reusesExistingKind ? existing.ownerManagerAgentId : null)
+            : input.ownerManagerAgentId,
+        workerAssignmentId:
+          input.workerAssignmentId === undefined
+            ? (reusesExistingKind ? existing.workerAssignmentId : null)
+            : input.workerAssignmentId,
+        executionMode: input.executionMode,
+        environmentStatus: input.environmentStatus
+      } as InitializeSecureSessionPrincipalInput);
+    }
+    const principalKind = input?.principalKind ?? "manager";
+    return this.initializePrincipalState(sessionAgentId, {
+      profileId: input?.profileId ?? sessionAgentId,
+      principalKind,
+      ownerManagerAgentId: input?.ownerManagerAgentId,
+      workerAssignmentId: input?.workerAssignmentId,
+      executionMode: input?.executionMode,
+      environmentStatus: input?.environmentStatus
+    } as InitializeSecureSessionPrincipalInput);
+  }
+
+  initializePrincipalState(
+    sessionAgentId: string,
+    input: InitializeSecureSessionPrincipalInput
+  ): SecureSessionState {
+    const normalized = normalizePrincipalInitialization(sessionAgentId, input);
     return this.database.transaction(() => {
       const existing = this.getSessionState(sessionAgentId);
-      if (existing) return existing;
+      if (existing) {
+        if (!samePrincipalIdentity(existing, normalized)) {
+          throw new SecureSessionIdConflictError("principal identity");
+        }
+        return existing;
+      }
+      if (normalized.principalKind === "worker") {
+        const owner = this.requireSessionState(normalized.ownerManagerAgentId!);
+        if (owner.principalKind !== "manager" || owner.profileId !== normalized.profileId) {
+          throw new SecureSessionIdConflictError("worker owner");
+        }
+      }
       const now = this.timestamp();
       this.database.prepare(`
         INSERT INTO secure_session_state (
           session_agent_id, revision, forked_from_session_agent_id, profile_id,
+          principal_kind, owner_manager_agent_id, worker_assignment_id,
           execution_mode, environment_status, created_at, updated_at
-        ) VALUES (?, 0, NULL, ?, ?, ?, ?, ?)
-      `).run(sessionAgentId, profileId, executionMode, environmentStatus, now, now);
+        ) VALUES (?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        sessionAgentId,
+        normalized.profileId,
+        normalized.principalKind,
+        normalized.ownerManagerAgentId,
+        normalized.workerAssignmentId,
+        normalized.executionMode,
+        normalized.environmentStatus,
+        now,
+        now
+      );
       this.insertRevision(sessionAgentId, 0, "initialized", null, 0, now);
       this.audit({
         eventType: "session_initialized",
@@ -883,7 +933,8 @@ export class SecureSessionStore {
       );
     }
     return this.database.transaction(() => {
-      const state = this.getOrCreateSessionState(input.sessionAgentId, {
+      const existing = this.getSessionState(input.sessionAgentId);
+      const state = existing ?? this.getOrCreateSessionState(input.sessionAgentId, {
         profileId: input.profileId ?? input.sessionAgentId,
         executionMode: input.executionMode,
         environmentStatus: input.environmentStatus
@@ -891,11 +942,12 @@ export class SecureSessionStore {
       if (input.baseRevision !== undefined) {
         this.assertRevision(state, input.baseRevision);
       }
-      const profileId = input.profileId ?? state.profileId;
+      if (input.profileId !== undefined && input.profileId !== state.profileId) {
+        throw new SecureSessionIdConflictError("principal profile");
+      }
       const executionMode = input.executionMode ?? state.executionMode;
       const environmentStatus = input.environmentStatus ?? state.environmentStatus;
       if (
-        state.profileId === profileId &&
         state.executionMode === executionMode &&
         state.environmentStatus === environmentStatus
       ) {
@@ -912,9 +964,9 @@ export class SecureSessionStore {
       );
       this.database.prepare(`
         UPDATE secure_session_state
-        SET profile_id = ?, execution_mode = ?, environment_status = ?, updated_at = ?
+        SET execution_mode = ?, environment_status = ?, updated_at = ?
         WHERE session_agent_id = ?
-      `).run(profileId, executionMode, environmentStatus, now, input.sessionAgentId);
+      `).run(executionMode, environmentStatus, now, input.sessionAgentId);
       this.audit({
         eventType: "session_runtime_updated",
         sessionAgentId: input.sessionAgentId,
@@ -949,8 +1001,9 @@ export class SecureSessionStore {
       this.database.prepare(`
         INSERT INTO secure_session_state (
           session_agent_id, revision, forked_from_session_agent_id, profile_id,
+          principal_kind, owner_manager_agent_id, worker_assignment_id,
           execution_mode, environment_status, created_at, updated_at
-        ) VALUES (?, 0, ?, ?, 'standard', 'stopped', ?, ?)
+        ) VALUES (?, 0, ?, ?, 'manager', NULL, NULL, 'standard', 'stopped', ?, ?)
       `).run(
         forkSessionAgentId,
         sourceSessionAgentId,
@@ -986,6 +1039,7 @@ export class SecureSessionStore {
   listSessionStates(): SecureSessionState[] {
     const rows = this.database.prepare(`
       SELECT session_agent_id, revision, forked_from_session_agent_id, profile_id,
+        principal_kind, owner_manager_agent_id, worker_assignment_id,
         execution_mode, environment_status, created_at, updated_at
       FROM secure_session_state
       ORDER BY session_agent_id
@@ -993,10 +1047,155 @@ export class SecureSessionStore {
     return rows.map(mapState);
   }
 
+  listPrincipalStatesForManager(managerAgentId: string): SecureSessionState[] {
+    assertId(managerAgentId, "manager agent ID");
+    const manager = this.requireSessionState(managerAgentId);
+    if (manager.principalKind !== "manager") {
+      throw new SecureSessionIdConflictError("manager principal");
+    }
+    const rows = this.database.prepare(`
+      SELECT session_agent_id, revision, forked_from_session_agent_id, profile_id,
+        principal_kind, owner_manager_agent_id, worker_assignment_id,
+        execution_mode, environment_status, created_at, updated_at
+      FROM secure_session_state
+      WHERE session_agent_id = ? OR owner_manager_agent_id = ?
+      ORDER BY CASE WHEN session_agent_id = ? THEN 0 ELSE 1 END, session_agent_id
+    `).all(managerAgentId, managerAgentId, managerAgentId) as StateRow[];
+    return rows.map(mapState);
+  }
+
+  listPrincipalSnapshotsForManager(
+    managerAgentId: string
+  ): SecureSessionSnapshot[] {
+    return this.listPrincipalStatesForManager(managerAgentId)
+      .map(({ sessionAgentId }) => this.getSnapshot(sessionAgentId));
+  }
+
+  updateWorkerAssignment(
+    input: UpdateSecureSessionWorkerAssignmentInput
+  ): SecureSessionMutationResult {
+    assertId(input.sessionAgentId, "worker agent ID");
+    assertId(input.workerAssignmentId, "worker assignment ID");
+    if (input.baseRevision !== undefined) assertRevision(input.baseRevision);
+    return this.database.transaction(() => {
+      const state = this.requireSessionState(input.sessionAgentId);
+      if (state.principalKind !== "worker") {
+        throw new SecureSessionIdConflictError("worker assignment");
+      }
+      if (input.baseRevision !== undefined) {
+        this.assertRevision(state, input.baseRevision);
+      }
+      if (state.workerAssignmentId === input.workerAssignmentId) {
+        const snapshot = this.getSnapshot(input.sessionAgentId);
+        return { changed: false, revision: state.revision, snapshot };
+      }
+
+      const staleRequests = this.database.prepare(`
+        SELECT request_id, secret_id
+        FROM secure_session_request
+        WHERE session_agent_id = ? AND state = 'pending'
+          AND worker_assignment_id IS NOT ?
+        ORDER BY request_id
+      `).all(
+        input.sessionAgentId,
+        input.workerAssignmentId
+      ) as Array<{ request_id: string; secret_id: string | null }>;
+      const oneUseLeases = this.database.prepare(`
+        SELECT lease_id, secret_id, request_id
+        FROM secure_session_lease
+        WHERE session_agent_id = ? AND state = 'active'
+          AND lease_kind = 'one_use'
+          AND one_use_operation_id IS NULL
+        ORDER BY lease_id
+      `).all(input.sessionAgentId) as Array<{
+        lease_id: string;
+        secret_id: string;
+        request_id: string | null;
+      }>;
+      const now = this.timestamp();
+      const revision = this.incrementRevision(
+        input.sessionAgentId,
+        "worker_assignment_updated",
+        null,
+        1 + staleRequests.length + oneUseLeases.length,
+        now
+      );
+
+      this.database.prepare(`
+        UPDATE secure_session_request
+        SET state = 'cancelled', resolved_at = COALESCE(resolved_at, ?)
+        WHERE session_agent_id = ? AND state = 'pending'
+          AND worker_assignment_id IS NOT ?
+      `).run(now, input.sessionAgentId, input.workerAssignmentId);
+      for (const request of staleRequests) {
+        this.audit({
+          eventType: "request_resolved",
+          sessionAgentId: input.sessionAgentId,
+          secretId: request.secret_id,
+          requestId: request.request_id,
+          outcome: "cancelled",
+          occurredAt: now
+        });
+      }
+
+      this.database.prepare(`
+        UPDATE secure_session_lease
+        SET state = 'revoked', updated_revision = ?, revoked_at = ?,
+          revocation_reason = 'policy_changed', updated_at = ?
+        WHERE session_agent_id = ? AND state = 'active'
+          AND lease_kind = 'one_use'
+          AND one_use_operation_id IS NULL
+      `).run(revision, now, now, input.sessionAgentId);
+      for (const lease of oneUseLeases) {
+        this.audit({
+          eventType: "lease_revoked",
+          sessionAgentId: input.sessionAgentId,
+          secretId: lease.secret_id,
+          requestId: lease.request_id,
+          leaseId: lease.lease_id,
+          outcome: "revoked",
+          occurredAt: now
+        });
+      }
+
+      this.database.prepare(`
+        UPDATE secure_session_state
+        SET worker_assignment_id = ?, updated_at = ?
+        WHERE session_agent_id = ?
+      `).run(input.workerAssignmentId, now, input.sessionAgentId);
+      this.audit({
+        eventType: "worker_assignment_updated",
+        sessionAgentId: input.sessionAgentId,
+        outcome: "updated",
+        occurredAt: now
+      });
+      return {
+        changed: true,
+        revision,
+        snapshot: this.getSnapshot(input.sessionAgentId)
+      };
+    })();
+  }
+
   createRequest(input: CreateSecureSessionRequestInput): SecureSessionSnapshot {
     const normalized = this.normalizeRequestInput(input);
     return this.database.transaction(() => {
-      this.getOrCreateSessionState(input.sessionAgentId);
+      const state = this.getOrCreateSessionState(input.sessionAgentId);
+      if (input.requestedByAgentId !== input.sessionAgentId) {
+        throw new SecureSessionIdConflictError("request principal");
+      }
+      if (
+        (state.principalKind === "manager" && normalized.workerAssignmentId !== null)
+        || (
+          state.principalKind === "worker"
+          && (
+            normalized.workerAssignmentId === null
+            || normalized.workerAssignmentId !== state.workerAssignmentId
+          )
+        )
+      ) {
+        throw new SecureSessionIdConflictError("request worker assignment");
+      }
       if (input.secretId) {
         const secret = this.requireSecret(input.secretId);
         if (secret.displayAlias !== input.displayAlias) {
@@ -1014,13 +1213,15 @@ export class SecureSessionStore {
       const revision = this.incrementRevision(input.sessionAgentId, "request_created", null, 1, now);
       this.database.prepare(`
         INSERT INTO secure_session_request (
-          request_id, session_agent_id, secret_id, display_alias, requested_lease_kind,
-          requested_duration_seconds, purpose_summary, requested_by_agent_id,
-          requested_by_display_name, state, requested_at, expires_at, resolved_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
+          request_id, session_agent_id, worker_assignment_id, secret_id,
+          display_alias, requested_lease_kind, requested_duration_seconds,
+          purpose_summary, requested_by_agent_id, requested_by_display_name,
+          state, requested_at, expires_at, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
       `).run(
         input.requestId,
         input.sessionAgentId,
+        normalized.workerAssignmentId,
         input.secretId ?? null,
         input.displayAlias,
         input.requestedLeaseKind,
@@ -1780,6 +1981,7 @@ export class SecureSessionStore {
     requestedExposures: SecureSessionRequestedExposure[];
     durationSeconds: number | null;
     expiresAt: string | null;
+    workerAssignmentId: string | null;
   } {
     assertId(input.requestId, "request ID");
     assertId(input.sessionAgentId, "session agent ID");
@@ -1808,6 +2010,10 @@ export class SecureSessionStore {
     return {
       requestedExposures,
       durationSeconds,
+      workerAssignmentId: normalizeOptionalId(
+        input.workerAssignmentId,
+        "worker assignment ID"
+      ),
       expiresAt: normalizeOptionalTimestamp(input.expiresAt, "request expiration time")
     };
   }
@@ -1899,9 +2105,11 @@ export class SecureSessionStore {
     }
   }
 
-  private getSessionState(sessionAgentId: string): SecureSessionState | null {
+  getSessionState(sessionAgentId: string): SecureSessionState | null {
+    assertId(sessionAgentId, "session agent ID");
     const row = this.database.prepare(`
       SELECT session_agent_id, revision, forked_from_session_agent_id, profile_id,
+        principal_kind, owner_manager_agent_id, worker_assignment_id,
         execution_mode, environment_status, created_at, updated_at
       FROM secure_session_state WHERE session_agent_id = ?
     `).get(sessionAgentId) as StateRow | undefined;
@@ -1965,6 +2173,7 @@ export class SecureSessionStore {
     return {
       requestId: row.request_id,
       sessionAgentId: row.session_agent_id,
+      workerAssignmentId: row.worker_assignment_id,
       secretId: row.secret_id,
       displayAlias: row.display_alias,
       requestedExposures: this.listRequestExposures(row.request_id),
@@ -2266,15 +2475,22 @@ export class SecureSessionStore {
     outcome: string;
     occurredAt: string;
   }): void {
+    const state = input.sessionAgentId
+      ? this.getSessionState(input.sessionAgentId)
+      : null;
     this.database.prepare(`
       INSERT INTO secure_session_audit (
-        event_type, session_agent_id, profile_id, provider_id, secret_id, binding_id,
-        request_id, lease_id, operation_id, outcome, occurred_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        event_type, session_agent_id, profile_id, principal_kind,
+        owner_manager_agent_id, worker_assignment_id, provider_id, secret_id,
+        binding_id, request_id, lease_id, operation_id, outcome, occurred_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.eventType,
       input.sessionAgentId ?? null,
-      input.profileId ?? null,
+      input.profileId ?? state?.profileId ?? null,
+      state?.principalKind ?? null,
+      state?.ownerManagerAgentId ?? null,
+      state?.workerAssignmentId ?? null,
       input.providerId ?? null,
       input.secretId ?? null,
       input.bindingId ?? null,
@@ -2303,7 +2519,7 @@ const LEASE_SELECT = `SELECT lease_id, session_agent_id, secret_id, request_id,
 const REQUEST_SELECT = `SELECT request_id, session_agent_id, secret_id,
   display_alias, requested_lease_kind, requested_duration_seconds, purpose_summary,
   requested_by_agent_id, requested_by_display_name, state, requested_at,
-  expires_at, resolved_at FROM secure_session_request`;
+  expires_at, resolved_at, worker_assignment_id FROM secure_session_request`;
 
 interface ProviderRow {
   provider_id: string;
@@ -2353,6 +2569,9 @@ interface StateRow {
   revision: number;
   forked_from_session_agent_id: string | null;
   profile_id: string;
+  principal_kind: SecureSessionState["principalKind"];
+  owner_manager_agent_id: string | null;
+  worker_assignment_id: string | null;
   execution_mode: SecureSessionState["executionMode"];
   environment_status: SecureSessionState["environmentStatus"];
   created_at: string;
@@ -2380,6 +2599,7 @@ interface LeaseRow {
 interface RequestRow {
   request_id: string;
   session_agent_id: string;
+  worker_assignment_id: string | null;
   secret_id: string | null;
   display_alias: string;
   requested_lease_kind: SecureSessionRequest["requestedLeaseKind"];
@@ -2426,6 +2646,9 @@ interface AuditRow {
   event_type: string;
   session_agent_id: string | null;
   profile_id: string | null;
+  principal_kind: SecureSessionAuditRecord["principalKind"];
+  owner_manager_agent_id: string | null;
+  worker_assignment_id: string | null;
   provider_id: string | null;
   secret_id: string | null;
   binding_id: string | null;
@@ -2505,6 +2728,9 @@ function mapState(row: StateRow): SecureSessionState {
     revision: row.revision,
     forkedFromSessionAgentId: row.forked_from_session_agent_id,
     profileId: row.profile_id,
+    principalKind: row.principal_kind,
+    ownerManagerAgentId: row.owner_manager_agent_id,
+    workerAssignmentId: row.worker_assignment_id,
     executionMode: row.execution_mode,
     environmentStatus: row.environment_status,
     createdAt: row.created_at,
@@ -2540,6 +2766,9 @@ function mapAudit(row: AuditRow): SecureSessionAuditRecord {
     eventType: row.event_type,
     sessionAgentId: row.session_agent_id,
     profileId: row.profile_id,
+    principalKind: row.principal_kind,
+    ownerManagerAgentId: row.owner_manager_agent_id,
+    workerAssignmentId: row.worker_assignment_id,
     providerId: row.provider_id,
     secretId: row.secret_id,
     bindingId: row.binding_id,
@@ -2607,9 +2836,11 @@ function sameRequest(
     requestedExposures: SecureSessionRequestedExposure[];
     durationSeconds: number | null;
     expiresAt: string | null;
+    workerAssignmentId: string | null;
   }
 ): boolean {
   return existing.sessionAgentId === input.sessionAgentId &&
+    existing.workerAssignmentId === normalized.workerAssignmentId &&
     existing.secretId === (input.secretId ?? null) &&
     existing.displayAlias === input.displayAlias &&
     existing.requestedLeaseKind === input.requestedLeaseKind &&
@@ -2619,6 +2850,75 @@ function sameRequest(
     existing.requestedByDisplayName === input.requestedByDisplayName &&
     existing.expiresAt === normalized.expiresAt &&
     sameExposureDescriptors(existing.requestedExposures, normalized.requestedExposures);
+}
+
+interface NormalizedPrincipalInitialization {
+  profileId: string;
+  principalKind: SecureSessionState["principalKind"];
+  ownerManagerAgentId: string | null;
+  workerAssignmentId: string | null;
+  executionMode: SecureSessionState["executionMode"];
+  environmentStatus: SecureSessionState["environmentStatus"];
+}
+
+function normalizePrincipalInitialization(
+  sessionAgentId: string,
+  input: InitializeSecureSessionPrincipalInput
+): NormalizedPrincipalInitialization {
+  assertId(sessionAgentId, "session agent ID");
+  assertId(input.profileId, "profile ID");
+  assertEnum(input.principalKind, SECURE_SESSION_PRINCIPAL_KINDS, "principal kind");
+  const executionMode = input.executionMode ?? "standard";
+  const environmentStatus = input.environmentStatus ?? "stopped";
+  assertEnum(executionMode, ["standard", "secure"], "execution mode");
+  assertEnum(
+    environmentStatus,
+    ["stopped", "starting", "ready", "degraded", "failed"],
+    "environment status"
+  );
+  if (input.principalKind === "manager") {
+    return {
+      profileId: input.profileId,
+      principalKind: "manager",
+      ownerManagerAgentId: requireAbsent(
+        input.ownerManagerAgentId,
+        "Manager principals cannot have an owner manager"
+      ),
+      workerAssignmentId: requireAbsent(
+        input.workerAssignmentId,
+        "Manager principals cannot have a worker assignment"
+      ),
+      executionMode,
+      environmentStatus
+    };
+  }
+  const ownerManagerAgentId = requireId(
+    input.ownerManagerAgentId,
+    "Worker principals require an owner manager"
+  );
+  if (ownerManagerAgentId === sessionAgentId) {
+    throw new Error("Worker principals cannot own themselves");
+  }
+  return {
+    profileId: input.profileId,
+    principalKind: "worker",
+    ownerManagerAgentId,
+    workerAssignmentId: normalizeOptionalId(
+      input.workerAssignmentId,
+      "worker assignment ID"
+    ),
+    executionMode,
+    environmentStatus
+  };
+}
+
+function samePrincipalIdentity(
+  state: SecureSessionState,
+  input: NormalizedPrincipalInitialization
+): boolean {
+  return state.profileId === input.profileId
+    && state.principalKind === input.principalKind
+    && state.ownerManagerAgentId === input.ownerManagerAgentId;
 }
 
 function sameLeaseGrant(

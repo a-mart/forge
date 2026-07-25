@@ -6,6 +6,7 @@ import {
   SECURE_SECRET_LEASE_KINDS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
   SECURE_SECRET_PROVIDER_KINDS,
+  SECURE_SESSION_PRINCIPAL_KINDS,
   SecureSessionsContractError,
   isSecureSecretBinding,
   isSecureSecretLeaseSpec,
@@ -50,6 +51,7 @@ describe('Secure Sessions protocol', () => {
       'access_request',
       'project_default',
     ])
+    expect(SECURE_SESSION_PRINCIPAL_KINDS).toEqual(['manager', 'worker'])
 
     const provider = {
       providerId: 'provider-local',
@@ -316,6 +318,7 @@ describe('Secure Sessions protocol', () => {
       purposeSummary: 'Fetch the deployment repository',
       requestedByAgentId: 'agent-worker',
       requestedByDisplayName: 'Deployment worker',
+      workerAssignmentId: 'assignment-1',
       createdAt: now,
       expiresAt: null,
     } satisfies SecureAccessRequestSummary
@@ -324,6 +327,9 @@ describe('Secure Sessions protocol', () => {
       type: 'secure_session_snapshot',
       sessionAgentId: 'session-1',
       profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
       revision: 8,
       executionMode: 'secure',
       environmentStatus: 'ready',

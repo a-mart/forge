@@ -352,7 +352,7 @@ describe("SecureSessionStore", () => {
       ],
       requestedLeaseKind: "task",
       purposeSummary: "Deploy the reviewed release",
-      requestedByAgentId: "worker",
+      requestedByAgentId: "session",
       requestedByDisplayName: "Release worker"
     });
     expect(pending.requests[0]).toEqual(expect.objectContaining({
@@ -449,7 +449,7 @@ describe("SecureSessionStore", () => {
       requestedExposures: [{ deliveryKind: "stdin" }],
       requestedLeaseKind: "one_use",
       purposeSummary: "Authenticate the reviewed operation",
-      requestedByAgentId: "worker",
+      requestedByAgentId: "session",
       requestedByDisplayName: "Worker"
     });
     first.createLease({
@@ -643,7 +643,7 @@ describe("SecureSessionStore", () => {
       }],
       requestedLeaseKind: "task",
       purposeSummary: "Deploy",
-      requestedByAgentId: "agent",
+      requestedByAgentId: "session",
       requestedByDisplayName: "Agent"
     });
     const granted = store.createLease({
@@ -676,7 +676,7 @@ describe("SecureSessionStore", () => {
       }],
       requestedLeaseKind: "task",
       purposeSummary: "Deploy",
-      requestedByAgentId: "agent",
+      requestedByAgentId: "expired-session",
       requestedByDisplayName: "Agent",
       expiresAt: "2026-07-23T11:59:59.000Z"
     });
@@ -712,7 +712,7 @@ describe("SecureSessionStore", () => {
       }],
       requestedLeaseKind: "task",
       purposeSummary: "Deploy",
-      requestedByAgentId: "agent",
+      requestedByAgentId: "session",
       requestedByDisplayName: "Agent"
     });
 
@@ -757,6 +757,240 @@ describe("SecureSessionStore", () => {
         state: "pending"
       })]
     }));
+    database.close();
+  });
+
+  it("initializes independent team principals and rejects immutable identity drift", () => {
+    const { database, store } = createMemoryStore();
+    const manager = store.initializePrincipalState("manager", {
+      profileId: "project",
+      principalKind: "manager",
+      executionMode: "secure",
+      environmentStatus: "ready"
+    });
+    const worker = store.initializePrincipalState("worker", {
+      profileId: "project",
+      principalKind: "worker",
+      ownerManagerAgentId: "manager",
+      workerAssignmentId: null,
+      executionMode: "secure",
+      environmentStatus: "ready"
+    });
+
+    expect(manager).toEqual(expect.objectContaining({
+      principalKind: "manager",
+      ownerManagerAgentId: null,
+      workerAssignmentId: null
+    }));
+    expect(worker).toEqual(expect.objectContaining({
+      principalKind: "worker",
+      ownerManagerAgentId: "manager",
+      workerAssignmentId: null
+    }));
+    expect(store.listPrincipalStatesForManager("manager").map((state) => ({
+      sessionAgentId: state.sessionAgentId,
+      principalKind: state.principalKind
+    }))).toEqual([
+      { sessionAgentId: "manager", principalKind: "manager" },
+      { sessionAgentId: "worker", principalKind: "worker" }
+    ]);
+    expect(store.listPrincipalSnapshotsForManager("manager")).toHaveLength(2);
+
+    store.updateWorkerAssignment({
+      sessionAgentId: "worker",
+      workerAssignmentId: "assignment-1"
+    });
+    expect(store.initializePrincipalState("worker", {
+      profileId: "project",
+      principalKind: "worker",
+      ownerManagerAgentId: "manager",
+      workerAssignmentId: null
+    }).workerAssignmentId).toBe("assignment-1");
+    expect(() => store.initializePrincipalState("worker", {
+      profileId: "other-project",
+      principalKind: "worker",
+      ownerManagerAgentId: "manager",
+      workerAssignmentId: null
+    })).toThrow(/principal identity/);
+    expect(() => store.getOrCreateSessionState("worker", {
+      profileId: "project",
+      principalKind: "manager"
+    })).toThrow(/principal identity/);
+    expect(() => store.updateSessionRuntimeState({
+      sessionAgentId: "worker",
+      profileId: "other-project"
+    })).toThrow(/principal profile/);
+    database.close();
+  });
+
+  it("advances worker assignment generations without dropping task or timed authority", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    store.initializePrincipalState("manager", {
+      profileId: "project",
+      principalKind: "manager"
+    });
+    store.initializePrincipalState("worker", {
+      profileId: "project",
+      principalKind: "worker",
+      ownerManagerAgentId: "manager",
+      workerAssignmentId: "assignment-1"
+    });
+    store.createRequest({
+      requestId: "stale-request",
+      sessionAgentId: "worker",
+      workerAssignmentId: "assignment-1",
+      secretId: "secret",
+      displayAlias: "deploy-token",
+      requestedExposures: [{
+        deliveryKind: "environment",
+        targetName: "TOKEN"
+      }],
+      requestedLeaseKind: "task",
+      purposeSummary: "Deploy the reviewed release",
+      requestedByAgentId: "worker",
+      requestedByDisplayName: "Worker"
+    });
+    store.createLease({
+      leaseId: "task",
+      sessionAgentId: "worker",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      baseRevision: 1
+    });
+    store.createLease({
+      leaseId: "timed",
+      sessionAgentId: "worker",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "timed",
+      expiresAt: "2026-07-23T13:00:00.000Z",
+      baseRevision: 2
+    });
+    store.createLease({
+      leaseId: "one-use",
+      sessionAgentId: "worker",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "one_use",
+      baseRevision: 3
+    });
+
+    const advanced = store.updateWorkerAssignment({
+      sessionAgentId: "worker",
+      workerAssignmentId: "assignment-2",
+      baseRevision: 4
+    });
+    expect(advanced).toEqual(expect.objectContaining({
+      changed: true,
+      revision: 5,
+      snapshot: expect.objectContaining({
+        state: expect.objectContaining({
+          workerAssignmentId: "assignment-2"
+        })
+      })
+    }));
+    expect(advanced.snapshot.leases).toEqual([
+      expect.objectContaining({ leaseId: "task", state: "active" }),
+      expect.objectContaining({ leaseId: "timed", state: "active" }),
+      expect.objectContaining({
+        leaseId: "one-use",
+        state: "revoked",
+        revocationReason: "policy_changed"
+      })
+    ]);
+    expect(database.prepare(`
+      SELECT state FROM secure_session_request WHERE request_id = 'stale-request'
+    `).get()).toEqual({ state: "cancelled" });
+    expect(() => store.createRequest({
+      requestId: "old-assignment-request",
+      sessionAgentId: "worker",
+      workerAssignmentId: "assignment-1",
+      displayAlias: "deploy-token",
+      requestedExposures: [{ deliveryKind: "stdin" }],
+      requestedLeaseKind: "task",
+      purposeSummary: "Use a stale assignment",
+      requestedByAgentId: "worker",
+      requestedByDisplayName: "Worker"
+    })).toThrow(/request worker assignment/);
+    expect(store.createRequest({
+      requestId: "current-request",
+      sessionAgentId: "worker",
+      workerAssignmentId: "assignment-2",
+      displayAlias: "deploy-token",
+      requestedExposures: [{ deliveryKind: "stdin" }],
+      requestedLeaseKind: "task",
+      purposeSummary: "Use the current assignment",
+      requestedByAgentId: "worker",
+      requestedByDisplayName: "Worker"
+    }).requests).toEqual([
+      expect.objectContaining({
+        requestId: "current-request",
+        workerAssignmentId: "assignment-2"
+      })
+    ]);
+    expect(store.listAudit("worker")).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "worker_assignment_updated",
+        principalKind: "worker",
+        ownerManagerAgentId: "manager",
+        workerAssignmentId: "assignment-2"
+      })
+    ]));
+    database.close();
+  });
+
+  it("materializes project defaults as distinct principal-owned leases", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    store.putProjectDefault({ profileId: "project", secretId: "secret" });
+    store.initializePrincipalState("manager", {
+      profileId: "project",
+      principalKind: "manager"
+    });
+    for (const workerId of ["worker-a", "worker-b"]) {
+      store.initializePrincipalState(workerId, {
+        profileId: "project",
+        principalKind: "worker",
+        ownerManagerAgentId: "manager",
+        workerAssignmentId: null
+      });
+    }
+    for (const [sessionAgentId, leaseId] of [
+      ["manager", "manager-default"],
+      ["worker-a", "worker-a-default"],
+      ["worker-b", "worker-b-default"]
+    ] as const) {
+      store.createLease({
+        leaseId,
+        sessionAgentId,
+        secretId: "secret",
+        bindingIds: ["binding"],
+        leaseKind: "task",
+        grantSource: "project_default",
+        baseRevision: 0
+      });
+    }
+
+    expect(store.listActiveProjectDefaultLeases("project").map((lease) => ({
+      leaseId: lease.leaseId,
+      sessionAgentId: lease.sessionAgentId
+    }))).toEqual([
+      { leaseId: "manager-default", sessionAgentId: "manager" },
+      { leaseId: "worker-a-default", sessionAgentId: "worker-a" },
+      { leaseId: "worker-b-default", sessionAgentId: "worker-b" }
+    ]);
+    expect(() => store.createLease({
+      leaseId: "duplicate-manager-default",
+      sessionAgentId: "manager",
+      secretId: "secret",
+      bindingIds: ["binding"],
+      leaseKind: "task",
+      grantSource: "project_default",
+      baseRevision: 1
+    })).toThrow(/UNIQUE constraint/);
+    expect(store.getSnapshot("manager").state.revision).toBe(1);
     database.close();
   });
 

@@ -48,6 +48,9 @@ export const SECURE_SESSION_LEASE_GRANT_SOURCES = [
 export type SecureSessionLeaseGrantSource =
   (typeof SECURE_SESSION_LEASE_GRANT_SOURCES)[number];
 
+export const SECURE_SESSION_PRINCIPAL_KINDS = ["manager", "worker"] as const;
+export type SecureSessionPrincipalKind = (typeof SECURE_SESSION_PRINCIPAL_KINDS)[number];
+
 export const SECURE_SESSION_LEASE_STATES = ["active", "consumed", "revoked", "expired"] as const;
 export type SecureSessionLeaseState = (typeof SECURE_SESSION_LEASE_STATES)[number];
 
@@ -195,6 +198,9 @@ export interface SecureSessionState {
   revision: number;
   forkedFromSessionAgentId: string | null;
   profileId: string;
+  principalKind: SecureSessionPrincipalKind;
+  ownerManagerAgentId: string | null;
+  workerAssignmentId: string | null;
   executionMode: "standard" | "secure";
   environmentStatus: "stopped" | "starting" | "ready" | "degraded" | "failed";
   createdAt: string;
@@ -225,6 +231,7 @@ export interface SecureSessionLease {
 export interface SecureSessionRequest {
   requestId: string;
   sessionAgentId: string;
+  workerAssignmentId: string | null;
   secretId: string | null;
   displayAlias: string;
   requestedExposures: SecureSessionRequestedExposure[];
@@ -328,6 +335,7 @@ export interface CompleteSecureSessionLeaseUseInput {
 export interface CreateSecureSessionRequestInput {
   requestId: string;
   sessionAgentId: string;
+  workerAssignmentId?: string | null;
   secretId?: string | null;
   displayAlias: string;
   requestedExposures: readonly SecureSessionExposureDescriptor[];
@@ -362,6 +370,9 @@ export interface SecureSessionAuditRecord {
   eventType: string;
   sessionAgentId: string | null;
   profileId: string | null;
+  principalKind: SecureSessionPrincipalKind | null;
+  ownerManagerAgentId: string | null;
+  workerAssignmentId: string | null;
   providerId: string | null;
   secretId: string | null;
   bindingId: string | null;
@@ -397,9 +408,30 @@ export interface PutSecureSessionSecretWithBindingsInput {
 
 export interface InitializeSecureSessionStateInput {
   profileId: string;
+  principalKind?: SecureSessionPrincipalKind;
+  ownerManagerAgentId?: string | null;
+  workerAssignmentId?: string | null;
   executionMode?: SecureSessionState["executionMode"];
   environmentStatus?: SecureSessionState["environmentStatus"];
 }
+
+type InitializeSecureSessionPrincipalRuntimeInput = {
+  profileId: string;
+  executionMode?: SecureSessionState["executionMode"];
+  environmentStatus?: SecureSessionState["environmentStatus"];
+};
+
+export type InitializeSecureSessionPrincipalInput =
+  | (InitializeSecureSessionPrincipalRuntimeInput & {
+      principalKind: "manager";
+      ownerManagerAgentId?: null;
+      workerAssignmentId?: null;
+    })
+  | (InitializeSecureSessionPrincipalRuntimeInput & {
+      principalKind: "worker";
+      ownerManagerAgentId: string;
+      workerAssignmentId?: string | null;
+    });
 
 export interface UpdateSecureSessionRuntimeStateInput {
   sessionAgentId: string;
@@ -407,4 +439,10 @@ export interface UpdateSecureSessionRuntimeStateInput {
   profileId?: string;
   executionMode?: SecureSessionState["executionMode"];
   environmentStatus?: SecureSessionState["environmentStatus"];
+}
+
+export interface UpdateSecureSessionWorkerAssignmentInput {
+  sessionAgentId: string;
+  workerAssignmentId: string;
+  baseRevision?: number;
 }
