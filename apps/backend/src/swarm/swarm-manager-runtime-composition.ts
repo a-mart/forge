@@ -991,7 +991,6 @@ export class SwarmManagerRuntimeComposition {
     if (!this.goalCoordinator) throw new Error("Runtime composition planning has not been attached");
     return this.goalCoordinator;
   }
-
   private requireServices(): SwarmManagerRuntimeBoundServices {
     if (!this.services) throw new Error("Runtime composition services are not bound");
     return this.services;
