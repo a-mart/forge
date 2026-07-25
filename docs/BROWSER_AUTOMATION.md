@@ -7,7 +7,7 @@ Forge has three separate browser automation paths. **Managed Browser** and **Ext
 | Path | What it controls | Identity and UI | Current limits | Use it when |
 |---|---|---|---|---|
 | **Managed Browser** | Forge-owned Electron `WebContentsView` tabs | Persistent profile-scoped Electron partition; tabs render in the Browser workspace and can dock or pop out | Requires Forge Desktop | You want a browser Forge owns, physical viewport controls, and session recordings. |
-| **External Chrome (Local Beta)** | Explicitly attached tabs in a Chrome profile that loaded Forge's unpacked extension | Tabs stay in Chrome; Forge Desktop shows profile aliases, candidates, attachment state, and agent operations | Chrome 125+; no physical resize, recording, managed download workflow, standalone capture/export controls, or dock/pop-out | You need Forge to work in selected tabs with an existing Chrome login or site state. |
+| **External Chrome (Local Beta)** | The session's bounded leased tab set in a Chrome profile that loaded Forge's unpacked extension | Tabs stay in Chrome; Forge Desktop shows profile aliases, candidates, attachment state, and agent operations | Chrome 125+; no physical resize, recordings, managed download workflow, standalone screenshot export controls, or dock/pop-out | You need Forge to work with an existing Chrome login or site state. |
 | **`agent-browser` Skill** | The separately installed Vercel Labs `agent-browser` CLI and its browser sessions | External CLI lifecycle; no Forge Browser workspace or browser-state contract | Depends on the Skill and CLI prerequisites | You want the existing command-line browsing/extraction workflow. |
 
 Selecting **Browser** in the Desktop activity rail opens the browser workspace for the selected local manager. Use **Browser host** to choose Managed Browser or a connected External Chrome host. Host selection is a per-session preference and changes which host subsequent browser operations target. **Switching the selected host does not detach External Chrome tabs.**
@@ -70,13 +70,15 @@ Forge does not open Chrome settings pages, discover profiles, or install the ext
 
 ### Permissions and privacy
 
-The V1 manifest intentionally retains a broad authority envelope: `<all_urls>` plus `alarms`, `bookmarks`, `debugger`, `downloads`, `favicon`, `history`, `nativeMessaging`, `notifications`, `scripting`, `sessions`, `sidePanel`, `storage`, `tabGroups`, `tabs`, `topSites`, and `webNavigation`, with optional `downloads.open`. This is declared Chrome authority, not a claim that every API is active. Current Local Beta code does not read bookmarks, history, or top sites and does not use managed download events/artifacts or `downloads.open`; those APIs remain dormant.
+The declared V1 permission set intentionally includes `<all_urls>` plus `alarms`, `bookmarks`, `debugger`, `downloads`, `favicon`, `history`, `nativeMessaging`, `notifications`, `scripting`, `sessions`, `sidePanel`, `storage`, `tabGroups`, `tabs`, `topSites`, and `webNavigation`, with optional `downloads.open`. This is declared Chrome authority, not a claim that every API is active. Current Local Beta code does not read bookmarks, history, or top sites and does not call `downloads.open`; those APIs remain dormant. The startup shell registers download-change notifications, but the payload currently ignores them: Forge provides no managed download workflow, artifact capture or persistence, or download-open behavior.
 
 Forge does **not** copy Chrome credentials, Chrome profile databases, official Chrome profile names, bookmarks, history, or top sites. Loading the extension still grants the declared authority to that extension. Once you attach a page, browser snapshots can expose its visible content, accessibility data, bounded console/network/action diagnostics, URL/title, and a bounded PNG, and operations can click, type, navigate, wait, or execute arbitrary JavaScript. Authenticated page actions can therefore act with that Chrome profile's site identity. The model provider may receive attached-page data needed for the active turn.
 
 Candidate tab titles and origins are listed locally before attachment. External Chrome URLs/titles are removed from persisted session browser state and bounded audit summaries, but that persistence minimization does not retract data already used in a live model turn. Protect the Forge data directory, Desktop account, Chrome profile, and any backups.
 
 ### Attach tabs
+
+External Chrome operates only the session's bounded leased tab set: tabs you confirm, tabs Forge creates through `open` in the selected or sole connected profile, and qualifying grouped child tabs when you explicitly enable that policy.
 
 1. Select the local manager and open **Browser**.
 2. Choose **External Chrome** from **Browser host**. The option becomes available only after a compatible extension instance connects.
@@ -89,7 +91,7 @@ The extension side panel can create a Forge-named grouped tab or a local pending
 
 ### Leases, human control, and detach
 
-A Chrome extension instance grants one compare-and-set session lease over the explicit tab set. Another Forge attachment cannot silently reuse that instance or tab scope. Human input interrupts agent control, and opening DevTools or another debugger can make Forge lose debugger ownership.
+A Chrome extension instance grants one compare-and-set session lease over that bounded tab set. Another Forge attachment cannot silently reuse that instance or tab scope. Human input interrupts agent control, and opening DevTools or another debugger can make Forge lose debugger ownership.
 
 External Chrome leases persist until the turn disposition, **Detach now**, a session lifecycle release, bounded expiry, or connection/debugger loss. A turn can retain a bounded handoff lease for a later follow-up; it is not indefinite. Stop, archive, delete, explicit detach, and host replacement run the guarded lifecycle release path. Forge keeps exact durable release authority so an interrupted release can be reconciled after restart.
 
@@ -102,9 +104,9 @@ External Chrome supports status, grouped create/open, navigation, snapshot, clic
 External Chrome does not support:
 
 - physical viewport resize or device presets;
-- recording;
-- managed download events, download artifacts, or opening downloaded files;
-- standalone physical screenshot capture/export controls; or
+- recordings;
+- managed download handling, download artifact capture or persistence, or opening downloaded files;
+- a standalone screenshot toolbar/export workflow (`snapshot` can still return bounded transient screenshot data); or
 - the Managed Browser dock/pop-out workspace.
 
 Recordings and completed browser recording artifacts are Managed Browser-only. External tabs remain rendered and controlled in Chrome, not in an Electron tab view.

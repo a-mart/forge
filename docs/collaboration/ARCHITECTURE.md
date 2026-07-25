@@ -30,7 +30,7 @@ Core invariants:
 | Auth | No normal browser app session; provider credentials are separate | Collaboration Better Auth member/admin session | Same collaboration session |
 | Protocol | Builder HTTP/WS | Reviewed Builder HTTP/WS allowlists plus builder protocol handshake | `collab_*` protocol and collaboration routes |
 | Files/Git/terminals | Local active origin | Selected remote active origin, subject to policy | Not inferred from route presence |
-| Desktop browser hosts | Managed Browser webviews or explicitly attached External Chrome tabs for the selected normal local manager | Neither local host is forwarded; normal remote managers may expose tools but get `unavailable-host` without a host connected directly to that backend | No tools or host bridge |
+| Desktop browser hosts | Managed Browser webviews or leased External Chrome tabs for the selected normal local manager | Neither local host is forwarded; normal remote managers may expose tools but get `unavailable-host` without a host connected directly to that backend | No tools or host bridge |
 | Non-chat Settings/Stats/Archive/onboarding/Cortex | Local | Still local | Separate Collaboration settings where designed |
 | Specialists/skills | Builder target space and normal loading | Builder target space on the remote server | Collaboration target space and selected global state |
 | Data movement | Local | No clone or sync; state and execution remain remote | Channel history/content remain remote |

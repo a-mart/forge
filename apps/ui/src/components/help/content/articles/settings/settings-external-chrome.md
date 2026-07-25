@@ -6,7 +6,7 @@ It requires Chrome 125+. Chrome shows normal Developer Mode/unpacked warnings, a
 
 The V1 extension declares access to all websites and powerful Chrome permissions, including debugger, bookmarks, history, downloads, top sites, tabs, sessions, navigation, scripting, storage, tab groups, notifications, side panel, and native messaging, plus optional download-open authority.
 
-That is a broad declared authority envelope, not a list of active features. Current Local Beta code does not read bookmarks, history, or top sites and does not use managed download events/artifacts or download-open. Those APIs remain dormant.
+That is a broad declared V1 permission set, not a list of active features. Current Local Beta code does not read bookmarks, history, or top sites or open downloaded files. The startup shell registers download-change notifications, but the payload ignores them: Forge provides no managed download workflow or saved download artifacts.
 
 Forge does not copy Chrome credentials, Chrome profile databases, official Chrome profile names, bookmarks, history, or top sites. Once you attach a page, snapshots and operations can expose its content, accessibility data, bounded console/network/action diagnostics, URL/title, a bounded PNG, authenticated actions, and arbitrary JavaScript to the active turn.
 
@@ -33,9 +33,11 @@ Compatible connected profiles auto-reload after a Forge update or rollback. Use 
 
 Open **Browser**, choose **External Chrome**, select a connected extension instance, and review candidate tabs. Editable profile aliases are Forge-local display state, not Chrome's official profile names. Restricted pages, debugger conflicts, and tabs leased elsewhere cannot be selected.
 
-A confirmed attachment grants one session lease over the explicit tab set. Leases persist until turn disposition, **Detach now**, lifecycle release, bounded expiry, or loss. Switching the selected Browser host is only a preference change and does not detach. DevTools or trusted human input interrupts agent control. Detach leaves tabs open.
+External Chrome operates only the session's bounded leased tab set: tabs you confirm, tabs Forge creates through `open` in the selected or sole connected profile, and qualifying grouped child tabs when you explicitly enable that policy.
 
-External Chrome supports status, grouped create/open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. It does not support physical resize, recording, managed download events/artifacts/open, standalone physical capture/export controls, or dock/pop-out. Browser recordings are Managed Browser-only.
+A confirmed attachment grants one session lease over that bounded tab set. Leases persist until turn disposition, **Detach now**, lifecycle release, bounded expiry, or loss. Switching the selected Browser host is only a preference change and does not detach. DevTools or trusted human input interrupts agent control. Detach leaves tabs open.
+
+External Chrome supports status, grouped create/open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. It does not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or dock/pop-out. Snapshot can return transient screenshot data, but there is no standalone screenshot toolbar/export workflow. Browser recordings are Managed Browser-only.
 
 ## Status, repair, and ownership
 

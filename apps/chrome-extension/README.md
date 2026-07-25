@@ -18,9 +18,9 @@ Build output is `dist/extension/` plus `dist/package-manifest.json`. Inputs and 
 
 ## Permission and privacy boundary
 
-The V1 manifest intentionally keeps a broad authority envelope: `<all_urls>` plus `alarms`, `bookmarks`, `debugger`, `downloads`, `favicon`, `history`, `nativeMessaging`, `notifications`, `scripting`, `sessions`, `sidePanel`, `storage`, `tabGroups`, `tabs`, `topSites`, and `webNavigation`, with optional `downloads.open`.
+The declared V1 permission set is broad: `<all_urls>` plus `alarms`, `bookmarks`, `debugger`, `downloads`, `favicon`, `history`, `nativeMessaging`, `notifications`, `scripting`, `sessions`, `sidePanel`, `storage`, `tabGroups`, `tabs`, `topSites`, and `webNavigation`, with optional `downloads.open`.
 
-That ledger describes declared Chrome authority, not current API use. Current Local Beta code does not read bookmarks, history, or top sites and does not implement managed download events/artifacts or `downloads.open`. Do not narrow the manifest independently of the accepted compatibility-envelope decision, and do not describe dormant permissions as active behavior.
+That ledger describes declared Chrome authority, not current API use. Current Local Beta code does not read bookmarks, history, or top sites and does not call `downloads.open`; those APIs remain dormant. The startup shell registers download-change notifications, but the payload currently ignores them: Forge provides no managed download workflow, artifact capture or persistence, or download-open behavior. Keep the declared V1 permission set aligned across the manifest, docs, and tests; do not describe a declared permission as active end-user behavior.
 
 The extension creates a random local instance ID in extension storage. It does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. The optional Forge-local alias is extension/renderer display state, not a Chrome profile name.
 
@@ -30,9 +30,9 @@ A dedicated Chrome profile is strongly recommended because an attached page can 
 
 The native port connects through `com.forge.external_chrome` to Forge Desktop's authenticated current-user relay. The side panel and Desktop Browser workspace list bounded local candidates. Restricted/internal pages, tabs held by another debugger or DevTools, and tabs already leased elsewhere are rejected.
 
-An extension instance owns at most one compare-and-set session lease. The lease covers only the confirmed roots plus qualifying grouped child tabs when the user explicitly enables that policy. Trusted human input interrupts agent control. A debugger detach, connection loss, bounded expiry, turn disposition, explicit detach, or session lifecycle release revokes or reconciles authority. Detach leaves user tabs open.
+External Chrome operates only the session's bounded leased tab set: tabs you confirm, tabs Forge creates through `open` in the selected or sole connected profile, and qualifying grouped child tabs when you explicitly enable that policy. An extension instance owns at most one compare-and-set session lease over that set. Trusted human input interrupts agent control. A debugger detach, connection loss, bounded expiry, turn disposition, explicit detach, or session lifecycle release revokes or reconciles authority. Detach leaves user tabs open.
 
-Supported operations are status, grouped create/open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. External Chrome does not support physical resize, recording, managed download events/artifacts/open, standalone physical capture/export controls, or the Managed Browser dock/pop-out.
+Supported operations are status, grouped create/open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. External Chrome does not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or the Managed Browser dock/pop-out. Snapshot can still return bounded transient screenshot data, but there is no standalone screenshot toolbar/export workflow.
 
 Compatible connected profiles can accept an authenticated local payload reload after Desktop update or rollback. Manual Chrome reload is fallback-only when Forge Settings reports **Manual extension reload required**.
 
@@ -48,7 +48,7 @@ pnpm --filter @forge/chrome-extension test
 pnpm --filter @forge/chrome-extension build
 ```
 
-The focused tests cover pinned identity, the exact manifest ledger, dormant-API assertions, deterministic packaging, selector verification, native RPC bounds, candidate/lease compare-and-set rules, debugger routing, human interruption, navigation, snapshots, and interactions.
+The focused tests cover pinned identity, the exact manifest ledger, declared-API use assertions, deterministic packaging, selector verification, native RPC bounds, candidate/lease compare-and-set rules, debugger routing, human interruption, navigation, snapshots, and interactions.
 
 An opt-in isolated fixture is available:
 
