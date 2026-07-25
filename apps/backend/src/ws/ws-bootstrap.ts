@@ -2,7 +2,6 @@ import { performance } from "node:perf_hooks";
 import {
   isSystemProfile,
   type BuilderTimelineChannelView,
-  type SecureSessionSnapshot,
   type ServerEvent,
   type TerminalDescriptor,
 } from "@forge/protocol";
@@ -32,6 +31,33 @@ import { projectConversationEntryForSubscriptionWire } from "./conversation-subs
 export const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
 const MAX_SUBSCRIBE_MESSAGE_COUNT = 2000;
 const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
+
+type SecureSessionBootstrapManager = Pick<
+  SwarmManager,
+  "getAgent" | "getConfig"
+> & Partial<Pick<
+  SwarmManager,
+  "getSecureSessionSnapshot" | "listSecureSessionTeamSnapshots"
+>>;
+
+function supportsSecureSessionBootstrap(
+  candidate: unknown,
+): candidate is SecureSessionBootstrapManager {
+  if (typeof candidate !== "object" || candidate === null) {
+    return false;
+  }
+
+  return "getAgent" in candidate
+    && typeof candidate.getAgent === "function"
+    && "getConfig" in candidate
+    && typeof candidate.getConfig === "function"
+    && (
+      ("getSecureSessionSnapshot" in candidate
+        && typeof candidate.getSecureSessionSnapshot === "function")
+      || ("listSecureSessionTeamSnapshots" in candidate
+        && typeof candidate.listSecureSessionTeamSnapshots === "function")
+    );
+}
 
 export type BootstrapConversationHistory = ReturnType<SwarmManager["getConversationHistory"]>;
 export interface SubscriptionBootstrapSendResult {
@@ -213,18 +239,14 @@ export async function sendSubscriptionBootstrap(options: {
     await sendMeasured("remoteUpdateAwareness", remoteUpdateAwarenessEvent);
   }
 
-  const secureSnapshotProvider = swarmManager as unknown as {
-    getSecureSessionSnapshot?: (
-      sessionAgentId: string,
-    ) => SecureSessionSnapshot | Promise<SecureSessionSnapshot>;
-    listSecureSessionTeamSnapshots?: (
-      managerAgentId: string,
-    ) => SecureSessionSnapshot[] | Promise<SecureSessionSnapshot[]>;
-  };
-  const secureTarget = swarmManager.getAgent(targetAgentId);
+  const secureSnapshotProvider = supportsSecureSessionBootstrap(swarmManager)
+    ? swarmManager
+    : null;
+  const secureTarget = secureSnapshotProvider?.getAgent(targetAgentId);
   if (
-    secureTarget
-    && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget)
+    secureSnapshotProvider
+    && secureTarget
+    && isBuilderRuntimeTarget(secureSnapshotProvider.getConfig().runtimeTarget)
   ) {
     try {
       const snapshots = secureTarget.role === "manager"
