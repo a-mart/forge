@@ -59,6 +59,7 @@ import { activateRemoteUpdateAwarenessProject } from '@/components/settings/remo
 import { getActiveLocalRemoteUpdateSnapshot } from '@/components/index-page/remote-update-awareness'
 import { createLocalBuilderSidebarOrderApi } from '@/lib/builder-sidebar-order-api'
 import {
+  applySecureSessionProjectDefaults,
   denySecureAccessRequest,
   fetchSecureSessionCatalog,
   fetchSecureSessionSnapshot,
@@ -70,6 +71,7 @@ import {
   resolveSecureSecretsForProfile,
   secureSessionUiErrorMessage,
   SecureSessionUiError,
+  shouldRefreshAfterProjectDefaultsApplyError,
   startSecureSession,
   stopSecureSession,
   toSecureSecretOptions,
@@ -1006,6 +1008,74 @@ export function BuilderSurface({
     secureSessionSnapshot?.revision,
   ])
 
+  const handleApplySecureProjectDefaults = useCallback(async (
+    managerAgentId: string,
+  ) => {
+    const apiClient = httpClientRef.current
+    const client = clientRef.current
+    const managerSnapshot =
+      client?.getState().secureSessionSnapshots[managerAgentId] ?? null
+    if (
+      !apiClient
+      || !client
+      || !managerSnapshot
+      || managerSnapshot.principalKind !== 'manager'
+      || isRemoteOriginActive
+    ) return false
+
+    try {
+      applySecureMutationResult(client, await applySecureSessionProjectDefaults(
+        apiClient,
+        managerAgentId,
+        managerSnapshot.revision,
+      ))
+      return true
+    } catch (error) {
+      if (shouldRefreshAfterProjectDefaultsApplyError(error)) {
+        try {
+          const refreshed = await fetchSecureSessionSnapshot(
+            apiClient,
+            managerAgentId,
+          )
+          applySecureMutationResult(client, refreshed)
+          return false
+        } catch {
+          // Report the original fixed failure when exact reconciliation is unavailable.
+        }
+      }
+      reportSecureMutationError(client, managerAgentId, error)
+      return false
+    }
+  }, [
+    applySecureMutationResult,
+    clientRef,
+    httpClientRef,
+    isRemoteOriginActive,
+    reportSecureMutationError,
+  ])
+
+  const handleReviewProjectSecrets = useCallback(() => {
+    const profileId = secureSessionSnapshot?.profileId
+    if (!isActiveManager || isRemoteOriginActive || !profileId) return
+    panels.fileEditorCoordinator.requestFileEditorTransition(
+      { type: 'navigate-route', nextView: 'settings' },
+      () => {
+        navigateToRoute({
+          view: 'settings',
+          surface: 'builder',
+          settingsTab: 'secrets',
+          settingsProfileId: profileId,
+        })
+      },
+    )
+  }, [
+    isActiveManager,
+    isRemoteOriginActive,
+    navigateToRoute,
+    panels.fileEditorCoordinator,
+    secureSessionSnapshot?.profileId,
+  ])
+
   const handleGrantSecureSession = useCallback(async (
     sessionAgentId: string,
     grant: SecureGrantInput,
@@ -1311,6 +1381,8 @@ export function BuilderSurface({
         : {
             onStart: handleStartSecureSession,
             onGrant: handleGrantSecureSessions,
+            onApplyProjectDefaults: handleApplySecureProjectDefaults,
+            onReviewProjectSecrets: handleReviewProjectSecrets,
             onRevoke: handleRevokeSecureSession,
           }),
     }
@@ -1318,7 +1390,9 @@ export function BuilderSurface({
     activeAgentId,
     activeOriginId,
     handleGrantSecureSessions,
+    handleApplySecureProjectDefaults,
     handleRevokeSecureSession,
+    handleReviewProjectSecrets,
     handleStartSecureSession,
     isActiveManager,
     isRemoteOriginActive,

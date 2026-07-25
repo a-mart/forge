@@ -32,6 +32,7 @@ import { SECURE_OUTPUT_QUARANTINE, SecureValueGuard } from "./redaction/secure-v
 import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
 import type {
   FulfillSecureAccessRequestInput,
+  ApplySecureSessionProjectDefaultsInput,
   ImportBitwardenSecureSecretInput,
   ConnectBitwardenSecureSecretProviderInput,
   CreateLocalSecureSecretInput,
@@ -1524,6 +1525,44 @@ export class SecureSessionsService {
     }
   }
 
+  async applySecureSessionProjectDefaults(
+    sessionAgentId: string,
+    input: ApplySecureSessionProjectDefaultsInput,
+  ): Promise<PublicSecureSessionSnapshot> {
+    const manager = this.requireTeamManager(sessionAgentId);
+    if (!this.isTeamSecureMode(manager.agentId)) {
+      throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+    }
+    return await this.withAuthorityMutation(async () => {
+      const store = await this.store();
+      const managerSnapshot = store.getSnapshot(manager.agentId);
+      requireRevision(managerSnapshot.state.revision, input.baseRevision);
+      const principals = this.listApplicableProjectDefaultPrincipals(
+        store,
+        manager,
+      );
+      return await this.withSessionMutations(
+        principals.map(({ descriptor }) => descriptor.agentId),
+        async () => {
+          requireRevision(
+            store.getSnapshot(manager.agentId).state.revision,
+            input.baseRevision,
+          );
+          for (const principal of principals) {
+            await this.applyProjectDefaultsToPrincipalUnlocked(
+              store,
+              principal,
+            );
+          }
+          return this.toPublicSnapshot(
+            store,
+            store.getSnapshot(manager.agentId),
+          );
+        },
+      );
+    });
+  }
+
   async stopSecureSession(
     sessionAgentId: string,
     input: StopSecureSessionInput,
@@ -2780,6 +2819,104 @@ export class SecureSessionsService {
     }
   }
 
+  private async applyProjectDefaultsToPrincipalUnlocked(
+    store: SecureSessionStore,
+    principal: SecurePrincipal,
+  ): Promise<PublicSecureSessionSnapshot> {
+    const sessionAgentId = principal.descriptor.agentId;
+    const before = store.getSnapshot(sessionAgentId);
+    assertPrincipalOwnerMatches(principal, before.state);
+    const active = this.activeSessions.get(sessionAgentId);
+    if (
+      before.state.executionMode !== "secure"
+      || (
+        before.state.environmentStatus === "ready"
+        && (!active || active.closed)
+      )
+      || (
+        before.state.environmentStatus === "stopped"
+        && active !== undefined
+      )
+      || !["ready", "stopped"].includes(before.state.environmentStatus)
+    ) {
+      throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+    }
+
+    const prepared = await this.prepareProjectDefaultsForStart(
+      store,
+      principal.descriptor,
+    );
+    let materialsTransferred = false;
+    let environmentRebuilt = false;
+    let failedClosed = false;
+    try {
+      if (prepared.length > 0 && active) {
+        await this.rebuildEnvironmentForNewLease(
+          store,
+          principal.descriptor,
+        );
+        environmentRebuilt = true;
+      }
+
+      let storedSnapshot = store.getSnapshot(sessionAgentId);
+      if (prepared.length > 0) {
+        const created = store.createLeases({
+          sessionAgentId,
+          baseRevision: storedSnapshot.state.revision,
+          grants: prepared.map((item) => ({
+            leaseId: item.leaseId,
+            secretId: item.secretId,
+            bindingIds: item.bindingIds,
+            leaseKind: "task",
+            grantSource: "project_default",
+            expiresAt: null,
+          })),
+        });
+        for (const item of prepared) {
+          this.cachedLeaseSecrets.set(item.leaseId, item.material);
+          this.cachedLeaseOwners.set(item.leaseId, sessionAgentId);
+          this.setProjectDefaultStatus(sessionAgentId, {
+            secretId: item.secretId,
+            displayAlias: item.displayAlias,
+            state: "active",
+            statusCode: "ok",
+          });
+        }
+        materialsTransferred = true;
+        storedSnapshot = created.snapshot;
+        if (active) {
+          try {
+            await this.ensureGuardForActiveLeases(store, sessionAgentId);
+          } catch (error) {
+            failedClosed = true;
+            await this.failClosedSession(store, principal.descriptor);
+            throw error;
+          }
+        }
+        this.scheduleLeaseExpiry(store, sessionAgentId);
+      }
+
+      const snapshot = this.toPublicSnapshot(store, storedSnapshot);
+      this.options.emitSnapshot(toSnapshotEvent(snapshot));
+      return snapshot;
+    } catch (error) {
+      if (environmentRebuilt && !failedClosed) {
+        await this.failClosedSession(store, principal.descriptor);
+        failedClosed = true;
+      }
+      if (!failedClosed) {
+        this.options.emitSnapshot(toSnapshotEvent(
+          this.toPublicSnapshot(store, store.getSnapshot(sessionAgentId)),
+        ));
+      }
+      throw this.publicError(error);
+    } finally {
+      if (!materialsTransferred) {
+        for (const item of prepared) item.material.release();
+      }
+    }
+  }
+
   private setProjectDefaultStatus(
     sessionAgentId: string,
     status: SecureSessionProjectDefaultStatus,
@@ -3523,6 +3660,81 @@ export class SecureSessionsService {
         principalKind: "worker",
         workerAssignmentId,
       });
+    }
+    return principals;
+  }
+
+  private listApplicableProjectDefaultPrincipals(
+    store: SecureSessionStore,
+    manager: AgentDescriptor,
+  ): SecurePrincipal[] {
+    const principals: SecurePrincipal[] = [];
+    for (const state of store.listPrincipalStatesForManager(manager.agentId)) {
+      if (state.executionMode !== "secure") continue;
+      if (state.sessionAgentId === manager.agentId) {
+        const active = this.activeSessions.get(manager.agentId);
+        if (
+          state.principalKind !== "manager"
+          || state.environmentStatus !== "ready"
+          || !active
+          || active.closed
+        ) {
+          throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+        }
+        principals.push({
+          descriptor: manager,
+          manager,
+          profileId: requireProfileId(manager),
+          principalKind: "manager",
+          workerAssignmentId: null,
+        });
+        continue;
+      }
+
+      const descriptor = this.options.getDescriptor(state.sessionAgentId);
+      if (
+        !descriptor
+        || !this.isEligibleSecureWorker(descriptor)
+        || state.principalKind !== "worker"
+        || state.ownerManagerAgentId !== manager.agentId
+        || state.profileId !== manager.profileId
+      ) {
+        continue;
+      }
+      const active = this.activeSessions.get(descriptor.agentId);
+      if (state.environmentStatus === "ready") {
+        if (
+          !active
+          || active.closed
+          || state.workerAssignmentId === null
+          || active.task.taskId !== workerTaskId(
+            descriptor.agentId,
+            state.workerAssignmentId,
+          )
+          || descriptorWorkerAssignmentId(descriptor)
+            !== state.workerAssignmentId
+        ) {
+          throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+        }
+      } else if (
+        state.environmentStatus !== "stopped"
+        || active
+      ) {
+        continue;
+      }
+      principals.push({
+        descriptor,
+        manager,
+        profileId: requireProfileId(manager),
+        principalKind: "worker",
+        workerAssignmentId: state.workerAssignmentId,
+      });
+    }
+    if (
+      principals.length === 0
+      || principals[0]?.descriptor.agentId !== manager.agentId
+    ) {
+      throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
     }
     return principals;
   }

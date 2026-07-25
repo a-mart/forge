@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SecureAccessRequestSummary, SecureSessionSnapshot } from '@forge/protocol'
 import {
+  applySecureSessionProjectDefaults,
   fetchSecureSessionSnapshot,
   fulfillSecureAccessRequestPrivately,
   grantSecureSessionLease,
@@ -11,6 +12,7 @@ import {
   resolveSecureSecretsForProfile,
   secureSessionUiErrorMessage,
   SecureSessionUiError,
+  shouldRefreshAfterProjectDefaultsApplyError,
   toProtocolBindings,
   toSecureSessionSnapshotView,
 } from './secure-sessions-api'
@@ -71,6 +73,24 @@ describe('Secure Sessions API', () => {
     )).toBe('This project already has the maximum number of automatic secrets.')
   })
 
+  it('refreshes exact state after stale or ambiguous project-default results', () => {
+    expect(shouldRefreshAfterProjectDefaultsApplyError(
+      new SecureSessionUiError('SECURE_STALE_REVISION'),
+    )).toBe(true)
+    expect(shouldRefreshAfterProjectDefaultsApplyError(
+      new SecureSessionUiError('SECURE_SOURCE_UNAVAILABLE'),
+    )).toBe(true)
+    expect(shouldRefreshAfterProjectDefaultsApplyError(
+      new SecureSessionUiError('SECURE_OPERATION_FAILED'),
+    )).toBe(true)
+    expect(shouldRefreshAfterProjectDefaultsApplyError(
+      new SecureSessionUiError('SECURE_REQUEST_INVALID'),
+    )).toBe(false)
+    expect(shouldRefreshAfterProjectDefaultsApplyError(
+      new TypeError('offline'),
+    )).toBe(false)
+  })
+
   it('uses no-store for snapshot reads', async () => {
     const fetch = vi.fn(async (_path: string, _init?: RequestInit) =>
       new Response(JSON.stringify(snapshot()), { status: 200 }))
@@ -80,6 +100,27 @@ describe('Secure Sessions API', () => {
       '/api/secure-sessions/manager%2Fone',
       expect.objectContaining({ cache: 'no-store' }),
     )
+  })
+
+  it('applies project defaults to the exact manager revision', async () => {
+    const fetch = vi.fn(async (_path: string, _init?: RequestInit) =>
+      new Response(JSON.stringify(snapshot(5)), { status: 200 }))
+
+    await applySecureSessionProjectDefaults(
+      makeClient(fetch),
+      'manager/one',
+      4,
+    )
+
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      '/api/secure-sessions/manager%2Fone/project-defaults/apply',
+    )
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      baseRevision: 4,
+    })
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get(
+      'X-Forge-Secure-Control',
+    )).toBe('test-secure-control-token-that-is-long-enough')
   })
 
   it('maps a fixed output-quarantine state without exposing match details', () => {

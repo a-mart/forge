@@ -9,6 +9,7 @@ import type {
 } from '@/components/chat/secure-session/types'
 import { fetchSecureSecretsCatalog, type SecureSecretsCatalog } from './secure-secrets-api'
 import type {
+  ApplySecureSessionProjectDefaultsRequest,
   GrantSecureSecretLeaseRequest,
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
@@ -80,6 +81,17 @@ export function secureSessionUiErrorMessage(error: unknown): string {
     : ERROR_MESSAGES.SECURE_OPERATION_FAILED
 }
 
+export function shouldRefreshAfterProjectDefaultsApplyError(
+  error: unknown,
+): boolean {
+  return error instanceof SecureSessionUiError
+    && (
+      error.code === 'SECURE_STALE_REVISION'
+      || error.code === 'SECURE_SOURCE_UNAVAILABLE'
+      || error.code === 'SECURE_OPERATION_FAILED'
+    )
+}
+
 export function isPrivateSecureFulfillmentAvailable(): boolean {
   return getPrivateBridge() !== null
 }
@@ -120,6 +132,23 @@ export async function stopSecureSession(
     headers: jsonHeaders(),
     body: JSON.stringify({ baseRevision, stopProcesses: true }),
   })
+}
+
+export async function applySecureSessionProjectDefaults(
+  apiClient: SettingsApiClient,
+  managerAgentId: string,
+  baseRevision: number,
+): Promise<SecureSessionSnapshot> {
+  const input: ApplySecureSessionProjectDefaultsRequest = { baseRevision }
+  return requestSnapshot(
+    apiClient,
+    `${sessionPath(managerAgentId)}/project-defaults/apply`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(input),
+    },
+  )
 }
 
 export async function grantSecureSessionLease(

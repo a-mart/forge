@@ -14,6 +14,7 @@ import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
 import type { SecureOrphanRecoveryResult } from "./execution/secure-execution-backend.js";
 import type {
   ConnectBitwardenSecureSecretProviderInput,
+  ApplySecureSessionProjectDefaultsInput,
   CreateLocalSecureSecretInput,
   FulfillSecureAccessRequestInput,
   ImportBitwardenSecureSecretInput,
@@ -107,6 +108,16 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     input: StopSecureSessionInput,
   ): Promise<SecureSessionSnapshot> {
     return this.secureSessions.stopSecureSession(sessionAgentId, input);
+  }
+
+  applySecureSessionProjectDefaults(
+    sessionAgentId: string,
+    input: ApplySecureSessionProjectDefaultsInput,
+  ): Promise<SecureSessionSnapshot> {
+    return this.secureSessions.applySecureSessionProjectDefaults(
+      sessionAgentId,
+      input,
+    );
   }
 
   isTeamSecureMode(managerAgentId: string): boolean {

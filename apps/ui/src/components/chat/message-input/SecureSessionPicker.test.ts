@@ -126,8 +126,12 @@ describe('SecureSessionPicker', () => {
     expect(onRevoke).toHaveBeenCalledWith('manager-1', 'lease-1')
   })
 
-  it('summarizes project-default readiness without provider details', () => {
+  it('shows compact team project-default states and one manager apply action', async () => {
+    const onApplyProjectDefaults = vi.fn(async () => {})
+    const onReviewProjectSecrets = vi.fn()
     renderPicker(makeConfig({
+      onApplyProjectDefaults,
+      onReviewProjectSecrets,
       snapshot: {
         sessionAgentId: 'manager-1',
         principalKind: 'manager',
@@ -158,16 +162,82 @@ describe('SecureSessionPicker', () => {
         ],
         updatedAt: '2026-07-23T12:00:00.000Z',
       },
+      teamMembers: [{
+        sessionAgentId: 'worker-1',
+        displayName: 'Deploy worker',
+        snapshot: {
+          sessionAgentId: 'worker-1',
+          principalKind: 'worker',
+          ownerManagerAgentId: 'manager-1',
+          revision: 5,
+          executionMode: 'secure',
+          environmentStatus: 'ready',
+          leases: [],
+          pendingRequests: [],
+          projectDefaults: [{
+            secretId: 'secret-ready',
+            displayAlias: 'ready-secret',
+            state: 'configured',
+            statusCode: 'ok',
+          }],
+          updatedAt: '2026-07-23T12:00:00.000Z',
+        },
+      }],
     }))
 
     openPicker(/secure session ready/i)
 
-    expect(getByRole(document.body, 'generic', {
+    const defaults = getByRole(document.body, 'region', {
       name: 'Project default status',
-    }).textContent).toBe(
-      '3 project defaults · 1 ready · 1 unavailable · 1 conflict',
-    )
+    })
+    expect(defaults.textContent).toContain('ready-secretReady to apply')
+    expect(defaults.textContent).toContain('unavailable-secretUnavailable')
+    expect(defaults.textContent).toContain('conflicting-secretBinding conflict')
+    expect(getByRole(defaults, 'button', { name: 'Apply now' })).toBeTruthy()
+    expect(defaults.querySelectorAll('button').length).toBe(2)
     expect(document.body.textContent).not.toContain('provider')
+
+    flushSync(() => {
+      fireEvent.click(getByRole(defaults, 'button', { name: 'Apply now' }))
+    })
+    await vi.waitFor(() => {
+      expect(onApplyProjectDefaults).toHaveBeenCalledTimes(1)
+      expect(onApplyProjectDefaults).toHaveBeenCalledWith('manager-1')
+      expect((getByRole(defaults, 'button', {
+        name: 'Review project secrets',
+      }) as HTMLButtonElement).disabled).toBe(false)
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(defaults, 'button', {
+        name: 'Review project secrets',
+      }))
+    })
+    expect(onReviewProjectSecrets).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows an active project default without apply or review actions', () => {
+    renderPicker(makeConfig({
+      onApplyProjectDefaults: vi.fn(),
+      onReviewProjectSecrets: vi.fn(),
+      snapshot: {
+        ...makeConfig().snapshot!,
+        projectDefaults: [{
+          secretId: 'secret-active',
+          displayAlias: 'active-secret',
+          state: 'active',
+          statusCode: 'ok',
+        }],
+      },
+    }))
+
+    openPicker(/secure session ready/i)
+
+    const defaults = getByRole(document.body, 'region', {
+      name: 'Project default status',
+    })
+    expect(defaults.textContent).toContain('active-secretActive')
+    expect(defaults.querySelector('button')).toBeNull()
   })
 
   it('defaults to session-lifetime access and grants several saved secrets together', async () => {
@@ -365,6 +435,8 @@ describe('SecureSessionPicker', () => {
   it('keeps a worker view read-only while showing its own isolated grants', () => {
     const onGrant = vi.fn()
     const onRevoke = vi.fn()
+    const onApplyProjectDefaults = vi.fn()
+    const onReviewProjectSecrets = vi.fn()
     renderPicker(makeConfig({
       readOnly: true,
       snapshot: {
@@ -383,10 +455,18 @@ describe('SecureSessionPicker', () => {
           bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
         }],
         pendingRequests: [],
+        projectDefaults: [{
+          secretId: 'secret-default',
+          displayAlias: 'deploy-token',
+          state: 'configured',
+          statusCode: 'ok',
+        }],
         updatedAt: '2026-07-23T12:00:00.000Z',
       },
       onGrant,
       onRevoke,
+      onApplyProjectDefaults,
+      onReviewProjectSecrets,
     }))
 
     openPicker(/active with 1 active lease/)
@@ -401,10 +481,18 @@ describe('SecureSessionPicker', () => {
     const actionButtonLabels = Array.from(popover!.querySelectorAll('button'))
       .map((button) => button.textContent ?? '')
       .filter((label) =>
-        ['Revoke', 'Grant secrets', 'Stop processes and revoke'].includes(label))
+        [
+          'Apply now',
+          'Review project secrets',
+          'Revoke',
+          'Grant secrets',
+          'Stop processes and revoke',
+        ].includes(label))
     expect(actionButtonLabels).toEqual([])
     expect(onGrant).not.toHaveBeenCalled()
     expect(onRevoke).not.toHaveBeenCalled()
+    expect(onApplyProjectDefaults).not.toHaveBeenCalled()
+    expect(onReviewProjectSecrets).not.toHaveBeenCalled()
   })
 
   it('attributes quarantined output to the worker and stops that exact principal', () => {

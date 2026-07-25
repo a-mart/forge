@@ -1831,6 +1831,267 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("applies newly configured project defaults independently across the active secure team", async () => {
+    const harness = createHarness();
+    const assignedWorker = workerDescriptor(
+      "worker-a",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+      "assignment-1",
+    );
+    const idleWorker = workerDescriptor(
+      "worker-idle",
+      "manager-a",
+      "profile-a",
+      "/workspace-a",
+    );
+    harness.descriptors.set("worker-a", assignedWorker);
+    harness.descriptors.set("worker-idle", idleWorker);
+    await harness.service.startSecureSession("manager-a");
+
+    const manual = await harness.service.createLocalSecureSecret({
+      displayAlias: "manual-team-secret",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "MANUAL_TEAM_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    let managerSnapshot = await harness.service.getSecureSessionSnapshot("manager-a");
+    managerSnapshot = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: managerSnapshot.revision,
+      secretId: manual.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "MANUAL_TEAM_TOKEN" }],
+      leaseKind: "task",
+    });
+    const workerSnapshot = await harness.service.getSecureSessionSnapshot("worker-a");
+    await harness.service.grantSecureSessionLease("worker-a", {
+      baseRevision: workerSnapshot.revision,
+      secretId: manual.secretId,
+      exposures: [{ deliveryKind: "environment", targetName: "MANUAL_TEAM_TOKEN" }],
+      leaseKind: "task",
+    });
+
+    const validDefault = await harness.service.createLocalSecureSecret({
+      displayAlias: "apply-valid-default",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "APPLY_VALID_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const conflictingDefault = await harness.service.createLocalSecureSecret({
+      displayAlias: "apply-conflicting-default",
+      encryptedMaterial: Buffer.from(`${BETA}-conflict`).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "MANUAL_TEAM_TOKEN" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(validDefault.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(
+      conflictingDefault.secretId,
+      { profileId: "profile-a", enabled: true },
+    );
+
+    const ensuredBeforeApply = harness.execution.ensured.length;
+    const emittedBeforeApply = harness.snapshots.length;
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: managerSnapshot.revision },
+    );
+    const team = await harness.service.listSecureSessionTeamSnapshots("manager-a");
+    const byPrincipal = new Map(
+      team.map((snapshot) => [snapshot.sessionAgentId, snapshot]),
+    );
+
+    expect(applied.sessionAgentId).toBe("manager-a");
+    expect(harness.execution.ensured).toHaveLength(ensuredBeforeApply + 2);
+    expect(harness.snapshots.slice(emittedBeforeApply).map(
+      ({ sessionAgentId }) => sessionAgentId,
+    )).toEqual(["manager-a", "worker-a", "worker-idle"]);
+    const validLeaseIds = new Set<string>();
+    for (const principalId of ["manager-a", "worker-a", "worker-idle"]) {
+      const snapshot = byPrincipal.get(principalId)!;
+      const validLeases = snapshot.leases.filter((lease) =>
+        lease.secretId === validDefault.secretId
+        && lease.grantSource === "project_default"
+        && lease.status === "active"
+      );
+      expect(validLeases).toHaveLength(1);
+      expect(validLeases[0]).toEqual(expect.objectContaining({
+        leaseKind: "task",
+      }));
+      validLeaseIds.add(validLeases[0]!.leaseId);
+    }
+    expect(validLeaseIds.size).toBe(3);
+    for (const principalId of ["manager-a", "worker-a"]) {
+      const snapshot = byPrincipal.get(principalId)!;
+      expect(snapshot.leases).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          secretId: manual.secretId,
+          grantSource: "manual",
+          status: "active",
+        }),
+      ]));
+      expect(snapshot.projectDefaults).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          secretId: conflictingDefault.secretId,
+          state: "conflict",
+          statusCode: "binding_conflict",
+        }),
+      ]));
+    }
+    expect(byPrincipal.get("worker-idle")).toEqual(expect.objectContaining({
+      environmentStatus: "stopped",
+      leases: expect.arrayContaining([
+        expect.objectContaining({
+          secretId: conflictingDefault.secretId,
+          grantSource: "project_default",
+          status: "active",
+        }),
+      ]),
+    }));
+
+    const ensuredAfterApply = harness.execution.ensured.length;
+    const leaseIdsBeforeRetry = team.flatMap(({ leases }) =>
+      leases.filter((lease) => lease.grantSource === "project_default")
+        .map(({ leaseId }) => leaseId)
+    ).sort();
+    const retried = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: applied.revision },
+    );
+    const retriedTeam = await harness.service.listSecureSessionTeamSnapshots(
+      "manager-a",
+    );
+    expect(harness.execution.ensured).toHaveLength(ensuredAfterApply);
+    expect(retriedTeam.flatMap(({ leases }) =>
+      leases.filter((lease) => lease.grantSource === "project_default")
+        .map(({ leaseId }) => leaseId)
+    ).sort()).toEqual(leaseIdsBeforeRetry);
+    expect(retried.revision).toBe(applied.revision);
+
+    await harness.service.setSecureSecretProjectDefault(validDefault.secretId, {
+      profileId: "profile-a",
+      enabled: false,
+    });
+    const afterDisable = await harness.service.listSecureSessionTeamSnapshots(
+      "manager-a",
+    );
+    for (const snapshot of afterDisable) {
+      expect(snapshot.leases.some((lease) =>
+        lease.secretId === validDefault.secretId
+        && lease.grantSource === "project_default"
+        && lease.status === "active"
+      )).toBe(false);
+    }
+    for (const principalId of ["manager-a", "worker-a"]) {
+      expect(afterDisable.find(({ sessionAgentId }) =>
+        sessionAgentId === principalId
+      )?.leases).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          secretId: manual.secretId,
+          grantSource: "manual",
+          status: "active",
+        }),
+      ]));
+    }
+    await harness.close();
+  });
+
+  it("keeps apply-project-default partial source failures fixed-code and non-blocking", async () => {
+    const harness = createHarness({ failSourceResolutionAfter: 1 });
+    await harness.service.startSecureSession("manager-a");
+    const available = await harness.service.createLocalSecureSecret({
+      displayAlias: "apply-available",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "APPLY_AVAILABLE" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    const unavailable = await harness.service.createLocalSecureSecret({
+      displayAlias: "apply-unavailable",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "APPLY_UNAVAILABLE" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(available.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    await harness.service.setSecureSecretProjectDefault(unavailable.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const before = await harness.service.getSecureSessionSnapshot("manager-a");
+
+    const applied = await harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: before.revision },
+    );
+
+    expect(applied.leases).toEqual([
+      expect.objectContaining({
+        secretId: available.secretId,
+        grantSource: "project_default",
+        status: "active",
+      }),
+    ]);
+    expect(applied.projectDefaults).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        secretId: available.secretId,
+        state: "active",
+        statusCode: "ok",
+      }),
+      expect.objectContaining({
+        secretId: unavailable.secretId,
+        state: "unavailable",
+        statusCode: "source_unavailable",
+      }),
+    ]));
+    await harness.close();
+  });
+
+  it("rejects stale apply-project-default revisions before any principal mutation", async () => {
+    const harness = createHarness();
+    harness.descriptors.set(
+      "worker-a",
+      workerDescriptor(
+        "worker-a",
+        "manager-a",
+        "profile-a",
+        "/workspace-a",
+        "assignment-1",
+      ),
+    );
+    await harness.service.startSecureSession("manager-a");
+    const projectDefault = await harness.service.createLocalSecureSecret({
+      displayAlias: "stale-apply-default",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{ deliveryKind: "environment", targetName: "STALE_APPLY_DEFAULT" }],
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+    await harness.service.setSecureSecretProjectDefault(projectDefault.secretId, {
+      profileId: "profile-a",
+      enabled: true,
+    });
+    const manager = await harness.service.getSecureSessionSnapshot("manager-a");
+    const statesBefore = harness.store.listPrincipalSnapshotsForManager("manager-a");
+    const ensuredBefore = [...harness.execution.ensured];
+    const destroyedBefore = [...harness.execution.destroyed];
+    const emittedBefore = harness.snapshots.length;
+
+    await expect(harness.service.applySecureSessionProjectDefaults(
+      "manager-a",
+      { baseRevision: manager.revision + 1 },
+    )).rejects.toThrow("SECURE_STALE_REVISION");
+
+    expect(harness.store.listPrincipalSnapshotsForManager("manager-a"))
+      .toEqual(statesBefore);
+    expect(harness.execution.ensured).toEqual(ensuredBefore);
+    expect(harness.execution.destroyed).toEqual(destroyedBefore);
+    expect(harness.snapshots).toHaveLength(emittedBefore);
+    await harness.close();
+  });
+
   it("never reports a project default active after startup recycle fails", async () => {
     const harness = createHarness({ recycleDisposition: "deferred" });
     const secret = await harness.service.createLocalSecureSecret({

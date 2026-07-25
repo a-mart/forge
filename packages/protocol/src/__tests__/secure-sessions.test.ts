@@ -10,6 +10,7 @@ import {
   SecureSessionsContractError,
   isSecureSecretBinding,
   isSecureSecretLeaseSpec,
+  parseApplySecureSessionProjectDefaultsRequest,
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
   parseRequestSecureSecretAccessRequest,
@@ -18,6 +19,7 @@ import {
   parseSecureSecretBinding,
   parseSecureSecretLeaseSpec,
   parseSecureSecretScope,
+  type ApplySecureSessionProjectDefaultsRequest,
   type SecureAccessRequestSummary,
   type SecureSecretBinding,
   type SecureSecretCatalog,
@@ -263,6 +265,25 @@ describe('Secure Sessions protocol', () => {
         sourceLocator: 'forbidden',
       }],
     })).toThrow(SecureSessionsContractError)
+  })
+
+  it('parses only a revision when applying configured project defaults', () => {
+    const request = parseApplySecureSessionProjectDefaultsRequest({
+      baseRevision: 7,
+    })
+    expect(request).toEqual({ baseRevision: 7 })
+    expectTypeOf(request).toEqualTypeOf<ApplySecureSessionProjectDefaultsRequest>()
+
+    for (const invalid of [
+      {},
+      { baseRevision: -1 },
+      { baseRevision: 7, secretId: 'forbidden-selection' },
+      { baseRevision: 7, grants: [] },
+    ]) {
+      expect(() =>
+        parseApplySecureSessionProjectDefaultsRequest(invalid)
+      ).toThrow(SecureSessionsContractError)
+    }
   })
 
   it('rejects unknown fields at every secret-bearing input boundary', () => {

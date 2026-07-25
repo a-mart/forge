@@ -141,6 +141,10 @@ export interface SecureSessionPickerConfig {
     sessionAgentId: string,
     grants: SecureGrantInput[],
   ) => boolean | void | Promise<boolean | void>
+  onApplyProjectDefaults?: (
+    managerAgentId: string,
+  ) => boolean | void | Promise<boolean | void>
+  onReviewProjectSecrets?: () => void
   onRevoke?: (
     sessionAgentId: string,
     leaseId?: string,

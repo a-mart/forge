@@ -315,6 +315,14 @@ export interface GrantSecureSecretLeasesRequest {
   grants: GrantSecureSecretLeaseInput[]
 }
 
+/**
+ * Applies only the project's already-configured defaults to the active Secure
+ * Mode team. Secret selection and delivery data are intentionally absent.
+ */
+export interface ApplySecureSessionProjectDefaultsRequest {
+  baseRevision: number
+}
+
 export interface RevokeSecureSecretLeaseRequest {
   baseRevision: number
   leaseId: string
@@ -616,6 +624,16 @@ export function parseGrantSecureSecretLeasesRequest(
   return {
     baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
     grants,
+  }
+}
+
+export function parseApplySecureSessionProjectDefaultsRequest(
+  value: unknown,
+): ApplySecureSessionProjectDefaultsRequest {
+  const input = recordInput(value, 'request')
+  knownKeys(input, ['baseRevision'], 'request')
+  return {
+    baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
   }
 }
 

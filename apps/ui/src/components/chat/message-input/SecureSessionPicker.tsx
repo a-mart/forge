@@ -27,6 +27,7 @@ import {
 } from '../secure-session/format'
 import type {
   SecureLeaseView,
+  SecureProjectDefaultStatusView,
   SecureSessionPickerConfig,
 } from '../secure-session/types'
 
@@ -49,24 +50,47 @@ function leaseDescription(lease: SecureLeaseView): string {
   return parts.filter(Boolean).join(' · ')
 }
 
-function projectDefaultsDescription(
-  projectDefaults: NonNullable<SecureSessionPickerConfig['snapshot']>['projectDefaults'],
-): string | null {
-  if (!projectDefaults?.length) return null
-  const unavailableCount = projectDefaults.filter(
-    (entry) => entry.state === 'unavailable',
-  ).length
-  const conflictCount = projectDefaults.filter(
-    (entry) => entry.state === 'conflict',
-  ).length
-  const readyCount = projectDefaults.length - unavailableCount - conflictCount
-  const parts = [
-    `${projectDefaults.length} project ${projectDefaults.length === 1 ? 'default' : 'defaults'}`,
-    `${readyCount} ready`,
+const PROJECT_DEFAULT_STATE_PRIORITY: Record<
+  SecureProjectDefaultStatusView['state'],
+  number
+> = {
+  active: 0,
+  configured: 1,
+  unavailable: 2,
+  conflict: 3,
+}
+
+function aggregateProjectDefaults(
+  config: SecureSessionPickerConfig,
+): SecureProjectDefaultStatusView[] {
+  const snapshots = [
+    ...(config.snapshot ? [config.snapshot] : []),
+    ...(config.teamMembers ?? []).map((member) => member.snapshot),
   ]
-  if (unavailableCount > 0) parts.push(`${unavailableCount} unavailable`)
-  if (conflictCount > 0) parts.push(`${conflictCount} conflict`)
-  return parts.join(' · ')
+  const defaultsById = new Map<string, SecureProjectDefaultStatusView>()
+  for (const snapshot of snapshots) {
+    for (const projectDefault of snapshot.projectDefaults ?? []) {
+      const current = defaultsById.get(projectDefault.secretId)
+      if (
+        !current
+        || PROJECT_DEFAULT_STATE_PRIORITY[projectDefault.state]
+          > PROJECT_DEFAULT_STATE_PRIORITY[current.state]
+      ) {
+        defaultsById.set(projectDefault.secretId, projectDefault)
+      }
+    }
+  }
+  return Array.from(defaultsById.values()).sort((left, right) =>
+    left.displayAlias.localeCompare(right.displayAlias))
+}
+
+function projectDefaultStateLabel(
+  state: SecureProjectDefaultStatusView['state'],
+): string {
+  if (state === 'active') return 'Active'
+  if (state === 'configured') return 'Ready to apply'
+  if (state === 'unavailable') return 'Unavailable'
+  return 'Binding conflict'
 }
 
 function pickerState(config: SecureSessionPickerConfig, activeLeaseCount: number): {
@@ -170,12 +194,14 @@ export function SecureSessionPicker({
   const [grantOpen, setGrantOpen] = useState(false)
   const [stopOpen, setStopOpen] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [applyingProjectDefaults, setApplyingProjectDefaults] = useState(false)
   const sessionAgentId = config.snapshot?.sessionAgentId
 
   useEffect(() => {
     setOpen(false)
     setGrantOpen(false)
     setStopOpen(false)
+    setApplyingProjectDefaults(false)
   }, [config.originId, sessionAgentId])
 
   const activeLeases = useMemo(
@@ -189,8 +215,17 @@ export function SecureSessionPicker({
     [activeLeases, config.secrets],
   )
   const state = pickerState(config, activeLeases.length)
-  const projectDefaultsSummary = projectDefaultsDescription(
-    config.snapshot?.projectDefaults,
+  const projectDefaults = useMemo(
+    () => aggregateProjectDefaults(config),
+    [config],
+  )
+  const hasNonActiveProjectDefaults = projectDefaults.some(
+    (projectDefault) => projectDefault.state !== 'active',
+  )
+  const hasProjectDefaultsNeedingReview = projectDefaults.some(
+    (projectDefault) =>
+      projectDefault.state === 'unavailable'
+      || projectDefault.state === 'conflict',
   )
   const canGrant =
     !config.readOnly
@@ -228,6 +263,20 @@ export function SecureSessionPicker({
       if (result !== false) setGrantOpen(true)
     } finally {
       setStarting(false)
+    }
+  }
+
+  const applyProjectDefaults = async () => {
+    if (
+      !sessionAgentId
+      || !config.onApplyProjectDefaults
+      || applyingProjectDefaults
+    ) return
+    setApplyingProjectDefaults(true)
+    try {
+      await config.onApplyProjectDefaults(sessionAgentId)
+    } finally {
+      setApplyingProjectDefaults(false)
     }
   }
 
@@ -304,13 +353,76 @@ export function SecureSessionPicker({
             </div>
           ) : null}
 
-          {projectDefaultsSummary ? (
-            <div
-              className="rounded-md border border-border/70 bg-muted/35 p-2.5 text-xs text-muted-foreground"
+          {projectDefaults.length > 0 ? (
+            <section
+              className="space-y-2 rounded-md border border-border/70 bg-muted/35 p-2.5"
               aria-label="Project default status"
             >
-              {projectDefaultsSummary}
-            </div>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Project defaults
+                </h3>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {projectDefaults.length}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {projectDefaults.map((projectDefault) => (
+                  <div
+                    key={projectDefault.secretId}
+                    className="flex items-center justify-between gap-3 text-xs"
+                  >
+                    <span className="min-w-0 truncate text-foreground">
+                      {projectDefault.displayAlias}
+                    </span>
+                    <span className={cn(
+                      'shrink-0 font-medium',
+                      projectDefault.state === 'active'
+                        ? 'text-emerald-700 dark:text-emerald-300'
+                        : projectDefault.state === 'configured'
+                          ? 'text-muted-foreground'
+                          : 'text-amber-700 dark:text-amber-300',
+                    )}>
+                      {projectDefaultStateLabel(projectDefault.state)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {!config.readOnly
+              && (hasNonActiveProjectDefaults || hasProjectDefaultsNeedingReview) ? (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {hasNonActiveProjectDefaults && config.onApplyProjectDefaults ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      disabled={config.disabled || applyingProjectDefaults}
+                      onClick={() => void applyProjectDefaults()}
+                    >
+                      {applyingProjectDefaults ? (
+                        <>
+                          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                          Applying…
+                        </>
+                      ) : 'Apply now'}
+                    </Button>
+                  ) : null}
+                  {hasProjectDefaultsNeedingReview
+                  && config.onReviewProjectSecrets ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      disabled={config.disabled || applyingProjectDefaults}
+                      onClick={config.onReviewProjectSecrets}
+                    >
+                      Review project secrets
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
           ) : null}
 
           {teamMembers.length > 0 ? (

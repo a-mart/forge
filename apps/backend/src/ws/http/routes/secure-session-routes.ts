@@ -1,12 +1,14 @@
 import {
   SECURE_SECRET_RETENTIONS,
   SecureSessionsContractError,
+  parseApplySecureSessionProjectDefaultsRequest,
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
   parseResolveSecureSecretAccessRequest,
   parseRevokeSecureSecretLeaseRequest,
   parseSecureSecretBinding,
   parseSecureSecretScope,
+  type ApplySecureSessionProjectDefaultsRequest,
   type GrantSecureSecretLeaseRequest,
   type GrantSecureSecretLeasesRequest,
   type ResolveSecureSecretAccessRequest,
@@ -67,6 +69,10 @@ export interface SecureSessionsTransportService {
   stopSecureSession(
     sessionAgentId: string,
     input: StopSecureSessionInput,
+  ): Promise<SecureSessionSnapshot>;
+  applySecureSessionProjectDefaults(
+    sessionAgentId: string,
+    input: ApplySecureSessionProjectDefaultsRequest,
   ): Promise<SecureSessionSnapshot>;
   grantSecureSessionLease(
     sessionAgentId: string,
@@ -142,6 +148,28 @@ export function createSecureSessionRoutes(options: {
                 parseStopInput(body),
               );
           sendSecureJson(response, 200, snapshot);
+          return;
+        }
+
+        const applyProjectDefaultsMatch = requestUrl.pathname.match(
+          /^\/api\/secure-sessions\/([^/]+)\/project-defaults\/apply$/,
+        );
+        if (request.method === "POST" && applyProjectDefaultsMatch) {
+          const sessionAgentId = parsePathId(
+            applyProjectDefaultsMatch[1],
+            "sessionAgentId",
+          );
+          const input = parseApplySecureSessionProjectDefaultsRequest(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.applySecureSessionProjectDefaults(
+              sessionAgentId,
+              input,
+            ),
+          );
           return;
         }
 

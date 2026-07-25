@@ -29,6 +29,7 @@ function fakeService(): SecureSessionsTransportService {
     getSecureSessionSnapshot: vi.fn(() => snapshot),
     startSecureSession: vi.fn(async () => snapshot),
     stopSecureSession: vi.fn(async () => snapshot),
+    applySecureSessionProjectDefaults: vi.fn(async () => snapshot),
     grantSecureSessionLease: vi.fn(async () => snapshot),
     grantSecureSessionLeases: vi.fn(async () => snapshot),
     revokeSecureSessionLease: vi.fn(async () => snapshot),
@@ -190,6 +191,33 @@ describe("secure session routes", () => {
       expect(response.status).toBe(400);
     }
     expect(service.grantSecureSessionLeases).toHaveBeenCalledTimes(1);
+  });
+
+  it("strictly applies configured project defaults without accepting secret selection", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+    const endpoint =
+      `${server.baseUrl}/api/secure-sessions/manager-1/project-defaults/apply`;
+
+    const applied = await postJson(endpoint, { baseRevision: 4 });
+
+    expect(applied.status).toBe(200);
+    expect(service.applySecureSessionProjectDefaults).toHaveBeenCalledWith(
+      "manager-1",
+      { baseRevision: 4 },
+    );
+    expect(await applied.json()).toEqual(snapshot);
+
+    for (const invalid of [
+      {},
+      { baseRevision: -1 },
+      { baseRevision: 4, secretId: "forbidden" },
+      { baseRevision: 4, grants: [] },
+    ]) {
+      const response = await postJson(endpoint, invalid);
+      expect(response.status).toBe(400);
+    }
+    expect(service.applySecureSessionProjectDefaults).toHaveBeenCalledTimes(1);
   });
 
   it("fulfills an access request with ciphertext and never serializes it back", async () => {

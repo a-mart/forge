@@ -671,6 +671,50 @@ describe('MessageInput', () => {
       expect(onSend).not.toHaveBeenCalled()
       expect(getTextarea().value).toBe('Keep this secure-session draft unsent')
     })
+
+    it('applies project defaults without submitting, clearing, or closing the draft flow', async () => {
+      const onSend = vi.fn()
+      const onApplyProjectDefaults = vi.fn(async () => true)
+      renderMessageInput({
+        onSend,
+        secureSessionPicker: {
+          availability: { state: 'available' },
+          snapshot: {
+            sessionAgentId: 'manager-1',
+            principalKind: 'manager',
+            revision: 2,
+            executionMode: 'secure',
+            environmentStatus: 'ready',
+            leases: [],
+            pendingRequests: [],
+            projectDefaults: [{
+              secretId: 'secret-1',
+              displayAlias: 'deploy-token',
+              state: 'configured',
+              statusCode: 'ok',
+            }],
+            updatedAt: '2026-07-23T12:00:00.000Z',
+          },
+          secrets: [],
+          onApplyProjectDefaults,
+        },
+      })
+      await flush()
+
+      typeInTextarea('Keep this project-default draft unsent')
+      fireEvent.click(getByLabelText(container, /secure session ready/i))
+      await flush()
+      const apply = getByRole(document.body, 'button', { name: 'Apply now' })
+      apply.focus()
+      fireEvent.click(apply)
+      await flush()
+
+      expect(onApplyProjectDefaults).toHaveBeenCalledWith('manager-1')
+      expect(onSend).not.toHaveBeenCalled()
+      expect(getTextarea().value).toBe('Keep this project-default draft unsent')
+      expect(getByRole(document.body, 'button', { name: 'Apply now' })).toBeTruthy()
+      expect(document.activeElement).toBe(apply)
+    })
   })
 
   /* ---- Voice recording gating ---- */

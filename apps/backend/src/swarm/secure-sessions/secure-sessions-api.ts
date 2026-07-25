@@ -1,4 +1,5 @@
 import type {
+  ApplySecureSessionProjectDefaultsRequest,
   SecureSecretBinding,
   SecureSecretLeaseKind,
   SecureSecretRetention,
@@ -55,6 +56,9 @@ export interface StopSecureSessionInput {
   baseRevision: number;
   stopProcesses: true;
 }
+
+export type ApplySecureSessionProjectDefaultsInput =
+  ApplySecureSessionProjectDefaultsRequest;
 
 export interface TeardownWorkerSecurePrincipalOptions {
   /**
