@@ -227,6 +227,91 @@ describe('leased-frame navigation observer recovery', () => {
     })).rejects.toThrow(/quiesced/u)
   })
 
+  it('blocks post-prepare side-panel claim/create while preserving safe inspection', async () => {
+    const chrome = fakeChrome({ tabs: [{ id: 9, windowId: 1, groupId: 2, url: 'https://fixture.invalid/' }] })
+    ;(globalThis as Record<string, unknown>).chrome = chrome
+    const runtime = new Runtime()
+    const internals = runtime as unknown as {
+      leases: LeaseManager
+      dispatchPicker(message: Record<string, unknown>): Promise<any>
+      handleDesktopRequest(request: Record<string, unknown>): Promise<any>
+    }
+    await internals.handleDesktopRequest({
+      jsonrpc: '2.0', id: 'prepare', method: 'forge.runtime.prepareUpdate',
+      params: { protocolVersion: 1, payloadVersion: 'm5-runtime.1', sha256: 'a'.repeat(64), deadlineAt: new Date(Date.now() + 1_000).toISOString() },
+    })
+    await expect(internals.dispatchPicker({
+      kind: 'picker.claim', leaseId: 'picker-race', leaseEpoch: 1, sessionAgentId: 'session-a', tabIds: [9], childPolicy: 'manual',
+    })).rejects.toThrow(/quiesced/u)
+    await expect(internals.dispatchPicker({
+      kind: 'picker.create', leaseId: 'picker-create-race', leaseEpoch: 2, sessionAgentId: 'session-a', groupTitle: 'Forge',
+    })).rejects.toThrow(/quiesced/u)
+    await expect(internals.dispatchPicker({ kind: 'picker.current' })).resolves.toEqual({ lease: null })
+    await expect(internals.dispatchPicker({ kind: 'picker.list' })).resolves.toHaveProperty('windows')
+    expect(internals.leases.current()).toBeNull()
+    expect(chrome.attached.size).toBe(0)
+  })
+
+  it('revokes a picker claim whose debugger attach crosses the prepare barrier', async () => {
+    const chrome = fakeChrome({ tabs: [{ id: 9, windowId: 1, groupId: 2, url: 'https://fixture.invalid/' }] })
+    ;(globalThis as Record<string, unknown>).chrome = chrome
+    const runtime = new Runtime()
+    const internals = runtime as unknown as {
+      dispatchPicker(message: Record<string, unknown>): Promise<any>
+      handleDesktopRequest(request: Record<string, unknown>): Promise<any>
+    }
+    let attachStarted!: () => void
+    let finishAttach!: () => void
+    const started = new Promise<void>((resolve) => { attachStarted = resolve })
+    const blocked = new Promise<void>((resolve) => { finishAttach = resolve })
+    const originalAttach = chrome.debugger.attach
+    chrome.debugger.attach = async (target, version) => {
+      attachStarted()
+      await blocked
+      await originalAttach(target, version)
+    }
+    const claim = internals.dispatchPicker({
+      kind: 'picker.claim', leaseId: 'picker-race', leaseEpoch: 1, sessionAgentId: 'session-a', tabIds: [9], childPolicy: 'manual',
+    })
+    await started
+    let prepareSettled = false
+    const prepare = internals.handleDesktopRequest({
+      jsonrpc: '2.0', id: 'prepare-race', method: 'forge.runtime.prepareUpdate',
+      params: { protocolVersion: 1, payloadVersion: 'm5-runtime.1', sha256: 'a'.repeat(64), deadlineAt: new Date(Date.now() + 1_000).toISOString() },
+    }).finally(() => { prepareSettled = true })
+    await viFlush()
+    expect(prepareSettled).toBe(false)
+    finishAttach()
+    await expect(claim).rejects.toThrow(/quiesced|lease/u)
+    await expect(prepare).resolves.toMatchObject({ quiesced: true })
+    expect(chrome.attached.size).toBe(0)
+  })
+
+  it('withholds prepare acknowledgement when its deadline elapses during detach but leaves zero authority', async () => {
+    const chrome = fakeChrome({ tabs: [{ id: 9, windowId: 1, groupId: 2, url: 'https://fixture.invalid/' }] })
+    ;(globalThis as Record<string, unknown>).chrome = chrome
+    const runtime = new Runtime()
+    const internals = runtime as unknown as {
+      leases: LeaseManager
+      debuggers: DebuggerController
+      attachTab(tabId: number): Promise<void>
+      handleDesktopRequest(request: Record<string, unknown>): Promise<any>
+    }
+    await internals.leases.claim({ leaseId: 'deadline-lease', leaseEpoch: 1, sessionAgentId: 'session-a', tabIds: [9], childPolicy: 'manual' })
+    await internals.attachTab(9)
+    const originalDetach = chrome.debugger.detach
+    chrome.debugger.detach = async (target) => {
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      await originalDetach(target)
+    }
+    await expect(internals.handleDesktopRequest({
+      jsonrpc: '2.0', id: 'prepare-deadline', method: 'forge.runtime.prepareUpdate',
+      params: { protocolVersion: 1, payloadVersion: 'm5-runtime.1', sha256: 'a'.repeat(64), deadlineAt: new Date(Date.now() + 5).toISOString() },
+    })).rejects.toThrow(/deadline elapsed/u)
+    expect(internals.leases.current()).toBeNull()
+    expect(chrome.attached.size).toBe(0)
+  })
+
   it('does not overwrite a newer human interruption while cancelling navigation', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 9, windowId: 1, groupId: 2, url: 'https://fixture.invalid/' }] })
     ;(globalThis as Record<string, unknown>).chrome = chrome

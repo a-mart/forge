@@ -133,6 +133,14 @@ describe('External Chrome protocol identity and negotiation', () => {
     }
   })
 
+  it('parses the authenticated prior V1 hello without inventing an immutable payload hash', () => {
+    const { payloadSha256: _payloadSha256, ...priorParams } = hello.params
+    void _payloadSha256
+    const parsed = parse({ ...hello, params: priorParams })
+    expect(parsed).toMatchObject({ method: 'forge.runtime.hello', params: { payloadVersion: '1.0.0', shellAbi: 1 } })
+    expect((parsed as Extract<ExternalChromeJsonRpcMessage, { method: 'forge.runtime.hello' }>).params.payloadSha256).toBeUndefined()
+  })
+
   it('round-trips a bounded hello/welcome negotiation without adding fields', () => {
     expect(parse(hello)).toEqual(hello)
     const welcome = {

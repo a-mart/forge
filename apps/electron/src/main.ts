@@ -656,7 +656,7 @@ if (!hasSingleInstanceLock) {
       } : {}),
       ...(externalChromeDeployer ? {
         rollbackController: externalChromeDeployer,
-        repairDeployment: () => externalChromeDeployer!.deploy(),
+        repairDeployment: () => externalChromeDeployer!.stage(),
         deploymentVerifier: externalChromeDeployer,
       } : {}),
     })
@@ -1396,7 +1396,11 @@ async function deployPackagedExternalChrome(): Promise<ExternalChromeDeployer | 
   })
   try {
     await new ExternalChromeDeploymentRecovery(deployer).run()
-    await deployer.deploy()
+    const installed = await deployer.verifyDeployment()
+    await deployer.stage()
+    // Initial install has no running selector/native authority to preserve. Updates
+    // remain staged until an authenticated runtime prepare/quiesce acknowledgement.
+    if (installed.state === 'missing') await deployer.activateStaged()
   } catch (error) {
     // External Chrome is optional; deployment failure must not disable Managed Browser or Desktop.
     console.warn('[external-chrome] Packaged resource deployment failed', error instanceof Error ? error.message : String(error))

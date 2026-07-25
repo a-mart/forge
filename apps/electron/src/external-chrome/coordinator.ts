@@ -36,11 +36,13 @@ import type {
 import {
   createExternalChromeNativeRegistration,
   type ExternalChromeNativeRegistration,
+  type ForgeRegistrationConflictEvidence,
 } from './registration.js'
 import { ExternalChromeRelayRuntime } from './relay-runtime.js'
 
 const DEFAULT_RENDEZVOUS_TTL_MS = 15_000
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000
+const TAKEOVER_AUTHORIZATION_TTL_MS = 15 * 60_000
 
 export interface ExternalChromeRollbackController {
   canRollback(): Promise<boolean>
@@ -95,6 +97,7 @@ export class ExternalChromeHostCoordinator {
   private readonly enabledStatePath: string
   private readonly runDirectory: string
   private readonly recoveryMarkerPath: string
+  private readonly takeoverAuthorizationPath: string
   private readonly schedule: typeof setInterval
   private readonly unschedule: typeof clearInterval
   private endpoint: ExternalChromeEndpointHandle | null = null
@@ -103,7 +106,6 @@ export class ExternalChromeHostCoordinator {
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private quiesced = false
   private recoveryOverride: ExternalChromeCoordinatorStatus['recovery'] | null = null
-  private takeoverRequiredFromHash: string | null = null
   private transitionTail: Promise<void> = Promise.resolve()
 
   constructor(options: ExternalChromeHostCoordinatorOptions) {
@@ -145,6 +147,7 @@ export class ExternalChromeHostCoordinator {
     this.enabledStatePath = path.join(this.paths.state, 'enabled.json')
     this.runDirectory = this.paths.run
     this.recoveryMarkerPath = path.join(this.paths.state, 'recovery-marker.json')
+    this.takeoverAuthorizationPath = path.join(this.paths.state, 'takeover-authorization.json')
   }
 
   status(): Promise<ExternalChromeCoordinatorStatus> {
@@ -168,14 +171,26 @@ export class ExternalChromeHostCoordinator {
 
   takeover(): Promise<ExternalChromeCoordinatorStatus> {
     return this.serialize(async () => {
-      const authority = await this.authority.inspect()
-      if (authority.state === 'other-live') throw new Error('Current External Chrome authority must be quiesced before takeover')
-      if (!this.takeoverRequiredFromHash || (authority.state !== 'none' && authority.state !== 'stale')) {
-        throw new Error('External Chrome takeover requires an observed conflicting data-dir authority')
+      const [authority, registration, authorization] = await Promise.all([
+        this.authority.inspect(), this.registration.inspect(), this.readTakeoverAuthorization(),
+      ])
+      if (authority.state === 'other-live' || authority.state === 'owned') {
+        throw new Error('Current External Chrome authority must be quiesced before takeover')
       }
-      const status = await this.enableUnlocked(true)
-      this.takeoverRequiredFromHash = null
-      return status
+      const authorityOwner = 'owner' in authority ? authority.owner : undefined
+      if (!authorization || !registration.forgeConflict ||
+        authorization.dataDirHash !== registration.forgeConflict.dataDirHash ||
+        authorization.registrationIdentity !== registration.forgeConflict.identity ||
+        (authority.state === 'stale' && authorityOwner?.dataDirHash !== authorization.dataDirHash)) {
+        throw new Error('External Chrome takeover authorization is missing or stale')
+      }
+      // Consume the exact one-time authorization only after live authority has been
+      // ruled out. Every subsequent mutation revalidates the same Forge-owned record.
+      await fs.rm(this.takeoverAuthorizationPath, { force: true })
+      await this.registration.transferForgeOwnedConflict(registration.forgeConflict)
+      const rotated = await this.auth.rotate()
+      rotated.key.fill(0)
+      return this.enableUnlocked(true)
     })
   }
 
@@ -216,7 +231,12 @@ export class ExternalChromeHostCoordinator {
       const wasEnabled = await this.readDesiredEnabled()
       if (this.endpoint) await this.quiesceRuntimeUnlocked('desktop-update')
       else await this.stopRuntime(false)
-      await this.rollbackController.rollback()
+      try {
+        await this.rollbackController.rollback()
+      } catch (error) {
+        this.recoveryOverride = 'manual-extension-reload'
+        throw error
+      }
       this.recoveryOverride = 'rolled-back'
       if (wasEnabled) return this.enableUnlocked(true)
       return this.statusUnlocked()
@@ -235,6 +255,7 @@ export class ExternalChromeHostCoordinator {
       await this.registration.remove()
       await this.auth.remove()
       await fs.rm(this.enabledStatePath, { force: true })
+      await fs.rm(this.takeoverAuthorizationPath, { force: true })
       this.quiesced = false
       return this.statusUnlocked()
     })
@@ -282,8 +303,8 @@ export class ExternalChromeHostCoordinator {
     const before = await this.authority.inspect()
     const beforeOwner = 'owner' in before ? before.owner : undefined
     const crossDataDirOwner = beforeOwner?.dataDirHash !== undefined && beforeOwner.dataDirHash !== this.dataDirHash
-    if (crossDataDirOwner) this.takeoverRequiredFromHash = beforeOwner.dataDirHash
-    if (before.state === 'other-live' || (crossDataDirOwner && !allowTakeover) || (before.state === 'stale' && !allowTakeover)) return this.statusUnlocked()
+    const takeoverAuthorization = await this.readTakeoverAuthorization()
+    if (before.state === 'other-live' || (!allowTakeover && (crossDataDirOwner || before.state === 'stale' || takeoverAuthorization !== null))) return this.statusUnlocked()
     if ((await this.inspectSetup()).pathState !== 'ready') {
       throw new Error('External Chrome unpacked extension deployment is missing or invalid')
     }
@@ -302,12 +323,18 @@ export class ExternalChromeHostCoordinator {
       // Durable lease authority is loaded before the endpoint can accept native hello.
       // Host registration/replacement and IPC recovery therefore cannot bypass checkpoints.
       await this.relay.ready()
-      const deployment = await this.deploymentVerifier?.verifyDeployment()
-      this.relay.configureExpectedRuntime(deployment?.state === 'ready' ? {
-        payloadVersion: deployment.install.payloadVersion,
-        sha256: deployment.install.payloadSha256,
-        shellAbi: deployment.install.shellAbi,
-      } : null)
+      const [deployment, pendingDeployment] = await Promise.all([
+        this.deploymentVerifier?.verifyDeployment(),
+        this.deploymentVerifier?.pendingDeployment?.() ?? null,
+      ])
+      const expectedDeployment = pendingDeployment ?? (deployment?.state === 'ready' ? deployment.install : null)
+      this.relay.configureExpectedRuntime(expectedDeployment ? {
+        payloadVersion: expectedDeployment.payloadVersion,
+        sha256: expectedDeployment.payloadSha256,
+        shellAbi: expectedDeployment.shellAbi,
+      } : null, pendingDeployment && this.deploymentVerifier?.activateStaged
+        ? async () => { await this.deploymentVerifier!.activateStaged!() }
+        : undefined)
       const epoch = createRendezvousEpoch()
       this.relay.activate({ epoch, desktopInstanceId: this.instanceId, keyId: keyRecord.keyId, secret: keyRecord.key })
       const endpoint = await this.endpoints.listen({
@@ -350,20 +377,32 @@ export class ExternalChromeHostCoordinator {
 
     const authorityOwner = 'owner' in authority ? authority.owner : undefined
     const crossDataDirOwner = authorityOwner?.dataDirHash !== undefined && authorityOwner.dataDirHash !== this.dataDirHash
-    if (crossDataDirOwner) this.takeoverRequiredFromHash = authorityOwner.dataDirHash
+    if (crossDataDirOwner && registration.forgeConflict?.dataDirHash === authorityOwner.dataDirHash) {
+      await this.writeTakeoverAuthorization(registration.forgeConflict)
+    }
+    const takeoverAuthorization = await this.readTakeoverAuthorization()
+    const exactTransfer = takeoverAuthorization !== null && registration.forgeConflict !== undefined &&
+      takeoverAuthorization.dataDirHash === registration.forgeConflict.dataDirHash &&
+      takeoverAuthorization.registrationIdentity === registration.forgeConflict.identity
     const platform = this.platform === 'darwin' || this.platform === 'linux' || this.platform === 'win32'
       ? this.platform
       : 'unsupported'
     const trustAllowsEnable = registration.trust === 'trusted' || registration.trust === 'unsupported'
-    const authorityAvailable = authority.state !== 'other-live' && authority.state !== 'stale' && this.takeoverRequiredFromHash === null
+    const authorityAvailable = authority.state !== 'other-live' && authority.state !== 'stale' && takeoverAuthorization === null
     const hasInstalledState = auth !== 'missing' || registration.registration !== 'not-registered' || state !== 'disabled'
     const markerRecovery = await this.readMarkerRecovery()
     const runtimeRecovery = this.relay.recoveryStatus()
     const deploymentRecovery = this.deploymentVerifier?.recoveryState?.() ?? null
-    const compatibilityRecovery = setup.pathState === 'mismatch' && !canRollback ? 'incompatible-payload' : null
+    const compatibilityRecovery = setup.pathState === 'mismatch' ? 'incompatible-payload' : null
+    if (state === 'online' && runtimeRecovery === 'ready') this.recoveryOverride = null
+    const activeRuntimeRecovery = state === 'online' && runtimeRecovery !== 'ready' ? runtimeRecovery : null
+    const activeMarkerRecovery = state !== 'online' && markerRecovery !== 'ready' ? markerRecovery : null
+    const rollbackFailure = this.recoveryOverride === 'manual-extension-reload' ? this.recoveryOverride : null
+    const rollbackReceipt = this.recoveryOverride === 'rolled-back' ? this.recoveryOverride : null
     const recovery = crossDataDirOwner
       ? 'authority-owned-by-other-data-dir'
-      : deploymentRecovery ?? compatibilityRecovery ?? this.recoveryOverride ?? (state === 'online' ? runtimeRecovery : markerRecovery)
+      : deploymentRecovery ?? compatibilityRecovery ?? rollbackFailure ?? activeRuntimeRecovery ?? activeMarkerRecovery ??
+        rollbackReceipt ?? (state === 'online' ? runtimeRecovery : markerRecovery)
     return {
       state,
       authority: authority.state,
@@ -376,10 +415,12 @@ export class ExternalChromeHostCoordinator {
       canRepair: platform !== 'unsupported' && authorityAvailable && registration.registration !== 'conflict' && (trustAllowsEnable || this.repairDeployment !== undefined),
       canRollback: authorityAvailable && canRollback,
       canRemove: authority.state !== 'other-live' && hasInstalledState,
-      canTakeover: platform !== 'unsupported' && this.takeoverRequiredFromHash !== null && authority.state !== 'owned' && setup.pathState === 'ready' && registration.registration !== 'conflict' && trustAllowsEnable,
+      canTakeover: platform !== 'unsupported' && exactTransfer && authority.state !== 'owned' && authority.state !== 'other-live' && setup.pathState === 'ready' && trustAllowsEnable,
       canReveal: setup.pathState === 'ready',
       recovery,
-      ...(crossDataDirOwner && authorityOwner?.dataDirHash ? { ownerDataDirHash: authorityOwner.dataDirHash } : {}),
+      ...((crossDataDirOwner ? authorityOwner?.dataDirHash : takeoverAuthorization?.dataDirHash) ? {
+        ownerDataDirHash: (crossDataDirOwner ? authorityOwner?.dataDirHash : takeoverAuthorization?.dataDirHash)!,
+      } : {}),
       setup,
       ...(registration.detail ? { detail: registration.detail.slice(0, 256) } : {}),
     }
@@ -504,6 +545,46 @@ export class ExternalChromeHostCoordinator {
     try {
       await fs.rename(temporary, this.recoveryMarkerPath)
       await this.access.securePrivateFile(this.recoveryMarkerPath)
+    } catch (error) {
+      await fs.rm(temporary, { force: true })
+      throw error
+    }
+  }
+
+  private async readTakeoverAuthorization(): Promise<{
+    dataDirHash: string
+    registrationIdentity: string
+    expiresAt: number
+  } | null> {
+    try {
+      const raw = await fs.readFile(this.takeoverAuthorizationPath, 'utf8')
+      if (Buffer.byteLength(raw) > 1_024) return null
+      const value = JSON.parse(raw) as Record<string, unknown>
+      if (value.schemaVersion !== 1 || Object.keys(value).sort().join(',') !== 'dataDirHash,expiresAt,registrationIdentity,schemaVersion' ||
+        typeof value.dataDirHash !== 'string' || !/^[a-f0-9]{16}$/u.test(value.dataDirHash) ||
+        typeof value.registrationIdentity !== 'string' || !/^[a-f0-9]{64}$/u.test(value.registrationIdentity) ||
+        typeof value.expiresAt !== 'number' || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= this.now()) {
+        return null
+      }
+      return { dataDirHash: value.dataDirHash, registrationIdentity: value.registrationIdentity, expiresAt: value.expiresAt }
+    } catch {
+      return null
+    }
+  }
+
+  private async writeTakeoverAuthorization(evidence: ForgeRegistrationConflictEvidence): Promise<void> {
+    if (!/^[a-f0-9]{16}$/u.test(evidence.dataDirHash) || !/^[a-f0-9]{64}$/u.test(evidence.identity)) return
+    await this.access.preparePrivateDirectory(path.dirname(this.takeoverAuthorizationPath))
+    const temporary = `${this.takeoverAuthorizationPath}.new-${process.pid}-${Date.now()}`
+    await fs.writeFile(temporary, `${JSON.stringify({
+      schemaVersion: 1,
+      dataDirHash: evidence.dataDirHash,
+      registrationIdentity: evidence.identity,
+      expiresAt: this.now() + TAKEOVER_AUTHORIZATION_TTL_MS,
+    })}\n`, { mode: 0o600, flag: 'wx' })
+    try {
+      await fs.rename(temporary, this.takeoverAuthorizationPath)
+      await this.access.securePrivateFile(this.takeoverAuthorizationPath)
     } catch (error) {
       await fs.rm(temporary, { force: true })
       throw error

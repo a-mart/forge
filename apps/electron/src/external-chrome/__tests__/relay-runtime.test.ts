@@ -34,11 +34,13 @@ async function sendRuntimeHello(
   client: AuthenticatedRelayClient,
   instanceId: string,
   payloadVersion = 'm4-runtime.1',
-  payloadSha256 = 'a'.repeat(64),
+  payloadSha256: string | null = 'a'.repeat(64),
+  shellAbi = 1,
 ): Promise<void> {
   await client.send({
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
-      protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
+      protocol: { min: 1, max: 1 }, shellAbi, payloadVersion,
+      ...(payloadSha256 === null ? {} : { payloadSha256 }),
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', extensionInstanceId: instanceId, chromeVersion: '125.0.0.0',
       methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.listCandidates', 'forge.browser.claim', 'forge.browser.create', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
@@ -55,6 +57,8 @@ async function connectedRuntime(
   instanceId = 'instance_profile_a',
   now: () => number = () => 1_000,
   expected?: { payloadVersion: string; sha256: string; shellAbi: number },
+  helloPayloadSha256: string | null = 'a'.repeat(64),
+  helloShellAbi = 1,
 ): Promise<{
   runtime: ExternalChromeRelayRuntime
   client: AuthenticatedRelayClient
@@ -71,7 +75,7 @@ async function connectedRuntime(
   servers.push(server)
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve) })
   const client = await connectRelayClient(endpoint)
-  await sendRuntimeHello(client, instanceId)
+  await sendRuntimeHello(client, instanceId, 'm4-runtime.1', helloPayloadSha256, helloShellAbi)
   expect(runtime.inventory()).toEqual([expect.objectContaining({ extensionInstanceId: instanceId, chromeVersion: '125.0.0.0' })])
   return { runtime, client, root }
 }
@@ -459,6 +463,100 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     const reloadedLoop = fakeExtensionLoop(reloaded)
     await expect(runtime.listCandidates('instance_profile_a', 'session-a')).resolves.toMatchObject({ extensionInstanceId: 'instance_profile_a' })
     runtime.deactivate(); reloaded.close(); await reloadedLoop
+  })
+
+  it('accepts the actual prior V1 hello only for bounded update/manual recovery and never readiness', async () => {
+    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
+    const { runtime, client } = await connectedRuntime('instance_legacy', () => Date.now(), expected, null)
+    expect(runtime.inventory()).toEqual([expect.objectContaining({ extensionInstanceId: 'instance_legacy', payloadVersion: 'm4-runtime.1' })])
+    expect(runtime.inventory()[0]).not.toHaveProperty('payloadSha256')
+    const prepare = await client.receive()
+    expect(prepare).toMatchObject({ method: 'forge.runtime.prepareUpdate', params: { payloadVersion: expected.payloadVersion, sha256: expected.sha256 } })
+    await client.send({ jsonrpc: '2.0', id: prepare!.id, error: { code: -32601, message: 'prior runtime has no automatic update handler' } })
+    for (let attempt = 0; attempt < 20 && runtime.recoveryStatus() !== 'manual-extension-reload'; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(runtime.recoveryStatus()).toBe('manual-extension-reload')
+    await expect(runtime.listCandidates('instance_legacy', 'session-a')).rejects.toThrow('extension-update-required')
+    runtime.deactivate(); client.close()
+  })
+
+  it('never treats a legacy hello without immutable identity as ready when no target is configured', async () => {
+    const { runtime, client } = await connectedRuntime('instance_legacy_without_target', () => Date.now(), undefined, null)
+    expect(runtime.recoveryStatus()).toBe('manual-extension-reload')
+    await expect(runtime.listCandidates('instance_legacy_without_target', 'session-a')).rejects.toThrow('extension-update-required')
+    runtime.deactivate(); client.close()
+  })
+
+  it('reports authenticated shell ABI skew as incompatible and never attempts payload reload', async () => {
+    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
+    const { runtime, client } = await connectedRuntime('instance_shell_skew', () => Date.now(), expected, 'a'.repeat(64), 2)
+    expect(runtime.recoveryStatus()).toBe('incompatible-payload')
+    await expect(runtime.listCandidates('instance_shell_skew', 'session-a')).rejects.toThrow('extension-update-required')
+    const raced = await Promise.race([
+      client.receive().then(() => 'message'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('none'), 10)),
+    ])
+    expect(raced).toBe('none')
+    runtime.deactivate(); client.close()
+  })
+
+  it('updates every stale profile independently and aggregates mixed generations safely', async () => {
+    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
+    const { runtime, client: oldA, root } = await connectedRuntime('instance_profile_a', () => Date.now(), expected)
+    const oldB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(oldB, 'instance_profile_b')
+    const requestsA: Array<{ method: string; params: Record<string, unknown> }> = []
+    const requestsB: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loopA = fakeExtensionLoop(oldA, requestsA, 'instance_profile_a')
+    const loopB = fakeExtensionLoop(oldB, requestsB, 'instance_profile_b')
+    for (let attempt = 0; attempt < 50 && (requestsA.length < 2 || requestsB.length < 2); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(requestsA.map((entry) => entry.method)).toEqual(['forge.runtime.prepareUpdate', 'forge.runtime.reload'])
+    expect(requestsB.map((entry) => entry.method)).toEqual(['forge.runtime.prepareUpdate', 'forge.runtime.reload'])
+    expect(runtime.recoveryStatus()).toBe('reconnecting')
+
+    const exactA = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(exactA, 'instance_profile_a', expected.payloadVersion, expected.sha256)
+    const exactLoopA = fakeExtensionLoop(exactA, [], 'instance_profile_a')
+    expect(runtime.recoveryStatus()).toBe('reconnecting')
+    await expect(runtime.listCandidates('instance_profile_a', 'session-a')).resolves.toMatchObject({ extensionInstanceId: 'instance_profile_a' })
+    await expect(runtime.listCandidates('instance_profile_b', 'session-b')).rejects.toThrow('extension-update-required')
+    const exactB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(exactB, 'instance_profile_b', expected.payloadVersion, expected.sha256)
+    expect(runtime.recoveryStatus()).toBe('ready')
+    const exactLoopB = fakeExtensionLoop(exactB, [], 'instance_profile_b')
+    await expect(runtime.listCandidates('instance_profile_a', 'session-a')).resolves.toMatchObject({ extensionInstanceId: 'instance_profile_a' })
+    exactA.close()
+    for (let attempt = 0; attempt < 20 && runtime.inventory().some((entry) => entry.extensionInstanceId === 'instance_profile_a'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(runtime.recoveryStatus()).toBe('ready')
+    runtime.deactivate(); oldA.close(); oldB.close(); exactB.close()
+    await Promise.all([loopA, loopB, exactLoopA, exactLoopB])
+  })
+
+  it.each(['new-hello-before-old-rejection', 'old-rejection-before-new-hello'] as const)('keeps exact readiness when reload settlement order is %s', async (order) => {
+    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
+    const activationOrder: string[] = []
+    const { runtime, client: old, root } = await connectedRuntime('instance_generation', () => Date.now(), expected)
+    runtime.configureExpectedRuntime(expected, async () => { activationOrder.push('activate') })
+    const prepare = await old.receive()
+    activationOrder.push('prepare')
+    await old.send({ jsonrpc: '2.0', id: prepare!.id, result: { protocolVersion: 1, payloadVersion: expected.payloadVersion, quiesced: true } })
+    const reload = await old.receive()
+    activationOrder.push('reload')
+    expect(activationOrder).toEqual(['prepare', 'activate', 'reload'])
+    let exact: AuthenticatedRelayClient
+    if (order === 'old-rejection-before-new-hello') {
+      old.close()
+      for (let attempt = 0; attempt < 20 && runtime.inventory().length > 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+      exact = await connectRelayClient(path.join(root, 'relay.sock'))
+      await sendRuntimeHello(exact, 'instance_generation', expected.payloadVersion, expected.sha256)
+    } else {
+      exact = await connectRelayClient(path.join(root, 'relay.sock'))
+      await sendRuntimeHello(exact, 'instance_generation', expected.payloadVersion, expected.sha256)
+      old.close()
+    }
+    expect(reload).toMatchObject({ method: 'forge.runtime.reload' })
+    for (let attempt = 0; attempt < 20 && runtime.recoveryStatus() !== 'ready'; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(runtime.recoveryStatus()).toBe('ready')
+    runtime.deactivate(); exact.close(); old.close()
   })
 
   it('accepts explicit instance-scoped claims but never arbitrary pre-existing tabs', async () => {

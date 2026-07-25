@@ -101,6 +101,7 @@ export class Runtime implements ServiceWorkerPayload {
   private payloadSha256 = ''
   private extensionInstanceId = ''
   private acceptingOperations = true
+  private readonly authorityOperations = new Set<Promise<void>>()
 
   async initialize(): Promise<void> {
     const identity = payloadIdentity()
@@ -201,9 +202,18 @@ export class Runtime implements ServiceWorkerPayload {
     return true
   }
 
-  private async dispatchPicker(message: PickerMessage): Promise<unknown> {
+  private async dispatchPicker(message: PickerMessage, authorityTracked = false): Promise<unknown> {
     if (message.kind === 'picker.list') return { windows: await this.leases.listCandidates(), lease: this.leases.current() }
     if (message.kind === 'picker.current') return { lease: this.leases.current() }
+    if (!authorityTracked && (message.kind === 'picker.create' || message.kind === 'picker.claim')) {
+      return this.trackAuthorityOperation(() => this.dispatchPicker(message, true))
+    }
+    // Quiesce is an authority barrier, not merely a Desktop transport gate. The
+    // side panel remains able to inspect and to release the exact current lease,
+    // but can never claim/create debugger authority after prepareUpdate begins.
+    if (!this.acceptingOperations && (message.kind === 'picker.create' || message.kind === 'picker.claim')) {
+      throw new LeaseError('lease-lost', 'runtime is quiesced for update')
+    }
     if (message.kind === 'picker.create') {
       if (typeof message.leaseId !== 'string' || !Number.isSafeInteger(message.leaseEpoch) || typeof message.sessionAgentId !== 'string' || typeof message.groupTitle !== 'string') {
         throw new LeaseError('scope-mismatch', 'create fields are invalid')
@@ -213,7 +223,9 @@ export class Runtime implements ServiceWorkerPayload {
         ...(message.url ? { url: message.url } : {}), groupTitle: message.groupTitle,
       })
       try {
+        this.assertAcceptingAuthority()
         await this.attachTab(created.tab.id as number)
+        this.assertAcceptingAuthority()
         this.leases.assertScope(created.lease.leaseId, created.lease.leaseEpoch, created.tab.id as number)
       } catch (error) {
         this.clearOperationState([created.tab.id as number])
@@ -239,8 +251,10 @@ export class Runtime implements ServiceWorkerPayload {
         childPolicy: message.childPolicy,
       })
       try {
+        this.assertAcceptingAuthority()
         for (const tabId of claimed.lease.tabIds) {
           await this.attachTab(tabId)
+          this.assertAcceptingAuthority()
           this.leases.assertScope(claimed.lease.leaseId, claimed.lease.leaseEpoch, tabId)
         }
       } catch (error) {
@@ -272,11 +286,17 @@ export class Runtime implements ServiceWorkerPayload {
     } catch { /* reconnect/recovery reports the current local lease */ }
   }
 
-  private async handleDesktopRequest(message: ExternalChromeJsonRpcMessage): Promise<unknown> {
+  private async handleDesktopRequest(message: ExternalChromeJsonRpcMessage, authorityTracked = false): Promise<unknown> {
     if (!('method' in message) || !('id' in message)) throw new Error('Desktop message is not a request')
     const request = message as ExternalChromeRequest
-    if (!this.acceptingOperations && !['forge.runtime.ping', 'forge.runtime.prepareUpdate', 'forge.runtime.reload'].includes(request.method)) {
+    if (!this.acceptingOperations && ![
+      'forge.runtime.ping', 'forge.runtime.prepareUpdate', 'forge.runtime.reload',
+      'forge.browser.listCandidates', 'forge.browser.release',
+    ].includes(request.method)) {
       throw new LeaseError('lease-lost', 'runtime is quiesced for update')
+    }
+    if (!authorityTracked && (request.method === 'forge.browser.claim' || request.method === 'forge.browser.create')) {
+      return this.trackAuthorityOperation(() => this.handleDesktopRequest(message, true))
     }
     switch (request.method) {
       case 'forge.runtime.ping':
@@ -290,8 +310,10 @@ export class Runtime implements ServiceWorkerPayload {
       case 'forge.browser.claim': {
         const claimed = await this.leases.claim(request.params)
         try {
+          this.assertAcceptingAuthority()
           for (const tabId of claimed.lease.tabIds) {
             await this.attachTab(tabId)
+            this.assertAcceptingAuthority()
             this.leases.assertScope(claimed.lease.leaseId, claimed.lease.leaseEpoch, tabId)
           }
         } catch (error) {
@@ -309,7 +331,9 @@ export class Runtime implements ServiceWorkerPayload {
       case 'forge.browser.create': {
         const created = await this.leases.create(request.params)
         try {
+          this.assertAcceptingAuthority()
           await this.attachTab(created.tab.id as number)
+          this.assertAcceptingAuthority()
           this.leases.assertScope(created.lease.leaseId, created.lease.leaseEpoch, created.tab.id as number)
         } catch (error) {
           this.clearOperationState([created.tab.id as number])
@@ -360,13 +384,29 @@ export class Runtime implements ServiceWorkerPayload {
         }
       }
       case 'forge.runtime.prepareUpdate': {
+        // Flip the barrier before inspecting time or lease state so even an expired
+        // request cannot race a local picker claim. Detach still runs to completion;
+        // an elapsed deadline only withholds the acknowledgement.
         this.acceptingOperations = false
+        const deadlineAt = Date.parse(request.params.deadlineAt)
+        let deadlineMissed = !Number.isFinite(deadlineAt) || Date.now() >= deadlineAt
+        // A prepare acknowledgement must be a true zero-authority barrier: wait
+        // for pre-barrier picker/child/attach work to observe the barrier and undo.
+        await Promise.allSettled([...this.authorityOperations])
+        deadlineMissed ||= Date.now() >= deadlineAt
         const lease = this.leases.current()
         if (lease !== null) {
-          const releasedTabIds = await this.releaseDebuggerAuthority(lease.leaseId, lease.leaseEpoch)
-          this.broadcastStatus(releasedTabIds, 'detached')
-          this.notifyLocalLease(lease, 'released')
+          try {
+            const releasedTabIds = await this.releaseDebuggerAuthority(lease.leaseId, lease.leaseEpoch, deadlineAt)
+            this.broadcastStatus(releasedTabIds, 'detached')
+            this.notifyLocalLease(lease, 'released')
+          } catch (error) {
+            deadlineMissed ||= Date.now() >= deadlineAt
+            if (!deadlineMissed) throw error
+          }
         }
+        deadlineMissed ||= Date.now() >= deadlineAt
+        if (deadlineMissed) throw new Error('prepareUpdate deadline elapsed while detaching debugger authority')
         return { protocolVersion: 1, payloadVersion: request.params.payloadVersion, quiesced: true }
       }
       case 'forge.runtime.reload': {
@@ -389,8 +429,13 @@ export class Runtime implements ServiceWorkerPayload {
     if (lease?.state === 'HANDOFF' && lease.leaseId === params.leaseId && lease.leaseEpoch === params.leaseEpoch && lease.tabIds.includes(params.tabId)) {
       const handoffTabs = [...lease.tabIds]
       try {
-        for (const tabId of handoffTabs) await this.attachTab(tabId)
+        this.assertAcceptingAuthority()
+        for (const tabId of handoffTabs) {
+          await this.attachTab(tabId)
+          this.assertAcceptingAuthority()
+        }
         lease = await this.leases.resumeHandoff(params.leaseId, params.leaseEpoch, params.tabId)
+        this.assertAcceptingAuthority()
       } catch (error) {
         await this.leases.markLost()
         this.clearOperationState(handoffTabs)
@@ -589,13 +634,16 @@ export class Runtime implements ServiceWorkerPayload {
     }
   }
 
-  private async attachTab(tabId: number): Promise<void> {
+  private async attachTab(tabId: number, authorityTracked = false): Promise<void> {
+    if (!authorityTracked) return this.trackAuthorityOperation(() => this.attachTab(tabId, true))
+    this.assertAcceptingAuthority()
     await this.debuggers.attach(tabId)
     await this.chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       files: [`payloads/${this.directory}/content-script.js`],
       world: 'ISOLATED',
     })
+    this.assertAcceptingAuthority()
   }
 
   private handleConnect(value: unknown): void {
@@ -738,6 +786,7 @@ export class Runtime implements ServiceWorkerPayload {
   }
 
   private async handleChildTab(value: unknown): Promise<void> {
+    if (!this.acceptingOperations) return
     const tab = value as ChromeTab | undefined
     if (tab?.id === undefined || tab.openerTabId === undefined) return
     const lease = this.leases.current()
@@ -778,11 +827,15 @@ export class Runtime implements ServiceWorkerPayload {
     await this.includeChild(tabId as number, openerTabId)
   }
 
-  private async includeChild(tabId: number, openerTabId: number): Promise<void> {
+  private async includeChild(tabId: number, openerTabId: number, authorityTracked = false): Promise<void> {
+    if (!this.acceptingOperations) return
+    if (!authorityTracked) return this.trackAuthorityOperation(() => this.includeChild(tabId, openerTabId, true))
     const lease = await this.leases.includeChild(tabId, openerTabId)
     if (lease === null) return
     try {
+      this.assertAcceptingAuthority()
       await this.attachTab(tabId)
+      this.assertAcceptingAuthority()
       this.leases.assertScope(lease.leaseId, lease.leaseEpoch, tabId)
     } catch {
       const current = this.leases.current()
@@ -834,10 +887,23 @@ export class Runtime implements ServiceWorkerPayload {
     this.notifyLocalLease(lease, 'released')
   }
 
-  private async releaseDebuggerAuthority(leaseId: string, leaseEpoch: number): Promise<number[]> {
+  private assertAcceptingAuthority(): void {
+    if (!this.acceptingOperations) throw new LeaseError('lease-lost', 'runtime is quiesced for update')
+  }
+
+  private trackAuthorityOperation<Result>(operation: () => Promise<Result>): Promise<Result> {
+    this.assertAcceptingAuthority()
+    const result = Promise.resolve().then(operation)
+    const tracked = result.then(() => undefined, () => undefined)
+    this.authorityOperations.add(tracked)
+    void tracked.finally(() => this.authorityOperations.delete(tracked))
+    return result
+  }
+
+  private async releaseDebuggerAuthority(leaseId: string, leaseEpoch: number, deadlineAt?: number): Promise<number[]> {
     const current = this.leases.current()
     if (current?.leaseId === leaseId && current.leaseEpoch === leaseEpoch) this.clearOperationState(current.tabIds)
-    return releaseLeaseDebuggerAuthority(this.leases, this.debuggers, leaseId, leaseEpoch)
+    return releaseLeaseDebuggerAuthority(this.leases, this.debuggers, leaseId, leaseEpoch, deadlineAt)
   }
 
   private clearOperationState(tabIds: number[]): void {
@@ -871,12 +937,20 @@ export async function releaseLeaseDebuggerAuthority(
   debuggers: DebuggerController,
   leaseId: string,
   leaseEpoch: number,
+  deadlineAt?: number,
 ): Promise<number[]> {
   const tabIds = await leases.beginRelease(leaseId, leaseEpoch)
-  const results = await Promise.allSettled(tabIds.map((tabId) => debuggers.reset(tabId)))
+  let deadlineMissed = deadlineAt !== undefined && (!Number.isFinite(deadlineAt) || Date.now() >= deadlineAt)
+  const results = await Promise.allSettled(tabIds.map(async (tabId) => {
+    deadlineMissed ||= deadlineAt !== undefined && Date.now() >= deadlineAt
+    await debuggers.reset(tabId)
+    deadlineMissed ||= deadlineAt !== undefined && Date.now() >= deadlineAt
+  }))
   const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
   if (failure) throw failure.reason
   await leases.completeRelease(leaseId, leaseEpoch)
+  deadlineMissed ||= deadlineAt !== undefined && Date.now() >= deadlineAt
+  if (deadlineMissed) throw new Error('prepareUpdate deadline elapsed while detaching debugger authority')
   return tabIds
 }
 

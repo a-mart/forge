@@ -104,6 +104,21 @@ describe('ExternalChromeDeployer', () => {
     expect(JSON.parse(await fs.readFile(path.join(stablePath, 'current.json'), 'utf8')).payloadVersion).toBe('1.0.0')
   })
 
+  it('stages immutable update artifacts without changing selector/native selection until activation', async () => {
+    const base = await fixture('1.0.0', 'payload-old', process.platform, process.arch, 'shell-old', 'native-old')
+    const deployer = new ExternalChromeDeployer({ dataRoot: path.resolve(base.dataRoot), resourcesRoot: base.resourcesRoot, desktopVersion: '0.22.5' })
+    await deployer.deploy()
+    const update = await fixture('1.1.0', 'payload-new', process.platform, process.arch, 'shell-new', 'native-new')
+    const updating = new ExternalChromeDeployer({ dataRoot: path.resolve(base.dataRoot), resourcesRoot: update.resourcesRoot, desktopVersion: '0.22.5' })
+    await updating.stage()
+    expect(await updating.pendingDeployment()).toMatchObject({ payloadVersion: '1.1.0', nativeSha256: sha256(Buffer.from('native-new')) })
+    expect(JSON.parse(await fs.readFile(path.join(updating.paths.extension, 'current.json'), 'utf8'))).toMatchObject({ payloadVersion: '1.0.0' })
+    expect(await fs.readFile(updating.paths.nativeHostExecutable, 'utf8')).toBe('native-old')
+    await updating.activateStaged()
+    expect(JSON.parse(await fs.readFile(path.join(updating.paths.extension, 'current.json'), 'utf8'))).toMatchObject({ payloadVersion: '1.1.0' })
+    expect(await fs.readFile(updating.paths.nativeHostExecutable, 'utf8')).toBe('native-new')
+  })
+
   it('rejects concurrent deployment locks', async () => {
     const input = await fixture()
     const paths = resolveExternalChromeDataPaths(path.resolve(input.dataRoot))
@@ -286,6 +301,9 @@ describe('ExternalChromeDeployer', () => {
       })
       await expect(crashing.deploy()).rejects.toThrow(`crash:${crashPhase}`)
       const restarted = new ExternalChromeDeployer({ dataRoot: path.resolve(base.dataRoot), resourcesRoot: input.resourcesRoot, desktopVersion: '0.22.5' })
+      await restarted.recover()
+      expect(JSON.parse(await fs.readFile(path.join(restarted.paths.extension, 'current.json'), 'utf8'))).toMatchObject({ payloadVersion: `0.9.${index}` })
+      expect(await restarted.verifyDeployment()).toMatchObject({ state: 'ready', install: { payloadVersion: `0.9.${index}` } })
       await restarted.deploy()
       const selector = JSON.parse(await fs.readFile(path.join(restarted.paths.extension, 'current.json'), 'utf8'))
       expect(selector.payloadVersion).toBe(`1.0.${index}`)

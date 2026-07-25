@@ -49,6 +49,8 @@ export type ExternalChromeDeploymentVerification =
 
 export interface ExternalChromeDeploymentVerifier {
   verifyDeployment(): Promise<ExternalChromeDeploymentVerification>
+  pendingDeployment?(): Promise<ExternalChromeInstallRecord | null>
+  activateStaged?(): Promise<ExternalChromeInstallRecord>
   recoveryState?(): 'manual-extension-reload' | null
 }
 
@@ -204,12 +206,81 @@ export class ExternalChromeDeployer {
   }
 
   async deploy(): Promise<ExternalChromeInstallRecord> {
+    await this.stage()
+    return this.activateStaged()
+  }
+
+  /** Validate and copy an immutable package without changing selector/native authority. */
+  async stage(): Promise<ExternalChromeInstallRecord> {
     const release = await this.lock.acquire(this.paths.lock)
     try {
       await this.recoverUnlocked()
       const manifest = await readExternalChromePackageManifest(path.join(this.options.resourcesRoot, 'package-manifest.json'))
       this.assertCompatible(manifest)
-      await this.validatePackagedResources(manifest)
+      await this.validatePackagedResources(manifest, this.options.resourcesRoot)
+      const record = installRecordFromManifest(manifest)
+      const directory = `staged-${manifest.extension.shellSha256.slice(0, 16)}-${manifest.extension.payloadSha256.slice(0, 16)}-${manifest.nativeHost.sha256.slice(0, 16)}`
+      const destination = path.join(this.paths.deployment, directory)
+      assertPathInside(this.paths.deployment, destination)
+      if (!(await exists(this.fs, destination))) {
+        const temporary = path.join(this.paths.deployment, `.stage-${randomUUID()}`)
+        await this.fs.mkdir(temporary, { recursive: true, mode: 0o700 })
+        try {
+          await this.copyInventory(path.join(this.options.resourcesRoot, 'extension-shell'), path.join(temporary, 'extension-shell'), manifest.extension.shellFiles)
+          await this.copyInventory(
+            path.join(this.options.resourcesRoot, 'payload', manifest.extension.payloadDirectory),
+            path.join(temporary, 'payload', manifest.extension.payloadDirectory),
+            manifest.extension.payloadFiles,
+          )
+          const nativeDirectory = path.join(temporary, 'native-host', `${this.platform}-${this.architecture}`)
+          await this.copyInventory(
+            path.join(this.options.resourcesRoot, 'native-host', `${this.platform}-${this.architecture}`),
+            nativeDirectory,
+            { [manifest.nativeHost.executable]: manifest.nativeHost.sha256 },
+          )
+          await this.fs.copyFile(path.join(this.options.resourcesRoot, 'package-manifest.json'), path.join(temporary, 'package-manifest.json'))
+          await this.fs.chmod(path.join(temporary, 'package-manifest.json'), 0o600)
+          await this.syncTree(temporary)
+          await this.renameWithRetry(temporary, destination)
+        } catch (error) {
+          await this.fs.rm(temporary, { recursive: true, force: true })
+          throw error
+        }
+      }
+      await this.validatePackagedResources(manifest, destination)
+      await this.atomicJson(path.join(this.paths.state, 'staged-deployment.json'), {
+        schemaVersion: 1, directory, payloadSha256: manifest.extension.payloadSha256, nativeSha256: manifest.nativeHost.sha256,
+      })
+      return record
+    } finally {
+      await release()
+    }
+  }
+
+  async pendingDeployment(): Promise<ExternalChromeInstallRecord | null> {
+    const staged = await this.readStagedDeployment()
+    return staged ? installRecordFromManifest(staged.manifest) : null
+  }
+
+  /** Activate only the exact previously validated staged package. */
+  async activateStaged(): Promise<ExternalChromeInstallRecord> {
+    const staged = await this.readStagedDeployment()
+    if (staged) return this.deployFromResources(staged.root)
+    // Multiple stale profiles may acknowledge prepare independently. Once one
+    // generation atomically activates the exact package, later acknowledgements
+    // observe the verified selection and may safely continue to reload.
+    const active = await this.verifyDeployment()
+    if (active.state === 'ready') return active.install
+    throw new Error('No validated External Chrome deployment is staged')
+  }
+
+  private async deployFromResources(resourcesRoot: string): Promise<ExternalChromeInstallRecord> {
+    const release = await this.lock.acquire(this.paths.lock)
+    try {
+      await this.recoverUnlocked()
+      const manifest = await readExternalChromePackageManifest(path.join(resourcesRoot, 'package-manifest.json'))
+      this.assertCompatible(manifest)
+      await this.validatePackagedResources(manifest, resourcesRoot)
       await this.phase('validated', manifest)
 
       const oldSelector = await this.readSelector(path.join(this.paths.extension, 'current.json'))
@@ -220,11 +291,12 @@ export class ExternalChromeDeployer {
       const record = installRecordFromManifest(manifest)
       const rollbackInstallToRetain = rollbackInstall && stableJson(rollbackInstall) !== stableJson(record)
         ? rollbackInstall : null
+      if (rollbackInstallToRetain) await this.atomicJson(path.join(this.paths.state, 'activation-backup.json'), rollbackInstallToRetain)
       const selector = selectorFromManifest(manifest)
       const stagingPayload = path.join(this.paths.deployment, `.payload-${randomUUID()}`)
       await this.fs.mkdir(this.paths.deployment, { recursive: true, mode: 0o700 })
       await this.copyInventory(
-        path.join(this.options.resourcesRoot, 'payload', manifest.extension.payloadDirectory),
+        path.join(resourcesRoot, 'payload', manifest.extension.payloadDirectory),
         stagingPayload,
         manifest.extension.payloadFiles,
       )
@@ -232,20 +304,15 @@ export class ExternalChromeDeployer {
       await this.phase('payload-staged', manifest)
 
       const shellChanged = !(await this.shellMatches(manifest))
-      if (shellChanged) {
-        await this.installWithShellMigration(manifest, stagingPayload, oldSelector, rollbackInstallToRetain)
-      } else {
-        await this.installPayload(stagingPayload, selector.payloadDirectory)
-      }
+      if (shellChanged) await this.installWithShellMigration(manifest, stagingPayload, oldSelector, rollbackInstallToRetain, resourcesRoot)
+      else await this.installPayload(stagingPayload, selector.payloadDirectory)
       await this.phase('payload-installed', manifest)
 
-      if (rollbackInstallToRetain) {
-        await this.atomicJson(this.paths.previousState, rollbackInstallToRetain)
-      }
+      if (rollbackInstallToRetain) await this.atomicJson(this.paths.previousState, rollbackInstallToRetain)
       if (!shellChanged) await this.atomicJson(path.join(this.paths.extension, 'current.json'), selector)
       await this.phase('selector-written', manifest)
 
-      await this.installNative(manifest, rollbackInstallToRetain?.nativeSha256)
+      await this.installNative(manifest, rollbackInstallToRetain?.nativeSha256, resourcesRoot)
       await this.phase('native-written', manifest)
 
       await this.atomicJson(this.paths.installState, record)
@@ -253,6 +320,8 @@ export class ExternalChromeDeployer {
       await this.phase('complete', manifest)
       this.manualRetry = false
       await this.fs.rm(this.paths.journal, { force: true })
+      await this.fs.rm(path.join(this.paths.state, 'activation-backup.json'), { force: true })
+      await this.fs.rm(path.join(this.paths.state, 'staged-deployment.json'), { force: true })
       return record
     } finally {
       await release()
@@ -364,6 +433,27 @@ export class ExternalChromeDeployer {
   private async recoverUnlocked(): Promise<void> {
     await this.ensureSafeRoot()
     const previousShell = path.join(this.paths.integrationRoot, 'extension.previous')
+    const activationBackupPath = path.join(this.paths.state, 'activation-backup.json')
+    const activationBackup = await this.readInstall(activationBackupPath)
+    if (activationBackup) {
+      const backupSelector = selectorFromInstall(activationBackup)
+      if (await exists(this.fs, previousShell) && await this.isValidRollbackAt(activationBackup, previousShell)) {
+        const interruptedShell = path.join(this.paths.integrationRoot, `extension.interrupted-${randomUUID()}`)
+        if (await exists(this.fs, this.paths.extension)) await this.renameWithRetry(this.paths.extension, interruptedShell)
+        await this.renameWithRetry(previousShell, this.paths.extension)
+        await this.fs.rm(interruptedShell, { recursive: true, force: true })
+      } else if (await this.isValidPayload(backupSelector)) {
+        await this.atomicJson(path.join(this.paths.extension, 'current.json'), backupSelector)
+      }
+      if (await this.nativeAvailable(activationBackup.nativeSha256)) await this.selectNative(activationBackup.nativeSha256)
+      if (await this.isValidRollbackAt(activationBackup, this.paths.extension) && await fileHasHash(this.fs, this.paths.nativeHostExecutable, activationBackup.nativeSha256)) {
+        await this.atomicJson(this.paths.installState, activationBackup)
+        await this.fs.rm(activationBackupPath, { force: true })
+        await this.fs.rm(this.paths.journal, { force: true })
+      } else {
+        this.manualRetry = true
+      }
+    }
     const nextShell = path.join(this.paths.integrationRoot, 'extension.new')
     const rollbackShell = path.join(this.paths.integrationRoot, 'extension.rollback-new')
     if (!(await exists(this.fs, this.paths.extension))) {
@@ -428,10 +518,10 @@ export class ExternalChromeDeployer {
     }
   }
 
-  private async validatePackagedResources(manifest: ExternalChromePackageManifest): Promise<void> {
-    const shellRoot = path.join(this.options.resourcesRoot, 'extension-shell')
-    const payloadRoot = path.join(this.options.resourcesRoot, 'payload', manifest.extension.payloadDirectory)
-    const nativeRoot = path.join(this.options.resourcesRoot, 'native-host', `${this.platform}-${this.architecture}`)
+  private async validatePackagedResources(manifest: ExternalChromePackageManifest, resourcesRoot: string): Promise<void> {
+    const shellRoot = path.join(resourcesRoot, 'extension-shell')
+    const payloadRoot = path.join(resourcesRoot, 'payload', manifest.extension.payloadDirectory)
+    const nativeRoot = path.join(resourcesRoot, 'native-host', `${this.platform}-${this.architecture}`)
     await this.validateInventory(shellRoot, manifest.extension.shellFiles)
     await this.validateInventory(payloadRoot, manifest.extension.payloadFiles)
     if (await this.inventoryTreeHash(shellRoot, Object.keys(manifest.extension.shellFiles).sort()) !== manifest.extension.shellSha256) {
@@ -488,11 +578,12 @@ export class ExternalChromeDeployer {
     stagingPayload: string,
     oldSelector: ExternalChromeSelector | null,
     rollbackInstall: ExternalChromeInstallRecord | null,
+    resourcesRoot: string,
   ): Promise<void> {
     const nextShell = path.join(this.paths.integrationRoot, 'extension.new')
     const previousShell = path.join(this.paths.integrationRoot, 'extension.previous')
     await this.fs.rm(nextShell, { recursive: true, force: true })
-    await this.copyInventory(path.join(this.options.resourcesRoot, 'extension-shell'), nextShell, manifest.extension.shellFiles)
+    await this.copyInventory(path.join(resourcesRoot, 'extension-shell'), nextShell, manifest.extension.shellFiles)
     const nextPayloads = path.join(nextShell, 'payloads')
     await this.fs.mkdir(nextPayloads, { recursive: true, mode: 0o755 })
     if (oldSelector && await this.isValidPayload(oldSelector)) {
@@ -556,10 +647,10 @@ export class ExternalChromeDeployer {
     await this.renameWithRetry(stagingPayload, destination)
   }
 
-  private async installNative(manifest: ExternalChromePackageManifest, rollbackNativeSha256?: string): Promise<void> {
+  private async installNative(manifest: ExternalChromePackageManifest, rollbackNativeSha256: string | undefined, resourcesRoot: string): Promise<void> {
     await this.fs.mkdir(this.paths.nativeHost, { recursive: true, mode: 0o700 })
     const source = path.join(
-      this.options.resourcesRoot,
+      resourcesRoot,
       'native-host',
       `${this.platform}-${this.architecture}`,
       manifest.nativeHost.executable,
@@ -824,6 +915,27 @@ export class ExternalChromeDeployer {
   private async phase(phase: DeploymentPhase, manifest: ExternalChromePackageManifest): Promise<void> {
     await this.atomicJson(this.paths.journal, { schemaVersion: 1, phase, packageVersion: manifest.packageVersion })
     await this.options.afterPhase?.(phase)
+  }
+
+  private async readStagedDeployment(): Promise<{ root: string; manifest: ExternalChromePackageManifest } | null> {
+    try {
+      const markerPath = path.join(this.paths.state, 'staged-deployment.json')
+      if ((await this.fs.stat(markerPath)).size > 1_024) return null
+      const value = JSON.parse(await this.fs.readFile(markerPath, 'utf8')) as unknown
+      if (!isExactObject(value, ['schemaVersion', 'directory', 'payloadSha256', 'nativeSha256']) || value.schemaVersion !== 1 ||
+        typeof value.directory !== 'string' || !/^staged-[a-f0-9]{16}-[a-f0-9]{16}-[a-f0-9]{16}$/u.test(value.directory) ||
+        typeof value.payloadSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.payloadSha256) ||
+        typeof value.nativeSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.nativeSha256)) return null
+      const root = path.join(this.paths.deployment, value.directory)
+      assertPathInside(this.paths.deployment, root)
+      const manifest = await readExternalChromePackageManifest(path.join(root, 'package-manifest.json'))
+      if (manifest.extension.payloadSha256 !== value.payloadSha256 || manifest.nativeHost.sha256 !== value.nativeSha256) return null
+      this.assertCompatible(manifest)
+      await this.validatePackagedResources(manifest, root)
+      return { root, manifest }
+    } catch {
+      return null
+    }
   }
 
   private async readSelector(file: string): Promise<ExternalChromeSelector | null> {

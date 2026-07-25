@@ -51,6 +51,28 @@ describe('External Chrome native registration', () => {
     expect(await registration.remove()).toMatchObject({ registration: 'not-registered' })
   })
 
+  it('transfers only exact Forge-owned registration records between data roots', async () => {
+    const firstDataRoot = await root()
+    const secondDataRoot = await root()
+    const registrationDirectory = path.join(await root(), 'shared', 'NativeMessagingHosts')
+    await prepareExecutable(firstDataRoot, 'darwin')
+    await prepareExecutable(secondDataRoot, 'darwin')
+    const first = new PosixNativeRegistration({ platform: 'darwin', dataRoot: firstDataRoot, registrationDirectory, trustVerifier: trusted })
+    const second = new PosixNativeRegistration({ platform: 'darwin', dataRoot: secondDataRoot, registrationDirectory, trustVerifier: trusted })
+    await first.repair()
+    const conflict = await second.inspect()
+    expect(conflict).toMatchObject({
+      registration: 'conflict',
+      forgeConflict: { identity: expect.stringMatching(/^[a-f0-9]{64}$/u), dataDirHash: expect.stringMatching(/^[a-f0-9]{16}$/u) },
+    })
+    await expect(second.transferForgeOwnedConflict({ identity: '0'.repeat(64), dataDirHash: conflict.forgeConflict!.dataDirHash }))
+      .rejects.toThrow(/stale/u)
+    await expect(second.transferForgeOwnedConflict(conflict.forgeConflict!)).resolves.toMatchObject({ registration: 'owned' })
+    expect(await first.inspect()).toMatchObject({ registration: 'conflict' })
+    await expect(readFile(path.join(resolveExternalChromeDataPaths(firstDataRoot, 'darwin').state, 'registration.json'), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('refuses to overwrite an unowned registration target', async () => {
     const dataRoot = await root()
     const registrationDirectory = path.join(dataRoot, 'fake-chrome', 'NativeMessagingHosts')

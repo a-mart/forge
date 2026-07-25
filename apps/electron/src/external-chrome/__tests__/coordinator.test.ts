@@ -5,10 +5,10 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ExternalChromeHostCoordinator } from '../coordinator.js'
 import { ExternalChromeDeployer } from '../deployer.js'
-import { PosixCurrentUserAccessController } from '../auth-rendezvous.js'
+import { ExternalChromeAuthorityStore, PosixCurrentUserAccessController } from '../auth-rendezvous.js'
 import { resolveExternalChromeDataPaths } from '../data-paths.js'
 import type { ExternalChromeEndpointAuthority, ExternalChromeEndpointHandle } from '../endpoint.js'
-import type { ExternalChromeNativeRegistration, NativeRegistrationInspection } from '../registration.js'
+import { PosixNativeRegistration, type ExecutableTrustVerifier, type ExternalChromeNativeRegistration, type ForgeRegistrationConflictEvidence, type NativeRegistrationInspection } from '../registration.js'
 import { EXTERNAL_CHROME_EXTENSION_ID, EXTERNAL_CHROME_PUBLIC_KEY_SHA256, sha256 } from '../package-manifest.js'
 
 const roots: string[] = []
@@ -74,6 +74,10 @@ class FakeRegistration implements ExternalChromeNativeRegistration {
   inspect(): Promise<NativeRegistrationInspection> { return Promise.resolve({ registration: this.registration, trust: this.trust }) }
   repair(): Promise<NativeRegistrationInspection> {
     this.repairs += 1
+    this.registration = 'owned'
+    return this.inspect()
+  }
+  transferForgeOwnedConflict(_evidence: ForgeRegistrationConflictEvidence): Promise<NativeRegistrationInspection> {
     this.registration = 'owned'
     return this.inspect()
   }
@@ -144,30 +148,50 @@ describe('ExternalChromeHostCoordinator', () => {
     await second.disable()
   })
 
-  it('requires explicit takeover after a different data-dir authority is quiesced', async () => {
+  it('persists exact Forge registration conflict evidence and transfers it only after quiesce', async () => {
     const firstRoot = await root()
     const secondRoot = await root()
-    const registration = new FakeRegistration()
+    const registrationDirectory = path.join(firstRoot.dataRoot, '..', 'shared-native-registration')
+    const trusted: ExecutableTrustVerifier = { verify: async () => 'trusted' }
+    const firstRegistration = new PosixNativeRegistration({
+      platform: 'linux', dataRoot: firstRoot.dataRoot, registrationDirectory, trustVerifier: trusted,
+    })
+    const secondRegistration = new PosixNativeRegistration({
+      platform: 'linux', dataRoot: secondRoot.dataRoot, registrationDirectory, trustVerifier: trusted,
+    })
     const alive = (pid: number): boolean => pid === 811 || pid === 812
+    const authorityFile = path.join(firstRoot.dataRoot, '..', 'shared-authority.json')
+    const firstAuthority = new ExternalChromeAuthorityStore(firstRoot.dataRoot, 'linux', 'desktop_takeover_first', 811, access, alive, Date.now, authorityFile)
+    const secondAuthority = new ExternalChromeAuthorityStore(secondRoot.dataRoot, 'linux', 'desktop_takeover_second', 812, access, alive, Date.now, authorityFile)
     const first = new ExternalChromeHostCoordinator({
       dataRoot: firstRoot.dataRoot, platform: 'linux', pid: 811, username: 'takeover-user', uid: 902,
-      instanceId: 'desktop_takeover_first', access, endpoints: new FakeEndpoints(), registration,
+      instanceId: 'desktop_takeover_first', access, authority: firstAuthority, endpoints: new FakeEndpoints(), registration: firstRegistration,
       isProcessAlive: alive, deploymentVerifier: firstRoot.deployer,
     })
-    const second = new ExternalChromeHostCoordinator({
+    let second = new ExternalChromeHostCoordinator({
       dataRoot: secondRoot.dataRoot, platform: 'linux', pid: 812, username: 'takeover-user', uid: 902,
-      instanceId: 'desktop_takeover_second', access, endpoints: new FakeEndpoints(), registration,
+      instanceId: 'desktop_takeover_second', access, authority: secondAuthority, endpoints: new FakeEndpoints(), registration: secondRegistration,
       isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
     })
     await first.enable()
     expect(await second.status()).toMatchObject({
       state: 'other-instance', authority: 'other-live', recovery: 'authority-owned-by-other-data-dir',
-      canEnable: false, canTakeover: true, ownerDataDirHash: expect.stringMatching(/^[a-f0-9]{16}$/u),
+      canEnable: false, canTakeover: false, ownerDataDirHash: expect.stringMatching(/^[a-f0-9]{16}$/u),
+      registration: 'conflict',
     })
     await expect(second.takeover()).rejects.toThrow(/must be quiesced/u)
     await first.quiesce('desktop-update')
-    expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true })
-    expect(await second.takeover()).toMatchObject({ state: 'online', authority: 'owned' })
+    // A coordinator restart retains only bounded exact conflict authorization.
+    second = new ExternalChromeHostCoordinator({
+      dataRoot: secondRoot.dataRoot, platform: 'linux', pid: 812, username: 'takeover-user', uid: 902,
+      instanceId: 'desktop_takeover_second_restart', access,
+      authority: new ExternalChromeAuthorityStore(secondRoot.dataRoot, 'linux', 'desktop_takeover_second_restart', 812, access, alive, Date.now, authorityFile),
+      endpoints: new FakeEndpoints(), registration: secondRegistration,
+      isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
+    })
+    expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true, registration: 'conflict' })
+    expect(await second.takeover()).toMatchObject({ state: 'online', authority: 'owned', registration: 'owned' })
+    await expect(second.takeover()).rejects.toThrow(/quiesced|authorization/u)
     await second.disable()
   })
 
@@ -305,6 +329,32 @@ describe('ExternalChromeHostCoordinator', () => {
     await deployer.deploy()
     await writeFile(paths.nativeHostExecutable, 'corrupt')
     await assertMismatch()
+  })
+
+  it('keeps rollback failures visible and lets active recovery outrank the receipt', async () => {
+    const failedRoot = await root()
+    const failed = new ExternalChromeHostCoordinator({
+      dataRoot: failedRoot.dataRoot, platform: 'linux', pid: 909, username: 'rollback-failed', uid: 909,
+      instanceId: 'desktop_rollback_failed', access, endpoints: new FakeEndpoints(), registration: new FakeRegistration(),
+      isProcessAlive: () => false, deploymentVerifier: failedRoot.deployer,
+      rollbackController: { canRollback: async () => true, rollback: async () => { throw new Error('synthetic rollback failure') } },
+    })
+    await failed.enable()
+    await expect(failed.rollback()).rejects.toThrow(/synthetic rollback failure/u)
+    expect(await failed.status()).toMatchObject({ recovery: 'manual-extension-reload' })
+
+    const activeRoot = await root()
+    const active = new ExternalChromeHostCoordinator({
+      dataRoot: activeRoot.dataRoot, platform: 'linux', pid: 910, username: 'rollback-active', uid: 910,
+      instanceId: 'desktop_rollback_active', access, endpoints: new FakeEndpoints(), registration: new FakeRegistration(),
+      isProcessAlive: () => false,
+      deploymentVerifier: {
+        verifyDeployment: () => activeRoot.deployer.verifyDeployment(),
+        recoveryState: () => 'manual-extension-reload',
+      },
+      rollbackController: { canRollback: async () => true, rollback: async () => undefined },
+    })
+    expect(await active.rollback()).toMatchObject({ recovery: 'manual-extension-reload' })
   })
 
   it('fails closed when executable trust is missing', async () => {
