@@ -1,6 +1,7 @@
 import { isSea } from 'node:sea'
 import { HOST_CONNECT_MAX_ATTEMPTS, HOST_EXTENSION_ORIGIN } from './constants.js'
 import { runNativeHost } from './host.js'
+import { normalizeNativeHostLaunchArguments } from './launch.js'
 import { assertSupportedPlatform } from './platform.js'
 import { createInstalledRelayDependencies } from './installed-discovery.js'
 import { AuthenticatedRelayClient } from './relay-client.js'
@@ -8,7 +9,7 @@ import { AuthenticatedRelayClient } from './relay-client.js'
 async function main(): Promise<void> {
   assertSupportedPlatform(process.platform)
   const platform = process.platform
-  const launchArguments = process.argv.slice(isSea() ? 1 : 2)
+  const launchArguments = normalizeNativeHostLaunchArguments(process.argv, isSea(), process.execPath)
   process.exitCode = await runNativeHost({
     input: process.stdin,
     output: process.stdout,

@@ -72,6 +72,15 @@ export function assertSeaToolchain({
   }
 }
 
+export async function prepareExecutableForInitialSmoke(executable, {
+  platform = process.platform,
+  runCommand = defaultRunCommand,
+} = {}) {
+  if (platform !== 'darwin') return
+  await runCommand('/usr/bin/codesign', ['--force', '--sign', '-', executable])
+  await runCommand('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', executable])
+}
+
 export async function prepareReleaseExecutable(executable, {
   platform = process.platform,
   env = process.env,
