@@ -53,17 +53,24 @@ export interface ExternalChromeLeaseCheckpoint {
   groupId: number | null
   childPolicy: ExternalChromeChildPolicy
   expiresAt: number
-  /** Durable proof that Extension acknowledged detach; retained until backend lifecycle release. */
+  /** Durable proof that Extension acknowledged detach; retained until backend lifecycle finalize. */
   releasedAt?: number
+  /** Opaque two-phase transaction authority. Never contains tab metadata. */
+  lifecycleReleaseId?: string
+  originalHostId?: string
+  originalHostGeneration?: number
 }
 
 interface PersistedCheckpoints {
   schemaVersion: 1
   leases: ExternalChromeLeaseCheckpoint[]
+  /** Bounded idempotency receipts, not lease authority and never picker-visible. */
+  finalizedReleaseIds?: string[]
 }
 
 class LeaseCheckpointStore {
   private checkpoints: ExternalChromeLeaseCheckpoint[] = []
+  private finalizedReleaseIds: string[] = []
   private loaded = false
   private operation: Promise<void> = Promise.resolve()
   constructor(private readonly file: string) {}
@@ -78,7 +85,7 @@ class LeaseCheckpointStore {
   put(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
     return this.serialize(async () => {
       await this.load()
-      this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== checkpoint.leaseId)
+      this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== checkpoint.leaseId || lease.leaseEpoch !== checkpoint.leaseEpoch)
       this.checkpoints.push(structuredClone(checkpoint))
       if (this.checkpoints.length > 128) this.checkpoints.splice(0, this.checkpoints.length - 128)
       await this.persist()
@@ -90,6 +97,36 @@ class LeaseCheckpointStore {
       await this.load()
       this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch)
       await this.persist()
+    })
+  }
+
+  finalizeLifecycleRelease(input: {
+    extensionInstanceId: string; sessionAgentId: string; profileId: string; leaseId: string; leaseEpoch: number;
+    lifecycleReleaseId: string; originalHostId: string; originalHostGeneration: number
+  }): Promise<void> {
+    return this.serialize(async () => {
+      await this.load()
+      const transaction = this.checkpoints.find((lease) => lease.lifecycleReleaseId === input.lifecycleReleaseId)
+      if (!transaction) {
+        if (this.finalizedReleaseIds.includes(input.lifecycleReleaseId)) return
+        throw new Error('stale lifecycle release authority')
+      }
+      if (transaction.releasedAt === undefined || transaction.extensionInstanceId !== input.extensionInstanceId ||
+        transaction.sessionAgentId !== input.sessionAgentId || transaction.profileId !== input.profileId ||
+        transaction.leaseId !== input.leaseId || transaction.leaseEpoch !== input.leaseEpoch ||
+        transaction.originalHostId !== input.originalHostId || transaction.originalHostGeneration !== input.originalHostGeneration) {
+        throw new Error('stale lifecycle release authority')
+      }
+      this.checkpoints = this.checkpoints.filter((lease) => lease !== transaction)
+      this.finalizedReleaseIds = [...this.finalizedReleaseIds.filter((id) => id !== input.lifecycleReleaseId), input.lifecycleReleaseId].slice(-256)
+      await this.persist()
+    })
+  }
+
+  wasLifecycleReleaseFinalized(lifecycleReleaseId: string): Promise<boolean> {
+    return this.serialize(async () => {
+      await this.load()
+      return this.finalizedReleaseIds.includes(lifecycleReleaseId)
     })
   }
 
@@ -116,17 +153,27 @@ class LeaseCheckpointStore {
       const value = JSON.parse(raw) as Partial<PersistedCheckpoints>
       if (value.schemaVersion !== 1 || !Array.isArray(value.leases)) return
       this.checkpoints = value.leases.filter(validCheckpoint).slice(-128)
+      this.finalizedReleaseIds = Array.isArray(value.finalizedReleaseIds)
+        ? value.finalizedReleaseIds.filter(validLifecycleReleaseId).slice(-256)
+        : []
     } catch { this.checkpoints = [] }
   }
 
   private async persist(): Promise<void> {
     await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
     const temporary = `${this.file}.new-${process.pid}-${randomUUID()}`
-    const value: PersistedCheckpoints = { schemaVersion: 1, leases: this.checkpoints }
+    const value: PersistedCheckpoints = {
+      schemaVersion: 1, leases: this.checkpoints,
+      ...(this.finalizedReleaseIds.length > 0 ? { finalizedReleaseIds: this.finalizedReleaseIds } : {}),
+    }
     await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: 'wx' })
     await fs.rename(temporary, this.file)
     if (process.platform !== 'win32') await fs.chmod(this.file, 0o600)
   }
+}
+
+function validLifecycleReleaseId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9._:@/-]+$/u.test(value)
 }
 
 function validCheckpoint(value: unknown): value is ExternalChromeLeaseCheckpoint {
@@ -137,7 +184,11 @@ function validCheckpoint(value: unknown): value is ExternalChromeLeaseCheckpoint
     Array.isArray(record.tabIds) && record.tabIds.length <= 128 && record.tabIds.every(Number.isSafeInteger) &&
     (record.groupId === null || Number.isSafeInteger(record.groupId)) &&
     (record.childPolicy === 'manual' || record.childPolicy === 'include-opened-by-leased-tabs') && Number.isFinite(record.expiresAt) &&
-    (record.releasedAt === undefined || Number.isFinite(record.releasedAt))
+    (record.releasedAt === undefined || Number.isFinite(record.releasedAt)) &&
+    ((record.lifecycleReleaseId === undefined && record.originalHostId === undefined && record.originalHostGeneration === undefined) ||
+      (validLifecycleReleaseId(record.lifecycleReleaseId) &&
+        typeof record.originalHostId === 'string' && record.originalHostId.length > 0 && record.originalHostId.length <= 128 &&
+        Number.isSafeInteger(record.originalHostGeneration) && (record.originalHostGeneration as number) > 0))
 }
 
 class FramedSocketPeer {
@@ -359,6 +410,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private readonly connections = new Map<string, RuntimeConnection>()
   private readonly checkpoints: LeaseCheckpointStore
   private reconciliation: Promise<void> = Promise.resolve()
+  private lifecycleReleaseOperations: Promise<void> = Promise.resolve()
 
   constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
     this.checkpoints = new LeaseCheckpointStore(checkpointFile)
@@ -429,10 +481,87 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return result
   }
 
-  async release(extensionInstanceId: string, leaseId: string, leaseEpoch: number, reason = 'released'): Promise<void> {
-    const result = await this.connection(extensionInstanceId).request('forge.browser.release', { protocolVersion: 1, leaseId, leaseEpoch, reason })
-    if (result.leaseId !== leaseId || result.leaseEpoch !== leaseEpoch) throw new Error('extension release response changed lease routing')
-    await this.checkpoints.remove(leaseId, leaseEpoch)
+  release(extensionInstanceId: string, leaseId: string, leaseEpoch: number, reason = 'released'): Promise<void> {
+    return this.serializeLifecycleRelease(async () => {
+      const checkpoint = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === extensionInstanceId
+        && lease.leaseId === leaseId && lease.leaseEpoch === leaseEpoch)
+      if (checkpoint?.releasedAt === undefined) {
+        const result = await this.connection(extensionInstanceId).request('forge.browser.release', { protocolVersion: 1, leaseId, leaseEpoch, reason })
+        if (result.leaseId !== leaseId || result.leaseEpoch !== leaseEpoch) throw new Error('extension release response changed lease routing')
+      }
+      if (checkpoint?.lifecycleReleaseId) await this.checkpoints.put({ ...checkpoint, releasedAt: checkpoint.releasedAt ?? this.now() })
+      else await this.checkpoints.remove(leaseId, leaseEpoch)
+    })
+  }
+
+  prepareLifecycleRelease(input: {
+    extensionInstanceId: string; sessionAgentId: string; profileId: string; tabId: number; lifecycleReleaseId: string;
+    originalHostId: string; originalHostGeneration: number; reason: string
+  }): Promise<void> {
+    return this.serializeLifecycleRelease(() => this.prepareLifecycleReleaseUnlocked(input))
+  }
+
+  finalizeLifecycleRelease(input: {
+    extensionInstanceId: string; sessionAgentId: string; profileId: string; tabId: number; lifecycleReleaseId: string;
+    originalHostId: string; originalHostGeneration: number
+  }): Promise<void> {
+    return this.serializeLifecycleRelease(async () => {
+      const checkpoints = await this.checkpoints.all()
+      const transaction = checkpoints.find((lease) => lease.lifecycleReleaseId === input.lifecycleReleaseId)
+      if (!transaction) {
+        if (await this.checkpoints.wasLifecycleReleaseFinalized(input.lifecycleReleaseId)) return
+        throw new Error('stale lifecycle release authority')
+      }
+      if (!transaction.tabIds.includes(input.tabId)) throw new Error('stale lifecycle release tab authority')
+      await this.checkpoints.finalizeLifecycleRelease({
+        extensionInstanceId: input.extensionInstanceId, sessionAgentId: input.sessionAgentId, profileId: input.profileId,
+        leaseId: transaction.leaseId, leaseEpoch: transaction.leaseEpoch, lifecycleReleaseId: input.lifecycleReleaseId,
+        originalHostId: input.originalHostId, originalHostGeneration: input.originalHostGeneration,
+      })
+    })
+  }
+
+  private serializeLifecycleRelease(work: () => Promise<void>): Promise<void> {
+    const result = this.lifecycleReleaseOperations.then(work, work)
+    this.lifecycleReleaseOperations = result.then(() => undefined, () => undefined)
+    return result
+  }
+
+  private async prepareLifecycleReleaseUnlocked(input: {
+    extensionInstanceId: string; sessionAgentId: string; profileId: string; tabId: number; lifecycleReleaseId: string;
+    originalHostId: string; originalHostGeneration: number; reason: string
+  }): Promise<void> {
+    if (await this.checkpoints.wasLifecycleReleaseFinalized(input.lifecycleReleaseId)) throw new Error('stale lifecycle release authority')
+    const checkpoints = await this.checkpoints.all()
+    let transaction = checkpoints.find((lease) => lease.lifecycleReleaseId === input.lifecycleReleaseId)
+    if (transaction) {
+      if (transaction.extensionInstanceId !== input.extensionInstanceId || transaction.sessionAgentId !== input.sessionAgentId ||
+        transaction.profileId !== input.profileId || !transaction.tabIds.includes(input.tabId) ||
+        transaction.originalHostId !== input.originalHostId || transaction.originalHostGeneration !== input.originalHostGeneration) {
+        throw new Error('stale lifecycle release authority')
+      }
+      if (transaction.releasedAt !== undefined) return
+    } else {
+      transaction = checkpoints.find((lease) => lease.releasedAt === undefined && lease.extensionInstanceId === input.extensionInstanceId &&
+        lease.sessionAgentId === input.sessionAgentId && lease.profileId === input.profileId && lease.tabIds.includes(input.tabId))
+        ?? checkpoints.find((lease) => lease.releasedAt !== undefined && lease.lifecycleReleaseId === undefined &&
+          lease.extensionInstanceId === input.extensionInstanceId && lease.sessionAgentId === input.sessionAgentId &&
+          lease.profileId === input.profileId && lease.tabIds.includes(input.tabId))
+      if (!transaction || transaction.lifecycleReleaseId !== undefined) throw new Error('stale lifecycle release authority')
+      transaction = {
+        ...transaction, lifecycleReleaseId: input.lifecycleReleaseId,
+        originalHostId: input.originalHostId, originalHostGeneration: input.originalHostGeneration,
+      }
+      await this.checkpoints.put(transaction)
+      if (transaction.releasedAt !== undefined) return
+    }
+    const result = await this.connection(input.extensionInstanceId).request('forge.browser.release', {
+      protocolVersion: 1, leaseId: transaction.leaseId, leaseEpoch: transaction.leaseEpoch, reason: input.reason,
+    })
+    if (result.leaseId !== transaction.leaseId || result.leaseEpoch !== transaction.leaseEpoch) {
+      throw new Error('extension release response changed lease routing')
+    }
+    await this.checkpoints.put({ ...transaction, releasedAt: this.now() })
   }
 
   async execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
@@ -566,12 +695,14 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, reason: 'lease-expired',
         })
         if (result.leaseId === lease.leaseId && result.leaseEpoch === lease.leaseEpoch) {
-          if (lease.sessionAgentId === '__local_pending__' || lease.profileId === '__local_pending__') {
-            await this.checkpoints.remove(lease.leaseId, lease.leaseEpoch)
+          const current = (await this.checkpoints.all()).find((candidate) => candidate.extensionInstanceId === lease.extensionInstanceId
+            && candidate.leaseId === lease.leaseId && candidate.leaseEpoch === lease.leaseEpoch) ?? lease
+          if (current.sessionAgentId === '__local_pending__' || current.profileId === '__local_pending__') {
+            await this.checkpoints.remove(current.leaseId, current.leaseEpoch)
           } else {
-            // Keep durable opaque proof until the backend's exact-generation lifecycle
-            // release acknowledges the same authority and removes it via release().
-            await this.checkpoints.put({ ...lease, releasedAt: this.now() })
+            // Merge the latest durable transaction fields: expiry and an explicit
+            // lifecycle prepare may race, but neither may erase the other's authority.
+            await this.checkpoints.put({ ...current, releasedAt: current.releasedAt ?? this.now() })
           }
         }
       } catch { /* retain checkpoint until acknowledged; never forget a possibly attached debugger */ }

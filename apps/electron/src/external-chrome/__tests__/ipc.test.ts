@@ -94,6 +94,10 @@ describe('trusted External Chrome IPC', () => {
       listCandidates: vi.fn(async (instance: string) => candidate(instance)),
       claim: vi.fn(async (input: any) => ({ protocolVersion: 1, leaseId: input.leaseId, leaseEpoch: input.leaseEpoch, sessionAgentId: input.sessionAgentId, extensionInstanceId: input.extensionInstanceId, groupId: null, childPolicy: input.childPolicy, tabs: [{ windowId: 1, tabId: input.tabIds[0], groupId: null, title: `${input.extensionInstanceId} title`, url: 'https://example.test/private', origin: 'https://example.test', active: true }] })),
       release: vi.fn(async () => undefined),
+      prepareLifecycleRelease: vi.fn(async (input: any) => {
+        if (input.extensionInstanceId !== 'profile_a') throw new Error('stale lifecycle release authority')
+      }),
+      finalizeLifecycleRelease: vi.fn(async () => undefined),
     }
     const coordinator = { status: vi.fn(async () => ({ ...status, state: 'online' as const })), transport: vi.fn(() => transport) } as unknown as ExternalChromeHostCoordinator
     installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
@@ -111,21 +115,26 @@ describe('trusted External Chrome IPC', () => {
     const attached = await invoke(event, attachment)
     expect(attached.status.attachment).toMatchObject({ extensionInstanceId: 'profile_a', tabs: [{ tabId: 7 }], childPolicy: 'manual', state: 'attached' })
     expect(JSON.stringify(attached)).not.toContain('/private')
-    const release = { operation: 'lifecycle-release', requestId: 'external-chrome-release:stop:correlation-1', hostId: 'external-host', hostGeneration: 4, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', reason: 'stop' }
+    const release = { operation: 'lifecycle-release', requestId: 'external-chrome-release:prepare:stop:correlation-1', hostId: 'external-host', hostGeneration: 4, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', phase: 'prepare', releaseId: 'release-1', reason: 'stop', originalHostId: 'external-host', originalHostGeneration: 4 }
     await expect(invoke(event, { ...release, requestId: 'wrong-correlation' })).resolves.toEqual({ ok: false, error: 'invalid-request' })
     await expect(invoke(event, { ...release, tabId: 'ext.profile_b.7' })).resolves.toEqual({ ok: false, error: 'stale-or-lost' })
     const acknowledged = await invoke(event, release)
     expect(acknowledged).toMatchObject({ ok: true, status: { attachment: null } })
-    expect(transport.release).toHaveBeenCalledWith('profile_a', expect.stringMatching(/^forge-ui-/u), 1, 'lifecycle-stop')
+    expect(transport.prepareLifecycleRelease).toHaveBeenCalledWith(expect.objectContaining({
+      extensionInstanceId: 'profile_a', tabId: 7, lifecycleReleaseId: 'release-1', reason: 'lifecycle-stop',
+    }))
+    await expect(invoke(event, { ...release, phase: 'finalize', requestId: 'external-chrome-release:finalize:stop:correlation-2' }))
+      .resolves.toMatchObject({ ok: true, status: { attachment: null } })
+    expect(transport.finalizeLifecycleRelease).toHaveBeenCalledWith(expect.objectContaining({ lifecycleReleaseId: 'release-1' }))
 
     await invoke(event, attachment)
     await invoke(event, { operation: 'detach', sessionAgentId: 'session-a', profileId: 'profile-a' })
     expect(transport.release).toHaveBeenLastCalledWith('profile_a', expect.stringMatching(/^forge-ui-/u), 2, 'detached-from-forge')
 
     await invoke(event, attachment)
-    transport.release.mockImplementationOnce(() => new Promise<void>(() => undefined))
+    transport.prepareLifecycleRelease.mockImplementationOnce(() => new Promise<void>(() => undefined))
     vi.useFakeTimers()
-    const timedOut = invoke(event, { ...release, requestId: 'external-chrome-release:delete:correlation-2', reason: 'delete' })
+    const timedOut = invoke(event, { ...release, requestId: 'external-chrome-release:prepare:delete:correlation-3', releaseId: 'release-3', reason: 'delete' })
     await vi.advanceTimersByTimeAsync(4_000)
     await expect(timedOut).resolves.toEqual({ ok: false, error: 'operation-failed' })
     vi.useRealTimers()
@@ -136,13 +145,18 @@ describe('trusted External Chrome IPC', () => {
     const ipcMain = { handle: vi.fn((channel: string, handler: any) => handlers.set(channel, handler)), removeHandler: vi.fn() } as unknown as IpcMain
     const mainWindow = { isDestroyed: () => false, webContents: { id: 42 } } as unknown as BrowserWindow
     let checkpoints: any[] = []
-    const release = vi.fn(async (_instance: string, leaseId: string, leaseEpoch: number) => {
-      checkpoints = checkpoints.filter((checkpoint) => checkpoint.leaseId !== leaseId || checkpoint.leaseEpoch !== leaseEpoch)
+    const prepareLifecycleRelease = vi.fn(async (input: any) => {
+      checkpoints = checkpoints.map((checkpoint) => checkpoint.tabIds.includes(input.tabId)
+        ? { ...checkpoint, releasedAt: Date.now(), lifecycleReleaseId: input.lifecycleReleaseId, originalHostId: input.originalHostId, originalHostGeneration: input.originalHostGeneration }
+        : checkpoint)
+    })
+    const finalizeLifecycleRelease = vi.fn(async (input: any) => {
+      checkpoints = checkpoints.filter((checkpoint) => checkpoint.lifecycleReleaseId !== input.lifecycleReleaseId)
     })
     const transport = {
       leaseCheckpoints: vi.fn(async () => structuredClone(checkpoints)),
       inventory: vi.fn(() => [{ extensionInstanceId: 'profile_a', profileAlias: 'Work', chromeVersion: '125', payloadVersion: '1', connectedAt: 'now' }]),
-      release,
+      prepareLifecycleRelease, finalizeLifecycleRelease,
     }
     const coordinator = { status: vi.fn(async () => ({ ...status, state: 'online' as const })), transport: vi.fn(() => transport) } as unknown as ExternalChromeHostCoordinator
     installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
@@ -157,17 +171,66 @@ describe('trusted External Chrome IPC', () => {
       }]
       await expect(invoke(event, { operation: 'status', sessionAgentId: 'session-a', profileId: 'profile-a' }))
         .resolves.toMatchObject({ ok: true, status: { attachment: { tabs: [{ tabId: 7 }] } } })
-      const request = reason === 'detach'
-        ? { operation: 'detach', sessionAgentId: 'session-a', profileId: 'profile-a' }
-        : { operation: 'lifecycle-release', requestId: `external-chrome-release:${reason}:after-install-${index}`, hostId: 'external-host', hostGeneration: 8, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', reason }
+      const releaseId = `release-after-install-${index}`
+      const request = { operation: 'lifecycle-release', requestId: `external-chrome-release:prepare:${reason}:after-install-${index}`, hostId: 'external-host', hostGeneration: 8, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', phase: 'prepare', releaseId, reason, originalHostId: 'external-host', originalHostGeneration: 8 }
       await expect(invoke(event, request)).resolves.toMatchObject({ ok: true, status: { attachment: null } })
+      await expect(invoke(event, { ...request, phase: 'finalize', requestId: `external-chrome-release:finalize:${reason}:after-install-${index}` }))
+        .resolves.toMatchObject({ ok: true, status: { attachment: null } })
     }
-    expect(release.mock.calls.map((call) => call.slice(1))).toEqual([
-      ['relay-after-install-0', 20, 'lifecycle-stop'],
-      ['relay-after-install-1', 21, 'lifecycle-archive'],
-      ['relay-after-install-2', 22, 'lifecycle-delete'],
-      ['relay-after-install-3', 23, 'detached-from-forge'],
-    ])
+    expect(prepareLifecycleRelease).toHaveBeenCalledTimes(4)
+    expect(finalizeLifecycleRelease).toHaveBeenCalledTimes(4)
+  })
+
+  it('keeps a late prepare durably retryable after the four-second IPC timeout and hides its tombstone', async () => {
+    vi.useFakeTimers()
+    try {
+      const handlers = new Map<string, (event: IpcMainInvokeEvent, input: unknown) => Promise<any>>()
+      const ipcMain = { handle: vi.fn((channel: string, handler: any) => handlers.set(channel, handler)), removeHandler: vi.fn() } as unknown as IpcMain
+      const mainWindow = { isDestroyed: () => false, webContents: { id: 42 } } as unknown as BrowserWindow
+      let checkpoints: any[] = [{
+        extensionInstanceId: 'profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', leaseId: 'lease-late',
+        leaseEpoch: 12, tabIds: [7], groupId: 9, childPolicy: 'manual', expiresAt: Date.now() + 60_000,
+      }]
+      let first = true
+      const prepareLifecycleRelease = vi.fn(async (input: any) => {
+        const existing = checkpoints.find((checkpoint) => checkpoint.lifecycleReleaseId === input.lifecycleReleaseId)
+        if (existing?.releasedAt !== undefined) return
+        if (first) {
+          first = false
+          await new Promise<void>((resolve) => setTimeout(resolve, 5_000))
+        }
+        checkpoints = checkpoints.map((checkpoint) => checkpoint.leaseId === 'lease-late' ? {
+          ...checkpoint, releasedAt: Date.now(), lifecycleReleaseId: input.lifecycleReleaseId,
+          originalHostId: input.originalHostId, originalHostGeneration: input.originalHostGeneration,
+        } : checkpoint)
+      })
+      const finalizeLifecycleRelease = vi.fn(async (input: any) => {
+        checkpoints = checkpoints.filter((checkpoint) => checkpoint.lifecycleReleaseId !== input.lifecycleReleaseId)
+      })
+      const transport = {
+        leaseCheckpoints: vi.fn(async () => structuredClone(checkpoints)),
+        inventory: vi.fn(() => [{ extensionInstanceId: 'profile_a', profileAlias: 'Work', chromeVersion: '125', payloadVersion: '1', connectedAt: 'now' }]),
+        prepareLifecycleRelease, finalizeLifecycleRelease,
+      }
+      const coordinator = { status: vi.fn(async () => ({ ...status, state: 'online' as const })), transport: vi.fn(() => transport) } as unknown as ExternalChromeHostCoordinator
+      installExternalChromeIpc({ ipcMain, mainWindow, coordinator })
+      const invoke = handlers.get('forge:external-chrome-attach')!
+      const event = { sender: { id: 42 } } as unknown as IpcMainInvokeEvent
+      const request = { operation: 'lifecycle-release', requestId: 'external-chrome-release:prepare:delete:late-1', hostId: 'external-host', hostGeneration: 4, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', phase: 'prepare', releaseId: 'release-late', reason: 'delete', originalHostId: 'external-host', originalHostGeneration: 4 }
+      const timedOut = invoke(event, request)
+      await vi.advanceTimersByTimeAsync(4_000)
+      await expect(timedOut).resolves.toEqual({ ok: false, error: 'operation-failed' })
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(checkpoints[0]).toMatchObject({ lifecycleReleaseId: 'release-late', releasedAt: expect.any(Number) })
+
+      await expect(invoke(event, request)).resolves.toMatchObject({ ok: true, status: { attachment: null } })
+      expect(prepareLifecycleRelease).toHaveBeenCalledTimes(2)
+      await expect(invoke(event, { ...request, phase: 'finalize', requestId: 'external-chrome-release:finalize:delete:late-2' }))
+        .resolves.toMatchObject({ ok: true, status: { attachment: null } })
+      expect(checkpoints).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reconciles IPC detach authority from durable relay checkpoints after Desktop restart', async () => {

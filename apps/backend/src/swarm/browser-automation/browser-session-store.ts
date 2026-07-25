@@ -196,9 +196,15 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     throw new Error("Pending panel reveal tab is missing");
   }
 
+  const externalChromeLifecycleRelease = normalizeExternalChromeLifecycleRelease(record.externalChromeLifecycleRelease);
+  if (externalChromeLifecycleRelease?.phase === "preparing" && !tabs.some((tab) => (
+    tab.hostKind === "external-chrome" && tab.tabId === externalChromeLifecycleRelease.tabId
+  ))) throw new Error("Preparing External Chrome release tab is missing");
+
   return {
     schemaVersion: 1,
     hostKind,
+    ...(externalChromeLifecycleRelease ? { externalChromeLifecycleRelease } : {}),
     profileId,
     sessionAgentId,
     hostingState: normalizeHostingState(record.hostingState),
@@ -213,6 +219,24 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     revision: nonNegativeInteger(record.revision, "revision"),
     createdAt: requiredString(record.createdAt, "createdAt", 128),
     updatedAt: requiredString(record.updatedAt, "updatedAt", 128),
+  };
+}
+
+function normalizeExternalChromeLifecycleRelease(value: unknown): BrowserSessionSnapshot["externalChromeLifecycleRelease"] {
+  if (value === undefined || value === null) return undefined;
+  const release = requiredRecord(value, "External Chrome lifecycle release");
+  if (release.reason !== "stop" && release.reason !== "archive" && release.reason !== "delete"
+    && release.reason !== "detach" && release.reason !== "host-replaced") throw new Error("Invalid External Chrome lifecycle release reason");
+  if (release.phase !== "preparing" && release.phase !== "prepared") throw new Error("Invalid External Chrome lifecycle release phase");
+  const releaseId = requiredId(release.releaseId, "releaseId");
+  const tabId = requiredId(release.tabId, "tabId");
+  const hostId = requiredId(release.hostId, "hostId");
+  if (!/^[A-Za-z0-9._-]+$/u.test(releaseId) || !/^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(tabId)) {
+    throw new Error("Invalid External Chrome lifecycle release authority");
+  }
+  return {
+    releaseId, reason: release.reason, tabId, hostId,
+    hostGeneration: positiveInteger(release.hostGeneration, "hostGeneration"), phase: release.phase,
   };
 }
 

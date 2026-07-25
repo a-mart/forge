@@ -173,10 +173,23 @@ export interface BrowserPanelRevealIntent {
   tabId: string | null
 }
 
+export interface ExternalChromeLifecycleReleaseTransaction {
+  /** Opaque idempotency token; never contains Chrome tab metadata. */
+  releaseId: string
+  reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced'
+  tabId: string
+  /** Original backend host authority that began this transaction. */
+  hostId: string
+  hostGeneration: number
+  phase: 'preparing' | 'prepared'
+}
+
 export interface BrowserSessionSnapshot {
   schemaVersion: 1
   /** Session-selected host. Absent legacy/replayed snapshots default to managed Electron. */
   hostKind?: BrowserHostKind
+  /** Durable two-phase detach state. Opaque and safe to replay after restart. */
+  externalChromeLifecycleRelease?: ExternalChromeLifecycleReleaseTransaction
   sessionAgentId: string
   profileId: string
   /** Controls whether the desktop host may mount physical webviews for this session. */
@@ -342,7 +355,18 @@ export interface BrowserTabTargetInput {
   hostKind?: BrowserHostKind
 }
 
-export type BrowserStatusInput = BrowserTabTargetInput
+export interface ExternalChromeLifecycleReleaseInput {
+  phase: 'prepare' | 'finalize'
+  releaseId: string
+  reason: ExternalChromeLifecycleReleaseTransaction['reason']
+  originalHostId: string
+  originalHostGeneration: number
+}
+
+export type BrowserStatusInput = BrowserTabTargetInput & {
+  /** Internal exact-authority lifecycle transaction carried over the existing host broker. */
+  externalChromeLifecycleRelease?: ExternalChromeLifecycleReleaseInput
+}
 
 export interface BrowserOpenInput extends BrowserTabTargetInput {
   url?: string
@@ -418,6 +442,8 @@ export interface BrowserRecordingStopInput extends BrowserTabTargetInput {
 
 export interface BrowserAutomationStatusResult {
   available: boolean
+  /** Exact opaque lifecycle acknowledgement, present only for internal prepare/finalize requests. */
+  externalChromeLifecycleRelease?: Pick<ExternalChromeLifecycleReleaseInput, 'phase' | 'releaseId'>
   host: BrowserHostConnectionSnapshot
   /** Legacy alias for physicalTabVisible. It is never canonical reveal intent. */
   panelVisible: boolean
@@ -1006,7 +1032,26 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
   const target = optionalTarget(operation, input)
 
   switch (operation) {
-    case 'status':
+    case 'status': {
+      knownKeys(operation, input, ['tabId', 'hostKind', 'externalChromeLifecycleRelease'])
+      if (input.externalChromeLifecycleRelease === undefined) return target as BrowserAutomationInputByOperation[Operation]
+      const lifecycle = recordInput(operation, input.externalChromeLifecycleRelease)
+      knownKeys(operation, lifecycle, ['phase', 'releaseId', 'reason', 'originalHostId', 'originalHostGeneration'])
+      if (lifecycle.phase !== 'prepare' && lifecycle.phase !== 'finalize') throw new BrowserAutomationContractError(operation, 'lifecycle phase must be prepare or finalize')
+      const releaseId = optionalId(operation, lifecycle.releaseId, 'releaseId')
+      const originalHostId = optionalId(operation, lifecycle.originalHostId, 'originalHostId')
+      if (!releaseId || !originalHostId) throw new BrowserAutomationContractError(operation, 'lifecycle authority is incomplete')
+      if (lifecycle.reason !== 'stop' && lifecycle.reason !== 'archive' && lifecycle.reason !== 'delete' && lifecycle.reason !== 'detach' && lifecycle.reason !== 'host-replaced') {
+        throw new BrowserAutomationContractError(operation, 'lifecycle reason is invalid')
+      }
+      if (!Number.isSafeInteger(lifecycle.originalHostGeneration) || (lifecycle.originalHostGeneration as number) < 1) {
+        throw new BrowserAutomationContractError(operation, 'originalHostGeneration must be a positive safe integer')
+      }
+      return { ...target, externalChromeLifecycleRelease: {
+        phase: lifecycle.phase, releaseId, reason: lifecycle.reason, originalHostId,
+        originalHostGeneration: lifecycle.originalHostGeneration as number,
+      } } as BrowserAutomationInputByOperation[Operation]
+    }
     case 'snapshot':
     case 'recordingStart': {
       knownKeys(operation, input, ['tabId', 'hostKind'])

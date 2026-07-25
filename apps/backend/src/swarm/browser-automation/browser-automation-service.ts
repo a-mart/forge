@@ -18,6 +18,7 @@ import {
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
+  type ExternalChromeLifecycleReleaseTransaction,
 } from "@forge/protocol";
 import {
   BrowserAutomationBrokerError,
@@ -682,77 +683,97 @@ export class BrowserAutomationService {
       const generation = this.getGeneration(key);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
+      let transaction = snapshot.externalChromeLifecycleRelease;
       const externalTabs = snapshot.tabs.filter((tab) => (
         resolveBrowserHostKind(tab.hostKind) === "external-chrome" && tab.lifecycle !== "closed"
       ));
-      if (externalTabs.length === 0) {
-        if (this.cancelledExternalLeaseRisk.has(sessionAgentId)) {
-          throw lifecycleReleaseError("malformed-response", false);
+
+      if (!transaction) {
+        if (externalTabs.length === 0) {
+          if (this.cancelledExternalLeaseRisk.has(sessionAgentId)) throw lifecycleReleaseError("malformed-response", false);
+          return;
         }
-        return;
-      }
-
-      const selectedTab = [snapshot.activeTabId, snapshot.defaultTabId]
-        .filter((tabId): tabId is string => tabId !== null)
-        .map((tabId) => externalTabs.find((tab) => tab.tabId === tabId))
-        .find((tab): tab is BrowserTabSnapshot => tab !== undefined)
-        ?? externalTabs.slice().sort((left, right) => left.tabId.localeCompare(right.tabId))[0];
-      if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) {
-        throw lifecycleReleaseError("malformed-response", false);
-      }
-
-      const authority = this.broker.getConnectionSnapshot("external-chrome");
-      if (!authority.connected || authority.hostId === null || authority.hostGeneration === null) {
-        throw lifecycleReleaseError("host-disconnected", true);
-      }
-
-      let response: BrowserAutomationResponse;
-      try {
-        response = await this.broker.request({
-          hostKind: "external-chrome",
-          sessionAgentId,
-          profileId,
-          tabId: selectedTab.tabId,
-          operation: "status",
-          input: { hostKind: "external-chrome", tabId: selectedTab.tabId },
-          timeoutMs: EXTERNAL_CHROME_RELEASE_TIMEOUT_MS,
-          artifactDirectory: null,
-          requestId: `external-chrome-release:${reason}:${crypto.randomUUID()}`,
-          expectedHost: {
-            hostId: authority.hostId,
-            hostGeneration: authority.hostGeneration,
-          },
+        const selectedTab = [snapshot.activeTabId, snapshot.defaultTabId]
+          .filter((tabId): tabId is string => tabId !== null)
+          .map((tabId) => externalTabs.find((tab) => tab.tabId === tabId))
+          .find((tab): tab is BrowserTabSnapshot => tab !== undefined)
+          ?? externalTabs.slice().sort((left, right) => left.tabId.localeCompare(right.tabId))[0];
+        if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) throw lifecycleReleaseError("malformed-response", false);
+        const authority = currentExternalChromeAuthority(this.broker);
+        transaction = {
+          releaseId: crypto.randomUUID(), reason, tabId: selectedTab.tabId,
+          hostId: authority.hostId, hostGeneration: authority.hostGeneration, phase: "preparing",
+        };
+        snapshot.externalChromeLifecycleRelease = transaction;
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          await this.persistChanged(snapshot, "lifecycle", generation);
         });
-      } catch (error) {
-        if (error instanceof BrowserAutomationBrokerError) {
-          throw new BrowserLifecycleReleaseError(error.failure);
-        }
-        throw lifecycleReleaseError("execution-failed", false);
       }
 
-      if (!response.ok) throw new BrowserLifecycleReleaseError(response.error);
-      if (!isLifecycleReleaseAcknowledgement(response)) {
-        throw lifecycleReleaseError("malformed-response", false);
+      if (transaction.phase === "preparing") {
+        await this.requestLifecycleReleasePhase(sessionAgentId, profileId, transaction, "prepare");
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          const releasingTabs = snapshot.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === "external-chrome");
+          const releasedIds = new Set(releasingTabs.map((tab) => tab.tabId));
+          snapshot.tabs = snapshot.tabs.filter((tab) => !releasedIds.has(tab.tabId)
+            || resolveBrowserHostKind(tab.hostKind) !== "external-chrome");
+          for (const tab of releasingTabs) this.tabOwners.delete(hostTabKey("external-chrome", tab.tabId));
+          if (resolveBrowserHostKind(snapshot.hostKind) === "external-chrome") {
+            const fallback = snapshot.tabs.find((tab) => tab.lifecycle !== "closed");
+            snapshot.hostKind = fallback ? resolveBrowserHostKind(fallback.hostKind) : DEFAULT_BROWSER_HOST_KIND;
+            snapshot.activeTabId = fallback?.tabId ?? null;
+            snapshot.defaultTabId = fallback?.tabId ?? null;
+            snapshot.panelVisible = false;
+            clearPanelReveal(snapshot);
+          }
+          transaction = { ...transaction!, phase: "prepared" };
+          snapshot.externalChromeLifecycleRelease = transaction;
+          await this.persistChanged(snapshot, "lifecycle", generation);
+          this.cancelledExternalLeaseRisk.delete(sessionAgentId);
+        });
       }
 
+      if (!transaction) throw lifecycleReleaseError("malformed-response", false);
+      const finalizingTransaction = transaction;
+      await this.requestLifecycleReleasePhase(sessionAgentId, profileId, finalizingTransaction, "finalize");
       await this.withSessionMutation(key, async () => {
         this.assertMutable(key, generation);
-        const releasedIds = new Set(externalTabs.map((tab) => tab.tabId));
-        snapshot.tabs = snapshot.tabs.filter((tab) => !releasedIds.has(tab.tabId)
-          || resolveBrowserHostKind(tab.hostKind) !== "external-chrome");
-        for (const tab of externalTabs) this.tabOwners.delete(hostTabKey("external-chrome", tab.tabId));
-        if (resolveBrowserHostKind(snapshot.hostKind) === "external-chrome") {
-          const fallback = snapshot.tabs.find((tab) => tab.lifecycle !== "closed");
-          snapshot.hostKind = fallback ? resolveBrowserHostKind(fallback.hostKind) : DEFAULT_BROWSER_HOST_KIND;
-          snapshot.activeTabId = fallback?.tabId ?? null;
-          snapshot.defaultTabId = fallback?.tabId ?? null;
-          snapshot.panelVisible = false;
-          clearPanelReveal(snapshot);
+        if (snapshot.externalChromeLifecycleRelease?.releaseId !== finalizingTransaction.releaseId) {
+          throw lifecycleReleaseError("malformed-response", false);
         }
+        delete snapshot.externalChromeLifecycleRelease;
         await this.persistChanged(snapshot, "lifecycle", generation);
-        this.cancelledExternalLeaseRisk.delete(sessionAgentId);
       });
     });
+  }
+
+  private async requestLifecycleReleasePhase(
+    sessionAgentId: string,
+    profileId: string,
+    transaction: ExternalChromeLifecycleReleaseTransaction,
+    phase: "prepare" | "finalize",
+  ): Promise<void> {
+    const authority = currentExternalChromeAuthority(this.broker);
+    let response: BrowserAutomationResponse;
+    try {
+      response = await this.broker.request({
+        hostKind: "external-chrome", sessionAgentId, profileId, tabId: transaction.tabId, operation: "status",
+        input: { hostKind: "external-chrome", tabId: transaction.tabId, externalChromeLifecycleRelease: {
+          phase, releaseId: transaction.releaseId, reason: transaction.reason,
+          originalHostId: transaction.hostId, originalHostGeneration: transaction.hostGeneration,
+        } },
+        timeoutMs: EXTERNAL_CHROME_RELEASE_TIMEOUT_MS, artifactDirectory: null,
+        requestId: `external-chrome-release:${phase}:${transaction.reason}:${crypto.randomUUID()}`,
+        expectedHost: { hostId: authority.hostId, hostGeneration: authority.hostGeneration },
+      });
+    } catch (error) {
+      if (error instanceof BrowserAutomationBrokerError) throw new BrowserLifecycleReleaseError(error.failure);
+      throw lifecycleReleaseError("execution-failed", false);
+    }
+    if (!response.ok) throw new BrowserLifecycleReleaseError(response.error);
+    if (!isLifecycleReleaseAcknowledgement(response, transaction, phase)) throw lifecycleReleaseError("malformed-response", false);
   }
 
   async recordFailedLifecycleRelease(
@@ -1159,6 +1180,10 @@ function privacyBoundExternalResult(operation: unknown, result: Record<string, u
   if (operation === "status") {
     return {
       available: result.available,
+      ...(isRecord(result.externalChromeLifecycleRelease) ? { externalChromeLifecycleRelease: {
+        phase: result.externalChromeLifecycleRelease.phase,
+        releaseId: result.externalChromeLifecycleRelease.releaseId,
+      } } : {}),
       host: result.host,
       panelVisible: result.panelVisible,
       panelRevealRequested: result.panelRevealRequested,
@@ -1243,13 +1268,29 @@ function isOpaqueExternalTabId(value: string): boolean {
   return value.length <= 128 && /^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(value);
 }
 
-function isLifecycleReleaseAcknowledgement(response: BrowserAutomationResponse): boolean {
+function currentExternalChromeAuthority(broker: BrowserHostBroker): { hostId: string; hostGeneration: number } {
+  const authority = broker.getConnectionSnapshot("external-chrome");
+  if (!authority.connected || authority.hostId === null || authority.hostGeneration === null) {
+    throw lifecycleReleaseError("host-disconnected", true);
+  }
+  return { hostId: authority.hostId, hostGeneration: authority.hostGeneration };
+}
+
+function isLifecycleReleaseAcknowledgement(
+  response: BrowserAutomationResponse,
+  transaction: ExternalChromeLifecycleReleaseTransaction,
+  phase: "prepare" | "finalize",
+): boolean {
   if (!response.ok || response.operation !== "status" || !isRecord(response.result)) return false;
+  const acknowledgement = response.result.externalChromeLifecycleRelease;
   return typeof response.result.available === "boolean"
     && typeof response.result.panelVisible === "boolean"
     && typeof response.result.panelRevealRequested === "boolean"
     && typeof response.result.physicalTabVisible === "boolean"
-    && response.result.selectedTab === null;
+    && response.result.selectedTab === null
+    && isRecord(acknowledgement)
+    && acknowledgement.phase === phase
+    && acknowledgement.releaseId === transaction.releaseId;
 }
 
 function lifecycleReleaseError(

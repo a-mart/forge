@@ -203,10 +203,10 @@ describe('BrowserAutomationHost main-owned view controller', () => {
       reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
     } as never
     await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve() })
-    const request = { requestId: 'external-chrome-release:archive:correlation-1', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.profile_a.7', hostId: 'external-host', hostGeneration: 5, deadlineAt: new Date(Date.now() + 5_000).toISOString(), artifactDirectory: null, operation: 'status', input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7' } } as BrowserAutomationRequest
+    const request = { requestId: 'external-chrome-release:prepare:archive:correlation-1', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.profile_a.7', hostId: 'external-host', hostGeneration: 5, deadlineAt: new Date(Date.now() + 5_000).toISOString(), artifactDirectory: null, operation: 'status', input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7', externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1', reason: 'archive', originalHostId: 'external-host', originalHostGeneration: 5 } } } as BrowserAutomationRequest
     const response = await executeSecondary!(request)
-    expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, reason: 'archive', tabId: 'ext.profile_a.7' }))
-    expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true })
+    expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, phase: 'prepare', releaseId: 'release-1', reason: 'archive', tabId: 'ext.profile_a.7' }))
+    expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true, result: { externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1' } } })
   })
 
   it('does not advertise External Chrome when coordinator setup exists but no extension runtime is ready', async () => {

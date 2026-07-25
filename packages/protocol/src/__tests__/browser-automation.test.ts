@@ -80,6 +80,22 @@ describe('browser automation operation contract', () => {
     expect(() => parseBrowserAutomationInput('status', { hostKind: 'other' })).toThrow(BrowserAutomationContractError)
   })
 
+  it('strictly parses opaque two-phase External Chrome lifecycle authority', () => {
+    const lifecycle = {
+      phase: 'prepare', releaseId: 'release-1', reason: 'delete',
+      originalHostId: 'external-host', originalHostGeneration: 4,
+    }
+    expect(parseBrowserAutomationInput('status', {
+      hostKind: 'external-chrome', tabId: 'ext.instance.7', externalChromeLifecycleRelease: lifecycle,
+    })).toEqual({ hostKind: 'external-chrome', tabId: 'ext.instance.7', externalChromeLifecycleRelease: lifecycle })
+    expect(() => parseBrowserAutomationInput('status', {
+      hostKind: 'external-chrome', externalChromeLifecycleRelease: { ...lifecycle, originalHostGeneration: 0 },
+    })).toThrow(BrowserAutomationContractError)
+    expect(() => parseBrowserAutomationInput('status', {
+      hostKind: 'external-chrome', externalChromeLifecycleRelease: { ...lifecycle, token: 'leak' },
+    })).toThrow(BrowserAutomationContractError)
+  })
+
   it('applies T3-compatible defaults', () => {
     expect(parseBrowserAutomationInput('open', {})).toEqual({
       show: true,

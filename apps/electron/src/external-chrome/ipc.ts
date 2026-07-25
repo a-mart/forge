@@ -67,7 +67,11 @@ export interface ExternalChromeLifecycleReleaseInput {
   sessionAgentId: string
   profileId: string
   tabId: string
+  phase: 'prepare' | 'finalize'
+  releaseId: string
   reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced'
+  originalHostId: string
+  originalHostGeneration: number
 }
 
 export interface ExternalChromeAttachInput {
@@ -150,7 +154,9 @@ export function installExternalChromeIpc(options: {
       const durableKeys = new Set<string>()
       for (const checkpoint of checkpoints) {
         leaseEpochs.set(checkpoint.extensionInstanceId, Math.max(leaseEpochs.get(checkpoint.extensionInstanceId) ?? 0, checkpoint.leaseEpoch))
-        if (checkpoint.sessionAgentId === '__local_pending__' || checkpoint.profileId === '__local_pending__') continue
+        // Released tombstones remain durable transaction authority, but are never
+        // presented as attachments and never block a new local lease.
+        if (checkpoint.releasedAt !== undefined || checkpoint.sessionAgentId === '__local_pending__' || checkpoint.profileId === '__local_pending__') continue
         const attachmentKey = key(checkpoint.sessionAgentId, checkpoint.profileId)
         durableKeys.add(attachmentKey)
         const cached = leases.get(attachmentKey)
@@ -212,19 +218,21 @@ export function installExternalChromeIpc(options: {
       const attachmentKey = key(request.sessionAgentId, request.profileId)
       if (request.operation === 'detach' || request.operation === 'lifecycle-release') {
         const existing = leases.get(attachmentKey)
-        if (!existing) return request.operation === 'detach'
-          ? { ok: true, status: await status(request.sessionAgentId, request.profileId) }
-          : { ok: false, error: 'stale-or-lost' }
-        if (request.operation === 'lifecycle-release') {
+        if (request.operation === 'detach') {
+          if (!existing) return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
+          await boundedRelease(transport.release(existing.extensionInstanceId, existing.leaseId, existing.leaseEpoch, 'detached-from-forge'))
+        } else {
           const tab = decodeOpaqueExternalTabId(request.tabId)
-          if (!tab || tab.extensionInstanceId !== existing.extensionInstanceId || !existing.tabs.some((candidate) => candidate.tabId === tab.tabId)) {
-            return { ok: false, error: 'stale-or-lost' }
+          if (!tab) return { ok: false, error: 'stale-or-lost' }
+          const transaction = {
+            extensionInstanceId: tab.extensionInstanceId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+            tabId: tab.tabId, lifecycleReleaseId: request.releaseId, originalHostId: request.originalHostId,
+            originalHostGeneration: request.originalHostGeneration,
           }
+          await boundedRelease(request.phase === 'prepare'
+            ? transport.prepareLifecycleRelease({ ...transaction, reason: `lifecycle-${request.reason}` })
+            : transport.finalizeLifecycleRelease(transaction))
         }
-        await boundedRelease(
-          transport.release(existing.extensionInstanceId, existing.leaseId, existing.leaseEpoch,
-            request.operation === 'detach' ? 'detached-from-forge' : `lifecycle-${request.reason}`),
-        )
         leases.delete(attachmentKey)
         return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
       }
@@ -311,14 +319,21 @@ function parseAttachRequest(value: unknown): ParsedAttachRequest | null {
       : null
   }
   if (value.operation === 'lifecycle-release') {
-    const keys = [...baseKeys, 'requestId', 'hostId', 'hostGeneration', 'tabId', 'reason']
+    const keys = [...baseKeys, 'requestId', 'hostId', 'hostGeneration', 'tabId', 'phase', 'releaseId', 'reason', 'originalHostId', 'originalHostGeneration']
     const reason = value.reason
-    if (!exactKeys(value, keys) || !identifier(value.requestId) || !identifier(value.hostId) ||
-      !Number.isSafeInteger(value.hostGeneration) || (value.hostGeneration as number) < 1 ||
+    const phase = value.phase
+    if (!exactKeys(value, keys) || !identifier(value.requestId) || !identifier(value.hostId) || !identifier(value.releaseId) ||
+      !identifier(value.originalHostId) || !Number.isSafeInteger(value.hostGeneration) || (value.hostGeneration as number) < 1 ||
+      !Number.isSafeInteger(value.originalHostGeneration) || (value.originalHostGeneration as number) < 1 ||
       typeof value.tabId !== 'string' || decodeOpaqueExternalTabId(value.tabId) === null ||
+      (phase !== 'prepare' && phase !== 'finalize') ||
       (reason !== 'stop' && reason !== 'archive' && reason !== 'delete' && reason !== 'detach' && reason !== 'host-replaced') ||
-      !value.requestId.startsWith(`external-chrome-release:${reason}:`)) return null
-    return { operation: 'lifecycle-release', requestId: value.requestId, hostId: value.hostId, hostGeneration: value.hostGeneration as number, sessionAgentId: value.sessionAgentId, profileId: value.profileId, tabId: value.tabId, reason }
+      !value.requestId.startsWith(`external-chrome-release:${phase}:${reason}:`)) return null
+    return {
+      operation: 'lifecycle-release', requestId: value.requestId, hostId: value.hostId, hostGeneration: value.hostGeneration as number,
+      sessionAgentId: value.sessionAgentId, profileId: value.profileId, tabId: value.tabId, phase, releaseId: value.releaseId,
+      reason, originalHostId: value.originalHostId, originalHostGeneration: value.originalHostGeneration as number,
+    }
   }
   if (value.operation !== 'attach' || !exactKeys(value, [...baseKeys, 'extensionInstanceId', 'tabIds', 'childPolicy', 'confirmed'], ['groupId'])) return null
   if (!identifier(value.extensionInstanceId) || value.confirmed !== true ||

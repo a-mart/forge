@@ -189,6 +189,44 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); client.close(); await loop
   })
 
+  it('retains exact prepared authority across restart and finalizes only its tombstone beside a concurrent new lease', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-old', leaseEpoch: 10, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    const transaction = {
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 40,
+      lifecycleReleaseId: 'release-exact', originalHostId: 'external-host', originalHostGeneration: 7,
+    }
+    await runtime.prepareLifecycleRelease({ ...transaction, reason: 'lifecycle-delete' })
+    await runtime.prepareLifecycleRelease({ ...transaction, reason: 'lifecycle-delete' })
+    expect(requests.filter((entry) => entry.method === 'forge.browser.release')).toHaveLength(1)
+    expect(await runtime.leaseCheckpoints()).toEqual([expect.objectContaining({
+      leaseId: 'lease-old', leaseEpoch: 10, lifecycleReleaseId: 'release-exact', releasedAt: 1_000,
+    })])
+
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-old', leaseEpoch: 11, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    runtime.deactivate(); client.close(); await loop
+    const restarted = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'), () => 2_000)
+    await restarted.ready()
+    await expect(restarted.finalizeLifecycleRelease({ ...transaction, lifecycleReleaseId: 'stale-token' })).rejects.toThrow(/stale/u)
+    expect((await restarted.leaseCheckpoints()).map((entry) => entry.leaseEpoch).sort()).toEqual([10, 11])
+    await restarted.finalizeLifecycleRelease(transaction)
+    await restarted.finalizeLifecycleRelease(transaction) // duplicate commit acknowledgement is harmless
+    await expect(restarted.leaseCheckpoints()).resolves.toEqual([expect.objectContaining({ leaseId: 'lease-old', leaseEpoch: 11 })])
+    expect((await restarted.leaseCheckpoints())[0]).not.toHaveProperty('releasedAt')
+    const checkpoint = JSON.parse(await readFile(path.join(root, 'state', 'leases.json'), 'utf8'))
+    expect(checkpoint.leases).not.toEqual(expect.arrayContaining([expect.objectContaining({ lifecycleReleaseId: 'release-exact' })]))
+    expect(checkpoint.leases).toEqual([expect.objectContaining({ leaseEpoch: 11 })])
+    expect(checkpoint.finalizedReleaseIds).toContain('release-exact')
+  })
+
   it('adopts only authenticated side-panel leases without persisting candidate tab metadata', async () => {
     const { runtime, client, root } = await connectedRuntime()
     await client.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
