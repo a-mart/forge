@@ -195,6 +195,10 @@ async function loadRegisteredSignals(
     }
   }));
 
+  vi.doMock("../desktop-secure-control-token.js", () => ({
+    readDesktopSecureControlTokenFromFd: async () => "t".repeat(32),
+  }));
+
   vi.doMock("../server.js", () => ({
     startServer: async () => ({
       host: BASE_CONFIG.host,
