@@ -29,14 +29,25 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
   const { command, browserAutomationService: service, socket, connectionId } = options;
   switch (command.type) {
     case "browser_host_register": {
-      const host = service.registerHost({
-        connectionId,
-        registration: command.registration,
-        sendRequest: async (request) => {
-          const sent = await sendCritical(options, { type: "browser_automation_request", request });
-          if (sent === null) throw new Error("Browser automation request could not be delivered");
-        },
-      });
+      let host;
+      try {
+        host = await service.registerHostWithLifecycleRelease({
+          connectionId,
+          registration: command.registration,
+          sendRequest: async (request) => {
+            const sent = await sendCritical(options, { type: "browser_automation_request", request });
+            if (sent === null) throw new Error("Browser automation request could not be delivered");
+          },
+        });
+      } catch {
+        sendFailure(
+          options,
+          command,
+          "LIFECYCLE_RELEASE_FAILED",
+          "External Chrome host replacement was blocked because its current lease could not be released.",
+        );
+        return true;
+      }
       await sendCritical(options, { type: "browser_host_connected", requestId: command.requestId, host });
       return true;
     }

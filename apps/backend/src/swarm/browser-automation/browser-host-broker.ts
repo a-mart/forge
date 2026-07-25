@@ -29,6 +29,10 @@ export interface BrowserHostBrokerRequest {
   input: Record<string, unknown>;
   timeoutMs?: number;
   artifactDirectory?: string | null;
+  /** Reserved for backend-owned, privacy-bounded correlation such as lifecycle release. */
+  requestId?: string;
+  /** Fail closed rather than routing an authority-sensitive request to a replacement host. */
+  expectedHost?: { hostId: string; hostGeneration: number };
 }
 
 export type BrowserHostResponseDisposition =
@@ -175,6 +179,12 @@ export class BrowserHostBroker {
     const hostKind = resolveBrowserHostKind(options.hostKind);
     const host = this.hosts.get(hostKind);
     if (!host) throw brokerError("unavailable-host", `No local ${hostKind} browser host is connected.`, true, { hostKind });
+    if (options.expectedHost && (
+      host.registration.hostId !== options.expectedHost.hostId
+      || host.generation !== options.expectedHost.hostGeneration
+    )) {
+      throw brokerError("stale-host-generation", "The expected browser host authority is no longer current.", true);
+    }
     if (!host.registration.capabilities.supportedOperations.includes(options.operation)) {
       this.logDebug("browser-host-broker:unsupported-operation", {
         hostKind,
@@ -189,8 +199,12 @@ export class BrowserHostBroker {
 
     const timeoutMs = normalizeTimeout(options.timeoutMs);
     const deadlineAt = new Date(Date.now() + timeoutMs).toISOString();
+    const requestId = options.requestId ?? this.allocateRequestId();
+    if (options.requestId && (this.pending.has(requestId) || this.completedRequestIds.has(requestId))) {
+      throw brokerError("invalid-input", "Browser request correlation was already used.", false);
+    }
     const request = {
-      requestId: this.allocateRequestId(),
+      requestId,
       hostKind,
       sessionAgentId: options.sessionAgentId,
       profileId: options.profileId,
@@ -277,6 +291,15 @@ export class BrowserHostBroker {
 
   getPendingCount(): number {
     return this.pending.size;
+  }
+
+  hasPendingSession(sessionAgentId: string, hostKind?: BrowserHostKind): boolean {
+    for (const pending of this.pending.values()) {
+      if (pending.request.sessionAgentId !== sessionAgentId) continue;
+      if (hostKind !== undefined && pending.request.hostKind !== hostKind) continue;
+      return true;
+    }
+    return false;
   }
 
   private finishWithError(pending: PendingRequest, error: BrowserAutomationBrokerError): void {

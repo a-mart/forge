@@ -31,6 +31,15 @@ export type BrowserAutomationInvocationResult<Operation extends BrowserAutomatio
   | { ok: true; operation: Operation; result: BrowserAutomationResultByOperation[Operation] }
   | { ok: false; operation: Operation; error: BrowserAutomationFailure };
 
+export type BrowserLifecycleReleaseReason = "stop" | "archive" | "delete" | "host-replaced";
+
+export class BrowserLifecycleReleaseError extends Error {
+  constructor(readonly failure: BrowserAutomationFailure) {
+    super(`External Chrome lifecycle release failed (${failure.code}).`);
+    this.name = "BrowserLifecycleReleaseError";
+  }
+}
+
 export interface BrowserAutomationServiceOptions {
   dataDir: string;
   now?: () => string;
@@ -60,6 +69,12 @@ export class BrowserAutomationService {
   private readonly sessionMutationChains = new Map<string, Promise<void>>();
   /** In-flight invoke/load work deleteSession awaits before clearing storage. */
   private readonly sessionInFlight = new Map<string, Set<Promise<unknown>>>();
+  /** Serializes release authority per session so lifecycle retries cannot overlap. */
+  private readonly lifecycleReleaseChains = new Map<string, Promise<void>>();
+  /** Serializes host replacement so a second registration cannot bypass release. */
+  private readonly hostRegistrationChains = new Map<BrowserHostKind, Promise<void>>();
+  /** A cancelled External Chrome request may have acquired a lease before its response was dropped. */
+  private readonly cancelledExternalLeaseRisk = new Set<string>();
 
   constructor(options: BrowserAutomationServiceOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -86,6 +101,27 @@ export class BrowserAutomationService {
     const host = this.broker.register(options);
     this.onHostChanged(host);
     return host;
+  }
+
+  async registerHostWithLifecycleRelease(options: {
+    connectionId: string;
+    registration: BrowserHostRegistration;
+    sendRequest: (request: BrowserAutomationRequest) => void | Promise<void>;
+  }): Promise<BrowserHostConnectionSnapshot> {
+    const hostKind = resolveBrowserHostKind(options.registration.capabilities.hostKind);
+    return this.withHostRegistration(hostKind, async () => {
+      const current = this.broker.getConnectionSnapshot(hostKind);
+      if (hostKind === "external-chrome" && current.connected) {
+        for (const snapshot of this.getLoadedSessionSnapshots()) {
+          await this.releaseSessionForLifecycle(
+            snapshot.profileId,
+            snapshot.sessionAgentId,
+            "host-replaced",
+          );
+        }
+      }
+      return this.registerHost(options);
+    });
   }
 
   unregisterHost(connectionId: string, hostId?: string, hostGeneration?: number, hostKind?: BrowserHostKind): boolean {
@@ -592,7 +628,126 @@ export class BrowserAutomationService {
   }
 
   cancelSession(sessionAgentId: string): number {
+    if (this.broker.hasPendingSession(sessionAgentId, "external-chrome")) {
+      this.cancelledExternalLeaseRisk.add(sessionAgentId);
+    }
     return this.broker.cancelSession(sessionAgentId);
+  }
+
+  async releaseSessionForLifecycle(
+    profileId: string,
+    sessionAgentId: string,
+    reason: BrowserLifecycleReleaseReason,
+  ): Promise<void> {
+    const key = sessionKey(profileId, sessionAgentId);
+    return this.withLifecycleRelease(key, async () => {
+      this.cancelSession(sessionAgentId);
+      await this.awaitInFlight(key);
+      const generation = this.getGeneration(key);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      const externalTabs = snapshot.tabs.filter((tab) => (
+        resolveBrowserHostKind(tab.hostKind) === "external-chrome" && tab.lifecycle !== "closed"
+      ));
+      if (externalTabs.length === 0) {
+        if (this.cancelledExternalLeaseRisk.has(sessionAgentId)) {
+          throw lifecycleReleaseError("malformed-response", false);
+        }
+        return;
+      }
+
+      const selectedTab = [snapshot.activeTabId, snapshot.defaultTabId]
+        .filter((tabId): tabId is string => tabId !== null)
+        .map((tabId) => externalTabs.find((tab) => tab.tabId === tabId))
+        .find((tab): tab is BrowserTabSnapshot => tab !== undefined)
+        ?? (externalTabs.length === 1 ? externalTabs[0] : undefined);
+      if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) {
+        throw lifecycleReleaseError("malformed-response", false);
+      }
+
+      const authority = this.broker.getConnectionSnapshot("external-chrome");
+      if (!authority.connected || authority.hostId === null || authority.hostGeneration === null) {
+        throw lifecycleReleaseError("host-disconnected", true);
+      }
+
+      let response: BrowserAutomationResponse;
+      try {
+        response = await this.broker.request({
+          hostKind: "external-chrome",
+          sessionAgentId,
+          profileId,
+          tabId: selectedTab.tabId,
+          operation: "status",
+          input: { hostKind: "external-chrome", tabId: selectedTab.tabId },
+          timeoutMs: EXTERNAL_CHROME_RELEASE_TIMEOUT_MS,
+          artifactDirectory: null,
+          requestId: `external-chrome-release:${reason}:${crypto.randomUUID()}`,
+          expectedHost: {
+            hostId: authority.hostId,
+            hostGeneration: authority.hostGeneration,
+          },
+        });
+      } catch (error) {
+        if (error instanceof BrowserAutomationBrokerError) {
+          throw new BrowserLifecycleReleaseError(error.failure);
+        }
+        throw lifecycleReleaseError("execution-failed", false);
+      }
+
+      if (!response.ok) throw new BrowserLifecycleReleaseError(response.error);
+      if (!isLifecycleReleaseAcknowledgement(response)) {
+        throw lifecycleReleaseError("malformed-response", false);
+      }
+
+      await this.withSessionMutation(key, async () => {
+        this.assertMutable(key, generation);
+        const releasedIds = new Set(externalTabs.map((tab) => tab.tabId));
+        snapshot.tabs = snapshot.tabs.filter((tab) => !releasedIds.has(tab.tabId)
+          || resolveBrowserHostKind(tab.hostKind) !== "external-chrome");
+        for (const tab of externalTabs) this.tabOwners.delete(hostTabKey("external-chrome", tab.tabId));
+        if (resolveBrowserHostKind(snapshot.hostKind) === "external-chrome") {
+          const fallback = snapshot.tabs.find((tab) => tab.lifecycle !== "closed");
+          snapshot.hostKind = fallback ? resolveBrowserHostKind(fallback.hostKind) : DEFAULT_BROWSER_HOST_KIND;
+          snapshot.activeTabId = fallback?.tabId ?? null;
+          snapshot.defaultTabId = fallback?.tabId ?? null;
+          snapshot.panelVisible = false;
+          clearPanelReveal(snapshot);
+        }
+        await this.persistChanged(snapshot, "lifecycle", generation);
+        this.cancelledExternalLeaseRisk.delete(sessionAgentId);
+      });
+    });
+  }
+
+  async recordFailedLifecycleRelease(
+    profileId: string,
+    sessionAgentId: string,
+    reason: Extract<BrowserLifecycleReleaseReason, "stop">,
+    error: unknown,
+  ): Promise<BrowserSessionSnapshot> {
+    const key = sessionKey(profileId, sessionAgentId);
+    const generation = this.getGeneration(key);
+    return this.withSessionMutation(key, async () => {
+      this.assertMutable(key, generation);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      const failureResult = error instanceof BrowserLifecycleReleaseError
+        ? error.failure
+        : failure("execution-failed", "External Chrome lifecycle release failed.", false);
+      const timestamp = this.now();
+      snapshot.recentActions.push({
+        id: `external-chrome-release-failed:${reason}:${crypto.randomUUID()}`,
+        operation: "status",
+        tabId: null,
+        status: "failed",
+        errorCode: failureResult.code,
+        startedAt: timestamp,
+        completedAt: timestamp,
+      });
+      snapshot.recentActions = snapshot.recentActions.slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS);
+      await this.persistChanged(snapshot, "lifecycle", generation);
+      return cloneSnapshot(snapshot);
+    });
   }
 
   async archiveSession(profileId: string, sessionAgentId: string): Promise<BrowserSessionSnapshot> {
@@ -698,6 +853,7 @@ export class BrowserAutomationService {
       }
       this.sessions.delete(key);
       this.sessionLoadPromises.delete(key);
+      this.cancelledExternalLeaseRisk.delete(sessionAgentId);
       await this.store.delete(profileId, sessionAgentId);
       this.sessionTombs.delete(key);
     });
@@ -876,6 +1032,36 @@ export class BrowserAutomationService {
     }
   }
 
+  private async withLifecycleRelease<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.lifecycleReleaseChains.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    const chained = previous.catch(() => undefined).then(() => gate);
+    this.lifecycleReleaseChains.set(key, chained);
+    await previous.catch(() => undefined);
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.lifecycleReleaseChains.get(key) === chained) this.lifecycleReleaseChains.delete(key);
+    }
+  }
+
+  private async withHostRegistration<T>(hostKind: BrowserHostKind, work: () => Promise<T>): Promise<T> {
+    const previous = this.hostRegistrationChains.get(hostKind) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    const chained = previous.catch(() => undefined).then(() => gate);
+    this.hostRegistrationChains.set(hostKind, chained);
+    await previous.catch(() => undefined);
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.hostRegistrationChains.get(hostKind) === chained) this.hostRegistrationChains.delete(hostKind);
+    }
+  }
+
   private async withSessionMutation<T>(key: string, work: () => Promise<T>): Promise<T> {
     const previous = this.sessionMutationChains.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -1015,8 +1201,30 @@ function externalFailureMessage(code: string): string {
   return `External Chrome request failed (${code}).`;
 }
 
+const EXTERNAL_CHROME_RELEASE_TIMEOUT_MS = 5_000;
+
 function isOpaqueExternalTabId(value: string): boolean {
   return value.length <= 128 && /^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(value);
+}
+
+function isLifecycleReleaseAcknowledgement(response: BrowserAutomationResponse): boolean {
+  if (!response.ok || response.operation !== "status" || !isRecord(response.result)) return false;
+  return typeof response.result.available === "boolean"
+    && typeof response.result.panelVisible === "boolean"
+    && typeof response.result.panelRevealRequested === "boolean"
+    && typeof response.result.physicalTabVisible === "boolean"
+    && response.result.selectedTab === null;
+}
+
+function lifecycleReleaseError(
+  code: BrowserAutomationFailure["code"],
+  retryable: boolean,
+): BrowserLifecycleReleaseError {
+  return new BrowserLifecycleReleaseError(failure(
+    code,
+    `External Chrome lifecycle release failed (${code}).`,
+    retryable,
+  ));
 }
 
 function isPanelRevealPending(snapshot: BrowserSessionSnapshot): boolean {

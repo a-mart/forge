@@ -131,6 +131,44 @@ describe('browser websocket transport', () => {
     expect(service.broker.isCurrentConnection('same-connection', 'host-1', 2)).toBe(true)
   })
 
+  it('returns a correlated safe error when External Chrome replacement release fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-host-replacement-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    service.registerHostWithLifecycleRelease = async () => { throw new Error('private lease detail') }
+    const sent: ServerEvent[] = []
+    await handleBrowserCommand({
+      command: {
+        type: 'browser_host_register',
+        requestId: 'replacement-1',
+        registration: {
+          ...registration('external-new'),
+          capabilities: {
+            ...registration().capabilities,
+            hostKind: 'external-chrome',
+            supportedOperations: ['status', 'open', 'navigate'],
+          },
+        },
+      },
+      socket: {} as WebSocket,
+      connectionId: 'new-connection',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => undefined,
+      resolveProfileIdForAgent: () => undefined,
+      send: (_socket, event) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    })
+
+    expect(sent).toEqual([{
+      type: 'error',
+      code: 'BROWSER_HOST_REGISTER_LIFECYCLE_RELEASE_FAILED',
+      message: 'External Chrome host replacement was blocked because its current lease could not be released.',
+      requestId: 'replacement-1',
+    }])
+    expect(JSON.stringify(sent)).not.toContain('private lease detail')
+  })
+
   it('frames oversized multi-session hydration below the websocket event limit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-browser-handshake-chunks-'))
     roots.push(root)

@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BrowserAutomationRequest,
   BrowserAutomationResponse,
@@ -120,6 +120,37 @@ function response(request: BrowserAutomationRequest): BrowserAutomationResponse 
       selectedTab: null,
     },
   };
+}
+
+function externalRegistration(hostId = "external-host"): BrowserHostRegistration {
+  return {
+    ...registration(),
+    hostId,
+    capabilities: {
+      ...registration().capabilities,
+      hostKind: "external-chrome",
+      supportedOperations: ["status", "open", "navigate"],
+      supportsRecording: false,
+    },
+  };
+}
+
+async function seedExternalSession(service: BrowserAutomationService): Promise<void> {
+  const state = service.store.createEmpty("profile-1", "manager-1");
+  state.hostKind = "external-chrome";
+  state.tabs = [{ ...tab("manager-1", "profile-1", "ext.instance.41"), hostKind: "external-chrome" }];
+  state.activeTabId = "ext.instance.41";
+  state.defaultTabId = "ext.instance.41";
+  await service.store.save(state);
+  await service.getSessionSnapshot("profile-1", "manager-1");
+}
+
+async function waitForPendingRequest(service: BrowserAutomationService): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (service.broker.getPendingCount() > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("Browser request did not become pending");
 }
 
 function connect(service: BrowserAutomationService, requests: BrowserAutomationRequest[]): void {
@@ -646,6 +677,247 @@ describe("BrowserAutomationService", () => {
     await expect(service.invoke("manager-1", "profile-1", "recordingStop", {})).resolves.toMatchObject({
       ok: false,
       error: { code: "artifact-path-invalid" },
+    });
+  });
+
+  it("acknowledges lifecycle release against the exact External Chrome authority and removes released state", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    const requests: BrowserAutomationRequest[] = [];
+    const host = service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest(request) {
+        requests.push(request);
+        queueMicrotask(() => service.acceptHostResponse("external-socket", response(request)));
+      },
+    });
+
+    await expect(service.releaseSessionForLifecycle("profile-1", "manager-1", "archive")).resolves.toBeUndefined();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      requestId: expect.stringMatching(/^external-chrome-release:archive:[A-Za-z0-9._-]{1,80}$/u),
+      hostKind: "external-chrome",
+      hostId: host.hostId,
+      hostGeneration: host.hostGeneration,
+      operation: "status",
+      tabId: "ext.instance.41",
+      input: { hostKind: "external-chrome", tabId: "ext.instance.41" },
+    });
+    await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      hostKind: "managed-electron",
+      tabs: [],
+      activeTabId: null,
+      defaultTabId: null,
+    });
+  });
+
+  it("fails lifecycle release closed on a stale host generation", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration("old-host"),
+      sendRequest: (request) => { requests.push(request); },
+    });
+
+    const releasing = service.releaseSessionForLifecycle("profile-1", "manager-1", "delete");
+    await waitForPendingRequest(service);
+    service.registerHost({
+      connectionId: "replacement-socket",
+      registration: externalRegistration("replacement-host"),
+      sendRequest: () => undefined,
+    });
+    await expect(releasing).rejects.toMatchObject({ failure: { code: "stale-host-generation" } });
+    await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+      tabs: [expect.objectContaining({ tabId: "ext.instance.41" })],
+    });
+  });
+
+  it("fails lifecycle release closed when the exact host disconnects", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest: () => undefined,
+    });
+
+    const releasing = service.releaseSessionForLifecycle("profile-1", "manager-1", "archive");
+    await waitForPendingRequest(service);
+    service.unregisterHost("external-socket", "external-host", 1, "external-chrome");
+    await expect(releasing).rejects.toMatchObject({ failure: { code: "host-disconnected" } });
+  });
+
+  it("bounds lifecycle release timeout without mutating lease authority", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service } = await createService();
+      await seedExternalSession(service);
+      service.registerHost({
+        connectionId: "external-socket",
+        registration: externalRegistration(),
+        sendRequest: () => undefined,
+      });
+
+      const releasing = service.releaseSessionForLifecycle("profile-1", "manager-1", "delete");
+      const timedOut = expect(releasing).rejects.toMatchObject({ failure: { code: "timeout" } });
+      await vi.waitFor(() => expect(service.broker.getPendingCount()).toBe(1));
+      await vi.advanceTimersByTimeAsync(5_000);
+      await timedOut;
+      await expect(service.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
+        tabs: [expect.objectContaining({ tabId: "ext.instance.41" })],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails lifecycle release closed on a negative acknowledgement", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest(request) {
+        queueMicrotask(() => service.acceptHostResponse("external-socket", {
+          requestId: request.requestId,
+          hostKind: request.hostKind,
+          sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId,
+          tabId: request.tabId,
+          hostId: request.hostId,
+          hostGeneration: request.hostGeneration,
+          operation: request.operation,
+          elapsedMs: 1,
+          ok: false,
+          error: { code: "lease-lost", message: "private host detail", retryable: false },
+        }));
+      },
+    });
+
+    const releaseError = await service.releaseSessionForLifecycle("profile-1", "manager-1", "archive")
+      .catch((error: unknown) => error);
+    expect(releaseError).toMatchObject({
+      failure: { code: "lease-lost", message: "External Chrome request failed (lease-lost)." },
+    });
+
+    const marked = await service.recordFailedLifecycleRelease("profile-1", "manager-1", "stop", releaseError);
+    expect(marked.recentActions.at(-1)).toMatchObject({
+      id: expect.stringMatching(/^external-chrome-release-failed:stop:/u),
+      operation: "status",
+      tabId: null,
+      status: "failed",
+      errorCode: "lease-lost",
+    });
+    const persisted = await readFile(service.store.getStatePath("profile-1", "manager-1"), "utf8");
+    expect(persisted).not.toContain("private host detail");
+  });
+
+  it("fails closed when a cancelled External Chrome open may have acquired a lease without returning an opaque tab", async () => {
+    const { service } = await createService();
+    await service.getSessionSnapshot("profile-1", "manager-1");
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest: (request) => { requests.push(request); },
+    });
+
+    const opening = service.invoke("manager-1", "profile-1", "open", {
+      hostKind: "external-chrome",
+      show: false,
+      reuseExistingTab: false,
+    });
+    await waitForPendingRequest(service);
+    service.cancelSession("manager-1");
+    await expect(opening).resolves.toMatchObject({ ok: false, error: { code: "request-cancelled" } });
+    await expect(service.releaseSessionForLifecycle("profile-1", "manager-1", "stop"))
+      .rejects.toMatchObject({ failure: { code: "malformed-response" } });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("rejects malformed opaque release state before contacting the host", async () => {
+    const { service } = await createService();
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.hostKind = "external-chrome";
+    state.tabs = [{ ...tab("manager-1", "profile-1", "private-tab-title"), hostKind: "external-chrome" }];
+    state.activeTabId = "private-tab-title";
+    state.defaultTabId = "private-tab-title";
+    await service.store.save(state);
+    await service.getSessionSnapshot("profile-1", "manager-1");
+    const sendRequest = vi.fn();
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest,
+    });
+
+    await expect(service.releaseSessionForLifecycle("profile-1", "manager-1", "delete"))
+      .rejects.toMatchObject({ failure: { code: "malformed-response" } });
+    expect(sendRequest).not.toHaveBeenCalled();
+  });
+
+  it("releases every loaded External Chrome lease before replacing host authority", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "old-socket",
+      registration: externalRegistration("old-host"),
+      sendRequest(request) {
+        requests.push(request);
+        queueMicrotask(() => service.acceptHostResponse("old-socket", response(request)));
+      },
+    });
+
+    const replacement = await service.registerHostWithLifecycleRelease({
+      connectionId: "new-socket",
+      registration: externalRegistration("new-host"),
+      sendRequest: () => undefined,
+    });
+    expect(requests).toEqual([
+      expect.objectContaining({
+        requestId: expect.stringMatching(/^external-chrome-release:host-replaced:/u),
+        hostId: "old-host",
+        hostGeneration: 1,
+      }),
+    ]);
+    expect(replacement).toMatchObject({ hostId: "new-host", hostGeneration: 2 });
+  });
+
+  it("does not replace External Chrome authority after a failed release acknowledgement", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    service.registerHost({
+      connectionId: "old-socket",
+      registration: externalRegistration("old-host"),
+      sendRequest(request) {
+        queueMicrotask(() => service.acceptHostResponse("old-socket", {
+          requestId: request.requestId,
+          hostKind: request.hostKind,
+          sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId,
+          tabId: request.tabId,
+          hostId: request.hostId,
+          hostGeneration: request.hostGeneration,
+          operation: request.operation,
+          elapsedMs: 1,
+          ok: false,
+          error: { code: "lease-lost", message: "private detail", retryable: false },
+        }));
+      },
+    });
+
+    await expect(service.registerHostWithLifecycleRelease({
+      connectionId: "new-socket",
+      registration: externalRegistration("new-host"),
+      sendRequest: () => undefined,
+    })).rejects.toMatchObject({ failure: { code: "lease-lost" } });
+    expect(service.broker.getConnectionSnapshot("external-chrome")).toMatchObject({
+      hostId: "old-host",
+      hostGeneration: 1,
     });
   });
 
