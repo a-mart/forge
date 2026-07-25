@@ -10,30 +10,40 @@ This feature is designed for the practical middle ground between two unsafe extr
 giving the model a password and building a special-purpose tool for every command that
 might need one.
 
-## What a Secure Session is
+## What Team Secure Mode is
 
-A Secure Session belongs to one local Builder manager task. While it is active:
+Team Secure Mode starts from one local Builder manager, but the manager and every
+eligible local Forge Pi worker are independent secure principals. No principal
+inherits another principal's grants, resolved material, requests, or container.
+While it is active:
 
-- Pi Bash commands run in one reusable, task-owned Linux container;
+- the manager and each assigned eligible worker run Pi Bash in separate reusable,
+  principal-owned Linux containers;
+- an eligible worker without an assignment can hold its own project-default policy
+  while stopped; Forge provisions its container only when work is assigned;
 - the workspace is mounted directly into the container (at the same path on
   macOS/Linux and at `/workspace` on Windows);
 - approved values can be delivered to a command as an environment variable, stdin,
   a protected RAM-backed file, or an askpass helper;
-- one task or timed grant can be reused across many commands;
+- each principal's task or timed grant can be reused across many commands by that
+  principal;
 - every Bash output byte is filtered before the Pi tool accumulator, Forge events,
   persistence, extensions, UI, or the next provider request;
 - host-side file-tool results pass through the same active exact-value guard before
   they can be returned to the runtime;
-- stopping the Secure Session revokes its leases and destroys the container and its
-  descendant processes.
+- stopping one worker's secure processes revokes only that worker and destroys its
+  container; stopping Team Secure Mode from the manager stops the entire team.
 
 The agent sees only catalog aliases, delivery destinations, lease status, and fixed
 error codes. It cannot ask the Secure Sessions tools to return a stored value or a
 provider locator.
 
-Secure Sessions are currently available only for local Builder sessions using a
-Pi-backed runtime. Claude SDK, Cursor SDK, Remote Projects, Collaboration channels,
-and ordinary integrated terminals fail closed or do not expose the control.
+Team Secure Mode is currently available for a supported local Pi-backed Builder
+manager and eligible local Forge Pi workers in the same project. Unsupported worker
+runtimes fail closed before secure work is dispatched; Forge does not silently run
+that assignment without the secure boundary. Claude SDK, Cursor SDK, Cursor ACP,
+Remote Projects, Collaboration channels, Codex plugin/external-thread workers, and
+ordinary integrated terminals are not Secure Sessions execution paths.
 
 ## Set up the execution environment
 
@@ -84,6 +94,10 @@ Adding a secret from a project context defaults to **Only this project**. If a
 project-scoped secret and an all-projects secret use the same alias, that project uses
 its project-scoped secret. Other projects continue to use the all-projects secret.
 Scope controls where an alias can be selected; it does not grant any task access.
+
+For a direct route from the Builder sidebar, right-click a local project header and
+choose **Project Secrets**. Forge opens **Settings → Secrets** with that project
+preselected, without changing the active conversation or its draft.
 
 ### Local vault
 
@@ -152,22 +166,25 @@ project policy, separate from the secret's availability scope:
 - a project-scoped secret can be a default only for its own project;
 - an all-projects secret can be a default in one project without becoming automatic
   in every project;
-- a default receives an **Until Secure Session stops** task lease only when Secure
-  Mode starts for that project;
-- it is never injected into standard Bash, a model prompt, a worker, the integrated
-  terminal, or another project.
+- when Team Secure Mode starts, Forge evaluates the default independently for the
+  manager and every eligible worker principal;
+- each eligible principal receives its own **Until Secure Session stops** lease and
+  resolves its own material; no value or lease is copied from the manager;
+- workers that join the secure team later receive their own applicable defaults
+  during secure preparation;
+- a default is never injected into standard Bash, a model prompt, the integrated
+  terminal, another project, or an unsupported worker runtime.
 
-Enabling a default while Secure Mode is already running does not silently rebuild the
-environment or attach the value. Use the current **Grant access** flow to grant it
-explicitly, or stop and restart Secure Mode to apply the configured defaults.
-Disabling a default revokes leases that were created from that policy; it does not
-remove a separate manual grant.
+Enabling a default while Team Secure Mode is active marks it **Configured**. Choose
+**Apply now** in the shield to apply or retry non-active defaults for every eligible
+team principal without restarting. Disabling a default revokes only the independent
+leases created from that policy; it does not remove a separate manual grant.
 
-Forge evaluates defaults independently during startup. A locked or unavailable source
-is reported as unavailable, and a delivery collision is reported as a binding
-conflict. Either problem skips that default without blocking the other defaults or the
-Secure Session itself. Public status contains only fixed states and error codes, never
-provider error text or protected material.
+Forge evaluates every principal and default independently. A locked or unavailable
+source is reported as unavailable, and a delivery collision is reported as a binding
+conflict. Either problem skips that principal's default without blocking other
+defaults or principals. Public status contains only fixed states and error codes,
+never provider error text or protected material.
 
 Archiving a project preserves its project-scoped secrets and default settings so they
 remain available after restore. Permanently deleting the project removes its
@@ -177,12 +194,17 @@ not deleted when one project's mapping is removed.
 ## Start, grant, reuse, and revoke
 
 1. Open a local Builder manager whose current runtime is supported.
-2. Select the shield beside **Send** and start a Secure Session.
-3. Forge attaches the project's available defaults as task leases and reports any
-   default it could not activate.
-4. Select any additional saved aliases. Forge gives a newly saved secret a stable,
-   generated environment delivery automatically; advanced saved bindings remain
-   available when a specific askpass, file, stdin, or environment shape is needed.
+2. Select the shield beside **Send** and start Team Secure Mode. Forge prepares the
+   manager and every eligible current worker as separate principals. If a worker is
+   actively streaming, startup fails instead of changing its execution boundary
+   underneath a command.
+3. Forge applies the project's available defaults independently and reports any
+   principal/default pair it could not activate. Use **Apply now** to apply newly
+   configured defaults or retry recovered sources without restarting.
+4. Choose a team agent, then select any additional saved aliases. Forge gives a newly
+   saved secret a stable, generated environment delivery automatically; advanced
+   saved bindings remain available when a specific askpass, file, stdin, or
+   environment shape is needed.
 5. Choose a lease:
    - **Until Secure Session stops** is the default and remains available until the
      user revokes it or stops the Secure Session.
@@ -190,19 +212,20 @@ not deleted when one project's mapping is removed.
    - **One use** is atomically consumed by the next Secure Bash command, whether or
      not that command actually references the binding.
 6. Continue working normally. The same task or timed lease is checked on every
-   command, so a 16-command workflow does not require 16 prompts.
-7. Revoke an individual lease, or stop the Secure Session to revoke everything and
-   destroy the environment.
+   command from that principal, so a 16-command workflow does not require 16 prompts.
+7. Revoke one principal's lease, stop one worker's secure processes, or stop Team
+   Secure Mode from the manager to revoke the entire team and destroy its
+   environments.
 
 Every active task or timed grant is injected into every Secure Bash command and is
 available to that command's child processes. This broad process scope is what
 preserves ordinary Bash syntax; it is not a semantic promise that the value is used
 only for the action the user had in mind. Grant narrowly and revoke promptly.
 
-Secure Bash calls for one task are serialized across their complete authorization,
+Secure Bash calls for one principal are serialized across their complete authorization,
 execution, and teardown boundary. This is intentional: two model-requested Bash calls
 cannot race one-use consumption or enter the old container while the first call is
-destroying it. Different tasks can still execute in parallel.
+destroying it. Different principals can still execute in parallel.
 
 An agent can inspect safe session status and request an alias, binding, and lease
 shape. If the alias does not exist, the agent can propose the missing secret by alias,
@@ -217,9 +240,21 @@ The missing-secret dialog currently accepts local-vault material. To use Bitward
 first import its reference under **Settings → Secrets**; the agent can then request and
 you can approve that saved catalog alias normally.
 
-Requests and their approval cards stay outside the persisted transcript. Secure grants
-remain manager-local. Forge blocks spawning, retrying, or assigning workers while
-Secure Mode is active; stop Secure Mode before delegating work.
+Requests and their approval cards stay outside the persisted transcript. A request
+belongs to the manager or worker that created it. Worker requests also capture the
+current assignment generation, so an approval from an old assignment becomes stale
+instead of granting a replacement assignment.
+
+Delegation remains available in Team Secure Mode for eligible local Forge Pi workers.
+Before the manager's assignment is delivered, Forge prepares that worker's independent
+principal and advances it to the exact assignment. Follow-up work on the same
+assignment reuses that worker environment. Reassignment destroys the previous
+environment before starting the new assignment. Pending requests and unused one-use
+grants from the old assignment are cancelled, while task and unexpired timed leases
+remain authority of the same worker principal and are re-resolved into the new
+environment. A failed dispatch aborts the new environment. Stopping or deleting a
+worker tears down that worker without disturbing siblings. Unsupported workers fail
+closed rather than receiving secure work through a non-secure runtime.
 
 Revision checks prevent a stale browser from overwriting a newer approval or
 revocation. Provider failures, expired leases, missing aliases, unsupported delivery
@@ -242,8 +277,11 @@ Secure Sessions make the following concrete promises for supported paths:
   released, while an exact match is replaced by a fixed redaction marker without
   revealing its position;
 - a final structured guard protects runtime events and provider context;
-- successful output redaction completes the command normally, consumes a one-use
-  lease when applicable, and leaves task or timed leases available for later commands;
+- successful output redaction completes the command normally and marks only that
+  principal as quarantined; the agent can continue, a one-use lease is consumed when
+  applicable, and task or timed leases remain available for later commands;
+- the manager can stop the exact quarantined worker's secure processes without
+  tearing down sibling principals, or stop Team Secure Mode to revoke the whole team;
 - stopping or failing a secure operation destroys the task container when safe
   filtering or process control cannot be guaranteed.
 
@@ -265,9 +303,12 @@ Docker host's kernel. The provider interface is intentionally replaceable so a
 microVM backend can be added without changing vault, lease, approval, or redaction
 contracts.
 
-The workspace mount is writable by design. Secure Sessions protect unrelated host
+The workspace mount is writable by design. Team principals in one project can see and
+modify the same selected workspace, so their file changes can race even though their
+processes, grants, and containers are isolated. Secure Sessions protect unrelated host
 paths and make hard process revocation reliable, but they do not protect the selected
-workspace from the task. Use a dedicated worktree for untrusted or destructive work.
+workspace from authorized code. Give high-risk or concurrently writing agents
+separate Git worktrees instead of relying on the secret boundary for file isolation.
 
 ## Storage and lifecycle
 
@@ -294,10 +335,14 @@ popouts. Origin and loopback checks remain defense in depth. Same-user process
 inspection, Electron compromise, and the Docker daemon remain inside the trusted
 computing base.
 
-Forks, resumed runtimes, and workers never gain an active lease merely because another
-session had one. A stopped session must pass a fresh lease check before another
-credentialed command. Forge recovers and destroys orphaned managed containers rather
-than attaching them to an unrelated task.
+Forks and resumed runtimes never gain an active lease merely because another
+principal had one. Managers and workers keep separate session state, leases, requests,
+cached material, guards, and containers. A worker assignment change invalidates
+requests and unused one-use leases from the old assignment and rebuilds that worker's
+environment. Task and unexpired timed leases remain with the same worker principal;
+they never transfer to the manager or a sibling. A stopped principal must pass a
+fresh lease check before another credentialed command. Forge recovers and destroys
+orphaned managed containers rather than attaching them to an unrelated principal.
 
 Each running container also receives a read-only bind mount of a host-owned dead-man
 heartbeat file. Forge refreshes that file directly; the guest can only inspect its
@@ -338,13 +383,35 @@ still passes through the secure guard.
 | --- | --- |
 | Environment unavailable | Docker is unavailable, unsupported, or the runner image failed its contract check |
 | Source locked or unavailable | Desktop safe storage, Bitwarden authentication, or the `bws` host command is unavailable |
-| Project default unavailable | This default was skipped; fix its source and restart Secure Mode, or use **Grant access** after the source recovers |
+| Project default unavailable | This principal's default was skipped; fix its source and choose **Apply now** after it recovers |
 | Project default binding conflict | This default was skipped because its saved delivery collides with another active/default delivery |
 | Revision conflict | Another view changed the session; refresh before retrying |
-| Protected output redacted | The guard removed protected material before it reached the agent; the Secure Session can continue |
-| Unsupported runtime | The current runtime cannot guarantee Forge-owned tools before provider continuation |
+| Protected output redacted | The guard removed protected material before it reached the agent; that principal is quarantined but can continue, or you can stop its secure processes |
+| Unsupported runtime | This manager or worker cannot guarantee Forge-owned tools before provider continuation and fails closed |
 
 Do not diagnose these failures by placing a value in chat, a shell command, an
 environment file, or a bug report. Provider stderr and exception messages are
 deliberately discarded or converted into fixed public codes because upstream errors
 can contain sensitive response bodies.
+
+## Readiness and migration recovery
+
+The **Settings → Secrets** readiness panel checks the local Secure Bash backend,
+private-entry bridge, and configured sources. **Copy safe diagnostics** includes only
+bounded fixed execution/source codes and configured-default state. It never includes
+secret values, ciphertext, provider responses, raw stderr, credentials, provider
+locators, or catalog aliases.
+
+When a Forge data directory is copied to another machine, aliases, bindings, scopes,
+and project-default policy can remain useful, but local-vault ciphertext and the
+encrypted Bitwarden machine-account token remain bound to the original operating
+system encryption context. Recover those sources under **Sources**:
+
+- Choose **Test vault**. If saved local values cannot be decrypted, Forge lists the
+  affected aliases and offers them one at a time. **Save and continue** replaces only
+  that value while preserving its alias, bindings, scope, and default policy. You can
+  also skip or delete the alias.
+- When a Bitwarden source reports **Reconnect required**, choose **Reconnect** and
+  enter a new machine-account token. Forge verifies it before replacing only the
+  encrypted credential; the connection and its imported aliases, bindings, scopes,
+  and defaults stay in place.

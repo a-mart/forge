@@ -161,26 +161,31 @@ On macOS, Windows, and Linux, the Browser toolbar can pop the same live native t
 
 ### Secure Sessions
 
-Secure Sessions let a supported local Builder task use saved local or Bitwarden-backed
-secrets without placing their values in chat or model-visible tool arguments. Under
-**Settings → Secrets**, choose whether an alias is available only to one project or to
-all local projects. Local-vault and Bitwarden-backed secrets use the same scope and
-project-default settings. A project-scoped alias overrides an all-projects alias with
-the same name inside that project.
+Secure Sessions let a supported local Builder team use saved local or
+Bitwarden-backed secrets without placing their values in chat or model-visible tool
+arguments. Under **Settings → Secrets**, choose whether an alias is available only to
+one project or to all local projects. Right-click a local project header and choose
+**Project Secrets** to open the same settings with that project preselected.
 
-Use the shield beside **Send** to start the isolated task environment and grant task,
-timed, or one-use access. A secret marked **Automatically available in this project**
-receives a task lease when Secure Mode starts; it is never added to standard Bash,
-prompts, workers, or the integrated terminal. Defaults that are unavailable or have a
-binding conflict are reported and skipped without blocking the rest of the Secure
-Session.
+Use the shield beside **Send** to start Team Secure Mode and grant task, timed, or
+one-use access. The manager and every eligible local Forge Pi worker receive separate
+containers, leases, and resolved material; workers never inherit the manager's grant.
+A secret marked **Automatically available in this project** is evaluated independently
+for each eligible principal. Use **Apply now** to apply or retry configured defaults
+without restarting.
 
-The agent keeps using ordinary Bash. One task or timed grant can support many commands;
-stopping the Secure Session revokes its leases and destroys the task container.
+Each agent keeps using ordinary Bash. One task or timed grant can support many commands
+from that principal. You can revoke one grant, stop one worker's secure processes, or
+stop Team Secure Mode from the manager to revoke the whole team. Unsupported worker
+runtimes fail closed. Team containers can write the same selected workspace, so use
+separate Git worktrees for high-risk or concurrently writing agents.
 The agent can also propose an alias that does not exist. Its request contains only the
 alias, purpose, delivery, and lease. **Add secret and approve** collects the value
 privately in Forge Desktop and saves it to the current project by default; **Use for
 this task only** avoids creating a reusable saved secret.
+The **Settings → Secrets** readiness panel can test the local vault and Bitwarden
+connections after a data-directory move. Its safe diagnostics contain fixed codes
+only; local re-entry and Bitwarden reconnect preserve existing secret configuration.
 Secure Sessions currently require Forge Desktop for private value entry, a Pi-backed
 runtime, Docker, and the Forge runner image. Read [Secure Sessions](SECURE_SESSIONS.md)
 before relying on it: software that receives a raw value can still intentionally

@@ -45,20 +45,25 @@ the local Builder stores them. Saved local-vault and Bitwarden-backed aliases ca
 available to one selected project or all local projects. A project-specific alias
 overrides an all-projects alias of the same name in that project.
 
-Marking a secret automatic for one project creates task leases when that project's
-Secure Mode starts. It does not configure a host environment variable or grant
-standard Bash, prompts, workers, or terminals access. The Docker execution backend
-requires the pinned
+Marking a secret automatic for one project creates an independent task lease for the
+manager and each eligible local Forge Pi worker when Team Secure Mode starts. No
+principal inherits another's lease or resolved material. Use **Apply now** in the
+shield to apply or retry configured defaults without restarting. This policy does not
+configure a host environment variable or grant standard Bash, prompts, terminals, or
+unsupported worker runtimes access. The Docker execution backend requires the pinned
 `forge-secure-runner:node22-v4` image, which can be built with the command in the
 [Secure Sessions guide](SECURE_SESSIONS.md#set-up-the-execution-environment). Its
-effective Docker endpoint must be a local `unix://` socket; remote Docker contexts and
-remote `DOCKER_HOST` transports are rejected rather than treated as a deployment
-target.
+effective Docker endpoint must be a local `unix://` socket on macOS/Linux or Docker
+Desktop's exact local named pipe on Windows; remote Docker contexts and transports
+are rejected rather than treated as a deployment target.
 
 The feature is local-Builder-only and fail-closed. It does not inherit values from
 `shared/config/secrets.json` or silently fall back to host execution. A saved source
-becomes available to a task only through an explicit lease or a configured project
-default. See
+becomes available to a principal only through its own explicit lease or a configured
+project default. Unsupported workers do not receive secure assignments through a
+non-secure runtime. The Settings readiness panel reports fixed codes only and supports
+local-value re-entry or Bitwarden credential reconnection after a data-directory
+move, without replacing aliases, bindings, scopes, or defaults. See
 [Secure Sessions](SECURE_SESSIONS.md) for sources, bindings, supported runtimes,
 security guarantees, and limitations.
 
