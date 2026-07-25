@@ -104,7 +104,7 @@ export class BrowserAutomationService {
   }
 
   acceptHostResponse(connectionId: string, response: unknown, encodedBytes?: number): BrowserHostResponseDisposition {
-    return this.broker.acceptResponse(connectionId, response, encodedBytes);
+    return this.broker.acceptResponse(connectionId, privacyBoundHostResponse(response), encodedBytes);
   }
 
   async invoke<Operation extends BrowserAutomationOperation>(
@@ -322,6 +322,32 @@ export class BrowserAutomationService {
     return [...this.sessions.values()].map(cloneSnapshot);
   }
 
+  async getHostHydrationSnapshot(
+    profileId: string,
+    sessionAgentId: string,
+    hostKind: BrowserHostKind,
+  ): Promise<BrowserSessionSnapshot> {
+    const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    const tabs = snapshot.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === hostKind);
+    const tabIds = new Set(tabs.map((tab) => tab.tabId));
+    const selectedForHost = resolveBrowserHostKind(snapshot.hostKind) === hostKind;
+    return {
+      ...cloneSnapshot(snapshot),
+      hostKind,
+      tabs: tabs.map((tab) => cloneTab(tab)),
+      activeTabId: selectedForHost && snapshot.activeTabId && tabIds.has(snapshot.activeTabId)
+        ? snapshot.activeTabId
+        : null,
+      defaultTabId: selectedForHost && snapshot.defaultTabId && tabIds.has(snapshot.defaultTabId)
+        ? snapshot.defaultTabId
+        : null,
+      panelVisible: hostKind === "managed-electron" && selectedForHost ? snapshot.panelVisible : false,
+      panelReveal: hostKind === "managed-electron" && selectedForHost
+        ? snapshot.panelReveal
+        : { sequence: 0, acknowledgedSequence: 0, tabId: null },
+    };
+  }
+
   async reportHostState(
     connectionId: string,
     hostId: string,
@@ -364,7 +390,7 @@ export class BrowserAutomationService {
           tabs: reported.tabs,
           revision: reported.baseRevision,
         });
-        normalizedTabs = envelope.tabs;
+        normalizedTabs = envelope.tabs.map((tab) => hostKind === "external-chrome" ? privacyBoundExternalTab(tab) : tab);
         if (normalizedTabs.some((tab) => resolveBrowserHostKind(tab.hostKind) !== hostKind)) {
           throw new Error("Host report contains a tab for another browser host kind");
         }
@@ -870,6 +896,129 @@ export class BrowserAutomationService {
   }
 }
 
+function privacyBoundHostResponse(value: unknown): unknown {
+  if (!isRecord(value) || value.hostKind !== "external-chrome") return value;
+  const routing = {
+    requestId: value.requestId,
+    hostKind: value.hostKind,
+    sessionAgentId: value.sessionAgentId,
+    profileId: value.profileId,
+    tabId: value.tabId,
+    hostId: value.hostId,
+    hostGeneration: value.hostGeneration,
+    operation: value.operation,
+    elapsedMs: value.elapsedMs,
+  };
+  if (value.ok === false) {
+    const rawError = isRecord(value.error) ? value.error : {};
+    const code = safeExternalErrorCode(rawError.code);
+    return {
+      ...routing,
+      ok: false,
+      error: {
+        code,
+        message: externalFailureMessage(code),
+        retryable: rawError.retryable === true,
+      },
+      ...(isRecord(value.updatedTab) ? { updatedTab: privacyBoundExternalTab(value.updatedTab) } : {}),
+    };
+  }
+  if (value.ok !== true || !isRecord(value.result)) return routing;
+  const result = privacyBoundExternalResult(value.operation, value.result);
+  return {
+    ...routing,
+    ok: true,
+    result,
+    ...(isRecord(value.updatedTab) ? { updatedTab: privacyBoundExternalTab(value.updatedTab) } : {}),
+  };
+}
+
+function privacyBoundExternalResult(operation: unknown, result: Record<string, unknown>): Record<string, unknown> {
+  if (operation === "status") {
+    return {
+      available: result.available,
+      host: result.host,
+      panelVisible: result.panelVisible,
+      panelRevealRequested: result.panelRevealRequested,
+      physicalTabVisible: result.physicalTabVisible,
+      selectedTab: isRecord(result.selectedTab) ? privacyBoundExternalTab(result.selectedTab) : result.selectedTab,
+    };
+  }
+  if (operation === "open") {
+    return {
+      tab: isRecord(result.tab) ? privacyBoundExternalTab(result.tab) : result.tab,
+      created: result.created,
+      panelRevealRequested: result.panelRevealRequested,
+    };
+  }
+  if (operation === "navigate") {
+    return {
+      tab: isRecord(result.tab) ? privacyBoundExternalTab(result.tab) : result.tab,
+      readiness: result.readiness,
+    };
+  }
+  // External Chrome M3 has no other qualified operations. Returning an empty
+  // projection makes a dishonest host response fail normal result validation.
+  return {};
+}
+
+function privacyBoundExternalTab(value: Record<string, unknown> | BrowserTabSnapshot): BrowserTabSnapshot {
+  return {
+    hostKind: "external-chrome",
+    tabId: typeof value.tabId === "string" && isOpaqueExternalTabId(value.tabId) ? value.tabId : "",
+    sessionAgentId: value.sessionAgentId as string,
+    profileId: value.profileId as string,
+    // Selection metadata remains local to Desktop. The backend retains only
+    // the opaque leased-tab identity and non-sensitive runtime state.
+    url: "",
+    title: "",
+    lifecycle: value.lifecycle as BrowserTabSnapshot["lifecycle"],
+    loading: value.loading as boolean,
+    live: value.live as boolean,
+    canGoBack: value.canGoBack as boolean,
+    canGoForward: value.canGoForward as boolean,
+    zoomFactor: value.zoomFactor as number,
+    controller: value.controller as BrowserTabSnapshot["controller"],
+    agentCursor: value.agentCursor as BrowserTabSnapshot["agentCursor"],
+    recording: null,
+    viewportSetting: value.viewportSetting as BrowserTabSnapshot["viewportSetting"],
+    renderedViewport: value.renderedViewport as BrowserTabSnapshot["renderedViewport"],
+    physicalVisible: value.physicalVisible === true,
+    error: isRecord(value.error)
+      ? (() => {
+          const code = safeExternalErrorCode(value.error.code);
+          return { code, message: externalFailureMessage(code) };
+        })()
+      : null,
+    createdAt: value.createdAt as string,
+    updatedAt: value.updatedAt as string,
+  };
+}
+
+const EXTERNAL_ERROR_CODES = new Set<BrowserAutomationFailure["code"]>([
+  "unavailable-host", "unsupported-operation", "session-not-found", "tab-not-found", "tab-session-mismatch",
+  "invalid-input", "invalid-url", "navigation-failed", "timeout", "control-interrupted", "target-not-found",
+  "invalid-selector", "target-not-editable", "coordinates-outside-viewport", "evaluation-failed", "result-too-large",
+  "response-too-large", "host-disconnected", "stale-host-generation", "malformed-response", "artifact-path-invalid",
+  "recording-conflict", "recording-requires-visible-tab", "recording-not-found", "request-cancelled", "execution-failed",
+  "attachment-required", "lease-conflict", "lease-lost", "restricted-target", "debugger-unavailable",
+  "extension-update-required", "chrome-policy-blocked",
+]);
+
+function safeExternalErrorCode(value: unknown): BrowserAutomationFailure["code"] {
+  return typeof value === "string" && EXTERNAL_ERROR_CODES.has(value as BrowserAutomationFailure["code"])
+    ? value as BrowserAutomationFailure["code"]
+    : "malformed-response";
+}
+
+function externalFailureMessage(code: string): string {
+  return `External Chrome request failed (${code}).`;
+}
+
+function isOpaqueExternalTabId(value: string): boolean {
+  return value.length <= 128 && /^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(value);
+}
+
 function isPanelRevealPending(snapshot: BrowserSessionSnapshot): boolean {
   const reveal = snapshot.panelReveal;
   return Boolean(reveal && reveal.tabId !== null && reveal.sequence > reveal.acknowledgedSequence);
@@ -965,6 +1114,7 @@ function isValidSuccessResult(
 function isValidTabForSession(value: unknown, snapshot: BrowserSessionSnapshot, hostKind: BrowserHostKind): value is BrowserTabSnapshot {
   if (!isRecord(value)) return false;
   return typeof value.tabId === "string"
+    && (hostKind !== "external-chrome" || isOpaqueExternalTabId(value.tabId))
     && resolveBrowserHostKind(value.hostKind as BrowserHostKind | undefined) === hostKind
     && value.sessionAgentId === snapshot.sessionAgentId
     && value.profileId === snapshot.profileId
@@ -1034,6 +1184,10 @@ function hostTabKey(hostKind: BrowserHostKind, tabId: string): string {
 
 function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
   return structuredClone(snapshot);
+}
+
+function cloneTab(tab: BrowserTabSnapshot): BrowserTabSnapshot {
+  return structuredClone(tab);
 }
 
 /** Host-owned physical runtime fields only; identity/membership stay backend-owned. */

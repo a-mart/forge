@@ -2,6 +2,7 @@ import {
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_HOST_PROTOCOL_VERSION,
   DEFAULT_BROWSER_HOST_KIND,
+  EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS,
   isBrowserHostKind,
   BROWSER_VIEWPORT_MAX_AREA,
   BROWSER_VIEWPORT_MAX_DIMENSION,
@@ -171,8 +172,15 @@ function parseCapabilities(value: unknown): BrowserHostCapabilities {
         ...(typeof capabilities.playwrightVersion === "string" ? { playwright: boundedString(capabilities.playwrightVersion, "registration.capabilities.playwrightVersion", 64) } : {}),
       }
     : parseRuntimeVersions(capabilities.runtimeVersions);
-  if (resolvedHostKind === "external-chrome" && (operations.includes("resize") || operations.includes("recordingStart") || operations.includes("recordingStop") || features.resize || features.recording)) {
-    throw new Error("External Chrome M0 cannot advertise resize or recording");
+  if (resolvedHostKind === "external-chrome") {
+    const qualified = EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS as readonly unknown[];
+    if (operations.some((operation) => !qualified.includes(operation))) {
+      throw new Error("External Chrome may advertise only M3-qualified operations");
+    }
+    if (features.resize || features.recording || features.capturePage || features.downloadEvents
+      || features.downloadArtifacts || features.downloadOpen) {
+      throw new Error("External Chrome may not advertise unqualified M3 features");
+    }
   }
   return {
     hostKind: resolvedHostKind,

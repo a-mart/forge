@@ -73,11 +73,12 @@ function response(request: BrowserAutomationRequest): BrowserAutomationResponse 
     elapsedMs: 5,
   };
   if (request.operation === "open") {
+    const tabId = request.hostKind === "external-chrome" ? "ext.instance.41" : "tab-1";
     return {
       ...base,
       operation: "open",
       ok: true,
-      result: { tab: { ...tab(request.sessionAgentId, request.profileId), hostKind: request.hostKind }, created: true, panelRevealRequested: true },
+      result: { tab: { ...tab(request.sessionAgentId, request.profileId, tabId), hostKind: request.hostKind }, created: true, panelRevealRequested: true },
     };
   }
   if (request.operation === "evaluate") {
@@ -86,6 +87,17 @@ function response(request: BrowserAutomationRequest): BrowserAutomationResponse 
       operation: "evaluate",
       ok: true,
       result: { tabId: request.tabId!, value: "SECRET_RESULT", serializedBytes: 13 },
+    };
+  }
+  if (request.operation === "navigate") {
+    return {
+      ...base,
+      operation: "navigate",
+      ok: true,
+      result: {
+        tab: { ...tab(request.sessionAgentId, request.profileId, request.tabId!), hostKind: request.hostKind },
+        readiness: request.input.readiness,
+      },
     };
   }
   return {
@@ -176,7 +188,7 @@ describe("BrowserAutomationService", () => {
         capabilities: {
           ...registration().capabilities,
           hostKind: "external-chrome",
-          supportedOperations: ["status", "open", "evaluate"],
+          supportedOperations: ["status", "open", "navigate"],
           supportsRecording: false,
         },
       },
@@ -189,16 +201,93 @@ describe("BrowserAutomationService", () => {
     await expect(service.invoke("manager-1", "profile-1", "open", {
       hostKind: "external-chrome", show: false, reuseExistingTab: false,
     })).resolves.toMatchObject({ ok: true });
-    await expect(service.invoke("manager-1", "profile-1", "evaluate", {
-      expression: "1 + 1", awaitPromise: true, returnByValue: true,
+    await expect(service.invoke("manager-1", "profile-1", "navigate", {
+      url: "https://example.com/next", readiness: "load", timeoutMs: 15_000,
     })).resolves.toMatchObject({ ok: true });
     expect(requests.map((request) => request.hostKind)).toEqual(["external-chrome", "external-chrome"]);
 
     const restarted = new BrowserAutomationService({ dataDir, now: () => timestamp });
     await expect(restarted.getSessionSnapshot("profile-1", "manager-1")).resolves.toMatchObject({
       hostKind: "external-chrome",
-      tabs: [expect.objectContaining({ hostKind: "external-chrome" })],
+      tabs: [expect.objectContaining({ hostKind: "external-chrome", url: "", title: "" })],
     });
+  });
+
+  it("projects External Chrome responses before state, events, persistence, diagnostics, or tool results", async () => {
+    const { dataDir } = await createService();
+    const changes: BrowserTabSnapshot[] = [];
+    const privateUrl = "https://private.invalid/path?secret=yes";
+    const privateTitle = "Private candidate title";
+    const privateOrigin = "https://private.invalid";
+    const guarded = new BrowserAutomationService({
+      dataDir,
+      now: () => timestamp,
+      onSessionChanged: (snapshot) => {
+        changes.push(...snapshot.tabs);
+      },
+    });
+    guarded.registerHost({
+      connectionId: "external-private",
+      registration: {
+        ...registration(),
+        hostId: "external-private-host",
+        capabilities: {
+          ...registration().capabilities,
+          hostKind: "external-chrome",
+          supportedOperations: ["open", "navigate", "status"],
+          supportsRecording: false,
+        },
+      },
+      sendRequest(request) {
+        const leasedTab = {
+          ...tab(request.sessionAgentId, request.profileId, request.tabId ?? "ext.instance.41"),
+          hostKind: "external-chrome" as const,
+          url: privateUrl,
+          title: privateTitle,
+          origin: privateOrigin,
+          candidates: [{ title: "Unselected candidate", origin: "https://other.invalid" }],
+        };
+        const result = request.operation === "open"
+          ? { tab: leasedTab, created: true, panelRevealRequested: false, candidates: leasedTab.candidates }
+          : request.operation === "navigate"
+            ? { tab: leasedTab, readiness: request.input.readiness, origin: privateOrigin }
+            : {
+                available: true,
+                host: guarded.broker.getConnectionSnapshot("external-chrome"),
+                panelVisible: false,
+                panelRevealRequested: false,
+                physicalTabVisible: false,
+                selectedTab: leasedTab,
+                candidates: leasedTab.candidates,
+              };
+        queueMicrotask(() => guarded.acceptHostResponse("external-private", {
+          requestId: request.requestId,
+          hostKind: request.hostKind,
+          sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId,
+          tabId: request.tabId,
+          hostId: request.hostId,
+          hostGeneration: request.hostGeneration,
+          operation: request.operation,
+          ok: true,
+          result,
+          updatedTab: leasedTab,
+          elapsedMs: 1,
+        }));
+      },
+    });
+
+    const opened = await guarded.invoke("manager-1", "profile-1", "open", {
+      hostKind: "external-chrome", show: false, reuseExistingTab: false,
+    });
+    expect(opened).toMatchObject({
+      ok: true,
+      result: { tab: { tabId: "ext.instance.41", url: "", title: "" } },
+    });
+    expect(JSON.stringify(opened)).not.toMatch(/private|candidate|origin/i);
+    expect(JSON.stringify(changes)).not.toMatch(/private|candidate|origin/i);
+    expect(JSON.stringify(await guarded.getSessionSnapshot("profile-1", "manager-1"))).not.toMatch(/private|candidate|origin/i);
+    expect(await readFile(guarded.store.getStatePath("profile-1", "manager-1"), "utf8")).not.toMatch(/private|candidate|origin/i);
   });
 
   it("changes host and tab selection atomically so omitted-host calls follow a managed activation", async () => {
@@ -229,8 +318,8 @@ describe("BrowserAutomationService", () => {
     await service.invoke("manager-1", "profile-1", "open", {
       hostKind: "managed-electron", show: false, reuseExistingTab: false,
     });
-    await expect(service.activateTab("profile-1", "manager-1", "tab-1", "external-chrome")).resolves.toMatchObject({
-      hostKind: "external-chrome", activeTabId: "tab-1", defaultTabId: "tab-1",
+    await expect(service.activateTab("profile-1", "manager-1", "ext.instance.41", "external-chrome")).resolves.toMatchObject({
+      hostKind: "external-chrome", activeTabId: "ext.instance.41", defaultTabId: "ext.instance.41",
     });
     await expect(service.activateTab("profile-1", "manager-1", "tab-1", "managed-electron")).resolves.toMatchObject({
       hostKind: "managed-electron", activeTabId: "tab-1", defaultTabId: "tab-1",
@@ -241,6 +330,38 @@ describe("BrowserAutomationService", () => {
     })).resolves.toMatchObject({ ok: true });
     expect(managedRequests.at(-1)).toMatchObject({ operation: "evaluate", hostKind: "managed-electron", tabId: "tab-1" });
     expect(externalRequests).toHaveLength(1);
+  });
+
+  it("projects restart hydration independently for managed and External Chrome hosts", async () => {
+    const { dataDir, service } = await createService();
+    const state = service.store.createEmpty("profile-1", "manager-1");
+    state.hostKind = "external-chrome";
+    state.tabs = [
+      { ...tab("manager-1", "profile-1", "managed-tab"), hostKind: "managed-electron" },
+      { ...tab("manager-1", "profile-1", "ext.instance.41"), hostKind: "external-chrome", url: "https://private.invalid/path", title: "Private" },
+    ];
+    state.activeTabId = "ext.instance.41";
+    state.defaultTabId = "ext.instance.41";
+    state.panelVisible = true;
+    state.panelReveal = { sequence: 1, acknowledgedSequence: 0, tabId: "ext.instance.41" };
+    await service.store.save(state);
+
+    const restarted = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    await expect(restarted.getHostHydrationSnapshot("profile-1", "manager-1", "external-chrome")).resolves.toMatchObject({
+      hostKind: "external-chrome",
+      tabs: [{ hostKind: "external-chrome", tabId: "ext.instance.41", url: "", title: "" }],
+      activeTabId: "ext.instance.41",
+      defaultTabId: "ext.instance.41",
+      panelVisible: false,
+      panelReveal: { sequence: 0, acknowledgedSequence: 0, tabId: null },
+    });
+    await expect(restarted.getHostHydrationSnapshot("profile-1", "manager-1", "managed-electron")).resolves.toMatchObject({
+      hostKind: "managed-electron",
+      tabs: [{ hostKind: "managed-electron", tabId: "managed-tab" }],
+      activeTabId: null,
+      defaultTabId: null,
+      panelVisible: false,
+    });
   });
 
   it("keeps identical tab ids host-scoped when closing and selecting fallbacks", async () => {

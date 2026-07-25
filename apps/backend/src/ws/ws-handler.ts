@@ -779,15 +779,12 @@ export class WsHandler {
       .filter((descriptor) => descriptor.role === "manager")
       .map(async (descriptor) => {
         const profileId = descriptor.profileId ?? descriptor.agentId;
-        const snapshot = await this.browserAutomationService.getSessionSnapshot(profileId, descriptor.agentId);
-        const tabs = snapshot.tabs.filter((tab) => (tab.hostKind ?? "managed-electron") === hostKind);
-        const tabIds = new Set(tabs.map((tab) => tab.tabId));
-        sessions.set(`${profileId}:${descriptor.agentId}`, {
-          ...snapshot,
-          tabs,
-          activeTabId: snapshot.activeTabId && tabIds.has(snapshot.activeTabId) ? snapshot.activeTabId : null,
-          defaultTabId: snapshot.defaultTabId && tabIds.has(snapshot.defaultTabId) ? snapshot.defaultTabId : null,
-        });
+        const snapshot = await this.browserAutomationService.getHostHydrationSnapshot(
+          profileId,
+          descriptor.agentId,
+          hostKind,
+        );
+        sessions.set(`${profileId}:${descriptor.agentId}`, snapshot);
       }));
     return [...sessions.values()];
   }

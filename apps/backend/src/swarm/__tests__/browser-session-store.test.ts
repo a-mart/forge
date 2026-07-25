@@ -120,7 +120,13 @@ describe("BrowserSessionStore", () => {
     const persisted = await readFile(store.getStatePath("profile-1", "manager-1"), "utf8");
     expect(persisted).not.toContain("private.invalid");
     expect(persisted).not.toContain("Private title");
-    expect(JSON.parse(persisted)).toMatchObject({ tabs: [{ url: "", title: "" }], recentActions: [{ id: "external-action" }] });
+    expect(JSON.parse(persisted)).toMatchObject({ tabs: [{ url: "", title: "", error: null }], recentActions: [{ id: "external-action" }] });
+    const restarted = new BrowserSessionStore({ dataDir, now });
+    await expect(restarted.load("profile-1", "manager-1")).resolves.toMatchObject({
+      hostKind: "external-chrome",
+      tabs: [{ hostKind: "external-chrome", url: "", title: "", error: null }],
+      recentActions: [{ id: "external-action" }],
+    });
   });
 
   it("persists only canonical metadata and omits screenshot, page, evaluate, and diagnostic payloads", async () => {

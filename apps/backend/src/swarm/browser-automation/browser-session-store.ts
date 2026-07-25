@@ -80,6 +80,7 @@ export class BrowserSessionStore {
       const snapshot = normalizeSnapshot(parsed, profileId, sessionAgentId);
       snapshot.tabs = snapshot.tabs.map((tab) => ({
         ...tab,
+        ...(tab.hostKind === "external-chrome" ? { url: "", title: "", error: null } : {}),
         live: false,
         controller: "none",
         recording: null,
@@ -150,14 +151,17 @@ export class BrowserSessionStore {
 }
 
 function privacyBoundSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
-  if (snapshot.hostKind !== 'external-chrome' && snapshot.tabs.every((tab) => tab.hostKind !== 'external-chrome')) return snapshot;
+  if (snapshot.hostKind !== "external-chrome" && snapshot.tabs.every((tab) => tab.hostKind !== "external-chrome")) return snapshot;
   return {
     ...snapshot,
-    tabs: snapshot.tabs.map((tab) => tab.hostKind === 'external-chrome' ? { ...tab, url: '', title: '' } : tab),
+    tabs: snapshot.tabs.map((tab) => tab.hostKind === "external-chrome"
+      ? { ...tab, url: "", title: "", error: null }
+      : tab),
     recentActions: snapshot.recentActions.map((action) => {
-      if (action.tabId === null || !snapshot.tabs.some((tab) => tab.hostKind === 'external-chrome' && tab.tabId === action.tabId)) return action;
+      if (action.tabId === null || !snapshot.tabs.some((tab) => tab.hostKind === "external-chrome" && tab.tabId === action.tabId)) return action;
       const { url: _url, title: _title, ...safe } = action;
-      void _url; void _title;
+      void _url;
+      void _title;
       return safe;
     }),
   };
