@@ -51,6 +51,30 @@ function makeHost(onGuestBeforeInput?: ConstructorParameters<typeof ManagedBrows
 
 beforeEach(() => { createdViews.length = 0 })
 describe('ManagedBrowserViewHost', () => {
+  it('rejects external-only state and filters same-id external tabs from mixed state', async () => {
+    const { host, manager } = makeHost()
+    await host.reconcile({
+      controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 1, workspaceEpoch: 2,
+      sessions: [{ ...session([{ ...tab('same'), hostKind: 'external-chrome' }]), hostKind: 'external-chrome' }],
+    })
+    expect(host.tabCount).toBe(0)
+    expect(manager.registerTabWebContents).not.toHaveBeenCalled()
+
+    const managed = { ...tab('same'), hostKind: 'managed-electron' as const, title: 'managed' }
+    const external = { ...tab('same'), hostKind: 'external-chrome' as const, title: 'external' }
+    await host.reconcile({
+      controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 2, workspaceEpoch: 2,
+      sessions: [{ ...session([managed, external]), hostKind: 'managed-electron' }],
+    })
+    expect(host.tabCount).toBe(1)
+    expect(manager.registerTabWebContents).toHaveBeenCalledOnce()
+    expect(manager.registerTabWebContents).toHaveBeenCalledWith(
+      expect.objectContaining({ tab: expect.objectContaining({ hostKind: 'managed-electron', title: 'managed' }) }),
+      expect.anything(),
+    )
+    await expect(host.ensureProvisional(external, 2)).rejects.toMatchObject({ code: 'invalid-input' })
+  })
+
   it('creates exactly one runtime per canonical tab and ignores stale reconciliation', async () => {
     const { host, manager } = makeHost()
     const input = { controllerInstanceId: 'controller', hostGeneration: 4, updateSequence: 1, workspaceEpoch: 9, sessions: [session([tab('one'), tab('two')])] }

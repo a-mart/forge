@@ -19,7 +19,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 | Forge file | T3 Code reference |
 | --- | --- |
 | `packages/protocol/src/browser-automation.ts` | Browser operation semantics, bounds, and viewport presets at `9a0a07167f0623c3a7db0ffeff2e3939760309df` |
-| `apps/electron/src/browser/browser-automation-manager.ts` | `apps/desktop/src/preview/Manager.ts` |
+| `apps/electron/src/browser/managed-electron-target-adapter.ts` | `apps/desktop/src/preview/Manager.ts` |
 | `apps/electron/src/browser/browser-session.ts` | `apps/desktop/src/preview/BrowserSession.ts` |
 | `apps/electron/src/browser/playwright-injected-runtime.ts` | `apps/desktop/src/preview/PlaywrightInjectedRuntime.ts` |
 | `apps/electron/src/browser/guest-preload.ts` | GuestProtocol / PickPreload |

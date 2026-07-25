@@ -6,12 +6,14 @@ This workspace packages Forge as a standalone desktop application for macOS, Win
 
 The Electron app is a thin wrapper around Forge's existing backend and UI:
 
-- **Main process** (`src/main.ts`) — launches the packaged backend, manages the application window and auto-updates, owns Managed Browser sessions, and installs the trusted browser IPC handlers
-- **Trusted preload** (`src/preload.ts`) — bridges the Forge renderer to a narrow IPC API, including the Managed Browser host bridge; browser IPC rejects callers other than the trusted Forge renderer
-- **Renderer process** — loads the staged UI bundle from `ui/index.html` and keeps the single connected Desktop browser host/recording authority registered with the local Builder backend
+- **Main process** (`src/main.ts`) — launches the packaged backend, manages the application window and auto-updates, owns Managed Browser sessions, and owns the External Chrome deployment/coordinator/native relay
+- **Trusted preload** (`src/preload.ts`) — bridges the Forge renderer to narrow Managed Browser and External Chrome IPC APIs; browser IPC rejects callers other than the trusted Forge renderer
+- **Renderer process** — loads the staged UI bundle from `ui/index.html`, registers the two local Desktop browser-host adapters with the local Builder backend, and remains the Managed Browser view/recording authority
 - **Guest preload** (`src/browser/guest-preload.ts`) — runs inside sandboxed managed tab views, reports only real pointer/key input so human control can interrupt an agent action, and renders the non-interactive agent cursor inside the native guest
 
-Managed Browser partitions are persistent and profile-scoped. The main process owns exactly one `WebContentsView` and automation runtime per live tab; views enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected partitions. On macOS, Windows, and Linux, the same view can move into the single native Managed Browser pop-out and back without remounting, changing host generation, or interrupting CDP/recording. Cmd+W docks it on macOS and Ctrl+W docks it on Windows/Linux. The main-process `BrowserAutomationManager` serializes typed operations and uses Chromium's debugger protocol. Semantic locator work uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
+Managed Browser partitions are persistent and profile-scoped. The main process owns exactly one `WebContentsView` and automation runtime per live tab; views enforce sandboxing, context isolation, no Node integration, HTTP(S)-only navigation, restricted permissions, and expected partitions. On macOS, Windows, and Linux, the same view can move into the single native Managed Browser pop-out and back without remounting, changing host generation, or interrupting CDP/recording. Cmd+W docks it on macOS and Ctrl+W docks it on Windows/Linux. The main-process `BrowserAutomationManager` routes typed operations by host kind. Managed Browser uses the pinned `playwright-core` 1.60.0 injected runtime extracted from `lib/coreBundle.js`; marker, version, fixture, packaging, and notice tests fail closed when that private integration changes.
+
+External Chrome remains a separate local Desktop adapter. The coordinator deploys the deterministic unpacked extension and required native host from packaged resources into the active Forge data directory, owns current-user authentication/rendezvous and Chrome registration, and exposes only bounded status/candidate/lease/operation IPC to the main renderer. External tabs stay in Chrome and do not create Electron views or recording authority. The [Browser automation guide](../../docs/BROWSER_AUTOMATION.md) is the user-facing source of truth.
 
 ### Packaged layout
 
@@ -25,6 +27,7 @@ Managed Browser partitions are persistent and profile-scoped. The main process o
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
 - **SQLite runtime** — `better-sqlite3` remains external to the backend bundle so its Electron-specific native binding can be staged and exercised with Electron-as-Node before packaging
 - **Managed Browser runtime** — main/trusted-preload/guest-preload bundles in `app.asar`, plus `.stage/browser-runtime/playwright-core/` and an exact staged copy of root `THIRD_PARTY_NOTICES.md` under packaged `resources/browser-runtime/`
+- **External Chrome deployment resources** — deterministic extension shell/payload and a platform/architecture SEA native host under `.stage/external-chrome/`, packaged as `resources/external-chrome/`; release builds require the official pinned SEA Node plus platform signing before the native-host hash/manifest is created
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
@@ -34,12 +37,20 @@ At runtime the packaged app spawns the staged backend bundle from `backend/dist/
 |------|---------|
 | `src/main.ts` | Main process entry point. Window management, backend lifecycle, IPC handlers |
 | `src/preload.ts` | Trusted renderer bridge, including the narrow Managed Browser IPC facade |
-| `src/browser/browser-automation-manager.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
+| `src/browser/browser-automation-manager.ts` | Host-kind routing across browser target adapters |
+| `src/browser/managed-electron-target-adapter.ts` | Electron-hosted tab runtime, typed operation execution, interruption, diagnostics, and recording capture |
 | `src/browser/browser-ipc.ts` | Main-authority-only automation IPC handlers |
 | `src/browser/managed-browser-view-host.ts` | Epoch/sequence-guarded main-process ownership, bounds, and same-view reparenting |
 | `src/browser/browser-workspace-ipc.ts` | Narrow role-scoped pop-out projection and correlated command relay |
 | `src/browser/guest-preload.ts` | Sandboxed guest input-only preload |
 | `src/browser/playwright-injected-runtime.ts` | Pinned, fail-closed Playwright semantic-locator runtime extraction |
+| `src/browser/external-chrome-target-adapter.ts` | Routes supported External Chrome operations through the bounded relay |
+| `src/external-chrome/coordinator.ts` | Deployment, current-user authority, registration, update, rollback, repair, takeover, and removal coordinator |
+| `src/external-chrome/relay-runtime.ts` | Authenticated extension inventory, exact lease checkpoints, operation transport, and recovery |
+| `src/external-chrome/registration.ts` | Forge-owned native-host manifest/registry inspection, repair, transfer, and removal |
+| `src/external-chrome/data-paths.ts` | Canonical External Chrome integration paths under the active Forge data directory |
+| `scripts/stage-external-chrome.mjs` | Combines verified extension and native-host inventories into the Electron stage |
+| `scripts/external-chrome-package-content-smoke.mjs` | Verifies staged/packaged inventory, target metadata, hashes, and signature policy |
 | `src/auto-updater.ts` | Auto-update logic using `electron-updater` and GitHub Releases |
 | `src/window-state.ts` | Persists window position, size, maximized state, and fullscreen state across restarts |
 | `src/fix-path.ts` | Ensures PATH is set correctly on macOS when launched from GUI (not terminal) |
@@ -91,6 +102,34 @@ pnpm exec vitest run scripts/__tests__/browser-third-party-notices.test.mjs
 
 The real fixtures require a graphical Electron environment supported by the current platform. They execute rather than intentionally skip on macOS, Windows, and Linux. Validation for the cross-platform pop-out change was executed natively only on macOS; native Windows and Linux reparenting, recording/media, close-race, and packaged-layout qualification remain unexecuted. Run all smoke commands on each target platform; passing on one operating system does not qualify another.
 
+### External Chrome packaging and validation
+
+External Chrome has separate extension, native-host, Electron coordinator, staging, and package-content gates. The non-live validation path is:
+
+```bash
+# Shared contracts and package workspaces
+pnpm --filter @forge/protocol build
+pnpm --filter @forge/chrome-extension identity
+pnpm --filter @forge/chrome-extension typecheck
+pnpm --filter @forge/chrome-extension test
+pnpm --filter @forge/chrome-extension build
+pnpm --filter @forge/external-chrome-native-host typecheck
+pnpm --filter @forge/external-chrome-native-host test
+
+# Credential-free, explicitly non-publishable current-target SEA
+FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --filter @forge/external-chrome-native-host package:current
+
+# Electron coordinator/adapter and packaging policy
+pnpm --dir apps/electron exec vitest run src/external-chrome/__tests__ src/browser/__tests__/browser-target-adapters.test.ts
+pnpm --dir apps/electron exec vitest run scripts/__tests__/external-chrome-staging.test.mjs scripts/__tests__/external-chrome-release-signing.test.mjs scripts/__tests__/windows-ci-signing-env.test.mjs
+FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron stage:external-chrome
+FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --dir apps/electron test:external-chrome-package
+```
+
+`stage:external-chrome` expects the built extension and native-host package manifests. It fails on a missing required executable, target/architecture mismatch, protocol mismatch, incomplete inventory, hash drift, or signature-policy failure. The package-content smoke walks the complete stage, rejects symlinks/extra files/hash changes, and verifies the native-host signature metadata. Validation mode explicitly allows an unverified validation signature only for this smoke; the deployed release path rejects it.
+
+The opt-in extension fixture can exercise a temporary isolated Chrome profile, but it is not a replacement for a headed Chrome/Desktop/native-registration run. Do not run live registration or load an everyday Chrome profile during routine CI/docs validation. Unit tests, builds, staging, and package-content smoke do not by themselves qualify headed Chrome, native registration, the current platform, installer contents, or the release SEA/signing path.
+
 If you only want to run the Electron app without starting the UI dev server separately:
 
 ```bash
@@ -120,11 +159,14 @@ The packaging pipeline:
 6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
 8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
-9. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
-10. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
-11. Runs `electron-builder --publish never`
+9. Builds the External Chrome shell/payload and current platform/architecture native host with official Node 25.6.1; release mode signs and signer-verifies the native host before calculating its hash, while explicit validation mode produces a non-publishable unverified manifest
+10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
+11. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
+12. Runs `electron-builder --publish never`; the Windows `afterPack` hook restores the pre-signed host after electron-builder's recursive extra-resource signer, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform signature before installers are produced
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
+
+External Chrome adds fail-closed release gates to that pipeline. A publishable installer requires the pinned extension ID and deterministic shell/payload inventory, a required SEA for the package target/architecture, matching native protocol metadata, release-mode signature verification against the configured signer, byte-identical preservation through electron-builder, and post-package hash/signature verification. A validation-mode host or manifest is deliberately non-deployable and must never be promoted by relabeling it as a release artifact. Complete headed Chrome, live native registration, target-platform, installer, and updater checks remain operator gates before any draft is published.
 
 ## Desktop CLI
 
@@ -158,17 +200,25 @@ Add signing variables to `.env` before packaging signed builds.
 | `APPLE_ID` | Your Apple ID email |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from appleid.apple.com |
 | `APPLE_TEAM_ID` | Your Apple Developer Team ID |
+| `FORGE_MACOS_SIGNING_IDENTITY` | Exact `Developer ID Application: … (TEAMID)` common name expected on the native host |
+| `FORGE_SEA_NODE` | Absolute path to the official Node 25.6.1 executable (not a vendor build missing `NODE_SEA_FUSE`) |
 
-With these set, macOS packaging signs and notarizes automatically via `electron-builder`.
+Release packaging also requires `FORGE_EXTERNAL_CHROME_BUILD_MODE=release`. The native host is signed first and its observed identity/team must match the two expected values; electron-builder then signs/notarizes the outer app.
 
-### Windows signing (optional)
+### Windows signing
 
 | Variable | Description |
 |----------|-------------|
 | `CSC_LINK` or `WIN_CSC_LINK` | Base64 or file path for the Windows code-signing certificate |
 | `CSC_KEY_PASSWORD` or `WIN_CSC_KEY_PASSWORD` | Password for that certificate |
+| `FORGE_WINDOWS_SIGNER_SUBJECT` | Exact Authenticode signer certificate subject expected on the native host |
+| `FORGE_SEA_NODE` | Official Node 25.6.1 executable installed by `actions/setup-node` |
 
-If Windows signing credentials are absent, Windows installers are still buildable but remain unsigned.
+`workflow_dispatch` is release mode and fails before packaging when credentials or the expected signer are absent. `electron/*` pushes set `FORGE_EXTERNAL_CHROME_BUILD_MODE=validation`; Actions does not expose `WIN_CSC_*` / signer secrets on those pushes, packaging blanks `WIN_CSC_*` plus `CSC_*` aliases, and `CSC_IDENTITY_AUTO_DISCOVERY=false` so electron-builder cannot auto-discover a signing identity. Validation native-host manifests stay explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
+
+```bash
+FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
+```
 
 ## Releasing
 
@@ -191,7 +241,7 @@ If Windows signing credentials are absent, Windows installers are still buildabl
    - Do not rely on a tag-first flow
 
 2. **Build and validate macOS locally**
-   - Run `pnpm package:electron` on a macOS machine with signing credentials in `.env`
+   - Install the official Node 25.6.1 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
    - This build clears `apps/electron/release/` first; copy/archive older artifacts elsewhere if you need to keep them
    - Confirm the expected macOS assets exist in `apps/electron/release/`
 
@@ -220,8 +270,8 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 
 ### Windows CI notes
 
-- `workflow_dispatch` is the release build path
-- `electron/*` branch pushes are the release-branch validation path
+- `workflow_dispatch` is the fail-closed signed release build path and requires the Windows certificate/password plus `FORGE_WINDOWS_SIGNER_SUBJECT`
+- `electron/*` branch pushes are unsigned validation-only builds: no signing secrets are injected, `CSC_*` aliases are blanked, identity auto-discovery is disabled, and the External Chrome package is deliberately non-deployable
 - The workflow does not publish a GitHub Release on its own
 - Download the Windows artifact from the workflow run, then upload those files into the draft release alongside the locally built macOS assets
 - The release operator is still responsible for choosing the correct GitHub release channel: beta builds stay prerelease, stable builds are published later as stable

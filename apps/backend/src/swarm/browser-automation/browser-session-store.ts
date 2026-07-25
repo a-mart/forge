@@ -2,7 +2,9 @@ import { access, readFile, rename, rm } from "node:fs/promises";
 import {
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
   BROWSER_VIEWPORT_PRESETS,
+  DEFAULT_BROWSER_HOST_KIND,
   isBrowserAutomationOperation,
+  isBrowserHostKind,
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
@@ -47,6 +49,7 @@ export class BrowserSessionStore {
     const timestamp = this.now();
     return {
       schemaVersion: 1,
+      hostKind: DEFAULT_BROWSER_HOST_KIND,
       sessionAgentId,
       profileId,
       hostingState: "hosted",
@@ -77,6 +80,7 @@ export class BrowserSessionStore {
       const snapshot = normalizeSnapshot(parsed, profileId, sessionAgentId);
       snapshot.tabs = snapshot.tabs.map((tab) => ({
         ...tab,
+        ...(tab.hostKind === "external-chrome" ? { url: "", title: "", error: null } : {}),
         live: false,
         controller: "none",
         recording: null,
@@ -101,7 +105,7 @@ export class BrowserSessionStore {
     const normalized = this.normalize(snapshot);
     const path = this.getStatePath(normalized.profileId, normalized.sessionAgentId);
     const previous = this.writeChains.get(path) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => writeJsonFileAtomic(path, normalized));
+    const current = previous.catch(() => undefined).then(() => writeJsonFileAtomic(path, privacyBoundSnapshot(normalized)));
     this.writeChains.set(path, current);
     try {
       await current;
@@ -146,6 +150,23 @@ export class BrowserSessionStore {
   }
 }
 
+function privacyBoundSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
+  if (snapshot.hostKind !== "external-chrome" && snapshot.tabs.every((tab) => tab.hostKind !== "external-chrome")) return snapshot;
+  return {
+    ...snapshot,
+    tabs: snapshot.tabs.map((tab) => tab.hostKind === "external-chrome"
+      ? { ...tab, url: "", title: "", error: null }
+      : tab),
+    recentActions: snapshot.recentActions.map((action) => {
+      if (action.tabId === null || !snapshot.tabs.some((tab) => tab.hostKind === "external-chrome" && tab.tabId === action.tabId)) return action;
+      const { url: _url, title: _title, ...safe } = action;
+      void _url;
+      void _title;
+      return safe;
+    }),
+  };
+}
+
 function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: string): BrowserSessionSnapshot {
   const record = requiredRecord(value, "browser session");
   if (record.schemaVersion !== 1) throw new Error("Unsupported browser session schema version");
@@ -154,10 +175,14 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
   }
   if (!Array.isArray(record.tabs) || record.tabs.length > MAX_TABS) throw new Error("Invalid browser tabs");
 
-  const tabs = record.tabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId));
+  const hostKind = normalizeHostKind(record.hostKind);
+  const tabs = record.tabs.map((tab) => normalizeTab(tab, profileId, sessionAgentId, hostKind));
   const tabIds = new Set<string>();
+  const hostTabIds = new Set<string>();
   for (const tab of tabs) {
-    if (tabIds.has(tab.tabId)) throw new Error("Duplicate browser tab id");
+    const key = `${tab.hostKind ?? DEFAULT_BROWSER_HOST_KIND}\u0000${tab.tabId}`;
+    if (hostTabIds.has(key)) throw new Error("Duplicate browser tab id for host kind");
+    hostTabIds.add(key);
     tabIds.add(tab.tabId);
   }
 
@@ -171,8 +196,20 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
     throw new Error("Pending panel reveal tab is missing");
   }
 
+  const externalChromeLifecycleRelease = normalizeExternalChromeLifecycleRelease(record.externalChromeLifecycleRelease);
+  if (externalChromeLifecycleRelease?.phase === "preparing" && !tabs.some((tab) => (
+    tab.hostKind === "external-chrome" && tab.tabId === externalChromeLifecycleRelease.tabId
+  ))) throw new Error("Preparing External Chrome release tab is missing");
+  const externalChromeTurnDisposition = normalizeExternalChromeTurnDisposition(record.externalChromeTurnDisposition);
+  if (externalChromeTurnDisposition?.phase === "pending" && !tabs.some((tab) => (
+    tab.hostKind === "external-chrome" && tab.tabId === externalChromeTurnDisposition.tabId
+  ))) throw new Error("Pending External Chrome turn disposition tab is missing");
+
   return {
     schemaVersion: 1,
+    hostKind,
+    ...(externalChromeLifecycleRelease ? { externalChromeLifecycleRelease } : {}),
+    ...(externalChromeTurnDisposition ? { externalChromeTurnDisposition } : {}),
     profileId,
     sessionAgentId,
     hostingState: normalizeHostingState(record.hostingState),
@@ -190,6 +227,38 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
   };
 }
 
+function normalizeExternalChromeLifecycleRelease(value: unknown): BrowserSessionSnapshot["externalChromeLifecycleRelease"] {
+  if (value === undefined || value === null) return undefined;
+  const release = requiredRecord(value, "External Chrome lifecycle release");
+  if (release.reason !== "stop" && release.reason !== "archive" && release.reason !== "delete"
+    && release.reason !== "detach" && release.reason !== "host-replaced") throw new Error("Invalid External Chrome lifecycle release reason");
+  if (release.phase !== "preparing" && release.phase !== "prepared") throw new Error("Invalid External Chrome lifecycle release phase");
+  const releaseId = requiredId(release.releaseId, "releaseId");
+  const tabId = requiredId(release.tabId, "tabId");
+  const hostId = requiredId(release.hostId, "hostId");
+  if (!/^[A-Za-z0-9._-]+$/u.test(releaseId) || !/^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(tabId)) {
+    throw new Error("Invalid External Chrome lifecycle release authority");
+  }
+  return {
+    releaseId, reason: release.reason, tabId, hostId,
+    hostGeneration: positiveInteger(release.hostGeneration, "hostGeneration"), phase: release.phase,
+  };
+}
+
+function normalizeExternalChromeTurnDisposition(value: unknown): BrowserSessionSnapshot["externalChromeTurnDisposition"] {
+  if (value === undefined || value === null) return undefined;
+  const turn = requiredRecord(value, "External Chrome turn disposition");
+  if (turn.disposition !== "handoff" || (turn.phase !== "pending" && turn.phase !== "completed")) {
+    throw new Error("Invalid External Chrome turn disposition");
+  }
+  const turnId = requiredId(turn.turnId, "turnId");
+  const tabId = requiredId(turn.tabId, "tabId");
+  if (!/^[A-Za-z0-9._:@/-]+$/u.test(turnId) || !/^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(tabId)) {
+    throw new Error("Invalid External Chrome turn disposition authority");
+  }
+  return { turnId, tabId, disposition: "handoff", phase: turn.phase };
+}
+
 function normalizePanelReveal(value: unknown): NonNullable<BrowserSessionSnapshot["panelReveal"]> {
   // Persisted snapshots from before durable reveal intent are already satisfied;
   // panelVisible alone must never cause an upgrade-time surprise reveal.
@@ -205,13 +274,19 @@ function normalizePanelReveal(value: unknown): NonNullable<BrowserSessionSnapsho
   return { sequence, acknowledgedSequence, tabId };
 }
 
+function normalizeHostKind(value: unknown) {
+  if (value === undefined || value === null) return DEFAULT_BROWSER_HOST_KIND;
+  if (isBrowserHostKind(value)) return value;
+  throw new Error("Invalid browser host kind");
+}
+
 function normalizeHostingState(value: unknown): BrowserSessionSnapshot["hostingState"] {
   if (value === undefined || value === null) return "hosted";
   if (value === "hosted" || value === "unhosted" || value === "removed") return value;
   throw new Error("Invalid browser session hosting state");
 }
 
-function normalizeTab(value: unknown, profileId: string, sessionAgentId: string): BrowserTabSnapshot {
+function normalizeTab(value: unknown, profileId: string, sessionAgentId: string, sessionHostKind = DEFAULT_BROWSER_HOST_KIND): BrowserTabSnapshot {
   const tab = requiredRecord(value, "browser tab");
   if (tab.profileId !== profileId || tab.sessionAgentId !== sessionAgentId) {
     throw new Error("Browser tab identity does not match its session");
@@ -224,6 +299,7 @@ function normalizeTab(value: unknown, profileId: string, sessionAgentId: string)
   if (controller !== "human" && controller !== "agent" && controller !== "none") throw new Error("Invalid browser controller");
 
   return {
+    hostKind: tab.hostKind === undefined ? sessionHostKind : normalizeHostKind(tab.hostKind),
     tabId: requiredId(tab.tabId, "tabId"),
     sessionAgentId,
     profileId,

@@ -66,11 +66,23 @@ export function useTranscriptController({
     messages: state.messages,
   })
 
+  const bootstrapForActiveAgent =
+    state.conversationBootstrap.agentId === activeAgentId
+      ? state.conversationBootstrap
+      : null
+  const isConversationInteractive =
+    !bootstrapForActiveAgent || bootstrapForActiveAgent.phase === 'ready' || bootstrapForActiveAgent.phase === 'idle'
+  const stalePresentation =
+    !isConversationInteractive &&
+    state.conversationPresentation?.agentId === activeAgentId &&
+    state.conversationPresentation.servedView === bootstrapForActiveAgent?.servedView
+      ? state.conversationPresentation
+      : null
   const isLoading = activeAgentStatus === 'streaming' || isAwaitingResponseStart
 
   const { allMessages, visibleMessages } = useVisibleMessages({
-    messages: state.messages,
-    activityMessages: state.activityMessages,
+    messages: stalePresentation?.messages ?? state.messages,
+    activityMessages: stalePresentation?.activityMessages ?? state.activityMessages,
     agents: state.agents,
     activeAgent,
     channelView: messageSourceView,
@@ -78,6 +90,9 @@ export function useTranscriptController({
   })
 
   const pinnedMessageIds = useMemo(() => {
+    // Stale rows are visual continuity only; header/sidebar projections must
+    // remain empty until the selected bootstrap installs fresh authority.
+    if (!isConversationInteractive) return []
     const ids: string[] = []
     for (const m of visibleMessages) {
       if (m.type === 'conversation_message' && m.pinned) {
@@ -86,7 +101,7 @@ export function useTranscriptController({
       }
     }
     return ids
-  }, [visibleMessages])
+  }, [isConversationInteractive, visibleMessages])
 
   const pinnedCount = pinnedMessageIds.length
 
@@ -144,8 +159,10 @@ export function useTranscriptController({
   }, [messageListRef])
 
   const collectedArtifacts = useMemo(
-    () => collectArtifactsFromMessages(allMessages, activeAgentId),
-    [activeAgentId, allMessages],
+    () => isConversationInteractive
+      ? collectArtifactsFromMessages(allMessages, activeAgentId)
+      : [],
+    [activeAgentId, allMessages, isConversationInteractive],
   )
 
   const feedbackSessionId = useMemo(() => {
@@ -185,5 +202,8 @@ export function useTranscriptController({
     collectedArtifacts,
     feedbackProfileId,
     feedback,
+    conversationBootstrap: bootstrapForActiveAgent,
+    hasStaleConversationPresentation: stalePresentation !== null,
+    isConversationInteractive,
   }
 }

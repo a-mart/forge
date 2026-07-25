@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Forge External Chrome</title>
+  <link rel="stylesheet" href="side-panel.css">
+</head>
+<body>
+  <main>
+    <header>
+      <span class="mark" aria-hidden="true">F</span>
+      <div><h1>External Chrome</h1><p>Local beta · Chrome 125+ · local Desktop relay</p></div>
+    </header>
+    <p class="warning">Broad V1 permissions are declared. Leases can include tabs you select below, tabs created with New Forge group or Forge's open operation, and qualifying grouped child tabs when you enable that option. Use a dedicated Chrome profile. Detach leaves leased tabs open. DevTools or trusted human input interrupts agent control.</p>
+    <div class="status" data-forge-status>Starting local payload…</div>
+    <form data-forge-picker>
+      <fieldset><legend>Local tab candidates</legend><div data-forge-candidates></div></fieldset>
+      <label>Pending session label
+        <input data-forge-session value="local" maxlength="64" aria-describedby="forge-session-hint">
+        <small id="forge-session-hint" class="hint">Local label for this side-panel pending lease only. It is not the final Forge backend session mapping; Desktop assigns that when you attach from the Browser rail.</small>
+      </label>
+      <label><input type="checkbox" data-forge-child-policy> Include tabs opened by leased tabs in this group</label>
+      <div class="actions"><button type="submit">Attach selected tabs</button><button type="button" data-forge-create>New Forge group</button><button type="button" data-forge-release>Detach now</button></div>
+    </form>
+    <p class="truth">Detach leaves user tabs open. Resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, and dock/pop-out are not supported.</p>
+  </main>
+  <script type="module" src="side-panel-bootstrap.js"></script>
+</body>
+</html>

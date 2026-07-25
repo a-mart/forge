@@ -17,7 +17,7 @@ const ADAPTED_SOURCES = [
     marker: 'adapted from',
   },
   {
-    path: 'apps/electron/src/browser/browser-automation-manager.ts',
+    path: 'apps/electron/src/browser/managed-electron-target-adapter.ts',
     marker: 'substantially adapted from T3 Code',
   },
   {
@@ -64,7 +64,7 @@ describe('browser third-party notices attribution', () => {
     expect(notice).toContain('9a0a07167f0623c3a7db0ffeff2e3939760309df')
     expect(notice).toContain('Permission is hereby granted, free of charge')
     expect(notice).toContain('Substantial adapted-file mapping')
-    expect(notice).toContain('apps/electron/src/browser/browser-automation-manager.ts')
+    expect(notice).toContain('apps/electron/src/browser/managed-electron-target-adapter.ts')
     expect(notice).toContain('apps/desktop/src/preview/Manager.ts')
     expect(notice).toContain('playwright-core 1.60.0')
     expect(notice).toContain('browser-runtime/playwright-core/')

@@ -435,7 +435,7 @@ export class SwarmSettingsService {
         directoryName: entry.directoryName,
         description: entry.description,
         envCount: entry.env.length,
-        hasRichConfig: entry.directoryName.trim().toLowerCase() === "chrome-cdp",
+        hasRichConfig: false,
         sourceKind: entry.sourceKind,
         ...(entry.profileId ? { profileId: entry.profileId } : {}),
         rootPath: entry.rootPath,

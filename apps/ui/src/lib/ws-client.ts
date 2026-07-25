@@ -1,10 +1,18 @@
+import { resolveBrowserHostKind } from '@forge/protocol'
 import type { CodexElicitationDecision, CodexElicitationPersistScope, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
+import type { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
+import {
+  conversationBootstrapMetrics,
+  type ConversationSubscriptionReason,
+} from './ws-client/conversation-bootstrap-metrics'
 import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
 import {
   assertConnectedSocket,
   assertReconnectableSocket,
   buildBrowserHostFocusCommand,
   buildBrowserHostHydrateCommand,
+  buildBrowserHostSelectCommand,
+  buildBrowserExternalChromeDetachConfirmedCommand,
   buildBrowserHostRegisterCommand,
   buildBrowserHostResponseCommand,
   buildBrowserHostStateReportCommand,
@@ -79,6 +87,7 @@ import {
 
 const BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS = 2_000
 const BROWSER_HANDSHAKE_RETRY_MS = 500
+export const CONVERSATION_BOOTSTRAP_WATCHDOG_MS = 30_000
 
 /** Server close code for a permanently invalidated collaboration session. */
 const SESSION_INVALIDATED_CLOSE_CODE = 4001
@@ -152,6 +161,7 @@ import type {
   BrowserAutomationResponse,
   BrowserHostRegistration,
   BrowserHostSessionStateReport,
+  BrowserHostKind,
   BrowserHostStateReportResult,
   BrowserSessionSnapshot,
   BrowserViewportSetting,
@@ -181,10 +191,27 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
+export interface ManagerWsClientOptions {
+  originId?: string
+  conversationSnapshotCache?: ConversationSnapshotCache
+  conversationBootstrapWatchdogMs?: number
+}
+
 export class ManagerWsClient {
   private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
   private conversationView: BuilderTimelineChannelView = 'web'
+  private readonly originId: string
+  private readonly conversationSnapshotCache?: ConversationSnapshotCache
+  private readonly conversationBootstrapWatchdogMs: number
+  private conversationBootstrapTimer: ReturnType<typeof setTimeout> | null = null
+  private stalePresentationAttachedAt: number | null = null
+  private readonly subscriptionIdPrefix = generateClientRequestId()
+  private nextSubscriptionId = 1
+  /** Bounded metric guard: only the current/most-recent subscription can terminal twice. */
+  private terminalSubscriptionId: string | null = null
+  /** Destructive requests suppress recapture until fresh history replaces authority. */
+  private readonly nonCapturableConversationAgentIds = new Set<string>()
 
   /** Convenience accessor — delegates to transport so existing guards work unchanged. */
   private get socket(): WebSocket | null {
@@ -210,14 +237,22 @@ export class ManagerWsClient {
   private browserHandshakeInFlight = false
   private readonly browserHydrationChunks = new Map<string, { chunkCount: number; chunks: Array<Uint8Array | undefined> }>()
   private browserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
+  private secondaryBrowserHostRegistration: BrowserHostRegistration | null = null
+  private secondaryBrowserAutomationRequestHandler: ((request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>) | null = null
+  private secondaryBrowserHostGeneration: number | null = null
+  private secondaryBrowserHandshakeTimer: ReturnType<typeof setTimeout> | null = null
+  private secondaryBrowserHandshakeEpoch = 0
   private readonly repositoryProjectProgressListeners = new Map<
     string,
     (event: Extract<import('@forge/protocol').ServerEvent, { type: 'repository_project_creation_progress' }>) => void
   >()
 
-  constructor(url: string, initialAgentId?: string | null) {
+  constructor(url: string, initialAgentId?: string | null, options: ManagerWsClientOptions = {}) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
     this.desiredAgentId = normalizedInitialAgentId
+    this.originId = options.originId ?? 'local'
+    this.conversationSnapshotCache = options.conversationSnapshotCache
+    this.conversationBootstrapWatchdogMs = options.conversationBootstrapWatchdogMs ?? CONVERSATION_BOOTSTRAP_WATCHDOG_MS
     this.state = createInitialManagerWsState(normalizedInitialAgentId)
 
     this.requestDispatcher = new RequestDispatcher({
@@ -337,6 +372,78 @@ export class ManagerWsClient {
     }
   }
 
+  registerSecondaryBrowserAutomationHost(
+    registration: BrowserHostRegistration,
+    handleRequest: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResponse>,
+  ): () => void {
+    if ((registration.capabilities.hostKind ?? 'managed-electron') === 'managed-electron') {
+      throw new Error('The secondary browser host must use a non-default host kind')
+    }
+    this.secondaryBrowserHostRegistration = registration
+    this.secondaryBrowserAutomationRequestHandler = handleRequest
+    this.restartSecondaryBrowserHandshake()
+    return () => {
+      if (this.secondaryBrowserHostRegistration?.hostId !== registration.hostId) return
+      this.secondaryBrowserHostRegistration = null
+      this.secondaryBrowserAutomationRequestHandler = null
+      this.secondaryBrowserHostGeneration = null
+      this.stopSecondaryBrowserHandshake()
+    }
+  }
+
+  private restartSecondaryBrowserHandshake(): void {
+    this.stopSecondaryBrowserHandshake()
+    const registration = this.secondaryBrowserHostRegistration
+    if (!registration || !isSocketOpen(this.socket)) return
+    const hostKind = resolveBrowserHostKind(registration.capabilities.hostKind)
+    const epoch = this.secondaryBrowserHandshakeEpoch
+    this.secondaryBrowserHandshakeTimer = setTimeout(() => {
+      this.secondaryBrowserHandshakeTimer = null
+      void this.requestDispatcher.enqueueRequest(
+        'browser_host_register',
+        (requestId) => buildBrowserHostRegisterCommand(requestId, { ...registration, registeredAt: new Date().toISOString() }),
+        { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
+      ).then((host) => {
+        if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
+          host.hostId !== registration.hostId || host.hostGeneration === null || !isSocketOpen(this.socket)) return
+        this.secondaryBrowserHostGeneration = host.hostGeneration
+        this.runSecondaryBrowserHydration(epoch, registration, hostKind, host.hostGeneration)
+      }).catch(() => {
+        if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration || !isSocketOpen(this.socket)) return
+        this.secondaryBrowserHandshakeTimer = setTimeout(() => this.restartSecondaryBrowserHandshake(), BROWSER_HANDSHAKE_RETRY_MS)
+      })
+    }, 0)
+  }
+
+  private runSecondaryBrowserHydration(
+    epoch: number,
+    registration: BrowserHostRegistration,
+    hostKind: BrowserHostKind,
+    hostGeneration: number,
+  ): void {
+    if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
+      this.secondaryBrowserHostGeneration !== hostGeneration || !isSocketOpen(this.socket)) return
+    this.browserHydrationChunks.clear()
+    void this.requestDispatcher.enqueueRequest(
+      'browser_host_hydrate',
+      (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, hostGeneration, hostKind),
+      { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
+    ).catch(() => {
+      if (epoch !== this.secondaryBrowserHandshakeEpoch || this.secondaryBrowserHostRegistration !== registration ||
+        this.secondaryBrowserHostGeneration !== hostGeneration || !isSocketOpen(this.socket)) return
+      this.secondaryBrowserHandshakeTimer = setTimeout(() => {
+        this.secondaryBrowserHandshakeTimer = null
+        this.runSecondaryBrowserHydration(epoch, registration, hostKind, hostGeneration)
+      }, BROWSER_HANDSHAKE_RETRY_MS)
+    })
+  }
+
+  private stopSecondaryBrowserHandshake(): void {
+    this.secondaryBrowserHandshakeEpoch += 1
+    if (this.secondaryBrowserHandshakeTimer) clearTimeout(this.secondaryBrowserHandshakeTimer)
+    this.secondaryBrowserHandshakeTimer = null
+  }
+
   private restartBrowserHandshake(): void {
     this.stopBrowserHandshake()
     if (!this.browserHostRegistration || !isSocketOpen(this.socket)) return
@@ -372,7 +479,7 @@ export class ManagerWsClient {
       this.browserHydrationChunks.clear()
       await this.requestDispatcher.enqueueRequest(
         'browser_host_hydrate',
-        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!),
+        (requestId) => buildBrowserHostHydrateCommand(requestId, registration.hostId, host.hostGeneration!, registration.capabilities.hostKind ?? 'managed-electron'),
         { timeoutMs: BROWSER_HANDSHAKE_REQUEST_TIMEOUT_MS },
       )
     } catch {
@@ -433,7 +540,7 @@ export class ManagerWsClient {
     }
     return this.requestDispatcher.enqueueRequest(
       'browser_host_state_report',
-      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions),
+      (requestId) => buildBrowserHostStateReportCommand(requestId, registration.hostId, generation, sessions, registration.capabilities.hostKind ?? 'managed-electron'),
       { timeoutMs: 15_000 },
     )
   }
@@ -442,7 +549,7 @@ export class ManagerWsClient {
     const registration = this.browserHostRegistration
     const generation = this.state.browserHost.hostGeneration
     if (!registration || generation === null || !isSocketOpen(this.socket)) return
-    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused))
+    this.send(buildBrowserHostFocusCommand(registration.hostId, generation, focused, registration.capabilities.hostKind ?? 'managed-electron'))
   }
 
   acknowledgeBrowserPanelReveal(options: {
@@ -460,12 +567,25 @@ export class ManagerWsClient {
       'browser_panel_reveal_acknowledge',
       (requestId) => buildBrowserPanelRevealAcknowledgeCommand({
         requestId,
+        hostKind: registration.capabilities.hostKind ?? 'managed-electron',
         hostId: registration.hostId,
         hostGeneration,
         ...options,
       }),
       { timeoutMs: 15_000 },
     )
+  }
+
+  selectBrowserHost(sessionAgentId: string, profileId: string, hostKind: BrowserHostKind): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_host_select', (requestId) =>
+      buildBrowserHostSelectCommand(sessionAgentId, profileId, hostKind, requestId))
+  }
+
+  confirmExternalChromeDetached(sessionAgentId: string, profileId: string): Promise<BrowserSessionSnapshot> {
+    assertConnectedSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('browser_external_chrome_detach_confirmed', (requestId) =>
+      buildBrowserExternalChromeDetachConfirmedCommand(sessionAgentId, profileId, requestId))
   }
 
   openBrowserTab(sessionAgentId: string, profileId: string, options?: { url?: string; activate?: boolean }): Promise<BrowserSessionSnapshot> {
@@ -546,6 +666,7 @@ export class ManagerWsClient {
     this.requestDispatcher.rejectAllPendingRequests('Client destroyed before request completed.')
     this.sessionWorkerCache.destroy()
     this.bootstrapBuffer.clear()
+    this.cancelConversationBootstrapWatchdog()
     for (const timer of this.optimisticSendExpiryTimers) {
       clearTimeout(timer)
     }
@@ -555,7 +676,7 @@ export class ManagerWsClient {
     this.transport.disconnect()
   }
 
-  subscribeToAgent(agentId: string, options?: { explicit?: boolean }): void {
+  subscribeToAgent(agentId: string, options?: { explicit?: boolean; reason?: ConversationSubscriptionReason }): void {
     const trimmed = agentId.trim()
     if (!trimmed) return
 
@@ -567,43 +688,43 @@ export class ManagerWsClient {
 
     const previousTerminalScopeId = this.resolveTerminalScopeAgentId(this.state.targetAgentId)
     const nextTerminalScopeId = this.resolveTerminalScopeAgentId(trimmed)
-    const shouldResetTerminals = previousTerminalScopeId !== nextTerminalScopeId
-
-    this.desiredAgentId = trimmed
     const nextUnread = { ...this.state.unreadCounts }
     delete nextUnread[trimmed]
-    this.updateState({
-      targetAgentId: trimmed,
-      messages: [],
-      activityMessages: [],
-      conversationPage: null,
-      conversationPageLoading: false,
-      conversationPageRequestId: null,
-      conversationHistoryMutation: null,
-      modelCacheObservations: [],
-      pendingModelCacheObservations: [],
-      pendingChoiceIds: new Set(),
-      codexElicitations: [],
-      planSnapshotLoadingSessionId: trimmed,
-      goalSnapshotLoadingSessionId: trimmed,
-      secureSessionSnapshotLoadingSessionId: trimmed,
-      ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
-      lastError: null,
-      unreadCounts: nextUnread,
+    this.desiredAgentId = trimmed
+    this.beginConversationSubscription({
+      agentId: trimmed,
+      requestedView: this.conversationView,
+      reason: options?.reason ?? 'selection',
+      patch: {
+        planSnapshotLoadingSessionId: trimmed,
+        goalSnapshotLoadingSessionId: trimmed,
+        secureSessionSnapshotLoadingSessionId: trimmed,
+        ...(previousTerminalScopeId !== nextTerminalScopeId
+          ? { terminals: [], terminalSessionScopeId: null }
+          : {}),
+        unreadCounts: nextUnread,
+      },
     })
+  }
 
-    if (!isSocketOpen(this.socket)) {
-      return
-    }
-
-    this.bootstrapBuffer.begin(trimmed)
-    this.send(buildSubscribeCommand(trimmed, this.conversationView))
+  retryConversationBootstrap(): boolean {
+    const agentId = this.state.conversationBootstrap.agentId ?? this.state.targetAgentId
+    if (!agentId) return false
+    this.beginConversationSubscription({
+      agentId,
+      requestedView: this.state.conversationBootstrap.requestedView,
+      reason: 'retry',
+    })
+    return true
   }
 
   setConversationView(view: BuilderTimelineChannelView): boolean {
     if (this.conversationView === view) return false
     this.conversationView = view
-    return this.refreshConversationHistory()
+    const agentId = this.state.targetAgentId
+    if (!agentId) return false
+    this.beginConversationSubscription({ agentId, requestedView: view, reason: 'view_change' })
+    return isSocketOpen(this.socket)
   }
 
   sendUserMessage(
@@ -845,6 +966,10 @@ export class ManagerWsClient {
 
   async deleteManager(managerId: string): Promise<{ managerId: string }> {
     assertReconnectableSocket(this.socket)
+    this.invalidateConversationSnapshotAgent(managerId)
+    for (const agent of this.state.agents) {
+      if (agent.managerId === managerId) this.invalidateConversationSnapshotAgent(agent.agentId)
+    }
     return this.requestDispatcher.enqueueRequest('delete_manager', (requestId) =>
       buildDeleteManagerCommand(managerId, requestId),
     )
@@ -964,6 +1089,7 @@ export class ManagerWsClient {
 
   async archiveSession(agentId: string): Promise<SessionArchiveResult> {
     assertReconnectableSocket(this.socket)
+    this.invalidateConversationSnapshotAgent(agentId)
     return this.requestDispatcher.enqueueRequest('archive_session', (requestId) =>
       buildSessionActionCommand('archive_session', agentId, requestId),
     )
@@ -978,6 +1104,7 @@ export class ManagerWsClient {
 
   async deleteSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
+    this.invalidateConversationSnapshotAgent(agentId)
     return this.requestDispatcher.enqueueRequest('delete_session', (requestId) =>
       buildSessionActionCommand('delete_session', agentId, requestId),
     )
@@ -985,6 +1112,7 @@ export class ManagerWsClient {
 
   async clearSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
+    this.invalidateConversationSnapshotAgent(agentId)
     return this.requestDispatcher.enqueueRequest('clear_session', (requestId) =>
       buildSessionActionCommand('clear_session', agentId, requestId),
     )
@@ -1021,6 +1149,10 @@ export class ManagerWsClient {
 
   async archiveProfile(profileId: string): Promise<ProfileArchiveResult> {
     assertReconnectableSocket(this.socket)
+    this.conversationSnapshotCache?.evictProfile(this.originId, profileId)
+    for (const agent of this.state.agents) {
+      if (agent.profileId === profileId) this.nonCapturableConversationAgentIds.add(agent.agentId)
+    }
     return this.requestDispatcher.enqueueRequest('archive_profile', (requestId) =>
       buildProfileArchiveActionCommand('archive_profile', profileId, requestId),
     )
@@ -1149,6 +1281,7 @@ export class ManagerWsClient {
   }
 
   async loadOlderConversation(limit?: number): Promise<ConversationPageResult | null> {
+    if (this.state.conversationBootstrap.phase !== 'ready') return null
     const agentId = this.state.targetAgentId
     const cursor = this.state.conversationPage?.nextCursor
     if (!agentId || !cursor || !this.state.conversationPage?.hasOlder || this.state.conversationPageLoading) {
@@ -1191,9 +1324,38 @@ export class ManagerWsClient {
 
   refreshConversationHistory(): boolean {
     const agentId = this.state.targetAgentId
-    if (!agentId || !isSocketOpen(this.socket)) return false
+    if (!agentId) return false
+    this.beginConversationSubscription({
+      agentId,
+      requestedView: this.conversationView,
+      reason: 'refresh',
+    })
+    return isSocketOpen(this.socket)
+  }
 
+  private beginConversationSubscription(input: {
+    agentId: string | null
+    requestedView: BuilderTimelineChannelView
+    reason: ConversationSubscriptionReason
+    patch?: Partial<ManagerWsState>
+    /** Destructive fallback reducers have already revoked the outgoing authority. */
+    captureOutgoingSnapshot?: boolean
+  }): void {
+    const previous = this.state.conversationBootstrap
+    if (previous.phase === 'pending' && previous.subscriptionId) {
+      this.recordConversationBootstrapTerminal(previous.subscriptionId, 'superseded')
+    }
+    this.cancelConversationBootstrapWatchdog()
+    if (input.captureOutgoingSnapshot !== false) this.captureCurrentConversationSnapshot()
+    this.bootstrapBuffer.clear()
+
+    const subscriptionId = `${this.subscriptionIdPrefix}-${this.nextSubscriptionId++}`.slice(0, 128)
+    const startedAt = Date.now()
+    this.stalePresentationAttachedAt = null
     this.updateState({
+      ...input.patch,
+      targetAgentId: input.agentId,
+      subscribedAgentId: null,
       messages: [],
       activityMessages: [],
       conversationPage: null,
@@ -1202,13 +1364,98 @@ export class ManagerWsClient {
       conversationHistoryMutation: null,
       modelCacheObservations: [],
       pendingModelCacheObservations: [],
+      pendingChoiceIds: new Set(),
       codexElicitations: [],
-      secureSessionSnapshotLoadingSessionId: agentId,
+      secureSessionSnapshotLoadingSessionId: input.agentId,
+      conversationPresentation: null,
+      conversationBootstrap: {
+        phase: 'pending',
+        agentId: input.agentId,
+        subscriptionId,
+        requestedView: input.requestedView,
+        servedView: null,
+        reason: input.reason,
+        protocolMode: previous.protocolMode,
+        startedAt,
+      },
       lastError: null,
     })
-    this.bootstrapBuffer.begin(agentId)
-    this.send(buildSubscribeCommand(agentId, this.conversationView))
-    return true
+    conversationBootstrapMetrics.started(input.reason)
+
+    if (!isSocketOpen(this.socket)) return
+    if (input.agentId) this.bootstrapBuffer.begin(input.agentId)
+    this.startConversationBootstrapWatchdog(subscriptionId)
+    this.emitActiveSubscriptionCommand()
+  }
+
+  /** The sole subscribe command emitter. Pending state is installed before this runs. */
+  private emitActiveSubscriptionCommand(): void {
+    const bootstrap = this.state.conversationBootstrap
+    if (bootstrap.phase !== 'pending' || !bootstrap.subscriptionId) return
+    this.send(buildSubscribeCommand(
+      bootstrap.agentId,
+      bootstrap.requestedView,
+      bootstrap.subscriptionId,
+    ))
+  }
+
+  private startConversationBootstrapWatchdog(subscriptionId: string): void {
+    this.cancelConversationBootstrapWatchdog()
+    this.conversationBootstrapTimer = setTimeout(() => {
+      this.conversationBootstrapTimer = null
+      const current = this.state.conversationBootstrap
+      if (current.phase !== 'pending' || current.subscriptionId !== subscriptionId) return
+      this.recordConversationBootstrapTerminal(subscriptionId, 'timed_out')
+      this.updateState({
+        conversationBootstrap: {
+          ...current,
+          phase: 'error',
+          errorCode: 'BOOTSTRAP_TIMEOUT',
+          errorMessage: 'Conversation loading timed out.',
+        },
+      })
+    }, this.conversationBootstrapWatchdogMs)
+  }
+
+  private cancelConversationBootstrapWatchdog(): void {
+    if (this.conversationBootstrapTimer) clearTimeout(this.conversationBootstrapTimer)
+    this.conversationBootstrapTimer = null
+  }
+
+  private recordConversationBootstrapTerminal(
+    subscriptionId: string,
+    terminal: 'completed' | 'failed' | 'timed_out' | 'superseded' | 'disconnected',
+  ): void {
+    if (this.terminalSubscriptionId === subscriptionId) return
+    this.terminalSubscriptionId = subscriptionId
+    conversationBootstrapMetrics.terminal(terminal)
+  }
+
+  private invalidateConversationSnapshotAgent(agentId: string): void {
+    this.nonCapturableConversationAgentIds.add(agentId)
+    this.conversationSnapshotCache?.evictAgent(this.originId, agentId)
+  }
+
+  private captureCurrentConversationSnapshot(): void {
+    const bootstrap = this.state.conversationBootstrap
+    if (
+      !this.conversationSnapshotCache ||
+      bootstrap.phase !== 'ready' ||
+      bootstrap.protocolMode !== 'correlated' ||
+      !bootstrap.agentId ||
+      !bootstrap.servedView ||
+      this.nonCapturableConversationAgentIds.has(bootstrap.agentId)
+    ) return
+    const profileId = this.state.agents.find((agent) => agent.agentId === bootstrap.agentId)?.profileId ?? null
+    this.conversationSnapshotCache.capture({
+      originId: this.originId,
+      agentId: bootstrap.agentId,
+      servedView: bootstrap.servedView,
+      profileId,
+      messages: this.state.messages,
+      activityMessages: this.state.activityMessages,
+      conversationPage: this.state.conversationPage,
+    })
   }
 
   // -----------------------------------------------------------------------
@@ -1262,6 +1509,11 @@ export class ManagerWsClient {
       browserHostHydrated: false,
       browserPanelRevealRequest: null,
       browserMetadataStale: false,
+      conversationBootstrap: {
+        ...this.state.conversationBootstrap,
+        protocolMode: 'unknown',
+      },
+      conversationPresentation: null,
       lastError: null,
     })
 
@@ -1270,8 +1522,13 @@ export class ManagerWsClient {
     // worker fetch was lost to the disconnect.
     this.sessionWorkerCache.retryFailedFetchesAfterReconnect()
 
-    this.send(buildSubscribeCommand(this.desiredAgentId, this.conversationView))
+    this.beginConversationSubscription({
+      agentId: this.desiredAgentId,
+      requestedView: this.conversationView,
+      reason: 'reconnect',
+    })
     this.restartBrowserHandshake()
+    this.restartSecondaryBrowserHandshake()
   }
 
   private handleTransportClose(event?: CloseEvent): void {
@@ -1280,7 +1537,14 @@ export class ManagerWsClient {
     this.explicitAgentSelectionPending = false
     this.rejectedExplicitAgentSelectionId = null
     this.bootstrapBuffer.clear()
+    this.cancelConversationBootstrapWatchdog()
+    const pendingBootstrap = this.state.conversationBootstrap
+    if (pendingBootstrap.phase === 'pending' && pendingBootstrap.subscriptionId) {
+      this.recordConversationBootstrapTerminal(pendingBootstrap.subscriptionId, 'disconnected')
+    }
     this.stopBrowserHandshake()
+    this.stopSecondaryBrowserHandshake()
+    this.secondaryBrowserHostGeneration = null
 
     // Keep `loadedSessionIds` — see handleTransportOpen.
     this.updateState({
@@ -1301,6 +1565,16 @@ export class ManagerWsClient {
       browserHostHydrated: false,
       browserPanelRevealRequest: null,
       browserMetadataStale: Object.keys(this.state.browserSessions).length > 0,
+      ...(pendingBootstrap.phase === 'pending'
+        ? {
+            conversationBootstrap: {
+              ...pendingBootstrap,
+              phase: 'error' as const,
+              errorCode: 'DISCONNECTED',
+              errorMessage: 'Disconnected while loading conversation.',
+            },
+          }
+        : {}),
     })
 
     this.sessionWorkerCache.clearQueuedRefetches()
@@ -1325,8 +1599,68 @@ export class ManagerWsClient {
     })
   }
 
+  private handleSecondaryBrowserEvent(event: ServerEvent): boolean {
+    const registration = this.secondaryBrowserHostRegistration
+    if (!registration) return false
+    const hostKind = registration.capabilities.hostKind ?? 'managed-electron'
+    if (event.type === 'browser_host_connected') {
+      if ((event.host.hostKind ?? event.host.capabilities?.hostKind ?? 'managed-electron') !== hostKind ||
+        (event.host.hostId !== null && event.host.hostId !== registration.hostId)) return false
+      if (event.requestId && this.requestDispatcher.tracker.getPendingRequestType(event.requestId) === 'browser_host_register') {
+        this.secondaryBrowserHostGeneration = event.host.hostGeneration
+        this.requestDispatcher.tracker.resolve('browser_host_register', event.requestId, event.host)
+      }
+      return true
+    }
+    if (event.type === 'browser_host_hydration_chunk') {
+      if (event.hostKind !== hostKind || event.hostId !== registration.hostId ||
+        event.hostGeneration !== this.secondaryBrowserHostGeneration ||
+        this.requestDispatcher.tracker.getPendingRequestType(event.requestId) !== 'browser_host_hydrate') return false
+      const sessions = this.acceptBrowserHydrationChunk(event)
+      if (sessions !== null) this.requestDispatcher.tracker.resolve('browser_host_hydrate', event.requestId, sessions)
+      return true
+    }
+    if (event.type !== 'browser_automation_request') return false
+    const request = { ...event.request, hostKind: resolveBrowserHostKind(event.request.hostKind) } as BrowserAutomationRequest
+    if (request.hostKind !== hostKind) return false
+    if (request.hostId !== registration.hostId || request.hostGeneration !== this.secondaryBrowserHostGeneration || !this.secondaryBrowserAutomationRequestHandler) {
+      this.send(buildBrowserHostResponseCommand({
+        requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+        profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+        operation: request.operation, ok: false,
+        error: { code: 'stale-host-generation', message: 'External Chrome release/request targeted a stale local host generation.', retryable: true },
+        elapsedMs: 0,
+      } as BrowserAutomationResponse))
+      return true
+    }
+    void this.secondaryBrowserAutomationRequestHandler(request).then(
+      (response) => this.send(buildBrowserHostResponseCommand(response)),
+      (error: unknown) => this.send(buildBrowserHostResponseCommand({
+        requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+        profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+        operation: request.operation, ok: false,
+        error: { code: 'host-disconnected', message: error instanceof Error ? error.message : 'External Chrome host failed.', retryable: true },
+        elapsedMs: 0,
+      } as BrowserAutomationResponse)),
+    )
+    return true
+  }
+
   private handleServerEvent(parsed: unknown): void {
     const event = parsed as ServerEvent
+
+    if (event.type === 'conversation_reset') {
+      this.invalidateConversationSnapshotAgent(event.agentId)
+    } else if (event.type === 'conversation_page' && event.page.completeness === 'source_changed') {
+      this.invalidateConversationSnapshotAgent(event.agentId)
+    } else if (event.type === 'session_archived' || event.type === 'session_cleared') {
+      this.invalidateConversationSnapshotAgent(event.agentId)
+    } else if (event.type === 'profile_archived') {
+      this.conversationSnapshotCache?.evictProfile(this.originId, event.profileId)
+      for (const agent of this.state.agents) {
+        if (agent.profileId === event.profileId) this.nonCapturableConversationAgentIds.add(agent.agentId)
+      }
+    }
 
     if (
       event.type === 'error' &&
@@ -1336,7 +1670,11 @@ export class ManagerWsClient {
       this.rejectedExplicitAgentSelectionId = this.explicitAgentSelectionAgentId
       this.explicitAgentSelectionPending = false
       this.bootstrapBuffer.clear()
-    } else if (
+    }
+
+    if (this.handleConversationBootstrapFrame(event)) return
+
+    if (
       event.type === 'ready' &&
       event.subscribedAgentId === this.explicitAgentSelectionAgentId
     ) {
@@ -1357,6 +1695,8 @@ export class ManagerWsClient {
       if (consumed) return
     }
 
+    if (this.handleSecondaryBrowserEvent(event)) return
+
     if (handleBrowserEvent(event, {
       state: this.state,
       updateState: (patch) => this.updateState(patch),
@@ -1376,6 +1716,15 @@ export class ManagerWsClient {
       })
     ) {
       return
+    }
+
+    // Gate terminal snapshots at the facade so handlers stay pure: reject late
+    // prior-scope frames after A→B when the selected target's resolved scope differs.
+    if (event.type === 'terminals_snapshot') {
+      const expectedTerminalScopeId = this.resolveTerminalScopeAgentId(this.state.targetAgentId)
+      if (event.sessionAgentId !== expectedTerminalScopeId) {
+        return
+      }
     }
 
     if (
@@ -1455,6 +1804,191 @@ export class ManagerWsClient {
     })
   }
 
+  private handleConversationBootstrapFrame(event: ServerEvent): boolean {
+    if (
+      event.type !== 'ready' &&
+      event.type !== 'conversation_history' &&
+      event.type !== 'pending_choices_snapshot' &&
+      event.type !== 'bootstrap_failed'
+    ) return false
+
+    const frame = event.type
+    const current = this.state.conversationBootstrap
+    const eventSubscriptionId = 'subscriptionId' in event ? event.subscriptionId : undefined
+
+    // Uncorrelated ready may be a ping. It can refresh connection health only.
+    if (frame === 'ready' && !eventSubscriptionId && current.phase === 'pending') {
+      if (!this.state.connected) this.updateState({ connected: true })
+      return true
+    }
+
+    // A matching uncorrelated history is the sole legacy-peer detector.
+    if (frame === 'conversation_history' && !eventSubscriptionId && current.phase === 'pending') {
+      const expectedAgentId = current.agentId ?? event.agentId
+      if (event.agentId !== expectedAgentId) return true
+      this.conversationSnapshotCache?.evictOrigin(this.originId)
+      this.bootstrapBuffer.flush()
+      let patch: Partial<ManagerWsState> = {}
+      handleConversationEvent(event, {
+        state: this.state,
+        updateState: (next) => { patch = { ...patch, ...next } },
+      })
+      this.cancelConversationBootstrapWatchdog()
+      if (current.subscriptionId) this.recordConversationBootstrapTerminal(current.subscriptionId, 'completed')
+      if (event.agentId === this.explicitAgentSelectionAgentId) {
+        this.hasExplicitAgentSelection = false
+        this.explicitAgentSelectionAgentId = null
+        this.explicitAgentSelectionPending = false
+        this.rejectedExplicitAgentSelectionId = null
+      }
+      this.updateState({
+        ...patch,
+        targetAgentId: event.agentId,
+        subscribedAgentId: event.agentId,
+        conversationPresentation: null,
+        conversationBootstrap: {
+          ...current,
+          phase: 'ready',
+          agentId: event.agentId,
+          servedView: current.requestedView,
+          protocolMode: 'legacy',
+          errorCode: undefined,
+          errorMessage: undefined,
+        },
+      })
+      return true
+    }
+
+    // Legacy choices may arrive before legacy history. Apply only to the
+    // selected target, but do not let them prove capability or completion.
+    if (!eventSubscriptionId) {
+      if (
+        frame === 'pending_choices_snapshot' &&
+        (current.agentId === null || event.agentId === current.agentId)
+      ) {
+        handleConversationEvent(event, {
+          state: this.state,
+          updateState: (patch) => this.updateState(patch),
+        })
+        return true
+      }
+      return false
+    }
+
+    if (
+      current.phase === 'ready' &&
+      frame === 'pending_choices_snapshot' &&
+      current.subscriptionId === eventSubscriptionId &&
+      current.agentId === event.agentId &&
+      current.servedView === event.servedConversationView
+    ) {
+      handleConversationEvent(event, {
+        state: this.state,
+        updateState: (patch) => this.updateState(patch),
+      })
+      return true
+    }
+
+    const mismatchDimension = (() => {
+      if (current.phase !== 'pending') return 'phase' as const
+      if (current.subscriptionId !== eventSubscriptionId) return 'id' as const
+      const eventAgentId = frame === 'ready' ? event.subscribedAgentId : event.agentId
+      if (current.agentId !== null && eventAgentId !== current.agentId) return 'agent' as const
+      if (event.servedConversationView !== current.requestedView) return 'view' as const
+      return null
+    })()
+    if (mismatchDimension) {
+      conversationBootstrapMetrics.mismatch({ frame, dimension: mismatchDimension })
+      return true
+    }
+
+    const eventAgentId = frame === 'ready' ? event.subscribedAgentId : event.agentId
+    if (frame === 'ready') {
+      const presentation = this.conversationSnapshotCache?.get({
+        originId: this.originId,
+        agentId: eventAgentId,
+        servedView: event.servedConversationView!,
+      }) ?? null
+      this.stalePresentationAttachedAt = presentation ? Date.now() : null
+      this.rejectedExplicitAgentSelectionId = null
+      this.explicitAgentSelectionPending = false
+      this.updateState({
+        connected: true,
+        targetAgentId: eventAgentId,
+        subscribedAgentId: eventAgentId,
+        conversationPresentation: presentation,
+        conversationBootstrap: {
+          ...current,
+          agentId: eventAgentId,
+          servedView: event.servedConversationView!,
+          protocolMode: 'correlated',
+        },
+      })
+      return true
+    }
+
+    if (frame === 'bootstrap_failed') {
+      this.cancelConversationBootstrapWatchdog()
+      this.recordConversationBootstrapTerminal(eventSubscriptionId, 'failed')
+      if (event.code === 'UNKNOWN_AGENT' || event.code === 'TARGET_REMOVED') {
+        this.conversationSnapshotCache?.evictAgent(this.originId, eventAgentId)
+      }
+      this.updateState({
+        conversationBootstrap: {
+          ...current,
+          phase: 'error',
+          agentId: eventAgentId,
+          servedView: event.servedConversationView,
+          protocolMode: 'correlated',
+          errorCode: event.code,
+          errorMessage: event.message,
+        },
+      })
+      return true
+    }
+
+    if (frame === 'pending_choices_snapshot') {
+      handleConversationEvent(event, {
+        state: this.state,
+        updateState: (patch) => this.updateState(patch),
+      })
+      return true
+    }
+
+    // Correlated history is the success point. Reduce fresh authority and
+    // release stale presentation in the same state notification.
+    this.bootstrapBuffer.flush()
+    let patch: Partial<ManagerWsState> = {}
+    handleConversationEvent(event, {
+      state: this.state,
+      updateState: (next) => { patch = { ...patch, ...next } },
+    })
+    this.cancelConversationBootstrapWatchdog()
+    this.recordConversationBootstrapTerminal(eventSubscriptionId, 'completed')
+    // The correlated history is fresh authority, so a reset/clear suppression
+    // can be released before capturing the replacement snapshot below.
+    this.nonCapturableConversationAgentIds.delete(eventAgentId)
+    if (this.stalePresentationAttachedAt !== null) {
+      conversationBootstrapMetrics.staleDwell(Date.now() - this.stalePresentationAttachedAt)
+      this.stalePresentationAttachedAt = null
+    }
+    this.updateState({
+      ...patch,
+      conversationPresentation: null,
+      conversationBootstrap: {
+        ...current,
+        phase: 'ready',
+        agentId: eventAgentId,
+        servedView: event.servedConversationView!,
+        protocolMode: 'correlated',
+        errorCode: undefined,
+        errorMessage: undefined,
+      },
+    })
+    this.captureCurrentConversationSnapshot()
+    return true
+  }
+
   private applyAgentStatus(
     event: Extract<ServerEvent, { type: 'agent_status' }>,
   ): void {
@@ -1471,6 +2005,24 @@ export class ManagerWsClient {
   }
 
   private applyAgentsSnapshot(agents: AgentDescriptor[]): void {
+    // A full agents snapshot is authoritative for managers. Workers may be
+    // intentionally omitted and preserved by the worker cache, but a missing
+    // manager (and every worker owned by it) is definitively removed.
+    const incomingManagerIds = new Set(
+      agents.filter((agent) => agent.role === 'manager').map((agent) => agent.agentId),
+    )
+    const removedManagerIds = new Set(
+      this.state.agents
+        .filter((agent) => agent.role === 'manager' && !incomingManagerIds.has(agent.agentId))
+        .map((agent) => agent.agentId),
+    )
+    for (const agent of this.state.agents) {
+      if (
+        (agent.role === 'manager' && removedManagerIds.has(agent.agentId)) ||
+        (agent.role === 'worker' && removedManagerIds.has(agent.managerId))
+      ) this.invalidateConversationSnapshotAgent(agent.agentId)
+    }
+
     const result = reduceAgentsSnapshot({
       state: this.state,
       desiredAgentId: this.desiredAgentId,
@@ -1489,10 +2041,16 @@ export class ManagerWsClient {
     }
 
     this.desiredAgentId = result.nextDesiredAgentId
-    this.updateState(result.patch)
-
-    if (result.subscribeToAgentId && isSocketOpen(this.socket)) {
-      this.send(buildSubscribeCommand(result.subscribeToAgentId, this.conversationView))
+    if (result.subscribeToAgentId) {
+      this.beginConversationSubscription({
+        agentId: result.subscribeToAgentId,
+        requestedView: this.conversationView,
+        reason: 'fallback',
+        patch: result.patch,
+        captureOutgoingSnapshot: false,
+      })
+    } else {
+      this.updateState(result.patch)
     }
   }
 
@@ -1527,6 +2085,9 @@ export class ManagerWsClient {
     })
 
     this.sessionWorkerCache.clearQueuedRefetch(managerId)
+    for (const deletedAgentId of result.deletedAgentIds) {
+      this.invalidateConversationSnapshotAgent(deletedAgentId)
+    }
     removeMutedAgents(result.deletedAgentIds)
 
     if (result.nextDesiredAgentId !== undefined) {
@@ -1537,10 +2098,16 @@ export class ManagerWsClient {
     }
 
     if (result.subscribeToAgentId) {
-      this.send(buildSubscribeCommand(result.subscribeToAgentId, this.conversationView))
+      this.beginConversationSubscription({
+        agentId: result.subscribeToAgentId,
+        requestedView: this.conversationView,
+        reason: 'fallback',
+        patch: result.patch,
+        captureOutgoingSnapshot: false,
+      })
+    } else {
+      this.updateState(result.patch)
     }
-
-    this.updateState(result.patch)
   }
 
   private applySessionDeleted(agentId: string, profileId: string): void {
@@ -1552,6 +2119,7 @@ export class ManagerWsClient {
     })
 
     this.sessionWorkerCache.clearQueuedRefetch(agentId)
+    this.invalidateConversationSnapshotAgent(agentId)
     removeMutedAgent(result.mutedAgentIdToRemove)
 
     if (result.nextDesiredAgentId !== undefined) {
@@ -1562,10 +2130,16 @@ export class ManagerWsClient {
     }
 
     if (result.subscribeToAgentId) {
-      this.send(buildSubscribeCommand(result.subscribeToAgentId, this.conversationView))
+      this.beginConversationSubscription({
+        agentId: result.subscribeToAgentId,
+        requestedView: this.conversationView,
+        reason: 'fallback',
+        patch: result.patch,
+        captureOutgoingSnapshot: false,
+      })
+    } else {
+      this.updateState(result.patch)
     }
-
-    this.updateState(result.patch)
   }
 
   private pushSystemMessage(text: string): void {

@@ -33,9 +33,13 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 
 Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
 
-### Managed Browser
+### Browser automation
 
-Managed Browser has no environment variable and no Settings → Skills toggle. It is a Forge Desktop host capability for normal local Builder managers, not a Skill. Ordinary web clients have no local browser IPC host, and that IPC is not forwarded to Remote Projects or Collaboration channels. See [Managed Browser](BROWSER_AUTOMATION.md).
+Managed Browser and External Chrome (Local Beta) are local Forge Desktop host capabilities for normal local Builder managers, not Skills. Managed Browser has no environment variable or Settings toggle. External Chrome setup, enable/disable, repair, rollback, takeover, and removal live in **Settings → External Chrome (Local Beta)**.
+
+The session's selected host is persisted in the same `browser.json` used by both hosts. Changing the host preference does not detach an External Chrome lease. External Chrome deploys under `<data-dir>/integrations/external-chrome/`, and Chrome loads the stable `extension/` folder shown by Settings once per Chrome profile and Forge data directory. Completed browser recordings are Managed Browser-only.
+
+Ordinary web clients have no local browser host. Neither Desktop host, the External Chrome native relay, nor browser IPC is forwarded to Remote Projects or Collaboration channels. See [Browser automation](BROWSER_AUTOMATION.md).
 
 ### Secure Sessions
 
@@ -297,6 +301,17 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 
 ```
 <data-dir>/
+├── integrations/external-chrome/          # External Chrome deployment for this data directory
+│   ├── extension/                         # Stable Chrome Load unpacked folder
+│   │   ├── current.json                   # Verified selected payload
+│   │   └── payloads/                      # Immutable version/hash payload directories
+│   ├── native-host/                       # Deployed native relay executable
+│   ├── native-host-manifests/             # Canonical Forge-owned host manifest
+│   ├── auth/                              # Private local relay authentication
+│   ├── run/                               # Expiring current-user rendezvous
+│   ├── state/                             # Install/ownership/recovery/lease state
+│   ├── deployment/                        # Atomic deployment journal/state
+│   └── deploy.lock                        # Serialized deployment lock
 ├── shared/
 │   ├── config/                            # Shared settings and credentials
 │   │   ├── auth/
@@ -373,7 +388,7 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 │       ├── meta.json
 │       ├── feedback.jsonl
 │       ├── pinned-messages.json
-│       ├── browser.json                    # Managed Browser tabs/action metadata
+│       ├── browser.json                    # Shared browser host selection/tab/action metadata
 │       ├── plan.json
 │       ├── plan-history.ndjson
 │       ├── plan-usage.ndjson
@@ -405,7 +420,25 @@ Key persistent and regenerable paths use this canonical layout (most files are c
 └── uploads/                                # Uploaded attachments
 ```
 
-`browser.json` is per session, while successfully stopped recordings live under that session's `artifacts/browser/`. Screenshots are transient and are not written there. Cookies and site storage instead live in a persistent, profile-scoped Electron partition shared by sessions in that Forge profile; it is not represented in the server data tree above and can outlive session deletion. There is currently no shipped **Clear managed browser data** control.
+`browser.json` is per session and contains the selected host plus privacy-bounded state for both Desktop browser hosts. Persisted External Chrome entries omit page URLs/titles and sensitive action detail. Successfully stopped recordings live under that session's `artifacts/browser/` and are Managed Browser-only. Managed screenshot previews are transient; an External Chrome snapshot can return a bounded PNG to the active tool turn, but neither is written as a standalone screenshot artifact.
+
+Managed Browser cookies and site storage live in a persistent, profile-scoped Electron partition shared by sessions in that Forge profile; it is not represented in the server data tree above and can outlive session deletion. There is currently no shipped **Clear managed browser data** control. External Chrome site identity remains in Chrome's own profile; Forge does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites.
+
+### External Chrome local integration
+
+The `integrations/external-chrome/` tree belongs to exactly one Forge data directory. `extension/` is the stable folder users select with Chrome's **Load unpacked**; compatible updates change the verified `current.json`/payload contents rather than asking users to select a new payload directory. Loading that folder is still per Chrome profile, so repeat setup for every Chrome profile and every `FORGE_DATA_DIR`.
+
+Forge Desktop registers native host `com.forge.external_chrome` for the current user. The canonical manifest remains under the data directory and points to that data directory's deployed native relay. The external registration targets are:
+
+- macOS: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.forge.external_chrome.json`
+- Linux: `~/.config/google-chrome/NativeMessagingHosts/com.forge.external_chrome.json`
+- Windows: `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.forge.external_chrome` (default value points to the canonical manifest)
+
+These are maintainer/troubleshooting paths, not a platform qualification claim. Do not hand-edit or overwrite them to resolve conflicts. **Repair native host** may restore Forge-owned drift. Because Chrome has one current-user registration target for this host name, a different Forge data directory can conflict; quiesce the previous Forge authority and use **Take over stale owner** only when Settings proves the old Forge ownership is stale and enables the action. Takeover transfers Forge coordinator/native-host ownership, not Chrome profiles or tabs.
+
+`auth/`, `run/`, and `state/` contain sensitive current-user authentication, rendezvous, ownership, and exact lease-recovery material. Protect them and backups like credentials. **Remove integration** unregisters Forge's native host, disables the coordinator, and removes Forge-owned local authentication, but Chrome's unpacked extension must be removed manually from every profile; attached tabs stay open after detach.
+
+Compatible connected extension instances auto-reload after an update or rollback. Manual Chrome reload is required only when Settings reports **Manual extension reload required**. See [Browser automation](BROWSER_AUTOMATION.md#external-chrome-local-beta) for the permission disclosure, setup, operations, lifecycle, and troubleshooting flow.
 
 `shared/config/secrets.json` stores sensitive values as ordinary JSON; Forge does not application-encrypt that file at rest. Protect the data directory and every backup with appropriate operating-system or storage access controls, and handle copied `secrets.json` files as secrets.
 

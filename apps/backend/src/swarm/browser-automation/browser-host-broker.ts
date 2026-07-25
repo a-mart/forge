@@ -2,12 +2,15 @@ import { randomUUID } from "node:crypto";
 import {
   BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS,
   BROWSER_AUTOMATION_MAX_TIMEOUT_MS,
+  DEFAULT_BROWSER_HOST_KIND,
+  resolveBrowserHostKind,
   type BrowserAutomationErrorCode,
   type BrowserAutomationFailure,
   type BrowserAutomationOperation,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
   type BrowserHostConnectionSnapshot,
+  type BrowserHostKind,
   type BrowserHostRegistration,
 } from "@forge/protocol";
 
@@ -18,6 +21,7 @@ export interface BrowserHostBrokerRegistration {
 }
 
 export interface BrowserHostBrokerRequest {
+  hostKind?: BrowserHostKind;
   sessionAgentId: string;
   profileId: string;
   tabId: string | null;
@@ -25,6 +29,10 @@ export interface BrowserHostBrokerRequest {
   input: Record<string, unknown>;
   timeoutMs?: number;
   artifactDirectory?: string | null;
+  /** Reserved for backend-owned, privacy-bounded correlation such as lifecycle release. */
+  requestId?: string;
+  /** Fail closed rather than routing an authority-sensitive request to a replacement host. */
+  expectedHost?: { hostId: string; hostGeneration: number };
 }
 
 export type BrowserHostResponseDisposition =
@@ -48,6 +56,7 @@ export class BrowserAutomationBrokerError extends Error {
 interface CurrentHost {
   connectionId: string;
   registration: BrowserHostRegistration;
+  hostKind: BrowserHostKind;
   generation: number;
   connectedAt: string;
   focused: boolean;
@@ -75,8 +84,8 @@ export class BrowserHostBroker {
   private readonly requestId: () => string;
   private readonly maxResponseBytes: number;
   private readonly logDebug: (message: string, details?: unknown) => void;
-  private generation = 0;
-  private host: CurrentHost | null = null;
+  private readonly generations = new Map<BrowserHostKind, number>();
+  private readonly hosts = new Map<BrowserHostKind, CurrentHost>();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly completedRequestIds = new Set<string>();
 
@@ -88,47 +97,62 @@ export class BrowserHostBroker {
   }
 
   register(options: BrowserHostBrokerRegistration): BrowserHostConnectionSnapshot {
-    if (this.host) {
-      this.rejectPendingForGeneration(this.host.generation, "stale-host-generation", "Browser host was superseded by a newer registration.");
+    const hostKind = resolveBrowserHostKind(options.registration.capabilities.hostKind);
+    const previous = this.hosts.get(hostKind);
+    if (previous) {
+      this.rejectPendingForGeneration(hostKind, previous.generation, "stale-host-generation", "Browser host was superseded by a newer registration.");
     }
-    this.generation += 1;
-    this.host = {
+    const generation = (this.generations.get(hostKind) ?? 0) + 1;
+    this.generations.set(hostKind, generation);
+    this.hosts.set(hostKind, {
       ...options,
-      generation: this.generation,
+      registration: {
+        ...options.registration,
+        capabilities: { ...options.registration.capabilities, hostKind },
+      },
+      hostKind,
+      generation,
       connectedAt: this.now(),
       focused: false,
-    };
-    return this.getConnectionSnapshot();
+    });
+    return this.getConnectionSnapshot(hostKind);
   }
 
-  unregister(connectionId: string, hostId?: string, hostGeneration?: number): boolean {
-    const host = this.host;
-    if (!host || host.connectionId !== connectionId) return false;
-    if (hostId !== undefined && host.registration.hostId !== hostId) return false;
-    if (hostGeneration !== undefined && host.generation !== hostGeneration) return false;
-    this.host = null;
-    this.rejectPendingForGeneration(host.generation, "host-disconnected", "Browser host disconnected.");
-    return true;
+  unregister(connectionId: string, hostId?: string, hostGeneration?: number, hostKind?: BrowserHostKind): boolean {
+    const kinds = hostKind ? [hostKind] : [...this.hosts.keys()];
+    let removed = false;
+    for (const kind of kinds) {
+      const host = this.hosts.get(kind);
+      if (!host || host.connectionId !== connectionId) continue;
+      if (hostId !== undefined && host.registration.hostId !== hostId) continue;
+      if (hostGeneration !== undefined && host.generation !== hostGeneration) continue;
+      this.hosts.delete(kind);
+      this.rejectPendingForGeneration(kind, host.generation, "host-disconnected", "Browser host disconnected.");
+      removed = true;
+    }
+    return removed;
   }
 
-  setFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean): boolean {
-    const host = this.host;
+  setFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): boolean {
+    const host = this.hosts.get(hostKind);
     if (!host || host.connectionId !== connectionId || host.registration.hostId !== hostId || host.generation !== hostGeneration) return false;
     host.focused = focused;
     return true;
   }
 
-  isCurrentConnection(connectionId: string, hostId: string, hostGeneration: number): boolean {
-    return !!this.host
-      && this.host.connectionId === connectionId
-      && this.host.registration.hostId === hostId
-      && this.host.generation === hostGeneration;
+  isCurrentConnection(connectionId: string, hostId: string, hostGeneration: number, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): boolean {
+    const host = this.hosts.get(hostKind);
+    return !!host
+      && host.connectionId === connectionId
+      && host.registration.hostId === hostId
+      && host.generation === hostGeneration;
   }
 
-  getConnectionSnapshot(): BrowserHostConnectionSnapshot {
-    const host = this.host;
+  getConnectionSnapshot(hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): BrowserHostConnectionSnapshot {
+    const host = this.hosts.get(hostKind);
     return host
       ? {
+          hostKind,
           connected: true,
           hostId: host.registration.hostId,
           hostGeneration: host.generation,
@@ -137,6 +161,7 @@ export class BrowserHostBroker {
           connectedAt: host.connectedAt,
         }
       : {
+          hostKind,
           connected: false,
           hostId: null,
           hostGeneration: null,
@@ -146,23 +171,41 @@ export class BrowserHostBroker {
         };
   }
 
+  getConnectionSnapshots(): BrowserHostConnectionSnapshot[] {
+    return (["managed-electron", "external-chrome"] as const).map((kind) => this.getConnectionSnapshot(kind));
+  }
+
   async request(options: BrowserHostBrokerRequest): Promise<BrowserAutomationResponse> {
-    const host = this.host;
-    if (!host) throw brokerError("unavailable-host", "No local Electron browser host is connected.", true);
+    const hostKind = resolveBrowserHostKind(options.hostKind);
+    const host = this.hosts.get(hostKind);
+    if (!host) throw brokerError("unavailable-host", `No local ${hostKind} browser host is connected.`, true, { hostKind });
+    if (options.expectedHost && (
+      host.registration.hostId !== options.expectedHost.hostId
+      || host.generation !== options.expectedHost.hostGeneration
+    )) {
+      throw brokerError("stale-host-generation", "The expected browser host authority is no longer current.", true);
+    }
     if (!host.registration.capabilities.supportedOperations.includes(options.operation)) {
       this.logDebug("browser-host-broker:unsupported-operation", {
+        hostKind,
         hostId: host.registration.hostId,
         operation: options.operation,
       });
-      throw brokerError("unsupported-operation", `The connected browser host does not support ${options.operation}.`, false, {
+      throw brokerError("unsupported-operation", `The ${hostKind} browser host does not support ${options.operation}.`, false, {
+        hostKind,
         operation: options.operation,
       });
     }
 
     const timeoutMs = normalizeTimeout(options.timeoutMs);
     const deadlineAt = new Date(Date.now() + timeoutMs).toISOString();
+    const requestId = options.requestId ?? this.allocateRequestId();
+    if (options.requestId && (this.pending.has(requestId) || this.completedRequestIds.has(requestId))) {
+      throw brokerError("invalid-input", "Browser request correlation was already used.", false);
+    }
     const request = {
-      requestId: this.allocateRequestId(),
+      requestId,
+      hostKind,
       sessionAgentId: options.sessionAgentId,
       profileId: options.profileId,
       tabId: options.tabId,
@@ -211,11 +254,11 @@ export class BrowserHostBroker {
 
   acceptResponse(connectionId: string, value: unknown, encodedBytes?: number): BrowserHostResponseDisposition {
     if (!isResponseEnvelope(value)) return "mismatched-response";
-    const response = value as BrowserAutomationResponse;
-    const pending = this.pending.get(response.requestId);
-    if (!pending) return this.completedRequestIds.has(response.requestId) ? "duplicate" : "unknown-request";
+    const pending = this.pending.get(value.requestId);
+    if (!pending) return this.completedRequestIds.has(value.requestId) ? "duplicate" : "unknown-request";
     if (!hasResponseRouting(value)) return "mismatched-response";
-    const host = this.host;
+    const response = value as BrowserAutomationResponse;
+    const host = this.hosts.get(response.hostKind);
     if (!host || response.hostId !== host.registration.hostId || response.hostGeneration !== host.generation) return "stale-host";
     if (connectionId !== pending.connectionId || connectionId !== host.connectionId) return "wrong-connection";
     if (!responseMatchesRequest(response, pending.request)) return "mismatched-response";
@@ -250,6 +293,15 @@ export class BrowserHostBroker {
     return this.pending.size;
   }
 
+  hasPendingSession(sessionAgentId: string, hostKind?: BrowserHostKind): boolean {
+    for (const pending of this.pending.values()) {
+      if (pending.request.sessionAgentId !== sessionAgentId) continue;
+      if (hostKind !== undefined && pending.request.hostKind !== hostKind) continue;
+      return true;
+    }
+    return false;
+  }
+
   private finishWithError(pending: PendingRequest, error: BrowserAutomationBrokerError): void {
     clearTimeout(pending.timer);
     this.pending.delete(pending.request.requestId);
@@ -257,9 +309,9 @@ export class BrowserHostBroker {
     pending.reject(error);
   }
 
-  private rejectPendingForGeneration(generation: number, code: BrowserAutomationErrorCode, message: string): void {
+  private rejectPendingForGeneration(hostKind: BrowserHostKind, generation: number, code: BrowserAutomationErrorCode, message: string): void {
     for (const pending of [...this.pending.values()]) {
-      if (pending.request.hostGeneration !== generation) continue;
+      if (pending.request.hostKind !== hostKind || pending.request.hostGeneration !== generation) continue;
       this.finishWithError(pending, brokerError(code, message, true));
     }
   }
@@ -286,6 +338,7 @@ function normalizeTimeout(value: number | undefined): number {
 
 function responseMatchesRequest(response: BrowserAutomationResponse, request: BrowserAutomationRequest): boolean {
   return response.requestId === request.requestId
+    && response.hostKind === request.hostKind
     && response.hostId === request.hostId
     && response.hostGeneration === request.hostGeneration
     && response.operation === request.operation
@@ -305,7 +358,8 @@ function isResponseEnvelope(value: unknown): value is { requestId: string } {
 function hasResponseRouting(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const response = value as Record<string, unknown>;
-  return typeof response.hostId === "string"
+  return (response.hostKind === "managed-electron" || response.hostKind === "external-chrome")
+    && typeof response.hostId === "string"
     && typeof response.hostGeneration === "number"
     && typeof response.sessionAgentId === "string"
     && typeof response.profileId === "string"

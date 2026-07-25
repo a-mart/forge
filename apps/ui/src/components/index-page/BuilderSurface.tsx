@@ -13,7 +13,8 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
 import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
 import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
-import { BrowserPanel, type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
+import { type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
+import { BuilderBrowserPanel } from '@/components/index-page/BuilderBrowserPanel'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
@@ -817,6 +818,7 @@ export function BuilderSurface({
   })
   const { feedback } = transcript
   const isLoading = transcript.isLoading
+  const conversationActionsEnabled = transcript.isConversationInteractive
 
   const missingPendingChoiceIds = useMemo(
     () => deriveMissingPendingChoiceIds(state.pendingChoiceIds, state.messages, activeAgentId),
@@ -1864,7 +1866,8 @@ export function BuilderSurface({
                     </div>
                   </div>
                 </section>
-              ) : <BrowserPanel
+              ) : <BuilderBrowserPanel
+                client={localClient}
                 sessionAgentId={browserSessionAgentId}
                 profileId={browserProfileId}
                 snapshot={browserSessionSnapshot}
@@ -1907,7 +1910,7 @@ export function BuilderSurface({
                   pinnedCount: transcript.pinnedCount,
                   pinnedMessageIds: transcript.pinnedMessageIds,
                   onScrollToMessage: transcript.handleScrollToMessage,
-                  onClearAllPins: session.handleClearAllPins,
+                  onClearAllPins: conversationActionsEnabled ? session.handleClearAllPins : undefined,
                   showStopAll: isActiveManager,
                   stopAllInProgress: isStoppingAllAgents,
                   stopAllDisabled: !state.connected || !canStopAllAgents,
@@ -1932,11 +1935,11 @@ export function BuilderSurface({
                   sessionFeedbackVote: isActiveManager && activeAgentId ? feedback.getVote(activeAgentId) : null,
                   sessionFeedbackHasComment: isActiveManager && activeAgentId ? feedback.hasComment(activeAgentId) : false,
                   onSessionFeedbackVote:
-                    isActiveManager && feedbackProfileId ? feedback.submitVote : undefined,
+                    conversationActionsEnabled && isActiveManager && feedbackProfileId ? feedback.submitVote : undefined,
                   onSessionFeedbackComment:
-                    isActiveManager && feedbackProfileId ? feedback.submitComment : undefined,
+                    conversationActionsEnabled && isActiveManager && feedbackProfileId ? feedback.submitComment : undefined,
                   onSessionFeedbackClearComment:
-                    isActiveManager && feedbackProfileId ? feedback.clearComment : undefined,
+                    conversationActionsEnabled && isActiveManager && feedbackProfileId ? feedback.clearComment : undefined,
                   isFeedbackSubmitting: feedback.isSubmitting,
                 }}
                 remoteUpdateSnapshot={remoteUpdateSnapshot}
@@ -1982,41 +1985,47 @@ export function BuilderSurface({
                   activeAgentId,
                   currentCollabUserId: activeOriginCurrentUserId ?? undefined,
                   projectAgent: activeAgent?.projectAgent,
-                  onSuggestionClick: session.handleSuggestionClick,
-                  onArtifactClick: panels.handleOpenArtifact,
-                  onForkFromMessage: activeAgentId ? session.handleForkFromMessage : undefined,
-                  onPinMessage: isActiveManager && activeAgentId ? session.handlePinMessage : undefined,
-                  onStopExternalThread: session.handleStopSession,
-                  onReplyToMessage: session.handleReplyToMessage,
-                  getVote: feedbackProfileId ? feedback.getVote : undefined,
-                  hasComment: feedbackProfileId ? feedback.hasComment : undefined,
-                  onFeedbackVote: feedbackProfileId ? feedback.submitVote : undefined,
-                  onFeedbackComment: feedbackProfileId ? feedback.submitComment : undefined,
-                  onFeedbackClearComment: feedbackProfileId ? feedback.clearComment : undefined,
+                  onSuggestionClick: conversationActionsEnabled ? session.handleSuggestionClick : undefined,
+                  onArtifactClick: conversationActionsEnabled ? panels.handleOpenArtifact : undefined,
+                  onForkFromMessage: conversationActionsEnabled && activeAgentId ? session.handleForkFromMessage : undefined,
+                  onPinMessage: conversationActionsEnabled && isActiveManager && activeAgentId ? session.handlePinMessage : undefined,
+                  onStopExternalThread: conversationActionsEnabled ? session.handleStopSession : undefined,
+                  onReplyToMessage: conversationActionsEnabled ? session.handleReplyToMessage : undefined,
+                  getVote: conversationActionsEnabled && feedbackProfileId ? feedback.getVote : undefined,
+                  hasComment: conversationActionsEnabled && feedbackProfileId ? feedback.hasComment : undefined,
+                  onFeedbackVote: conversationActionsEnabled && feedbackProfileId ? feedback.submitVote : undefined,
+                  onFeedbackComment: conversationActionsEnabled && feedbackProfileId ? feedback.submitComment : undefined,
+                  onFeedbackClearComment: conversationActionsEnabled && feedbackProfileId ? feedback.clearComment : undefined,
                   isFeedbackSubmitting: feedback.isSubmitting,
-                  onChoiceSubmit: session.handleChoiceSubmit,
-                  onChoiceCancel: session.handleChoiceCancel,
-                  pendingChoiceIds: state.pendingChoiceIds,
-                  codexElicitations: state.codexElicitations,
-                  onCodexElicitationResponse: (agentId, elicitationId, decision, values, persistScope) =>
-                    clientRef.current?.sendCodexElicitationResponse(agentId, elicitationId, decision, values, persistScope),
+                  onChoiceSubmit: conversationActionsEnabled ? session.handleChoiceSubmit : undefined,
+                  onChoiceCancel: conversationActionsEnabled ? session.handleChoiceCancel : undefined,
+                  pendingChoiceIds: conversationActionsEnabled ? state.pendingChoiceIds : new Set(),
+                  codexElicitations: conversationActionsEnabled ? state.codexElicitations : [],
+                  onCodexElicitationResponse: conversationActionsEnabled
+                    ? (agentId, elicitationId, decision, values, persistScope) =>
+                        clientRef.current?.sendCodexElicitationResponse(agentId, elicitationId, decision, values, persistScope)
+                    : undefined,
                   missingPendingChoiceIds,
                   planSnapshot,
                   planExpanded,
                   onPlanExpandedChange: setPlanExpanded,
                   statuses: state.statuses,
-                  hasOlder: state.conversationPage?.hasOlder ?? false,
-                  olderCursor: state.conversationPage?.nextCursor,
-                  isLoadingOlder: state.conversationPageLoading,
+                  hasOlder: conversationActionsEnabled && (state.conversationPage?.hasOlder ?? false),
+                  olderCursor: conversationActionsEnabled ? state.conversationPage?.nextCursor : undefined,
+                  isLoadingOlder: conversationActionsEnabled && state.conversationPageLoading,
                   historyCompleteness: state.conversationPage?.completeness ?? 'complete',
                   historyMutation: state.conversationHistoryMutation,
                   secureSessionRequests,
-                  onLoadOlder: () => {
+                  onLoadOlder: conversationActionsEnabled ? () => {
                     if (state.conversationPage?.completeness === 'source_changed') {
                       return clientRef.current?.refreshConversationHistory()
                     }
                     return clientRef.current?.loadOlderConversation()
-                  },
+                  } : undefined,
+                  conversationBootstrapPhase: transcript.conversationBootstrap?.phase,
+                  hasStalePresentation: transcript.hasStaleConversationPresentation,
+                  bootstrapErrorMessage: transcript.conversationBootstrap?.errorMessage,
+                  onRetryBootstrap: () => clientRef.current?.retryConversationBootstrap(),
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt
@@ -2081,7 +2090,7 @@ export function BuilderSurface({
                   onSend: session.handleSend,
                   onSubmitted: session.handleMessageInputSubmitted,
                   isLoading,
-                  disabled: !state.connected || !activeAgentId || hasActivePendingChoice,
+                  disabled: !state.connected || !activeAgentId || hasActivePendingChoice || !conversationActionsEnabled,
                   placeholderOverride: hasActivePendingChoice
                     ? 'Respond to the choice above or click Skip…'
                     : undefined,

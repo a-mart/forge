@@ -112,6 +112,7 @@ import type {
 } from './terminal-types.js'
 import type {
   ApiProxyResponseEvent,
+  BootstrapFailedEvent,
   ConversationHistoryEvent,
   ConversationPageEvent,
   ConversationResetEvent,
@@ -183,6 +184,7 @@ export type ServerEvent =
   | ConversationHistoryEvent
   | ConversationPageEvent
   | PendingChoicesSnapshotEvent
+  | BootstrapFailedEvent
   | RestartRecoverySnapshotEvent
   | RemoteUpdateAwarenessProjectChangedEvent
   | RemoteUpdateAwarenessProjectClearedEvent

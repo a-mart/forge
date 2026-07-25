@@ -17,6 +17,7 @@ import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
 import { SettingsProjectResources } from '@/components/settings/SettingsProjectResources'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
+import { SettingsExternalChrome } from '@/components/settings/SettingsExternalChrome'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
 import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
 import { SettingsObservability } from '@/components/settings/SettingsObservability'
@@ -206,6 +207,7 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} apiClient={apiClient} />}
+      {activeTab === 'external-chrome' && target.kind === 'builder' && <SettingsExternalChrome />}
       {activeTab === 'cli-access' && <SettingsCliAccess wsUrl={wsUrl} apiClient={apiClient} />}
       {activeTab === 'observability' && <SettingsObservability apiClient={apiClient} />}
       {activeTab === 'collaboration' && (

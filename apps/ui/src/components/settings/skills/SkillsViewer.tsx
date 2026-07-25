@@ -29,7 +29,6 @@ import {
   toErrorMessage,
 } from '../settings-api'
 import { createBuilderSettingsApiClient, type SettingsApiClient } from '../settings-api-client'
-import { SettingsChromeCdp } from '../SettingsChromeCdp'
 import { SkillEnvVariables } from './SkillEnvVariables'
 import { CollabScopeSelectItems, useCollabScopeData } from '../collab-scope'
 import { CategorySkillDefaultsView } from '../specialists/CategorySkillDefaultsView'
@@ -50,9 +49,7 @@ const COLLAB_CHANNEL_PREFIX = 'channel:'
 const RICH_CONFIG_SKILLS: Record<
   string,
   React.ComponentType<{ clientOrWsUrl: SettingsApiClient; onConfigChanged?: () => void }>
-> = {
-  'chrome-cdp': SettingsChromeCdp,
-}
+> = {}
 
 /* ------------------------------------------------------------------ */
 /*  Main component                                                    */

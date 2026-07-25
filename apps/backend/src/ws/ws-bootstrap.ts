@@ -93,6 +93,7 @@ export async function sendSubscriptionBootstrap(options: {
   supportsConversationPaging?: boolean;
   conversationView?: BuilderTimelineChannelView;
   supportsGoalControlRequestId?: boolean;
+  subscriptionId?: string;
   swarmManager: SwarmManager;
   terminalService: TerminalService | null;
   listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -115,6 +116,7 @@ export async function sendSubscriptionBootstrap(options: {
     supportsConversationPaging = false,
     conversationView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId,
     swarmManager,
     terminalService,
     listTerminalsForSession,
@@ -132,6 +134,9 @@ export async function sendSubscriptionBootstrap(options: {
   } = options;
 
   const canContinue = (): boolean => shouldContinue?.() !== false;
+  const subscriptionCorrelation = subscriptionId === undefined
+    ? {}
+    : { subscriptionId, servedConversationView: conversationView };
 
   const buildMode = resolveBackendSidebarPerfBuildMode();
   const startedAtMs = performance.now();
@@ -168,6 +173,7 @@ export async function sendSubscriptionBootstrap(options: {
     serverTime: new Date().toISOString(),
     subscribedAgentId: targetAgentId,
     ...(supportsGoalControlRequestId ? { goalControlRequestId: true as const } : {}),
+    ...subscriptionCorrelation,
   });
 
   if (!canContinue()) {
@@ -378,12 +384,14 @@ export async function sendSubscriptionBootstrap(options: {
     ...(supportsConversationPaging
       ? { page: projectConversationPageMetadataForWire(historyPageResult.page) }
       : {}),
+    ...subscriptionCorrelation,
   });
 
   const pendingChoicesSnapshot = buildPendingChoicesSnapshot(
     targetAgentId,
     pendingChoiceIds,
     pendingChoices,
+    subscriptionCorrelation,
   );
   metricFields.pendingChoiceDetailsReturned = pendingChoicesSnapshot.choices?.length ?? 0;
   await sendMeasured("pendingChoicesSnapshot", pendingChoicesSnapshot);
@@ -508,11 +516,16 @@ function buildPendingChoicesSnapshot(
   agentId: string,
   choiceIds: string[],
   choices: Extract<ServerEvent, { type: "choice_request" }>[],
+  correlation: {
+    subscriptionId?: string;
+    servedConversationView?: BuilderTimelineChannelView;
+  } = {},
 ): Extract<ServerEvent, { type: "pending_choices_snapshot" }> {
   const base = {
     type: "pending_choices_snapshot" as const,
     agentId,
     choiceIds,
+    ...correlation,
   };
   if (choices.length === 0) return base;
 

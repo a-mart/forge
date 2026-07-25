@@ -23,20 +23,22 @@ function installBridge() {
   const commitProvisional = vi.fn(async () => undefined)
   const abortProvisional = vi.fn(async () => undefined)
   const invoke = vi.fn()
+  const setTabPresentation = vi.fn(async (request: { tabId: string; visible: boolean; hostGeneration: number; sessionRevision: number; sequence: number }) => ({ applied: true, tab: { ...tab(request.tabId), hostKind: 'managed-electron' as const, physicalVisible: request.visible }, hostGeneration: request.hostGeneration, sessionRevision: request.sessionRevision, sequence: request.sequence }))
+  const publish = vi.fn(async () => undefined)
   window.electronBridge = {
     windowRole: 'main', backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin',
     browserAutomation: {
       capabilities: { supportedOperations: ['open', 'status'], playwrightVersion: '1.60.0', supportsRecording: true },
       reconcile, ensureProvisional, commitProvisional, abortProvisional, reportViewport: vi.fn(async () => undefined),
-      setTabPresentation: vi.fn(async (request) => ({ applied: true, tab: { ...tab(request.tabId), physicalVisible: request.visible }, hostGeneration: request.hostGeneration, sessionRevision: request.sessionRevision, sequence: request.sequence })),
+      setTabPresentation,
       captureScreenshot: vi.fn(async () => 'data:image/png;base64,a'), navigate: vi.fn(), history: vi.fn(), reload: vi.fn(), setZoom: vi.fn(), invoke,
       onStateChanged: vi.fn((listener) => { listeners.push(listener); return () => undefined }),
     },
     browserWorkspace: {
-      capability: { popoutAvailable: true }, getSnapshot: vi.fn(), publish: vi.fn(async () => undefined), popOut: vi.fn(async () => 'popped-out' as const), dock: vi.fn(async () => 'docked' as const), bringToFront: vi.fn(async () => undefined), reportViewport: vi.fn(), onProjection: vi.fn(() => () => undefined), onModeChanged: vi.fn(() => () => undefined), onFocusChanged: vi.fn(() => () => undefined),
+      capability: { popoutAvailable: true }, getSnapshot: vi.fn(), publish, popOut: vi.fn(async () => 'popped-out' as const), dock: vi.fn(async () => 'docked' as const), bringToFront: vi.fn(async () => undefined), reportViewport: vi.fn(), onProjection: vi.fn(() => () => undefined), onModeChanged: vi.fn(() => () => undefined), onFocusChanged: vi.fn(() => () => undefined),
     },
   }
-  return { reconcile, ensureProvisional, commitProvisional, abortProvisional, invoke, listeners }
+  return { reconcile, ensureProvisional, commitProvisional, abortProvisional, invoke, listeners, setTabPresentation, publish }
 }
 
 describe('BrowserAutomationHost main-owned view controller', () => {
@@ -49,6 +51,44 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     expect(registerBrowserAutomationHost).toHaveBeenCalledOnce()
     expect(bridge.reconcile).toHaveBeenCalledWith(expect.objectContaining({ sessions: [expect.objectContaining({ sessionAgentId: 'session-1' })] }))
     expect(container.querySelector('webview')).toBeNull()
+  })
+
+  it('never projects or presents an external-only session to the Managed Browser lifecycle', async () => {
+    const bridge = installBridge()
+    const externalSession = {
+      ...session(1, [{ ...tab(), hostKind: 'external-chrome' as const }]),
+      hostKind: 'external-chrome' as const,
+    }
+    const state = {
+      ...createInitialManagerWsState('session-1'),
+      connected: true,
+      browserSessions: { 'session-1': externalSession },
+    }
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: true })); await Promise.resolve() })
+    expect(bridge.reconcile).toHaveBeenCalledWith(expect.objectContaining({ sessions: [] }))
+    expect(bridge.setTabPresentation).not.toHaveBeenCalled()
+    expect(bridge.publish).toHaveBeenCalledWith(expect.objectContaining({
+      sessionAgentId: null, profileId: null, snapshot: null, connected: false,
+    }))
+  })
+
+  it('filters a same-id external tab from a mixed managed projection', async () => {
+    const bridge = installBridge()
+    const mixed = {
+      ...session(1, [
+        { ...tab('same'), hostKind: 'external-chrome' as const, title: 'external' },
+        { ...tab('same'), hostKind: 'managed-electron' as const, title: 'managed' },
+      ]),
+      hostKind: 'managed-electron' as const,
+    }
+    const state = { ...createInitialManagerWsState('session-1'), browserSessions: { 'session-1': mixed } }
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: true })); await Promise.resolve() })
+    expect(bridge.reconcile).toHaveBeenCalledWith(expect.objectContaining({
+      sessions: [expect.objectContaining({ tabs: [expect.objectContaining({ hostKind: 'managed-electron', title: 'managed' })] })],
+    }))
+    expect(bridge.setTabPresentation).toHaveBeenCalledTimes(1)
   })
 
   it('preserves the original open envelope for every provisional lifecycle failure and tears down provisional state', async () => {
@@ -71,7 +111,7 @@ describe('BrowserAutomationHost main-owned view controller', () => {
         bridge.invoke.mockImplementation(async (invoked: BrowserAutomationRequest) => ({ ...invoked, ok: false, error: { code: 'navigation-failed', message: 'failed', retryable: true }, elapsedMs: 1 }))
         bridge.abortProvisional.mockRejectedValue(failure)
       }
-      const request: Extract<BrowserAutomationRequest, { operation: 'open' }> = { requestId: `request-${phase}`, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null, hostId: 'host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 10_000).toISOString(), artifactDirectory: null, operation: 'open', input: { show: false, reuseExistingTab: false } }
+      const request: Extract<BrowserAutomationRequest, { operation: 'open' }> = { requestId: `request-${phase}`, hostKind: 'managed-electron', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null, hostId: 'host', hostGeneration: 1, deadlineAt: new Date(Date.now() + 10_000).toISOString(), artifactDirectory: null, operation: 'open', input: { show: false, reuseExistingTab: false } }
       const response = await execute!(request)
       expect(response).toMatchObject({
         requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
@@ -140,6 +180,93 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     await act(async () => { await vi.runAllTimersAsync() })
     expect(reportBrowserHostState).toHaveBeenCalledTimes(6)
     expect(reportBrowserHostState.mock.calls[5]?.[0]?.[0]?.tabs[0]?.title).toBe('new-runtime-2')
+  })
+
+  it('acknowledges correlated lifecycle release only after the exact local lease release succeeds', async () => {
+    installBridge()
+    const releaseStatus = {
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
+    } as const
+    const releaseForLifecycle = vi.fn(async () => ({ ok: true as const, status: releaseStatus }))
+    const turnEnded = vi.fn(async () => ({ ok: true as const, status: releaseStatus }))
+    window.electronBridge!.externalChrome = {
+      releaseForLifecycle, turnEnded,
+      localStatus: vi.fn(async () => ({ ok: true as const, status: {
+        coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+        instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: 'm4', connectedAt: now, supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'] }], attachment: null,
+      } })),
+    } as never
+    const state = createInitialManagerWsState('session-1')
+    let executeSecondary: ((request: BrowserAutomationRequest) => Promise<any>) | null = null
+    let secondaryRegistration: BrowserHostRegistration | null = null
+    const client = {
+      registerBrowserAutomationHost: vi.fn(() => vi.fn()),
+      registerSecondaryBrowserAutomationHost: vi.fn((registration, handler) => { secondaryRegistration = registration; executeSecondary = handler; return vi.fn() }),
+      reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
+    } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve() })
+    const request = { requestId: 'external-chrome-release:prepare:archive:correlation-1', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.profile_a.7', hostId: 'external-host', hostGeneration: 5, deadlineAt: new Date(Date.now() + 5_000).toISOString(), artifactDirectory: null, operation: 'status', input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7', externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1', reason: 'archive', originalHostId: 'external-host', originalHostGeneration: 5 } } } as BrowserAutomationRequest
+    expect(secondaryRegistration!.capabilities).toMatchObject({
+      supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'],
+      runtimeVersions: { extension: 'm4' },
+      features: {
+        resize: false, recording: false, capturePage: false,
+        downloadEvents: false, downloadArtifacts: false, downloadOpen: false,
+      },
+      supportsCapturePage: false,
+      supportsRecording: false,
+    })
+    expect(secondaryRegistration!.capabilities.supportedOperations).toContain('snapshot')
+    expect(secondaryRegistration!.capabilities.features?.capturePage).toBe(false)
+    const response = await executeSecondary!(request)
+    expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, phase: 'prepare', releaseId: 'release-1', reason: 'archive', tabId: 'ext.profile_a.7' }))
+    expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true, result: { externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1' } } })
+
+    const turnRequest = {
+      ...request, requestId: 'external-chrome-turn-ended:correlation-2',
+      input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7', externalChromeTurnDisposition: { turnId: 'turn-9', disposition: 'handoff' } },
+    } as BrowserAutomationRequest
+    const turnResponse = await executeSecondary!(turnRequest)
+    expect(turnEnded).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: turnRequest.requestId, hostGeneration: 5, tabId: 'ext.profile_a.7', turnId: 'turn-9', disposition: 'handoff',
+    }))
+    expect(turnResponse).toMatchObject({ ok: true, result: { externalChromeTurnDisposition: { turnId: 'turn-9', disposition: 'handoff' } } })
+  })
+
+  it('does not advertise External Chrome when coordinator setup exists but no extension runtime is ready', async () => {
+    installBridge()
+    window.electronBridge!.externalChrome = { localStatus: vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [], attachment: null,
+    } })) } as never
+    const state = createInitialManagerWsState('session-1')
+    const registerSecondaryBrowserAutomationHost = vi.fn()
+    const client = { registerBrowserAutomationHost: vi.fn(() => vi.fn()), registerSecondaryBrowserAutomationHost, reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve(); await Promise.resolve() })
+    expect(registerSecondaryBrowserAutomationHost).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the M3 operation surface without inventing capturePage when Desktop omits supportedOperations', async () => {
+    installBridge()
+    window.electronBridge!.externalChrome = { localStatus: vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: 'legacy', connectedAt: now }], attachment: null,
+    } })) } as never
+    const state = createInitialManagerWsState('session-1')
+    let secondaryRegistration: BrowserHostRegistration | null = null
+    const client = {
+      registerBrowserAutomationHost: vi.fn(() => vi.fn()),
+      registerSecondaryBrowserAutomationHost: vi.fn((registration) => { secondaryRegistration = registration; return vi.fn() }),
+      reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
+    } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve(); await Promise.resolve() })
+    expect(secondaryRegistration!.capabilities).toMatchObject({
+      supportedOperations: ['status', 'open', 'navigate'],
+      features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+      supportsCapturePage: false,
+    })
+    expect(secondaryRegistration!.capabilities.supportedOperations).not.toContain('snapshot')
   })
 
   it('publishes only the selected local projection and never renders a second host surface', async () => {

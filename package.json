@@ -12,6 +12,8 @@
     "apps/backend",
     "apps/ui",
     "apps/electron",
+    "apps/chrome-extension",
+    "apps/native-messaging-host",
     "apps/skill-share-worker",
     "packages/protocol",
     "packages/cli"
@@ -27,7 +29,7 @@
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "typecheck": "cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../ui && pnpm exec tsc --noEmit && cd ../../packages/protocol && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../cli && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../../apps/electron && pnpm exec tsc --noEmit && cd ../skill-share-worker && pnpm exec tsc --noEmit",
+    "typecheck": "cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../ui && pnpm exec tsc --noEmit && cd ../../packages/protocol && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../cli && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../../apps/electron && pnpm exec tsc --noEmit && cd ../skill-share-worker && pnpm exec tsc --noEmit && cd ../chrome-extension && pnpm exec tsc --noEmit && cd ../native-messaging-host && pnpm exec tsc --noEmit",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
     "pi-package:identity": "node scripts/pi-package-identity.mjs",
     "pi-extension:migrate": "node scripts/pi-extension-migration.mjs",

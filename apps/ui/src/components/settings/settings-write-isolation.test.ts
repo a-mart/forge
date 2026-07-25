@@ -368,51 +368,6 @@ describe('server version fetch isolation', () => {
 })
 
 /* ================================================================== */
-/*  Chrome CDP fetch/write isolation                                   */
-/* ================================================================== */
-
-describe('chrome cdp target isolation', () => {
-  it('fetchChromeCdpSettings routes through collab with credentials: include', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
-      config: { contextId: null, urlAllow: [], urlBlock: [] },
-      status: { connected: false },
-    }))
-    const { fetchChromeCdpSettings } = await import('./settings-api')
-
-    await fetchChromeCdpSettings(collabClient())
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/chrome-cdp',
-      expect.objectContaining({ credentials: 'include' }),
-    )
-  })
-
-  it('updateChromeCdpSettings routes through collab with credentials: include', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ ok: true }))
-    const { updateChromeCdpSettings } = await import('./settings-api')
-
-    await updateChromeCdpSettings(collabClient(), { contextId: null, urlAllow: [], urlBlock: [] })
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/chrome-cdp',
-      expect.objectContaining({ method: 'PUT', credentials: 'include' }),
-    )
-  })
-
-  it('testChromeCdpConnection routes through builder with same-origin', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ connected: true, port: 9222 }))
-    const { testChromeCdpConnection } = await import('./settings-api')
-
-    await testChromeCdpConnection(builderClient())
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/chrome-cdp/test',
-      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
-    )
-  })
-})
-
-/* ================================================================== */
 /*  Model preset fetch isolation (Specialists)                        */
 /* ================================================================== */
 

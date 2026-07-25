@@ -15,7 +15,10 @@ import type {
   RestartRecoverySnapshot,
   TerminalDescriptor,
   CodexElicitationRequestEvent,
+  BuilderTimelineChannelView,
 } from '@forge/protocol'
+import type { ConversationPresentationSnapshot } from './ws-client/conversation-snapshot-cache'
+import type { ConversationSubscriptionReason } from './ws-client/conversation-bootstrap-metrics'
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,
@@ -35,6 +38,22 @@ export interface ConversationHistoryMutation {
   kind: 'replace' | 'prepend'
 }
 
+export type ConversationBootstrapPhase = 'idle' | 'pending' | 'ready' | 'error'
+export type BootstrapProtocolMode = 'unknown' | 'correlated' | 'legacy'
+
+export interface ConversationBootstrapState {
+  phase: ConversationBootstrapPhase
+  agentId: string | null
+  subscriptionId: string | null
+  requestedView: BuilderTimelineChannelView
+  servedView: BuilderTimelineChannelView | null
+  reason: ConversationSubscriptionReason | null
+  protocolMode: BootstrapProtocolMode
+  startedAt: number | null
+  errorCode?: string
+  errorMessage?: string
+}
+
 export interface BrowserPanelRevealRequest {
   sessionAgentId: string
   profileId: string
@@ -49,6 +68,10 @@ export interface ManagerWsState {
   connectionEpoch: number
   targetAgentId: string | null
   subscribedAgentId: string | null
+  /** Explicit lifecycle for the selected conversation bootstrap. */
+  conversationBootstrap: ConversationBootstrapState
+  /** Frozen, passive cache overlay. Never used as reducer or command authority. */
+  conversationPresentation: ConversationPresentationSnapshot | null
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
   conversationPage: ConversationHistoryPageMetadata | null
@@ -123,6 +146,17 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     connectionEpoch: 0,
     targetAgentId,
     subscribedAgentId: null,
+    conversationBootstrap: {
+      phase: 'idle',
+      agentId: targetAgentId,
+      subscriptionId: null,
+      requestedView: 'web',
+      servedView: null,
+      reason: null,
+      protocolMode: 'unknown',
+      startedAt: null,
+    },
+    conversationPresentation: null,
     messages: [],
     activityMessages: [],
     conversationPage: null,

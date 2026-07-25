@@ -108,6 +108,10 @@ export interface MessageListProps {
   onLoadOlder?: () => unknown | Promise<unknown>
   /** Live Secure Session requests and quarantined-output state; never persisted as transcript rows. */
   secureSessionRequests?: SecureSessionRequestConfig
+  conversationBootstrapPhase?: 'idle' | 'pending' | 'ready' | 'error'
+  hasStalePresentation?: boolean
+  bootstrapErrorMessage?: string
+  onRetryBootstrap?: () => void
 }
 
 export interface MessageListHandle {
@@ -458,6 +462,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   historyMutation = null,
   onLoadOlder,
   secureSessionRequests,
+  conversationBootstrapPhase = 'idle',
+  hasStalePresentation = false,
+  bootstrapErrorMessage,
+  onRetryBootstrap,
 }, ref) {
   // useState (not useRef) for the scroll element so that the callback ref's
   // re-render lets the virtualizer pick up the real element via getScrollElement.
@@ -1046,6 +1054,37 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     captureViewportAnchor()
   }, [activeAgentId, captureViewportAnchor, displayEntries, historyMutation, isLoading, scrollEl])
 
+  const bootstrapBlocksActions =
+    conversationBootstrapPhase === 'pending' || conversationBootstrapPhase === 'error'
+
+  if (
+    displayEntries.length === 0 &&
+    !showPlanCard &&
+    !hasMissingPendingChoices &&
+    !hasOlder &&
+    bootstrapBlocksActions &&
+    !hasSecureSessionAttention
+  ) {
+    const failed = conversationBootstrapPhase === 'error'
+    return (
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center p-6"
+        aria-busy={!failed}
+        role={failed ? 'alert' : 'status'}
+        aria-live="polite"
+      >
+        <div className="text-center text-sm text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:delay-300">
+          <p>{failed ? (bootstrapErrorMessage ?? 'Couldn’t load conversation.') : 'Loading conversation…'}</p>
+          {failed && onRetryBootstrap ? (
+            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetryBootstrap}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
   if (
     displayEntries.length === 0
     && !isLoading
@@ -1308,6 +1347,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     <div
       className="relative min-h-0 flex flex-1 flex-col overflow-hidden"
       data-chat-transcript-surface=""
+      aria-busy={conversationBootstrapPhase === 'pending'}
     >
       {hasSecureSessionAttention && secureSessionRequests ? (
         <section
@@ -1351,6 +1391,24 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             />
           ))}
         </section>
+      ) : null}
+      {bootstrapBlocksActions && hasStalePresentation ? (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:delay-300"
+          role={conversationBootstrapPhase === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          <span>
+            {conversationBootstrapPhase === 'error'
+              ? 'Couldn’t refresh. Showing previous messages.'
+              : 'Updating conversation…'}
+          </span>
+          {conversationBootstrapPhase === 'error' && onRetryBootstrap ? (
+            <Button type="button" variant="ghost" size="sm" className="ml-auto h-7" onClick={onRetryBootstrap}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {codexElicitations.length ? <div className="shrink-0 space-y-2 overflow-auto p-2 md:p-3">{codexElicitations.map((request) => <CodexElicitationCard key={request.elicitationId} request={request} onRespond={(decision, values, persistScope) => onCodexElicitationResponse?.(request.agentId, request.elicitationId, decision, values, persistScope)} />)}</div> : null}
       <div

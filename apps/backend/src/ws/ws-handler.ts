@@ -5,6 +5,7 @@ import type {
   AgentToolCallEvent,
   ApiProxyCommand,
   BrowserClientCommand,
+  BrowserHostKind,
   BuilderTimelineChannelView,
   ChoiceRequestEvent,
   CollaborationServerEvent,
@@ -366,7 +367,7 @@ export class WsHandler {
         send: (targetSocket, event) => this.send(targetSocket, event),
         sendCritical: (targetSocket, event) => this.sendWithBackpressure(targetSocket, event),
         broadcastToSession: (sessionAgentId, event) => this.broadcastToSession(sessionAgentId, event),
-        hydrateHostSessions: () => this.hydrateBrowserHostSessions(),
+        hydrateHostSessions: (hostKind) => this.hydrateBrowserHostSessions(hostKind),
         logDebug: (message, details) => this.logDebug(message, details),
       });
       return;
@@ -380,6 +381,7 @@ export class WsHandler {
         command.conversationPaging === true,
         command.conversationView,
         command.goalControlRequestId === true,
+        command.subscriptionId,
       );
       return;
     }
@@ -672,6 +674,7 @@ export class WsHandler {
     supportsConversationPaging = false,
     conversationView: BuilderTimelineChannelView = "all",
     supportsGoalControlRequestId = false,
+    subscriptionId?: string,
   ): Promise<void> {
     await this.subscriptionManager.handleSubscribe(
       socket,
@@ -680,6 +683,7 @@ export class WsHandler {
       supportsConversationPaging,
       conversationView,
       supportsGoalControlRequestId,
+      subscriptionId,
     );
   }
 
@@ -778,13 +782,17 @@ export class WsHandler {
     if (connectionId) this.browserAutomationService.unregisterHost(connectionId);
   }
 
-  private async hydrateBrowserHostSessions() {
+  private async hydrateBrowserHostSessions(hostKind: BrowserHostKind = "managed-electron") {
     const sessions = new Map<string, Awaited<ReturnType<BrowserAutomationService["getSessionSnapshot"]>>>();
     await Promise.all(this.swarmManager.listAgents()
       .filter((descriptor) => descriptor.role === "manager")
       .map(async (descriptor) => {
         const profileId = descriptor.profileId ?? descriptor.agentId;
-        const snapshot = await this.browserAutomationService.getSessionSnapshot(profileId, descriptor.agentId);
+        const snapshot = await this.browserAutomationService.getHostHydrationSnapshot(
+          profileId,
+          descriptor.agentId,
+          hostKind,
+        );
         sessions.set(`${profileId}:${descriptor.agentId}`, snapshot);
       }));
     return [...sessions.values()];

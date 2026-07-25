@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Circle, ExternalLink, Globe2, PanelTopClose, Plus, RefreshCw, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   BROWSER_VIEWPORT_PRESETS,
+  resolveBrowserHostKind,
   resolveBrowserViewportPreset,
   type BrowserHostConnectionSnapshot,
   type BrowserSessionSnapshot,
@@ -15,6 +16,7 @@ import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { isElectron } from '@/lib/electron-bridge'
 import { cn } from '@/lib/utils'
+import { ExternalChromePanel } from './ExternalChromePanel'
 
 export interface BrowserWorkspaceCommandPort {
   open(autoOpenAttemptKey?: string): Promise<void>
@@ -60,7 +62,39 @@ export function BrowserPanel({
   client = null, sessionAgentId, profileId, snapshot, host, hostRef, commandPort,
   mode = 'docked', popoutAvailable = Boolean(window.electronBridge?.browserWorkspace?.capability.popoutAvailable),
 }: BrowserPanelProps) {
-  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed')
+  const preferenceKey = `forge.browser.host.v1:${sessionAgentId}`
+  const [selectedHost, setSelectedHost] = useState<'managed-electron' | 'external-chrome'>(() => readHostPreference(preferenceKey))
+  const [externalAvailable, setExternalAvailable] = useState(false)
+  useEffect(() => setSelectedHost(readHostPreference(preferenceKey)), [preferenceKey])
+  useEffect(() => {
+    const bridge = window.electronBridge?.windowRole === 'main' ? window.electronBridge.externalChrome : undefined
+    if (!bridge?.localStatus) { setExternalAvailable(false); return }
+    let disposed = false
+    const inspect = async (): Promise<void> => {
+      try {
+        const result = await bridge.localStatus!(sessionAgentId, profileId)
+        if (!disposed) setExternalAvailable(result.ok && result.status.coordinator.state === 'online'
+          && result.status.coordinator.setup.pathState === 'ready' && result.status.instances.length > 0)
+      } catch { if (!disposed) setExternalAvailable(false) }
+    }
+    void inspect()
+    const timer = window.setInterval(() => void inspect(), 3_000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [profileId, sessionAgentId])
+  const selectHost = (value: 'managed-electron' | 'external-chrome'): void => {
+    setSelectedHost(value)
+    try { sessionStorage.setItem(preferenceKey, value) } catch { /* session-only fallback remains in component state */ }
+    void client?.selectBrowserHost(sessionAgentId, profileId, value).catch(() => {
+      if (snapshot) setSelectedHost(resolveBrowserHostKind(snapshot.hostKind))
+    })
+  }
+  useEffect(() => {
+    if (!snapshot) return
+    const canonicalHost = resolveBrowserHostKind(snapshot.hostKind)
+    setSelectedHost(canonicalHost)
+    try { sessionStorage.setItem(preferenceKey, canonicalHost) } catch { /* canonical state remains in component state */ }
+  }, [preferenceKey, snapshot])
+  const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed' && resolveBrowserHostKind(tab.hostKind) === 'managed-electron')
   const hasOpenTab = openTabs.length > 0
   const activeTab = openTabs.find((tab) => tab.tabId === snapshot?.activeTabId) ?? openTabs[0] ?? null
   const [address, setAddress] = useState(activeTab?.url ?? '')
@@ -90,7 +124,8 @@ export function BrowserPanel({
 
   const managedBrowserSurface = window.electronBridge?.windowRole === 'main' || window.electronBridge?.windowRole === 'managed-browser-popout'
   const emptyAuthorityIdentity = `${sessionAgentId}:${profileId}`
-  const emptyAuthorityKey = managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
+  const emptyAuthorityKey = selectedHost === 'managed-electron' && resolveBrowserHostKind(snapshot?.hostKind) === 'managed-electron'
+    && managedBrowserSurface && !controlsUnavailable && host.connected && snapshot?.hostingState === 'hosted' && !hasOpenTab
     ? emptyBrowserOpenAttemptKey(sessionAgentId, profileId, host, snapshot)
     : null
 
@@ -127,8 +162,13 @@ export function BrowserPanel({
 
   const resize = (viewport: BrowserViewportSetting): void => { if (activeTab) void run(() => commands.resize(activeTab.tabId, viewport)) }
   const popped = mode === 'popped-out' || mode === 'opening'
+  const selector = <BrowserHostSelector selected={selectedHost} onSelect={selectHost} externalAvailable={externalAvailable || selectedHost === 'external-chrome'} />
+
+  if (selectedHost === 'external-chrome') return <div className="flex min-h-0 flex-1 flex-col">{selector}<ExternalChromePanel sessionAgentId={sessionAgentId} profileId={profileId} client={client} /></div>
 
   return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {selector}
     <section className="relative flex min-h-0 flex-1 flex-col bg-background" aria-label="Managed Browser workspace">
       <div className="sr-only" aria-live="polite">{popped ? 'Managed Browser is open in a separate window.' : 'Managed Browser is docked in the main window.'}</div>
       <header className="border-b bg-muted/30">
@@ -202,6 +242,7 @@ export function BrowserPanel({
       {activeTab?.error ? <div role="alert" className="border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">{activeTab.error.message}</div> : null}
       {error ? <div role="alert" className="border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div> : null}
     </section>
+    </div>
   )
 }
 
@@ -227,3 +268,5 @@ function IconButton({ label, disabled, onClick, children }: { label: string; dis
 function TabStatus({ tab }: { tab: BrowserTabSnapshot }) { const label = tab.controller === 'agent' ? 'Agent controlling' : tab.controller === 'human' ? 'Human controlling' : 'Ready'; return <span className="ml-auto flex items-center gap-1 text-muted-foreground"><span className={cn('size-1.5 rounded-full', tab.loading ? 'bg-amber-400' : tab.error ? 'bg-destructive' : 'bg-emerald-500')} />{label}{tab.recording ? ' · Recording' : ''}</span> }
 function ScreenshotPreview({ dataUrl, onClose }: { dataUrl: string; onClose: () => void }) { return <aside aria-label="Browser screenshot" className="ml-2 flex w-80 shrink-0 flex-col rounded-lg border bg-background p-3 shadow"><div className="mb-2 flex items-center"><strong className="text-sm">Screenshot</strong><button type="button" aria-label="Close screenshot" className="ml-auto rounded p-1 hover:bg-muted" onClick={onClose}><X className="size-4" /></button></div><img src={dataUrl} alt="Captured browser viewport" className="min-h-0 flex-1 object-contain" /></aside> }
 function viewportSelectValue(setting: BrowserViewportSetting | undefined): string { return setting?.mode === 'preset' ? setting.presetId : setting?.mode ?? 'fill' }
+function readHostPreference(key: string): 'managed-electron' | 'external-chrome' { try { return sessionStorage.getItem(key) === 'external-chrome' ? 'external-chrome' : 'managed-electron' } catch { return 'managed-electron' } }
+function BrowserHostSelector({ selected, onSelect, externalAvailable }: { selected: 'managed-electron' | 'external-chrome'; onSelect(value: 'managed-electron' | 'external-chrome'): void; externalAvailable: boolean }) { return <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2"><label htmlFor="browser-host" className="text-xs font-medium text-muted-foreground">Browser host</label><select id="browser-host" aria-label="Browser host" className="h-8 rounded border bg-background px-2 text-sm" value={selected} onChange={(event) => onSelect(event.target.value as 'managed-electron' | 'external-chrome')}><option value="managed-electron">Managed Browser</option><option value="external-chrome" disabled={!externalAvailable}>External Chrome</option></select><span className="rounded-full border px-2 py-0.5 text-[10px]">External Chrome · Local Beta · off by default</span></div> }

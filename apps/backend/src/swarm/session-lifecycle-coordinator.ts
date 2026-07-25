@@ -139,7 +139,12 @@ export interface SessionLifecycleCoordinatorOptions {
   };
   browser: Pick<
     BrowserAutomationService,
-    "cancelSession" | "archiveSession" | "restoreSession" | "deleteSession"
+    | "cancelSession"
+    | "releaseSessionForLifecycle"
+    | "recordFailedLifecycleRelease"
+    | "archiveSession"
+    | "restoreSession"
+    | "deleteSession"
   >;
   secureSessions: SecureSessionLifecyclePort;
   events: {
@@ -314,6 +319,11 @@ export class SessionLifecycleCoordinator {
         await this.options.secureSessions.stopForLifecycle(agentId);
         this.options.goals.cancelScheduledContinuation(agentId);
         this.options.browser.cancelSession(agentId);
+        await this.options.browser.releaseSessionForLifecycle(
+          descriptor.profileId,
+          agentId,
+          "archive",
+        );
         await this.options.capture.run(agentId, "archive");
         this.cleanupCodex(agentId);
         const result = await this.options.archive.archiveSession(agentId);
@@ -360,6 +370,13 @@ export class SessionLifecycleCoordinator {
           this.cleanupCodex(session.agentId);
           this.options.goals.cancelScheduledContinuation(session.agentId);
           this.options.browser.cancelSession(session.agentId);
+        }
+        for (const session of sessions) {
+          await this.options.browser.releaseSessionForLifecycle(
+            profileId,
+            session.agentId,
+            "archive",
+          );
         }
         const result = await this.options.archive.archiveProfile(profileId);
         for (const session of sessions) {
@@ -439,6 +456,11 @@ export class SessionLifecycleCoordinator {
         this.cleanupCodex(agentId);
         this.options.goals.cancelScheduledContinuation(agentId);
         this.options.browser.cancelSession(agentId);
+        await this.options.browser.releaseSessionForLifecycle(
+          requiredDescriptor.profileId,
+          agentId,
+          "delete",
+        );
         const result = await this.options.sessions.deleteSession(agentId);
         await this.cleanupSecureSessionStateAfterCoreDeletion(agentId);
         await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
@@ -461,6 +483,7 @@ export class SessionLifecycleCoordinator {
     );
     const descriptor = cloneDescriptor(requiredDescriptor);
     this.options.browser.cancelSession(agentId);
+    await this.options.browser.releaseSessionForLifecycle(requiredDescriptor.profileId, agentId, "delete");
     const result = await this.options.sessions.deleteCollaborationSession(agentId);
     await this.options.browser.deleteSession(requiredDescriptor.profileId, agentId);
     this.options.activeTools.clearSession(agentId);
@@ -520,10 +543,12 @@ export class SessionLifecycleCoordinator {
     callerAgentId: string,
     targetManagerId: string,
   ): Promise<Awaited<ReturnType<SwarmAgentLifecycleService["stopAllAgents"]>>> {
+    const descriptor = this.getRequiredSessionDescriptor(targetManagerId);
     await this.options.secureSessions.stopForLifecycle(targetManagerId);
     this.cleanupCodex(targetManagerId);
     this.options.goals.cancelScheduledContinuation(targetManagerId);
     this.options.browser.cancelSession(targetManagerId);
+    await this.releaseBeforeStop(descriptor.profileId, targetManagerId);
     return await this.options.lifecycle.stopAllAgents(
       callerAgentId,
       targetManagerId,
@@ -577,6 +602,13 @@ export class SessionLifecycleCoordinator {
           this.options.browser.cancelSession(session.agentId);
         }
         const deleted = sessions.map((session) => cloneDescriptor(session));
+        for (const descriptor of deleted) {
+          await this.options.browser.releaseSessionForLifecycle(
+            descriptor.profileId ?? targetManagerId,
+            descriptor.agentId,
+            "delete",
+          );
+        }
         const result = await this.options.lifecycle.deleteManager(
           callerAgentId,
           targetManagerId,
@@ -658,9 +690,22 @@ export class SessionLifecycleCoordinator {
     this.cleanupCodex(agentId);
     this.options.goals.cancelScheduledContinuation(agentId);
     this.options.browser.cancelSession(agentId);
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    await this.releaseBeforeStop(descriptor.profileId, agentId);
     const result = await this.options.lifecycle.stopSession(agentId);
     this.options.activeTools.clearSession(agentId);
     return result;
+  }
+
+  private async releaseBeforeStop(profileId: string, agentId: string): Promise<void> {
+    try {
+      await this.options.browser.releaseSessionForLifecycle(profileId, agentId, "stop");
+    } catch (error) {
+      // Stop is the only lifecycle that may proceed after a bounded release
+      // failure. Persist and publish the failure first; archive/delete and host
+      // replacement remain fail closed.
+      await this.options.browser.recordFailedLifecycleRelease(profileId, agentId, "stop", error);
+    }
   }
 
   private async rollbackFailedAgentCreatedSession(

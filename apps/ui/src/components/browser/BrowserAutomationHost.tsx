@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS, resolveBrowserHostKind } from '@forge/protocol'
 import type {
   BrowserAutomationErrorCode,
   BrowserAutomationRequest,
@@ -53,13 +54,14 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const selectedSessionRef = useRef(selectedSessionAgentId)
     const selectedProfileRef = useRef(selectedProfileId ?? null)
     const hostIdRef = useRef(`forge-browser-${randomId()}`)
+    const externalHostIdRef = useRef(`forge-external-chrome-${randomId()}`)
     const controllerInstanceIdRef = useRef(`renderer-${randomId()}`)
     const workspaceEpochRef = useRef(Date.now())
     const reconcileSequenceRef = useRef(0)
     const presentationSequences = useRef(new Map<string, number>())
     const pendingTabUpdates = useRef(new Map<string, BrowserTabSnapshot>())
-    const canonicalSessions = useRef(new Map<string, BrowserSessionSnapshot>(Object.entries(state.browserSessions)))
-    const projectedSessions = useRef(new Map<string, BrowserSessionSnapshot>(Object.entries(state.browserSessions)))
+    const canonicalSessions = useRef(managedSessionMap(state.browserSessions))
+    const projectedSessions = useRef(managedSessionMap(state.browserSessions))
     const reportInFlight = useRef(false)
     const reportTimer = useRef<number | null>(null)
     const runtimeUpdateSequence = useRef(0)
@@ -68,6 +70,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const revealAcknowledgements = useRef(new Set<string>())
     const automaticEmptyOpenAttempts = useRef(new Set<string>())
     const [workspaceMode, setWorkspaceMode] = useState<ManagedBrowserWorkspaceMode>(workspace?.capability.popoutAvailable ? 'docked' : 'unavailable')
+    const [externalRuntimeAvailable, setExternalRuntimeAvailable] = useState(false)
+    const [externalRuntimeOperations, setExternalRuntimeOperations] = useState<BrowserHostRegistration['capabilities']['supportedOperations']>([])
+    const [externalPayloadVersion, setExternalPayloadVersion] = useState('unknown')
     const workspaceModeRef = useRef<ManagedBrowserWorkspaceMode>(workspaceMode)
 
     useEffect(() => { bridgeRef.current = bridge }, [bridge])
@@ -78,7 +83,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       // a lower revision than the previous process. Conflict snapshots can
       // temporarily be newer than this projection when its corresponding live
       // event was dropped; those are adopted directly in flushReports below.
-      const nextProjected = new Map(Object.entries(state.browserSessions))
+      const nextProjected = managedSessionMap(state.browserSessions)
       let receivedCanonicalState = false
       for (const [sessionAgentId, session] of nextProjected) {
         if (session.tabs.some((tab) => tab.lifecycle !== 'closed')) {
@@ -94,7 +99,8 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         if (session.hostingState !== 'hosted') dropPendingSession(pendingTabUpdates.current, sessionAgentId)
       }
       for (const sessionAgentId of projectedSessions.current.keys()) {
-        if (!nextProjected.has(sessionAgentId) && state.browserHostHydrated) {
+        if (!nextProjected.has(sessionAgentId)
+          && (state.browserHostHydrated || state.browserSessions[sessionAgentId] !== undefined)) {
           canonicalSessions.current.delete(sessionAgentId)
           dropPendingSession(pendingTabUpdates.current, sessionAgentId)
           receivedCanonicalState = true
@@ -149,19 +155,22 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         for (const report of reports.values()) {
           const sessionResult = result.sessions.find((candidate) => candidate.sessionAgentId === report.sessionAgentId && candidate.profileId === report.profileId)
           if (!sessionResult) continue
-          if (sessionResult.snapshot) canonicalSessions.current.set(report.sessionAgentId, sessionResult.snapshot)
+          const managedSnapshot = sessionResult.snapshot ? managedSessionProjection(sessionResult.snapshot) : null
+          if (managedSnapshot) canonicalSessions.current.set(report.sessionAgentId, managedSnapshot)
           if (sessionResult.status === 'accepted') {
             for (const tab of report.tabs) {
               if (pendingTabUpdates.current.get(tab.tabId) === sent.get(tab.tabId)) pendingTabUpdates.current.delete(tab.tabId)
             }
-            rebasePendingSession(pendingTabUpdates.current, sessionResult.snapshot)
+            if (managedSnapshot) rebasePendingSession(pendingTabUpdates.current, managedSnapshot)
+            else dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
           } else if (sessionResult.status === 'revision-conflict') {
             sawConflict = true
             // A changed report base is real progress and warrants one rebased
             // attempt. An unchanged conflict waits for new canonical/runtime
             // state rather than polling the backend forever.
             if (sessionResult.snapshot.revision !== report.baseRevision) conflictMadeProgress = true
-            rebasePendingSession(pendingTabUpdates.current, sessionResult.snapshot)
+            if (managedSnapshot) rebasePendingSession(pendingTabUpdates.current, managedSnapshot)
+            else dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
           } else if (sessionResult.status === 'rejected' && sessionResult.reason !== 'invalid-report') {
             dropPendingSession(pendingTabUpdates.current, report.sessionAgentId)
           }
@@ -187,12 +196,60 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const scheduleReport = useCallback(() => scheduleReportTimer(flushReports, reportTimer), [flushReports])
 
     const executeRequest = useCallback(async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
+      const turnDisposition = externalTurnDisposition(request)
+      if (turnDisposition) {
+        const externalBridge = typeof window !== 'undefined' ? window.electronBridge?.externalChrome : undefined
+        if (!externalBridge?.turnEnded || !request.tabId) return hostFailureResponse(request, new BrowserRendererError('host-disconnected', 'External Chrome turn bridge is unavailable'))
+        const handedOff = await externalBridge.turnEnded({
+          requestId: request.requestId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, ...turnDisposition,
+        })
+        if (!handedOff.ok) {
+          const code: BrowserAutomationErrorCode = handedOff.error === 'stale-or-lost' ? 'lease-lost'
+            : handedOff.error === 'invalid-request' ? 'invalid-input' : 'execution-failed'
+          return hostFailureResponse(request, new BrowserRendererError(code, `External Chrome turn disposition failed: ${handedOff.error}`))
+        }
+        return {
+          requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          operation: 'status', ok: true, result: {
+            available: handedOff.status.instances.length > 0,
+            externalChromeTurnDisposition: turnDisposition,
+            host: { hostKind: 'external-chrome', connected: handedOff.status.instances.length > 0, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: handedOff.status.instances[0]?.connectedAt ?? null },
+            panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null,
+          }, elapsedMs: 0,
+        }
+      }
+      const lifecycleRelease = externalLifecycleRelease(request)
+      if (lifecycleRelease) {
+        const externalBridge = typeof window !== 'undefined' ? window.electronBridge?.externalChrome : undefined
+        if (!externalBridge?.releaseForLifecycle || !request.tabId) return hostFailureResponse(request, new BrowserRendererError('host-disconnected', 'External Chrome lifecycle release bridge is unavailable'))
+        const released = await externalBridge.releaseForLifecycle({
+          requestId: request.requestId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, ...lifecycleRelease,
+        })
+        if (!released.ok) {
+          const code: BrowserAutomationErrorCode = released.error === 'stale-or-lost' ? 'lease-lost'
+            : released.error === 'invalid-request' ? 'invalid-input' : 'execution-failed'
+          return hostFailureResponse(request, new BrowserRendererError(code, `External Chrome lifecycle release failed: ${released.error}`))
+        }
+        return {
+          requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          operation: 'status', ok: true, result: {
+            available: released.status.instances.length > 0,
+            externalChromeLifecycleRelease: { phase: lifecycleRelease.phase, releaseId: lifecycleRelease.releaseId },
+            host: { hostKind: 'external-chrome', connected: released.status.instances.length > 0, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: released.status.instances[0]?.connectedAt ?? null },
+            panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null,
+          }, elapsedMs: 0,
+        }
+      }
       const currentBridge = bridgeRef.current
       if (!currentBridge) return hostFailureResponse(request, new Error('Electron browser host is unavailable'))
       let invoked = request
       let provisional: BrowserTabSnapshot | null = null
       try {
-        if (request.operation === 'open' && request.tabId === null) {
+        if (request.hostKind === 'managed-electron' && request.operation === 'open' && request.tabId === null) {
           provisional = createProvisionalTab(request.sessionAgentId, request.profileId, request.input.url)
           await currentBridge.ensureProvisional({ tab: provisional, visible: false, created: true, workspaceEpoch: workspaceEpochRef.current })
           invoked = { ...request, tabId: provisional.tabId, input: { ...request.input, tabId: provisional.tabId } } as BrowserAutomationRequest
@@ -218,7 +275,14 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         hostId: hostIdRef.current,
         clientInstanceId: controllerInstanceIdRef.current,
         capabilities: {
+          hostKind: 'managed-electron',
+          protocolVersions: { minimum: 1, maximum: 1 },
           supportedOperations: bridge.capabilities.supportedOperations as BrowserHostRegistration['capabilities']['supportedOperations'],
+          runtimeVersions: { electron: 'desktop', chromium: 'embedded', playwright: bridge.capabilities.playwrightVersion },
+          features: {
+            resize: true, recording: bridge.capabilities.supportsRecording, capturePage: true,
+            downloadEvents: false, downloadArtifacts: false, downloadOpen: false,
+          },
           electronVersion: 'desktop', chromiumVersion: 'embedded', playwrightVersion: bridge.capabilities.playwrightVersion,
           maxResponseBytes: 8 * 1024 * 1024, supportsSandboxedWebviews: true, supportsCapturePage: true,
           supportsRecording: bridge.capabilities.supportsRecording,
@@ -229,6 +293,57 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     }, [bridge, client, executeRequest])
 
     useEffect(() => {
+      const external = typeof window !== 'undefined' && window.electronBridge?.windowRole === 'main'
+        ? window.electronBridge.externalChrome
+        : undefined
+      if (!external?.localStatus || !selectedSessionAgentId || !selectedProfileId) return
+      let disposed = false
+      const inspect = async (): Promise<void> => {
+        try {
+          const result = await external.localStatus!(selectedSessionAgentId, selectedProfileId)
+          const ready = result.ok && result.status.coordinator.state === 'online'
+            && result.status.coordinator.setup.pathState === 'ready' && result.status.instances.length > 0
+          // Once registered, retain the handler across runtime loss so status can report
+          // available:false immediately instead of leaving a stale broker registration to time out.
+          if (!disposed && ready) {
+            const operationSets = result.status.instances.map((instance) => new Set(instance.supportedOperations ?? EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS))
+            const supportedOperations = [...(operationSets[0] ?? new Set(EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS))]
+              .filter((operation) => operationSets.every((operations) => operations.has(operation)))
+            setExternalRuntimeOperations((current) => current.length === supportedOperations.length &&
+              current.every((operation, index) => operation === supportedOperations[index]) ? current : supportedOperations)
+            setExternalPayloadVersion(result.status.instances[0]?.payloadVersion ?? 'unknown')
+            setExternalRuntimeAvailable(true)
+          }
+        } catch { /* initial registration remains gated; an existing handler stays live */ }
+      }
+      void inspect()
+      const timer = window.setInterval(() => void inspect(), 3_000)
+      return () => { disposed = true; window.clearInterval(timer) }
+    }, [selectedProfileId, selectedSessionAgentId])
+
+    useEffect(() => {
+      if (!client || !bridge || !externalRuntimeAvailable || externalRuntimeOperations.length === 0 || typeof client.registerSecondaryBrowserAutomationHost !== 'function') return
+      const registration: BrowserHostRegistration = {
+        hostId: externalHostIdRef.current,
+        clientInstanceId: controllerInstanceIdRef.current,
+        capabilities: {
+          hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
+          supportedOperations: externalRuntimeOperations, maxResponseBytes: 1024 * 1024,
+          runtimeVersions: { chrome: 'external', extension: externalPayloadVersion },
+          // capturePage/supportsCapturePage are Managed Browser physical capture/export flags,
+          // not the typed snapshot operation advertised in supportedOperations.
+          features: {
+            resize: false, recording: false, capturePage: false, downloadEvents: false,
+            downloadArtifacts: false, downloadOpen: false,
+          },
+          supportsSandboxedWebviews: false, supportsCapturePage: false, supportsRecording: false,
+        },
+        registeredAt: new Date().toISOString(),
+      }
+      return client.registerSecondaryBrowserAutomationHost(registration, executeRequest)
+    }, [bridge, client, executeRequest, externalPayloadVersion, externalRuntimeAvailable, externalRuntimeOperations])
+
+    useEffect(() => {
       if (!bridge) return
       const sequence = ++reconcileSequenceRef.current
       void bridge.reconcile({
@@ -236,7 +351,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         hostGeneration: state.browserHost.hostGeneration ?? 0,
         updateSequence: sequence,
         workspaceEpoch: workspaceEpochRef.current,
-        sessions: Object.values(state.browserSessions),
+        sessions: [...managedSessionMap(state.browserSessions).values()],
       }).catch(() => undefined)
     }, [bridge, state.browserHost.hostGeneration, state.browserSessions])
 
@@ -250,7 +365,9 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     useEffect(() => {
       if (!bridge || !client) return
       return bridge.onStateChanged((tab) => {
-        const session = canonicalSessions.current.get(tab.sessionAgentId) ?? stateRef.current.browserSessions[tab.sessionAgentId]
+        if (resolveBrowserHostKind(tab.hostKind) !== 'managed-electron') return
+        const session = canonicalSessions.current.get(tab.sessionAgentId)
+          ?? managedSessionProjection(stateRef.current.browserSessions[tab.sessionAgentId])
         if (!session || session.hostingState !== 'hosted' || !session.tabs.some((candidate) => candidate.tabId === tab.tabId)) return
         pendingTabUpdates.current.set(tab.tabId, tab)
         runtimeUpdateSequence.current += 1
@@ -294,7 +411,7 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
       if (!bridge) return
       const mode = workspaceMode
       const logicalVisible = mode === 'popped-out' || (mode !== 'opening' && mode !== 'docking' && panelVisible)
-      for (const session of Object.values(state.browserSessions)) {
+      for (const session of managedSessionMap(state.browserSessions).values()) {
         if (session.hostingState !== 'hosted') continue
         for (const tab of session.tabs) {
           if (tab.lifecycle === 'closed') continue
@@ -379,16 +496,18 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
 
     useEffect(() => {
       if (!workspace?.publish) return
-      const snapshot = selectedSessionAgentId ? state.browserSessions[selectedSessionAgentId] ?? null : null
+      const snapshot = selectedSessionAgentId
+        ? managedSessionProjection(state.browserSessions[selectedSessionAgentId])
+        : null
       void workspace.publish({
         workspaceEpoch: workspaceEpochRef.current,
-        sessionAgentId: selectedSessionAgentId,
-        profileId: selectedProfileId ?? snapshot?.profileId ?? null,
+        sessionAgentId: snapshot ? selectedSessionAgentId : null,
+        profileId: snapshot ? selectedProfileId ?? snapshot.profileId : null,
         snapshot,
         host: state.browserHost,
         mode: workspaceModeRef.current,
         popoutAvailable: workspace.capability.popoutAvailable,
-        connected: Boolean(client && state.connected && selectedSessionAgentId),
+        connected: Boolean(client && state.connected && selectedSessionAgentId && snapshot),
         publishedAt: new Date().toISOString(),
       }).catch(() => undefined)
     }, [client, selectedProfileId, selectedSessionAgentId, state.browserHost, state.browserSessions, state.connected, workspace])
@@ -401,16 +520,18 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
         onWorkspaceModeChange?.(mode)
         // Native owner changed without a host generation change. Re-publish and
         // let the presentation effect verify non-empty physical bounds.
-        const session = selectedSessionRef.current ? stateRef.current.browserSessions[selectedSessionRef.current] : null
+        const session = selectedSessionRef.current
+          ? managedSessionProjection(stateRef.current.browserSessions[selectedSessionRef.current])
+          : null
         if (workspace.publish) void workspace.publish({
           workspaceEpoch: workspaceEpochRef.current,
-          sessionAgentId: selectedSessionRef.current,
-          profileId: selectedProfileRef.current,
-          snapshot: session ?? null,
+          sessionAgentId: session ? selectedSessionRef.current : null,
+          profileId: session ? selectedProfileRef.current ?? session.profileId : null,
+          snapshot: session,
           host: stateRef.current.browserHost,
           mode,
           popoutAvailable: workspace.capability.popoutAvailable,
-          connected: Boolean(clientRef.current && stateRef.current.connected && selectedSessionRef.current),
+          connected: Boolean(clientRef.current && stateRef.current.connected && selectedSessionRef.current && session),
           publishedAt: new Date().toISOString(),
         }).catch(() => undefined)
       })
@@ -446,6 +567,28 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
 )
 
 const MAX_HOST_REPORT_CONFLICT_RETRIES = 3
+
+function managedSessionProjection(session: BrowserSessionSnapshot | null | undefined): BrowserSessionSnapshot | null {
+  if (!session || resolveBrowserHostKind(session.hostKind) !== 'managed-electron') return null
+  const tabs = session.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === 'managed-electron')
+  if (tabs.length === session.tabs.length) return session
+  const tabIds = new Set(tabs.map((tab) => tab.tabId))
+  return {
+    ...session,
+    tabs,
+    activeTabId: session.activeTabId && tabIds.has(session.activeTabId) ? session.activeTabId : null,
+    defaultTabId: session.defaultTabId && tabIds.has(session.defaultTabId) ? session.defaultTabId : null,
+  }
+}
+
+function managedSessionMap(sessions: Record<string, BrowserSessionSnapshot>): Map<string, BrowserSessionSnapshot> {
+  const managed = new Map<string, BrowserSessionSnapshot>()
+  for (const [sessionAgentId, session] of Object.entries(sessions)) {
+    const projected = managedSessionProjection(session)
+    if (projected) managed.set(sessionAgentId, projected)
+  }
+  return managed
+}
 
 function scheduleReportTimer(flush: () => void | Promise<void>, timer: { current: number | null }): void {
   if (timer.current !== null) return
@@ -491,6 +634,7 @@ function rebaseHostOwnedTabFields(canonical: BrowserTabSnapshot, updated: Browse
 function createProvisionalTab(sessionAgentId: string, profileId: string, url?: string): BrowserTabSnapshot {
   const now = new Date().toISOString()
   return {
+    hostKind: 'managed-electron',
     tabId: `tab-${randomId()}`, sessionAgentId, profileId, url: url ? normalizeUrl(url) : 'about:blank', title: 'New tab',
     lifecycle: 'restoring', loading: false, live: false, canGoBack: false, canGoForward: false, zoomFactor: 1,
     controller: 'none', agentCursor: null, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: null,
@@ -512,7 +656,7 @@ class BrowserRendererError extends Error {
 function hostFailureResponse(request: BrowserAutomationRequest, error: unknown): BrowserAutomationResponse {
   const failure = error && typeof error === 'object' ? error as { code?: unknown; message?: unknown; retryable?: unknown; details?: unknown } : null
   return {
-    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId,
+    requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId,
     hostId: request.hostId, hostGeneration: request.hostGeneration, operation: request.operation, ok: false,
     error: {
       code: typeof failure?.code === 'string' ? failure.code as BrowserAutomationErrorCode : 'execution-failed',
@@ -521,5 +665,20 @@ function hostFailureResponse(request: BrowserAutomationRequest, error: unknown):
       ...(failure?.details && typeof failure.details === 'object' ? { details: failure.details as Record<string, string | number | boolean | null> } : {}),
     }, elapsedMs: 0,
   }
+}
+function externalTurnDisposition(request: BrowserAutomationRequest): { turnId: string; disposition: 'handoff' } | null {
+  if (request.hostKind !== 'external-chrome' || request.operation !== 'status' || request.tabId === null) return null
+  const turn = request.input.externalChromeTurnDisposition
+  if (!turn || turn.disposition !== 'handoff' || !request.requestId.startsWith('external-chrome-turn-ended:')) return null
+  return turn
+}
+function externalLifecycleRelease(request: BrowserAutomationRequest): {
+  phase: 'prepare' | 'finalize'; releaseId: string; reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced';
+  originalHostId: string; originalHostGeneration: number
+} | null {
+  if (request.hostKind !== 'external-chrome' || request.operation !== 'status' || request.tabId === null) return null
+  const lifecycle = request.input.externalChromeLifecycleRelease
+  if (!lifecycle || !request.requestId.startsWith(`external-chrome-release:${lifecycle.phase}:${lifecycle.reason}:`)) return null
+  return lifecycle
 }
 function randomId(): string { try { return crypto.randomUUID() } catch { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` } }

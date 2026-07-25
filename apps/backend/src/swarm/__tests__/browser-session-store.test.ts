@@ -77,6 +77,58 @@ describe("BrowserSessionStore", () => {
     expect(entries).toEqual(["browser.json"]);
   });
 
+  it("defaults legacy persisted session and tab host kinds to Managed Electron", async () => {
+    const dataDir = await root();
+    const store = new BrowserSessionStore({ dataDir, now });
+    await store.save(snapshot(store));
+    const path = store.getStatePath("profile-1", "manager-1");
+    const legacy = JSON.parse(await readFile(path, "utf8"));
+    delete legacy.hostKind;
+    delete legacy.tabs[0].hostKind;
+    await writeFile(path, JSON.stringify(legacy), "utf8");
+    await expect(store.load("profile-1", "manager-1")).resolves.toMatchObject({
+      hostKind: "managed-electron",
+      tabs: [{ hostKind: "managed-electron" }],
+    });
+  });
+
+  it("namespaces identical tab ids by host kind", async () => {
+    const dataDir = await root();
+    const store = new BrowserSessionStore({ dataDir, now });
+    const state = snapshot(store);
+    state.tabs.push({ ...tab(), hostKind: "external-chrome", title: "External" });
+    await store.save(state);
+    await expect(store.load("profile-1", "manager-1")).resolves.toMatchObject({
+      tabs: [
+        { tabId: "tab-1", hostKind: "managed-electron" },
+        { tabId: "tab-1", hostKind: "external-chrome" },
+      ],
+    });
+  });
+
+  it("never persists External Chrome titles, full URLs, origins, or action copies", async () => {
+    const dataDir = await root();
+    const store = new BrowserSessionStore({ dataDir, now });
+    const state = snapshot(store);
+    state.hostKind = "external-chrome";
+    state.tabs = [{ ...tab(), hostKind: "external-chrome", url: "https://private.invalid/path?secret=yes", title: "Private title" }];
+    state.recentActions = [{
+      id: "external-action", operation: "navigate", tabId: "tab-1", status: "succeeded",
+      url: "https://private.invalid/path?secret=yes", title: "Private title", startedAt: now(),
+    }];
+    await store.save(state);
+    const persisted = await readFile(store.getStatePath("profile-1", "manager-1"), "utf8");
+    expect(persisted).not.toContain("private.invalid");
+    expect(persisted).not.toContain("Private title");
+    expect(JSON.parse(persisted)).toMatchObject({ tabs: [{ url: "", title: "", error: null }], recentActions: [{ id: "external-action" }] });
+    const restarted = new BrowserSessionStore({ dataDir, now });
+    await expect(restarted.load("profile-1", "manager-1")).resolves.toMatchObject({
+      hostKind: "external-chrome",
+      tabs: [{ hostKind: "external-chrome", url: "", title: "", error: null }],
+      recentActions: [{ id: "external-action" }],
+    });
+  });
+
   it("persists only canonical metadata and omits screenshot, page, evaluate, and diagnostic payloads", async () => {
     const dataDir = await root();
     const store = new BrowserSessionStore({ dataDir, now });

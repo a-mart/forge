@@ -1,3 +1,4 @@
+import { resolveBrowserHostKind } from '@forge/protocol'
 import type {
   BrowserSessionSnapshot,
   BrowserTabSnapshot,
@@ -108,9 +109,9 @@ export class ManagedBrowserViewHost {
 
       const next = new Map<string, BrowserTabSnapshot>()
       for (const session of input.sessions) {
-        if (session.hostingState !== 'hosted') continue
+        if (session.hostingState !== 'hosted' || resolveBrowserHostKind(session.hostKind) !== 'managed-electron') continue
         for (const tab of session.tabs) {
-          if (tab.lifecycle !== 'closed') next.set(tab.tabId, tab)
+          if (resolveBrowserHostKind(tab.hostKind) === 'managed-electron' && tab.lifecycle !== 'closed') next.set(tab.tabId, tab)
         }
       }
       this.desired.clear()
@@ -120,7 +121,8 @@ export class ManagedBrowserViewHost {
       // are protected until commit/abort resolves their open request.
       for (const [tabId, owned] of [...this.tabs]) {
         const canonical = next.get(tabId)
-        const explicitlyUnhosted = input.sessions.some((session) => session.sessionAgentId === owned.tab.sessionAgentId && session.hostingState !== 'hosted')
+        const explicitlyUnhosted = input.sessions.some((session) => session.sessionAgentId === owned.tab.sessionAgentId
+          && (session.hostingState !== 'hosted' || resolveBrowserHostKind(session.hostKind) !== 'managed-electron'))
         const committedExpired = owned.committedAtSequence !== null && input.updateSequence > owned.committedAtSequence + 1
         if (!canonical && (!owned.provisional || explicitlyUnhosted || committedExpired)) this.closeOwnedTab(tabId)
         else if (canonical) { owned.tab = canonical; owned.provisional = false; owned.committedAtSequence = null }
@@ -135,6 +137,9 @@ export class ManagedBrowserViewHost {
   async ensureProvisional(tab: BrowserTabSnapshot, workspaceEpoch: number): Promise<BrowserTabSnapshot> {
     return this.serialize(async () => {
       this.assertEpoch(workspaceEpoch)
+      if (resolveBrowserHostKind(tab.hostKind) !== 'managed-electron') {
+        throw new BrowserHostError('invalid-input', 'Managed browser host cannot own an external Chrome tab')
+      }
       const existing = this.tabs.get(tab.tabId)
       if (existing) {
         if (existing.tab.sessionAgentId !== tab.sessionAgentId || existing.tab.profileId !== tab.profileId) {
@@ -259,6 +264,9 @@ export class ManagedBrowserViewHost {
 
   private async createTab(tab: BrowserTabSnapshot, provisional: boolean): Promise<BrowserTabSnapshot> {
     this.assertAlive()
+    if (resolveBrowserHostKind(tab.hostKind) !== 'managed-electron') {
+      throw new BrowserHostError('invalid-input', 'Managed browser host cannot own an external Chrome tab')
+    }
     if (!isAllowedManagedBrowserUrl(tab.url)) throw new BrowserHostError('invalid-url', 'Managed browser URLs must use HTTP or HTTPS')
     const view = new WebContentsView({
       webPreferences: managedBrowserWebPreferences(

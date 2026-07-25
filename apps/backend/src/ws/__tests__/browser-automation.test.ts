@@ -33,11 +33,68 @@ describe('browser websocket transport', () => {
     })
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_response', response: { requestId: 1 } }))).ok).toBe(false)
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: 'browser_host_state_report', hostId: 'host-1', hostGeneration: 1, sessions: [] }))).ok).toBe(false)
+    expect(parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_select', requestId: 'select-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostKind: 'external-chrome',
+    })))).toMatchObject({ ok: true, command: { type: 'browser_host_select', hostKind: 'external-chrome' } })
     for (const type of [
       'browser_host_register', 'browser_host_hydrate', 'browser_host_focus', 'browser_host_response', 'browser_host_state_report',
-      'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
+      'browser_panel_reveal_acknowledge', 'browser_host_select', 'browser_external_chrome_detach_confirmed',
+      'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize',
       'browser_recording_start', 'browser_recording_stop',
     ] as const) expect(BUILDER_COMMAND_ACCESS[type]).toBe('admin')
+  })
+
+  it('normalizes legacy host payloads and restricts External Chrome registration to M4 capabilities', () => {
+    const legacy = parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_register', requestId: 'legacy', registration: registration(),
+    })))
+    expect(legacy).toMatchObject({
+      ok: true,
+      command: { registration: { capabilities: {
+        hostKind: 'managed-electron', protocolVersions: { minimum: 1, maximum: 1 },
+        features: { resize: true, recording: true, capturePage: true },
+      } } },
+    })
+    const external = parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_register', requestId: 'external', registration: {
+        hostId: 'external-host', clientInstanceId: 'external-instance', registeredAt: new Date().toISOString(),
+        capabilities: {
+          hostKind: 'external-chrome', protocolVersions: { minimum: 1, maximum: 1 },
+          supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'],
+          maxResponseBytes: 1_000_000,
+          features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+          runtimeVersions: { chrome: '138', extension: 'm4-fake' },
+        },
+      },
+    })))
+    expect(external).toMatchObject({ ok: true, command: { registration: { capabilities: { hostKind: 'external-chrome' } } } })
+    const overclaim = JSON.parse(JSON.stringify({
+      type: 'browser_host_register', requestId: 'external-overclaim', registration: {
+        hostId: 'external-host', clientInstanceId: 'external-instance', registeredAt: new Date().toISOString(),
+        capabilities: {
+          hostKind: 'external-chrome', supportedOperations: ['status', 'resize'], maxResponseBytes: 1_000_000,
+          features: { resize: false, recording: false, capturePage: false, downloadEvents: false, downloadArtifacts: false, downloadOpen: false },
+        },
+      },
+    }))
+    expect(parseClientCommand(Buffer.from(JSON.stringify(overclaim)))).toEqual({
+      ok: false,
+      error: 'External Chrome may advertise only M4-qualified operations',
+    })
+    overclaim.registration.capabilities.supportedOperations = ['status']
+    overclaim.registration.capabilities.features.capturePage = true
+    expect(parseClientCommand(Buffer.from(JSON.stringify(overclaim)))).toEqual({
+      ok: false,
+      error: 'External Chrome may not advertise physical viewport, recording, capture, or download features',
+    })
+    const oldResponse = parseClientCommand(Buffer.from(JSON.stringify({
+      type: 'browser_host_response', response: {
+        requestId: 'old', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: null,
+        hostId: 'host-1', hostGeneration: 1, operation: 'status', ok: false, elapsedMs: 0,
+        error: { code: 'unavailable-host', message: 'old', retryable: true },
+      },
+    })))
+    expect(oldResponse).toMatchObject({ ok: true, command: { response: { hostKind: 'managed-electron' } } })
   })
 
   it('recovers independently dropped registration and hydration phases without changing the connection', async () => {
@@ -76,6 +133,77 @@ describe('browser websocket transport', () => {
     await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'hydrate-retry', hostId: 'host-1', hostGeneration: 2 } })
     expect(delivered[1]).toMatchObject({ type: 'browser_host_hydration_chunk', requestId: 'hydrate-retry', hostGeneration: 2, chunkIndex: 0, chunkCount: 1 })
     expect(service.broker.isCurrentConnection('same-connection', 'host-1', 2)).toBe(true)
+  })
+
+  it('registers and hydrates a recovered External Chrome generation without pre-connection lifecycle requests', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-external-restart-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const persisted = service.store.createEmpty('profile-1', 'session-1')
+    persisted.hostKind = 'external-chrome'
+    persisted.tabs = [{ ...tabFor({ sessionAgentId: 'session-1', profileId: 'profile-1' } as BrowserAutomationRequest, 'ext.profile_a.7'), hostKind: 'external-chrome' }]
+    persisted.activeTabId = 'ext.profile_a.7'
+    persisted.defaultTabId = 'ext.profile_a.7'
+    await service.store.save(persisted)
+    const delivered: ServerEvent[] = []
+    const common = {
+      socket: {} as WebSocket,
+      connectionId: 'external-connection',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => undefined,
+      resolveProfileIdForAgent: () => undefined,
+      send: (_socket: WebSocket, event: ServerEvent) => delivered.push(event),
+      sendCritical: async (_socket: WebSocket, event: ServerEvent) => { delivered.push(event); return Buffer.byteLength(JSON.stringify(event)) },
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [await service.getHostHydrationSnapshot('profile-1', 'session-1', 'external-chrome')],
+    }
+    const external = {
+      ...registration('external-host'),
+      capabilities: { ...registration().capabilities, hostKind: 'external-chrome' as const, supportedOperations: ['status', 'open', 'navigate'] as const },
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'external-register', registration: external } })
+    expect(delivered).toEqual([expect.objectContaining({ type: 'browser_host_connected', requestId: 'external-register', host: expect.objectContaining({ hostGeneration: 1 }) })])
+    expect(delivered.some((event) => event.type === 'browser_automation_request')).toBe(false)
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_hydrate', requestId: 'external-hydrate', hostKind: 'external-chrome', hostId: 'external-host', hostGeneration: 1 } })
+    expect(delivered.at(-1)).toMatchObject({ type: 'browser_host_hydration_chunk', requestId: 'external-hydrate', hostKind: 'external-chrome', hostGeneration: 1 })
+  })
+
+  it('returns a correlated safe error when External Chrome replacement release fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-host-replacement-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    service.registerHostWithLifecycleRelease = async () => { throw new Error('private lease detail') }
+    const sent: ServerEvent[] = []
+    await handleBrowserCommand({
+      command: {
+        type: 'browser_host_register',
+        requestId: 'replacement-1',
+        registration: {
+          ...registration('external-new'),
+          capabilities: {
+            ...registration().capabilities,
+            hostKind: 'external-chrome',
+            supportedOperations: ['status', 'open', 'navigate'],
+          },
+        },
+      },
+      socket: {} as WebSocket,
+      connectionId: 'new-connection',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => undefined,
+      resolveProfileIdForAgent: () => undefined,
+      send: (_socket, event) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    })
+
+    expect(sent).toEqual([{
+      type: 'error',
+      code: 'BROWSER_HOST_REGISTER_LIFECYCLE_RELEASE_FAILED',
+      message: 'External Chrome host replacement was blocked because its current lease could not be released.',
+      requestId: 'replacement-1',
+    }])
+    expect(JSON.stringify(sent)).not.toContain('private lease detail')
   })
 
   it('frames oversized multi-session hydration below the websocket event limit', async () => {
@@ -314,6 +442,55 @@ describe('browser websocket transport', () => {
     })
   })
 
+  it('restores External Chrome host and tab ids atomically after an inactive managed open', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-inactive-host-'))
+    roots.push(root)
+    const service = new BrowserAutomationService({ dataDir: root })
+    const canonical = service.store.createEmpty('profile-1', 'session-1')
+    canonical.hostKind = 'external-chrome'
+    canonical.tabs = [{ ...tabFor({ hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1' }, 'external-tab'), hostKind: 'external-chrome' }]
+    canonical.activeTabId = 'external-tab'
+    canonical.defaultTabId = 'external-tab'
+    await service.store.save(canonical)
+    const socket = {} as WebSocket
+    const sent: ServerEvent[] = []
+    const common = {
+      socket,
+      connectionId: 'managed-connection',
+      subscribedAgentId: 'session-1',
+      browserAutomationService: service,
+      resolveManagerContextAgentId: () => 'session-1',
+      resolveProfileIdForAgent: () => 'profile-1',
+      send: (_socket: WebSocket, event: ServerEvent) => sent.push(event),
+      broadcastToSession: () => undefined,
+      hydrateHostSessions: async () => [],
+    }
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_register', requestId: 'register-managed', registration: registration() } })
+    sent.length = 0
+
+    const opening = handleBrowserCommand({
+      ...common,
+      command: { type: 'browser_tab_open', requestId: 'inactive-open', sessionAgentId: 'session-1', profileId: 'profile-1', activate: false },
+    })
+    const request = await nextAutomationRequest(sent, 'open')
+    const managedTab = tabFor(request, 'managed-tab')
+    await handleBrowserCommand({ ...common, command: { type: 'browser_host_response', response: {
+      ...routing(request), operation: 'open', ok: true,
+      result: { tab: managedTab, created: true, panelRevealRequested: false }, elapsedMs: 1, updatedTab: managedTab,
+    } } })
+    await opening
+
+    const succeeded = sent.find((event): event is Extract<ServerEvent, { type: 'browser_tab_command_succeeded' }> =>
+      event.type === 'browser_tab_command_succeeded' && event.requestId === 'inactive-open')
+    expect(succeeded?.snapshot).toMatchObject({
+      hostKind: 'external-chrome', activeTabId: 'external-tab', defaultTabId: 'external-tab',
+      tabs: [
+        expect.objectContaining({ hostKind: 'external-chrome', tabId: 'external-tab' }),
+        expect.objectContaining({ hostKind: 'managed-electron', tabId: 'managed-tab' }),
+      ],
+    })
+  })
+
   it('persists reveal acknowledgement only from the selected current host generation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'forge-browser-ws-reveal-ack-'))
     roots.push(root)
@@ -419,7 +596,7 @@ describe('browser websocket transport', () => {
     } })
     expect(sent.at(-1)).toEqual({
       type: 'browser_host_state_report_result', requestId: 'report-stale',
-      result: { hostId: 'host-1', hostGeneration: 1, status: 'stale-host-generation', sessions: [] },
+      result: { hostKind: 'managed-electron', hostId: 'host-1', hostGeneration: 1, status: 'stale-host-generation', sessions: [] },
     })
   })
 })
@@ -427,6 +604,7 @@ describe('browser websocket transport', () => {
 function routing(request: BrowserAutomationRequest) {
   return {
     requestId: request.requestId,
+    hostKind: request.hostKind,
     sessionAgentId: request.sessionAgentId,
     profileId: request.profileId,
     tabId: request.tabId,
@@ -434,10 +612,10 @@ function routing(request: BrowserAutomationRequest) {
     hostGeneration: request.hostGeneration,
   }
 }
-function tabFor(request: Pick<BrowserAutomationRequest, 'sessionAgentId' | 'profileId'>, tabId: string) {
+function tabFor(request: Pick<BrowserAutomationRequest, 'hostKind' | 'sessionAgentId' | 'profileId'>, tabId: string) {
   const now = new Date().toISOString()
   return {
-    tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, url: 'https://example.com/', title: 'Example',
+    hostKind: request.hostKind, tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId, url: 'https://example.com/', title: 'Example',
     lifecycle: 'ready' as const, loading: false, live: true, canGoBack: false, canGoForward: false, zoomFactor: 1,
     controller: 'none' as const, agentCursor: null, recording: null, viewportSetting: { mode: 'fill' as const }, renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, error: null, createdAt: now, updatedAt: now,
   }

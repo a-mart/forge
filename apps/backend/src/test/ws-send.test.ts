@@ -68,6 +68,7 @@ describe('sendWsEventWithBackpressure', () => {
   it('exposes ready and conversation_history as bootstrap-critical', () => {
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('ready')).toBe(true)
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('conversation_history')).toBe(true)
+    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('bootstrap_failed')).toBe(true)
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agents_snapshot')).toBe(true)
     expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agent_message')).toBe(false)
   })

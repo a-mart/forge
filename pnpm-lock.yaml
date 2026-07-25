@@ -178,6 +178,21 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
 
+  apps/chrome-extension:
+    devDependencies:
+      '@forge/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.13)(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@2.2.0))(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.10.13)(typescript@5.9.3))(tsx@4.21.0)(yaml@2.9.0)
+
   apps/electron:
     dependencies:
       '@forge/protocol':
@@ -214,6 +229,27 @@ importers:
       tsx:
         specifier: ^4.20.3
         version: 4.21.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.13)(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@2.2.0))(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.10.13)(typescript@5.9.3))(tsx@4.21.0)(yaml@2.9.0)
+
+  apps/native-messaging-host:
+    devDependencies:
+      '@electron/windows-sign':
+        specifier: 1.2.2
+        version: 1.2.2
+      '@forge/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.10.13
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
@@ -8974,7 +9010,6 @@ snapshots:
       postject: 1.0.0-alpha.6
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   '@emnapi/core@1.8.1':
     dependencies:
@@ -12524,8 +12559,7 @@ snapshots:
 
   commander@8.3.0: {}
 
-  commander@9.5.0:
-    optional: true
+  commander@9.5.0: {}
 
   compare-version@0.1.2: {}
 
@@ -12599,8 +12633,7 @@ snapshots:
     dependencies:
       luxon: 3.7.2
 
-  cross-dirname@0.1.0:
-    optional: true
+  cross-dirname@0.1.0: {}
 
   cross-env@7.0.3:
     dependencies:
@@ -15253,7 +15286,6 @@ snapshots:
   postject@1.0.0-alpha.6:
     dependencies:
       commander: 9.5.0
-    optional: true
 
   prebuild-install@7.1.3:
     dependencies:

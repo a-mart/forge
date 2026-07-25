@@ -284,7 +284,7 @@ function failure(
   details?: BrowserAutomationFailure['details'],
 ): BrowserAutomationResponse {
   return {
-    requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+    requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
     tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
     operation: request.operation, ok: false, error: { code, message, retryable, ...(details ? { details } : {}) }, elapsedMs: 0,
   }

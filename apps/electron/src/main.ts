@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
+import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel, type UpdateQuiesceHook } from './auto-updater.js'
 import { installCli, verifyCliInstall, writeInstallHint, type CliInstallResult } from './cli-install.js'
 import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from './deep-link.js'
 import { fixPath } from './fix-path.js'
@@ -24,6 +24,11 @@ import type { ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contr
 import { LifecycleLog } from './lifecycle-log.js'
 import { installSecureVaultChildBridge, installSecureVaultRendererIpc } from './secure-vault-ipc.js'
 import { applyElectronStartupOverrides } from './startup-overrides.js'
+import { ExternalChromeDeployer } from './external-chrome/deployer.js'
+import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
+import { ExternalChromeHostCoordinator } from './external-chrome/coordinator.js'
+import { ExternalChromeTargetAdapter } from './browser/external-chrome-target-adapter.js'
+import { installExternalChromeIpc } from './external-chrome/ipc.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
 loadDotEnv()
@@ -54,6 +59,8 @@ const EXTERNAL_PROTOCOL_SCHEME = 'forge'
 type BackendReadyMessage = {
   type: 'ready'
   port: number
+  /** Optional for compatibility with older backend children. */
+  dataDir?: string
 }
 
 type BackendBootstrap = {
@@ -64,6 +71,8 @@ type BackendBootstrap = {
   windowRole: 'main' | 'managed-browser-popout'
   managedBrowserPopoutAvailable: boolean
   secureControlToken: string
+  /** Backend-resolved, post-migration canonical root. Optional for old Desktop clients. */
+  dataDir?: string
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -78,12 +87,18 @@ let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
 let appProtocolRegistered = false
 let disposeBrowserHost: (() => void) | null = null
+let disposeExternalChromeIpc: (() => void) | null = null
+let externalChromeCoordinator: ExternalChromeHostCoordinator | null = null
+let externalChromeDeployer: ExternalChromeDeployer | null = null
 const browserSessions = new BrowserSessionRegistry()
 let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
 const lifecycleLog = new LifecycleLog({
   getLogPath: () => path.join(app.getPath('userData'), LIFECYCLE_LOG_FILENAME),
 })
 const handledTerminationSignals = new Set<NodeJS.Signals>()
+const externalChromeUpdateQuiesceHook: UpdateQuiesceHook = {
+  quiesce: async () => externalChromeCoordinator?.quiesce('desktop-update'),
+}
 
 app.commandLine.appendSwitch('disable-background-timer-throttling')
 
@@ -102,6 +117,7 @@ protocol.registerSchemesAsPrivileged([
 class BackendSupervisor {
   private child: ChildProcess | null = null
   private currentPort: number | null = null
+  private currentDataDir: string | null = null
   private startPromise: Promise<number> | null = null
   private stopping = false
   private restartTimer: NodeJS.Timeout | null = null
@@ -118,7 +134,11 @@ class BackendSupervisor {
       throw new Error('Backend bootstrap requested before backend was ready')
     }
 
-    return buildBackendBootstrap(this.currentPort, this.secureControlToken)
+    return buildBackendBootstrap(
+      this.currentPort,
+      this.currentDataDir ?? undefined,
+      this.secureControlToken,
+    )
   }
 
   get logPath(): string | null {
@@ -307,6 +327,7 @@ class BackendSupervisor {
 
         ready = true
         this.currentPort = message.port
+        this.currentDataDir = message.dataDir && path.isAbsolute(message.dataDir) ? path.normalize(message.dataDir) : null
         lifecycleLog.record('backend_ready', { isRestart, pid: child.pid ?? null, port: message.port })
         this.onReady(message.port, isRestart)
         finalizeResolve(message.port)
@@ -493,6 +514,9 @@ async function prepareQuitForUpdate(): Promise<void> {
     browserWorkspaceIpc = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
+    disposeExternalChromeIpc?.()
+    disposeExternalChromeIpc = null
+    await externalChromeCoordinator?.quiesce('desktop-update')
     await backendSupervisor.stop()
   }
 }
@@ -672,18 +696,36 @@ if (!hasSingleInstanceLock) {
       return
     }
 
+    externalChromeDeployer = await deployPackagedExternalChrome()
+    externalChromeCoordinator = new ExternalChromeHostCoordinator({
+      dataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
+      desktopVersion: app.getVersion(),
+      ...(app.isPackaged ? {
+        packagedManifestPath: path.join(process.resourcesPath, 'external-chrome', 'package-manifest.json'),
+      } : {}),
+      ...(externalChromeDeployer ? {
+        rollbackController: externalChromeDeployer,
+        repairDeployment: () => externalChromeDeployer!.stage(),
+        deploymentVerifier: externalChromeDeployer,
+      } : {}),
+    })
+    await externalChromeCoordinator.resumeIfEnabled().catch((error) => {
+      console.warn('[external-chrome] Previously enabled coordinator could not resume', error instanceof Error ? error.message : String(error))
+    })
+
     // Write CLI install hint on every launch so the shim can find the current app
     writeInstallHint()
 
     mainWindow = createMainWindow()
     const browserManager = new BrowserAutomationManager({
-      approvedDataRoot: resolveForgeDataRoot(),
+      approvedDataRoot: backendSupervisor.bootstrap.dataDir ?? resolveLegacyForgeDataRoot(),
       hostWebContentsId: mainWindow.webContents.id,
       sendToRenderer: (channel, payload) => {
         if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
           mainWindow.webContents.send(channel, payload)
         }
       },
+      externalChromeAdapter: new ExternalChromeTargetAdapter(externalChromeCoordinator.transport()),
     })
     browserViewHost = new ManagedBrowserViewHost({
       manager: browserManager,
@@ -695,6 +737,16 @@ if (!hasSingleInstanceLock) {
       },
     })
     disposeBrowserHost = installBrowserIpc({ ipcMain, mainWindow, manager: browserManager, viewHost: browserViewHost })
+    disposeExternalChromeIpc = installExternalChromeIpc({
+      ipcMain,
+      mainWindow,
+      coordinator: externalChromeCoordinator,
+      revealExtensionFolder: async (validatedPath) => {
+        const error = await shell.openPath(validatedPath)
+        if (error) throw new Error(error)
+      },
+      onError: (error) => console.warn('[external-chrome] Coordinator operation failed', error instanceof Error ? error.message : String(error)),
+    })
     browserWorkspaceIpc = installBrowserWorkspaceIpc({
       ipcMain,
       getMainWindow: () => mainWindow,
@@ -710,6 +762,7 @@ if (!hasSingleInstanceLock) {
       mainWindow,
       getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
       prepareQuitForUpdate,
+      quiesceHook: externalChromeUpdateQuiesceHook,
     })
     sleepBlockerService = new SleepBlockerService({
       getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
@@ -750,8 +803,12 @@ if (!hasSingleInstanceLock) {
     browserWorkspaceIpc = null
     disposeBrowserHost?.()
     disposeBrowserHost = null
+    disposeExternalChromeIpc?.()
+    disposeExternalChromeIpc = null
 
-    void backendSupervisor.stop().finally(() => {
+    void (externalChromeCoordinator?.quiesce('desktop-quit') ?? Promise.resolve()).catch((error) => {
+      console.warn('[external-chrome] Quit quiesce failed', error instanceof Error ? error.message : String(error))
+    }).finally(() => backendSupervisor.stop()).finally(() => {
       lifecycleLog.record('electron_exit_requested', { code: 0 })
       app.exit(0)
     })
@@ -815,6 +872,8 @@ function createMainWindow(): BrowserWindow {
       browserWorkspaceIpc = null
       disposeBrowserHost?.()
       disposeBrowserHost = null
+      disposeExternalChromeIpc?.()
+      disposeExternalChromeIpc = null
       browserViewHost = null
       mainWindow = null
     }
@@ -1274,7 +1333,11 @@ function isTrustedMainRenderer(event: unknown): boolean {
   return isTrustedRendererUrl(mainWindow.webContents.getURL())
 }
 
-function buildBackendBootstrap(port: number, secureControlToken: string): BackendBootstrap {
+function buildBackendBootstrap(
+  port: number,
+  dataDir: string | undefined,
+  secureControlToken: string,
+): BackendBootstrap {
   return {
     backendUrl: `http://127.0.0.1:${port}`,
     backendWsUrl: `ws://127.0.0.1:${port}`,
@@ -1283,6 +1346,7 @@ function buildBackendBootstrap(port: number, secureControlToken: string): Backen
     windowRole: 'main',
     managedBrowserPopoutAvailable: isManagedBrowserPopoutAvailable(),
     secureControlToken,
+    ...(dataDir ? { dataDir } : {}),
   }
 }
 
@@ -1403,12 +1467,40 @@ function resolveDefaultBackendPort(): number {
   return DEFAULT_BACKEND_PORT
 }
 
-function resolveForgeDataRoot(): string {
-  return path.resolve(
-    process.env.FORGE_DATA_DIR ??
-      process.env.MIDDLEMAN_DATA_DIR ??
-      path.join(app.getPath('home'), '.forge'),
-  )
+async function deployPackagedExternalChrome(): Promise<ExternalChromeDeployer | null> {
+  if (!app.isPackaged) return null
+  const dataRoot = backendSupervisor.bootstrap.dataDir
+  if (!dataRoot) {
+    console.warn('[external-chrome] Backend did not report a canonical data root; deployment skipped for compatibility')
+    return null
+  }
+  const deployer = new ExternalChromeDeployer({
+    dataRoot,
+    resourcesRoot: path.join(process.resourcesPath, 'external-chrome'),
+    desktopVersion: app.getVersion(),
+  })
+  try {
+    await new ExternalChromeDeploymentRecovery(deployer).run()
+    const installed = await deployer.verifyDeployment()
+    await deployer.stage()
+    // Initial install has no running selector/native authority to preserve. Updates
+    // remain staged until an authenticated runtime prepare/quiesce acknowledgement.
+    if (installed.state === 'missing') await deployer.activateStaged()
+  } catch (error) {
+    // External Chrome is optional; deployment failure must not disable Managed Browser or Desktop.
+    console.warn('[external-chrome] Packaged resource deployment failed', error instanceof Error ? error.message : String(error))
+  }
+  return deployer
+}
+
+function resolveLegacyForgeDataRoot(): string {
+  const configured = process.env.FORGE_DATA_DIR ?? process.env.MIDDLEMAN_DATA_DIR
+  if (configured) return path.resolve(configured)
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA?.trim() || path.join(app.getPath('home'), 'AppData', 'Local')
+    return path.resolve(localAppData, 'forge')
+  }
+  return path.resolve(app.getPath('home'), '.forge')
 }
 
 function isBackendReadyMessage(value: unknown): value is BackendReadyMessage {

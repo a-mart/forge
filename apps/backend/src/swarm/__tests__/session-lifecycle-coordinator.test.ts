@@ -53,6 +53,7 @@ describe("SessionLifecycleCoordinator", () => {
     expect(harness.calls).toEqual([
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:archive:forge:forge--s2",
       "capture",
       "codex.close:forge--s2",
       "archive",
@@ -91,6 +92,8 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:archive:forge:forge",
+      "browser.release:archive:forge:forge--s2",
       "archive.profile",
       "browser.archive:forge:forge",
       "tools:forge",
@@ -119,6 +122,7 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:delete:forge:forge--s2",
       "sessions.delete",
       "browser.delete:forge:forge--s2",
       "plans:forge--s2",
@@ -145,6 +149,7 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:delete:forge:forge--s2",
       "sessions.delete",
     ]);
     expect(
@@ -198,6 +203,7 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:stop:forge:forge--s2",
       "lifecycle.stopAll",
     ]);
 
@@ -218,6 +224,8 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:delete:forge:forge",
+      "browser.release:delete:forge:forge--s2",
       "lifecycle.deleteManager",
       "browser.delete:forge:forge",
       "goals.forget:forge",
@@ -240,6 +248,7 @@ describe("SessionLifecycleCoordinator", () => {
       "codex.close:forge--s2",
       "goals.cancel:forge--s2",
       "browser.cancel:forge--s2",
+      "browser.release:stop:forge:forge--s2",
       "lifecycle.stop",
       "tools:forge--s2",
     ]);
@@ -418,6 +427,44 @@ describe("SessionLifecycleCoordinator", () => {
       "secure-fence",
       "deleted",
     );
+  });
+
+  it("blocks archive/delete on failed release but durably marks a failed stop before proceeding", async () => {
+    const archiveHarness = createHarness();
+    archiveHarness.deps.browser.releaseSessionForLifecycle = vi.fn(async () => {
+      archiveHarness.calls.push("browser.release.failed");
+      throw new Error("release failed");
+    });
+    await expect(archiveHarness.coordinator.archiveSession("forge--s2")).rejects.toThrow("release failed");
+    expect(archiveHarness.deps.archive.archiveSession).not.toHaveBeenCalled();
+
+    const deleteHarness = createHarness();
+    deleteHarness.deps.browser.releaseSessionForLifecycle = vi.fn(async () => {
+      deleteHarness.calls.push("browser.release.failed");
+      throw new Error("release failed");
+    });
+    await expect(deleteHarness.coordinator.deleteSession("forge--s2")).rejects.toThrow("release failed");
+    expect(deleteHarness.deps.sessions.deleteSession).not.toHaveBeenCalled();
+
+    const stopHarness = createHarness();
+    stopHarness.deps.browser.releaseSessionForLifecycle = vi.fn(async () => {
+      stopHarness.calls.push("browser.release.failed");
+      throw new Error("release failed");
+    });
+    stopHarness.deps.lifecycle.stopSession = vi.fn(async () => {
+      stopHarness.calls.push("lifecycle.stop");
+      return { terminatedWorkerIds: [] };
+    });
+    await expect(stopHarness.coordinator.stopSession("forge--s2")).resolves.toEqual({ terminatedWorkerIds: [] });
+    expect(stopHarness.calls).toEqual([
+      "codex.close:forge--s2",
+      "goals.cancel:forge--s2",
+      "browser.cancel:forge--s2",
+      "browser.release.failed",
+      "browser.release-failed:stop:forge:forge--s2",
+      "lifecycle.stop",
+      "tools:forge--s2",
+    ]);
   });
 
   it("forks only active Builder sessions and sends a stable source snapshot to extensions", async () => {
@@ -632,6 +679,13 @@ function createHarness(): Harness {
       cancelSession: (agentId) => {
         calls.push(`browser.cancel:${agentId}`);
         return 0;
+      },
+      releaseSessionForLifecycle: async (profileId, agentId, reason) => {
+        calls.push(`browser.release:${reason}:${profileId}:${agentId}`);
+      },
+      recordFailedLifecycleRelease: async (profileId, agentId, reason) => {
+        calls.push(`browser.release-failed:${reason}:${profileId}:${agentId}`);
+        return {} as never;
       },
       archiveSession: async (profileId, agentId) => {
         calls.push(`browser.archive:${profileId}:${agentId}`);

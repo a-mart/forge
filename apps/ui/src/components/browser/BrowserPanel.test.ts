@@ -25,7 +25,7 @@ const { BrowserPanel } = await import('./BrowserPanel')
 let container: HTMLDivElement
 let root: Root | null = null
 beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container) })
-afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); delete window.electronBridge })
+afterEach(() => { if (root) act(() => root?.unmount()); root = null; container.remove(); sessionStorage.clear(); delete window.electronBridge })
 
 const now = new Date(0).toISOString()
 const tab: BrowserTabSnapshot = { tabId: 'tab-1', sessionAgentId: 'session-1', profileId: 'profile-1', url: 'https://example.com', title: 'Example', lifecycle: 'ready', loading: false, live: true, canGoBack: true, canGoForward: false, zoomFactor: 1, controller: 'agent', agentCursor: { x: 20, y: 30, phase: 'move', sequence: 1, createdAt: now }, recording: null, viewportSetting: { mode: 'fill' }, renderedViewport: { width: 1000, height: 700, deviceScaleFactor: 1 }, error: null, createdAt: now, updatedAt: now }
@@ -104,6 +104,22 @@ describe('BrowserPanel', () => {
     expect(container.querySelector('input[aria-label="Viewport width"]')).not.toBeNull()
   })
 
+  it('filters every External Chrome tab from the Managed strip and command targets', () => {
+    const activate = vi.fn()
+    const close = vi.fn()
+    const external = { ...tab, hostKind: 'external-chrome' as const, tabId: 'ext.profile_a.7', title: 'Opaque external secret' }
+    const managed = { ...tab, hostKind: 'managed-electron' as const, tabId: 'managed-1', title: 'Managed visible' }
+    const mixed = { ...snapshot, hostKind: 'managed-electron' as const, tabs: [external, managed], activeTabId: external.tabId, defaultTabId: external.tabId }
+    renderPanel({ snapshot: mixed, host: connectedHost, commandPort: createCommandPort({ activate, close }) })
+    expect(container.textContent).not.toContain('Opaque external secret')
+    expect(container.textContent).not.toContain('ext.profile_a.7')
+    expect(container.textContent).toContain('Managed visible')
+    const managedTab = container.querySelector('[role="tab"]')!
+    act(() => managedTab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(activate).toHaveBeenCalledWith('managed-1')
+    expect(close).not.toHaveBeenCalled()
+  })
+
   it('renders a HelpTrigger that routes to the Managed Browser article', () => {
     initializeHelpContent()
     act(() => {
@@ -130,6 +146,39 @@ describe('BrowserPanel', () => {
 
     const routed = getArticlesForContext('chat.browser')
     expect(routed.map((article) => article.id)).toContain('chat-browser')
+  })
+
+  it('hydrates host selection from the canonical snapshot instead of overwriting it with renderer storage', () => {
+    sessionStorage.setItem('forge.browser.host.v1:session-1', 'external-chrome')
+    const selectBrowserHost = vi.fn()
+    act(() => {
+      root = createRoot(container)
+      root.render(createElement(BrowserPanel, {
+        client: { selectBrowserHost } as never,
+        sessionAgentId: 'session-1', profileId: 'profile-1',
+        snapshot: { ...snapshot, hostKind: 'managed-electron' }, host: connectedHost,
+        commandPort: createCommandPort(),
+      }))
+    })
+    expect((container.querySelector('select[aria-label="Browser host"]') as HTMLSelectElement).value).toBe('managed-electron')
+    expect(selectBrowserHost).not.toHaveBeenCalled()
+  })
+
+  it('defaults to Managed Browser and switches to the session-scoped External Chrome host without projecting a view', async () => {
+    const localStatus = vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'disabled', authority: 'none', auth: 'missing', registration: 'not-registered', trust: 'missing', platform: 'darwin', canEnable: true, canDisable: false, canRepair: true, canRollback: false, canRemove: false, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [], attachment: null,
+    } }))
+    window.electronBridge = { windowRole: 'main', backendWsUrl: 'ws://localhost', platform: 'darwin', externalChrome: { localStatus } as never }
+    const commandPort = createCommandPort()
+    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { sessionAgentId: 'host-selector-session', profileId: 'profile-1', snapshot, host: connectedHost, commandPort })) })
+    const selector = container.querySelector('select[aria-label="Browser host"]') as HTMLSelectElement
+    expect(selector.value).toBe('managed-electron')
+    await act(async () => { selector.value = 'external-chrome'; selector.dispatchEvent(new Event('change', { bubbles: true })); await Promise.resolve(); await Promise.resolve() })
+    expect(selector.value).toBe('external-chrome')
+    expect(container.querySelector('[aria-label="External Chrome workspace"]')).not.toBeNull()
+    expect(container.querySelector('[data-browser-automation-viewport]')).toBeNull()
+    expect(localStatus).toHaveBeenCalledWith('host-selector-session', 'profile-1')
   })
 
   it('wires tab, history, reload, zoom, viewport, screenshot, and recording controls', async () => {

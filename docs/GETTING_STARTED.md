@@ -133,7 +133,7 @@ You can pin important messages to preserve them through compaction. Hover over a
 
 ### Workspace Rail and File Browser
 
-On desktop, Forge uses a left activity rail for Chat, Browser, Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Chat returns to the current manager/session conversation, including from a selected worker route back to its parent manager thread. Browser opens Forge-owned webviews for the selected local manager. Files opens as a left split pane beside the rail with a resizable file tree and file surface pane for editable text files or previews. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions. Browser, Files, Source Control, Artifacts/Dashboard, and Schedules switch mutually exclusively so panes do not stack or hide behind each other, while Terminal stays independent and persistent.
+On desktop, Forge uses a left activity rail for Chat, Browser, Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Chat returns to the current manager/session conversation, including from a selected worker route back to its parent manager thread. Browser opens the selected local Desktop browser host for the current manager. Files opens as a left split pane beside the rail with a resizable file tree and file surface pane for editable text files or previews. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions. Browser, Files, Source Control, Artifacts/Dashboard, and Schedules switch mutually exclusively so panes do not stack or hide behind each other, while Terminal stays independent and persistent.
 
 Files uses tabs. Single-click a file to open or activate one replaceable italic preview tab; opening another file by single click replaces that preview if it is clean. Double-click to make a tab sticky. A preview also becomes sticky on its first edit, and newly created files open as sticky tabs. Sticky tabs coexist, so you can keep several files open while still using a separate preview tab.
 
@@ -149,15 +149,21 @@ When Source Control has a linked worktree selected, that worktree scopes Files b
 
 > **Editor preference:** By default, external editor links open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
 
-### Managed Browser
+### Browser Automation
 
-Managed Browser is a Forge Desktop capability, not a Skill. It controls Forge-owned Electron tab views for the selected local Builder manager. It does not attach to your everyday Chrome profile, and local browser IPC is not forwarded to Remote Projects or Collaboration channels.
+Managed Browser and External Chrome (Local Beta) are Forge Desktop capabilities for the selected local Builder manager, not Skills. Select **Browser** in the desktop rail and use **Browser host** to choose one for the session. Changing the selected host is a preference change only; it does not detach an External Chrome lease.
 
-Select **Browser** in the desktop rail, then open a tab or enter an HTTP(S) address. The toolbar provides tab switching, back/forward, reload/hard reload, zoom, transient screenshot preview, visible-tab recording, and fill/freeform/device viewport sizes. Normal Builder managers can operate the same tabs with typed status, navigation, snapshot, interaction, evaluation, wait, and recording tools. If you click or type in the page during an agent action, Forge gives you control and interrupts that action instead of racing your input.
+**Managed Browser** controls Forge-owned Electron tab views. Its toolbar provides tab switching, navigation, reload, zoom, transient screenshot preview, visible-tab recording, fill/freeform/device viewport sizes, and dock/pop-out. The manager can use typed status, navigation, snapshot, interaction, evaluation, wait, and recording operations. If you click or type during an agent action, Forge gives you control and interrupts the action instead of racing it. Its profile-scoped Electron partition can outlive a session.
 
-A connected Forge Desktop host is required. In an ordinary web browser, the Browser workspace reports **Browser host unavailable** and does not attempt local browser IPC. A normal Builder manager reached through Remote Projects may still receive the tools, but calls return `unavailable-host` because the viewing machine's Desktop bridge is not forwarded to the remote backend. Collaboration channels do not receive Managed Browser access. There is no Managed Browser environment variable or Settings → Skills toggle.
+**External Chrome (Local Beta)** operates only the session's bounded leased tab set: tabs you confirm, tabs Forge creates through `open` in the selected or sole connected profile, and qualifying grouped child tabs when you explicitly enable that policy. It requires Chrome 125+, Developer Mode, and the pinned unpacked extension; Chrome or enterprise policy may block unpacked extensions. A dedicated Chrome profile with only the accounts needed for Forge work is strongly recommended.
 
-On macOS, Windows, and Linux, the Browser toolbar can pop the same live native tab into a dedicated window and dock it again without remounting or changing browser-host authority. Cmd+W docks on macOS, while Ctrl+W docks on Windows/Linux. Tab metadata persists with the session; stopped recordings become session artifacts under `artifacts/browser/`, while screenshots remain transient. Cookies and site storage use a persistent profile-scoped Electron partition shared by sessions in that Forge profile, and can outlive session deletion. See [Managed Browser](BROWSER_AUTOMATION.md) for security, lifecycle, and comparison details.
+To set it up, open **Settings → External Chrome (Local Beta)**, confirm the validated path is ready, then manually open `chrome://extensions`, enable Developer Mode, and use **Load unpacked** with the exact folder Forge shows. Confirm extension ID `fcchfcnadajoejfbiclihglkmbcfhajd`, then enable the coordinator. That folder is stable for the Forge data directory. Repeat setup once for each Chrome profile and Forge data directory. Compatible connected profiles auto-reload after a Forge update or rollback; reload manually only when Settings reports **Manual extension reload required**.
+
+Return to **Browser**, select External Chrome, choose a Forge-local profile alias, review candidate tabs, and confirm attachment. Attached pages can expose page content, accessibility data, diagnostics, a bounded snapshot PNG, authenticated actions, and arbitrary JavaScript to the active turn. Forge does not copy Chrome credentials, profile databases, official profile names, bookmarks, history, or top sites. Detach leaves tabs open. Switching hosts does not detach; leases persist until turn disposition, **Detach now**, lifecycle release, bounded expiry, or loss.
+
+External Chrome supports status, create/open, navigation, snapshot, click, type, press, scroll, evaluate, and wait. It does not support physical resize, recordings, download handling or saved artifacts, opening downloaded files, standalone screenshot export controls, or dock/pop-out. Snapshots can return transient screenshot data, but External Chrome has no standalone screenshot toolbar/export workflow. Both hosts share session state in `browser.json`; completed recordings under `artifacts/browser/` are Managed Browser-only.
+
+A connected Forge Desktop host is required. Ordinary web clients do not attempt local browser IPC. Neither Desktop host, its native relay, nor its IPC is forwarded to Remote Projects or Collaboration. A remote normal Builder manager may still receive structurally planned tools, but without a host connected directly to that backend they return `unavailable-host`; Collaboration channels receive neither Desktop host. See [Browser automation](BROWSER_AUTOMATION.md) for the full setup, permission, lifecycle, repair, and troubleshooting reference.
 
 ### Secure Sessions
 
@@ -569,16 +575,11 @@ You can upload custom notification sounds if you want to distinguish between ses
 Go to **Settings → Skills** to configure optional skill-backed agent capabilities:
 
 - **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
-- **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is not the Forge Desktop Managed Browser.
-- **Chrome CDP** — If you're running Chrome 146+, you can enable Chrome DevTools Protocol access. This lets agents connect to tabs you have open in your browser, with access to your authenticated sessions.
+- **`agent-browser`** — Use the separately installed Vercel Labs CLI and its browser lifecycle; this is separate from both Forge Desktop browser hosts.
 - **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills, profile/project skills, or repository `.forge/skills` skills as needed.
 - **Skill sharing** — Share a user-created global or project skill to generate a temporary bearer link from the skill share service. Recipients can open the link or a `forge://skill-import` deep link, but Forge always shows a preview first and never auto-installs. Conflicts default to reject; replacing an existing directory or installing an override requires explicit confirmation. Built-in and repository skills are not shareable in v1.
 
-Managed Browser is not configured here: it has no Skills toggle or environment variable and requires a connected Forge Desktop host.
-
-> **Chrome CDP tip:** Always set an allowlist of URLs. Without it, agents see every open tab (all 168 of them) and things get slow. And they will comment on your tab count.
-
-Chrome CDP also supports multiple Chrome profiles, which is useful for testing applications that need multiple authenticated users simultaneously.
+Managed Browser and External Chrome are not configured as Skills: both are local Forge Desktop hosts. Managed Browser has no Settings toggle; External Chrome setup and repair live in **Settings → External Chrome (Local Beta)**. Neither host is forwarded to Remote Projects or Collaboration.
 
 ### System Prompt Preview
 
@@ -790,7 +791,6 @@ Also be aware of prompt injection risks when agents browse the web. Malicious we
 
 **Mitigations:**
 - Keep backups of your data directory
-- Use allowlists for Chrome CDP access
 - Be cautious with agents that have broad system permissions
 - Review what agents are doing, especially early on
 

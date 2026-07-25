@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostRegistration } from "@forge/protocol";
+import type { BrowserAutomationRequest, BrowserAutomationResponse, BrowserHostKind, BrowserHostRegistration } from "@forge/protocol";
 import { BrowserAutomationBrokerError, BrowserHostBroker } from "../browser-automation/browser-host-broker.js";
 
-function registration(operations: BrowserHostRegistration["capabilities"]["supportedOperations"] = ["status"]): BrowserHostRegistration {
+function registration(
+  operations: BrowserHostRegistration["capabilities"]["supportedOperations"] = ["status"],
+  hostKind: BrowserHostKind = "managed-electron",
+): BrowserHostRegistration {
   return {
     hostId: "host-1",
     clientInstanceId: "client-1",
     registeredAt: "2026-07-22T00:00:00.000Z",
     capabilities: {
+      hostKind,
       supportedOperations: operations,
       electronVersion: "37.10.3",
       chromiumVersion: "138",
@@ -23,6 +27,7 @@ function registration(operations: BrowserHostRegistration["capabilities"]["suppo
 function success(request: BrowserAutomationRequest): BrowserAutomationResponse {
   return {
     requestId: request.requestId,
+    hostKind: request.hostKind,
     sessionAgentId: request.sessionAgentId,
     profileId: request.profileId,
     tabId: request.tabId,
@@ -94,7 +99,7 @@ describe("BrowserHostBroker", () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     const request = sent[0]!;
     const provisionalMismatch = {
-      requestId: request.requestId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+      requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
       tabId: "provisional-tab", hostId: request.hostId, hostGeneration: request.hostGeneration,
       operation: "open", ok: false, error: { code: "execution-failed", message: "failed", retryable: false }, elapsedMs: 0,
     };
@@ -102,6 +107,30 @@ describe("BrowserHostBroker", () => {
     const correlated = { ...provisionalMismatch, tabId: null };
     expect(broker.acceptResponse("socket-1", correlated)).toBe("accepted");
     await expect(pending).resolves.toMatchObject({ requestId: "open-request", operation: "open", tabId: null, ok: false });
+  });
+
+  it("keeps registrations, generations, and pending routing independent by host kind", async () => {
+    const sentManaged: BrowserAutomationRequest[] = [];
+    const sentExternal: BrowserAutomationRequest[] = [];
+    const broker = new BrowserHostBroker({ requestId: () => `request-${sentManaged.length}-${sentExternal.length}` });
+    const managed = broker.register({ connectionId: "socket-managed", registration: registration(), sendRequest: (request) => sentManaged.push(request) });
+    const external = broker.register({
+      connectionId: "socket-external",
+      registration: { ...registration(["status"], "external-chrome"), hostId: "external-host" },
+      sendRequest: (request) => sentExternal.push(request),
+    });
+    expect(managed.hostGeneration).toBe(1);
+    expect(external.hostGeneration).toBe(1);
+
+    const managedPending = requestStatus(broker);
+    const externalPending = broker.request({ hostKind: "external-chrome", sessionAgentId: "manager-1", profileId: "profile-1", tabId: null, operation: "status", input: {} });
+    await vi.waitFor(() => expect(sentManaged).toHaveLength(1));
+    await vi.waitFor(() => expect(sentExternal).toHaveLength(1));
+    broker.register({ connectionId: "socket-managed-2", registration: { ...registration(), hostId: "managed-2" }, sendRequest: () => undefined });
+    await expectBrokerCode(managedPending, "stale-host-generation");
+    expect(broker.getConnectionSnapshot("external-chrome")).toMatchObject({ connected: true, hostGeneration: 1, hostId: "external-host" });
+    expect(broker.acceptResponse("socket-external", success(sentExternal[0]!))).toBe("accepted");
+    await expect(externalPending).resolves.toMatchObject({ hostKind: "external-chrome", ok: true });
   });
 
   it("rejects unavailable and unsupported operations deterministically", async () => {

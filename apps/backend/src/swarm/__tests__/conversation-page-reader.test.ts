@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createConversationHistorySeamCursor,
   MAX_CONVERSATION_PAGE_BYTES,
+  MAX_CONVERSATION_PAGE_ITEMS,
   MAX_CONVERSATION_PAGE_SCAN_BYTES,
   readConversationHistoryPage,
 } from "../session/conversation-page-reader.js";
@@ -382,6 +383,104 @@ describe("readConversationHistoryPage", () => {
 
     expect(page.messages).toMatchObject([{ type: "conversation_message", id: "message-0" }]);
     expect(page.page.hasOlder).toBe(false);
+  });
+
+  it.each([
+    { canonicalCount: 500, supplementalCount: 0, expectedSupplementalCount: 0 },
+    { canonicalCount: 500, supplementalCount: 100, expectedSupplementalCount: 0 },
+    { canonicalCount: 400, supplementalCount: 250, expectedSupplementalCount: 100 },
+  ])(
+    "keeps $canonicalCount canonical rows at limit 500 with $supplementalCount supplemental rows",
+    ({ canonicalCount, supplementalCount, expectedSupplementalCount }) => {
+      const { sessionFile } = createFixture();
+      const canonicalRows = Array.from(
+        { length: canonicalCount },
+        (_, index) => conversationRow(index),
+      );
+      const supplementalRows = Array.from({ length: supplementalCount }, (_, index) => JSON.stringify({
+        type: "custom",
+        customType: "swarm_conversation_entry",
+        id: `supplemental-row-${index}`,
+        parentId: null,
+        timestamp: new Date(canonicalCount + index).toISOString(),
+        data: {
+          type: "agent_tool_call",
+          agentId: "manager",
+          actorAgentId: "worker-1",
+          timestamp: new Date(canonicalCount + index).toISOString(),
+          kind: "tool_execution_start",
+          toolName: "read",
+          toolCallId: `supplemental-${index}`,
+          text: `path-${index}`,
+        },
+      }));
+      writeFileSync(sessionFile, `${[...canonicalRows, ...supplementalRows].join("\n")}\n`);
+
+      const page = readConversationHistoryPage({
+        sessionFile,
+        limit: MAX_CONVERSATION_PAGE_ITEMS,
+        isVisible: () => true,
+        countsTowardLimit: (entry) => entry.type === "conversation_message",
+      });
+
+      expect(page.messages).toHaveLength(canonicalCount + expectedSupplementalCount);
+      expect(page.messages.filter((entry) => entry.type === "conversation_message"))
+        .toHaveLength(canonicalCount);
+      const supplementalIds = page.messages.flatMap((entry) =>
+        entry.type === "agent_tool_call" ? [entry.toolCallId] : [],
+      );
+      expect(supplementalIds).toEqual(Array.from(
+        { length: expectedSupplementalCount },
+        (_, index) => `supplemental-${supplementalCount - expectedSupplementalCount + index}`,
+      ));
+      expect(page.page.hasOlder).toBe(false);
+      expect(page.page.pageBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_BYTES);
+    },
+  );
+
+  it("bounds scans when supplemental activity extends beyond one canonical read budget", () => {
+    const { sessionFile } = createFixture();
+    const rows = Array.from({ length: 4_000 }, (_, index) => JSON.stringify({
+      type: "custom",
+      customType: "swarm_conversation_entry",
+      id: `activity-row-${index}`,
+      parentId: index > 0 ? `activity-row-${index - 1}` : null,
+      timestamp: new Date(index).toISOString(),
+      data: {
+        type: "agent_tool_call",
+        agentId: "manager",
+        actorAgentId: "worker-1",
+        timestamp: new Date(index).toISOString(),
+        kind: "tool_execution_start",
+        toolName: "read",
+        toolCallId: `tool-${index}`,
+        text: "x".repeat(1_024),
+      },
+    }));
+    writeFileSync(sessionFile, `${conversationRow(0)}\n${rows.join("\n")}\n`);
+
+    const first = readConversationHistoryPage({
+      sessionFile,
+      limit: 200,
+      projectionKey: "web",
+      isVisible: () => true,
+      countsTowardLimit: (entry) => entry.type === "conversation_message",
+    });
+    expect(first.page.completeness).toBe("partial_scan");
+    expect(first.page.scanBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_SCAN_BYTES);
+    expect(first.messages).toHaveLength(200);
+    expect(first.page.nextCursor).toBeDefined();
+
+    const second = readConversationHistoryPage({
+      sessionFile,
+      cursor: first.page.nextCursor,
+      limit: 200,
+      projectionKey: "web",
+      isVisible: () => true,
+      countsTowardLimit: (entry) => entry.type === "conversation_message",
+    });
+    expect(second.page.scanBytes).toBeLessThanOrEqual(MAX_CONVERSATION_PAGE_SCAN_BYTES);
+    expect(second.page.nextCursor).not.toBe(first.page.nextCursor);
   });
 
   it("rejects a cursor when the requested Builder view changes", () => {

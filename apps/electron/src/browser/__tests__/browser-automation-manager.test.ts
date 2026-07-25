@@ -177,7 +177,7 @@ function navigationListenerCounts(webview: FakeWebContents): Record<string, numb
 
 function request(operation: BrowserAutomationRequest['operation'], input: Record<string, unknown>, tabId: string | null = 'tab-1', overrides: Partial<BrowserAutomationRequest> = {}): BrowserAutomationRequest {
   return {
-    requestId: `request-${++requestSequence}`, sessionAgentId: 'session-1', profileId: 'profile-1', tabId,
+    requestId: `request-${++requestSequence}`, hostKind: 'managed-electron', sessionAgentId: 'session-1', profileId: 'profile-1', tabId,
     hostId: 'host-1', hostGeneration: 1, deadlineAt: new Date(Date.now() + 30_000).toISOString(), artifactDirectory: null,
     operation, input, ...overrides,
   } as BrowserAutomationRequest

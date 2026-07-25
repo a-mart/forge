@@ -22,6 +22,53 @@ export const BROWSER_AUTOMATION_OPERATIONS = [
 
 export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number]
 
+export const BROWSER_HOST_KINDS = ['managed-electron', 'external-chrome'] as const
+export type BrowserHostKind = (typeof BROWSER_HOST_KINDS)[number]
+export const DEFAULT_BROWSER_HOST_KIND: BrowserHostKind = 'managed-electron'
+export const BROWSER_HOST_PROTOCOL_VERSION = 1
+
+export function isBrowserHostKind(value: unknown): value is BrowserHostKind {
+  return typeof value === 'string' && (BROWSER_HOST_KINDS as readonly string[]).includes(value)
+}
+
+export function resolveBrowserHostKind(value: BrowserHostKind | null | undefined): BrowserHostKind {
+  return value ?? DEFAULT_BROWSER_HOST_KIND
+}
+
+export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
+  'status',
+  'open',
+  'navigate',
+  'snapshot',
+  'click',
+  'type',
+  'press',
+  'scroll',
+  'evaluate',
+  'waitFor',
+] as const satisfies readonly BrowserAutomationOperation[]
+
+/** Operations qualified by the production M3 lease runtime. */
+export const EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS = [
+  'status',
+  'open',
+  'navigate',
+] as const satisfies readonly BrowserAutomationOperation[]
+
+/** Complete External Chrome M4 functional surface; physical viewport and recording stay disabled. */
+export const EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS = [
+  'status',
+  'open',
+  'navigate',
+  'snapshot',
+  'click',
+  'type',
+  'press',
+  'scroll',
+  'evaluate',
+  'waitFor',
+] as const satisfies readonly BrowserAutomationOperation[]
+
 export const BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000
 export const BROWSER_AUTOMATION_MAX_TIMEOUT_MS = 60_000
 export const BROWSER_AUTOMATION_MAX_URL_LENGTH = 2_048
@@ -81,6 +128,8 @@ export type BrowserTabLifecycle = 'restoring' | 'loading' | 'ready' | 'failed' |
 export type BrowserSessionHostingState = 'hosted' | 'unhosted' | 'removed'
 
 export interface BrowserTabSnapshot {
+  /** Absent legacy snapshots are managed by the Electron host. */
+  hostKind?: BrowserHostKind
   tabId: string
   sessionAgentId: string
   profileId: string
@@ -138,8 +187,35 @@ export interface BrowserPanelRevealIntent {
   tabId: string | null
 }
 
+export interface ExternalChromeLifecycleReleaseTransaction {
+  /** Opaque idempotency token; never contains Chrome tab metadata. */
+  releaseId: string
+  reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced'
+  tabId: string
+  /** Original backend host authority that began this transaction. */
+  hostId: string
+  hostGeneration: number
+  phase: 'preparing' | 'prepared'
+}
+
+export interface ExternalChromeTurnDispositionTransaction {
+  /** Canonical backend turn identity; page data is never included. */
+  turnId: string
+  /** One opaque member proving which Desktop checkpoint must be dispositioned. */
+  tabId: string
+  /** M4 policy is bounded handoff for every surviving active External Chrome tab. */
+  disposition: 'handoff'
+  phase: 'pending' | 'completed'
+}
+
 export interface BrowserSessionSnapshot {
   schemaVersion: 1
+  /** Session-selected host. Absent legacy/replayed snapshots default to managed Electron. */
+  hostKind?: BrowserHostKind
+  /** Durable two-phase detach state. Opaque and safe to replay after restart. */
+  externalChromeLifecycleRelease?: ExternalChromeLifecycleReleaseTransaction
+  /** Durable terminal-turn disposition, retried with the same exact lease authority. */
+  externalChromeTurnDisposition?: ExternalChromeTurnDispositionTransaction
   sessionAgentId: string
   profileId: string
   /** Controls whether the desktop host may mount physical webviews for this session. */
@@ -161,6 +237,8 @@ export interface BrowserSessionSnapshot {
  * action history remain backend-owned; only matched tab runtime fields merge.
  */
 export interface BrowserHostSessionStateReport {
+  /** Absent legacy reports are from the managed Electron host. */
+  hostKind?: BrowserHostKind
   sessionAgentId: string
   profileId: string
   /** Canonical revision the host based this report on. Mismatches are rejected. */
@@ -186,12 +264,14 @@ export type BrowserHostSessionStateReportResult =
 
 export type BrowserHostStateReportResult =
   | {
+      hostKind?: BrowserHostKind
       hostId: string
       hostGeneration: number
       status: 'processed'
       sessions: BrowserHostSessionStateReportResult[]
     }
   | {
+      hostKind?: BrowserHostKind
       hostId: string
       hostGeneration: number
       status: 'stale-host-generation'
@@ -199,14 +279,40 @@ export type BrowserHostStateReportResult =
     }
 
 export interface BrowserHostCapabilities {
+  /** Absent legacy registrations are managed Electron hosts. */
+  hostKind?: BrowserHostKind
+  /** Browser automation wire versions accepted by this host. */
+  protocolVersions?: { minimum: number; maximum: number }
   supportedOperations: BrowserAutomationOperation[]
-  electronVersion: string
-  chromiumVersion: string
-  playwrightVersion: string
   maxResponseBytes: number
-  supportsSandboxedWebviews: boolean
-  supportsCapturePage: boolean
-  supportsRecording: boolean
+  features?: {
+    resize: boolean
+    recording: boolean
+    capturePage: boolean
+    downloadEvents: boolean
+    downloadArtifacts: boolean
+    downloadOpen: boolean
+  }
+  /** Runtime versions are host-specific; External Chrome need not emulate Electron fields. */
+  runtimeVersions?: {
+    electron?: string
+    chromium?: string
+    playwright?: string
+    chrome?: string
+    extension?: string
+  }
+  /** @deprecated Read runtimeVersions.electron. */
+  electronVersion?: string
+  /** @deprecated Read runtimeVersions.chromium. */
+  chromiumVersion?: string
+  /** @deprecated Read runtimeVersions.playwright. */
+  playwrightVersion?: string
+  /** @deprecated Read features.capturePage. */
+  supportsSandboxedWebviews?: boolean
+  /** @deprecated Read features.capturePage. */
+  supportsCapturePage?: boolean
+  /** @deprecated Read features.recording. */
+  supportsRecording?: boolean
 }
 
 export interface BrowserHostRegistration {
@@ -217,6 +323,8 @@ export interface BrowserHostRegistration {
 }
 
 export interface BrowserHostConnectionSnapshot {
+  /** Absent legacy/replayed snapshots are managed Electron hosts. */
+  hostKind?: BrowserHostKind
   connected: boolean
   hostId: string | null
   hostGeneration: number | null
@@ -252,6 +360,13 @@ export type BrowserAutomationErrorCode =
   | 'recording-not-found'
   | 'request-cancelled'
   | 'execution-failed'
+  | 'attachment-required'
+  | 'lease-conflict'
+  | 'lease-lost'
+  | 'restricted-target'
+  | 'debugger-unavailable'
+  | 'extension-update-required'
+  | 'chrome-policy-blocked'
 
 export interface BrowserAutomationFailure {
   code: BrowserAutomationErrorCode
@@ -262,9 +377,29 @@ export interface BrowserAutomationFailure {
 
 export interface BrowserTabTargetInput {
   tabId?: string
+  /** Explicit target host. Omission resolves through the session and then managed Electron. */
+  hostKind?: BrowserHostKind
 }
 
-export type BrowserStatusInput = BrowserTabTargetInput
+export interface ExternalChromeLifecycleReleaseInput {
+  phase: 'prepare' | 'finalize'
+  releaseId: string
+  reason: ExternalChromeLifecycleReleaseTransaction['reason']
+  originalHostId: string
+  originalHostGeneration: number
+}
+
+export interface ExternalChromeTurnDispositionInput {
+  turnId: string
+  disposition: 'handoff'
+}
+
+export type BrowserStatusInput = BrowserTabTargetInput & {
+  /** Internal exact-authority lifecycle transaction carried over the existing host broker. */
+  externalChromeLifecycleRelease?: ExternalChromeLifecycleReleaseInput
+  /** Internal terminal-turn transaction; mutually exclusive with lifecycle release. */
+  externalChromeTurnDisposition?: ExternalChromeTurnDispositionInput
+}
 
 export interface BrowserOpenInput extends BrowserTabTargetInput {
   url?: string
@@ -340,6 +475,10 @@ export interface BrowserRecordingStopInput extends BrowserTabTargetInput {
 
 export interface BrowserAutomationStatusResult {
   available: boolean
+  /** Exact opaque lifecycle acknowledgement, present only for internal prepare/finalize requests. */
+  externalChromeLifecycleRelease?: Pick<ExternalChromeLifecycleReleaseInput, 'phase' | 'releaseId'>
+  /** Exact terminal-turn acknowledgement; contains no selected page content. */
+  externalChromeTurnDisposition?: ExternalChromeTurnDispositionInput
   host: BrowserHostConnectionSnapshot
   /** Legacy alias for physicalTabVisible. It is never canonical reveal intent. */
   panelVisible: boolean
@@ -537,6 +676,7 @@ export type BrowserAutomationResult = {
 
 interface BrowserAutomationRequestRouting {
   requestId: string
+  hostKind: BrowserHostKind
   sessionAgentId: string
   profileId: string
   /** Resolved target, or null only when status/open has no current tab yet. */
@@ -557,6 +697,7 @@ export type BrowserAutomationRequest = {
 
 interface BrowserAutomationResponseRouting {
   requestId: string
+  hostKind: BrowserHostKind
   sessionAgentId: string
   profileId: string
   tabId: string | null
@@ -593,12 +734,15 @@ export interface BrowserHostRegisterCommand {
 export interface BrowserHostHydrateCommand {
   type: 'browser_host_hydrate'
   requestId: string
+  /** Absent legacy commands target managed Electron. */
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
 }
 
 export interface BrowserHostFocusCommand {
   type: 'browser_host_focus'
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
   focused: boolean
@@ -612,6 +756,7 @@ export interface BrowserHostResponseCommand {
 export interface BrowserHostStateReportCommand {
   type: 'browser_host_state_report'
   requestId: string
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
   sessions: BrowserHostSessionStateReport[]
@@ -620,12 +765,28 @@ export interface BrowserHostStateReportCommand {
 export interface BrowserPanelRevealAcknowledgeCommand {
   type: 'browser_panel_reveal_acknowledge'
   requestId: string
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
   sessionAgentId: string
   profileId: string
   tabId: string
   sequence: number
+}
+
+export interface BrowserHostSelectCommand {
+  type: 'browser_host_select'
+  requestId: string
+  sessionAgentId: string
+  profileId: string
+  hostKind: BrowserHostKind
+}
+
+export interface BrowserExternalChromeDetachConfirmedCommand {
+  type: 'browser_external_chrome_detach_confirmed'
+  requestId: string
+  sessionAgentId: string
+  profileId: string
 }
 
 export interface BrowserTabOpenCommand {
@@ -681,6 +842,8 @@ export type BrowserClientCommand =
   | BrowserHostResponseCommand
   | BrowserHostStateReportCommand
   | BrowserPanelRevealAcknowledgeCommand
+  | BrowserHostSelectCommand
+  | BrowserExternalChromeDetachConfirmedCommand
   | BrowserTabOpenCommand
   | BrowserTabActivateCommand
   | BrowserTabCloseCommand
@@ -702,6 +865,7 @@ export interface BrowserHostConnectedEvent {
 export interface BrowserHostHydrationChunkEvent {
   type: 'browser_host_hydration_chunk'
   requestId: string
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
   chunkIndex: number
@@ -712,6 +876,7 @@ export interface BrowserHostHydrationChunkEvent {
 /** Legacy unchunked event retained for wire compatibility with older peers. */
 export interface BrowserHostStateSnapshotEvent {
   type: 'browser_host_state_snapshot'
+  hostKind?: BrowserHostKind
   hostId: string
   hostGeneration: number
   sessions: BrowserSessionSnapshot[]
@@ -742,6 +907,13 @@ export interface BrowserSessionChangedEvent {
 export interface BrowserPanelRevealAcknowledgedEvent {
   type: 'browser_panel_reveal_acknowledged'
   requestId: string
+  snapshot: BrowserSessionSnapshot
+}
+
+export interface BrowserSessionCommandSucceededEvent {
+  type: 'browser_session_command_succeeded'
+  requestId: string
+  commandType: 'browser_host_select' | 'browser_external_chrome_detach_confirmed'
   snapshot: BrowserSessionSnapshot
 }
 
@@ -777,6 +949,7 @@ export type BrowserServerEvent =
   | BrowserSessionSnapshotEvent
   | BrowserSessionChangedEvent
   | BrowserPanelRevealAcknowledgedEvent
+  | BrowserSessionCommandSucceededEvent
   | BrowserTabCommandSucceededEvent
   | BrowserRecordingCommandSucceededEvent
 
@@ -812,7 +985,13 @@ function optionalId(operation: BrowserAutomationOperation, value: unknown, field
 
 function optionalTarget(operation: BrowserAutomationOperation, input: Record<string, unknown>): BrowserTabTargetInput {
   const tabId = optionalId(operation, input.tabId)
-  return tabId === undefined ? {} : { tabId }
+  if (input.hostKind !== undefined && !isBrowserHostKind(input.hostKind)) {
+    throw new BrowserAutomationContractError(operation, 'hostKind must be managed-electron or external-chrome')
+  }
+  return {
+    ...(tabId === undefined ? {} : { tabId }),
+    ...(input.hostKind === undefined ? {} : { hostKind: input.hostKind }),
+  }
 }
 
 function boundedString(operation: BrowserAutomationOperation, value: unknown, field: string, maximum: number, allowEmpty = false): string {
@@ -866,6 +1045,20 @@ export function isBrowserAutomationOperation(value: unknown): value is BrowserAu
   return typeof value === 'string' && (BROWSER_AUTOMATION_OPERATIONS as readonly string[]).includes(value)
 }
 
+/** Normalize a browser environment path without permitting URL authority ambiguity. */
+export function normalizeBrowserEnvironmentPath(
+  value: unknown,
+  operation: BrowserAutomationOperation = 'navigate',
+): string {
+  if (value === undefined || value === '') return '/'
+  const path = boundedString(operation, value, 'path', BROWSER_AUTOMATION_MAX_URL_LENGTH)
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\') || /[\u0000-\u001f\u007f]/u.test(path) ||
+    /%(?:2f|5c|40|3a|3f|23|25)/iu.test(path)) {
+    throw new BrowserAutomationContractError(operation, 'environment path must be an unambiguous absolute path')
+  }
+  return path
+}
+
 export function parseBrowserAutomationInput<Operation extends BrowserAutomationOperation>(
   operation: Operation,
   value: unknown,
@@ -874,14 +1067,43 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
   const target = optionalTarget(operation, input)
 
   switch (operation) {
-    case 'status':
+    case 'status': {
+      knownKeys(operation, input, ['tabId', 'hostKind', 'externalChromeLifecycleRelease', 'externalChromeTurnDisposition'])
+      if (input.externalChromeLifecycleRelease !== undefined && input.externalChromeTurnDisposition !== undefined) {
+        throw new BrowserAutomationContractError(operation, 'lifecycle release and turn disposition are mutually exclusive')
+      }
+      if (input.externalChromeTurnDisposition !== undefined) {
+        const turn = recordInput(operation, input.externalChromeTurnDisposition)
+        knownKeys(operation, turn, ['turnId', 'disposition'])
+        const turnId = optionalId(operation, turn.turnId, 'turnId')
+        if (!turnId || turn.disposition !== 'handoff') throw new BrowserAutomationContractError(operation, 'invalid External Chrome turn disposition')
+        return { ...target, externalChromeTurnDisposition: { turnId, disposition: 'handoff' } } as BrowserAutomationInputByOperation[Operation]
+      }
+      if (input.externalChromeLifecycleRelease === undefined) return target as BrowserAutomationInputByOperation[Operation]
+      const lifecycle = recordInput(operation, input.externalChromeLifecycleRelease)
+      knownKeys(operation, lifecycle, ['phase', 'releaseId', 'reason', 'originalHostId', 'originalHostGeneration'])
+      if (lifecycle.phase !== 'prepare' && lifecycle.phase !== 'finalize') throw new BrowserAutomationContractError(operation, 'lifecycle phase must be prepare or finalize')
+      const releaseId = optionalId(operation, lifecycle.releaseId, 'releaseId')
+      const originalHostId = optionalId(operation, lifecycle.originalHostId, 'originalHostId')
+      if (!releaseId || !originalHostId) throw new BrowserAutomationContractError(operation, 'lifecycle authority is incomplete')
+      if (lifecycle.reason !== 'stop' && lifecycle.reason !== 'archive' && lifecycle.reason !== 'delete' && lifecycle.reason !== 'detach' && lifecycle.reason !== 'host-replaced') {
+        throw new BrowserAutomationContractError(operation, 'lifecycle reason is invalid')
+      }
+      if (!Number.isSafeInteger(lifecycle.originalHostGeneration) || (lifecycle.originalHostGeneration as number) < 1) {
+        throw new BrowserAutomationContractError(operation, 'originalHostGeneration must be a positive safe integer')
+      }
+      return { ...target, externalChromeLifecycleRelease: {
+        phase: lifecycle.phase, releaseId, reason: lifecycle.reason, originalHostId,
+        originalHostGeneration: lifecycle.originalHostGeneration as number,
+      } } as BrowserAutomationInputByOperation[Operation]
+    }
     case 'snapshot':
     case 'recordingStart': {
-      knownKeys(operation, input, ['tabId'])
+      knownKeys(operation, input, ['tabId', 'hostKind'])
       return target as BrowserAutomationInputByOperation[Operation]
     }
     case 'open': {
-      knownKeys(operation, input, ['tabId', 'url', 'show', 'reuseExistingTab'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'url', 'show', 'reuseExistingTab'])
       const url = input.url === undefined ? undefined : boundedString(operation, input.url, 'url', BROWSER_AUTOMATION_MAX_URL_LENGTH)
       if (input.show !== undefined && typeof input.show !== 'boolean') throw new BrowserAutomationContractError(operation, 'show must be boolean')
       if (input.reuseExistingTab !== undefined && typeof input.reuseExistingTab !== 'boolean') throw new BrowserAutomationContractError(operation, 'reuseExistingTab must be boolean')
@@ -890,7 +1112,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       return { ...target, ...(url === undefined ? {} : { url }), show: input.show === undefined ? true : input.show, reuseExistingTab } as BrowserAutomationInputByOperation[Operation]
     }
     case 'navigate': {
-      knownKeys(operation, input, ['tabId', 'url', 'environmentPort', 'environmentProtocol', 'path', 'readiness', 'timeoutMs'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'url', 'environmentPort', 'environmentProtocol', 'path', 'readiness', 'timeoutMs'])
       const hasUrl = input.url !== undefined
       const hasPort = input.environmentPort !== undefined
       if (hasUrl === hasPort) throw new BrowserAutomationContractError(operation, 'provide exactly one of url or environmentPort')
@@ -902,13 +1124,13 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       }
       if (input.environmentProtocol !== undefined && input.environmentProtocol !== 'http' && input.environmentProtocol !== 'https') throw new BrowserAutomationContractError(operation, 'environmentProtocol must be http or https')
       if (!hasPort && (input.environmentProtocol !== undefined || input.path !== undefined)) throw new BrowserAutomationContractError(operation, 'environmentProtocol and path require environmentPort')
-      const path = input.path === undefined ? undefined : boundedString(operation, input.path, 'path', BROWSER_AUTOMATION_MAX_URL_LENGTH, true)
+      const path = hasPort ? normalizeBrowserEnvironmentPath(input.path, operation) : undefined
       const readiness = input.readiness === undefined ? 'load' : input.readiness
       if (readiness !== 'load' && readiness !== 'domContentLoaded' && readiness !== 'none') throw new BrowserAutomationContractError(operation, 'readiness must be load, domContentLoaded, or none')
       return { ...target, ...(url === undefined ? {} : { url }), ...(environmentPort === undefined ? {} : { environmentPort }), ...(input.environmentProtocol === undefined ? {} : { environmentProtocol: input.environmentProtocol }), ...(path === undefined ? {} : { path }), readiness, timeoutMs: timeout(operation, input.timeoutMs) } as BrowserAutomationInputByOperation[Operation]
     }
     case 'resize': {
-      knownKeys(operation, input, ['tabId', 'mode', 'presetId', 'orientation', 'width', 'height', 'timeoutMs'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'mode', 'presetId', 'orientation', 'width', 'height', 'timeoutMs'])
       const timeoutMs = timeout(operation, input.timeoutMs)
       if (input.mode === 'fill') {
         if (input.presetId !== undefined || input.orientation !== undefined || input.width !== undefined || input.height !== undefined) throw new BrowserAutomationContractError(operation, 'fill mode does not accept preset or dimensions')
@@ -930,7 +1152,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       throw new BrowserAutomationContractError(operation, 'mode must be fill, freeform, or preset')
     }
     case 'click': {
-      knownKeys(operation, input, ['tabId', 'locator', 'selector', 'x', 'y', 'timeoutMs'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'locator', 'selector', 'x', 'y', 'timeoutMs'])
       const locator = selector(operation, input.locator, 'locator')
       const css = selector(operation, input.selector, 'selector')
       const hasX = input.x !== undefined
@@ -942,7 +1164,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       return { ...target, x: finite(operation, input.x, 'x'), y: finite(operation, input.y, 'y'), timeoutMs } as BrowserAutomationInputByOperation[Operation]
     }
     case 'type': {
-      knownKeys(operation, input, ['tabId', 'text', 'clear', 'locator', 'selector', 'timeoutMs'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'text', 'clear', 'locator', 'selector', 'timeoutMs'])
       const locator = selector(operation, input.locator, 'locator')
       const css = selector(operation, input.selector, 'selector')
       if (locator !== undefined && css !== undefined) throw new BrowserAutomationContractError(operation, 'provide at most one locator or selector')
@@ -950,7 +1172,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       return { ...target, text: boundedString(operation, input.text, 'text', BROWSER_AUTOMATION_MAX_EVALUATE_BYTES, true), clear: input.clear === undefined ? false : input.clear, ...(locator === undefined ? {} : { locator }), ...(css === undefined ? {} : { selector: css }), timeoutMs: timeout(operation, input.timeoutMs) } as BrowserAutomationInputByOperation[Operation]
     }
     case 'press': {
-      knownKeys(operation, input, ['tabId', 'key', 'modifiers'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'key', 'modifiers'])
       const key = boundedString(operation, input.key, 'key', 128)
       let modifiers: BrowserPressInput['modifiers']
       if (input.modifiers !== undefined) {
@@ -960,7 +1182,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       return { ...target, key, ...(modifiers === undefined ? {} : { modifiers }) } as BrowserAutomationInputByOperation[Operation]
     }
     case 'scroll': {
-      knownKeys(operation, input, ['tabId', 'deltaX', 'deltaY', 'locator', 'selector'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'deltaX', 'deltaY', 'locator', 'selector'])
       const locator = selector(operation, input.locator, 'locator')
       const css = selector(operation, input.selector, 'selector')
       if (locator !== undefined && css !== undefined) throw new BrowserAutomationContractError(operation, 'provide at most one locator or selector')
@@ -968,13 +1190,13 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       return { ...target, ...(input.deltaX === undefined ? {} : { deltaX: finite(operation, input.deltaX, 'deltaX') }), ...(input.deltaY === undefined ? {} : { deltaY: finite(operation, input.deltaY, 'deltaY') }), ...(locator === undefined ? {} : { locator }), ...(css === undefined ? {} : { selector: css }) } as BrowserAutomationInputByOperation[Operation]
     }
     case 'evaluate': {
-      knownKeys(operation, input, ['tabId', 'expression', 'awaitPromise', 'returnByValue'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'expression', 'awaitPromise', 'returnByValue'])
       if (input.awaitPromise !== undefined && typeof input.awaitPromise !== 'boolean') throw new BrowserAutomationContractError(operation, 'awaitPromise must be boolean')
       if (input.returnByValue !== undefined && typeof input.returnByValue !== 'boolean') throw new BrowserAutomationContractError(operation, 'returnByValue must be boolean')
       return { ...target, expression: boundedString(operation, input.expression, 'expression', BROWSER_AUTOMATION_MAX_EVALUATE_BYTES), awaitPromise: input.awaitPromise === undefined ? true : input.awaitPromise, returnByValue: input.returnByValue === undefined ? true : input.returnByValue } as BrowserAutomationInputByOperation[Operation]
     }
     case 'waitFor': {
-      knownKeys(operation, input, ['tabId', 'locator', 'selector', 'text', 'urlIncludes', 'timeoutMs'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'locator', 'selector', 'text', 'urlIncludes', 'timeoutMs'])
       const locator = selector(operation, input.locator, 'locator')
       const css = selector(operation, input.selector, 'selector')
       if (locator !== undefined && css !== undefined) throw new BrowserAutomationContractError(operation, 'provide at most one locator or selector')
@@ -984,7 +1206,7 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
       return { ...target, ...(locator === undefined ? {} : { locator }), ...(css === undefined ? {} : { selector: css }), ...(text === undefined ? {} : { text }), ...(urlIncludes === undefined ? {} : { urlIncludes }), timeoutMs: timeout(operation, input.timeoutMs) } as BrowserAutomationInputByOperation[Operation]
     }
     case 'recordingStop': {
-      knownKeys(operation, input, ['tabId', 'recordingId'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'recordingId'])
       const recordingId = optionalId(operation, input.recordingId, 'recordingId')
       return { ...target, ...(recordingId === undefined ? {} : { recordingId }) } as BrowserAutomationInputByOperation[Operation]
     }

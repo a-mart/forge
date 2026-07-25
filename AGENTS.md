@@ -29,7 +29,8 @@ package manager version.
 
 - `apps/backend/` — orchestration, persistence, HTTP/WebSocket APIs, integrations, and terminals.
 - `apps/ui/` — TanStack Start/Vite React application.
-- `apps/electron/` — desktop packaging, runtime staging, updates, and releases.
+- `apps/electron/` — desktop packaging, runtime staging, updates, releases, and local browser hosts.
+- `apps/chrome-extension/` and `apps/native-messaging-host/` — External Chrome Local Beta extension and bounded native relay.
 - `packages/protocol/` — shared wire types, API contracts, and event definitions.
 - `packages/cli/` — first-party Forge CLI.
 - `docs/collaboration/` — Collaboration architecture, development, operations, and project tracking.
@@ -43,7 +44,7 @@ package manager version.
 | Local validation tiers and reports | [`docs/QUALITY.md`](docs/QUALITY.md) |
 | Collaboration | [`docs/collaboration/`](docs/collaboration/) |
 | Remote Projects | [`docs/collaboration/REMOTE_PROJECTS.md`](docs/collaboration/REMOTE_PROJECTS.md) |
-| Managed Browser | [`docs/BROWSER_AUTOMATION.md`](docs/BROWSER_AUTOMATION.md) |
+| Browser automation and Desktop browser hosts | [`docs/BROWSER_AUTOMATION.md`](docs/BROWSER_AUTOMATION.md) |
 | Model catalog and model additions | [`docs/MODEL_CATALOG.md`](docs/MODEL_CATALOG.md) and [`docs/ADDING_MODELS.md`](docs/ADDING_MODELS.md) |
 | Specialists | [`docs/SPECIALISTS.md`](docs/SPECIALISTS.md) |
 | Project resources | [`docs/PROJECT_RESOURCES.md`](docs/PROJECT_RESOURCES.md) |
@@ -73,6 +74,12 @@ variable catalogs, or release runbooks back into this file. Link to their mainta
   files or transient chat context.
 - Model-specific instructions are optional, user-authored per-model additions. Forge does not provide
   built-in model-specific instruction defaults.
+- Managed Browser and External Chrome are local Forge Desktop hosts for normal local Builder managers,
+  not Skills. Host selection is session state in the shared `browser.json`; changing that preference does
+  not detach External Chrome. Neither host nor its IPC/relay is forwarded to Remote Projects or
+  Collaboration. External Chrome deploys under `integrations/external-chrome/` for the active data
+  directory, while Chrome loads its stable `extension/` path once per Chrome profile and data directory.
+  Browser recording and `artifacts/browser/` remain Managed Browser-only.
 
 ## Safety
 

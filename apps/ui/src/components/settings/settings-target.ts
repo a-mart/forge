@@ -28,6 +28,7 @@ export type SettingsTab =
   | 'project-resources'
   | 'slash-commands'
   | 'extensions'
+  | 'external-chrome'
   | 'cli-access'
   | 'observability'
   | 'collaboration'
@@ -62,6 +63,7 @@ const BUILDER_TABS: SettingsTab[] = [
   'project-resources',
   'slash-commands',
   'extensions',
+  'external-chrome',
   'cli-access',
   'observability',
   'collaboration',

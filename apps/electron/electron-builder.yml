@@ -4,6 +4,8 @@ icon: build/icon
 directories:
   output: release
   buildResources: build
+afterPack: scripts/electron-builder-after-pack.cjs
+afterSign: scripts/electron-builder-after-sign.cjs
 files:
   - dist/**/*
   - '!dist/browser-fixture-smoke-main*'
@@ -43,6 +45,10 @@ extraResources:
     to: browser-runtime
     filter:
       - '**/*'
+  - from: .stage/external-chrome
+    to: external-chrome
+    filter:
+      - '**/*'
 protocols:
   - name: Forge Skill Import
     schemes:
@@ -57,6 +63,10 @@ mac:
     - target: zip
   category: public.app-category.developer-tools
   identity: ''
+  # The native host is pre-signed and hashed before staging. Re-signing it would
+  # invalidate package-manifest.json; afterSign verifies it stayed byte-identical.
+  signIgnore:
+    - '/Contents/Resources/external-chrome/native-host/'
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist

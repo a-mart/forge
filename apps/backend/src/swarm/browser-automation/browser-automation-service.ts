@@ -1,6 +1,8 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   BROWSER_AUTOMATION_MAX_SAFE_ACTIONS,
+  DEFAULT_BROWSER_HOST_KIND,
+  resolveBrowserHostKind,
   type BrowserAutomationFailure,
   type BrowserAutomationInputByOperation,
   type BrowserAutomationOperation,
@@ -8,6 +10,7 @@ import {
   type BrowserAutomationResponse,
   type BrowserAutomationResultByOperation,
   type BrowserHostConnectionSnapshot,
+  type BrowserHostKind,
   type BrowserHostRegistration,
   type BrowserHostSessionStateReport,
   type BrowserHostSessionStateReportResult,
@@ -15,6 +18,7 @@ import {
   type BrowserSafeActionSummary,
   type BrowserSessionSnapshot,
   type BrowserTabSnapshot,
+  type ExternalChromeLifecycleReleaseTransaction,
 } from "@forge/protocol";
 import {
   BrowserAutomationBrokerError,
@@ -27,6 +31,15 @@ import { BrowserSessionStore } from "./browser-session-store.js";
 export type BrowserAutomationInvocationResult<Operation extends BrowserAutomationOperation = BrowserAutomationOperation> =
   | { ok: true; operation: Operation; result: BrowserAutomationResultByOperation[Operation] }
   | { ok: false; operation: Operation; error: BrowserAutomationFailure };
+
+export type BrowserLifecycleReleaseReason = "stop" | "archive" | "delete" | "detach" | "host-replaced";
+
+export class BrowserLifecycleReleaseError extends Error {
+  constructor(readonly failure: BrowserAutomationFailure) {
+    super(`External Chrome lifecycle release failed (${failure.code}).`);
+    this.name = "BrowserLifecycleReleaseError";
+  }
+}
 
 export interface BrowserAutomationServiceOptions {
   dataDir: string;
@@ -57,6 +70,12 @@ export class BrowserAutomationService {
   private readonly sessionMutationChains = new Map<string, Promise<void>>();
   /** In-flight invoke/load work deleteSession awaits before clearing storage. */
   private readonly sessionInFlight = new Map<string, Set<Promise<unknown>>>();
+  /** Serializes release authority per session so lifecycle retries cannot overlap. */
+  private readonly lifecycleReleaseChains = new Map<string, Promise<void>>();
+  /** Serializes host replacement so a second registration cannot bypass release. */
+  private readonly hostRegistrationChains = new Map<BrowserHostKind, Promise<void>>();
+  /** A cancelled External Chrome request may have acquired a lease before its response was dropped. */
+  private readonly cancelledExternalLeaseRisk = new Set<string>();
 
   constructor(options: BrowserAutomationServiceOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -85,20 +104,57 @@ export class BrowserAutomationService {
     return host;
   }
 
-  unregisterHost(connectionId: string, hostId?: string, hostGeneration?: number): boolean {
-    const removed = this.broker.unregister(connectionId, hostId, hostGeneration);
-    if (removed) this.onHostChanged(this.broker.getConnectionSnapshot());
+  async registerHostWithLifecycleRelease(options: {
+    connectionId: string;
+    registration: BrowserHostRegistration;
+    sendRequest: (request: BrowserAutomationRequest) => void | Promise<void>;
+    hydrateSessionsForReplacement?: () => Promise<BrowserSessionSnapshot[]>;
+  }): Promise<BrowserHostConnectionSnapshot> {
+    const hostKind = resolveBrowserHostKind(options.registration.capabilities.hostKind);
+    return this.withHostRegistration(hostKind, async () => {
+      if (hostKind !== "external-chrome") return this.registerHost(options);
+      // Load every persisted session before deciding what must be released. This is the
+      // replacement readiness barrier: unloaded and concurrently hydrating snapshots
+      // cannot evade exact-generation lifecycle release.
+      await options.hydrateSessionsForReplacement?.();
+      const current = this.broker.getConnectionSnapshot(hostKind);
+      const releaseAll = async (): Promise<void> => {
+        for (const snapshot of this.getLoadedSessionSnapshots()) {
+          await this.releaseSessionForLifecycle(snapshot.profileId, snapshot.sessionAgentId, "host-replaced");
+        }
+      };
+      if (current.connected) {
+        // A true replacement must drain every loaded/hydrated lease through the
+        // old exact generation before broker authority can change.
+        await releaseAll();
+        return this.registerHost(options);
+      }
+      // Initial registration (including backend restart recovery) has no live old
+      // generation capable of accepting lifecycle requests. Establish the new
+      // correlated generation first; its subsequent hydration resumes/reconciles
+      // durable client authority without deadlocking on a request the registering
+      // secondary client cannot accept before browser_host_connected.
+      return this.registerHost(options);
+    });
+  }
+
+  unregisterHost(connectionId: string, hostId?: string, hostGeneration?: number, hostKind?: BrowserHostKind): boolean {
+    const removed = this.broker.unregister(connectionId, hostId, hostGeneration, hostKind);
+    if (removed) {
+      if (hostKind) this.onHostChanged(this.broker.getConnectionSnapshot(hostKind));
+      else for (const snapshot of this.broker.getConnectionSnapshots()) this.onHostChanged(snapshot);
+    }
     return removed;
   }
 
-  setHostFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean): boolean {
-    const changed = this.broker.setFocused(connectionId, hostId, hostGeneration, focused);
-    if (changed) this.onHostChanged(this.broker.getConnectionSnapshot());
+  setHostFocused(connectionId: string, hostId: string, hostGeneration: number, focused: boolean, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): boolean {
+    const changed = this.broker.setFocused(connectionId, hostId, hostGeneration, focused, hostKind);
+    if (changed) this.onHostChanged(this.broker.getConnectionSnapshot(hostKind));
     return changed;
   }
 
   acceptHostResponse(connectionId: string, response: unknown, encodedBytes?: number): BrowserHostResponseDisposition {
-    return this.broker.acceptResponse(connectionId, response, encodedBytes);
+    return this.broker.acceptResponse(connectionId, privacyBoundHostResponse(response), encodedBytes);
   }
 
   async invoke<Operation extends BrowserAutomationOperation>(
@@ -108,6 +164,11 @@ export class BrowserAutomationService {
     input: BrowserAutomationInputByOperation[Operation],
   ): Promise<BrowserAutomationInvocationResult<Operation>> {
     const key = sessionKey(profileId, sessionAgentId);
+    // A terminal disposition or lifecycle release owns the lease boundary. Calls
+    // admitted after that boundary starts must wait; calls already tracked are
+    // drained by the boundary before it snapshots exact authority.
+    const lifecycleBarrier = this.lifecycleReleaseChains.get(key);
+    if (lifecycleBarrier) await lifecycleBarrier.catch(() => undefined);
     const generation = this.getGeneration(key);
     return this.trackInFlight(key, async () => {
       if (!this.isGenerationCurrent(key, generation)) {
@@ -126,15 +187,17 @@ export class BrowserAutomationService {
           error: failure("request-cancelled", "Browser session was deleted.", true),
         };
       }
-      const target = this.resolveTarget(snapshot, operation, input as { tabId?: string; reuseExistingTab?: boolean });
+      const requestedHostKind = (input as { hostKind?: BrowserHostKind }).hostKind;
+      const hostKind = resolveBrowserHostKind(requestedHostKind ?? snapshot.hostKind);
+      const target = this.resolveTarget(snapshot, operation, input as { tabId?: string; reuseExistingTab?: boolean }, hostKind);
 
-      if (operation === "status" && !this.broker.getConnectionSnapshot().connected) {
+      if (operation === "status" && !this.broker.getConnectionSnapshot(hostKind).connected) {
         return {
           ok: true,
           operation,
           result: {
             available: false,
-            host: this.broker.getConnectionSnapshot(),
+            host: this.broker.getConnectionSnapshot(hostKind),
             panelVisible: false,
             panelRevealRequested: isPanelRevealPending(snapshot),
             physicalTabVisible: false,
@@ -171,6 +234,7 @@ export class BrowserAutomationService {
       let response: BrowserAutomationResponse;
       try {
         response = await this.broker.request({
+          hostKind,
           sessionAgentId,
           profileId,
           tabId: target.tab?.tabId ?? null,
@@ -203,8 +267,8 @@ export class BrowserAutomationService {
         }
 
         if (response.updatedTab && (
-          !isValidTabForSession(response.updatedTab, snapshot)
-          || !this.isTabIdAvailable(snapshot, response.updatedTab.tabId)
+          !isValidTabForSession(response.updatedTab, snapshot, hostKind)
+          || !this.isTabIdAvailable(snapshot, response.updatedTab.tabId, hostKind)
         )) {
           const malformed = failure("malformed-response", "Browser host returned invalid tab metadata.", false);
           await this.completeAction(snapshot, actionId, "failed", { errorCode: malformed.code, elapsedMs: response.elapsedMs });
@@ -223,8 +287,8 @@ export class BrowserAutomationService {
 
         const resultTabId = getResultTabId(response.result);
         if (
-          !isValidSuccessResult(operation, response.result, snapshot, target.tab?.tabId ?? null)
-          || (resultTabId !== null && !this.isTabIdAvailable(snapshot, resultTabId))
+          !isValidSuccessResult(operation, response.result, snapshot, target.tab?.tabId ?? null, hostKind)
+          || (resultTabId !== null && !this.isTabIdAvailable(snapshot, resultTabId, hostKind))
         ) {
           const malformed = failure("malformed-response", "Browser host returned a malformed operation result.", false);
           await this.completeAction(snapshot, actionId, "failed", { errorCode: malformed.code, elapsedMs: response.elapsedMs });
@@ -242,15 +306,24 @@ export class BrowserAutomationService {
           }
         }
 
-        this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation]);
+        if (resolveBrowserHostKind(snapshot.hostKind) !== hostKind) {
+          clearPanelReveal(snapshot);
+          snapshot.activeTabId = target.tab?.tabId ?? null;
+          snapshot.defaultTabId = target.tab?.tabId ?? null;
+        }
+        snapshot.hostKind = hostKind;
+        if (hostKind === "external-chrome") delete snapshot.externalChromeTurnDisposition;
+        this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation], hostKind);
         if (operation === "status" && response.ok) {
           const statusResult = response.result as BrowserAutomationResultByOperation["status"];
-          statusResult.host = this.broker.getConnectionSnapshot();
-          statusResult.available = statusResult.host.connected;
+          statusResult.host = this.broker.getConnectionSnapshot(hostKind);
+          // Renderer transport connectivity cannot upgrade a runtime-declared unavailable host.
+          // External Chrome remains unavailable when relay/native/extension readiness is false.
+          statusResult.available = statusResult.available && statusResult.host.connected;
           // Electron owns physical visibility; durable reveal intent remains backend-owned.
           statusResult.panelRevealRequested = isPanelRevealPending(snapshot);
         }
-        const completedMetadata = extractSafeCompletionMetadata(response.result);
+        const completedMetadata = extractSafeCompletionMetadata(response.result, hostKind);
         await this.completeAction(snapshot, actionId, "succeeded", {
           ...completedMetadata,
           elapsedMs: response.elapsedMs,
@@ -307,14 +380,41 @@ export class BrowserAutomationService {
     return [...this.sessions.values()].map(cloneSnapshot);
   }
 
+  async getHostHydrationSnapshot(
+    profileId: string,
+    sessionAgentId: string,
+    hostKind: BrowserHostKind,
+  ): Promise<BrowserSessionSnapshot> {
+    const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+    const tabs = snapshot.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === hostKind);
+    const tabIds = new Set(tabs.map((tab) => tab.tabId));
+    const selectedForHost = resolveBrowserHostKind(snapshot.hostKind) === hostKind;
+    return {
+      ...cloneSnapshot(snapshot),
+      hostKind,
+      tabs: tabs.map((tab) => cloneTab(tab)),
+      activeTabId: selectedForHost && snapshot.activeTabId && tabIds.has(snapshot.activeTabId)
+        ? snapshot.activeTabId
+        : null,
+      defaultTabId: selectedForHost && snapshot.defaultTabId && tabIds.has(snapshot.defaultTabId)
+        ? snapshot.defaultTabId
+        : null,
+      panelVisible: hostKind === "managed-electron" && selectedForHost ? snapshot.panelVisible : false,
+      panelReveal: hostKind === "managed-electron" && selectedForHost
+        ? snapshot.panelReveal
+        : { sequence: 0, acknowledgedSequence: 0, tabId: null },
+    };
+  }
+
   async reportHostState(
     connectionId: string,
     hostId: string,
     hostGeneration: number,
     reportedSessions: BrowserHostSessionStateReport[],
+    hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND,
   ): Promise<BrowserHostStateReportResult> {
-    if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration)) {
-      return { hostId, hostGeneration, status: "stale-host-generation", sessions: [] };
+    if (!this.broker.isCurrentConnection(connectionId, hostId, hostGeneration, hostKind)) {
+      return { hostKind, hostId, hostGeneration, status: "stale-host-generation", sessions: [] };
     }
 
     const results: BrowserHostSessionStateReportResult[] = [];
@@ -326,6 +426,7 @@ export class BrowserAutomationService {
       if (
         typeof reported.sessionAgentId !== "string"
         || typeof reported.profileId !== "string"
+        || resolveBrowserHostKind(reported.hostKind) !== hostKind
         || !Number.isInteger(reported.baseRevision)
         || reported.baseRevision < 0
         || !Array.isArray(reported.tabs)
@@ -347,7 +448,10 @@ export class BrowserAutomationService {
           tabs: reported.tabs,
           revision: reported.baseRevision,
         });
-        normalizedTabs = envelope.tabs;
+        normalizedTabs = envelope.tabs.map((tab) => hostKind === "external-chrome" ? privacyBoundExternalTab(tab) : tab);
+        if (normalizedTabs.some((tab) => resolveBrowserHostKind(tab.hostKind) !== hostKind)) {
+          throw new Error("Host report contains a tab for another browser host kind");
+        }
       } catch (error) {
         this.logDebug("browser-automation:invalid-host-state-report", {
           error: error instanceof Error ? error.message : String(error),
@@ -356,7 +460,7 @@ export class BrowserAutomationService {
         continue;
       }
       if (normalizedTabs.some((tab) => {
-        const owner = this.tabOwners.get(tab.tabId);
+        const owner = this.tabOwners.get(hostTabKey(hostKind, tab.tabId));
         return owner !== undefined && owner !== reported.sessionAgentId;
       })) {
         results.push({ ...resultBase, status: "rejected", reason: "invalid-report" });
@@ -397,7 +501,7 @@ export class BrowserAutomationService {
         });
         continue;
       }
-      if (normalizedTabs.some((reportedTab) => !canonical.tabs.some((tab) => tab.tabId === reportedTab.tabId))) {
+      if (normalizedTabs.some((reportedTab) => !canonical.tabs.some((tab) => tab.tabId === reportedTab.tabId && resolveBrowserHostKind(tab.hostKind) === hostKind))) {
         results.push({
           ...resultBase,
           status: "rejected",
@@ -409,7 +513,7 @@ export class BrowserAutomationService {
 
       let changed = false;
       for (const reportedTab of normalizedTabs) {
-        const index = canonical.tabs.findIndex((tab) => tab.tabId === reportedTab.tabId);
+        const index = canonical.tabs.findIndex((tab) => tab.tabId === reportedTab.tabId && resolveBrowserHostKind(tab.hostKind) === hostKind);
         const merged = mergeHostOwnedTabFields(canonical.tabs[index]!, reportedTab);
         if (merged !== canonical.tabs[index]) {
           canonical.tabs[index] = merged;
@@ -434,7 +538,7 @@ export class BrowserAutomationService {
         snapshot: cloneSnapshot(canonical),
       });
     }
-    return { hostId, hostGeneration, status: "processed", sessions: results };
+    return { hostKind, hostId, hostGeneration, status: "processed", sessions: results };
   }
 
   async acknowledgePanelReveal(
@@ -460,15 +564,17 @@ export class BrowserAutomationService {
     });
   }
 
-  async activateTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+  async activateTab(profileId: string, sessionAgentId: string, tabId: string, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
     return this.withSessionMutation(key, async () => {
       this.assertMutable(key, generation);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
-      const tab = snapshot.tabs.find((candidate) => candidate.tabId === tabId && candidate.lifecycle !== "closed");
+      const tab = snapshot.tabs.find((candidate) => candidate.tabId === tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind && candidate.lifecycle !== "closed");
       if (!tab) throw new Error("Browser tab was not found in the selected Forge session.");
+      if (resolveBrowserHostKind(snapshot.hostKind) !== hostKind) clearPanelReveal(snapshot);
+      snapshot.hostKind = hostKind;
       snapshot.activeTabId = tabId;
       snapshot.defaultTabId = tabId;
       snapshot.panelVisible = true;
@@ -477,26 +583,62 @@ export class BrowserAutomationService {
     });
   }
 
-  async closeTab(profileId: string, sessionAgentId: string, tabId: string): Promise<BrowserSessionSnapshot> {
+  async closeTab(profileId: string, sessionAgentId: string, tabId: string, hostKind: BrowserHostKind = DEFAULT_BROWSER_HOST_KIND): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
     return this.withSessionMutation(key, async () => {
       this.assertMutable(key, generation);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
-      const existing = snapshot.tabs.find((candidate) => candidate.tabId === tabId);
+      const existing = snapshot.tabs.find((candidate) => candidate.tabId === tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind);
       if (!existing || existing.lifecycle === "closed") throw new Error("Browser tab was not found in the selected Forge session.");
-      snapshot.tabs = snapshot.tabs.filter((candidate) => candidate.tabId !== tabId);
-      this.tabOwners.delete(tabId);
-      if (snapshot.panelReveal?.tabId === tabId) {
+      const selectedHostKind = resolveBrowserHostKind(snapshot.hostKind);
+      const closedActiveSelection = selectedHostKind === hostKind && snapshot.activeTabId === tabId;
+      const closedDefaultSelection = selectedHostKind === hostKind && snapshot.defaultTabId === tabId;
+      snapshot.tabs = snapshot.tabs.filter((candidate) => candidate !== existing);
+      this.tabOwners.delete(hostTabKey(resolveBrowserHostKind(existing.hostKind), tabId));
+      if (selectedHostKind === hostKind && snapshot.panelReveal?.tabId === tabId) {
         snapshot.panelReveal = {
           ...snapshot.panelReveal,
           acknowledgedSequence: snapshot.panelReveal.sequence,
           tabId: null,
         };
       }
-      if (snapshot.activeTabId === tabId) snapshot.activeTabId = snapshot.tabs[0]?.tabId ?? null;
-      if (snapshot.defaultTabId === tabId) snapshot.defaultTabId = snapshot.activeTabId;
+      if (closedActiveSelection || closedDefaultSelection) {
+        const sameHostTabs = snapshot.tabs.filter((candidate) => resolveBrowserHostKind(candidate.hostKind) === selectedHostKind && candidate.lifecycle !== "closed");
+        const retainedActive = !closedActiveSelection
+          ? sameHostTabs.find((candidate) => candidate.tabId === snapshot.activeTabId)
+          : undefined;
+        const retainedDefault = !closedDefaultSelection
+          ? sameHostTabs.find((candidate) => candidate.tabId === snapshot.defaultTabId)
+          : undefined;
+        const fallback = retainedActive ?? retainedDefault ?? sameHostTabs[0]
+          ?? snapshot.tabs.find((candidate) => candidate.lifecycle !== "closed");
+        snapshot.hostKind = fallback ? resolveBrowserHostKind(fallback.hostKind) : selectedHostKind;
+        snapshot.activeTabId = retainedActive?.tabId ?? fallback?.tabId ?? null;
+        snapshot.defaultTabId = retainedDefault?.tabId ?? snapshot.activeTabId;
+      }
+      await this.persistChanged(snapshot, "human-command", generation);
+      return cloneSnapshot(snapshot);
+    });
+  }
+
+  async selectHost(profileId: string, sessionAgentId: string, hostKind: BrowserHostKind): Promise<BrowserSessionSnapshot> {
+    const key = sessionKey(profileId, sessionAgentId);
+    const generation = this.getGeneration(key);
+    return this.withSessionMutation(key, async () => {
+      this.assertMutable(key, generation);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      if (resolveBrowserHostKind(snapshot.hostKind) === hostKind) return cloneSnapshot(snapshot);
+      const fallback = snapshot.tabs.find((tab) => resolveBrowserHostKind(tab.hostKind) === hostKind && tab.lifecycle !== "closed");
+      snapshot.hostKind = hostKind;
+      snapshot.activeTabId = fallback?.tabId ?? null;
+      snapshot.defaultTabId = fallback?.tabId ?? null;
+      if (hostKind !== "managed-electron") {
+        snapshot.panelVisible = false;
+        clearPanelReveal(snapshot);
+      }
       await this.persistChanged(snapshot, "human-command", generation);
       return cloneSnapshot(snapshot);
     });
@@ -507,6 +649,7 @@ export class BrowserAutomationService {
     sessionAgentId: string,
     activeTabId: string | null,
     defaultTabId: string | null,
+    hostKind: BrowserHostKind,
   ): Promise<BrowserSessionSnapshot> {
     const key = sessionKey(profileId, sessionAgentId);
     const generation = this.getGeneration(key);
@@ -514,9 +657,12 @@ export class BrowserAutomationService {
       this.assertMutable(key, generation);
       const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
       this.assertMutable(key, generation);
-      const tabIds = new Set(snapshot.tabs.map((tab) => tab.tabId));
+      const tabIds = new Set(snapshot.tabs
+        .filter((tab) => resolveBrowserHostKind(tab.hostKind) === hostKind && tab.lifecycle !== "closed")
+        .map((tab) => tab.tabId));
       if (activeTabId !== null && !tabIds.has(activeTabId)) throw new Error("Active browser tab is missing");
       if (defaultTabId !== null && !tabIds.has(defaultTabId)) throw new Error("Default browser tab is missing");
+      snapshot.hostKind = hostKind;
       snapshot.activeTabId = activeTabId;
       snapshot.defaultTabId = defaultTabId;
       await this.persistChanged(snapshot, "human-command", generation);
@@ -525,7 +671,232 @@ export class BrowserAutomationService {
   }
 
   cancelSession(sessionAgentId: string): number {
+    if (this.broker.hasPendingSession(sessionAgentId, "external-chrome")) {
+      this.cancelledExternalLeaseRisk.add(sessionAgentId);
+    }
     return this.broker.cancelSession(sessionAgentId);
+  }
+
+  async retryPendingExternalChromeTurnDispositions(): Promise<void> {
+    for (const snapshot of this.getLoadedSessionSnapshots()) {
+      const pending = snapshot.externalChromeTurnDisposition;
+      if (pending?.phase !== "pending") continue;
+      try {
+        await this.handoffExternalChromeAtTurnEnd(snapshot.profileId, snapshot.sessionAgentId, pending.turnId);
+      } catch (error) {
+        this.logDebug("external-chrome:turn-disposition-retry-pending", {
+          sessionAgentId: snapshot.sessionAgentId, turnId: pending.turnId, error: String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Terminal agent-turn policy: surviving active External Chrome tabs enter a bounded
+   * same-lease HANDOFF. Stop/archive/delete/detach remain final lifecycle releases.
+   * The opaque pending receipt is persisted before transport so renderer/backend
+   * reconnect retries cannot widen or change the lease scope.
+   */
+  async handoffExternalChromeAtTurnEnd(profileId: string, sessionAgentId: string, turnId: string): Promise<void> {
+    const key = sessionKey(profileId, sessionAgentId);
+    return this.withLifecycleRelease(key, async () => {
+      await this.awaitInFlight(key);
+      const generation = this.getGeneration(key);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      const previous = snapshot.externalChromeTurnDisposition;
+      if (previous?.turnId === turnId && previous.phase === "completed") return;
+      if (previous?.phase === "completed") {
+        // No successful External Chrome operation resumed this handoff since the
+        // prior terminal boundary. The retained disposition already covers the
+        // same surviving lease, so advance only the opaque backend receipt.
+        snapshot.externalChromeTurnDisposition = { ...previous, turnId };
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          await this.persistChanged(snapshot, "lifecycle", generation);
+        });
+        return;
+      }
+      if (previous?.phase === "pending" && previous.turnId !== turnId) {
+        throw new Error("An older External Chrome turn disposition is still pending.");
+      }
+      const externalTabs = snapshot.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === "external-chrome" && tab.lifecycle !== "closed");
+      if (externalTabs.length === 0) return;
+      const selectedTab = externalTabs.find((tab) => tab.tabId === snapshot.activeTabId)
+        ?? externalTabs.slice().sort((left, right) => left.tabId.localeCompare(right.tabId))[0];
+      if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) throw new Error("External Chrome turn authority is malformed.");
+      const transaction = previous?.turnId === turnId ? previous : {
+        turnId, tabId: selectedTab.tabId, disposition: "handoff" as const, phase: "pending" as const,
+      };
+      if (previous !== transaction) {
+        snapshot.externalChromeTurnDisposition = transaction;
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          await this.persistChanged(snapshot, "lifecycle", generation);
+        });
+      }
+      const authority = currentExternalChromeAuthority(this.broker);
+      let response: BrowserAutomationResponse;
+      try {
+        response = await this.broker.request({
+          hostKind: "external-chrome", sessionAgentId, profileId, tabId: transaction.tabId, operation: "status",
+          input: { hostKind: "external-chrome", tabId: transaction.tabId, externalChromeTurnDisposition: { turnId, disposition: "handoff" } },
+          timeoutMs: EXTERNAL_CHROME_RELEASE_TIMEOUT_MS, artifactDirectory: null,
+          requestId: `external-chrome-turn-ended:${crypto.randomUUID()}`,
+          expectedHost: { hostId: authority.hostId, hostGeneration: authority.hostGeneration },
+        });
+      } catch (error) {
+        if (error instanceof BrowserAutomationBrokerError) throw new BrowserLifecycleReleaseError(error.failure);
+        throw error;
+      }
+      if (!response.ok || response.operation !== "status" || response.result.externalChromeTurnDisposition?.turnId !== turnId
+        || response.result.externalChromeTurnDisposition.disposition !== "handoff") {
+        throw new Error("External Chrome turn acknowledgement did not match the terminal turn.");
+      }
+      await this.withSessionMutation(key, async () => {
+        this.assertMutable(key, generation);
+        if (snapshot.externalChromeTurnDisposition?.turnId !== turnId) throw new Error("External Chrome turn authority changed before commit.");
+        snapshot.externalChromeTurnDisposition = { ...transaction, phase: "completed" };
+        await this.persistChanged(snapshot, "lifecycle", generation);
+      });
+    });
+  }
+
+  async releaseSessionForLifecycle(
+    profileId: string,
+    sessionAgentId: string,
+    reason: BrowserLifecycleReleaseReason,
+  ): Promise<void> {
+    const key = sessionKey(profileId, sessionAgentId);
+    return this.withLifecycleRelease(key, async () => {
+      this.cancelSession(sessionAgentId);
+      await this.awaitInFlight(key);
+      const generation = this.getGeneration(key);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      let transaction = snapshot.externalChromeLifecycleRelease;
+      const externalTabs = snapshot.tabs.filter((tab) => (
+        resolveBrowserHostKind(tab.hostKind) === "external-chrome" && tab.lifecycle !== "closed"
+      ));
+
+      if (!transaction) {
+        if (externalTabs.length === 0) {
+          if (this.cancelledExternalLeaseRisk.has(sessionAgentId)) throw lifecycleReleaseError("malformed-response", false);
+          return;
+        }
+        const selectedTab = [snapshot.activeTabId, snapshot.defaultTabId]
+          .filter((tabId): tabId is string => tabId !== null)
+          .map((tabId) => externalTabs.find((tab) => tab.tabId === tabId))
+          .find((tab): tab is BrowserTabSnapshot => tab !== undefined)
+          ?? externalTabs.slice().sort((left, right) => left.tabId.localeCompare(right.tabId))[0];
+        if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) throw lifecycleReleaseError("malformed-response", false);
+        const authority = currentExternalChromeAuthority(this.broker);
+        transaction = {
+          releaseId: crypto.randomUUID(), reason, tabId: selectedTab.tabId,
+          hostId: authority.hostId, hostGeneration: authority.hostGeneration, phase: "preparing",
+        };
+        snapshot.externalChromeLifecycleRelease = transaction;
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          await this.persistChanged(snapshot, "lifecycle", generation);
+        });
+      }
+
+      if (transaction.phase === "preparing") {
+        await this.requestLifecycleReleasePhase(sessionAgentId, profileId, transaction, "prepare");
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          const releasingTabs = snapshot.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === "external-chrome");
+          const releasedIds = new Set(releasingTabs.map((tab) => tab.tabId));
+          snapshot.tabs = snapshot.tabs.filter((tab) => !releasedIds.has(tab.tabId)
+            || resolveBrowserHostKind(tab.hostKind) !== "external-chrome");
+          for (const tab of releasingTabs) this.tabOwners.delete(hostTabKey("external-chrome", tab.tabId));
+          if (resolveBrowserHostKind(snapshot.hostKind) === "external-chrome") {
+            const fallback = snapshot.tabs.find((tab) => tab.lifecycle !== "closed");
+            snapshot.hostKind = fallback ? resolveBrowserHostKind(fallback.hostKind) : DEFAULT_BROWSER_HOST_KIND;
+            snapshot.activeTabId = fallback?.tabId ?? null;
+            snapshot.defaultTabId = fallback?.tabId ?? null;
+            snapshot.panelVisible = false;
+            clearPanelReveal(snapshot);
+          }
+          transaction = { ...transaction!, phase: "prepared" };
+          snapshot.externalChromeLifecycleRelease = transaction;
+          delete snapshot.externalChromeTurnDisposition;
+          await this.persistChanged(snapshot, "lifecycle", generation);
+          this.cancelledExternalLeaseRisk.delete(sessionAgentId);
+        });
+      }
+
+      if (!transaction) throw lifecycleReleaseError("malformed-response", false);
+      const finalizingTransaction = transaction;
+      await this.requestLifecycleReleasePhase(sessionAgentId, profileId, finalizingTransaction, "finalize");
+      await this.withSessionMutation(key, async () => {
+        this.assertMutable(key, generation);
+        if (snapshot.externalChromeLifecycleRelease?.releaseId !== finalizingTransaction.releaseId) {
+          throw lifecycleReleaseError("malformed-response", false);
+        }
+        delete snapshot.externalChromeLifecycleRelease;
+        await this.persistChanged(snapshot, "lifecycle", generation);
+      });
+    });
+  }
+
+  private async requestLifecycleReleasePhase(
+    sessionAgentId: string,
+    profileId: string,
+    transaction: ExternalChromeLifecycleReleaseTransaction,
+    phase: "prepare" | "finalize",
+  ): Promise<void> {
+    const authority = currentExternalChromeAuthority(this.broker);
+    let response: BrowserAutomationResponse;
+    try {
+      response = await this.broker.request({
+        hostKind: "external-chrome", sessionAgentId, profileId, tabId: transaction.tabId, operation: "status",
+        input: { hostKind: "external-chrome", tabId: transaction.tabId, externalChromeLifecycleRelease: {
+          phase, releaseId: transaction.releaseId, reason: transaction.reason,
+          originalHostId: transaction.hostId, originalHostGeneration: transaction.hostGeneration,
+        } },
+        timeoutMs: EXTERNAL_CHROME_RELEASE_TIMEOUT_MS, artifactDirectory: null,
+        requestId: `external-chrome-release:${phase}:${transaction.reason}:${crypto.randomUUID()}`,
+        expectedHost: { hostId: authority.hostId, hostGeneration: authority.hostGeneration },
+      });
+    } catch (error) {
+      if (error instanceof BrowserAutomationBrokerError) throw new BrowserLifecycleReleaseError(error.failure);
+      throw lifecycleReleaseError("execution-failed", false);
+    }
+    if (!response.ok) throw new BrowserLifecycleReleaseError(response.error);
+    if (!isLifecycleReleaseAcknowledgement(response, transaction, phase)) throw lifecycleReleaseError("malformed-response", false);
+  }
+
+  async recordFailedLifecycleRelease(
+    profileId: string,
+    sessionAgentId: string,
+    reason: Extract<BrowserLifecycleReleaseReason, "stop">,
+    error: unknown,
+  ): Promise<BrowserSessionSnapshot> {
+    const key = sessionKey(profileId, sessionAgentId);
+    const generation = this.getGeneration(key);
+    return this.withSessionMutation(key, async () => {
+      this.assertMutable(key, generation);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      const failureResult = error instanceof BrowserLifecycleReleaseError
+        ? error.failure
+        : failure("execution-failed", "External Chrome lifecycle release failed.", false);
+      const timestamp = this.now();
+      snapshot.recentActions.push({
+        id: `external-chrome-release-failed:${reason}:${crypto.randomUUID()}`,
+        operation: "status",
+        tabId: null,
+        status: "failed",
+        errorCode: failureResult.code,
+        startedAt: timestamp,
+        completedAt: timestamp,
+      });
+      snapshot.recentActions = snapshot.recentActions.slice(-BROWSER_AUTOMATION_MAX_SAFE_ACTIONS);
+      await this.persistChanged(snapshot, "lifecycle", generation);
+      return cloneSnapshot(snapshot);
+    });
   }
 
   async archiveSession(profileId: string, sessionAgentId: string): Promise<BrowserSessionSnapshot> {
@@ -602,7 +973,7 @@ export class BrowserAutomationService {
         }
       }
       if (snapshot) {
-        for (const tab of snapshot.tabs) this.tabOwners.delete(tab.tabId);
+        for (const tab of snapshot.tabs) this.tabOwners.delete(hostTabKey(resolveBrowserHostKind(tab.hostKind), tab.tabId));
         const hadState = snapshot.tabs.length > 0 || snapshot.revision > 0 || snapshot.recentActions.length > 0;
         if (hadState) {
           snapshot.hostingState = "removed";
@@ -631,6 +1002,7 @@ export class BrowserAutomationService {
       }
       this.sessions.delete(key);
       this.sessionLoadPromises.delete(key);
+      this.cancelledExternalLeaseRisk.delete(sessionAgentId);
       await this.store.delete(profileId, sessionAgentId);
       this.sessionTombs.delete(key);
     });
@@ -640,11 +1012,12 @@ export class BrowserAutomationService {
     snapshot: BrowserSessionSnapshot,
     operation: BrowserAutomationOperation,
     input: { tabId?: string; reuseExistingTab?: boolean },
+    hostKind: BrowserHostKind,
   ): { tab?: BrowserTabSnapshot; failure?: BrowserAutomationFailure } {
     if (input.tabId) {
-      const tab = snapshot.tabs.find((candidate) => candidate.tabId === input.tabId);
+      const tab = snapshot.tabs.find((candidate) => candidate.tabId === input.tabId && resolveBrowserHostKind(candidate.hostKind) === hostKind);
       if (tab) return { tab };
-      const owner = this.tabOwners.get(input.tabId);
+      const owner = this.tabOwners.get(hostTabKey(hostKind, input.tabId));
       return {
         failure: owner && owner !== snapshot.sessionAgentId
           ? failure("tab-session-mismatch", "The requested browser tab belongs to another Forge session.", false)
@@ -653,7 +1026,7 @@ export class BrowserAutomationService {
     }
 
     const defaultId = snapshot.defaultTabId ?? snapshot.activeTabId;
-    const defaultTab = defaultId ? snapshot.tabs.find((tab) => tab.tabId === defaultId) : undefined;
+    const defaultTab = defaultId ? snapshot.tabs.find((tab) => tab.tabId === defaultId && resolveBrowserHostKind(tab.hostKind) === hostKind) : undefined;
     if (operation === "status") return { tab: defaultTab };
     if (operation === "open") {
       return input.reuseExistingTab === false ? {} : { tab: defaultTab };
@@ -666,11 +1039,12 @@ export class BrowserAutomationService {
     snapshot: BrowserSessionSnapshot,
     operation: BrowserAutomationOperation,
     result: BrowserAutomationResultByOperation[BrowserAutomationOperation],
+    hostKind: BrowserHostKind,
     options: { activate?: boolean } = {},
   ): void {
     if (operation === "open") {
       const tab = (result as BrowserAutomationResultByOperation["open"]).tab;
-      this.upsertTab(snapshot, tab);
+      this.upsertTab(snapshot, { ...tab, hostKind });
       if (options.activate !== false) {
         snapshot.activeTabId = tab.tabId;
         snapshot.defaultTabId = tab.tabId;
@@ -680,15 +1054,15 @@ export class BrowserAutomationService {
       }
       return;
     }
-    if (operation === "navigate") this.upsertTab(snapshot, (result as BrowserAutomationResultByOperation["navigate"]).tab);
+    if (operation === "navigate") this.upsertTab(snapshot, { ...(result as BrowserAutomationResultByOperation["navigate"]).tab, hostKind });
     if (operation === "status") {
       const selectedTab = (result as BrowserAutomationResultByOperation["status"]).selectedTab;
-      if (selectedTab) this.upsertTab(snapshot, selectedTab);
+      if (selectedTab) this.upsertTab(snapshot, { ...selectedTab, hostKind });
     }
   }
 
-  private isTabIdAvailable(snapshot: BrowserSessionSnapshot, tabId: string): boolean {
-    const owner = this.tabOwners.get(tabId);
+  private isTabIdAvailable(snapshot: BrowserSessionSnapshot, tabId: string, hostKind: BrowserHostKind): boolean {
+    const owner = this.tabOwners.get(hostTabKey(hostKind, tabId));
     return owner === undefined || owner === snapshot.sessionAgentId;
   }
 
@@ -700,16 +1074,16 @@ export class BrowserAutomationService {
       });
       return;
     }
-    const existing = snapshot.tabs.findIndex((candidate) => candidate.tabId === tab.tabId);
+    const existing = snapshot.tabs.findIndex((candidate) => candidate.tabId === tab.tabId && resolveBrowserHostKind(candidate.hostKind) === resolveBrowserHostKind(tab.hostKind));
     if (existing >= 0) snapshot.tabs[existing] = { ...tab };
     else snapshot.tabs.push({ ...tab });
-    this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
+    this.tabOwners.set(hostTabKey(resolveBrowserHostKind(tab.hostKind), tab.tabId), snapshot.sessionAgentId);
     snapshot.defaultTabId ??= tab.tabId;
     snapshot.activeTabId ??= tab.tabId;
   }
 
   private indexTabs(snapshot: BrowserSessionSnapshot): void {
-    for (const tab of snapshot.tabs) this.tabOwners.set(tab.tabId, snapshot.sessionAgentId);
+    for (const tab of snapshot.tabs) this.tabOwners.set(hostTabKey(resolveBrowserHostKind(tab.hostKind), tab.tabId), snapshot.sessionAgentId);
   }
 
   private async recordAction(
@@ -807,6 +1181,36 @@ export class BrowserAutomationService {
     }
   }
 
+  private async withLifecycleRelease<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.lifecycleReleaseChains.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    const chained = previous.catch(() => undefined).then(() => gate);
+    this.lifecycleReleaseChains.set(key, chained);
+    await previous.catch(() => undefined);
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.lifecycleReleaseChains.get(key) === chained) this.lifecycleReleaseChains.delete(key);
+    }
+  }
+
+  private async withHostRegistration<T>(hostKind: BrowserHostKind, work: () => Promise<T>): Promise<T> {
+    const previous = this.hostRegistrationChains.get(hostKind) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    const chained = previous.catch(() => undefined).then(() => gate);
+    this.hostRegistrationChains.set(hostKind, chained);
+    await previous.catch(() => undefined);
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.hostRegistrationChains.get(hostKind) === chained) this.hostRegistrationChains.delete(hostKind);
+    }
+  }
+
   private async withSessionMutation<T>(key: string, work: () => Promise<T>): Promise<T> {
     const previous = this.sessionMutationChains.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -827,9 +1231,231 @@ export class BrowserAutomationService {
   }
 }
 
+function privacyBoundHostResponse(value: unknown): unknown {
+  if (!isRecord(value) || value.hostKind !== "external-chrome") return value;
+  const routing = {
+    requestId: value.requestId,
+    hostKind: value.hostKind,
+    sessionAgentId: value.sessionAgentId,
+    profileId: value.profileId,
+    tabId: value.tabId,
+    hostId: value.hostId,
+    hostGeneration: value.hostGeneration,
+    operation: value.operation,
+    elapsedMs: value.elapsedMs,
+  };
+  if (value.ok === false) {
+    const rawError = isRecord(value.error) ? value.error : {};
+    const code = safeExternalErrorCode(rawError.code);
+    return {
+      ...routing,
+      ok: false,
+      error: {
+        code,
+        message: externalFailureMessage(code),
+        retryable: rawError.retryable === true,
+      },
+      ...(isRecord(value.updatedTab) ? { updatedTab: privacyBoundExternalTab(value.updatedTab) } : {}),
+    };
+  }
+  if (value.ok !== true || !isRecord(value.result)) return routing;
+  const result = privacyBoundExternalResult(value.operation, value.result);
+  return {
+    ...routing,
+    ok: true,
+    result,
+    ...(isRecord(value.updatedTab) ? { updatedTab: privacyBoundExternalTab(value.updatedTab) } : {}),
+  };
+}
+
+function privacyBoundExternalResult(operation: unknown, result: Record<string, unknown>): Record<string, unknown> {
+  if (operation === "status") {
+    return {
+      available: result.available,
+      ...(isRecord(result.externalChromeLifecycleRelease) ? { externalChromeLifecycleRelease: {
+        phase: result.externalChromeLifecycleRelease.phase,
+        releaseId: result.externalChromeLifecycleRelease.releaseId,
+      } } : {}),
+      ...(isRecord(result.externalChromeTurnDisposition) ? { externalChromeTurnDisposition: {
+        turnId: result.externalChromeTurnDisposition.turnId,
+        disposition: result.externalChromeTurnDisposition.disposition,
+      } } : {}),
+      host: result.host,
+      panelVisible: result.panelVisible,
+      panelRevealRequested: result.panelRevealRequested,
+      physicalTabVisible: result.physicalTabVisible,
+      selectedTab: isRecord(result.selectedTab) ? privacyBoundExternalTab(result.selectedTab) : result.selectedTab,
+    };
+  }
+  if (operation === "open") {
+    return {
+      tab: isRecord(result.tab) ? privacyBoundExternalTab(result.tab) : result.tab,
+      created: result.created,
+      panelRevealRequested: result.panelRevealRequested,
+    };
+  }
+  if (operation === "navigate") {
+    return {
+      tab: isRecord(result.tab) ? privacyBoundExternalTab(result.tab) : result.tab,
+      readiness: result.readiness,
+    };
+  }
+  // M4 operation payloads retain live tool semantics, but only advertised keys
+  // cross the host boundary. Durable/event/audit projections are bounded later.
+  if (operation === "snapshot") {
+    return {
+      tabId: result.tabId,
+      url: result.url,
+      title: result.title,
+      loading: result.loading,
+      viewportSetting: result.viewportSetting,
+      viewport: result.viewport,
+      visibleText: result.visibleText,
+      interactiveElements: result.interactiveElements,
+      accessibility: result.accessibility,
+      consoleEntries: result.consoleEntries,
+      networkEntries: result.networkEntries,
+      actionTimeline: result.actionTimeline,
+      screenshot: result.screenshot,
+    };
+  }
+  if (operation === "click") return { tabId: result.tabId, point: result.point };
+  if (operation === "type") {
+    return { tabId: result.tabId, characters: result.characters, cleared: result.cleared };
+  }
+  if (operation === "press") return { tabId: result.tabId, key: result.key, modifiers: result.modifiers };
+  if (operation === "scroll") {
+    return {
+      tabId: result.tabId,
+      deltaX: result.deltaX,
+      deltaY: result.deltaY,
+      scrollX: result.scrollX,
+      scrollY: result.scrollY,
+    };
+  }
+  if (operation === "evaluate") {
+    return {
+      tabId: result.tabId,
+      ...(result.value !== undefined ? { value: result.value } : {}),
+      ...(result.remoteObject !== undefined ? { remoteObject: result.remoteObject } : {}),
+      serializedBytes: result.serializedBytes,
+    };
+  }
+  if (operation === "waitFor") {
+    return { tabId: result.tabId, matched: result.matched, elapsedMs: result.elapsedMs };
+  }
+  // Physical viewport and recording operations remain unqualified for External
+  // Chrome. An empty projection makes a dishonest response fail normal validation.
+  return {};
+}
+
+function privacyBoundExternalTab(value: Record<string, unknown> | BrowserTabSnapshot): BrowserTabSnapshot {
+  return {
+    hostKind: "external-chrome",
+    tabId: typeof value.tabId === "string" && isOpaqueExternalTabId(value.tabId) ? value.tabId : "",
+    sessionAgentId: value.sessionAgentId as string,
+    profileId: value.profileId as string,
+    // Selection metadata remains local to Desktop. The backend retains only
+    // the opaque leased-tab identity and non-sensitive runtime state.
+    url: "",
+    title: "",
+    lifecycle: value.lifecycle as BrowserTabSnapshot["lifecycle"],
+    loading: value.loading as boolean,
+    live: value.live as boolean,
+    canGoBack: value.canGoBack as boolean,
+    canGoForward: value.canGoForward as boolean,
+    zoomFactor: value.zoomFactor as number,
+    controller: value.controller as BrowserTabSnapshot["controller"],
+    agentCursor: value.agentCursor as BrowserTabSnapshot["agentCursor"],
+    recording: null,
+    viewportSetting: value.viewportSetting as BrowserTabSnapshot["viewportSetting"],
+    renderedViewport: value.renderedViewport as BrowserTabSnapshot["renderedViewport"],
+    physicalVisible: value.physicalVisible === true,
+    error: isRecord(value.error)
+      ? (() => {
+          const code = safeExternalErrorCode(value.error.code);
+          return { code, message: externalFailureMessage(code) };
+        })()
+      : null,
+    createdAt: value.createdAt as string,
+    updatedAt: value.updatedAt as string,
+  };
+}
+
+const EXTERNAL_ERROR_CODES = new Set<BrowserAutomationFailure["code"]>([
+  "unavailable-host", "unsupported-operation", "session-not-found", "tab-not-found", "tab-session-mismatch",
+  "invalid-input", "invalid-url", "navigation-failed", "timeout", "control-interrupted", "target-not-found",
+  "invalid-selector", "target-not-editable", "coordinates-outside-viewport", "evaluation-failed", "result-too-large",
+  "response-too-large", "host-disconnected", "stale-host-generation", "malformed-response", "artifact-path-invalid",
+  "recording-conflict", "recording-requires-visible-tab", "recording-not-found", "request-cancelled", "execution-failed",
+  "attachment-required", "lease-conflict", "lease-lost", "restricted-target", "debugger-unavailable",
+  "extension-update-required", "chrome-policy-blocked",
+]);
+
+function safeExternalErrorCode(value: unknown): BrowserAutomationFailure["code"] {
+  return typeof value === "string" && EXTERNAL_ERROR_CODES.has(value as BrowserAutomationFailure["code"])
+    ? value as BrowserAutomationFailure["code"]
+    : "malformed-response";
+}
+
+function externalFailureMessage(code: string): string {
+  return `External Chrome request failed (${code}).`;
+}
+
+const EXTERNAL_CHROME_RELEASE_TIMEOUT_MS = 5_000;
+
+function isOpaqueExternalTabId(value: string): boolean {
+  return value.length <= 128 && /^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(value);
+}
+
+function currentExternalChromeAuthority(broker: BrowserHostBroker): { hostId: string; hostGeneration: number } {
+  const authority = broker.getConnectionSnapshot("external-chrome");
+  if (!authority.connected || authority.hostId === null || authority.hostGeneration === null) {
+    throw lifecycleReleaseError("host-disconnected", true);
+  }
+  return { hostId: authority.hostId, hostGeneration: authority.hostGeneration };
+}
+
+function isLifecycleReleaseAcknowledgement(
+  response: BrowserAutomationResponse,
+  transaction: ExternalChromeLifecycleReleaseTransaction,
+  phase: "prepare" | "finalize",
+): boolean {
+  if (!response.ok || response.operation !== "status" || !isRecord(response.result)) return false;
+  const acknowledgement = response.result.externalChromeLifecycleRelease;
+  return typeof response.result.available === "boolean"
+    && typeof response.result.panelVisible === "boolean"
+    && typeof response.result.panelRevealRequested === "boolean"
+    && typeof response.result.physicalTabVisible === "boolean"
+    && response.result.selectedTab === null
+    && isRecord(acknowledgement)
+    && acknowledgement.phase === phase
+    && acknowledgement.releaseId === transaction.releaseId;
+}
+
+function lifecycleReleaseError(
+  code: BrowserAutomationFailure["code"],
+  retryable: boolean,
+): BrowserLifecycleReleaseError {
+  return new BrowserLifecycleReleaseError(failure(
+    code,
+    `External Chrome lifecycle release failed (${code}).`,
+    retryable,
+  ));
+}
+
 function isPanelRevealPending(snapshot: BrowserSessionSnapshot): boolean {
   const reveal = snapshot.panelReveal;
   return Boolean(reveal && reveal.tabId !== null && reveal.sequence > reveal.acknowledgedSequence);
+}
+
+function clearPanelReveal(snapshot: BrowserSessionSnapshot): void {
+  if (!snapshot.panelReveal || snapshot.panelReveal.tabId === null) return;
+  snapshot.panelReveal = {
+    ...snapshot.panelReveal,
+    acknowledgedSequence: snapshot.panelReveal.sequence,
+    tabId: null,
+  };
 }
 
 function getResultTabId(value: unknown): string | null {
@@ -844,6 +1470,7 @@ function isValidSuccessResult(
   value: unknown,
   snapshot: BrowserSessionSnapshot,
   expectedTabId: string | null,
+  hostKind: BrowserHostKind,
 ): boolean {
   if (!isRecord(value)) return false;
   const directTabId = typeof value.tabId === "string" ? value.tabId : null;
@@ -858,15 +1485,15 @@ function isValidSuccessResult(
         && typeof value.physicalTabVisible === "boolean"
         && value.panelVisible === value.physicalTabVisible
         && (value.selectedTab === null || (
-          isValidTabForSession(value.selectedTab, snapshot)
+          isValidTabForSession(value.selectedTab, snapshot, hostKind)
           && (expectedTabId === null || value.selectedTab.tabId === expectedTabId)
         ));
     case "open":
       return typeof value.created === "boolean"
         && typeof value.panelRevealRequested === "boolean"
-        && isValidTabForSession(value.tab, snapshot);
+        && isValidTabForSession(value.tab, snapshot, hostKind);
     case "navigate":
-      return isValidTabForSession(value.tab, snapshot)
+      return isValidTabForSession(value.tab, snapshot, hostKind)
         && (value.readiness === "load" || value.readiness === "domContentLoaded" || value.readiness === "none");
     case "resize":
       return typeof value.tabId === "string" && isRecord(value.setting) && isRenderedViewport(value.viewport);
@@ -909,9 +1536,11 @@ function isValidSuccessResult(
   }
 }
 
-function isValidTabForSession(value: unknown, snapshot: BrowserSessionSnapshot): value is BrowserTabSnapshot {
+function isValidTabForSession(value: unknown, snapshot: BrowserSessionSnapshot, hostKind: BrowserHostKind): value is BrowserTabSnapshot {
   if (!isRecord(value)) return false;
   return typeof value.tabId === "string"
+    && (hostKind !== "external-chrome" || isOpaqueExternalTabId(value.tabId))
+    && resolveBrowserHostKind(value.hostKind as BrowserHostKind | undefined) === hostKind
     && value.sessionAgentId === snapshot.sessionAgentId
     && value.profileId === snapshot.profileId
     && typeof value.url === "string"
@@ -953,15 +1582,21 @@ function failure(code: BrowserAutomationFailure["code"], message: string, retrya
   return { code, message, retryable };
 }
 
-function extractSafeCompletionMetadata(result: unknown): Partial<BrowserSafeActionSummary> {
+function extractSafeCompletionMetadata(
+  result: unknown,
+  hostKind: BrowserHostKind,
+): Partial<BrowserSafeActionSummary> {
   if (!result || typeof result !== "object") return {};
   const value = result as Record<string, unknown>;
   const tab = value.tab && typeof value.tab === "object" ? value.tab as Record<string, unknown> : undefined;
   const viewport = value.viewport && typeof value.viewport === "object" ? value.viewport as Record<string, unknown> : undefined;
+  const persistPageIdentity = hostKind !== "external-chrome";
   return {
     ...(typeof value.path === "string" ? { artifactPath: value.path } : {}),
-    ...(typeof value.url === "string" ? { url: value.url } : typeof tab?.url === "string" ? { url: tab.url } : {}),
-    ...(typeof value.title === "string" ? { title: value.title } : typeof tab?.title === "string" ? { title: tab.title } : {}),
+    ...(persistPageIdentity && typeof value.url === "string" ? { url: value.url }
+      : persistPageIdentity && typeof tab?.url === "string" ? { url: tab.url } : {}),
+    ...(persistPageIdentity && typeof value.title === "string" ? { title: value.title }
+      : persistPageIdentity && typeof tab?.title === "string" ? { title: tab.title } : {}),
     ...(typeof value.width === "number" && typeof value.height === "number"
       ? { dimensions: { width: value.width, height: value.height } }
       : typeof viewport?.width === "number" && typeof viewport?.height === "number"
@@ -974,14 +1609,23 @@ function sessionKey(profileId: string, sessionAgentId: string): string {
   return `${profileId}\u0000${sessionAgentId}`;
 }
 
+function hostTabKey(hostKind: BrowserHostKind, tabId: string): string {
+  return `${hostKind}\u0000${tabId}`;
+}
+
 function cloneSnapshot(snapshot: BrowserSessionSnapshot): BrowserSessionSnapshot {
   return structuredClone(snapshot);
+}
+
+function cloneTab(tab: BrowserTabSnapshot): BrowserTabSnapshot {
+  return structuredClone(tab);
 }
 
 /** Host-owned physical runtime fields only; identity/membership stay backend-owned. */
 function mergeHostOwnedTabFields(canonical: BrowserTabSnapshot, reported: BrowserTabSnapshot): BrowserTabSnapshot {
   if (
     reported.tabId !== canonical.tabId
+    || resolveBrowserHostKind(reported.hostKind) !== resolveBrowserHostKind(canonical.hostKind)
     || reported.sessionAgentId !== canonical.sessionAgentId
     || reported.profileId !== canonical.profileId
   ) {

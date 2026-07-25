@@ -166,6 +166,7 @@ void app.whenReady().then(async () => {
   let requestSequence = 0
   const request = (operation: BrowserAutomationRequest['operation'], input: Record<string, unknown>, timeoutMs = 15_000): BrowserAutomationRequest => ({
     requestId: `popout-fixture-${++requestSequence}`,
+    hostKind: 'managed-electron',
     sessionAgentId: tab.sessionAgentId,
     profileId: tab.profileId,
     tabId: tab.tabId,

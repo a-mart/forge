@@ -6,6 +6,7 @@ import {
   SECURE_VAULT_RENDERER_CHANNEL,
   type SecureVaultRendererResponse,
 } from './secure-vault-ipc.js'
+import { createTrustedExternalChromeBridge } from './external-chrome/ipc.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -43,6 +44,7 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
       secureControlToken: bootstrap.secureControlToken,
       browserAutomation: createTrustedBrowserBridge(ipcRenderer),
       browserWorkspace,
+      externalChrome: createTrustedExternalChromeBridge(ipcRenderer),
       showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
         ipcRenderer.invoke('bridge:showOpenDialog', options),
       onTerminalShortcut: (listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): (() => void) => {

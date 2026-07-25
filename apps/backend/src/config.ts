@@ -39,7 +39,7 @@ export function readTelemetryEnvOverride(): boolean | undefined {
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
   const resourcesDir = resolveResourcesDir(rootDir);
-  const dataDir = process.env.FORGE_DATA_DIR ?? process.env.MIDDLEMAN_DATA_DIR ?? resolveDefaultDataDir();
+  const dataDir = resolve(process.env.FORGE_DATA_DIR ?? process.env.MIDDLEMAN_DATA_DIR ?? resolveDefaultDataDir());
   const managerId = undefined;
 
   const swarmDir = getSwarmDir(dataDir);
