@@ -66,6 +66,9 @@ describe('pinned offline identity and MV3 ledger', () => {
     const manifest = JSON.parse(await readFile(path.join(root, 'manifest.shell.json'), 'utf8')) as { description: string }
     const html = await readFile(path.join(root, 'public/side-panel.html'), 'utf8')
     const sidePanel = await readFile(path.join(root, 'src/payload/side-panel/index.ts'), 'utf8')
+    expect(manifest.description.length).toBeLessThanOrEqual(132)
+    expect(manifest.description).toContain('Local Beta')
+    expect(manifest.description).toContain('unpacked')
     expect(manifest.description).toContain('Chrome 125+')
     expect(manifest.description).toContain('Developer Mode')
     expect(manifest.description).toContain('dedicated profile')
