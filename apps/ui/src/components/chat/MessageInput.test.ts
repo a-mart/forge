@@ -672,6 +672,45 @@ describe('MessageInput', () => {
       expect(getTextarea().value).toBe('Keep this secure-session draft unsent')
     })
 
+    it('preserves the draft while routing an empty vault to project secrets', async () => {
+      const onSend = vi.fn()
+      const onReviewProjectSecrets = vi.fn()
+      renderMessageInput({
+        onSend,
+        secureSessionPicker: {
+          availability: { state: 'available' },
+          snapshot: {
+            sessionAgentId: 'manager-1',
+            principalKind: 'manager',
+            revision: 2,
+            executionMode: 'secure',
+            environmentStatus: 'ready',
+            leases: [],
+            pendingRequests: [],
+            updatedAt: '2026-07-23T12:00:00.000Z',
+          },
+          secrets: [],
+          onGrant: vi.fn(),
+          onReviewProjectSecrets,
+        },
+      })
+      await flush()
+
+      typeInTextarea('Keep this empty-vault draft unsent')
+      fireEvent.click(getByLabelText(container, /secure session ready/i))
+      await flush()
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
+      await flush()
+      fireEvent.click(getByRole(document.body, 'button', {
+        name: 'Add a project secret',
+      }))
+      await flush()
+
+      expect(onReviewProjectSecrets).toHaveBeenCalledTimes(1)
+      expect(onSend).not.toHaveBeenCalled()
+      expect(getTextarea().value).toBe('Keep this empty-vault draft unsent')
+    })
+
     it('applies project defaults without submitting, clearing, or closing the draft flow', async () => {
       const onSend = vi.fn()
       const onApplyProjectDefaults = vi.fn(async () => true)

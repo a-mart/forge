@@ -64,12 +64,14 @@ interface SecureGrantDialogProps {
   onGrant: (
     grants: SecureGrantInput[],
   ) => boolean | void | Promise<boolean | void>
+  onAddSecret?: () => void
   onClose: () => void
 }
 
 export function SecureGrantDialog({
   secrets,
   onGrant,
+  onAddSecret,
   onClose,
 }: SecureGrantDialogProps) {
   const availableSecrets = useMemo(
@@ -150,9 +152,25 @@ export function SecureGrantDialog({
               <Label>Saved secrets</Label>
               <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                 {availableSecrets.length === 0 ? (
-                  <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-                    No unleased saved secrets are available yet.
-                  </p>
+                  <div className="space-y-3 rounded-md border border-dashed p-3">
+                    <p className="text-sm text-muted-foreground">
+                      No unleased saved secrets are available yet.
+                    </p>
+                    {onAddSecret ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={submitting}
+                        onClick={() => {
+                          onClose()
+                          onAddSecret()
+                        }}
+                      >
+                        Add a project secret
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {availableSecrets.map((secret) => {
                   const checked = selectedSecretIds.includes(secret.secretId)

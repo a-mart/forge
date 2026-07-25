@@ -592,7 +592,10 @@ export function SecureSessionPicker({
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={config.disabled || !canGrant}
+                disabled={
+                  config.disabled
+                  || (!canGrant && !config.onReviewProjectSecrets)
+                }
                 onClick={() => {
                   setOpen(false)
                   setGrantOpen(true)
@@ -623,6 +626,7 @@ export function SecureSessionPicker({
         <SecureGrantDialog
           secrets={grantableSecrets}
           onGrant={(grants) => config.onGrant?.(sessionAgentId, grants)}
+          onAddSecret={config.onReviewProjectSecrets}
           onClose={() => setGrantOpen(false)}
         />
       ) : null}

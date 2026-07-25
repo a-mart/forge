@@ -238,7 +238,7 @@ export function PrivateSecretValueDialog({
               <span className="block text-xs text-muted-foreground">
                 {projectDefaultLimitReached
                   ? `This project already has ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic secrets. Remove one in Settings to enable another.`
-                  : 'Future Secure Sessions in this project receive a task-lifetime grant.'}
+                  : 'Each future Team Secure Mode in this project receives access until it stops.'}
               </span>
             </span>
           </label>

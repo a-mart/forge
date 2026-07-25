@@ -363,6 +363,31 @@ describe('SecureSessionPicker', () => {
     expect(getByRole(document.body, 'heading', { name: 'Grant secrets' })).toBeTruthy()
   })
 
+  it('routes an empty grant dialog directly to project secrets', async () => {
+    const onReviewProjectSecrets = vi.fn()
+    renderPicker(makeConfig({
+      secrets: [],
+      onReviewProjectSecrets,
+    }))
+
+    openPicker(/secure session ready/i)
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Grant secrets' }))
+    })
+
+    expect(document.body.textContent).toContain(
+      'No unleased saved secrets are available yet.',
+    )
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', {
+        name: 'Add a project secret',
+      }))
+    })
+
+    expect(onReviewProjectSecrets).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
   it('requires explicit confirmation before stopping processes and revoking all leases', () => {
     const onRevoke = vi.fn()
     renderPicker(makeConfig({

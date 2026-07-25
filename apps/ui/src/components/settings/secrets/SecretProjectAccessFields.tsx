@@ -101,7 +101,7 @@ export function ProjectDefaultFields({
           <p className="text-xs text-muted-foreground">
             {projectDefaultLimitReached
               ? `This project already has ${SECURE_SECRET_MAX_PROJECT_DEFAULTS} automatic secrets. Disable one before enabling another.`
-              : 'New Secure Mode sessions receive a task-lifetime grant. Standard Bash remains unchanged.'}
+              : 'Each new Team Secure Mode receives access until it stops. Standard Bash remains unchanged.'}
           </p>
         </div>
         <Switch
