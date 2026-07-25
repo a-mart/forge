@@ -111,7 +111,8 @@ export class SessionPlanCoordinator {
           status: node.status,
           dependsOn: [...node.dependsOn],
           ...(node.acceptanceCriteria ? { acceptanceCriteria: node.acceptanceCriteria } : {}),
-          effort: node.effort,
+          route: node.route,
+          ...(node.effort ? { effort: node.effort } : {}),
         })),
       }
       const snapshot = await this.writeGraph(owner, explanation, workGraph)
@@ -139,6 +140,7 @@ export class SessionPlanCoordinator {
     nodeId: string,
     attemptId: string,
     workerId: string,
+    resolution: Parameters<typeof recordWorkGraphWorkerStarted>[4] = {},
   ): Promise<void> {
     await this.withMutationLock(owner, async () => {
       const current = await this.getState(owner)
@@ -146,7 +148,13 @@ export class SessionPlanCoordinator {
       await this.writeGraph(
         owner,
         current.explanation,
-        recordWorkGraphWorkerStarted(current.workGraph, nodeId, attemptId, workerId),
+        recordWorkGraphWorkerStarted(
+          current.workGraph,
+          nodeId,
+          attemptId,
+          workerId,
+          resolution,
+        ),
       )
     })
   }

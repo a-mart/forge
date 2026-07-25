@@ -30,6 +30,56 @@ const ALL_PROFILES: ManagerProfile[] = [
 ];
 
 describe("session command handler", () => {
+  it("updates session posture and roster with request-correlated effective state", async () => {
+    const send = vi.fn();
+    const session = {
+      agentId: "manager--s2",
+      role: "manager",
+      profileId: "manager",
+      managerPosture: "hands_on",
+      managerPostureOrigin: "session_override",
+      delegationRosterId: "diverse",
+      delegationRosterOrigin: "session_override",
+    } as const;
+    const updateSessionDelegation = vi.fn(async () => undefined);
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn(() => session),
+      updateSessionDelegation,
+    };
+
+    const handled = await handleSessionCommand({
+      command: {
+        type: "update_session_delegation",
+        sessionAgentId: session.agentId,
+        managerPosture: { mode: "override", value: "hands_on" },
+        delegationRoster: { mode: "override", rosterId: "diverse" },
+        requestId: "delegation-1",
+      },
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(updateSessionDelegation).toHaveBeenCalledWith(session.agentId, {
+      managerPosture: { mode: "override", value: "hands_on" },
+      delegationRoster: { mode: "override", rosterId: "diverse" },
+    });
+    expect(send).toHaveBeenCalledWith(expect.anything(), {
+      type: "session_delegation_updated",
+      sessionAgentId: session.agentId,
+      managerPosture: "hands_on",
+      managerPostureOrigin: "session_override",
+      delegationRosterId: "diverse",
+      delegationRosterOrigin: "session_override",
+      requestId: "delegation-1",
+    });
+  });
+
   it("routes user goal controls to the scoped Builder session", async () => {
     const send = vi.fn();
     const controlSessionGoal = vi.fn(async () => undefined);

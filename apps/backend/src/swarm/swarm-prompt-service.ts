@@ -54,6 +54,7 @@ import {
   normalizeOptionalAgentId,
 } from "./swarm-manager-utils.js";
 import { composeBuiltinModeSystemPrompt } from "./worker-mode-prompt.js";
+import { buildManagerPostureBlock } from "./prompts/manager-posture.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Use coding tools (read/bash/edit/write) to execute implementation tasks.
@@ -315,6 +316,14 @@ export class SwarmPromptService {
         : "";
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
+    const managerPostureBlock = buildManagerPostureBlock(descriptor.managerPosture);
+    // eslint-disable-next-line no-template-curly-in-string
+    if (prompt.includes("${MANAGER_POSTURE}")) {
+      // eslint-disable-next-line no-template-curly-in-string
+      prompt = prompt.replaceAll("${MANAGER_POSTURE}", managerPostureBlock);
+    } else {
+      prompt = `${prompt.trimEnd()}\n\n${managerPostureBlock}`;
+    }
 
     const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
     if (projectAgentReferenceDocs.length > 0) {

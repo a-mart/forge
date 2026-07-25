@@ -1489,6 +1489,28 @@ export function BuilderSurface({
         }
       : undefined
 
+  const sessionCoordinationPicker =
+    isActiveManager
+    && activeAgent
+    && activeAgentProfile
+    && isSessionModelPickerEligible(activeAgent, activeAgentProfile)
+      ? {
+          originId: activeOriginId,
+          httpClientRef,
+          sessionAgentId: activeAgent.agentId,
+          profileId: activeAgentProfile.profileId,
+          managerPosture: activeAgent.managerPosture ?? 'delegation_first' as const,
+          managerPostureOrigin: activeAgent.managerPostureOrigin,
+          projectDefaultManagerPosture: activeAgentProfile.defaultManagerPosture,
+          delegationRosterId: activeAgent.delegationRosterId,
+          delegationRosterOrigin: activeAgent.delegationRosterOrigin,
+          projectDefaultDelegationRosterId: activeAgentProfile.defaultDelegationRosterId,
+          disabled: !state.connected,
+          onUpdateProjectDefaults: session.handleUpdateProjectDelegationDefaults,
+          onUpdateSession: session.handleUpdateSessionDelegation,
+        }
+      : undefined
+
   const localSidebarSession = useSessionActions({
     clientRef: localClientRef,
     fileEditorCoordinator: panels.fileEditorCoordinator,
@@ -2105,6 +2127,7 @@ export function BuilderSurface({
                   replyTarget,
                   onClearReplyTarget: () => setReplyTarget(null),
                   sessionModelPicker,
+                  sessionCoordinationPicker,
                   secureSessionPicker,
                 }}
               />

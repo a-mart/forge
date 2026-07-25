@@ -311,7 +311,7 @@ Forge registers these tools for swarm orchestration. They **cannot be overridden
 
 - `list_agents` — List agents in the swarm
 - `send_message_to_agent` — Send a message to another agent
-- `spawn_agent` — Delegate a task with a behavior mode and execution policy
+- `spawn_agent` — Delegate a task with a behavior mode and delegation route
 - `delegate_codex_plugin` — Delegate through the current server-bound Codex Plugin selector context
 - `kill_agent` — Terminate an agent
 - `speak_to_user` — Send a message to the end user (managers only)
@@ -378,7 +378,7 @@ Set `FORGE_DEBUG=true` in your `.env` to enable extension tool-call logging. Thi
 
 ## Model Catalog Integration
 
-Forge's model catalog system handles provider-specific behaviors and API protocol mappings. Current research work uses the `research` behavior mode with the configured execution policy and whatever search or documentation capabilities are available to that worker.
+Forge's model catalog system handles provider-specific behaviors and API protocol mappings. Current research work uses the `research` behavior mode with `route: auto` or a named route from the active delegation roster, plus whatever search or documentation capabilities are available to that worker.
 
 `apps/backend/src/swarm/model-catalog-request-behaviors.ts` covers request-time provider quirks. xAI native web/X search is not a current production capability; if it returns, it should be documented as a future or experimental adapter path rather than a built-in behavior.
 

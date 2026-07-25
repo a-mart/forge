@@ -259,7 +259,8 @@ describe('SessionPlanCoordinator', () => {
     const claims = await harness.coordinator.claimReadyWorkGraphNodes(harness.owner)
     expect(claims).toMatchObject([{
       nodeId: 'research',
-      executionPolicy: 'support',
+      behaviorMode: 'research',
+      requestedRoute: 'auto',
     }])
     await harness.coordinator.recordWorkGraphWorkerStarted(
       harness.owner,

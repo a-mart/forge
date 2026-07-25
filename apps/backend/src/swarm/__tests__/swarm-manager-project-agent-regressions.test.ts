@@ -13,7 +13,10 @@ import { readProjectAgentRecord } from "../project-agent-storage.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
-import { bootWithDefaultManager as bootWithDefaultManagerFromSupport } from "../../test-support/index.js";
+import {
+  bootWithDefaultManager as bootWithDefaultManagerFromSupport,
+  splitDelegationRosterRuntimeContext,
+} from "../../test-support/index.js";
 
 class FakeRuntime {
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = [];
@@ -340,7 +343,10 @@ describe("SwarmManager project-agent regressions", () => {
 
     const docsRuntime = manager.runtimeByAgentId.get(docsAgent.agentId);
     const qaRuntime = manager.runtimeByAgentId.get(qaAgent.agentId);
-    expect(docsRuntime?.sendCalls.map((call) => call.message)).toEqual([
+    const docsInputs = docsRuntime?.sendCalls.map((call) => (
+      splitDelegationRosterRuntimeContext(String(call.message))
+    ));
+    expect(docsInputs?.map((input) => input.message)).toEqual([
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
         fromDisplayName: "manager",
@@ -370,7 +376,11 @@ describe("SwarmManager project-agent regressions", () => {
         fromProjectName: "manager"
       })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nops-follow-up`
     ]);
-    expect(qaRuntime?.sendCalls.map((call) => call.message)).toEqual([
+    expect(docsInputs?.every((input) => input.roster.id === "balanced")).toBe(true);
+    const qaInputs = qaRuntime?.sendCalls.map((call) => (
+      splitDelegationRosterRuntimeContext(String(call.message))
+    ));
+    expect(qaInputs?.map((input) => input.message)).toEqual([
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
         fromDisplayName: "manager",
@@ -393,6 +403,7 @@ describe("SwarmManager project-agent regressions", () => {
         fromProjectName: "manager"
       })}\n[assistantOutputTarget] {"kind":"peer_agent"}\n\nnote-6`
     ]);
+    expect(qaInputs?.every((input) => input.roster.id === "balanced")).toBe(true);
   });
 
   it("treats an empty prompt.md as an intentionally blank override instead of falling back to descriptor cache", async () => {

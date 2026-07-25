@@ -63,7 +63,12 @@ vi.mock('../project-workspace-resolver.js', async () => {
 
 import type { AgentDescriptor, ConversationAttachment, SwarmConfig } from '../types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../runtime-contracts.js'
-import { FakeRuntime, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager } from '../../test-support/index.js'
+import {
+  FakeRuntime,
+  TestSwarmManager as TestSwarmManagerBase,
+  bootWithDefaultManager,
+  splitDelegationRosterRuntimeContext,
+} from '../../test-support/index.js'
 
 class TestSwarmManager extends TestSwarmManagerBase {
   protected override async createRuntimeForDescriptor(
@@ -1701,9 +1706,13 @@ describe('SwarmManager', () => {
     expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
 
     const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
-    expect(sessionRuntime?.sendCalls.at(-1)?.message).toBe(
+    const runtimeInput = splitDelegationRosterRuntimeContext(
+      String(sessionRuntime?.sendCalls.at(-1)?.message),
+    )
+    expect(runtimeInput.message).toBe(
       'SYSTEM: closeout reminder\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
     )
+    expect(runtimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
 
     const sessionHistory = manager.getConversationHistory(sessionAgent.agentId)
     expect(
@@ -1743,9 +1752,11 @@ describe('SwarmManager', () => {
       },
     )
     const continuationRuntimeText = await activateLastRuntimeUserMessage(manager, sessionAgent.agentId)
-    expect(continuationRuntimeText).toBe(
+    const runtimeInput = splitDelegationRosterRuntimeContext(continuationRuntimeText)
+    expect(runtimeInput.message).toBe(
       'SYSTEM: Completed the read-only health check across all three hosts.\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}',
     )
+    expect(runtimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
 
     await emitCleanAssistantFinal(
       manager,

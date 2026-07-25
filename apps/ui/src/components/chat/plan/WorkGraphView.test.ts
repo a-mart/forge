@@ -23,6 +23,7 @@ const graph: WorkGraphSnapshot = {
       status: 'awaiting_review',
       dependsOn: [],
       acceptanceCriteria: 'Evidence cites the inspected path.',
+      route: 'auto',
       effort: 'auto',
       attempts: [{
         id: 'attempt-1',
@@ -42,6 +43,7 @@ const graph: WorkGraphSnapshot = {
       kind: 'synthesis',
       status: 'pending',
       dependsOn: ['research'],
+      route: 'auto',
       effort: 'auto',
       attempts: [],
     },

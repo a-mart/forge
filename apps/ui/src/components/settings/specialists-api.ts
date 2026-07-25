@@ -5,7 +5,7 @@ import type {
   ManagerReasoningLevel,
   ResolvedSpecialistDefinition,
   SpecialistTargetSpace,
-  TierConfig,
+  DelegationRosterSettings,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 import { createBuilderSettingsApiClient } from './settings-api-client'
@@ -207,46 +207,25 @@ export async function deleteSharedSpecialist(
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function fetchTierConfigs(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<TierConfig[]> {
+export async function fetchDelegationRosterSettings(
+  clientOrWsUrl: SettingsApiClient | string | undefined,
+): Promise<DelegationRosterSettings> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, '/tiers')
-  const response = await client.fetch(path, { cache: 'no-store' })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { tiers?: unknown }
-  return Array.isArray(payload.tiers) ? payload.tiers.filter(isTierConfig) : []
+  return client.fetchJson<DelegationRosterSettings>('/api/settings/delegation-rosters', {
+    cache: 'no-store',
+  })
 }
 
-export async function saveTierConfigsApi(
+export async function saveDelegationRosterSettingsApi(
   clientOrWsUrl: SettingsApiClient | string | undefined,
-  tiers: TierConfig[],
-): Promise<TierConfig[]> {
+  settings: DelegationRosterSettings,
+): Promise<DelegationRosterSettings> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, '/tiers')
-  const response = await client.fetch(path, {
+  return client.fetchJson<DelegationRosterSettings>('/api/settings/delegation-rosters', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tiers }),
+    body: JSON.stringify(settings),
   })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as { tiers?: unknown }
-  return Array.isArray(payload.tiers) ? payload.tiers.filter(isTierConfig) : tiers
-}
-
-function isTierConfig(value: unknown): value is TierConfig {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const tier = value as Record<string, unknown>
-  return (
-    (tier.tier === 'light' || tier.tier === 'fast' || tier.tier === 'standard' || tier.tier === 'deep' || tier.tier === 'max') &&
-    typeof tier.displayName === 'string' &&
-    typeof tier.description === 'string' &&
-    typeof tier.color === 'string' &&
-    typeof tier.modelId === 'string' &&
-    typeof tier.provider === 'string' &&
-    (tier.reasoningLevel === undefined || typeof tier.reasoningLevel === 'string') &&
-    (tier.fallbackModelId === undefined || typeof tier.fallbackModelId === 'string') &&
-    (tier.fallbackProvider === undefined || typeof tier.fallbackProvider === 'string') &&
-    (tier.fallbackReasoningLevel === undefined || typeof tier.fallbackReasoningLevel === 'string')
-  )
 }
 
 export async function fetchWorkerTemplate(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<string> {

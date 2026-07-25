@@ -208,11 +208,35 @@ export class SessionInteractionCoordinator {
           claim.nodeId,
           claim.attemptId,
           spawned.agentId,
+          {
+            ...(spawned.delegationRouteId
+              ? { resolvedRouteId: spawned.delegationRouteId }
+              : {}),
+            ...(spawned.delegationRouteLabel
+              ? { resolvedRouteLabel: spawned.delegationRouteLabel }
+              : {}),
+            ...(spawned.delegationRosterId
+              ? { rosterId: spawned.delegationRosterId }
+              : {}),
+            ...(spawned.delegationRosterRevision
+              ? { rosterRevision: spawned.delegationRosterRevision }
+              : {}),
+            model: { ...spawned.model },
+            ...(spawned.delegationCapabilityEscalationRouteId
+              ? {
+                  capabilityEscalationRouteId:
+                    spawned.delegationCapabilityEscalationRouteId,
+                }
+              : {}),
+          },
         );
         dispatched.push({
           nodeId: claim.nodeId,
           workerId: spawned.agentId,
-          executionPolicy: claim.executionPolicy,
+          requestedRoute: claim.requestedRoute,
+          ...(spawned.delegationRouteId
+            ? { resolvedRouteId: spawned.delegationRouteId }
+            : {}),
         });
       } catch (error) {
         await this.options.plans.recordWorkGraphDispatchFailure(
@@ -571,7 +595,10 @@ function resolveGraphDispatch(claim: WorkGraphDispatchClaim, cwd: string): Spawn
       acceptance,
     ].filter(Boolean).join("\n\n"),
     mode: claim.behaviorMode,
-    executionPolicy: claim.executionPolicy,
+    route: claim.requestedRoute,
+    ...(claim.legacyExecutionPolicy
+      ? { executionPolicy: claim.legacyExecutionPolicy }
+      : {}),
     planStep: claim.title,
     cwd,
   }).spawnInput;

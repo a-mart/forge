@@ -39,6 +39,7 @@ import {
   TestSwarmManager as TestSwarmManagerBase,
   bootWithDefaultManager,
   createCodexExternalThreadWorkerDescriptor,
+  splitDelegationRosterRuntimeContext,
 } from '../test-support/index.js'
 
 class TestSwarmManager extends TestSwarmManagerBase {
@@ -315,7 +316,13 @@ describe('SwarmManager', () => {
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
     expect(managerRuntime?.sendCalls.at(-1)?.delivery).toBe('steer')
-    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"session_transcript"}\n\ninterrupt current plan')
+    const runtimeInput = splitDelegationRosterRuntimeContext(
+      String(managerRuntime?.sendCalls.at(-1)?.message),
+    )
+    expect(runtimeInput.message).toBe(
+      '[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"session_transcript"}\n\ninterrupt current plan',
+    )
+    expect(runtimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
   })
 
   it('streams worker active-tool snapshots even when the manager is idle', async () => {
@@ -1825,9 +1832,13 @@ describe('SwarmManager', () => {
     })
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
-    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
+    const runtimeInput = splitDelegationRosterRuntimeContext(
+      String(managerRuntime?.sendCalls.at(-1)?.message),
+    )
+    expect(runtimeInput.message).toBe(
       '[sourceContext] {"channel":"telegram","channelId":"123456","userId":"456789","threadTs":"173.456","channelType":"group","teamId":"T789"}\n[assistantOutputTarget] {"mode":"internal_only"}\n\nreply in telegram thread',
     )
+    expect(runtimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
   })
 
   it('defaults speak_to_user routing to web when target is omitted, even after telegram input', async () => {

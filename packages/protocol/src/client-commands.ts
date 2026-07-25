@@ -22,6 +22,7 @@ import type {
 import type {
   AgentSessionPurpose,
   ChoiceAnswer,
+  ManagerPosture,
   DeliveryMode,
   ManagerExactModelSelection,
   ManagerModelPreset,
@@ -93,6 +94,13 @@ export type ClientCommand =
       reasoningLevel?: ManagerReasoningLevel
       requestId?: string
     } & ManagerModelSelectionInput)
+  | {
+      type: 'update_project_delegation_defaults'
+      profileId: string
+      managerPosture?: ManagerPosture | null
+      delegationRosterId?: string | null
+      requestId?: string
+    }
   | ({
       type: 'update_manager_model'
       managerId: string
@@ -108,6 +116,13 @@ export type ClientCommand =
       requestId?: string
     } & ManagerModelSelectionInput)
   | { type: 'create_session'; profileId: string; label?: string; name?: string; sessionPurpose?: AgentSessionPurpose; requestId?: string }
+  | {
+      type: 'update_session_delegation'
+      sessionAgentId: string
+      managerPosture?: { mode: 'inherit' } | { mode: 'override'; value: ManagerPosture }
+      delegationRoster?: { mode: 'inherit' } | { mode: 'override'; rosterId: string }
+      requestId?: string
+    }
   | { type: 'stop_session'; agentId: string; requestId?: string }
   | { type: 'resume_session'; agentId: string; requestId?: string }
   | { type: 'hydrate_archive_last_used'; requestId?: string }

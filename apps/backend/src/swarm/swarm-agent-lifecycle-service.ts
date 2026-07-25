@@ -1,4 +1,11 @@
-import type { EffortTier, ManagerExactModelSelection, SpecialistTargetSpace, TierConfig } from "@forge/protocol";
+import type {
+  DelegationRoster,
+  DelegationRoute,
+  EffortTier,
+  ManagerExactModelSelection,
+  SpecialistTargetSpace,
+  TierConfig,
+} from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
@@ -64,6 +71,7 @@ import {
 } from "./external-thread-compatibility.js";
 import { isBuiltinModePromptId } from "./worker-mode-prompt.js";
 import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
+import { resolveDelegationRoute } from "./specialists/delegation-roster-store.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -522,6 +530,7 @@ export class SwarmAgentLifecycleService {
     const requestedTier = normalizeEffortTier(input.tier);
     const rawLens = input.lens?.trim();
     const requestedLensId = rawLens ? await this.options.normalizeSpecialistHandle(rawLens) : undefined;
+    const requestedRoute = input.route?.trim();
     let requestedSpecialistId: string | undefined;
     let tierSelection: { tier: EffortTier; lens?: string; legacySpecialistId?: string } | undefined;
 
@@ -545,12 +554,12 @@ export class SwarmAgentLifecycleService {
       tierSelection = { tier: requestedTier, ...(requestedLensId ? { lens: requestedLensId } : {}) };
     } else if (tierSelection && requestedLensId) {
       tierSelection = { ...tierSelection, lens: requestedLensId };
-    } else if (!tierSelection && requestedLensId) {
+    } else if (!tierSelection && requestedLensId && !requestedRoute) {
       tierSelection = { tier: "standard", lens: requestedLensId };
     }
 
     if (
-      (requestedSpecialistId || tierSelection) &&
+      (requestedSpecialistId || tierSelection || requestedRoute) &&
       (
         input.model !== undefined ||
         input.modelId !== undefined ||
@@ -559,12 +568,15 @@ export class SwarmAgentLifecycleService {
       )
     ) {
       throw new Error(
-        "Cannot combine specialist/tier/lens mode with model/prompt/archetype overrides. Use specialist/tier mode or ad-hoc mode, not both. reasoningLevel is the only allowed override."
+        "Cannot combine specialist/route/tier mode with model, prompt, or archetype overrides."
       );
     }
 
-    if (requestedSpecialistId && (input.tier !== undefined || requestedLensId)) {
-      throw new Error("Cannot combine 'specialist' with tier/lens. Use one delegation mode.");
+    if (requestedSpecialistId && (input.tier !== undefined || requestedLensId || requestedRoute)) {
+      throw new Error("Cannot combine custom specialist with route, tier, or behavior mode.");
+    }
+    if (requestedRoute && input.tier !== undefined) {
+      throw new Error("Cannot combine route with legacy tier selection.");
     }
 
     let model: AgentModelDescriptor;
@@ -574,6 +586,8 @@ export class SwarmAgentLifecycleService {
     let explicitSystemPrompt: string | undefined;
     let webSearch = false;
     let selectedTierConfig: TierConfig | undefined;
+    let selectedDelegationRoster: DelegationRoster | undefined;
+    let selectedDelegationRoute: DelegationRoute | undefined;
 
     const resolveRoster = async () => this.options.resolveSpecialistRosterForManager
       ? await this.options.resolveSpecialistRosterForManager(
@@ -585,7 +599,58 @@ export class SwarmAgentLifecycleService {
           isCollabSession(manager) ? "collaboration" : "builder"
         );
 
-    if (tierSelection) {
+    if (requestedRoute) {
+      const behaviorMode = input.behaviorMode ?? "general";
+      const resolved = await resolveDelegationRoute(
+        this.options.dataDir,
+        manager,
+        requestedRoute,
+        behaviorMode,
+      );
+      selectedDelegationRoster = resolved.roster;
+      selectedDelegationRoute = resolved.route;
+
+      if (requestedLensId) {
+        const roster = await resolveRoster();
+        specialist = roster.find((entry) => entry.specialistId === requestedLensId);
+        if (!specialist) {
+          throw new Error(`Unknown lens: ${requestedLensId}. See manager system prompt for available modes.`);
+        }
+        if (!specialist.enabled) {
+          throw new Error(`Lens "${requestedLensId}" is disabled for this profile. Enable it before spawning.`);
+        }
+        if (!specialist.available && !isBuiltinModePromptId(requestedLensId)) {
+          const reason = specialist.availabilityMessage?.trim()
+            || specialist.availabilityCode
+            || "unavailable with current auth/configuration";
+          throw new Error(`Lens "${requestedLensId}" is currently unavailable: ${reason}`);
+        }
+      }
+
+      model = {
+        provider: selectedDelegationRoute.provider,
+        modelId: selectedDelegationRoute.modelId,
+        thinkingLevel: selectedDelegationRoute.reasoningLevel,
+      };
+      model.thinkingLevel = normalizeThinkingLevelForModelDescriptor(model);
+      model = this.resolveSpawnModelWithCapacityFallback(model);
+
+      if (selectedDelegationRoute.availabilityFallback) {
+        specialistFallbackModel = {
+          provider: selectedDelegationRoute.availabilityFallback.provider,
+          modelId: selectedDelegationRoute.availabilityFallback.modelId,
+          thinkingLevel: selectedDelegationRoute.availabilityFallback.reasoningLevel,
+        };
+        specialistFallbackModel.thinkingLevel =
+          normalizeThinkingLevelForModelDescriptor(specialistFallbackModel);
+        specialistFallbackModel =
+          this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
+      }
+
+      archetypeId = undefined;
+      explicitSystemPrompt = undefined;
+      if (specialist?.webSearch) webSearch = true;
+    } else if (tierSelection) {
       let tierConfig = await resolveTierConfig(this.options.dataDir, tierSelection.tier);
       selectedTierConfig = tierConfig;
       const roster = this.options.resolveSpecialistRosterForManager
@@ -813,6 +878,22 @@ export class SwarmAgentLifecycleService {
       if (specialist?.webSearch) {
         descriptor.webSearch = true;
       }
+    } else if (selectedDelegationRoster && selectedDelegationRoute) {
+      descriptor.delegationRosterId = selectedDelegationRoster.rosterId;
+      descriptor.delegationRosterRevision = selectedDelegationRoster.revision;
+      descriptor.delegationRouteId = selectedDelegationRoute.routeId;
+      descriptor.delegationRouteLabel = selectedDelegationRoute.label;
+      descriptor.specialistId = `route:${selectedDelegationRoute.routeId}`;
+      descriptor.specialistDisplayName = selectedDelegationRoute.label;
+      descriptor.specialistColor = selectedDelegationRoute.color ?? "#7c3aed";
+      if (specialistFallbackModel) {
+        descriptor.delegationFallbackModel = { ...specialistFallbackModel };
+      }
+      if (selectedDelegationRoute.capabilityEscalationRouteId) {
+        descriptor.delegationCapabilityEscalationRouteId =
+          selectedDelegationRoute.capabilityEscalationRouteId;
+      }
+      if (specialist?.webSearch) descriptor.webSearch = true;
     } else if (specialist) {
       descriptor.specialistId = specialist.specialistId;
       descriptor.specialistDisplayName = specialist.displayName;

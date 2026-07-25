@@ -6,7 +6,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSpecialists } from './SettingsSpecialists'
-import type { ManagerProfile, ResolvedSpecialistDefinition, TierConfig } from '@forge/protocol'
+import type {
+  DelegationRosterSettings,
+  ManagerProfile,
+  ResolvedSpecialistDefinition,
+} from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
@@ -19,8 +23,8 @@ const specialistsApiMock = vi.hoisted(() => ({
   fetchRosterPrompt: vi.fn(),
   fetchChannelRosterPrompt: vi.fn(),
   fetchWorkerTemplate: vi.fn(),
-  fetchTierConfigs: vi.fn(),
-  saveTierConfigsApi: vi.fn(),
+  fetchDelegationRosterSettings: vi.fn(),
+  saveDelegationRosterSettingsApi: vi.fn(),
   saveSpecialist: vi.fn(),
   saveSharedSpecialist: vi.fn(),
   deleteSpecialist: vi.fn(),
@@ -43,8 +47,10 @@ vi.mock('./specialists-api', () => ({
   fetchRosterPrompt: (...args: unknown[]) => specialistsApiMock.fetchRosterPrompt(...args),
   fetchChannelRosterPrompt: (...args: unknown[]) => specialistsApiMock.fetchChannelRosterPrompt(...args),
   fetchWorkerTemplate: (...args: unknown[]) => specialistsApiMock.fetchWorkerTemplate(...args),
-  fetchTierConfigs: (...args: unknown[]) => specialistsApiMock.fetchTierConfigs(...args),
-  saveTierConfigsApi: (...args: unknown[]) => specialistsApiMock.saveTierConfigsApi(...args),
+  fetchDelegationRosterSettings: (...args: unknown[]) =>
+    specialistsApiMock.fetchDelegationRosterSettings(...args),
+  saveDelegationRosterSettingsApi: (...args: unknown[]) =>
+    specialistsApiMock.saveDelegationRosterSettingsApi(...args),
   saveSpecialist: (...args: unknown[]) => specialistsApiMock.saveSpecialist(...args),
   saveSharedSpecialist: (...args: unknown[]) => specialistsApiMock.saveSharedSpecialist(...args),
   deleteSpecialist: (...args: unknown[]) => specialistsApiMock.deleteSpecialist(...args),
@@ -116,53 +122,40 @@ const PROFILES: ManagerProfile[] = [
   },
 ]
 
-const TIER_CONFIGS: TierConfig[] = [
-  {
-    tier: 'light',
-    displayName: 'Light',
-    description: 'Quick checks and narrow tasks',
-    color: '#14b8a6',
-    provider: 'openai-codex',
-    modelId: 'gpt-5.4-mini',
-    reasoningLevel: 'low',
-  },
-  {
-    tier: 'fast',
-    displayName: 'Fast',
-    description: 'Implementation with low latency',
-    color: '#2563eb',
-    provider: 'cursor-sdk',
-    modelId: 'composer-2.5',
-    reasoningLevel: 'medium',
-  },
-  {
-    tier: 'standard',
-    displayName: 'Standard',
-    description: 'Default specialist work',
-    color: '#7c3aed',
-    provider: 'openai-codex',
-    modelId: 'gpt-5.5',
-    reasoningLevel: 'medium',
-  },
-  {
-    tier: 'deep',
-    displayName: 'Deep',
-    description: 'Careful planning and review',
-    color: '#dc2626',
-    provider: 'openai-codex',
-    modelId: 'gpt-5.5',
-    reasoningLevel: 'high',
-  },
-  {
-    tier: 'max',
-    displayName: 'Max',
-    description: 'Highest effort architecture',
-    color: '#111827',
-    provider: 'openai-codex',
-    modelId: 'gpt-5.5',
-    reasoningLevel: 'xhigh',
-  },
-]
+const DELEGATION_ROSTERS: DelegationRosterSettings = {
+  version: 1,
+  defaultRosterId: 'balanced',
+  rosters: [{
+    rosterId: 'balanced',
+    revision: 1,
+    name: 'Balanced',
+    description: 'General-purpose delegation routes.',
+    defaultRouteId: 'fast-builder',
+    modeRoutes: {
+      general: 'fast-builder',
+      research: 'research-analyst',
+    },
+    routes: [
+      {
+        routeId: 'fast-builder',
+        label: 'Fast Builder',
+        useWhen: 'Well-specified implementation.',
+        provider: 'cursor-sdk',
+        modelId: 'composer-2.5',
+        reasoningLevel: 'medium',
+        capabilityEscalationRouteId: 'research-analyst',
+      },
+      {
+        routeId: 'research-analyst',
+        label: 'Research Analyst',
+        useWhen: 'Source-backed investigation.',
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        reasoningLevel: 'medium',
+      },
+    ],
+  }],
+}
 
 // Mock localStorage — Node 22 built-in localStorage is incomplete in jsdom env
 const localStorageMock = (() => {
@@ -197,8 +190,10 @@ beforeEach(() => {
   Element.prototype.releasePointerCapture ??= vi.fn()
   Element.prototype.scrollIntoView ??= vi.fn()
 
-  specialistsApiMock.fetchTierConfigs.mockResolvedValue(TIER_CONFIGS)
-  specialistsApiMock.saveTierConfigsApi.mockImplementation(async (_clientOrWsUrl, tiers) => tiers)
+  specialistsApiMock.fetchDelegationRosterSettings.mockResolvedValue(DELEGATION_ROSTERS)
+  specialistsApiMock.saveDelegationRosterSettingsApi.mockImplementation(
+    async (_clientOrWsUrl, settings) => settings,
+  )
   specialistsApiMock.saveSharedSpecialist.mockResolvedValue(undefined)
   specialistsApiMock.saveSpecialist.mockResolvedValue(undefined)
   specialistsApiMock.deleteSpecialist.mockResolvedValue(undefined)
@@ -291,20 +286,20 @@ describe('SettingsSpecialists', () => {
       expect(container.textContent).toContain('Enabled')
     })
 
-    it('renders the three execution policy model controls', async () => {
+    it('renders editable model routes without mixing them into specialist personas', async () => {
       renderSpecialists([makeSpecialist()])
       await flush()
       await flush()
 
-      expect(specialistsApiMock.fetchTierConfigs).toHaveBeenCalledWith('ws://127.0.0.1:47187')
-      expect(container.textContent).toContain('Execution Policies')
-      expect(container.textContent).toContain('Support')
-      expect(container.textContent).toContain('Routine')
-      expect(container.textContent).toContain('Deep')
-      expect(container.textContent).not.toContain('Lightlight')
-      expect(container.textContent).not.toContain('Maxmax')
+      expect(specialistsApiMock.fetchDelegationRosterSettings)
+        .toHaveBeenCalledWith('ws://127.0.0.1:47187')
+      expect(container.textContent).toContain('Delegation Rosters')
+      expect(container.textContent).toContain('Automatic route mapping')
+      expect(container.textContent).toContain('Fast Builder')
+      expect(container.textContent).toContain('Research Analyst')
       expect(container.textContent).toContain('composer-2.5')
-      expect(container.textContent).toContain('Save Policies')
+      expect(container.textContent).toContain('Save rosters')
+      expect(container.textContent).toContain('keep worker personas in Specialists')
     })
   })
 

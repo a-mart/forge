@@ -80,6 +80,12 @@ export function handleSessionEvent(
       })
       return true
 
+    case 'session_delegation_updated':
+      context.requestTracker.resolve('update_session_delegation', event.requestId, {
+        sessionAgentId: event.sessionAgentId,
+      })
+      return true
+
     case 'profile_renamed':
       context.requestTracker.resolve('rename_profile', event.requestId, {
         profileId: event.profileId,

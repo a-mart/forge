@@ -16,6 +16,7 @@ import {
   type DeliveryMode,
   type ManagerExactModelSelection,
   type ManagerModelPreset,
+  type ManagerPosture,
   type ManagerReasoningLevel,
   type ProjectAgentCapability,
   type SessionModelUpdateMode,
@@ -396,6 +397,40 @@ export function buildUpdateProfileDefaultModelCommand(
   }
 }
 
+export function buildUpdateProjectDelegationDefaultsCommand(
+  profileId: string,
+  updates: {
+    managerPosture?: ManagerPosture | null
+    delegationRosterId?: string | null
+  },
+  requestId: string,
+): ClientCommand {
+  if (
+    !Object.prototype.hasOwnProperty.call(updates, 'managerPosture')
+    && !Object.prototype.hasOwnProperty.call(updates, 'delegationRosterId')
+  ) {
+    throw new Error('A posture or roster update is required.')
+  }
+  return {
+    type: 'update_project_delegation_defaults',
+    profileId: requireTrimmedValue(profileId, 'Profile id is required.'),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'managerPosture')
+      ? { managerPosture: updates.managerPosture }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(updates, 'delegationRosterId')
+      ? {
+          delegationRosterId: updates.delegationRosterId === null
+            ? null
+            : requireTrimmedValue(
+                updates.delegationRosterId ?? '',
+                'Delegation roster id is required.',
+              ),
+        }
+      : {}),
+    requestId,
+  }
+}
+
 export function buildUpdateManagerModelCommand(
   managerId: string,
   model: ManagerModelPreset | undefined,
@@ -552,6 +587,44 @@ export function buildUpdateSessionModelCommand(
     type: 'update_session_model',
     sessionAgentId: trimmed,
     mode,
+    requestId,
+  }
+}
+
+export function buildUpdateSessionDelegationCommand(
+  sessionAgentId: string,
+  updates: {
+    managerPosture?: { mode: 'inherit' } | {
+      mode: 'override'
+      value: ManagerPosture
+    }
+    delegationRoster?: { mode: 'inherit' } | {
+      mode: 'override'
+      rosterId: string
+    }
+  },
+  requestId: string,
+): ClientCommand {
+  if (!updates.managerPosture && !updates.delegationRoster) {
+    throw new Error('A posture or roster update is required.')
+  }
+  return {
+    type: 'update_session_delegation',
+    sessionAgentId: requireTrimmedValue(sessionAgentId, 'Session agent id is required.'),
+    ...(updates.managerPosture ? { managerPosture: updates.managerPosture } : {}),
+    ...(updates.delegationRoster
+      ? {
+          delegationRoster: updates.delegationRoster.mode === 'inherit'
+            ? updates.delegationRoster
+            : {
+                mode: 'override',
+                rosterId: requireTrimmedValue(
+                  updates.delegationRoster.rosterId,
+                  'Delegation roster id is required.',
+                ),
+              },
+        }
+      : {}),
     requestId,
   }
 }

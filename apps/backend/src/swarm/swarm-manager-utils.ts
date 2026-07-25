@@ -338,6 +338,71 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'modelOrigin must be "profile_default" or "session_override" when provided';
   }
 
+  if (
+    value.managerPosture !== undefined &&
+    value.managerPosture !== "delegation_first" &&
+    value.managerPosture !== "hands_on"
+  ) {
+    return 'managerPosture must be "delegation_first" or "hands_on" when provided';
+  }
+
+  if (
+    value.managerPostureOrigin !== undefined &&
+    value.managerPostureOrigin !== "product_default" &&
+    value.managerPostureOrigin !== "project_default" &&
+    value.managerPostureOrigin !== "session_override"
+  ) {
+    return "managerPostureOrigin is invalid when provided";
+  }
+
+  if (value.delegationRosterId !== undefined && !isNonEmptyString(value.delegationRosterId)) {
+    return "delegationRosterId must be a non-empty string when provided";
+  }
+
+  if (
+    value.delegationRosterOrigin !== undefined &&
+    value.delegationRosterOrigin !== "global_default" &&
+    value.delegationRosterOrigin !== "project_default" &&
+    value.delegationRosterOrigin !== "session_override"
+  ) {
+    return "delegationRosterOrigin is invalid when provided";
+  }
+
+  if (value.delegationRouteId !== undefined && !isNonEmptyString(value.delegationRouteId)) {
+    return "delegationRouteId must be a non-empty string when provided";
+  }
+  if (value.delegationRouteLabel !== undefined && !isNonEmptyString(value.delegationRouteLabel)) {
+    return "delegationRouteLabel must be a non-empty string when provided";
+  }
+  if (
+    value.delegationRosterRevision !== undefined &&
+    (
+      typeof value.delegationRosterRevision !== "number" ||
+      !Number.isInteger(value.delegationRosterRevision) ||
+      value.delegationRosterRevision < 1
+    )
+  ) {
+    return "delegationRosterRevision must be a positive integer when provided";
+  }
+  if (
+    value.delegationCapabilityEscalationRouteId !== undefined &&
+    !isNonEmptyString(value.delegationCapabilityEscalationRouteId)
+  ) {
+    return "delegationCapabilityEscalationRouteId must be a non-empty string when provided";
+  }
+  if (value.delegationFallbackModel !== undefined) {
+    if (!isRecord(value.delegationFallbackModel)) {
+      return "delegationFallbackModel must be an object when provided";
+    }
+    if (
+      !isNonEmptyString(value.delegationFallbackModel.provider) ||
+      !isNonEmptyString(value.delegationFallbackModel.modelId) ||
+      !isNonEmptyString(value.delegationFallbackModel.thinkingLevel)
+    ) {
+      return "delegationFallbackModel must contain provider, modelId, and thinkingLevel";
+    }
+  }
+
   if (value.pinnedAt !== undefined && typeof value.pinnedAt !== "string") {
     return "pinnedAt must be a string when provided";
   }

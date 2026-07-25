@@ -39,18 +39,20 @@ export function WorkGraphNodeStatusIcon({
 export function WorkGraphNodeRuntime({ node }: { node: WorkGraphNode }) {
   const attempt = node.attempts[node.attempts.length - 1]
   if (!attempt) {
-    return node.effort !== 'auto' ? (
-      <span className="text-[10px] capitalize text-muted-foreground">{node.effort} requested</span>
+    return node.route && node.route !== 'auto' ? (
+      <span className="text-[10px] text-muted-foreground">{node.route} requested</span>
     ) : null
   }
+  const routeLabel = attempt.resolvedRouteLabel
+    ?? attempt.resolvedRouteId
+    ?? attempt.executionPolicy
+    ?? attempt.requestedRoute
+    ?? 'Auto'
   const label = node.status === 'awaiting_review'
-    ? `Review ${attempt.executionPolicy}`
-    : `${attempt.executionPolicy} · try ${attempt.number}`
+    ? `Review ${routeLabel}`
+    : `${routeLabel} · try ${attempt.number}`
   return (
-    <span className={cn(
-      'text-[10px] capitalize text-muted-foreground',
-      attempt.executionPolicy === 'deep' && 'text-fuchsia-500',
-    )}>
+    <span className={cn('text-[10px] text-muted-foreground')}>
       {label}
     </span>
   )

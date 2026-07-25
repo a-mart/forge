@@ -169,6 +169,40 @@ describe("ProfileBootReconciler", () => {
     expect(harness.upsertedProfileIds).toEqual(["forge"]);
   });
 
+  it("persists effective posture and roster inheritance for legacy manager sessions", () => {
+    const productDefault = makeManager("product-default", "forge");
+    const projectDefault = makeManager("project-default", "forge");
+    const explicit = makeManager("explicit", "forge", {
+      managerPosture: "hands_on",
+      delegationRosterId: "special",
+    });
+    const collab = makeManager("collab", "forge", { sessionSurface: "collab" });
+    const profile = makeProfile("forge", {
+      defaultManagerPosture: "hands_on",
+      defaultDelegationRosterId: "project-roster",
+    });
+    const harness = createHarness({
+      descriptors: [productDefault, projectDefault, explicit, collab],
+      profiles: [profile],
+    });
+
+    expect(harness.reconciler.reconcileDelegationStateOnBoot("global-roster")).toBe(true);
+    expect(productDefault).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "project_default",
+      delegationRosterId: "project-roster",
+      delegationRosterOrigin: "project_default",
+    });
+    expect(explicit).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "project_default",
+      delegationRosterId: "special",
+      delegationRosterOrigin: "session_override",
+    });
+    expect(collab.managerPosture).toBeUndefined();
+    expect(harness.reconciler.reconcileDelegationStateOnBoot("global-roster")).toBe(false);
+  });
+
   it("marks the Cortex profile as system and is idempotent", () => {
     const cortex = makeProfile("cortex", { profileType: "user" });
     const harness = createHarness({ profiles: [cortex] });

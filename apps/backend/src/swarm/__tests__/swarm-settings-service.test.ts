@@ -180,6 +180,202 @@ function createOpenAICodexOAuthSecretsEnvService(): any {
   };
 }
 
+describe("SwarmSettingsService delegation settings", () => {
+  it("changes session posture with one runtime recycle while roster-only changes stay runtime-stable", async () => {
+    const root = await createTempRoot();
+    const session = Object.assign(createSession(root, "manager"), {
+      managerPosture: "delegation_first" as const,
+      managerPostureOrigin: "product_default" as const,
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateSessionDelegation(session.agentId, {
+      managerPosture: { mode: "override", value: "hands_on" },
+      delegationRoster: { mode: "override", rosterId: "balanced" },
+    });
+
+    expect(session).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "session_override",
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "session_override",
+    });
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(1);
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(
+      session.agentId,
+      "prompt_mode_change",
+    );
+
+    await service.updateSessionDelegation(session.agentId, {
+      delegationRoster: { mode: "inherit" },
+    });
+    expect(session.delegationRosterOrigin).toBe("global_default");
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recycle when only the posture inheritance origin changes", async () => {
+    const root = await createTempRoot();
+    const session = Object.assign(createSession(root, "manager"), {
+      managerPosture: "hands_on" as const,
+      managerPostureOrigin: "session_override" as const,
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const profile = createProfile();
+    profile.defaultManagerPosture = "hands_on";
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      profiles: new Map([["manager", profile]]),
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateSessionDelegation(session.agentId, {
+      managerPosture: { mode: "inherit" },
+    });
+
+    expect(session).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "project_default",
+    });
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
+  it("updates project inheritance independently for posture and roster", async () => {
+    const root = await createTempRoot();
+    const inherited = Object.assign(createSession(root, "manager"), {
+      managerPosture: "delegation_first" as const,
+      managerPostureOrigin: "product_default" as const,
+      delegationRosterId: "old-global",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const postureOverride = Object.assign(createSession(root, "manager--posture"), {
+      managerPosture: "delegation_first" as const,
+      managerPostureOrigin: "session_override" as const,
+      delegationRosterId: "old-global",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const rosterOverride = Object.assign(createSession(root, "manager--roster"), {
+      managerPosture: "delegation_first" as const,
+      managerPostureOrigin: "product_default" as const,
+      delegationRosterId: "special",
+      delegationRosterOrigin: "session_override" as const,
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const profiles = new Map([["manager", createProfile()]]);
+    const service = createService({
+      rootDir: root,
+      sessions: [inherited, postureOverride, rosterOverride],
+      profiles,
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateProjectDelegationDefaults("manager", {
+      managerPosture: "hands_on",
+      delegationRosterId: "balanced",
+    });
+
+    expect(profiles.get("manager")).toMatchObject({
+      defaultManagerPosture: "hands_on",
+      defaultDelegationRosterId: "balanced",
+    });
+    expect(inherited).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "project_default",
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "project_default",
+    });
+    expect(postureOverride).toMatchObject({
+      managerPosture: "delegation_first",
+      managerPostureOrigin: "session_override",
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "project_default",
+    });
+    expect(rosterOverride).toMatchObject({
+      managerPosture: "hands_on",
+      managerPostureOrigin: "project_default",
+      delegationRosterId: "special",
+      delegationRosterOrigin: "session_override",
+    });
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      [inherited.agentId, "prompt_mode_change"],
+      [rosterOverride.agentId, "prompt_mode_change"],
+    ]);
+  });
+
+  it("owns roster validation, persistence, and global-default projection", async () => {
+    const root = await createTempRoot();
+    const session = Object.assign(createSession(root, "manager"), {
+      delegationRosterId: "balanced",
+      delegationRosterOrigin: "global_default" as const,
+    });
+    const saveStore = vi.fn(async () => undefined);
+    const service = createService({ rootDir: root, sessions: [session], saveStore });
+    const settings = {
+      version: 1 as const,
+      defaultRosterId: "focused",
+      rosters: [{
+        rosterId: "focused",
+        revision: 1,
+        name: "Focused",
+        defaultRouteId: "builder",
+        routes: [{
+          routeId: "builder",
+          label: "Builder",
+          useWhen: "Use for ordinary implementation.",
+          provider: "openai-codex",
+          modelId: "gpt-5.5",
+          reasoningLevel: "medium" as const,
+        }],
+      }],
+    };
+
+    const saved = await service.saveDelegationRosterSettings(settings);
+
+    expect(saved).toMatchObject(settings);
+    await expect(service.getDelegationRosterSettings()).resolves.toEqual(saved);
+    expect(session).toMatchObject({
+      delegationRosterId: "focused",
+      delegationRosterOrigin: "global_default",
+    });
+    expect(saveStore).toHaveBeenCalledOnce();
+  });
+
+  it("rejects unavailable models and removal of referenced rosters before writing", async () => {
+    const root = await createTempRoot();
+    const profile = createProfile();
+    profile.defaultDelegationRosterId = "focused";
+    const service = createService({
+      rootDir: root,
+      sessions: [],
+      profiles: new Map([["manager", profile]]),
+    });
+    const settings = await service.getDelegationRosterSettings();
+    const invalidModel = {
+      ...settings,
+      rosters: settings.rosters.map((roster) => ({
+        ...roster,
+        routes: roster.routes.map((route, index) => index === 0
+          ? { ...route, provider: "missing-provider", modelId: "missing-model" }
+          : route),
+      })),
+    };
+
+    await expect(service.saveDelegationRosterSettings(invalidModel))
+      .rejects.toThrow("references unavailable model");
+    await expect(service.saveDelegationRosterSettings(settings))
+      .rejects.toThrow('Cannot remove delegation roster "focused"');
+  });
+});
+
 describe("SwarmSettingsService.updateManagerModel", () => {
   it("preserves Secure Session authority while recycling the model runtime", async () => {
     const root = await createTempRoot();

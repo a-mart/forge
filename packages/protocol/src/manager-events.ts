@@ -2,6 +2,7 @@ import type {
   AgentDescriptor,
   ManagerModelPreset,
   ManagerReasoningLevel,
+  ManagerPosture,
 } from './shared-types.js'
 
 export interface ManagerCreatedEvent {
@@ -37,6 +38,14 @@ export interface ManagerCwdUpdatedEvent {
   type: 'manager_cwd_updated'
   managerId: string
   cwd: string
+  requestId?: string
+}
+
+export interface ProjectDelegationDefaultsUpdatedEvent {
+  type: 'project_delegation_defaults_updated'
+  profileId: string
+  managerPosture?: ManagerPosture
+  delegationRosterId?: string
   requestId?: string
 }
 

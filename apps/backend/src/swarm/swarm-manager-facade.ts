@@ -100,7 +100,7 @@ import type { CompactAgentContextOptions } from "./swarm-compaction-coordinator.
 import type { SwarmConfigurationCoordinator } from "./swarm-configuration-coordinator.js";
 import type { SwarmRuntimeLifecycleCoordinator } from "./swarm-runtime-lifecycle-coordinator.js";
 import type { SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
-import { SwarmManagerSecureSessionsFacade } from "./secure-sessions/swarm-manager-secure-sessions-facade.js";
+import { SwarmManagerDelegationFacade } from "./swarm-manager-delegation-facade.js";
 import type {
   AppendConversationUserMessageOptions,
   AppendConversationUserMessageResult,
@@ -216,7 +216,7 @@ import type {
  * coordinators above, while this class keeps the manager's compatibility
  * surface explicit without forcing every delegate into the composition root.
  */
-export abstract class SwarmManagerFacade extends SwarmManagerSecureSessionsFacade {
+export abstract class SwarmManagerFacade extends SwarmManagerDelegationFacade {
   protected abstract getFacadeServices(): SwarmManagerFacadeServices;
   flushPendingPersistence(): Promise<void> { return this.services.persistence.flushPendingTurnSeqPersists(); }
   getSessionPlanSnapshot(

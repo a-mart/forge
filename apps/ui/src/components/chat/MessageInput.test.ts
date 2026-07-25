@@ -178,6 +178,7 @@ function renderMessageInput(
     replyTarget: ComponentProps<typeof MessageInput>['replyTarget']
     onClearReplyTarget: () => void
     sessionModelPicker: ComponentProps<typeof MessageInput>['sessionModelPicker']
+    sessionCoordinationPicker: ComponentProps<typeof MessageInput>['sessionCoordinationPicker']
     secureSessionPicker: ComponentProps<typeof MessageInput>['secureSessionPicker']
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
@@ -600,6 +601,49 @@ describe('MessageInput', () => {
       expect(onUpdate).toHaveBeenCalledWith('manager-1', 'inherit')
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
       expect(document.activeElement).toBe(trigger)
+    })
+  })
+
+  describe('session coordination picker', () => {
+    const baseCoordinationPicker = {
+      originId: 'remote-origin',
+      httpClientRef: { current: pickerApiClient },
+      sessionAgentId: 'manager-1',
+      profileId: 'project-1',
+      managerPosture: 'delegation_first' as const,
+      managerPostureOrigin: 'product_default' as const,
+      delegationRosterId: 'balanced',
+      delegationRosterOrigin: 'global_default' as const,
+      onUpdateProjectDefaults: vi.fn(),
+      onUpdateSession: vi.fn(),
+    }
+
+    it('stays hidden without a parent-provided Builder manager configuration', async () => {
+      renderMessageInput()
+      await flush()
+      expect(container.querySelector('[aria-label^="Coordination:"]')).toBeNull()
+    })
+
+    it('renders a non-submitting control for an eligible Builder manager', async () => {
+      renderMessageInput({ sessionCoordinationPicker: baseCoordinationPicker })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Coordination: Delegate, balanced')
+      expect(trigger).toBeInstanceOf(HTMLButtonElement)
+      expect((trigger as HTMLButtonElement).type).toBe('button')
+    })
+
+    it('disables the coordination control with the Builder connection', async () => {
+      renderMessageInput({
+        sessionCoordinationPicker: {
+          ...baseCoordinationPicker,
+          disabled: true,
+        },
+      })
+      await flush()
+
+      const trigger = getByLabelText(container, 'Coordination: Delegate, balanced')
+      expect((trigger as HTMLButtonElement).disabled).toBe(true)
     })
   })
 

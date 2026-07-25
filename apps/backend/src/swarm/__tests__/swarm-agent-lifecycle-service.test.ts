@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -20,6 +20,7 @@ import {
   MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
 } from "../manual-stop-notice.js";
 import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "../secure-sessions/runtime/secure-runtime-binding.js";
+import { resolveDelegationRosterSettings } from "../specialists/delegation-roster-store.js";
 
 const NOW = "2026-04-20T12:00:00.000Z";
 
@@ -2626,6 +2627,75 @@ describe("SwarmAgentLifecycleService", () => {
       expect.objectContaining({ agentId: "worker-a" }),
       "composed worker core + lens prompt",
     );
+  });
+
+  it("pins the active roster route, executor, fallback, and escalation on a worker attempt", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-route-lifecycle-"));
+    try {
+      const manager = createAgentDescriptor({
+        agentId: "route-manager",
+        role: "manager",
+        managerId: "route-manager",
+        profileId: "route-manager",
+        status: "idle",
+        cwd: "/proj",
+        delegationRosterId: "balanced",
+        delegationRosterOrigin: "global_default",
+      });
+      const settings = await resolveDelegationRosterSettings(dataDir);
+      const roster = settings.rosters[0]!;
+      const expectedRoute = roster.routes.find((route) => route.routeId === "research-analyst")!;
+      const descriptors = new Map([[manager.agentId, manager]]);
+      const svc = new SwarmAgentLifecycleService(
+        baseLifecycleOptions({
+          dataDir,
+          descriptors,
+          assertManager: () => manager,
+          resolveSpecialistRosterForProfile: vi.fn(async () => [{
+            specialistId: "researcher",
+            displayName: "Researcher",
+            color: "#14b8a6",
+            enabled: true,
+            whenToUse: "research",
+            promptBody: "Research behavior.",
+            available: true,
+          }]),
+        }),
+      );
+
+      const spawned = await svc.spawnAgent(manager.agentId, {
+        agentId: "research-worker",
+        route: "auto",
+        behaviorMode: "research",
+        lens: "researcher",
+      });
+
+      expect(spawned).toMatchObject({
+        delegationRouteId: "research-analyst",
+        delegationRouteLabel: expectedRoute.label,
+        delegationRosterId: "balanced",
+        delegationRosterRevision: roster.revision,
+        model: {
+          provider: expectedRoute.provider,
+          modelId: expectedRoute.modelId,
+          thinkingLevel: expectedRoute.reasoningLevel,
+        },
+      });
+      const internal = descriptors.get(spawned.agentId);
+      expect(internal?.delegationCapabilityEscalationRouteId)
+        .toBe(expectedRoute.capabilityEscalationRouteId);
+      expect(spawned).not.toHaveProperty("delegationCapabilityEscalationRouteId");
+      if (expectedRoute.availabilityFallback) {
+        expect(internal?.delegationFallbackModel).toMatchObject({
+          provider: expectedRoute.availabilityFallback.provider,
+          modelId: expectedRoute.availabilityFallback.modelId,
+          thinkingLevel: expectedRoute.availabilityFallback.reasoningLevel,
+        });
+        expect(spawned).not.toHaveProperty("delegationFallbackModel");
+      }
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("rolls back a mode worker when its required behavior prompt cannot be resolved", async () => {

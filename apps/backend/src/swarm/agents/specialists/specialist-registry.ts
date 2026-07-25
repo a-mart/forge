@@ -112,12 +112,6 @@ export const DEFAULT_TIER_CONFIGS: Record<EffortTier, TierConfig> = {
     fallbackReasoningLevel: "medium",
   },
 };
-const EXECUTION_POLICY_CONFIGS = [
-  { policy: "support", tier: "fast", description: "low-cost, low-latency support work" },
-  { policy: "routine", tier: "standard", description: "ordinary well-specified implementation" },
-  { policy: "deep", tier: "deep", description: "complex, ambiguous, or high-risk work" },
-] as const satisfies ReadonlyArray<{ policy: string; tier: EffortTier; description: string }>;
-
 const BEHAVIOR_MODE_CONFIGS = [
   { mode: "plan", lens: "planner", description: "task breakdown, sequencing, and risk analysis" },
   { mode: "correctness-review", lens: "code-reviewer", description: "bugs, edge cases, and contract validation" },
@@ -461,27 +455,15 @@ export function generateRosterBlock(
 
 export function generateTierLensRosterBlock(
   roster: ResolvedSpecialistDefinition[],
-  tierConfigs: readonly TierConfig[] = Object.values(DEFAULT_TIER_CONFIGS),
+  _tierConfigs: readonly TierConfig[] = Object.values(DEFAULT_TIER_CONFIGS),
 ): string {
   const enabled = roster.filter((entry) => entry.enabled);
   const available = enabled.filter((entry) => entry.available);
   const lines = [
-    "Delegate workers with a behavior `mode` and an `executionPolicy`.",
+    "Delegate workers with a behavior `mode` and an execution `route`.",
     "",
-    "Execution policies:",
+    "Forge appends the active `[delegationRoster]` to manager-bound turns. Use `route=auto` by default; select a named route only when that roster entry's current guidance clearly fits.",
   ];
-
-  const configsByTier = new Map(tierConfigs.map((config) => [config.tier, config]));
-  for (const policyConfig of EXECUTION_POLICY_CONFIGS) {
-    const config = configsByTier.get(policyConfig.tier) ?? DEFAULT_TIER_CONFIGS[policyConfig.tier];
-    const primary = `${compactProvider(config.provider)}/${config.modelId}${config.reasoningLevel ? ` ${config.reasoningLevel}` : ""}`;
-    const fallback = config.fallbackModelId
-      ? ` -> fb ${compactProvider(config.fallbackProvider ?? "unknown")}/${config.fallbackModelId}${
-          config.fallbackReasoningLevel ? ` ${config.fallbackReasoningLevel}` : ""
-        }`
-      : "";
-    lines.push(`- \`${policyConfig.policy}\`: ${policyConfig.description} [${primary}${fallback}]`);
-  }
 
   // Shipped mode handles contribute prompts only; their persisted model fields
   // do not control policy routing and therefore must not hide a mode when a
@@ -491,8 +473,7 @@ export function generateTierLensRosterBlock(
   for (const modeConfig of BEHAVIOR_MODE_CONFIGS) {
     const lens = enabledById.get(modeConfig.lens);
     if (lens) {
-      const defaultPolicy = modeConfig.mode === "research" ? "support" : "deep";
-      lines.push(`- \`${modeConfig.mode}\` (default ${defaultPolicy}): ${modeConfig.description}`);
+      lines.push(`- \`${modeConfig.mode}\`: ${modeConfig.description}`);
     }
   }
 
@@ -518,9 +499,10 @@ export function generateTierLensRosterBlock(
   lines.push(
     "",
     "Routing guidance:",
-    "- Match policy to task difficulty and risk; model availability fallback is automatic.",
+    "- Behavior mode controls the worker's operating contract; route controls only executor selection.",
+    "- Availability fallback is automatic and does not mean capability escalation.",
     "- Keep one worker responsible for one concrete outcome. Use a review mode only when review adds material value.",
-    "- Mode defaults are guidance, not a capability floor. A bounded plan or review may use `support`; raise the policy when ambiguity or risk warrants it.",
+    "- If a result is inadequate, retry or revise using evidence; do not choose stronger routes merely because a graph has many nodes.",
   );
 
   return lines.join("\n");

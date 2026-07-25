@@ -1,5 +1,5 @@
 import { resolveBrowserHostKind } from '@forge/protocol'
-import type { CodexElicitationDecision, CodexElicitationPersistScope, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
+import type { CodexElicitationDecision, CodexElicitationPersistScope, ManagerPosture, ProjectAgentCapability, SessionGoalControlAction } from '@forge/protocol'
 import type { ConversationSnapshotCache } from './ws-client/conversation-snapshot-cache'
 import {
   conversationBootstrapMetrics,
@@ -67,6 +67,8 @@ import {
   buildUpdateManagerCwdCommand,
   buildUpdateManagerModelCommand,
   buildUpdateProfileDefaultModelCommand,
+  buildUpdateProjectDelegationDefaultsCommand,
+  buildUpdateSessionDelegationCommand,
   buildUpdateSessionModelCommand,
   buildUserMessageCommand,
   buildValidateDirectoryCommand,
@@ -987,6 +989,21 @@ export class ManagerWsClient {
     )
   }
 
+  async updateProjectDelegationDefaults(
+    profileId: string,
+    updates: {
+      managerPosture?: ManagerPosture | null
+      delegationRosterId?: string | null
+    },
+  ): Promise<{ profileId: string }> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest(
+      'update_project_delegation_defaults',
+      (requestId) =>
+        buildUpdateProjectDelegationDefaultsCommand(profileId, updates, requestId),
+    )
+  }
+
   async updateManagerModel(
     managerId: string,
     model?: ManagerModelPreset,
@@ -1070,6 +1087,27 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('update_session_model', (requestId) =>
       buildUpdateSessionModelCommand(sessionAgentId, mode, model, reasoningLevel, requestId, modelSelection),
+    )
+  }
+
+  async updateSessionDelegation(
+    sessionAgentId: string,
+    updates: {
+      managerPosture?: { mode: 'inherit' } | {
+        mode: 'override'
+        value: ManagerPosture
+      }
+      delegationRoster?: { mode: 'inherit' } | {
+        mode: 'override'
+        rosterId: string
+      }
+    },
+  ): Promise<{ sessionAgentId: string }> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest(
+      'update_session_delegation',
+      (requestId) =>
+        buildUpdateSessionDelegationCommand(sessionAgentId, updates, requestId),
     )
   }
 

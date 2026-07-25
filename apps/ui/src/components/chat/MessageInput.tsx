@@ -12,6 +12,7 @@ import { VoiceRecordingBar } from './message-input/VoiceRecordingBar'
 import { ComposerTextarea } from './message-input/ComposerTextarea'
 import { SecureSessionPicker } from './message-input/SecureSessionPicker'
 import { SessionModelPicker } from './message-input/SessionModelPicker'
+import { SessionCoordinationPicker } from './message-input/SessionCoordinationPicker'
 import { useDraft } from './message-input/hooks/use-draft'
 import { useSlashCommands } from './message-input/hooks/use-slash-commands'
 import { useMentions } from './message-input/hooks/use-mentions'
@@ -26,6 +27,7 @@ export type {
   MessageInputHandle,
   MessageInputProps,
   SecureSessionPickerConfig,
+  SessionCoordinationPickerConfig,
   SessionModelPickerConfig,
 } from './message-input/types'
 import type { MessageInputHandle, MessageInputProps } from './message-input/types'
@@ -49,6 +51,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     replyTarget,
     onClearReplyTarget,
     sessionModelPicker,
+    sessionCoordinationPicker,
     secureSessionPicker,
   },
   ref,
@@ -494,6 +497,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
             <div className="flex min-w-0 items-center gap-1">
               {secureSessionPicker ? <SecureSessionPicker config={secureSessionPicker} /> : null}
+              {sessionCoordinationPicker
+                ? <SessionCoordinationPicker config={sessionCoordinationPicker} />
+                : null}
               {sessionModelPicker ? <SessionModelPicker config={sessionModelPicker} /> : null}
 
               <Button

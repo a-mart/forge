@@ -417,7 +417,7 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("one bounded planning or discovery investigation")
     expect(resolved).toContain("never owns scheduler state or graph mutation")
     expect(resolved).toContain("Do not impose a mandatory planner, implementer, reviewer, or synthesis chain")
-    expect(resolved).toContain("Fan-in count alone is not a reason to spend Deep")
+    expect(resolved).toContain("Graph size and fan-in do not justify a stronger executor")
     expect(resolved).toContain("pass that step's exact text as `planStep`")
     expect(resolved).toContain("Creating or updating a plan is coordination, not execution")
     expect(resolved).toContain("Use `create_goal` only when the user explicitly asks")
@@ -426,19 +426,52 @@ Custom project instruction: always mention the release train when summarizing de
     expect(resolved).toContain("A goal never expands authority")
   });
 
-  it("allows bounded read-only manager orientation without allowing project mutations", async () => {
+  it("composes exactly one concise manager posture block", async () => {
+    const { config } = await makeConfig();
+    const delegationFirst = createManagerDescriptor(config, repoRoot);
+    const handsOn = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "hands_on",
+    });
+    const delegationPrompt = await createPromptServiceForDescriptor(
+      config,
+      delegationFirst,
+    ).buildResolvedManagerPrompt(delegationFirst);
+    const handsOnPrompt = await createPromptServiceForDescriptor(
+      config,
+      handsOn,
+    ).buildResolvedManagerPrompt(handsOn);
+
+    expect(delegationPrompt).toContain("Your posture is **Delegation-first**.")
+    expect(delegationPrompt).toContain("Manager direct project work is read-only.")
+    expect(handsOnPrompt).toContain("Your posture is **Hands-on**.")
+    expect(handsOnPrompt).toContain("Normally own one cohesive outcome directly")
+    expect(handsOnPrompt).toContain("This posture changes preference, not authority")
+    expect(delegationPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
+    expect(handsOnPrompt.match(/^# Work routing$/gm)).toHaveLength(1)
+    expect(delegationPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
+    expect(handsOnPrompt).not.toContain("$" + "{MANAGER_POSTURE}")
+    expect(Math.abs(delegationPrompt.length - handsOnPrompt.length)).toBeLessThan(500)
+  });
+
+  it("keeps tool authority aligned with the selected manager posture", async () => {
     const { config } = await makeConfig();
     const descriptor = createManagerDescriptor(config, repoRoot);
     const service = createPromptServiceForDescriptor(config, descriptor);
+    const handsOnDescriptor = createManagerDescriptor(config, repoRoot, {
+      managerPosture: "hands_on",
+    });
+    const handsOnService = createPromptServiceForDescriptor(config, handsOnDescriptor);
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
+    const handsOn = await handsOnService.buildResolvedManagerPrompt(handsOnDescriptor);
 
     expect(resolved).toContain("bounded read-only orientation");
-    expect(resolved).toContain("If the lookup exposes implementation work");
+    expect(resolved).toContain("If a direct lookup exposes material implementation or investigation");
     expect(resolved).toContain("Manager direct project work is read-only");
-    expect(resolved).toContain("Do not use `edit`/`write` for project work");
-    expect(resolved).toContain("non-mutating focused `bash` or status commands");
-    expect(resolved).toContain("do not use shell or browser actions as an indirect way");
+    expect(resolved).toContain("In Delegation-first, direct project work is read-only");
+    expect(handsOn).toContain("In Hands-on, you may use normal project tools");
+    expect(handsOn).toContain("one bounded manager-owned outcome");
+    expect(handsOn).not.toContain("Do not use `edit`/`write` for project work");
   });
 
   it("requires an Other choice unless the user explicitly intends a closed confirmation", async () => {

@@ -693,7 +693,7 @@ describe('buildSwarmTools', () => {
     })
   })
 
-  it('defaults spawn_agent to general routine work', async () => {
+  it('defaults spawn_agent to general work on the active roster auto route', async () => {
     let receivedInput: SpawnAgentInput | undefined
 
     const host = makeHost(async (_callerAgentId, input) => {
@@ -724,7 +724,8 @@ describe('buildSwarmTools', () => {
     )
 
     expect(receivedInput).toMatchObject({
-      tier: 'standard',
+      behaviorMode: 'general',
+      route: 'auto',
       initialMessage: 'Implement the focused change.',
     })
     expect(receivedInput?.lens).toBeUndefined()

@@ -271,6 +271,51 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "update_project_delegation_defaults") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId,
+      });
+      return true;
+    }
+    try {
+      requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
+      await swarmManager.updateProjectDelegationDefaults(command.profileId, {
+        ...(Object.prototype.hasOwnProperty.call(command, "managerPosture")
+          ? { managerPosture: command.managerPosture }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(command, "delegationRosterId")
+          ? { delegationRosterId: command.delegationRosterId }
+          : {}),
+      });
+      const profile = swarmManager.listProfiles()
+        .find((candidate) => candidate.profileId === command.profileId);
+      broadcastToSubscribed({
+        type: "project_delegation_defaults_updated",
+        profileId: command.profileId,
+        ...(profile?.defaultManagerPosture
+          ? { managerPosture: profile.defaultManagerPosture }
+          : {}),
+        ...(profile?.defaultDelegationRosterId
+          ? { delegationRosterId: profile.defaultDelegationRosterId }
+          : {}),
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_PROJECT_DELEGATION_DEFAULTS_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId,
+      });
+    }
+    return true;
+  }
+
   if (command.type === "update_manager_model") {
     const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
     if (!managerContextId) {

@@ -42,6 +42,10 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     variables: [
       { name: 'SWARM_MEMORY_FILE', description: "Path to the agent's memory file" },
       {
+        name: 'MANAGER_POSTURE',
+        description: 'Selected manager operating posture composed by Forge.',
+      },
+      {
         name: 'MODEL_SPECIFIC_INSTRUCTIONS',
         description: 'Optional user-authored instructions for the active manager model.',
       },
@@ -86,6 +90,10 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     displayName: 'Collaboration Channel System Prompt',
     description: 'Instructions for manager sessions that back collaboration channels.',
     variables: [
+      {
+        name: 'MANAGER_POSTURE',
+        description: 'Selected manager operating posture composed by Forge.',
+      },
       {
         name: 'MODEL_SPECIFIC_INSTRUCTIONS',
         description: 'Optional user-authored instructions for the active manager model.',

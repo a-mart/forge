@@ -462,7 +462,7 @@ describe("claude-mcp-tool-bridge", () => {
     expect(result.content[1].text).toContain("[details]");
   });
 
-  it("dispatches spawn_agent with behavior mode and execution policy", async () => {
+  it("dispatches spawn_agent with behavior mode and execution route", async () => {
     const manager = createMockDescriptor();
     const host = createMockHost();
     const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
@@ -472,7 +472,7 @@ describe("claude-mcp-tool-bridge", () => {
       planStep: "Implement backend",
       initialMessage: "Implement the backend change.",
       mode: "general",
-      executionPolicy: "routine"
+      route: "auto"
     });
 
     expect(host.spawnAgent).toHaveBeenCalledWith(
@@ -481,7 +481,8 @@ describe("claude-mcp-tool-bridge", () => {
         agentId: "backend-worker",
         planStep: "Implement backend",
         initialMessage: "Implement the backend change.",
-        tier: "standard"
+        behaviorMode: "general",
+        route: "auto"
       })
     );
   });

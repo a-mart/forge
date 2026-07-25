@@ -16,6 +16,10 @@ import {
   resolveTierConfigs,
   resolveWorkspaceRoster,
 } from "./specialists/specialist-registry.js";
+import {
+  formatDelegationRosterModelContext,
+  resolveDelegationRosterForManager,
+} from "./specialists/delegation-roster-store.js";
 import type {
   AgentDescriptor,
   SpawnAgentInput,
@@ -236,6 +240,12 @@ export class PromptResourceCoordinator {
       });
       return this.resolveCollaborationSpecialists(manager.agentId, []);
     }
+  }
+
+  async buildDelegationRosterModelContext(manager: AgentDescriptor): Promise<string> {
+    return formatDelegationRosterModelContext(
+      await resolveDelegationRosterForManager(this.options.config.paths.dataDir, manager),
+    );
   }
 
   async resolveProjectWorkspaceForManager(manager: AgentDescriptor) {

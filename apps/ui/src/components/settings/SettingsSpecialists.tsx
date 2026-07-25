@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { CollaborationCategory, ManagerReasoningLevel, TierConfig } from '@forge/protocol'
+import type { CollaborationCategory } from '@forge/protocol'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useHelpContext } from '@/components/help/help-hooks'
-import { Eye, Loader2, Plus, Save } from 'lucide-react'
+import { Eye, Loader2, Plus } from 'lucide-react'
 import {
   Select,
   SelectContent,
-  SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -39,11 +38,7 @@ import { PendingSaveDialog } from './specialists/PendingSaveDialog'
 import { CollabSettingsBanner } from './specialists/CollabSettingsBanner'
 import { CategoryDefaultsView } from './specialists/CategoryDefaultsView'
 import { ChannelSpecialistSelection } from './specialists/ChannelSpecialistSelection'
-import { fetchTierConfigs, saveTierConfigsApi } from './specialists-api'
-import { ModelIdSelect } from './specialists/ModelIdSelect'
-import { FallbackModelSection } from './specialists/FallbackModelSection'
-import { REASONING_LEVEL_LABELS } from './specialists/types'
-import { getSupportedReasoningLevelsForModelId } from '@/lib/model-preset'
+import { DelegationRosterSettingsView } from './specialists/DelegationRosterSettings'
 import {
   getBehaviorModeCardMetadata,
   isDelegationChoiceSpecialist,
@@ -51,24 +46,6 @@ import {
 } from './specialists/utils'
 
 export { type SettingsSpecialistsProps } from './specialists/types'
-
-const EXECUTION_POLICY_TIERS = {
-  fast: {
-    displayName: 'Support',
-    policy: 'support',
-    description: 'Low-cost, low-latency support work such as scans, lookups, and simple implementation.',
-  },
-  standard: {
-    displayName: 'Routine',
-    policy: 'routine',
-    description: 'Ordinary well-specified implementation and balanced day-to-day work.',
-  },
-  deep: {
-    displayName: 'Deep',
-    policy: 'deep',
-    description: 'Complex, ambiguous, or high-risk implementation, planning, and review.',
-  },
-} as const
 
 /* ================================================================== */
 /*  Main component                                                     */
@@ -107,51 +84,6 @@ export function SettingsSpecialists({
 
   const modelPresets = useModelPresets(presetsApiClient, modelConfigChangeKey, { allowDynamicPresetIds: true })
   const selectableModels = useMemo(() => getAllSelectableModels(modelPresets), [modelPresets])
-  const [tierConfigs, setTierConfigs] = useState<TierConfig[]>([])
-  const [tiersLoading, setTiersLoading] = useState(false)
-  const [tiersSaving, setTiersSaving] = useState(false)
-  const [tiersError, setTiersError] = useState<string | null>(null)
-  const [expandedTierFallbacks, setExpandedTierFallbacks] = useState<Set<string>>(new Set())
-
-  useEffect(() => {
-    let cancelled = false
-    setTiersLoading(true)
-    fetchTierConfigs(clientOrWsUrl)
-      .then((tiers) => {
-        if (!cancelled) {
-          setTierConfigs(tiers)
-          setTiersError(null)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) setTiersError(error instanceof Error ? error.message : String(error))
-      })
-      .finally(() => {
-        if (!cancelled) setTiersLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [clientOrWsUrl, specialistChangeKey, modelConfigChangeKey])
-
-  const updateTierConfig = useCallback((tier: string, patch: Partial<TierConfig>) => {
-    setTierConfigs((prev) => prev.map((config) => config.tier === tier ? { ...config, ...patch } : config))
-  }, [])
-
-  const saveTierConfigs = useCallback(async () => {
-    setTiersSaving(true)
-    setTiersError(null)
-    try {
-      setTierConfigs(await saveTierConfigsApi(clientOrWsUrl, tierConfigs))
-    } catch (error) {
-      setTiersError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setTiersSaving(false)
-    }
-  }, [clientOrWsUrl, tierConfigs])
-
-  const policyTierConfigs = useMemo(
-    () => tierConfigs.filter((config) => config.tier in EXECUTION_POLICY_TIERS),
-    [tierConfigs],
-  )
 
   /* ---- Collab scope data (shared hook, WP-U3) ---- */
   const { collabCategories, collabChannels, setCollabCategories } = useCollabScopeData(
@@ -438,8 +370,8 @@ export function SettingsSpecialists({
       <SettingsSection
         label="Delegation Configuration"
         description={isCollab
-          ? 'Configure worker behavior modes, custom specialists, and execution policies shared across collaboration channels.'
-          : 'Configure how managers delegate work. Global behavior modes and custom specialists are shared across all profiles.'}
+          ? 'Configure worker behavior modes and custom specialists shared across collaboration channels.'
+          : 'Configure how managers delegate work. Global behavior modes and custom specialists are shared across all projects.'}
       >
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
@@ -460,115 +392,19 @@ export function SettingsSpecialists({
         </div>
       </SettingsSection>
 
-      <SettingsSection
-        label="Execution Policies"
-        description="Choose the model and availability fallback used for support, routine, and deep delegated work."
-        cta={(
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={saveTierConfigs}
-            disabled={tiersSaving || tiersLoading || policyTierConfigs.length === 0}
-            className="gap-1.5"
-          >
-            {tiersSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            Save Policies
-          </Button>
-        )}
-      >
-        {tiersLoading ? (
-          <div className="flex items-center py-3 text-xs text-muted-foreground">
-            <Loader2 className="mr-2 size-3.5 animate-spin" />
-            Loading execution policies
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {policyTierConfigs.map((tier) => {
-              const policy = EXECUTION_POLICY_TIERS[tier.tier as keyof typeof EXECUTION_POLICY_TIERS]
-              const supportedLevels = getSupportedReasoningLevelsForModelId(tier.modelId, modelPresets, tier.provider)
-              const fallbackExpanded = expandedTierFallbacks.has(tier.tier)
-              return (
-                <div key={tier.tier} className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                  <div className="grid gap-3 lg:grid-cols-[150px_minmax(0,1fr)_220px_150px] lg:items-start">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="size-2.5 rounded-full" style={{ backgroundColor: tier.color }} />
-                        <p className="text-sm font-medium">{policy.displayName}</p>
-                      </div>
-                      <p className="font-mono text-[11px] text-muted-foreground">{policy.policy}</p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{policy.description}</p>
-                    <div className="flex flex-col gap-1.5">
-                      <Label className="text-xs font-medium text-muted-foreground">Model</Label>
-                      <ModelIdSelect
-                        modelId={tier.modelId}
-                        provider={tier.provider}
-                        onValueChange={(next) => updateTierConfig(tier.tier, {
-                          provider: next.provider,
-                          modelId: next.modelId,
-                        })}
-                        models={selectableModels}
-                        presets={modelPresets}
-                        placeholder="Select model"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label className="text-xs font-medium text-muted-foreground">Reasoning</Label>
-                      <Select
-                        value={tier.reasoningLevel ?? 'medium'}
-                        onValueChange={(reasoningLevel) => updateTierConfig(tier.tier, {
-                          reasoningLevel: reasoningLevel as ManagerReasoningLevel,
-                        })}
-                      >
-                        <SelectTrigger className="w-full text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {supportedLevels.map((level) => (
-                            <SelectItem key={level} value={level} className="text-xs">
-                              {REASONING_LEVEL_LABELS[level] || level}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <FallbackModelSection
-                      isEditing
-                      isExpanded={fallbackExpanded}
-                      onToggle={() => {
-                        setExpandedTierFallbacks((prev) => {
-                          const next = new Set(prev)
-                          if (next.has(tier.tier)) next.delete(tier.tier)
-                          else next.add(tier.tier)
-                          return next
-                        })
-                      }}
-                      fallbackModelId={tier.fallbackModelId ?? ''}
-                      fallbackProvider={tier.fallbackProvider ?? ''}
-                      fallbackReasoningLevel={tier.fallbackReasoningLevel ?? ''}
-                      onUpdateField={(field, value) => {
-                        if (typeof value !== 'string') return
-                        if (field === 'fallbackModelId') updateTierConfig(tier.tier, { fallbackModelId: value || undefined })
-                        if (field === 'fallbackProvider') updateTierConfig(tier.tier, { fallbackProvider: value || undefined })
-                        if (field === 'fallbackReasoningLevel') updateTierConfig(tier.tier, { fallbackReasoningLevel: value as ManagerReasoningLevel || undefined })
-                      }}
-                      modelPresets={modelPresets}
-                      selectableModels={selectableModels}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-        {tiersError && (
-          <div className="mt-3 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-            <p className="text-xs text-destructive">{tiersError}</p>
-          </div>
-        )}
-      </SettingsSection>
+      {!isCollab && (
+        <SettingsSection
+          label="Delegation Rosters"
+          description="Define model routes and the situations where managers should use them. Projects and sessions can select a roster without changing its definition."
+        >
+          <DelegationRosterSettingsView
+            clientOrWsUrl={clientOrWsUrl}
+            modelPresets={modelPresets}
+            selectableModels={selectableModels}
+            refreshKey={modelConfigChangeKey}
+          />
+        </SettingsSection>
+      )}
 
       {/* ============================================================ */}
       {/*  Category Defaults View                                       */}

@@ -21,7 +21,6 @@ import {
   resolveManagerDelegation,
   translateManagerDelegationError,
   WORKER_BEHAVIOR_MODES,
-  WORKER_EXECUTION_POLICIES,
 } from "./specialists/delegation-policy.js";
 
 export type { SwarmToolHost } from "./swarm-tool-host.js";
@@ -74,10 +73,6 @@ const knowledgeEntryTypeSchema = Type.Union([
 
 const workerBehaviorModeSchema = Type.Union(
   WORKER_BEHAVIOR_MODES.map((mode) => Type.Literal(mode)),
-);
-
-const workerExecutionPolicySchema = Type.Union(
-  WORKER_EXECUTION_POLICIES.map((policy) => Type.Literal(policy)),
 );
 
 function includeListAgentsEntry(agent: AgentDescriptor, includeTerminated: boolean): boolean {
@@ -450,7 +445,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Delegate a concrete task to an independent worker. Choose a behavior mode for the output contract and an execution policy for model cost/capability. Defaults are mode=general and executionPolicy=routine; plan and review modes default to deep, but any mode can use support for bounded low-risk work. Use customSpecialist only for a saved custom specialist, without mode or executionPolicy. The call returns after the assignment is accepted.",
+        "Delegate one concrete outcome to an independent worker. Choose a behavior mode for the output contract and normally leave route=auto so Forge selects from the active roster. Name a route only when its current roster guidance clearly fits. Use customSpecialist only for a saved custom specialist, without mode or route. The call returns after the assignment is accepted.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -462,9 +457,14 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           })
         ),
         mode: Type.Optional(workerBehaviorModeSchema),
-        executionPolicy: Type.Optional(workerExecutionPolicySchema),
+        route: Type.Optional(Type.String({
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^(auto|[a-z0-9][a-z0-9-]{0,63})$",
+          description: "Execution route from the active roster. Defaults to auto.",
+        })),
         customSpecialist: Type.Optional(
-          Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and executionPolicy." })
+          Type.String({ description: "Saved custom specialist handle. Mutually exclusive with mode and route." })
         ),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
         initialMessage: Type.String({ description: "Concrete task and expected outcome for the worker." }),
@@ -474,7 +474,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           agentId: string;
           planStep?: string;
           mode?: "general" | "plan" | "correctness-review" | "design-review" | "research";
-          executionPolicy?: "support" | "routine" | "deep";
+          route?: string;
           customSpecialist?: string;
           cwd?: string;
           initialMessage: string;
@@ -502,9 +502,11 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             tier: spawnInput.tier,
             lens: spawnInput.lens,
             requestedMode: resolvedDelegation.requestedMode,
-            requestedExecutionPolicy: resolvedDelegation.requestedExecutionPolicy,
+            requestedRoute: resolvedDelegation.requestedRoute,
             modelProvider: spawned.model.provider,
             modelId: spawned.model.modelId,
+            resolvedRouteId: spawned.delegationRouteId,
+            rosterRevision: spawned.delegationRosterRevision,
           },
         });
 

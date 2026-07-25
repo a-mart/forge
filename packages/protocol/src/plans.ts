@@ -1,3 +1,6 @@
+import type { AgentModelDescriptor } from './agents.js'
+import type { DelegationBehaviorMode } from './delegation.js'
+
 export const PLAN_STEP_STATUSES = ['pending', 'in_progress', 'completed'] as const
 
 export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number]
@@ -9,9 +12,11 @@ export interface PlanStep {
 
 export const WORK_GRAPH_NODE_KINDS = [
   'task',
+  'plan',
   'research',
   'implementation',
   'review',
+  'design-review',
   'synthesis',
   'decision',
 ] as const
@@ -51,8 +56,16 @@ export interface WorkGraphAttempt {
   startedAt: string
   completedAt?: string
   workerId?: string
-  behaviorMode: 'general' | 'correctness-review' | 'research'
-  executionPolicy: 'support' | 'routine' | 'deep'
+  behaviorMode: DelegationBehaviorMode
+  requestedRoute?: string
+  resolvedRouteId?: string
+  resolvedRouteLabel?: string
+  rosterId?: string
+  rosterRevision?: number
+  model?: AgentModelDescriptor
+  capabilityEscalationRouteId?: string
+  /** @deprecated Retained only for persisted pre-roster attempts. */
+  executionPolicy?: 'support' | 'routine' | 'deep'
   summary?: string
 }
 
@@ -64,7 +77,10 @@ export interface WorkGraphNode {
   status: WorkGraphNodeStatus
   dependsOn: string[]
   acceptanceCriteria?: string
-  effort: WorkGraphEffort
+  /** Missing on persisted pre-roster graphs and treated as auto. */
+  route?: string
+  /** @deprecated Retained only for persisted pre-roster graphs. */
+  effort?: WorkGraphEffort
   attempts: WorkGraphAttempt[]
 }
 

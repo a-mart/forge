@@ -330,6 +330,7 @@ describe('handleConversationEvent plan snapshots', () => {
         kind: 'research' as const,
         status: 'running' as const,
         dependsOn: [],
+        route: 'auto' as const,
         effort: 'auto' as const,
         attempts: [{
           id: 'attempt-1',

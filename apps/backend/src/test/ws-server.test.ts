@@ -13,7 +13,10 @@ import { getProfileUnreadStatePath } from '../swarm/data-paths.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { CliSessionCompactionResult, ServerEvent } from '@forge/protocol'
-import { getAvailablePort } from '../test-support/index.js'
+import {
+  getAvailablePort,
+  splitDelegationRosterRuntimeContext,
+} from '../test-support/index.js'
 import {
   WsServerTestSwarmManager as TestSwarmManager,
   bootWsServerTestManager as bootWithDefaultManager,
@@ -2608,9 +2611,13 @@ describe('SwarmWebSocketServer', () => {
     if (message.type === 'conversation_message') {
       expect(message.sourceContext).toEqual({ channel: 'cli', messageId: 'send-1' })
     }
-    expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
+    const runtimeInput = splitDelegationRosterRuntimeContext(
+      String(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message),
+    )
+    expect(runtimeInput.message).toBe(
       '[sourceContext] {"channel":"cli","messageId":"send-1"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nhello from cli',
     )
+    expect(runtimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
 
     client.send(JSON.stringify({
       type: 'cli_run',
@@ -2637,9 +2644,13 @@ describe('SwarmWebSocketServer', () => {
     if (runMessage.type === 'conversation_message') {
       expect(runMessage.sourceContext).toEqual({ channel: 'cli', messageId: 'run-correlation-1' })
     }
-    expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
+    const runRuntimeInput = splitDelegationRosterRuntimeContext(
+      String(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message),
+    )
+    expect(runRuntimeInput.message).toBe(
       '[sourceContext] {"channel":"cli","messageId":"run-correlation-1"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nhello from cli run',
     )
+    expect(runRuntimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
 
     client.send(JSON.stringify({
       type: 'cli_send_message',
@@ -2654,9 +2665,13 @@ describe('SwarmWebSocketServer', () => {
       messageId: 'send-project-agent',
       sourceContext: { channel: 'cli', messageId: 'send-project-agent' },
     })
-    expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
+    const projectAgentRuntimeInput = splitDelegationRosterRuntimeContext(
+      String(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message),
+    )
+    expect(projectAgentRuntimeInput.message).toBe(
       '[sourceContext] {"channel":"cli","messageId":"send-project-agent"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nhello docs agent',
     )
+    expect(projectAgentRuntimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
 
     client.send(JSON.stringify({
       type: 'cli_run',
@@ -2677,9 +2692,13 @@ describe('SwarmWebSocketServer', () => {
       messageId: 'run-docs-correlation',
       sourceContext: { channel: 'cli', messageId: 'run-docs-correlation' },
     })
-    expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
+    const projectAgentRunRuntimeInput = splitDelegationRosterRuntimeContext(
+      String(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message),
+    )
+    expect(projectAgentRunRuntimeInput.message).toBe(
       '[sourceContext] {"channel":"cli","messageId":"run-docs-correlation"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"unsupported_direct_cli_source"}\n\nrun docs agent',
     )
+    expect(projectAgentRunRuntimeInput.roster).toMatchObject({ id: 'balanced', revision: 1 })
 
     client.close()
     await once(client, 'close')

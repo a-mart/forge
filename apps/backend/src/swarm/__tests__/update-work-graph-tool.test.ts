@@ -22,6 +22,6 @@ describe("update_work_graph guidance", () => {
     expect(serialized).toContain("true readiness prerequisites");
     expect(serialized).toContain("Related work does not automatically require an edge");
     expect(serialized).toContain("smallest DAG that preserves real parallel readiness");
-    expect(serialized).toContain("graph size and fan-in do not justify deep");
+    expect(serialized).toContain("Graph size and fan-in do not justify a stronger route");
   });
 });

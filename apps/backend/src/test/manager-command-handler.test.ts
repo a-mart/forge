@@ -52,6 +52,50 @@ const ALL_PROFILES: ManagerProfile[] = [
 ];
 
 describe("manager command handler", () => {
+  it("updates project delegation defaults and broadcasts the persisted state", async () => {
+    const profiles = USER_PROFILES.map((profile) => ({ ...profile }));
+    const alpha = profiles.find((profile) => profile.profileId === "alpha")!;
+    const updateProjectDelegationDefaults = vi.fn(async () => {
+      alpha.defaultManagerPosture = "hands_on";
+      alpha.defaultDelegationRosterId = "diverse";
+    });
+    const broadcastToSubscribed = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => profiles),
+      updateProjectDelegationDefaults,
+    };
+
+    const handled = await handleManagerCommand({
+      command: {
+        type: "update_project_delegation_defaults",
+        profileId: "alpha",
+        managerPosture: "hands_on",
+        delegationRosterId: "diverse",
+        requestId: "project-delegation-1",
+      },
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send: vi.fn(),
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(updateProjectDelegationDefaults).toHaveBeenCalledWith("alpha", {
+      managerPosture: "hands_on",
+      delegationRosterId: "diverse",
+    });
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "project_delegation_defaults_updated",
+      profileId: "alpha",
+      managerPosture: "hands_on",
+      delegationRosterId: "diverse",
+      requestId: "project-delegation-1",
+    });
+  });
+
   it("handles archive_profile and restore_profile commands with request-correlated events", async () => {
     const send = vi.fn();
     const broadcastToSubscribed = vi.fn();

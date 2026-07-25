@@ -16,6 +16,33 @@ import {
 export const MAX_CONVERSATION_PAGE_CURSOR_LENGTH = 4_096;
 
 export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
+  if (maybe.type === "update_session_delegation") {
+    const sessionAgentId = (maybe as { sessionAgentId?: unknown }).sessionAgentId;
+    const managerPosture = (maybe as { managerPosture?: unknown }).managerPosture;
+    const delegationRoster = (maybe as { delegationRoster?: unknown }).delegationRoster;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    if (typeof sessionAgentId !== "string" || sessionAgentId.trim().length === 0) {
+      return fail("update_session_delegation.sessionAgentId must be a non-empty string");
+    }
+    if (managerPosture === undefined && delegationRoster === undefined) {
+      return fail("update_session_delegation requires managerPosture or delegationRoster");
+    }
+    const parsedPosture = parseManagerPostureUpdate(managerPosture);
+    if (parsedPosture.error) return fail(parsedPosture.error);
+    const parsedRoster = parseDelegationRosterUpdate(delegationRoster);
+    if (parsedRoster.error) return fail(parsedRoster.error);
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("update_session_delegation.requestId must be a string when provided");
+    }
+    return ok({
+      type: "update_session_delegation",
+      sessionAgentId: sessionAgentId.trim(),
+      ...(parsedPosture.value ? { managerPosture: parsedPosture.value } : {}),
+      ...(parsedRoster.value ? { delegationRoster: parsedRoster.value } : {}),
+      requestId,
+    });
+  }
+
   if (maybe.type === "session_goal_control") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const action = (maybe as { action?: unknown }).action;
@@ -411,4 +438,64 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
   }
 
   return undefined;
+}
+
+function parseManagerPostureUpdate(value: unknown): {
+  value?: { mode: "inherit" } | {
+    mode: "override";
+    value: "delegation_first" | "hands_on";
+  };
+  error?: string;
+} {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { error: "update_session_delegation.managerPosture must be an object" };
+  }
+  const record = value as Record<string, unknown>;
+  if (record.mode === "inherit") return { value: { mode: "inherit" } };
+  if (
+    record.mode === "override"
+    && (record.value === "delegation_first" || record.value === "hands_on")
+  ) {
+    return {
+      value: {
+        mode: "override",
+        value: record.value,
+      },
+    };
+  }
+  return {
+    error:
+      'update_session_delegation.managerPosture must use mode="inherit" or '
+      + 'mode="override" with a supported value',
+  };
+}
+
+function parseDelegationRosterUpdate(value: unknown): {
+  value?: { mode: "inherit" } | { mode: "override"; rosterId: string };
+  error?: string;
+} {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { error: "update_session_delegation.delegationRoster must be an object" };
+  }
+  const record = value as Record<string, unknown>;
+  if (record.mode === "inherit") return { value: { mode: "inherit" } };
+  if (
+    record.mode === "override"
+    && typeof record.rosterId === "string"
+    && /^[a-z0-9][a-z0-9-]{0,63}$/.test(record.rosterId.trim())
+  ) {
+    return {
+      value: {
+        mode: "override",
+        rosterId: record.rosterId.trim(),
+      },
+    };
+  }
+  return {
+    error:
+      'update_session_delegation.delegationRoster must use mode="inherit" or '
+      + 'mode="override" with a lowercase rosterId',
+  };
 }

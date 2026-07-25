@@ -68,7 +68,7 @@ describe("SessionInteractionCoordinator", () => {
       task: "Inspect the current behavior.",
       dependencyContext: "[accepted-source: Accepted source]\nstatus: done\nsummary: Evidence.",
       behaviorMode: "research",
-      executionPolicy: "support",
+      requestedRoute: "auto",
     }]);
     vi.mocked(harness.options.plans.getSnapshot).mockResolvedValue({
       type: "session_plan_snapshot",
@@ -87,9 +87,9 @@ describe("SessionInteractionCoordinator", () => {
       "manager",
       expect.objectContaining({
         agentId: "graph-research-1",
-        tier: "fast",
+        route: "auto",
+        behaviorMode: "research",
         lens: "researcher",
-        policyControlledModel: true,
         planStep: "Research current behavior",
         initialMessage: expect.stringContaining("Accepted dependency results"),
       }),
@@ -99,13 +99,14 @@ describe("SessionInteractionCoordinator", () => {
       "research",
       "attempt-1",
       "graph-research-1",
+      { model: { provider: "openai", modelId: "gpt-5" } },
     );
     expect(result).toMatchObject({
       revision: 3,
       dispatched: [{
         nodeId: "research",
         workerId: "graph-research-1",
-        executionPolicy: "support",
+        requestedRoute: "auto",
       }],
       dispatchFailures: [],
     });

@@ -476,6 +476,12 @@ export class SwarmSpecialistFallbackManager {
   private async doResolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor
   ): Promise<AgentModelDescriptor | undefined> {
+    if (descriptor.role === "worker" && descriptor.delegationFallbackModel) {
+      return this.options.resolveSpawnModelWithCapacityFallback({
+        ...descriptor.delegationFallbackModel,
+      });
+    }
+
     if (descriptor.role !== "worker" || !descriptor.specialistId || !descriptor.profileId) {
       return undefined;
     }
