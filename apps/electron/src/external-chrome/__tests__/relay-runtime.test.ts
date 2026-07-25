@@ -408,6 +408,76 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate(); client.close(); await loop
   })
 
+  it('retains a disconnected durable checkpoint and retries the exact barrier after authenticated reconnect', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-reconnect-release', leaseEpoch: 41, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    client.close()
+    await loop
+    for (let attempt = 0; attempt < 20 && runtime.inventory().length > 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+
+    await expect(runtime.quiesce('integration-remove', 3_000)).rejects.toThrow(/could not prove release/u)
+    expect(runtime.recoveryStatus()).toBe('manual-extension-reload')
+    await expect(runtime.leaseCheckpoints()).resolves.toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_profile_a', leaseId: 'lease-reconnect-release', leaseEpoch: 41,
+    })])
+    await expect(runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'new-session', profileId: 'new-profile',
+      leaseId: 'lease-blocked', leaseEpoch: 42, tabIds: [41], groupId: 9, childPolicy: 'manual',
+    })).rejects.toThrow('extension-update-required')
+
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    const retriedRequests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const retriedLoop = fakeExtensionLoop(reconnected, retriedRequests)
+    await expect(runtime.quiesce('integration-remove', 3_000)).resolves.toBeUndefined()
+    expect(retriedRequests.map((entry) => entry.method)).toEqual(['forge.runtime.prepareUpdate', 'forge.browser.release'])
+    expect(retriedRequests[1]?.params).toMatchObject({ leaseId: 'lease-reconnect-release', leaseEpoch: 41, reason: 'integration-remove' })
+    await expect(runtime.leaseCheckpoints()).resolves.toEqual([])
+    runtime.deactivate(); reconnected.close(); await retriedLoop
+  })
+
+  it('rejects a mismatched exact release acknowledgement and retains durable recovery authority', async () => {
+    const { runtime, client } = await connectedRuntime()
+    const loop = (async () => {
+      while (true) {
+        const message = await client.receive()
+        if (!message) return
+        if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
+        const params = message.params as Record<string, unknown>
+        if (message.method === 'forge.browser.claim') {
+          await client.send({ jsonrpc: '2.0', id: message.id, result: {
+            protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
+            extensionInstanceId: 'instance_profile_a', groupId: 9, childPolicy: params.childPolicy,
+            tabs: [{ windowId: 1, tabId: 40, groupId: 9, title: '', url: 'https://fixture.invalid/', origin: 'https://fixture.invalid', active: true }],
+          } })
+        } else if (message.method === 'forge.runtime.prepareUpdate') {
+          await client.send({ jsonrpc: '2.0', id: message.id, result: {
+            protocolVersion: 1, payloadVersion: params.payloadVersion, quiesced: true,
+          } })
+        } else if (message.method === 'forge.browser.release') {
+          await client.send({ jsonrpc: '2.0', id: message.id, result: {
+            protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: Number(params.leaseEpoch) + 1, releasedTabIds: [40],
+          } })
+        }
+      }
+    })()
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-mismatched-ack', leaseEpoch: 51, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    await expect(runtime.quiesce('auth-rotation', 3_000)).rejects.toThrow(/could not prove release/u)
+    expect(runtime.recoveryStatus()).toBe('manual-extension-reload')
+    await expect(runtime.leaseCheckpoints()).resolves.toEqual([expect.objectContaining({
+      extensionInstanceId: 'instance_profile_a', leaseId: 'lease-mismatched-ack', leaseEpoch: 51,
+    })])
+    runtime.deactivate(); client.close(); await loop
+  })
+
   it('fails closed on a dropped prepare acknowledgement even when exact release later settles', async () => {
     const { runtime, client } = await connectedRuntime()
     let dropPrepare = false

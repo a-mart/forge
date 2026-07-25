@@ -435,6 +435,16 @@ class RuntimeConnection {
 
 type RuntimeRecovery = 'ready' | 'updating' | 'reconnecting' | 'manual-extension-reload' | 'incompatible-payload'
 
+export type ExternalChromeLifecycleBarrierReason =
+  | 'desktop-update'
+  | 'desktop-quit'
+  | 'user-disable'
+  | 'integration-remove'
+  | 'deployment-repair'
+  | 'auth-rotation'
+  | 'deployment-rollback'
+  | 'authority-takeover'
+
 interface RuntimeInstanceState {
   generation: number
   connection: RuntimeConnection
@@ -463,6 +473,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private observedStaleRuntimeKey: string | null = null
   private activatedRuntimeKey: string | null = null
   private failedActivationRuntimeKey: string | null = null
+  private lifecycleBarrierRecovery: RuntimeRecovery | null = null
 
   constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
     this.checkpoints = new LeaseCheckpointStore(checkpointFile)
@@ -491,6 +502,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   recoveryStatus(): RuntimeRecovery {
+    if (this.lifecycleBarrierRecovery !== null) return this.lifecycleBarrierRecovery
     const states = [...this.instanceStates.values()].map((state) => state.recovery)
     if (states.length === 0) return this.expectedRuntime === null ? 'ready' : 'reconnecting'
     for (const candidate of ['incompatible-payload', 'manual-extension-reload', 'updating', 'reconnecting'] as const) {
@@ -519,43 +531,62 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   /**
-   * Bounded Desktop lifecycle barrier. New authority is rejected before the first
-   * await; every acknowledged checkpoint is then released at its exact epoch.
+   * Bounded Desktop lifecycle barrier. New authority is rejected synchronously
+   * before the first await. Mutation callers may proceed only after every current
+   * authenticated runtime prepared and every durable active checkpoint returned
+   * an acknowledgement on its exact instance/lease/epoch connection.
    */
-  async quiesce(reason: 'desktop-update' | 'desktop-quit', deadlineAt: number): Promise<void> {
+  async quiesce(reason: ExternalChromeLifecycleBarrierReason, deadlineAt: number): Promise<void> {
     this.operationsQuiesced = true
-    const connections = [...this.connections.values()]
-    const preparation = await Promise.allSettled(connections.map(async (connection) => {
-      const inventory = connection.inventory
-      if (!inventory) throw new Error('runtime hello is incomplete')
-      const target = this.expectedRuntime ?? (inventory.payloadSha256
-        ? { payloadVersion: inventory.payloadVersion, sha256: inventory.payloadSha256, shellAbi: inventory.shellAbi }
-        : null)
-      if (!target) throw new Error('legacy runtime requires manual extension reload')
-      if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed before prepareUpdate')
-      const result = await connection.request('forge.runtime.prepareUpdate', {
-        protocolVersion: 1, payloadVersion: target.payloadVersion, sha256: target.sha256,
-        deadlineAt: new Date(deadlineAt).toISOString(),
-      }, Math.max(1, Math.floor((deadlineAt - this.now()) / 2)))
-      if (result.payloadVersion !== target.payloadVersion || result.quiesced !== true) throw new Error('runtime returned a mismatched prepareUpdate acknowledgement')
-    }))
-    const checkpoints = (await this.checkpoints.all()).filter((lease) => lease.releasedAt === undefined)
-    const releases = await Promise.allSettled(checkpoints.map(async (lease) => {
-      const connection = this.connections.get(lease.extensionInstanceId)
-      if (!connection) throw new Error('runtime disconnected before exact lease release')
-      if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed before exact lease release')
-      const result = await connection.request('forge.browser.release', {
-        protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, reason,
-      }, Math.max(1, deadlineAt - this.now()))
-      if (result.leaseId !== lease.leaseId || result.leaseEpoch !== lease.leaseEpoch) throw new Error('runtime release acknowledgement changed lease authority')
-      if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed during exact lease release')
-      await this.checkpoints.remove(lease.extensionInstanceId, lease.leaseId, lease.leaseEpoch)
-    }))
-    const remaining = (await this.checkpoints.all()).filter((lease) => lease.releasedAt === undefined)
-    const failures = [...preparation, ...releases].filter((result) => result.status === 'rejected')
-    if (failures.length > 0 || remaining.length > 0) {
-      throw new Error(`External Chrome quiesce could not prove release of ${remaining.length} lease(s)`)
+    this.lifecycleBarrierRecovery = 'updating'
+    try {
+      const barrierRevision = this.runtimeStateRevision
+      const connections = [...this.connections.entries()]
+      const preparation = await Promise.allSettled(connections.map(async ([extensionInstanceId, connection]) => {
+        const inventory = connection.inventory
+        if (!inventory || inventory.extensionInstanceId !== extensionInstanceId) throw new Error('runtime hello is incomplete')
+        const target = this.expectedRuntime ?? (inventory.payloadSha256
+          ? { payloadVersion: inventory.payloadVersion, sha256: inventory.payloadSha256, shellAbi: inventory.shellAbi }
+          : null)
+        if (!target) throw new Error('legacy runtime requires manual extension reload')
+        if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed before prepareUpdate')
+        const result = await connection.request('forge.runtime.prepareUpdate', {
+          protocolVersion: 1, payloadVersion: target.payloadVersion, sha256: target.sha256,
+          deadlineAt: new Date(deadlineAt).toISOString(),
+        }, Math.max(1, Math.floor((deadlineAt - this.now()) / 2)))
+        if (this.connections.get(extensionInstanceId) !== connection || result.payloadVersion !== target.payloadVersion || result.quiesced !== true) {
+          throw new Error('runtime returned a stale or mismatched prepareUpdate acknowledgement')
+        }
+      }))
+      const checkpoints = (await this.checkpoints.all()).filter((lease) => lease.releasedAt === undefined)
+      const releases = await Promise.allSettled(checkpoints.map(async (lease) => {
+        const connection = this.connections.get(lease.extensionInstanceId)
+        if (!connection) throw new Error('runtime disconnected before exact lease release')
+        if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed before exact lease release')
+        const result = await connection.request('forge.browser.release', {
+          protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, reason,
+        }, Math.max(1, deadlineAt - this.now()))
+        if (this.connections.get(lease.extensionInstanceId) !== connection ||
+          result.leaseId !== lease.leaseId || result.leaseEpoch !== lease.leaseEpoch) {
+          throw new Error('runtime release acknowledgement changed exact instance/lease authority')
+        }
+        if (this.now() >= deadlineAt) throw new Error('quiesce deadline elapsed during exact lease release')
+        await this.checkpoints.remove(lease.extensionInstanceId, lease.leaseId, lease.leaseEpoch)
+      }))
+      const remaining = (await this.checkpoints.all()).filter((lease) => lease.releasedAt === undefined)
+      const failures = [...preparation, ...releases].filter((result) => result.status === 'rejected')
+      if (barrierRevision !== this.runtimeStateRevision || failures.length > 0 || remaining.length > 0) {
+        throw new Error(`External Chrome quiesce could not prove release of ${remaining.length} lease(s)`)
+      }
+      this.lifecycleBarrierRecovery = null
+    } catch (error) {
+      this.lifecycleBarrierRecovery = 'manual-extension-reload'
+      throw error
     }
+  }
+
+  async hasActiveLeaseCheckpoints(): Promise<boolean> {
+    return (await this.checkpoints.all()).some((lease) => lease.releasedAt === undefined)
   }
 
   accept(socket: Socket): void {

@@ -38,7 +38,10 @@ import {
   type ExternalChromeNativeRegistration,
   type ForgeRegistrationConflictEvidence,
 } from './registration.js'
-import { ExternalChromeRelayRuntime } from './relay-runtime.js'
+import {
+  ExternalChromeRelayRuntime,
+  type ExternalChromeLifecycleBarrierReason,
+} from './relay-runtime.js'
 
 const DEFAULT_RENDEZVOUS_TTL_MS = 15_000
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000
@@ -189,6 +192,10 @@ export class ExternalChromeHostCoordinator {
         (authority.state === 'stale' && authorityOwner?.dataDirHash !== authorization.dataDirHash)) {
         throw new Error('External Chrome takeover authorization is missing or stale')
       }
+      // A local durable lease from an interrupted prior authority remains the
+      // sole recovery handle. Do not transfer registration or rotate auth until
+      // that exact authority is released (normally this is an empty barrier).
+      await this.proveExactLifecycleReleaseUnlocked('authority-takeover')
       // The durable exact authorization remains retryable until registration has
       // crossed its own idempotent transfer boundary. A restart can therefore
       // finish an exact partial transfer, while foreign/drifted records still fail.
@@ -198,15 +205,18 @@ export class ExternalChromeHostCoordinator {
       await this.registration.repair()
       const rotated = await this.auth.rotate()
       rotated.key.fill(0)
-      return this.enableUnlocked(true)
+      const result = await this.enableUnlocked(true)
+      await this.clearLifecycleRecoveryUnlocked()
+      return result
     })
   }
 
   disable(): Promise<ExternalChromeCoordinatorStatus> {
     return this.serialize(async () => {
+      await this.proveExactLifecycleReleaseUnlocked('user-disable')
       await this.stopRuntime(false)
       await this.writeDesiredEnabled(false)
-      this.quiesced = false
+      await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
   }
@@ -216,17 +226,20 @@ export class ExternalChromeHostCoordinator {
       const authorityBefore = await this.authority.inspect()
       const authStatus = await this.auth.status()
       const wasEnabled = await this.readDesiredEnabled()
-      if (this.repairDeployment) {
+      const rotatesAuth = authStatus !== 'secure' || authorityBefore.state === 'stale'
+      const invalidatesRuntime = this.repairDeployment !== undefined || rotatesAuth
+      if (invalidatesRuntime) {
+        await this.proveExactLifecycleReleaseUnlocked(this.repairDeployment ? 'deployment-repair' : 'auth-rotation')
         await this.stopRuntime(false)
-        await this.repairDeployment()
       }
-      if (authStatus !== 'secure' || authorityBefore.state === 'stale') {
-        await this.stopRuntime(false)
+      if (this.repairDeployment) await this.repairDeployment()
+      if (rotatesAuth) {
         const rotated = await this.auth.rotate()
         rotated.key.fill(0)
       }
       await this.registration.repair()
-      if (wasEnabled) return this.enableUnlocked(true)
+      if (wasEnabled) await this.enableUnlocked(true)
+      if (invalidatesRuntime) await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
   }
@@ -237,8 +250,8 @@ export class ExternalChromeHostCoordinator {
         throw new Error('No validated External Chrome rollback is available')
       }
       const wasEnabled = await this.readDesiredEnabled()
-      if (this.endpoint) await this.quiesceRuntimeUnlocked('desktop-update')
-      else await this.stopRuntime(false)
+      await this.proveExactLifecycleReleaseUnlocked('deployment-rollback')
+      await this.stopRuntime(false)
       try {
         await this.rollbackController.rollback()
       } catch (error) {
@@ -246,7 +259,9 @@ export class ExternalChromeHostCoordinator {
         throw error
       }
       this.recoveryOverride = 'rolled-back'
-      if (wasEnabled) return this.enableUnlocked(true)
+      if (wasEnabled) await this.enableUnlocked(true)
+      await fs.rm(this.recoveryMarkerPath, { force: true })
+      this.quiesced = false
       return this.statusUnlocked()
     })
   }
@@ -258,13 +273,14 @@ export class ExternalChromeHostCoordinator {
 
   remove(): Promise<ExternalChromeCoordinatorStatus> {
     return this.serialize(async () => {
+      await this.proveExactLifecycleReleaseUnlocked('integration-remove')
       await this.stopRuntime(false)
       await this.writeDesiredEnabled(false)
       await this.registration.remove()
       await this.auth.remove()
       await fs.rm(this.enabledStatePath, { force: true })
       await fs.rm(this.takeoverAuthorizationPath, { force: true })
-      this.quiesced = false
+      await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
   }
@@ -272,10 +288,12 @@ export class ExternalChromeHostCoordinator {
   rotateAuthKey(): Promise<ExternalChromeCoordinatorStatus> {
     return this.serialize(async () => {
       const wasEnabled = await this.readDesiredEnabled()
+      await this.proveExactLifecycleReleaseUnlocked('auth-rotation')
       await this.stopRuntime(false)
       const rotated = await this.auth.rotate()
       rotated.key.fill(0)
-      if (wasEnabled) return this.enableUnlocked(true)
+      if (wasEnabled) await this.enableUnlocked(true)
+      await this.clearLifecycleRecoveryUnlocked()
       return this.statusUnlocked()
     })
   }
@@ -285,26 +303,52 @@ export class ExternalChromeHostCoordinator {
   }
 
   private async quiesceRuntimeUnlocked(reason: 'desktop-update' | 'desktop-quit'): Promise<void> {
-    const deadlineAt = this.now() + 4_000
     let failure: unknown = null
     try {
-      await this.relay.quiesce(reason, deadlineAt)
+      await this.proveExactLifecycleReleaseUnlocked(reason)
     } catch (error) {
       failure = error
     }
-    // Capability stays detached even when exact release could not be proven.
+    // Desktop exit/update cannot keep a listener alive. Unlike user-requested
+    // mutations, this involuntary boundary may detach transport after retaining
+    // the exact checkpoint and opaque recovery marker.
     await this.stopRuntime(true)
     this.quiesced = true
-    await this.writeRecoveryMarker({
-      schemaVersion: 1, reason, status: failure === null ? 'quiesced' : 'release-unproven',
-      at: new Date(this.now()).toISOString(),
-    })
     if (failure !== null) throw failure instanceof Error ? failure : new Error(String(failure))
+  }
+
+  private async proveExactLifecycleReleaseUnlocked(reason: ExternalChromeLifecycleBarrierReason): Promise<void> {
+    const deadlineAt = this.now() + 4_000
+    try {
+      await this.relay.quiesce(reason, deadlineAt)
+      this.quiesced = true
+      await this.writeRecoveryMarker({
+        schemaVersion: 1, reason, status: 'quiesced', at: new Date(this.now()).toISOString(),
+      })
+    } catch (error) {
+      // Keep endpoint, rendezvous, registration, auth, deployment, and durable
+      // lease checkpoints intact so the exact profile can reconnect and retry.
+      this.quiesced = true
+      this.recoveryOverride = 'manual-extension-reload'
+      await this.writeRecoveryMarker({
+        schemaVersion: 1, reason, status: 'release-unproven', at: new Date(this.now()).toISOString(),
+      })
+      throw error
+    }
+  }
+
+  private async clearLifecycleRecoveryUnlocked(): Promise<void> {
+    await fs.rm(this.recoveryMarkerPath, { force: true })
+    this.recoveryOverride = null
+    this.quiesced = false
   }
 
   private async enableUnlocked(allowTakeover: boolean): Promise<ExternalChromeCoordinatorStatus> {
     if (this.endpoint) {
-      this.quiesced = false
+      // A failed user lifecycle barrier intentionally keeps the authenticated
+      // listener alive for exact reconnect/retry, but Enable must not reopen the
+      // operations gate or misreport that recovery authority as online.
+      if (this.quiesced) return this.statusUnlocked()
       await this.writeDesiredEnabled(true)
       return this.statusUnlocked()
     }
@@ -315,6 +359,11 @@ export class ExternalChromeHostCoordinator {
     if (before.state === 'other-live' || (!allowTakeover && (crossDataDirOwner || before.state === 'stale' || takeoverAuthorization !== null))) return this.statusUnlocked()
     if ((await this.inspectSetup()).pathState !== 'ready') {
       throw new Error('External Chrome unpacked extension deployment is missing or invalid')
+    }
+
+    const authStatus = await this.auth.status()
+    if ((before.state === 'stale' || authStatus !== 'secure') && await this.relay.hasActiveLeaseCheckpoints()) {
+      await this.proveExactLifecycleReleaseUnlocked('auth-rotation')
     }
 
     const expiresAt = this.expiry()
@@ -544,7 +593,7 @@ export class ExternalChromeHostCoordinator {
 
   private async writeRecoveryMarker(value: {
     schemaVersion: 1
-    reason: 'desktop-update' | 'desktop-quit'
+    reason: ExternalChromeLifecycleBarrierReason
     status: 'quiesced' | 'release-unproven'
     at: string
   }): Promise<void> {

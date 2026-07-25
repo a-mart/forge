@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ExternalChromeHostCoordinator } from '../coordinator.js'
 import { ExternalChromeDeployer } from '../deployer.js'
 import { ExternalChromeAuthorityStore, PosixCurrentUserAccessController } from '../auth-rendezvous.js'
@@ -263,12 +263,73 @@ describe('ExternalChromeHostCoordinator', () => {
     expect(endpoints.handles[0]?.closed).toBe(true)
   })
 
+  it('fails user lifecycle mutations closed before registration, auth, deployment, or authority changes and permits retry', async () => {
+    const { dataRoot, deployer } = await root()
+    const registration = new FakeRegistration()
+    const endpoints = new FakeEndpoints()
+    let deploymentRepairs = 0
+    const coordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 514, username: `barrier-user-${path.basename(dataRoot)}`, uid: 514,
+      instanceId: 'desktop_barrier_test', access, endpoints, registration, isProcessAlive: () => false,
+      repairDeployment: async () => { deploymentRepairs += 1 }, deploymentVerifier: deployer,
+    })
+    await coordinator.enable()
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
+    const originalAuth = await readFile(paths.authKey, 'utf8')
+    const barrier = vi.spyOn(coordinator.transport(), 'quiesce')
+
+    barrier.mockRejectedValueOnce(new Error('synthetic disconnected checkpoint'))
+    await expect(coordinator.disable()).rejects.toThrow(/disconnected checkpoint/u)
+    expect(await coordinator.status()).toMatchObject({ state: 'quiesced', authority: 'owned', recovery: 'manual-extension-reload' })
+    expect(endpoints.handles[0]?.closed).toBe(false)
+    expect(registration).toMatchObject({ registration: 'owned', removes: 0 })
+    expect(await readFile(paths.authKey, 'utf8')).toBe(originalAuth)
+    expect(JSON.parse(await readFile(path.join(paths.state, 'enabled.json'), 'utf8'))).toMatchObject({ enabled: true })
+
+    barrier.mockResolvedValueOnce(undefined)
+    await expect(coordinator.disable()).resolves.toMatchObject({ state: 'disabled', recovery: 'ready' })
+    await coordinator.enable()
+
+    barrier.mockRejectedValueOnce(new Error('synthetic dropped prepare acknowledgement'))
+    await expect(coordinator.repair()).rejects.toThrow(/dropped prepare/u)
+    expect(deploymentRepairs).toBe(0)
+    expect(await readFile(paths.authKey, 'utf8')).toBe(originalAuth)
+    expect(registration.repairs).toBe(2) // the two successful enables only
+
+    barrier.mockResolvedValueOnce(undefined)
+    await expect(coordinator.repair()).resolves.toMatchObject({ state: 'online', recovery: 'reconnecting' })
+    expect(deploymentRepairs).toBe(1)
+
+    const authBeforeRotation = await readFile(paths.authKey, 'utf8')
+    barrier.mockRejectedValueOnce(new Error('synthetic mismatched release acknowledgement'))
+    await expect(coordinator.rotateAuthKey()).rejects.toThrow(/mismatched release/u)
+    expect(await readFile(paths.authKey, 'utf8')).toBe(authBeforeRotation)
+    expect(endpoints.handles.at(-1)?.closed).toBe(false)
+
+    barrier.mockResolvedValueOnce(undefined)
+    await coordinator.rotateAuthKey()
+    expect(await readFile(paths.authKey, 'utf8')).not.toBe(authBeforeRotation)
+
+    const authBeforeRemove = await readFile(paths.authKey, 'utf8')
+    barrier.mockRejectedValueOnce(new Error('synthetic remove timeout'))
+    await expect(coordinator.remove()).rejects.toThrow(/remove timeout/u)
+    expect(registration.removes).toBe(0)
+    expect(await readFile(paths.authKey, 'utf8')).toBe(authBeforeRemove)
+    expect(endpoints.handles.at(-1)?.closed).toBe(false)
+
+    barrier.mockResolvedValueOnce(undefined)
+    await expect(coordinator.remove()).resolves.toMatchObject({ state: 'disabled', auth: 'missing', registration: 'not-registered', recovery: 'ready' })
+    expect(registration.removes).toBe(1)
+  })
+
   it('fails update quiesce closed and writes only an opaque recovery marker when release is unproven', async () => {
     const { dataRoot, deployer } = await root()
     const registration = new FakeRegistration()
     const endpoints = new FakeEndpoints()
     const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
     await mkdir(paths.state, { recursive: true })
+    await mkdir(path.dirname(paths.authKey), { recursive: true })
+    await writeFile(paths.authKey, `${Buffer.alloc(32, 0x55).toString('base64')}\n`, { mode: 0o600 })
     await writeFile(path.join(paths.state, 'leases.json'), `${JSON.stringify({
       schemaVersion: 1,
       leases: [{
@@ -281,6 +342,16 @@ describe('ExternalChromeHostCoordinator', () => {
       instanceId: 'desktop_marker_test', access, endpoints, registration, isProcessAlive: () => false, deploymentVerifier: deployer,
     })
     await coordinator.enable()
+    const authBeforeRemove = await readFile(paths.authKey, 'utf8')
+    await expect(coordinator.remove()).rejects.toThrow(/could not prove release/u)
+    expect(endpoints.handles[0]?.closed).toBe(false)
+    expect(registration).toMatchObject({ registration: 'owned', removes: 0 })
+    expect(await readFile(paths.authKey, 'utf8')).toBe(authBeforeRemove)
+    expect(await coordinator.status()).toMatchObject({ state: 'quiesced', authority: 'owned', recovery: 'manual-extension-reload' })
+    expect(JSON.parse(await readFile(path.join(paths.state, 'recovery-marker.json'), 'utf8'))).toMatchObject({
+      schemaVersion: 1, reason: 'integration-remove', status: 'release-unproven', at: expect.any(String),
+    })
+
     await expect(coordinator.quiesce('desktop-update')).rejects.toThrow(/could not prove release/u)
     expect(endpoints.handles[0]?.closed).toBe(true)
     expect(await coordinator.status()).toMatchObject({ state: 'quiesced', recovery: 'manual-extension-reload' })
