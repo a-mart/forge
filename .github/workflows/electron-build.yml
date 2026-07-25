@@ -69,6 +69,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Electron 42+ materializes its platform binary on first execution instead
+      # of during postinstall. Fail early if download or target-version integrity
+      # is unavailable rather than discovering it during native rebuild/package.
+      - name: Materialize and verify Electron runtime
+        run: pnpm --dir apps/electron verify:runtime
+
       - name: Run mandatory Windows Pi trust gates
         shell: bash
         env:

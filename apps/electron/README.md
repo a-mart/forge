@@ -71,13 +71,19 @@ This command starts the UI dev server (`pnpm dev:ui`) and waits for it to be rea
 
 Before Electron launches, the desktop workspace prepares a cached `better-sqlite3` binary for Electron's embedded Node runtime. The cache lives under `apps/electron/.dev-native/` and is separate from the Host-Node binary installed by pnpm, so switching between `pnpm dev` and `pnpm dev:electron` does not rebuild or overwrite shared dependencies. The cache is versioned by the Electron version, platform, architecture, and `better-sqlite3` source fingerprint, and is verified with an Electron-as-Node in-memory database smoke test before use.
 
+Electron 42+ downloads its platform binary on first execution rather than during package postinstall. Materialize it early and assert the exact embedded runtime before native preparation or packaging:
+
+```bash
+pnpm --dir apps/electron verify:runtime
+```
+
 To prepare or revalidate the Electron development binary without launching the app:
 
 ```bash
 pnpm --dir apps/electron prepare:dev-native
 ```
 
-If no matching prebuilt binary is available, preparation falls back to a local source build and therefore requires the platform's normal native compiler toolchain.
+If no matching prebuilt binary is available, preparation falls back to a local source build and therefore requires the platform's normal native compiler toolchain. Electron 43's V8 external-pointer API requires `better-sqlite3` 12.11.1 or newer; 12.9.0 fails its ABI 148 source build.
 
 Changes to UI code hot-reload. Changes to Electron main process code (`src/main.ts`, etc.) require restarting the app.
 
@@ -160,7 +166,7 @@ The packaging pipeline:
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
 8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
 9. Builds the External Chrome shell/payload and current platform/architecture native host with official Node 25.6.1; release mode signs and signer-verifies the native host before calculating its hash, while explicit validation mode produces a non-publishable unverified manifest
-10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
+10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, exercising `better-sqlite3`, `sqlite3`, `node-pty`, `sharp`, and `koffi` with Electron-as-Node and ensuring they do not silently fall back to repo-level `node_modules`
 11. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
 12. Runs `electron-builder --publish never`; the Windows `afterPack` hook restores the pre-signed host after electron-builder's recursive extra-resource signer, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform signature before installers are produced
 
@@ -286,8 +292,10 @@ The root `pnpm dev:electron` workflow also uses backend port `47287`; only its U
 
 The desktop app is tested and supported on:
 
-- **macOS** 10.13+ (both Intel and Apple Silicon)
+- **macOS** 12+ (Apple Silicon is exercised locally; Intel requires separate native qualification before claiming support evidence)
 - **Windows** 10+ (x64)
 - **Linux** (x64, AppImage format)
+
+Forge accepts Electron 43's platform dialog default when a directory picker has no `defaultPath`: Downloads when available, otherwise the user's home directory. Pickers with a repository or working-directory path keep using that explicit location; Forge does not maintain a second app-owned recent-directory store.
 
 Windows builds use an NSIS installer with per-user installation by default. Linux builds use AppImage for maximum compatibility.

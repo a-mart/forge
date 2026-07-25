@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, access } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -15,6 +15,10 @@ import {
   validateStagedBetterSqlite3PackageDir,
   BACKEND_BUNDLE_EXTERNAL_PACKAGES,
 } from '../../apps/electron/scripts/build-all.mjs'
+import {
+  assertResolvedInsideStage,
+  STAGED_ELECTRON_NATIVE_PACKAGES,
+} from '../../apps/electron/scripts/staged-native-runtime-smoke.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -43,6 +47,34 @@ describe('BACKEND_BUNDLE_EXTERNAL_PACKAGES packaging', () => {
     expect(names).toContain('@mariozechner/clipboard')
     expect(names).toContain('better-sqlite3')
     expect(BACKEND_BUNDLE_EXTERNAL_PACKAGES.find((pkg) => pkg.name === 'better-sqlite3')?.validateWithElectronOnly).toBe(true)
+  })
+})
+
+describe('staged Electron-as-Node native runtime smoke', () => {
+  it('covers every native-capable packaged backend dependency', () => {
+    expect(STAGED_ELECTRON_NATIVE_PACKAGES).toEqual([
+      'better-sqlite3',
+      'sqlite3',
+      'node-pty',
+      'sharp',
+      'koffi',
+    ])
+  })
+
+  it('accepts only entries physically inside staged node_modules', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'forge-native-stage-'))
+    const stagedNodeModules = join(root, 'stage', 'node_modules')
+    const stagedEntry = join(stagedNodeModules, 'sharp', 'index.js')
+    const repoFallback = join(root, 'node_modules', 'sharp', 'index.js')
+    await mkdir(dirname(stagedEntry), { recursive: true })
+    await mkdir(dirname(repoFallback), { recursive: true })
+    await writeFile(stagedEntry, 'module.exports = {}')
+    await writeFile(repoFallback, 'module.exports = {}')
+
+    expect(assertResolvedInsideStage(stagedEntry, stagedNodeModules, 'sharp')).toBe(realpathSync(stagedEntry))
+    expect(() => assertResolvedInsideStage(repoFallback, stagedNodeModules, 'sharp')).toThrow(
+      'sharp resolved outside staged node_modules',
+    )
   })
 })
 
