@@ -82,6 +82,16 @@ describe('ManagerWsClient browser automation state', () => {
     expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({
       type: 'browser_host_response', response: { requestId: 'external-request', hostKind: 'external-chrome', error: { code: 'attachment-required' } },
     })
+
+    ingest({ type: 'browser_automation_request', request: {
+      requestId: 'stale-release', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1',
+      tabId: 'ext.profile_a.7', operation: 'status', input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7' },
+      hostId: 'external-host', hostGeneration: 7, deadlineAt: new Date(Date.now() + 1_000).toISOString(), artifactDirectory: null,
+    } })
+    expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({
+      type: 'browser_host_response', response: { requestId: 'stale-release', error: { code: 'stale-host-generation' } },
+    })
+    expect(handleRequest).toHaveBeenCalledTimes(1)
     client.destroy()
   })
 

@@ -132,6 +132,23 @@ describe('BrowserPanel', () => {
     expect(routed.map((article) => article.id)).toContain('chat-browser')
   })
 
+  it('defaults to Managed Browser and switches to the session-scoped External Chrome host without projecting a view', async () => {
+    const localStatus = vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'disabled', authority: 'none', auth: 'missing', registration: 'not-registered', trust: 'missing', platform: 'darwin', canEnable: true, canDisable: false, canRepair: true, canRollback: false, canRemove: false, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [], attachment: null,
+    } }))
+    window.electronBridge = { windowRole: 'main', backendWsUrl: 'ws://localhost', platform: 'darwin', externalChrome: { localStatus } as never }
+    const commandPort = createCommandPort()
+    act(() => { root = createRoot(container); root.render(createElement(BrowserPanel, { sessionAgentId: 'host-selector-session', profileId: 'profile-1', snapshot, host: connectedHost, commandPort })) })
+    const selector = container.querySelector('select[aria-label="Browser host"]') as HTMLSelectElement
+    expect(selector.value).toBe('managed-electron')
+    await act(async () => { selector.value = 'external-chrome'; selector.dispatchEvent(new Event('change', { bubbles: true })); await Promise.resolve(); await Promise.resolve() })
+    expect(selector.value).toBe('external-chrome')
+    expect(container.querySelector('[aria-label="External Chrome workspace"]')).not.toBeNull()
+    expect(container.querySelector('[data-browser-automation-viewport]')).toBeNull()
+    expect(localStatus).toHaveBeenCalledWith('host-selector-session', 'profile-1')
+  })
+
   it('wires tab, history, reload, zoom, viewport, screenshot, and recording controls', async () => {
     window.electronBridge = { windowRole: 'main', backendUrl: 'http://localhost', backendWsUrl: 'ws://localhost', getVersion: () => 'test', platform: 'darwin', browserAutomation: {} as never }
     const commandPort = createCommandPort()

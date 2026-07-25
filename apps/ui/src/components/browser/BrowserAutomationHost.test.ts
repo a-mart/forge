@@ -182,6 +182,27 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     expect(reportBrowserHostState.mock.calls[5]?.[0]?.[0]?.tabs[0]?.title).toBe('new-runtime-2')
   })
 
+  it('acknowledges correlated lifecycle release only after the exact local lease release succeeds', async () => {
+    installBridge()
+    const releaseForLifecycle = vi.fn(async () => ({ ok: true as const, status: {
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
+    } }))
+    window.electronBridge!.externalChrome = { releaseForLifecycle } as never
+    const state = createInitialManagerWsState('session-1')
+    let executeSecondary: ((request: BrowserAutomationRequest) => Promise<any>) | null = null
+    const client = {
+      registerBrowserAutomationHost: vi.fn(() => vi.fn()),
+      registerSecondaryBrowserAutomationHost: vi.fn((_registration, handler) => { executeSecondary = handler; return vi.fn() }),
+      reportBrowserHostState: vi.fn(), setBrowserHostFocused: vi.fn(), getState: () => state,
+    } as never
+    await act(async () => { root = createRoot(container); root.render(createElement(BrowserAutomationHost, { client, state, selectedSessionAgentId: 'session-1', selectedProfileId: 'profile-1', panelVisible: false })); await Promise.resolve() })
+    const request = { requestId: 'external-chrome-release:archive:correlation-1', hostKind: 'external-chrome', sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.profile_a.7', hostId: 'external-host', hostGeneration: 5, deadlineAt: new Date(Date.now() + 5_000).toISOString(), artifactDirectory: null, operation: 'status', input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7' } } as BrowserAutomationRequest
+    const response = await executeSecondary!(request)
+    expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, reason: 'archive', tabId: 'ext.profile_a.7' }))
+    expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true })
+  })
+
   it('publishes only the selected local projection and never renders a second host surface', async () => {
     installBridge()
     const state = { ...createInitialManagerWsState('session-1'), connected: true, browserSessions: { 'session-1': session() } }

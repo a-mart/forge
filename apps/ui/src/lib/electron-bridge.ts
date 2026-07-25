@@ -7,6 +7,8 @@ import type {
   BrowserTabSnapshot,
   BrowserViewportSetting,
   ExternalChromeCoordinatorStatus,
+  ExternalChromeCandidateWindow,
+  ExternalChromeChildPolicy,
 } from '@forge/protocol'
 
 export interface SleepBlockerStatus { enabled: boolean; blocking: boolean; graceRemainingMs: number | null; reason: string }
@@ -19,10 +21,24 @@ export type UpdateStatus =
   | { type: 'error'; message?: string }
 export interface CliInstallResult { success: boolean; installedPath: string; binDir: string; pathIncluded: boolean; pathInstructions: string | null; error?: string }
 export type ExternalChromeControlResult = { ok: true; status: ExternalChromeCoordinatorStatus } | { ok: false; error: 'invalid-request' | 'operation-failed' }
+export type ExternalChromeLocalError = 'invalid-request' | 'setup-required' | 'attachment-required' | 'lease-conflict' | 'restricted-target' | 'debugger-unavailable' | 'chrome-policy-blocked' | 'stale-or-lost' | 'extension-update-required' | 'operation-failed'
+export interface ExternalChromeRuntimeInstance { extensionInstanceId: string; profileAlias?: string; chromeVersion: string; payloadVersion: string; connectedAt: string }
+export interface ExternalChromeLocalAttachment {
+  sessionAgentId: string; profileId: string; extensionInstanceId: string; profileAlias: string; groupId: number | null
+  childPolicy: ExternalChromeChildPolicy; state: 'attached' | 'recovering' | 'lost'; attachedAt: string
+  tabs: Array<{ windowId: number; tabId: number; groupId: number | null; title: string; origin: string; active: boolean }>
+}
+export interface ExternalChromeLocalStatus { coordinator: ExternalChromeCoordinatorStatus; instances: ExternalChromeRuntimeInstance[]; attachment: ExternalChromeLocalAttachment | null }
+export type ExternalChromeAttachResult = { ok: true; status: ExternalChromeLocalStatus; windows?: ExternalChromeCandidateWindow[] } | { ok: false; error: ExternalChromeLocalError }
 export interface ExternalChromeBridge {
   status(): Promise<ExternalChromeControlResult>; enable(): Promise<ExternalChromeControlResult>; disable(): Promise<ExternalChromeControlResult>
   repair(): Promise<ExternalChromeControlResult>; rollback(): Promise<ExternalChromeControlResult>; remove(): Promise<ExternalChromeControlResult>
   takeover(): Promise<ExternalChromeControlResult>; revealExtensionFolder(): Promise<ExternalChromeControlResult>
+  localStatus?(sessionAgentId: string, profileId: string): Promise<ExternalChromeAttachResult>
+  listCandidates?(sessionAgentId: string, profileId: string, extensionInstanceId: string): Promise<ExternalChromeAttachResult>
+  attach?(input: { sessionAgentId: string; profileId: string; extensionInstanceId: string; tabIds: number[]; groupId?: number; childPolicy: ExternalChromeChildPolicy; confirmed: true }): Promise<ExternalChromeAttachResult>
+  detach?(sessionAgentId: string, profileId: string): Promise<ExternalChromeAttachResult>
+  releaseForLifecycle?(input: { requestId: string; hostId: string; hostGeneration: number; sessionAgentId: string; profileId: string; tabId: string; reason: 'stop' | 'archive' | 'delete' | 'host-replaced' }): Promise<ExternalChromeAttachResult>
 }
 
 export type ElectronWindowRole = 'main' | 'managed-browser-popout'

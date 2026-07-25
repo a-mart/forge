@@ -24,7 +24,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { ExternalChromeBridge } from '@/lib/electron-bridge'
 import { SettingsSection } from './settings-row'
 
 const CONFIRMATIONS = {
@@ -89,8 +88,8 @@ export function SettingsExternalChrome() {
 
   useEffect(() => { void load() }, [load])
 
-  const run = useCallback(async (action: keyof ExternalChromeBridge) => {
-    if (!bridge || action === 'status') return
+  const run = useCallback(async (action: 'enable' | 'disable' | 'repair' | 'rollback' | 'remove' | 'takeover' | 'revealExtensionFolder') => {
+    if (!bridge) return
     setBusy(action)
     setError(null)
     try {

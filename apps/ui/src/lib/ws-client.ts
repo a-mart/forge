@@ -1381,8 +1381,17 @@ export class ManagerWsClient {
     }
     if (event.type !== 'browser_automation_request') return false
     const request = { ...event.request, hostKind: resolveBrowserHostKind(event.request.hostKind) } as BrowserAutomationRequest
-    if (request.hostKind !== hostKind || request.hostId !== registration.hostId ||
-      request.hostGeneration !== this.secondaryBrowserHostGeneration || !this.secondaryBrowserAutomationRequestHandler) return false
+    if (request.hostKind !== hostKind) return false
+    if (request.hostId !== registration.hostId || request.hostGeneration !== this.secondaryBrowserHostGeneration || !this.secondaryBrowserAutomationRequestHandler) {
+      this.send(buildBrowserHostResponseCommand({
+        requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+        profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+        operation: request.operation, ok: false,
+        error: { code: 'stale-host-generation', message: 'External Chrome release/request targeted a stale local host generation.', retryable: true },
+        elapsedMs: 0,
+      } as BrowserAutomationResponse))
+      return true
+    }
     void this.secondaryBrowserAutomationRequestHandler(request).then(
       (response) => this.send(buildBrowserHostResponseCommand(response)),
       (error: unknown) => this.send(buildBrowserHostResponseCommand({

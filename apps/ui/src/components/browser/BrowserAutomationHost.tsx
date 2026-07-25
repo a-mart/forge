@@ -193,6 +193,29 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const scheduleReport = useCallback(() => scheduleReportTimer(flushReports, reportTimer), [flushReports])
 
     const executeRequest = useCallback(async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
+      const lifecycleReason = externalLifecycleReleaseReason(request)
+      if (lifecycleReason) {
+        const externalBridge = typeof window !== 'undefined' ? window.electronBridge?.externalChrome : undefined
+        if (!externalBridge?.releaseForLifecycle || !request.tabId) return hostFailureResponse(request, new BrowserRendererError('host-disconnected', 'External Chrome lifecycle release bridge is unavailable'))
+        const released = await externalBridge.releaseForLifecycle({
+          requestId: request.requestId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, reason: lifecycleReason,
+        })
+        if (!released.ok) {
+          const code: BrowserAutomationErrorCode = released.error === 'stale-or-lost' ? 'lease-lost'
+            : released.error === 'invalid-request' ? 'invalid-input' : 'execution-failed'
+          return hostFailureResponse(request, new BrowserRendererError(code, `External Chrome lifecycle release failed: ${released.error}`))
+        }
+        return {
+          requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          operation: 'status', ok: true, result: {
+            available: released.status.instances.length > 0,
+            host: { hostKind: 'external-chrome', connected: released.status.instances.length > 0, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: released.status.instances[0]?.connectedAt ?? null },
+            panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null,
+          }, elapsedMs: 0,
+        }
+      }
       const currentBridge = bridgeRef.current
       if (!currentBridge) return hostFailureResponse(request, new Error('Electron browser host is unavailable'))
       let invoked = request
@@ -583,5 +606,10 @@ function hostFailureResponse(request: BrowserAutomationRequest, error: unknown):
       ...(failure?.details && typeof failure.details === 'object' ? { details: failure.details as Record<string, string | number | boolean | null> } : {}),
     }, elapsedMs: 0,
   }
+}
+function externalLifecycleReleaseReason(request: BrowserAutomationRequest): 'stop' | 'archive' | 'delete' | 'host-replaced' | null {
+  if (request.hostKind !== 'external-chrome' || request.operation !== 'status' || request.tabId === null) return null
+  const match = /^external-chrome-release:(stop|archive|delete|host-replaced):[A-Za-z0-9._-]{1,80}$/u.exec(request.requestId)
+  return match ? match[1] as 'stop' | 'archive' | 'delete' | 'host-replaced' : null
 }
 function randomId(): string { try { return crypto.randomUUID() } catch { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` } }
