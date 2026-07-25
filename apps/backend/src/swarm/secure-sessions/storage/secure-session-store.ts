@@ -450,6 +450,17 @@ export class SecureSessionStore {
     return row ? this.hydrateSecret(row) : null;
   }
 
+  listSecretScopeProfileIds(secretId: string): string[] {
+    assertId(secretId, "secret ID");
+    return (this.database.prepare(`
+      SELECT profile_id
+      FROM secure_session_secret_scope_profile
+      WHERE secret_id = ?
+      ORDER BY profile_id
+    `).all(secretId) as Array<{ profile_id: string }>)
+      .map(({ profile_id }) => profile_id);
+  }
+
   getEncryptedSecret(secretId: string): SecureSessionEncryptedSecret | null {
     assertId(secretId, "secret ID");
     const row = this.database.prepare(`
@@ -475,7 +486,7 @@ export class SecureSessionStore {
       this.assertSecretAliasAvailable(
         input.displayAlias,
         input.scopeKind,
-        normalized.profileId,
+        normalized.profileIds,
         input.secretId
       );
       const provider = this.requireProvider(input.providerId);
@@ -500,6 +511,7 @@ export class SecureSessionStore {
         now,
         now
       );
+      this.replaceSecretScopeProfiles(input.secretId, normalized.profileIds, now);
       this.audit({
         eventType: "secret_created",
         providerId: input.providerId,
@@ -520,7 +532,7 @@ export class SecureSessionStore {
       this.assertSecretAliasAvailable(
         input.displayAlias,
         input.scopeKind,
-        normalized.profileId,
+        normalized.profileIds,
         input.secretId
       );
       this.revokeCatalogLeases("secret", input.secretId, "policy_changed", now);
@@ -530,7 +542,7 @@ export class SecureSessionStore {
         ? existingProjectDefaults
         : input.scopeKind === "profile"
           ? existingProjectDefaults.filter(({ profileId }) =>
-              profileId !== normalized.profileId
+              !normalized.profileIds.includes(profileId)
             )
           : [];
       const removeAllProjectDefault = Boolean(
@@ -558,6 +570,7 @@ export class SecureSessionStore {
         now,
         input.secretId
       );
+      this.replaceSecretScopeProfiles(input.secretId, normalized.profileIds, now);
       for (const projectDefault of removedProjectDefaults) {
         this.database.prepare(`
           DELETE FROM secure_session_project_default
@@ -703,11 +716,10 @@ export class SecureSessionStore {
         secret.scopeKind === "profile"
         && (
           input.policy.kind === "all_projects"
-          || profileIds.length > 1
-          || (profileIds.length === 1 && profileIds[0] !== secret.profileId)
+          || profileIds.some((profileId) => !secret.profileIds.includes(profileId))
         )
       ) {
-        throw new Error("Project-scoped secrets may default only in their own project");
+        throw new Error("Project-scoped secrets may default only in available projects");
       }
       const normalizedPolicy = input.policy.kind === "projects" && profileIds.length === 0
         ? { kind: "none" } as const
@@ -789,7 +801,10 @@ export class SecureSessionStore {
       if (secret.retention !== "saved") {
         throw new Error("Session-only secrets cannot be project defaults");
       }
-      if (secret.scopeKind === "profile" && secret.profileId !== input.profileId) {
+      if (
+        secret.scopeKind === "profile"
+        && !secret.profileIds.includes(input.profileId)
+      ) {
         throw new Error("Project defaults cannot reference another project's secret");
       }
       const allProjects = this.getAllProjectDefault(input.secretId);
@@ -889,18 +904,29 @@ export class SecureSessionStore {
       const effectiveDefaultSecretIds = this.listEffectiveProjectDefaults(profileId)
         .map(({ secretId }) => secretId);
       const scopedSecrets = this.database.prepare(`
-        SELECT secret_id, provider_id
-        FROM secure_session_secret
-        WHERE scope_kind = 'profile' AND profile_id = ?
-        ORDER BY secret_id
+        SELECT secret.secret_id, secret.provider_id
+        FROM secure_session_secret secret
+        JOIN secure_session_secret_scope_profile scope_profile
+          ON scope_profile.secret_id = secret.secret_id
+        WHERE secret.scope_kind = 'profile'
+          AND scope_profile.profile_id = ?
+        ORDER BY secret.secret_id
       `).all(profileId) as Array<{ secret_id: string; provider_id: string }>;
+      const deletedSecretIds = new Set(
+        scopedSecrets
+          .filter((secret) =>
+            this.listSecretScopeProfileIds(secret.secret_id).length === 1
+          )
+          .map((secret) => secret.secret_id)
+      );
       const result = {
         projectDefaultsDeleted: defaultSecretIds.length,
-        secretsDeleted: scopedSecrets.length
+        secretsDeleted: deletedSecretIds.size,
+        secretsUpdated: scopedSecrets.length - deletedSecretIds.size
       };
       const now = this.timestamp();
       this.revokeProjectDefaultLeases(profileId, effectiveDefaultSecretIds, now);
-      if (result.projectDefaultsDeleted === 0 && result.secretsDeleted === 0) {
+      if (result.projectDefaultsDeleted === 0 && scopedSecrets.length === 0) {
         return result;
       }
       this.database.prepare(`
@@ -916,15 +942,36 @@ export class SecureSessionStore {
         });
       }
       for (const secret of scopedSecrets) {
-        this.revokeCatalogLeases("secret", secret.secret_id, "secret_deleted", now);
+        if (deletedSecretIds.has(secret.secret_id)) {
+          this.revokeCatalogLeases("secret", secret.secret_id, "secret_deleted", now);
+          this.database.prepare(`
+            DELETE FROM secure_session_secret WHERE secret_id = ?
+          `).run(secret.secret_id);
+          this.audit({
+            eventType: "secret_deleted",
+            providerId: secret.provider_id,
+            secretId: secret.secret_id,
+            outcome: "deleted",
+            occurredAt: now
+          });
+          continue;
+        }
+        this.revokeCatalogLeases("secret", secret.secret_id, "policy_changed", now);
         this.database.prepare(`
-          DELETE FROM secure_session_secret WHERE secret_id = ?
-        `).run(secret.secret_id);
+          DELETE FROM secure_session_secret_scope_profile
+          WHERE secret_id = ? AND profile_id = ?
+        `).run(secret.secret_id, profileId);
+        const [nextProfileId] = this.listSecretScopeProfileIds(secret.secret_id);
+        this.database.prepare(`
+          UPDATE secure_session_secret
+          SET profile_id = ?, updated_at = ?
+          WHERE secret_id = ?
+        `).run(nextProfileId, now, secret.secret_id);
         this.audit({
-          eventType: "secret_deleted",
+          eventType: "secret_updated",
           providerId: secret.provider_id,
           secretId: secret.secret_id,
-          outcome: "deleted",
+          outcome: "updated",
           occurredAt: now
         });
       }
@@ -2131,6 +2178,7 @@ export class SecureSessionStore {
   private normalizeSecretInput(input: CreateSecureSessionSecretInput): {
     displayName: string | null;
     profileId: string | null;
+    profileIds: string[];
     encryptedMaterial: Buffer | null;
   } {
     assertId(input.secretId, "secret ID");
@@ -2138,9 +2186,31 @@ export class SecureSessionStore {
     assertBoundedText(input.displayAlias, "secret display alias", MAX_DISPLAY_LENGTH);
     const displayName = normalizeOptionalText(input.displayName, "secret display name", MAX_DISPLAY_LENGTH);
     assertEnum(input.scopeKind, SECURE_SESSION_SCOPE_KINDS, "secret scope");
-    const profileId = input.scopeKind === "instance"
-      ? requireAbsent(input.profileId, "Instance-scoped secrets cannot have a profile ID")
-      : requireId(input.profileId, "Profile-scoped secrets require a profile ID");
+    const profileIds = input.scopeKind === "instance"
+      ? []
+      : [...new Set(
+          input.profileIds?.length
+            ? input.profileIds
+            : [requireId(input.profileId, "Project-scoped secrets require a project ID")]
+        )].sort();
+    if (input.scopeKind === "instance") {
+      requireAbsent(input.profileId, "Instance-scoped secrets cannot have a profile ID");
+      if (input.profileIds?.length) {
+        throw new Error("Instance-scoped secrets cannot have project IDs");
+      }
+    } else {
+      if (profileIds.length === 0) {
+        throw new Error("Project-scoped secrets require at least one project ID");
+      }
+      for (const profileId of profileIds) assertId(profileId, "project ID");
+      if (
+        input.profileIds
+        && new Set(input.profileIds).size !== input.profileIds.length
+      ) {
+        throw new Error("Project-scoped secret project IDs must be unique");
+      }
+    }
+    const profileId = profileIds[0] ?? null;
     assertEnum(input.retention, SECURE_SESSION_RETENTIONS, "secret retention");
     assertBoundedText(input.sourceLocator, "secret source locator", MAX_SOURCE_LOCATOR_LENGTH);
     const encryptedMaterial = input.encryptedMaterial ?? null;
@@ -2157,6 +2227,7 @@ export class SecureSessionStore {
     return {
       displayName,
       profileId,
+      profileIds,
       encryptedMaterial: encryptedMaterial === null ? null : Buffer.from(encryptedMaterial)
     };
   }
@@ -2164,22 +2235,33 @@ export class SecureSessionStore {
   private assertSecretAliasAvailable(
     displayAlias: string,
     scopeKind: SecureSessionSecret["scopeKind"],
-    profileId: string | null,
+    profileIds: readonly string[],
     excludingSecretId: string
   ): void {
-    const conflict = scopeKind === "instance"
-      ? this.database.prepare(`
+    if (scopeKind === "instance") {
+      const conflict = this.database.prepare(`
           SELECT 1
           FROM secure_session_secret
           WHERE scope_kind = 'instance' AND display_alias = ? AND secret_id != ?
-        `).get(displayAlias, excludingSecretId)
-      : this.database.prepare(`
-          SELECT 1
-          FROM secure_session_secret
-          WHERE scope_kind = 'profile' AND profile_id = ?
-            AND display_alias = ? AND secret_id != ?
-        `).get(profileId, displayAlias, excludingSecretId);
-    if (conflict) throw new SecureSessionAliasConflictError();
+        `).get(displayAlias, excludingSecretId);
+      if (conflict) throw new SecureSessionAliasConflictError();
+      return;
+    }
+    const conflict = this.database.prepare(`
+      SELECT 1
+      FROM secure_session_secret scoped_secret
+      JOIN secure_session_secret_scope_profile scoped_profile
+        ON scoped_profile.secret_id = scoped_secret.secret_id
+      WHERE scoped_secret.scope_kind = 'profile'
+        AND scoped_secret.display_alias = ?
+        AND scoped_secret.secret_id != ?
+        AND scoped_profile.profile_id = ?
+    `);
+    for (const profileId of profileIds) {
+      if (conflict.get(displayAlias, excludingSecretId, profileId)) {
+        throw new SecureSessionAliasConflictError();
+      }
+    }
   }
 
   private hydrateSecret(row: SecretRow): SecureSessionSecret {
@@ -2189,9 +2271,30 @@ export class SecureSessionStore {
       this.getProviderBackendConfig(provider.providerId) !== null;
     return {
       ...metadata,
+      profileIds: row.scope_kind === "profile"
+        ? this.listSecretScopeProfileIds(row.secret_id)
+        : [],
       bindings: this.listBindings(row.secret_id),
       available: provider.enabled && provider.status === "available" && providerConfigured
     };
+  }
+
+  private replaceSecretScopeProfiles(
+    secretId: string,
+    profileIds: readonly string[],
+    now: string
+  ): void {
+    this.database.prepare(`
+      DELETE FROM secure_session_secret_scope_profile WHERE secret_id = ?
+    `).run(secretId);
+    const insert = this.database.prepare(`
+      INSERT INTO secure_session_secret_scope_profile (
+        secret_id, profile_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?)
+    `);
+    for (const profileId of profileIds) {
+      insert.run(secretId, profileId, now, now);
+    }
   }
 
   private normalizeRequestInput(input: CreateSecureSessionRequestInput): {
@@ -2996,6 +3099,7 @@ function mapSecretMetadata(
     displayName: row.display_name,
     scopeKind: row.scope_kind,
     profileId: row.profile_id,
+    profileIds: [],
     retention: row.retention,
     sourceLocator: row.source_locator,
     createdAt: row.created_at,

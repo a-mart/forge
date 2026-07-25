@@ -118,14 +118,16 @@ but private value entry requires the Desktop bridge.
 
 Every saved secret has an availability scope:
 
-- **Only this project** makes the alias available to one selected local project.
-- **All projects** makes the alias available to every local project on this Forge
-  instance.
+- Select one or more projects to make the alias available only in those local
+  projects.
+- Select **All projects** to make the alias available to every local project on
+  this Forge instance, including projects created later.
 
-Adding a secret from a project context defaults to **Only this project**. If a
-project-scoped secret and an all-projects secret use the same alias, that project uses
-its project-scoped secret. Other projects continue to use the all-projects secret.
-Scope controls where an alias can be selected; it does not grant any task access.
+Adding a secret from a project context defaults to that project. If a
+selected-project secret and an all-projects secret use the same alias, each selected
+project uses the selected-project secret. Other projects continue to use the
+all-projects secret. Scope controls where an alias can be selected; it does not grant
+any task access.
 
 For a direct route from the Builder sidebar, right-click a local project header and
 choose **Project Secrets**. Forge opens **Settings → Secrets** with that project
@@ -151,7 +153,7 @@ Forge verifies the connection before saving the source, so a displayed
 **Available** state means the configured credential was actually accepted.
 
 Under **Secrets**, import a Bitwarden secret UUID, assign a Forge alias, and choose the
-same **Only this project** or **All projects** scope available to local-vault secrets.
+same selected-projects or **All projects** scope available to local-vault secrets.
 Automatic-grant policy also works the same way for either source. Forge keeps the UUID
 and encrypted machine credential backend-only. When an approved command needs the
 value, the trusted host invokes `bws` with an isolated temporary configuration

@@ -1,68 +1,122 @@
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   type ManagerProfile,
 } from '@forge/protocol'
+import { ChevronDown } from 'lucide-react'
 import type { SecretScopeKind } from './secret-project-access-values'
 
 export function SecretScopeFields({
   idPrefix,
   profiles,
   scopeKind,
-  profileId,
+  selectedProfileIds,
   disabled,
   onScopeKindChange,
-  onProfileIdChange,
+  onProfileCheckedChange,
 }: {
   idPrefix: string
   profiles: ManagerProfile[]
   scopeKind: SecretScopeKind
-  profileId: string
+  selectedProfileIds: Set<string>
   disabled: boolean
   onScopeKindChange: (scopeKind: SecretScopeKind) => void
-  onProfileIdChange: (profileId: string) => void
+  onProfileCheckedChange: (profileId: string, checked: boolean) => void
 }) {
+  const selectedCount = selectedProfileIds.size
+  const triggerLabel = scopeKind === 'instance'
+    ? 'All projects'
+    : selectedCount === 1
+      ? profiles.find((profile) =>
+          selectedProfileIds.has(profile.profileId)
+        )?.displayName || '1 project'
+      : `${selectedCount} projects`
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      <Field label="Available in" htmlFor={`${idPrefix}-scope`}>
-        <Select
-          value={scopeKind}
-          onValueChange={(value) => onScopeKindChange(value as SecretScopeKind)}
-          disabled={disabled}
+    <div className="space-y-1.5">
+      <Label htmlFor={`${idPrefix}-scope`}>Available in</Label>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            id={`${idPrefix}-scope`}
+            type="button"
+            variant="outline"
+            role="combobox"
+            disabled={disabled}
+            className="w-full justify-between font-normal"
+            aria-label="Available in projects"
+          >
+            <span className="truncate">{triggerLabel}</span>
+            <ChevronDown className="size-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[var(--radix-popover-trigger-width)] min-w-64 p-1.5"
         >
-          <SelectTrigger id={`${idPrefix}-scope`} className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="profile" disabled={profiles.length === 0}>
-              Only this project
-            </SelectItem>
-            <SelectItem value="instance">All projects</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      {scopeKind === 'profile' ? (
-        <ProjectSelect
-          id={`${idPrefix}-scope-project`}
-          label="Project"
-          profiles={profiles}
-          value={profileId}
-          disabled={disabled}
-          onValueChange={onProfileIdChange}
-        />
-      ) : (
-        <p className="self-end pb-2 text-xs text-muted-foreground">
-          The alias can be selected from any local project.
-        </p>
-      )}
+          <label className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-sm hover:bg-accent/60">
+            <Checkbox
+              checked={scopeKind === 'instance'}
+              onCheckedChange={(checked) => {
+                if (checked === true) onScopeKindChange('instance')
+              }}
+              aria-label="Available in all projects"
+            />
+            <span>
+              <span className="block font-medium">All projects</span>
+              <span className="block text-xs text-muted-foreground">
+                Includes projects created later.
+              </span>
+            </span>
+          </label>
+          <div className="my-1 border-t border-border/70" />
+          <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
+            Selected projects
+          </p>
+          <div className="max-h-56 overflow-y-auto">
+            {profiles.length === 0 ? (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                No projects are available.
+              </p>
+            ) : profiles.map((profile) => {
+              const checked =
+                scopeKind === 'projects' && selectedProfileIds.has(profile.profileId)
+              const lastSelected =
+                checked && selectedProfileIds.size === 1
+              const displayName = profile.displayName || profile.profileId
+              return (
+                <label
+                  key={profile.profileId}
+                  className={`flex items-center gap-2 rounded px-2 py-1.5 text-sm ${
+                    lastSelected
+                      ? 'cursor-not-allowed opacity-60'
+                      : 'cursor-pointer hover:bg-accent/60'
+                  }`}
+                >
+                  <Checkbox
+                    checked={checked}
+                    disabled={lastSelected}
+                    onCheckedChange={(nextChecked) => {
+                      if (scopeKind !== 'projects') onScopeKindChange('projects')
+                      onProfileCheckedChange(profile.profileId, nextChecked === true)
+                    }}
+                    aria-label={`Available in ${displayName}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{displayName}</span>
+                </label>
+              )
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+      <p className="text-xs text-muted-foreground">
+        {scopeKind === 'instance'
+          ? 'The alias can be selected from any local project.'
+          : 'The alias can be selected only from the checked projects.'}
+      </p>
     </div>
   )
 }
@@ -71,7 +125,7 @@ export function AutomaticGrantFields({
   idPrefix,
   profiles,
   scopeKind,
-  scopeProfileId,
+  scopeProfileIds,
   selectedProfileIds,
   everyProject,
   limitReachedProfileIds,
@@ -83,7 +137,7 @@ export function AutomaticGrantFields({
   idPrefix: string
   profiles: ManagerProfile[]
   scopeKind: SecretScopeKind
-  scopeProfileId: string
+  scopeProfileIds: Set<string>
   selectedProfileIds: Set<string>
   everyProject: boolean
   limitReachedProfileIds: Set<string>
@@ -92,8 +146,8 @@ export function AutomaticGrantFields({
   onProfileCheckedChange: (profileId: string, checked: boolean) => void
   onEveryProjectChange: (enabled: boolean) => void
 }) {
-  const selectableProfiles = scopeKind === 'profile'
-    ? profiles.filter((profile) => profile.profileId === scopeProfileId)
+  const selectableProfiles = scopeKind === 'projects'
+    ? profiles.filter((profile) => scopeProfileIds.has(profile.profileId))
     : profiles
   const everyProjectBlocked = scopeKind === 'instance'
     && !everyProject
@@ -192,61 +246,11 @@ export function AutomaticGrantFields({
           another until one is removed.
         </p>
       ) : null}
-      {scopeKind === 'profile' ? (
+      {scopeKind === 'projects' ? (
         <p className="text-xs text-muted-foreground">
-          A project-only secret can be granted automatically only in its own project.
+          This secret can be granted automatically only in projects where it is available.
         </p>
       ) : null}
     </fieldset>
-  )
-}
-
-function ProjectSelect({
-  id,
-  label,
-  profiles,
-  value,
-  disabled,
-  onValueChange,
-}: {
-  id: string
-  label: string
-  profiles: ManagerProfile[]
-  value: string
-  disabled: boolean
-  onValueChange: (profileId: string) => void
-}) {
-  return (
-    <Field label={label} htmlFor={id}>
-      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-        <SelectTrigger id={id} className="w-full">
-          <SelectValue placeholder="Choose a project" />
-        </SelectTrigger>
-        <SelectContent>
-          {profiles.map((profile) => (
-            <SelectItem key={profile.profileId} value={profile.profileId}>
-              {profile.displayName || profile.profileId}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Field>
-  )
-}
-
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={htmlFor}>{label}</Label>
-      {children}
-    </div>
   )
 }

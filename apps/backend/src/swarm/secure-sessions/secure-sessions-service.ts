@@ -613,12 +613,11 @@ export class SecureSessionsService {
       let catalogChanged = false;
       const orphanedProfileIds = new Set<string>();
       for (const secret of store.listSecrets()) {
-        if (
-          secret.scopeKind === "profile"
-          && secret.profileId
-          && !this.options.hasProfile(secret.profileId)
-        ) {
-          orphanedProfileIds.add(secret.profileId);
+        if (secret.scopeKind !== "profile") continue;
+        for (const profileId of secret.profileIds) {
+          if (!this.options.hasProfile(profileId)) {
+            orphanedProfileIds.add(profileId);
+          }
         }
       }
       for (const projectDefault of store.listProjectDefaults()) {
@@ -631,6 +630,7 @@ export class SecureSessionsService {
         catalogChanged = (
           deleted.projectDefaultsDeleted > 0
           || deleted.secretsDeleted > 0
+          || deleted.secretsUpdated > 0
         ) || catalogChanged;
       }
       for (const state of store.listSessionStates()) {
@@ -1044,10 +1044,8 @@ export class SecureSessionsService {
       secret.scopeKind === "profile"
       && (
         policy.kind === "all_projects"
-        || requestedProfileIds.length > 1
-        || (
-          requestedProfileIds.length === 1
-          && requestedProfileIds[0] !== secret.profileId
+        || requestedProfileIds.some(
+          (profileId) => !secret.profileIds.includes(profileId)
         )
       )
     ) {
@@ -1132,7 +1130,8 @@ export class SecureSessionsService {
       const store = await this.store();
       const scopedSecretIds = store.listSecrets()
           .filter((secret) =>
-            secret.scopeKind === "profile" && secret.profileId === normalizedProfileId
+            secret.scopeKind === "profile"
+            && secret.profileIds.includes(normalizedProfileId)
           )
           .map((secret) => secret.secretId);
       const defaultSecretIds = this.listEffectiveProjectDefaultsForProfile(
@@ -1166,6 +1165,7 @@ export class SecureSessionsService {
         if (
           result.projectDefaultsDeleted === 0
           && result.secretsDeleted === 0
+          && result.secretsUpdated === 0
           && affected.leaseIds.length === 0
         ) {
           return;
@@ -1197,9 +1197,7 @@ export class SecureSessionsService {
           scope,
           displayAlias,
           undefined,
-          scope.profileId
-            ? this.isAllProjectAutomaticGrantEligible(scope.profileId)
-            : true,
+          (profileId) => this.isAllProjectAutomaticGrantEligible(profileId),
         );
         const result = store.createSecretWithBindings({
           secret: {
@@ -1253,9 +1251,7 @@ export class SecureSessionsService {
           scope,
           displayAlias,
           undefined,
-          scope.profileId
-            ? this.isAllProjectAutomaticGrantEligible(scope.profileId)
-            : true,
+          (profileId) => this.isAllProjectAutomaticGrantEligible(profileId),
         );
         const result = store.createSecretWithBindings({
           secret: {
@@ -1312,9 +1308,7 @@ export class SecureSessionsService {
           nextScope,
           nextDisplayAlias,
           secretId,
-          nextScope.profileId
-            ? this.isAllProjectAutomaticGrantEligible(nextScope.profileId)
-            : true,
+          (profileId) => this.isAllProjectAutomaticGrantEligible(profileId),
         );
         const existingBindings = store.listBindings(secretId);
         const nextBindings = input.bindings === undefined && existingBindings.length > 0
@@ -1344,7 +1338,8 @@ export class SecureSessionsService {
             );
           }
           for (const { profileId } of projectDefaults.filter(({ profileId }) =>
-            nextScope.scopeKind === "instance" || nextScope.profileId === profileId
+            nextScope.scopeKind === "instance"
+            || nextScope.profileIds.includes(profileId)
           )) {
             assertProjectDefaultBindingCompatibility(
               store,
@@ -2474,7 +2469,11 @@ export class SecureSessionsService {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
     const profileId = requireProfileId(descriptor);
-    let scope: { scopeKind: "instance" | "profile"; profileId: string | null };
+    let scope: {
+      scopeKind: "instance" | "profile";
+      profileId: string | null;
+      profileIds: string[];
+    };
     if (input.retention === "session") {
       if (
         input.makeProjectDefault === true
@@ -2488,11 +2487,14 @@ export class SecureSessionsService {
       ) {
         throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
       }
-      scope = { scopeKind: "profile", profileId };
+      scope = { scopeKind: "profile", profileId, profileIds: [profileId] };
     } else if (input.retention === "saved" && input.scope !== undefined) {
       scope = toStoredScope(input.scope);
       this.requireExistingProfileScope(scope);
-      if (scope.scopeKind === "profile" && scope.profileId !== profileId) {
+      if (
+        scope.scopeKind === "profile"
+        && !scope.profileIds.includes(profileId)
+      ) {
         throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
       }
     } else {
@@ -2504,9 +2506,8 @@ export class SecureSessionsService {
       scope,
       request.displayAlias,
       undefined,
-      scope.profileId
-        ? this.isAllProjectAutomaticGrantEligible(scope.profileId)
-        : true,
+      (candidateProfileId) =>
+        this.isAllProjectAutomaticGrantEligible(candidateProfileId),
     );
     if (
       input.makeProjectDefault === true
@@ -4154,9 +4155,12 @@ export class SecureSessionsService {
   private assertScopeLifecycleAvailable(scope: {
     scopeKind: "instance" | "profile";
     profileId: string | null;
+    profileIds: string[];
   }): void {
-    if (scope.scopeKind === "profile" && scope.profileId) {
-      this.assertProfileLifecycleAvailable(scope.profileId);
+    if (scope.scopeKind === "profile") {
+      for (const profileId of scope.profileIds) {
+        this.assertProfileLifecycleAvailable(profileId);
+      }
     }
   }
 
@@ -4185,8 +4189,10 @@ export class SecureSessionsService {
     const profileIds = new Set<string>();
     for (const secretId of wanted) {
       const secret = store.getSecret(secretId);
-      if (secret?.scopeKind === "profile" && secret.profileId) {
-        profileIds.add(secret.profileId);
+      if (secret?.scopeKind === "profile") {
+        for (const profileId of secret.profileIds) {
+          profileIds.add(profileId);
+        }
       }
     }
     for (const projectDefault of store.listProjectDefaults()) {
@@ -4222,10 +4228,14 @@ export class SecureSessionsService {
   private requireExistingProfileScope(scope: {
     scopeKind: "instance" | "profile";
     profileId: string | null;
+    profileIds: string[];
   }): void {
     if (
       scope.scopeKind === "profile"
-      && (!scope.profileId || !this.options.hasProfile(scope.profileId))
+      && (
+        scope.profileIds.length === 0
+        || scope.profileIds.some((profileId) => !this.options.hasProfile(profileId))
+      )
     ) {
       throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
     }
@@ -4641,16 +4651,33 @@ function normalizeHttpsOrigin(value: string): string {
 function toStoredScope(scope: CreateLocalSecureSecretInput["scope"]): {
   scopeKind: "instance" | "profile";
   profileId: string | null;
+  profileIds: string[];
 } {
-  if (!scope || scope.kind === "instance") return { scopeKind: "instance", profileId: null };
-  return { scopeKind: "profile", profileId: bounded(scope.profileId, 256) };
+  if (!scope || scope.kind === "instance") {
+    return { scopeKind: "instance", profileId: null, profileIds: [] };
+  }
+  const profileIds = scope.kind === "profile"
+    ? [bounded(scope.profileId, 256)]
+    : [...new Set(scope.profileIds.map((profileId) => bounded(profileId, 256)))]
+        .sort();
+  if (profileIds.length === 0) {
+    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  }
+  return {
+    scopeKind: "profile",
+    profileId: profileIds[0]!,
+    profileIds,
+  };
 }
 
-function toPublicScope(secret: Pick<SecureSessionSecret, "scopeKind" | "profileId">):
+function toPublicScope(
+  secret: Pick<SecureSessionSecret, "scopeKind" | "profileId" | "profileIds">,
+):
   SecureSecretSummary["scope"] {
-  return secret.scopeKind === "instance"
-    ? { kind: "instance" }
-    : { kind: "profile", profileId: secret.profileId ?? "" };
+  if (secret.scopeKind === "instance") return { kind: "instance" };
+  return secret.profileIds.length === 1
+    ? { kind: "profile", profileId: secret.profileIds[0]! }
+    : { kind: "profiles", profileIds: [...secret.profileIds] };
 }
 
 function defaultSecureSecretBinding(
@@ -4992,7 +5019,7 @@ function samePublicBindings(
 }
 
 function isVisibleTo(secret: SecureSessionSecret, profileId: string): boolean {
-  return secret.scopeKind === "instance" || secret.profileId === profileId;
+  return secret.scopeKind === "instance" || secret.profileIds.includes(profileId);
 }
 
 /**
@@ -5013,7 +5040,7 @@ function resolveVisibleSavedSecrets(
     const existing = byAlias.get(secret.displayAlias);
     if (!existing || (
       secret.scopeKind === "profile"
-      && secret.profileId === profileId
+      && secret.profileIds.includes(profileId)
       && existing.scopeKind === "instance"
     )) {
       byAlias.set(secret.displayAlias, secret);
@@ -5033,28 +5060,34 @@ function resolveVisibleSavedSecretByAlias(
 
 function assertDoesNotShadowConfiguredDefault(
   store: SecureSessionStore,
-  scope: { scopeKind: "instance" | "profile"; profileId: string | null },
+  scope: {
+    scopeKind: "instance" | "profile";
+    profileId: string | null;
+    profileIds: string[];
+  },
   displayAlias: string,
   excludedSecretId?: string,
-  allProjectsEligible = true,
+  allProjectsEligibleByProfileId: (
+    profileId: string,
+  ) => boolean = () => true,
 ): void {
-  if (scope.scopeKind !== "profile" || !scope.profileId) return;
+  if (scope.scopeKind !== "profile") return;
   const shadowed = store.listSecrets().find((secret) =>
     secret.secretId !== excludedSecretId
     && secret.scopeKind === "instance"
     && secret.retention === "saved"
     && secret.displayAlias === displayAlias
   );
-  if (
-    shadowed
-    && (
-      allProjectsEligible
-        ? store.listEffectiveProjectDefaults(scope.profileId)
-        : store.listProjectDefaults(scope.profileId)
-    )
-      .some((projectDefault) => projectDefault.secretId === shadowed.secretId)
-  ) {
-    throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+  if (!shadowed) return;
+  for (const profileId of scope.profileIds) {
+    const configured = allProjectsEligibleByProfileId(profileId)
+      ? store.listEffectiveProjectDefaults(profileId)
+      : store.listProjectDefaults(profileId);
+    if (configured.some(
+      (projectDefault) => projectDefault.secretId === shadowed.secretId
+    )) {
+      throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+    }
   }
 }
 

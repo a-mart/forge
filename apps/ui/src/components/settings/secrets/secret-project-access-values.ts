@@ -1,13 +1,26 @@
 import type { ManagerProfile, SecureSecretScope } from '@forge/protocol'
 
-export type SecretScopeKind = SecureSecretScope['kind']
+export type SecretScopeKind = 'instance' | 'projects'
 
 export function scopeFor(
   scopeKind: SecretScopeKind,
-  profileId: string,
+  selectedProfileIds: Set<string>,
 ): SecureSecretScope | null {
   if (scopeKind === 'instance') return { kind: 'instance' }
-  return profileId ? { kind: 'profile', profileId } : null
+  const profileIds = [...selectedProfileIds].sort()
+  if (profileIds.length === 0) return null
+  return profileIds.length === 1
+    ? { kind: 'profile', profileId: profileIds[0]! }
+    : { kind: 'profiles', profileIds }
+}
+
+export function scopeKindFor(scope: SecureSecretScope): SecretScopeKind {
+  return scope.kind === 'instance' ? 'instance' : 'projects'
+}
+
+export function scopeProfileIds(scope: SecureSecretScope): string[] {
+  if (scope.kind === 'instance') return []
+  return scope.kind === 'profile' ? [scope.profileId] : scope.profileIds
 }
 
 export function scopeLabel(
@@ -16,7 +29,9 @@ export function scopeLabel(
 ): string {
   return scope.kind === 'instance'
     ? 'All projects'
-    : `Only this project · ${projectName(scope.profileId, profileById)}`
+    : scopeProfileIds(scope).length === 1
+      ? `1 project · ${projectName(scopeProfileIds(scope)[0]!, profileById)}`
+      : `${scopeProfileIds(scope).length} projects`
 }
 
 export function projectName(

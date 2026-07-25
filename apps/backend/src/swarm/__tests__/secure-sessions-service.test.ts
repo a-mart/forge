@@ -1839,6 +1839,71 @@ describe("SecureSessionsService", () => {
     await harness.close();
   });
 
+  it("shares one saved secret across selected projects and prunes grants with its scope", async () => {
+    const harness = createHarness();
+    const shared = await harness.service.createLocalSecureSecret({
+      displayAlias: "selected-projects",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+      bindings: [{
+        deliveryKind: "environment",
+        targetName: "SELECTED_PROJECTS_TOKEN",
+      }],
+      scope: {
+        kind: "profiles",
+        profileIds: ["profile-b", "profile-a"],
+      },
+    });
+    expect(shared.scope).toEqual({
+      kind: "profiles",
+      profileIds: ["profile-a", "profile-b"],
+    });
+    await expect(harness.service.getSecureSessionAgentView("manager-a"))
+      .resolves.toEqual(expect.objectContaining({
+        availableSecrets: [
+          expect.objectContaining({ displayAlias: "selected-projects" }),
+        ],
+      }));
+    await expect(harness.service.getSecureSessionAgentView("manager-b"))
+      .resolves.toEqual(expect.objectContaining({
+        availableSecrets: [
+          expect.objectContaining({ displayAlias: "selected-projects" }),
+        ],
+      }));
+
+    await expect(harness.service.replaceSecureSecretAutomaticGrantPolicy(
+      shared.secretId,
+      { kind: "projects", profileIds: ["profile-a", "profile-b"] },
+    )).resolves.toEqual(expect.objectContaining({
+      automaticGrantPolicy: {
+        kind: "projects",
+        profileIds: ["profile-a", "profile-b"],
+      },
+    }));
+    await expect(harness.service.replaceSecureSecretAutomaticGrantPolicy(
+      shared.secretId,
+      { kind: "projects", profileIds: ["missing-profile"] },
+    )).rejects.toMatchObject({ code: "SECURE_REQUEST_INVALID" });
+
+    await expect(harness.service.updateSecureSecret(shared.secretId, {
+      scope: { kind: "profile", profileId: "profile-b" },
+    })).resolves.toEqual(expect.objectContaining({
+      scope: { kind: "profile", profileId: "profile-b" },
+      automaticGrantPolicy: {
+        kind: "projects",
+        profileIds: ["profile-b"],
+      },
+    }));
+    await expect(harness.service.getSecureSessionAgentView("manager-a"))
+      .resolves.toEqual(expect.objectContaining({ availableSecrets: [] }));
+    await expect(harness.service.getSecureSessionAgentView("manager-b"))
+      .resolves.toEqual(expect.objectContaining({
+        availableSecrets: [
+          expect.objectContaining({ displayAlias: "selected-projects" }),
+        ],
+      }));
+    await harness.close();
+  });
+
   it("rejects forged project scopes", async () => {
     const harness = createHarness();
     await expect(harness.service.createLocalSecureSecret({

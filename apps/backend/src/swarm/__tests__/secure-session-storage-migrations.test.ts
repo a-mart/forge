@@ -44,6 +44,52 @@ describe("secure session migrations", () => {
     database.close();
   });
 
+  it("backfills existing project-scoped secrets into the multi-project scope table", () => {
+    const database = new Database(":memory:");
+    database.pragma("foreign_keys = ON");
+    database.exec(`
+      CREATE TABLE secure_session_schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        applied_at TEXT NOT NULL
+      ) STRICT
+    `);
+    for (const migration of SECURE_SESSION_MIGRATIONS.slice(0, 4)) {
+      migration.up(database);
+      database.prepare(`
+        INSERT INTO secure_session_schema_migrations (version, name, applied_at)
+        VALUES (?, ?, 't')
+      `).run(migration.version, migration.name);
+    }
+    database.exec(`
+      INSERT INTO secure_session_provider (
+        provider_id, kind, display_name, enabled, status, last_status_code,
+        created_at, updated_at
+      ) VALUES (
+        'local', 'local_keychain', 'Local', 1, 'available', 'ok', 't', 't'
+      );
+      INSERT INTO secure_session_secret (
+        secret_id, provider_id, display_alias, scope_kind, profile_id,
+        retention, source_locator, encrypted_material, created_at, updated_at
+      ) VALUES (
+        'secret', 'local', 'deploy', 'profile', 'project-a',
+        'saved', 'local', x'01', 't', 't'
+      );
+    `);
+
+    runSecureSessionMigrations(database);
+
+    expect(database.prepare(`
+      SELECT secret_id, profile_id
+      FROM secure_session_secret_scope_profile
+    `).all()).toEqual([{
+      secret_id: "secret",
+      profile_id: "project-a"
+    }]);
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
+  });
+
   it("uses only fixed fields and constrains encrypted persistence to bounded blobs", () => {
     const database = new Database(":memory:");
     database.pragma("foreign_keys = ON");

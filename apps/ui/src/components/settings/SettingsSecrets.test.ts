@@ -677,7 +677,7 @@ describe('SettingsSecrets', () => {
       expect(getByText(container, 'Private sources')).toBeTruthy()
     })
     activateTab('Secrets')
-    await chooseSelect('local-secret-scope', 'All projects')
+    await chooseAvailability('local-secret-scope', 'Available in Beta Project')
 
     fireEvent.click(getByRole(container, 'checkbox', {
       name: 'Automatically grant in Alpha Project',
@@ -694,6 +694,15 @@ describe('SettingsSecrets', () => {
     fireEvent.click(getByRole(container, 'button', { name: 'Save local secret' }))
 
     await waitFor(() => {
+      expect(secureSecretsApiMock.createLocalSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          scope: {
+            kind: 'profiles',
+            profileIds: ['project-alpha', 'project-beta'],
+          },
+        }),
+      )
       expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledTimes(1)
       expect(secureSecretsApiMock.updateSecureSecretAutomaticGrant).toHaveBeenCalledWith(
         expect.anything(),
@@ -726,7 +735,7 @@ describe('SettingsSecrets', () => {
       name: 'Automatically grant in Beta Project',
     })).toBeNull()
 
-    await chooseSelect('local-secret-scope', 'All projects')
+    await chooseAvailability('local-secret-scope', 'Available in all projects')
     const everyProject = getByRole(container, 'checkbox', {
       name: 'Every project, including future projects',
     })
@@ -821,6 +830,75 @@ describe('SettingsSecrets', () => {
     expect(container.textContent).toContain('Automatically granted in Beta Project')
   })
 
+  it('edits an existing selected-project scope without collapsing it', async () => {
+    const selectedProjectsSecret = {
+      ...SECRET_SUMMARY,
+      scope: {
+        kind: 'profiles' as const,
+        profileIds: ['project-alpha', 'project-beta'],
+      },
+    }
+    secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
+      providers: [LOCAL_PROVIDER],
+      secrets: [selectedProjectsSecret],
+      projectDefaults: [],
+    })
+    secureSecretsApiMock.updateSecureSecret.mockResolvedValue(
+      selectedProjectsSecret,
+    )
+    secureSecretsApiMock.updateSecureSecretAutomaticGrant.mockResolvedValue(
+      selectedProjectsSecret,
+    )
+    render()
+
+    await waitFor(() => {
+      expect(getByText(container, 'Private sources')).toBeTruthy()
+    })
+    activateTab('Secrets')
+    expect(container.textContent).toContain('2 projects')
+
+    fireEvent.click(getByRole(container, 'button', { name: 'Edit' }))
+    let scopeTrigger: Element | null = null
+    await waitFor(() => {
+      scopeTrigger = container.querySelector('#edit-secret-1-scope')
+      expect(scopeTrigger).toBeTruthy()
+    })
+    flushSync(() => {
+      fireEvent.click(scopeTrigger!)
+    })
+    let alphaScopeCheckbox: HTMLElement | null = null
+    let betaScopeCheckbox: HTMLElement | null = null
+    await waitFor(() => {
+      alphaScopeCheckbox = getByRole(document.body, 'checkbox', {
+        name: 'Available in Alpha Project',
+      })
+      betaScopeCheckbox = getByRole(document.body, 'checkbox', {
+        name: 'Available in Beta Project',
+      })
+    })
+    expect(
+      alphaScopeCheckbox!.getAttribute('data-state'),
+    ).toBe('checked')
+    expect(
+      betaScopeCheckbox!.getAttribute('data-state'),
+    ).toBe('checked')
+    fireEvent.keyDown(document.body, { key: 'Escape', code: 'Escape' })
+    fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(secureSecretsApiMock.updateSecureSecret).toHaveBeenCalledWith(
+        expect.anything(),
+        'secret-1',
+        expect.objectContaining({
+          scope: {
+            kind: 'profiles',
+            profileIds: ['project-alpha', 'project-beta'],
+          },
+        }),
+      )
+    })
+  })
+
   it('prevents an alias collision in the same project with clear safe copy', async () => {
     secureSecretsApiMock.fetchSecureSecretsCatalog.mockResolvedValue({
       providers: [LOCAL_PROVIDER],
@@ -894,7 +972,10 @@ describe('SettingsSecrets', () => {
     })
     activateTab('Secrets')
     fireEvent.click(getByRole(container, 'button', { name: 'Edit' }))
-    await chooseSelect('edit-secret-1-scope', 'Only this project')
+    await chooseAvailability(
+      'edit-secret-1-scope',
+      'Available in Alpha Project',
+    )
     fireEvent.click(getByRole(container, 'button', { name: 'Save changes' }))
 
     await waitFor(() => {
@@ -935,7 +1016,10 @@ describe('SettingsSecrets', () => {
       expect(getByText(container, 'Private sources')).toBeTruthy()
     })
     activateTab('Secrets')
-    await chooseSelect('bitwarden-secret-scope', 'All projects')
+    await chooseAvailability(
+      'bitwarden-secret-scope',
+      'Available in all projects',
+    )
     fireEvent.change(getByLabelText(container, 'Bitwarden secret ID'), {
       target: { value: '12345678-1234-1234-1234-123456789012' },
     })
@@ -961,22 +1045,22 @@ function activateTab(name: string): void {
   })
 }
 
-async function chooseSelect(id: string, option: string): Promise<void> {
+async function chooseAvailability(id: string, option: string): Promise<void> {
   let trigger: Element | null = null
   await waitFor(() => {
     trigger = container.querySelector(`#${id}`)
     expect(trigger).toBeTruthy()
   })
   flushSync(() => {
-    fireEvent.keyDown(trigger!, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(trigger!)
   })
+  let checkbox: HTMLElement | null = null
   await waitFor(() => {
-    expect(getByRole(document.body, 'option', { name: option })).toBeTruthy()
+    checkbox = getByRole(document.body, 'checkbox', { name: option })
+    expect(checkbox).toBeTruthy()
   })
   flushSync(() => {
-    fireEvent.click(getByRole(document.body, 'option', { name: option }))
-  })
-  await waitFor(() => {
-    expect(container.getAttribute('aria-hidden')).not.toBe('true')
+    fireEvent.click(checkbox!)
+    fireEvent.keyDown(document.body, { key: 'Escape', code: 'Escape' })
   })
 }

@@ -249,14 +249,34 @@ describe('Secure Sessions API', () => {
         available: true,
         updatedAt: '2026-07-23T12:00:00.000Z',
       },
+      {
+        secretId: 'selected-projects',
+        providerId: 'local',
+        displayAlias: 'selected-only',
+        displayName: 'Selected projects token',
+        scope: {
+          kind: 'profiles' as const,
+          profileIds: ['profile-1', 'profile-3'],
+        },
+        retention: 'saved' as const,
+        bindings: [{
+          deliveryKind: 'environment' as const,
+          targetName: 'SELECTED_TOKEN',
+        }],
+        available: true,
+        updatedAt: '2026-07-23T12:00:00.000Z',
+      },
     ]
 
     expect(
       resolveSecureSecretsForProfile(secrets, 'profile-1').map((secret) => secret.secretId),
-    ).toEqual(['current-override'])
+    ).toEqual(['current-override', 'selected-projects'])
     expect(
       resolveSecureSecretsForProfile(secrets, 'profile-2').map((secret) => secret.secretId),
     ).toEqual(['global-shared', 'other-project'])
+    expect(
+      resolveSecureSecretsForProfile(secrets, 'profile-3').map((secret) => secret.secretId),
+    ).toEqual(['global-shared', 'selected-projects'])
   })
 
   it('posts a reviewed multi-secret grant as one batch request', async () => {

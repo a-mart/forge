@@ -321,8 +321,11 @@ export function resolveSecureSecretsForProfile(
 
   const resolvedByAlias = new Map<string, SecureSecretSummary>()
   for (const secret of secrets) {
-    if (secret.scope.kind === 'profile') {
-      if (secret.scope.profileId !== profileId) continue
+    if (secret.scope.kind !== 'instance') {
+      const profileIds = secret.scope.kind === 'profile'
+        ? [secret.scope.profileId]
+        : secret.scope.profileIds
+      if (!profileIds.includes(profileId)) continue
       resolvedByAlias.set(secret.displayAlias, secret)
       continue
     }

@@ -519,6 +519,16 @@ describe("SecureSessionStore", () => {
     const options = { dbPath, loadDatabaseModule: async () => Database };
     const first = await SecureSessionStore.open(options, () => new Date(NOW));
     seedLocalCatalog(first);
+    first.createSecret({
+      secretId: "multi-project-secret",
+      providerId: "local",
+      displayAlias: "multi-project",
+      scopeKind: "profile",
+      profileIds: ["profile-b", "profile-a"],
+      retention: "saved",
+      sourceLocator: "local:multi-project-secret",
+      encryptedMaterial: Buffer.from("safe-storage-multi-project-ciphertext")
+    });
     first.putProjectDefault({ profileId: "profile", secretId: "secret" });
     first.getOrCreateSessionState("session", { profileId: "profile" });
     first.createRequest({
@@ -558,6 +568,12 @@ describe("SecureSessionStore", () => {
     expect(second.listProjectDefaults("profile")).toEqual([
       expect.objectContaining({ secretId: "secret" })
     ]);
+    expect(second.getSecret("multi-project-secret")).toEqual(
+      expect.objectContaining({
+        profileId: "profile-a",
+        profileIds: ["profile-a", "profile-b"]
+      })
+    );
     await second.close();
 
     const verification = new Database(dbPath, { readonly: true });
@@ -706,6 +722,7 @@ describe("SecureSessionStore", () => {
     expect(store.deleteProjectSecretState("project-a")).toEqual({
       projectDefaultsDeleted: 0,
       secretsDeleted: 0,
+      secretsUpdated: 0,
     });
     expect(store.getAutomaticGrantPolicy("secret")).toEqual({
       kind: "all_projects",
@@ -754,7 +771,8 @@ describe("SecureSessionStore", () => {
     store.putProjectDefault({ profileId: "project-b", secretId: "secret" });
     expect(store.deleteProjectSecretState("project-b")).toEqual({
       projectDefaultsDeleted: 2,
-      secretsDeleted: 1
+      secretsDeleted: 1,
+      secretsUpdated: 0
     });
     expect(store.getSecret("project-secret")).toBeNull();
     expect(store.getSecret("secret")).not.toBeNull();
@@ -777,6 +795,83 @@ describe("SecureSessionStore", () => {
       profileId: "project-b",
       secretId: "session-secret"
     })).toThrow(/Session-only secrets/);
+    database.close();
+  });
+
+  it("persists multi-project availability and removes only a deleted project association", () => {
+    const { database, store } = createMemoryStore();
+    seedLocalCatalog(store);
+    const secret = store.createSecret({
+      secretId: "shared-project-secret",
+      providerId: "local",
+      displayAlias: "shared-token",
+      scopeKind: "profile",
+      profileIds: ["project-b", "project-a"],
+      retention: "saved",
+      sourceLocator: "local:shared-project-secret",
+      encryptedMaterial: Buffer.from("safe-storage-shared-ciphertext")
+    });
+
+    expect(secret).toEqual(expect.objectContaining({
+      profileId: "project-a",
+      profileIds: ["project-a", "project-b"]
+    }));
+    store.putProjectDefault({
+      profileId: "project-a",
+      secretId: secret.secretId
+    });
+    store.putProjectDefault({
+      profileId: "project-b",
+      secretId: secret.secretId
+    });
+    expect(() => store.putProjectDefault({
+      profileId: "project-c",
+      secretId: secret.secretId
+    })).toThrow(/another project's secret/);
+
+    expect(() => store.createSecret({
+      secretId: "overlapping-alias",
+      providerId: "local",
+      displayAlias: "shared-token",
+      scopeKind: "profile",
+      profileIds: ["project-b", "project-c"],
+      retention: "saved",
+      sourceLocator: "local:overlapping-alias",
+      encryptedMaterial: Buffer.from("safe-storage-overlap-ciphertext")
+    })).toThrow(SecureSessionAliasConflictError);
+    expect(store.createSecret({
+      secretId: "disjoint-alias",
+      providerId: "local",
+      displayAlias: "shared-token",
+      scopeKind: "profile",
+      profileIds: ["project-c"],
+      retention: "saved",
+      sourceLocator: "local:disjoint-alias",
+      encryptedMaterial: Buffer.from("safe-storage-disjoint-ciphertext")
+    })).toEqual(expect.objectContaining({
+      profileIds: ["project-c"]
+    }));
+
+    expect(store.deleteProjectSecretState("project-a")).toEqual({
+      projectDefaultsDeleted: 1,
+      secretsDeleted: 0,
+      secretsUpdated: 1
+    });
+    expect(store.getSecret(secret.secretId)).toEqual(expect.objectContaining({
+      profileId: "project-b",
+      profileIds: ["project-b"]
+    }));
+    expect(store.listProjectDefaults("project-b")).toEqual([
+      expect.objectContaining({ secretId: secret.secretId })
+    ]);
+
+    expect(store.deleteProjectSecretState("project-b")).toEqual({
+      projectDefaultsDeleted: 1,
+      secretsDeleted: 1,
+      secretsUpdated: 0
+    });
+    expect(store.getSecret(secret.secretId)).toBeNull();
+    expect(store.getSecret("disjoint-alias")).not.toBeNull();
     database.close();
   });
 

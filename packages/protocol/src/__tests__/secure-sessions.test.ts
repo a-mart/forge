@@ -97,6 +97,21 @@ describe('Secure Sessions protocol', () => {
       secretId: 'secret-api',
     })])
     expect(parseSecureSecretScope(secret.scope)).toEqual(secret.scope)
+    expect(parseSecureSecretScope({
+      kind: 'profiles',
+      profileIds: ['profile-1', 'profile-2'],
+    })).toEqual({
+      kind: 'profiles',
+      profileIds: ['profile-1', 'profile-2'],
+    })
+    expect(() => parseSecureSecretScope({
+      kind: 'profiles',
+      profileIds: [],
+    })).toThrow(SecureSessionsContractError)
+    expect(() => parseSecureSecretScope({
+      kind: 'profiles',
+      profileIds: ['profile-1', 'profile-1'],
+    })).toThrow(SecureSessionsContractError)
   })
 
   it('parses every guest-side binding without provider-side source fields', () => {

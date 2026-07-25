@@ -44,7 +44,9 @@ import {
 import {
   projectName,
   scopeFor,
+  scopeKindFor,
   scopeLabel,
+  scopeProfileIds,
   type SecretScopeKind,
 } from './secret-project-access-values'
 import {
@@ -80,9 +82,11 @@ export function SecretCatalogPanel({
   const [displayName, setDisplayName] = useState('')
   const [material, setMaterial] = useState('')
   const [localScopeKind, setLocalScopeKind] = useState<SecretScopeKind>(
-    profiles.length > 0 ? 'profile' : 'instance',
+    profiles.length > 0 ? 'projects' : 'instance',
   )
-  const [localProfileId, setLocalProfileId] = useState(firstProfileId)
+  const [localScopeProfileIds, setLocalScopeProfileIds] = useState<Set<string>>(
+    new Set(firstProfileId ? [firstProfileId] : []),
+  )
   const [localAutomaticProfileIds, setLocalAutomaticProfileIds] = useState<Set<string>>(
     new Set(),
   )
@@ -92,9 +96,12 @@ export function SecretCatalogPanel({
   const [bitwardenAlias, setBitwardenAlias] = useState('')
   const [bitwardenName, setBitwardenName] = useState('')
   const [bitwardenScopeKind, setBitwardenScopeKind] = useState<SecretScopeKind>(
-    profiles.length > 0 ? 'profile' : 'instance',
+    profiles.length > 0 ? 'projects' : 'instance',
   )
-  const [bitwardenProfileId, setBitwardenProfileId] = useState(firstProfileId)
+  const [bitwardenScopeProfileIds, setBitwardenScopeProfileIds] =
+    useState<Set<string>>(
+      new Set(firstProfileId ? [firstProfileId] : []),
+  )
   const [bitwardenAutomaticProfileIds, setBitwardenAutomaticProfileIds] =
     useState<Set<string>>(new Set())
   const [bitwardenEveryProject, setBitwardenEveryProject] = useState(false)
@@ -103,7 +110,8 @@ export function SecretCatalogPanel({
   const [editName, setEditName] = useState('')
   const [replacementMaterial, setReplacementMaterial] = useState('')
   const [editScopeKind, setEditScopeKind] = useState<SecretScopeKind>('instance')
-  const [editProfileId, setEditProfileId] = useState('')
+  const [editScopeProfileIds, setEditScopeProfileIds] =
+    useState<Set<string>>(new Set())
   const [editAutomaticProfileIds, setEditAutomaticProfileIds] =
     useState<Set<string>>(new Set())
   const [editEveryProject, setEditEveryProject] = useState(false)
@@ -196,14 +204,17 @@ export function SecretCatalogPanel({
     const fallbackProfileId = initialProfileId ?? profiles[0]?.profileId ?? ''
     const remainsSelectable = (profileId: string) =>
       profiles.some((profile) => profile.profileId === profileId)
-    const recover = (current: string) =>
-      remainsSelectable(current) ? current : fallbackProfileId
     const prune = (current: Set<string>) => new Set(
       [...current].filter(remainsSelectable),
     )
-    setLocalProfileId(recover)
-    setBitwardenProfileId(recover)
-    setEditProfileId(recover)
+    const recoverScope = (current: Set<string>) => {
+      const next = prune(current)
+      if (next.size === 0 && fallbackProfileId) next.add(fallbackProfileId)
+      return next
+    }
+    setLocalScopeProfileIds(recoverScope)
+    setBitwardenScopeProfileIds(recoverScope)
+    setEditScopeProfileIds(prune)
     setLocalAutomaticProfileIds(prune)
     setBitwardenAutomaticProfileIds(prune)
     setEditAutomaticProfileIds(prune)
@@ -227,7 +238,7 @@ export function SecretCatalogPanel({
     event.preventDefault()
     const materialForSubmission = material
     setMaterial('')
-    const scope = scopeFor(localScopeKind, localProfileId)
+    const scope = scopeFor(localScopeKind, localScopeProfileIds)
     const automaticGrantPolicy = automaticGrantPolicyFor(
       scope,
       localAutomaticProfileIds,
@@ -312,7 +323,7 @@ export function SecretCatalogPanel({
     event.preventDefault()
     const sourceLocator = bitwardenLocator.trim()
     setBitwardenLocator('')
-    const scope = scopeFor(bitwardenScopeKind, bitwardenProfileId)
+    const scope = scopeFor(bitwardenScopeKind, bitwardenScopeProfileIds)
     const automaticGrantPolicy = automaticGrantPolicyFor(
       scope,
       bitwardenAutomaticProfileIds,
@@ -401,8 +412,8 @@ export function SecretCatalogPanel({
     setEditAlias(secret.displayAlias)
     setEditName(secret.displayName ?? '')
     setReplacementMaterial('')
-    setEditScopeKind(secret.scope.kind)
-    setEditProfileId(secret.scope.kind === 'profile' ? secret.scope.profileId : profiles[0]?.profileId ?? '')
+    setEditScopeKind(scopeKindFor(secret.scope))
+    setEditScopeProfileIds(new Set(scopeProfileIds(secret.scope)))
     setEditAutomaticProfileIds(
       automaticGrantPolicy.kind === 'projects'
         ? new Set(automaticGrantPolicy.profileIds)
@@ -417,7 +428,7 @@ export function SecretCatalogPanel({
     setEditName('')
     setReplacementMaterial('')
     setEditScopeKind('instance')
-    setEditProfileId('')
+    setEditScopeProfileIds(new Set())
     setEditAutomaticProfileIds(new Set())
     setEditEveryProject(false)
   }
@@ -425,7 +436,7 @@ export function SecretCatalogPanel({
   const saveEdit = async (secret: SecureSecretSummary) => {
     const materialForSubmission = replacementMaterial
     setReplacementMaterial('')
-    const scope = scopeFor(editScopeKind, editProfileId)
+    const scope = scopeFor(editScopeKind, editScopeProfileIds)
     const automaticGrantPolicy = automaticGrantPolicyFor(
       scope,
       editAutomaticProfileIds,
@@ -569,34 +580,30 @@ export function SecretCatalogPanel({
                         idPrefix={`edit-${secret.secretId}`}
                         profiles={profiles}
                         scopeKind={editScopeKind}
-                        profileId={editProfileId}
+                        selectedProfileIds={editScopeProfileIds}
                         disabled={isBusy}
                         onScopeKindChange={(scopeKind) => {
                           setEditScopeKind(scopeKind)
-                          if (scopeKind === 'profile') {
-                            const profileId = editProfileId || profiles[0]?.profileId || ''
-                            setEditProfileId(profileId)
-                            const wasAutomatic =
-                              editEveryProject || editAutomaticProfileIds.has(profileId)
+                          if (scopeKind === 'projects') {
                             setEditEveryProject(false)
-                            setEditAutomaticProfileIds(
-                              wasAutomatic ? new Set([profileId]) : new Set(),
-                            )
                           }
                         }}
-                        onProfileIdChange={(profileId) => {
-                          const wasAutomatic = editAutomaticProfileIds.size > 0
-                          setEditProfileId(profileId)
-                          setEditAutomaticProfileIds(
-                            wasAutomatic ? new Set([profileId]) : new Set(),
+                        onProfileCheckedChange={(profileId, checked) => {
+                          setEditScopeProfileIds((current) =>
+                            withProfileChecked(current, profileId, checked)
                           )
+                          if (!checked) {
+                            setEditAutomaticProfileIds((current) =>
+                              withProfileChecked(current, profileId, false)
+                            )
+                          }
                         }}
                       />
                       <AutomaticGrantFields
                         idPrefix={`edit-${secret.secretId}`}
                         profiles={profiles}
                         scopeKind={editScopeKind}
-                        scopeProfileId={editProfileId}
+                        scopeProfileIds={editScopeProfileIds}
                         selectedProfileIds={editAutomaticProfileIds}
                         everyProject={editEveryProject}
                         limitReachedProfileIds={limitReachedProfileIds(secret.secretId)}
@@ -803,34 +810,30 @@ export function SecretCatalogPanel({
               idPrefix="bitwarden-secret"
               profiles={profiles}
               scopeKind={bitwardenScopeKind}
-              profileId={bitwardenProfileId}
+              selectedProfileIds={bitwardenScopeProfileIds}
               disabled={busyKey !== null}
               onScopeKindChange={(scopeKind) => {
                 setBitwardenScopeKind(scopeKind)
-                if (scopeKind === 'profile') {
-                  const profileId = bitwardenProfileId || profiles[0]?.profileId || ''
-                  setBitwardenProfileId(profileId)
-                  const wasAutomatic =
-                    bitwardenEveryProject || bitwardenAutomaticProfileIds.has(profileId)
+                if (scopeKind === 'projects') {
                   setBitwardenEveryProject(false)
-                  setBitwardenAutomaticProfileIds(
-                    wasAutomatic ? new Set([profileId]) : new Set(),
-                  )
                 }
               }}
-              onProfileIdChange={(profileId) => {
-                const wasAutomatic = bitwardenAutomaticProfileIds.size > 0
-                setBitwardenProfileId(profileId)
-                setBitwardenAutomaticProfileIds(
-                  wasAutomatic ? new Set([profileId]) : new Set(),
+              onProfileCheckedChange={(profileId, checked) => {
+                setBitwardenScopeProfileIds((current) =>
+                  withProfileChecked(current, profileId, checked)
                 )
+                if (!checked) {
+                  setBitwardenAutomaticProfileIds((current) =>
+                    withProfileChecked(current, profileId, false)
+                  )
+                }
               }}
             />
             <AutomaticGrantFields
               idPrefix="bitwarden-secret"
               profiles={profiles}
               scopeKind={bitwardenScopeKind}
-              scopeProfileId={bitwardenProfileId}
+              scopeProfileIds={bitwardenScopeProfileIds}
               selectedProfileIds={bitwardenAutomaticProfileIds}
               everyProject={bitwardenEveryProject}
               limitReachedProfileIds={limitReachedProfileIds()}
@@ -909,34 +912,30 @@ export function SecretCatalogPanel({
             idPrefix="local-secret"
             profiles={profiles}
             scopeKind={localScopeKind}
-            profileId={localProfileId}
+            selectedProfileIds={localScopeProfileIds}
             disabled={!materialEntryAvailable || busyKey !== null}
             onScopeKindChange={(scopeKind) => {
               setLocalScopeKind(scopeKind)
-              if (scopeKind === 'profile') {
-                const profileId = localProfileId || profiles[0]?.profileId || ''
-                setLocalProfileId(profileId)
-                const wasAutomatic =
-                  localEveryProject || localAutomaticProfileIds.has(profileId)
+              if (scopeKind === 'projects') {
                 setLocalEveryProject(false)
-                setLocalAutomaticProfileIds(
-                  wasAutomatic ? new Set([profileId]) : new Set(),
-                )
               }
             }}
-            onProfileIdChange={(profileId) => {
-              const wasAutomatic = localAutomaticProfileIds.size > 0
-              setLocalProfileId(profileId)
-              setLocalAutomaticProfileIds(
-                wasAutomatic ? new Set([profileId]) : new Set(),
+            onProfileCheckedChange={(profileId, checked) => {
+              setLocalScopeProfileIds((current) =>
+                withProfileChecked(current, profileId, checked)
               )
+              if (!checked) {
+                setLocalAutomaticProfileIds((current) =>
+                  withProfileChecked(current, profileId, false)
+                )
+              }
             }}
           />
           <AutomaticGrantFields
             idPrefix="local-secret"
             profiles={profiles}
             scopeKind={localScopeKind}
-            scopeProfileId={localProfileId}
+            scopeProfileIds={localScopeProfileIds}
             selectedProfileIds={localAutomaticProfileIds}
             everyProject={localEveryProject}
             limitReachedProfileIds={limitReachedProfileIds()}
@@ -997,9 +996,14 @@ function automaticGrantPolicyFor(
   if (everyProject) {
     return scope.kind === 'instance' ? { kind: 'all_projects' } : null
   }
-  const profileIds = scope.kind === 'profile'
-    ? (selectedProfileIds.has(scope.profileId) ? [scope.profileId] : [])
-    : [...selectedProfileIds].sort()
+  const availableProfileIds = scope.kind === 'instance'
+    ? null
+    : new Set(scopeProfileIds(scope))
+  const profileIds = [...selectedProfileIds]
+    .filter((profileId) =>
+      availableProfileIds === null || availableProfileIds.has(profileId)
+    )
+    .sort()
   return profileIds.length > 0
     ? { kind: 'projects', profileIds }
     : { kind: 'none' }
@@ -1039,10 +1043,11 @@ function hasAliasCollision(
 }
 
 function sameScope(left: SecureSecretScope, right: SecureSecretScope): boolean {
-  return left.kind === right.kind
-    && (left.kind === 'instance' || (
-      right.kind === 'profile' && left.profileId === right.profileId
-    ))
+  if (left.kind === 'instance' || right.kind === 'instance') {
+    return left.kind === 'instance' && right.kind === 'instance'
+  }
+  const rightProfileIds = new Set(scopeProfileIds(right))
+  return scopeProfileIds(left).some((profileId) => rightProfileIds.has(profileId))
 }
 
 function validAlias(value: string): boolean {

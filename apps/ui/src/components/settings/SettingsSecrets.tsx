@@ -85,7 +85,14 @@ function BuilderSecretsSettings({
   )
   const visibleSecrets = useMemo(
     () => catalog.secrets.filter((secret) =>
-      secret.scope.kind === 'instance' || projectProfileIds.has(secret.scope.profileId)
+      secret.scope.kind === 'instance'
+      || (
+        secret.scope.kind === 'profile'
+          ? projectProfileIds.has(secret.scope.profileId)
+          : secret.scope.profileIds.some((profileId) =>
+              projectProfileIds.has(profileId)
+            )
+      )
     ),
     [catalog.secrets, projectProfileIds],
   )

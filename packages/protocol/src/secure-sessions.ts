@@ -129,6 +129,7 @@ export type SecureSecretRetention = (typeof SECURE_SECRET_RETENTIONS)[number]
 export type SecureSecretScope =
   | { kind: 'instance' }
   | { kind: 'profile'; profileId: string }
+  | { kind: 'profiles'; profileIds: string[] }
 
 /**
  * One project may automatically grant at most this many saved secrets.
@@ -488,7 +489,34 @@ export function parseSecureSecretScope(value: unknown): SecureSecretScope {
       ),
     }
   }
-  throw new SecureSessionsContractError('scope.kind must be instance or profile')
+  if (input.kind === 'profiles') {
+    knownKeys(input, ['kind', 'profileIds'], 'scope')
+    if (
+      !Array.isArray(input.profileIds)
+      || input.profileIds.length === 0
+      || input.profileIds.length > SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS
+    ) {
+      throw new SecureSessionsContractError(
+        `scope.profileIds must contain between 1 and ${SECURE_SESSIONS_MAX_POLICY_PROFILE_IDS} project IDs`,
+      )
+    }
+    const profileIds = input.profileIds.map((profileId, index) =>
+      boundedString(
+        profileId,
+        `scope.profileIds[${index}]`,
+        SECURE_SESSIONS_MAX_ID_LENGTH,
+      )
+    )
+    if (new Set(profileIds).size !== profileIds.length) {
+      throw new SecureSessionsContractError(
+        'scope.profileIds must contain unique project IDs',
+      )
+    }
+    return { kind: 'profiles', profileIds }
+  }
+  throw new SecureSessionsContractError(
+    'scope.kind must be instance, profile, or profiles',
+  )
 }
 
 export function isSecureSecretScope(value: unknown): value is SecureSecretScope {

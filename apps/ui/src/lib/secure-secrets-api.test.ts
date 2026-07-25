@@ -187,14 +187,19 @@ describe('secure secrets API', () => {
       displayAlias: 'github/work',
       displayName: 'GitHub work token',
       material: rawSecret,
-      scope: { kind: 'profile', profileId: 'project-alpha' },
+      scope: {
+        kind: 'profiles',
+        profileIds: ['project-alpha', 'project-beta'],
+      },
     })
 
     const requestBody = String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Forge-Secure-Control'))
       .toBe('test-secure-control-token-that-is-long-enough')
     expect(requestBody).toContain('"encryptedMaterial":"ciphertext-only"')
-    expect(requestBody).toContain('"scope":{"kind":"profile","profileId":"project-alpha"}')
+    expect(requestBody).toContain(
+      '"scope":{"kind":"profiles","profileIds":["project-alpha","project-beta"]}',
+    )
     expect(requestBody).not.toContain(rawSecret)
   })
 

@@ -829,6 +829,33 @@ export const SECURE_SESSION_MIGRATIONS: readonly SecureSessionMigration[] = [
         END;
       `);
     }
+  },
+  {
+    version: 5,
+    name: "multi_project_secret_availability",
+    up(database) {
+      database.exec(`
+        CREATE TABLE secure_session_secret_scope_profile (
+          secret_id TEXT NOT NULL
+            REFERENCES secure_session_secret(secret_id) ON DELETE CASCADE,
+          profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 256),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (secret_id, profile_id)
+        ) STRICT;
+
+        CREATE INDEX secure_session_secret_scope_profile_profile_idx
+          ON secure_session_secret_scope_profile(profile_id, secret_id);
+
+        INSERT INTO secure_session_secret_scope_profile (
+          secret_id, profile_id, created_at, updated_at
+        )
+        SELECT secret_id, profile_id, created_at, updated_at
+        FROM secure_session_secret
+        WHERE scope_kind = 'profile'
+        ORDER BY secret_id;
+      `);
+    }
   }
 ];
 

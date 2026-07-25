@@ -9,12 +9,13 @@ principals with independent containers, grants, and requests.
 
 Every saved local-vault or Bitwarden-backed secret has a scope:
 
-- **Only this project** makes it selectable in one local project.
-- **All projects** makes it selectable in every local project.
+- Check one or more projects to make it selectable only in those local projects.
+- Check **All projects** to make it selectable in every local project, including
+  projects created later.
 
-Adding a secret from a project defaults to that project. If both scopes contain the
-same alias, that project uses its project-scoped secret while other projects continue
-to use the all-projects secret.
+Adding a secret from a project defaults to that project. If a selected-project secret
+and an all-projects secret use the same alias, each selected project uses the
+selected-project secret while other projects continue to use the all-projects secret.
 
 Right-click a local project header and choose **Project Secrets** to open this page
 with that project preselected. The shortcut does not switch conversations or clear
@@ -46,8 +47,8 @@ automatic-grant policy as local-vault secrets.
 
 Under **Automatically grant in**, select one or more projects. An all-projects secret
 can instead use **Every project**, which covers current projects and projects created
-later. A project-only secret can be granted automatically only in its own project.
-Catalog availability alone never grants access.
+later. A selected-project secret can be granted automatically only in the projects
+where it is available. Catalog availability alone never grants access.
 
 Each selected policy gives the secret an **Until Secure Session stops** lease for
 each eligible team principal when Team Secure Mode starts.
@@ -62,8 +63,9 @@ only that principal's automatic grant and reports a fixed status without blockin
 other grants or principals. Each project supports at most 16 effective automatic grants.
 
 Archiving a project preserves its project-only secrets and automatic-grant mappings.
-Permanently deleting the project removes those project-only entries, but does not
-delete an all-projects secret or its **Every project** policy.
+Permanently deleting a project removes that project from selected-project entries,
+deleting a secret only if it was the final selected project. It does not delete an
+all-projects secret or its **Every project** policy.
 
 ## Bind a delivery shape
 

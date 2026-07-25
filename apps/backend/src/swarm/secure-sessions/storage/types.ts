@@ -129,6 +129,7 @@ export interface SecureSessionSecret {
   displayName: string | null;
   scopeKind: SecureSessionScopeKind;
   profileId: string | null;
+  profileIds: string[];
   retention: SecureSessionRetention;
   /** Backend-only provider locator; transport adapters must explicitly project public fields. */
   sourceLocator: string;
@@ -164,6 +165,7 @@ export interface ReplaceSecureSessionAutomaticGrantPolicyInput {
 export interface DeleteSecureSessionProjectStateResult {
   projectDefaultsDeleted: number;
   secretsDeleted: number;
+  secretsUpdated: number;
 }
 
 export interface SecureSessionEncryptedSecret extends SecureSessionSecret {
@@ -178,6 +180,7 @@ export interface CreateSecureSessionSecretInput {
   displayName?: string | null;
   scopeKind: SecureSessionScopeKind;
   profileId?: string | null;
+  profileIds?: string[];
   retention: SecureSessionRetention;
   sourceLocator: string;
   /** Electron safeStorage ciphertext only; null is valid for remote-provider records. */

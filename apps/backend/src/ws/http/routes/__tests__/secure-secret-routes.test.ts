@@ -103,7 +103,10 @@ describe("secure secret routes", () => {
       displayAlias: "DEPLOY_TOKEN",
       encryptedMaterial: materialCiphertext,
       bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
-      scope: { kind: "profile", profileId: "profile-1" },
+      scope: {
+        kind: "profiles",
+        profileIds: ["profile-1", "profile-2"],
+      },
       retention: "saved",
     });
     expect(created.status).toBe(201);
@@ -111,7 +114,10 @@ describe("secure secret routes", () => {
       displayAlias: "DEPLOY_TOKEN",
       encryptedMaterial: materialCiphertext,
       bindings: [{ deliveryKind: "environment", targetName: "DEPLOY_TOKEN" }],
-      scope: { kind: "profile", profileId: "profile-1" },
+      scope: {
+        kind: "profiles",
+        profileIds: ["profile-1", "profile-2"],
+      },
       retention: "saved",
     });
 
