@@ -200,6 +200,8 @@ export interface ExternalChromeHelloParams {
   protocol: ExternalChromeProtocolRange
   shellAbi: number
   payloadVersion: string
+  /** Hash parsed from the immutable selected payload directory by the shell-loaded runtime. */
+  payloadSha256: string
   extensionId: string
   extensionInstanceId: string
   profileAlias?: string
@@ -827,13 +829,18 @@ function parseBrowserFailure(value: unknown, path: string): BrowserAutomationFai
 
 function parseHelloParams(value: unknown): ExternalChromeHelloParams {
   const params = object(value, 'params')
-  strictKeys(params, 'params', ['protocol', 'shellAbi', 'payloadVersion', 'extensionId', 'extensionInstanceId', 'chromeVersion', 'methods', 'maxMessageBytes', 'operations', 'features'], ['profileAlias'])
+  strictKeys(params, 'params', ['protocol', 'shellAbi', 'payloadVersion', 'payloadSha256', 'extensionId', 'extensionInstanceId', 'chromeVersion', 'methods', 'maxMessageBytes', 'operations', 'features'], ['profileAlias'])
   const extensionId = identifier(params.extensionId, 'params.extensionId')
   if (extensionId !== EXTERNAL_CHROME_EXTENSION_ID) fail('invalid-params', 'params.extensionId does not match the pinned identity', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
   return {
     protocol: parseProtocolRange(params.protocol),
     shellAbi: integer(params.shellAbi, 'params.shellAbi', 1),
     payloadVersion: identifier(params.payloadVersion, 'params.payloadVersion'),
+    payloadSha256: (() => {
+      const digest = boundedString(params.payloadSha256, 'params.payloadSha256', 64)
+      if (!/^[a-f0-9]{64}$/u.test(digest)) fail('invalid-params', 'params.payloadSha256 must be lowercase SHA-256', EXTERNAL_CHROME_JSON_RPC_ERROR_CODES.invalidParams)
+      return digest
+    })(),
     extensionId,
     extensionInstanceId: identifier(params.extensionInstanceId, 'params.extensionInstanceId'),
     ...(params.profileAlias === undefined ? {} : { profileAlias: boundedString(params.profileAlias, 'params.profileAlias', EXTERNAL_CHROME_MAX_LABEL_LENGTH) }),

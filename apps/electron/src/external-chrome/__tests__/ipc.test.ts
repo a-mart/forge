@@ -17,6 +17,7 @@ const status = {
   canRemove: true,
   canTakeover: true,
   canReveal: true,
+  recovery: 'ready',
   setup: {
     extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' as const,
     pathState: 'ready' as const,

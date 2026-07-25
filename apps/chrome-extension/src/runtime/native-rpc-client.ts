@@ -33,6 +33,7 @@ export interface NativeRpcClientOptions {
   connect: (hostName: string) => ChromeRuntimePort
   extensionInstanceId: string
   chromeVersion: string
+  payloadSha256?: string
   profileAlias?: string
   scheduler?: NativeRpcScheduler
   randomId?: () => string
@@ -134,6 +135,7 @@ export class NativeRpcClient {
       protocol: { min: EXTERNAL_CHROME_PROTOCOL_MIN_VERSION, max: EXTERNAL_CHROME_PROTOCOL_MAX_VERSION },
       shellAbi: SHELL_ABI,
       payloadVersion: PAYLOAD_VERSION,
+      payloadSha256: this.options.payloadSha256 ?? '0'.repeat(64),
       extensionId: EXTERNAL_CHROME_EXTENSION_ID,
       extensionInstanceId: this.options.extensionInstanceId,
       ...(this.options.profileAlias ? { profileAlias: this.options.profileAlias } : {}),

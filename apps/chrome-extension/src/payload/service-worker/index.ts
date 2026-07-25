@@ -15,6 +15,7 @@ import { restrictedTargetReason } from '../../runtime/restricted-target.js'
 import { NativeRpcClient } from '../../runtime/native-rpc-client.js'
 import { ExternalChromeOperationExecutor } from '../../runtime/operation-executor.js'
 import type { ServiceWorkerPayload, ShellEventName } from '../../shell/service-worker-bootstrap.js'
+import { loadVerifiedPayloadSelector } from '../../shell/selector.js'
 
 const INSTANCE_KEY = 'forge.externalChrome.instanceId.v1'
 const PROFILE_ALIAS_KEY = 'forge.externalChrome.profileAlias.v1'
@@ -64,10 +65,12 @@ function selectedTab(tab: ChromeTab): Record<string, unknown> {
   }
 }
 
-function payloadDirectory(): string {
+function payloadIdentity(): { directory: string; sha256: string } {
   const match = /\/payloads\/([^/]+)\/service-worker\.js(?:\?|$)/.exec(import.meta.url)
   if (match === null || !match[1].startsWith(`${PAYLOAD_VERSION}-`)) throw new Error('payload directory does not match runtime version')
-  return match[1]
+  const sha256 = match[1].slice(PAYLOAD_VERSION.length + 1)
+  if (!/^[a-f0-9]{64}$/u.test(sha256)) throw new Error('payload directory has no immutable SHA-256 identity')
+  return { directory: match[1], sha256 }
 }
 
 export class Runtime implements ServiceWorkerPayload {
@@ -95,10 +98,14 @@ export class Runtime implements ServiceWorkerPayload {
   })
   private native: NativeRpcClient | null = null
   private directory = ''
+  private payloadSha256 = ''
   private extensionInstanceId = ''
+  private acceptingOperations = true
 
   async initialize(): Promise<void> {
-    this.directory = payloadDirectory()
+    const identity = payloadIdentity()
+    this.directory = identity.directory
+    this.payloadSha256 = identity.sha256
     const stored = await this.chrome.storage.local.get(INSTANCE_KEY)
     const extensionInstanceId = typeof stored[INSTANCE_KEY] === 'string' ? stored[INSTANCE_KEY] as string : crypto.randomUUID()
     this.extensionInstanceId = extensionInstanceId
@@ -123,6 +130,7 @@ export class Runtime implements ServiceWorkerPayload {
       connect: (hostName) => this.chrome.runtime.connectNative(hostName),
       extensionInstanceId,
       chromeVersion: chromeVersion(),
+      payloadSha256: this.payloadSha256,
       ...(profileAlias ? { profileAlias } : {}),
       onConnected: () => {
         void this.chrome.alarms.clear(TRANSPORT_GRACE_ALARM)
@@ -267,6 +275,9 @@ export class Runtime implements ServiceWorkerPayload {
   private async handleDesktopRequest(message: ExternalChromeJsonRpcMessage): Promise<unknown> {
     if (!('method' in message) || !('id' in message)) throw new Error('Desktop message is not a request')
     const request = message as ExternalChromeRequest
+    if (!this.acceptingOperations && !['forge.runtime.ping', 'forge.runtime.prepareUpdate', 'forge.runtime.reload'].includes(request.method)) {
+      throw new LeaseError('lease-lost', 'runtime is quiesced for update')
+    }
     switch (request.method) {
       case 'forge.runtime.ping':
         return { protocolVersion: 1, nonce: request.params.nonce, receivedAt: new Date().toISOString() }
@@ -348,14 +359,32 @@ export class Runtime implements ServiceWorkerPayload {
           turnId: request.params.turnId, releasedTabs: result.releasedTabs, handoffTabs: result.handoffTabs,
         }
       }
-      case 'forge.runtime.prepareUpdate':
-      case 'forge.runtime.reload':
+      case 'forge.runtime.prepareUpdate': {
+        this.acceptingOperations = false
+        const lease = this.leases.current()
+        if (lease !== null) {
+          const releasedTabIds = await this.releaseDebuggerAuthority(lease.leaseId, lease.leaseEpoch)
+          this.broadcastStatus(releasedTabIds, 'detached')
+          this.notifyLocalLease(lease, 'released')
+        }
+        return { protocolVersion: 1, payloadVersion: request.params.payloadVersion, quiesced: true }
+      }
+      case 'forge.runtime.reload': {
+        const selector = await loadVerifiedPayloadSelector((entry) => this.chrome.runtime.getURL(entry), 'service-worker.js')
+        if (selector.payloadVersion !== request.params.payloadVersion || selector.payloadSha256 !== request.params.sha256) {
+          throw new Error('selected payload does not match the authenticated reload request')
+        }
+        // The JSON-RPC response must reach Desktop before this worker invalidates its native port.
+        setTimeout(() => this.chrome.runtime.reload(), 0)
+        return { protocolVersion: 1, payloadVersion: request.params.payloadVersion, accepted: true }
+      }
       case 'forge.runtime.hello':
         throw new Error(`${request.method} is not enabled by the current External Chrome runtime`)
     }
   }
 
   private async executeDesktopRequest(params: Extract<ExternalChromeRequest, { method: 'forge.browser.execute' }>['params']): Promise<unknown> {
+    if (!this.acceptingOperations) throw new LeaseError('lease-lost', 'runtime is quiesced for update')
     let lease = this.leases.current()
     if (lease?.state === 'HANDOFF' && lease.leaseId === params.leaseId && lease.leaseEpoch === params.leaseEpoch && lease.tabIds.includes(params.tabId)) {
       const handoffTabs = [...lease.tabIds]
@@ -844,7 +873,7 @@ export async function releaseLeaseDebuggerAuthority(
   leaseEpoch: number,
 ): Promise<number[]> {
   const tabIds = await leases.beginRelease(leaseId, leaseEpoch)
-  const results = await Promise.allSettled(tabIds.map((tabId) => debuggers.detach(tabId)))
+  const results = await Promise.allSettled(tabIds.map((tabId) => debuggers.reset(tabId)))
   const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
   if (failure) throw failure.reason
   await leases.completeRelease(leaseId, leaseEpoch)

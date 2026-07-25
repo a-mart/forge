@@ -42,6 +42,7 @@ export interface ExternalChromeRuntimeInventory {
   profileAlias?: string
   chromeVersion: string
   payloadVersion: string
+  payloadSha256?: string
   supportedOperations: BrowserAutomationOperation[]
   features: ExternalChromeFeatures
   connectedAt: string
@@ -91,17 +92,17 @@ class LeaseCheckpointStore {
   put(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
     return this.serialize(async () => {
       await this.load()
-      this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== checkpoint.leaseId || lease.leaseEpoch !== checkpoint.leaseEpoch)
+      this.checkpoints = this.checkpoints.filter((lease) => lease.extensionInstanceId !== checkpoint.extensionInstanceId || lease.leaseId !== checkpoint.leaseId || lease.leaseEpoch !== checkpoint.leaseEpoch)
       this.checkpoints.push(structuredClone(checkpoint))
       if (this.checkpoints.length > 128) this.checkpoints.splice(0, this.checkpoints.length - 128)
       await this.persist()
     })
   }
 
-  remove(leaseId: string, leaseEpoch: number): Promise<void> {
+  remove(extensionInstanceId: string, leaseId: string, leaseEpoch: number): Promise<void> {
     return this.serialize(async () => {
       await this.load()
-      this.checkpoints = this.checkpoints.filter((lease) => lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch)
+      this.checkpoints = this.checkpoints.filter((lease) => lease.extensionInstanceId !== extensionInstanceId || lease.leaseId !== leaseId || lease.leaseEpoch !== leaseEpoch)
       await this.persist()
     })
   }
@@ -287,6 +288,7 @@ class RuntimeConnection {
   }>()
   private requestSequence = 0
   private closed = false
+  private firstLeaseReport = true
 
   constructor(
     private readonly peer: FramedSocketPeer,
@@ -303,6 +305,7 @@ class RuntimeConnection {
   async request<Method extends ExternalChromeRequestMethod>(
     method: Method,
     params: ExternalChromeRequestParamsByMethod[Method],
+    timeoutOverrideMs?: number,
   ): Promise<ExternalChromeResultByMethod[Method]> {
     if (this.closed) throw new Error('extension runtime is disconnected')
     if (this.pending.size >= MAX_PENDING_REQUESTS) throw new Error('extension request queue is full')
@@ -310,9 +313,11 @@ class RuntimeConnection {
     const requestedDeadline = method === 'forge.browser.execute' && typeof (params as { deadlineAt?: unknown }).deadlineAt === 'string'
       ? Date.parse((params as { deadlineAt: string }).deadlineAt)
       : Number.NaN
-    const timeoutMs = Number.isFinite(requestedDeadline)
-      ? Math.max(1, Math.min(61_000, requestedDeadline - Date.now() + 250))
-      : 10_000
+    const timeoutMs = timeoutOverrideMs !== undefined
+      ? Math.max(1, Math.min(61_000, timeoutOverrideMs))
+      : Number.isFinite(requestedDeadline)
+        ? Math.max(1, Math.min(61_000, requestedDeadline - Date.now() + 250))
+        : 10_000
     const response = await new Promise<ExternalChromeJsonRpcMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
@@ -329,6 +334,12 @@ class RuntimeConnection {
     if ('error' in response) throw new Error(response.error.data?.code ?? response.error.message)
     if (!('result' in response)) throw new Error('extension returned an invalid response')
     return response.result as ExternalChromeResultByMethod[Method]
+  }
+
+  consumeFirstLeaseReport(): boolean {
+    const first = this.firstLeaseReport
+    this.firstLeaseReport = false
+    return first
   }
 
   close(): void {
@@ -385,15 +396,16 @@ class RuntimeConnection {
         ...(hello.profileAlias ? { profileAlias: hello.profileAlias } : {}),
         chromeVersion: hello.chromeVersion,
         payloadVersion: hello.payloadVersion,
+        payloadSha256: hello.payloadSha256,
         supportedOperations: hello.operations.filter((operation) => operation.supported).map((operation) => operation.operation),
         features: structuredClone(hello.features),
         connectedAt: new Date().toISOString(),
       }
-      await this.onHello(this, hello)
       await this.sendPayload({ jsonrpc: '2.0', id: parsed.id, result: {
         protocolVersion: 1, desktopInstanceId: this.context.desktopInstanceId, heartbeatMs: HEARTBEAT_MS,
         maxMessageBytes: this.maxMessageBytes, requiredShellAbi: 1,
       } })
+      await this.onHello(this, hello)
       return
     }
     if (parsed.method === 'forge.runtime.ping') {
@@ -426,14 +438,30 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private readonly checkpoints: LeaseCheckpointStore
   private reconciliation: Promise<void> = Promise.resolve()
   private lifecycleReleaseOperations: Promise<void> = Promise.resolve()
+  private acceptingOperations = false
+  private expectedRuntime: { payloadVersion: string; sha256: string; shellAbi: number } | null = null
+  private recovery: 'ready' | 'updating' | 'reconnecting' | 'manual-extension-reload' | 'incompatible-payload' = 'reconnecting'
+  private updateAttempt: Promise<void> | null = null
 
   constructor(checkpointFile: string, private readonly now: () => number = Date.now) {
     this.checkpoints = new LeaseCheckpointStore(checkpointFile)
   }
 
+  configureExpectedRuntime(runtime: { payloadVersion: string; sha256: string; shellAbi: number } | null): void {
+    this.expectedRuntime = runtime === null ? null : { ...runtime }
+    this.acceptingOperations = runtime === null
+    this.recovery = runtime === null ? 'ready' : 'reconnecting'
+  }
+
+  recoveryStatus(): 'ready' | 'updating' | 'reconnecting' | 'manual-extension-reload' | 'incompatible-payload' {
+    return this.recovery
+  }
+
   activate(input: { epoch: string; desktopInstanceId: string; keyId: string; secret: Uint8Array }): void {
     this.deactivate()
     this.context = { ...input, secret: Buffer.from(input.secret) }
+    this.acceptingOperations = this.expectedRuntime === null
+    this.recovery = this.expectedRuntime === null ? 'ready' : 'reconnecting'
   }
 
   deactivate(): void {
@@ -444,6 +472,42 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     this.connections.clear()
     this.context?.secret.fill(0)
     this.context = null
+    this.acceptingOperations = false
+  }
+
+  /**
+   * Bounded Desktop lifecycle barrier. New authority is rejected before the first
+   * await; every acknowledged checkpoint is then released at its exact epoch.
+   */
+  async quiesce(reason: 'desktop-update' | 'desktop-quit', deadlineAt: number): Promise<void> {
+    this.acceptingOperations = false
+    const connections = [...this.connections.values()]
+    const preparation = await Promise.allSettled(connections.map(async (connection) => {
+      const inventory = connection.inventory
+      if (!inventory) throw new Error('runtime hello is incomplete')
+      if (!inventory.payloadSha256) throw new Error('runtime hello has no immutable payload identity')
+      const target = this.expectedRuntime ?? { payloadVersion: inventory.payloadVersion, sha256: inventory.payloadSha256, shellAbi: 1 }
+      const result = await connection.request('forge.runtime.prepareUpdate', {
+        protocolVersion: 1, payloadVersion: target.payloadVersion, sha256: target.sha256,
+        deadlineAt: new Date(deadlineAt).toISOString(),
+      }, Math.max(1, Math.floor((deadlineAt - this.now()) / 2)))
+      if (result.payloadVersion !== target.payloadVersion || result.quiesced !== true) throw new Error('runtime returned a mismatched prepareUpdate acknowledgement')
+    }))
+    const checkpoints = (await this.checkpoints.all()).filter((lease) => lease.releasedAt === undefined)
+    const releases = await Promise.allSettled(checkpoints.map(async (lease) => {
+      const connection = this.connections.get(lease.extensionInstanceId)
+      if (!connection) throw new Error('runtime disconnected before exact lease release')
+      const result = await connection.request('forge.browser.release', {
+        protocolVersion: 1, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch, reason,
+      }, Math.max(1, deadlineAt - this.now()))
+      if (result.leaseId !== lease.leaseId || result.leaseEpoch !== lease.leaseEpoch) throw new Error('runtime release acknowledgement changed lease authority')
+      await this.checkpoints.remove(lease.extensionInstanceId, lease.leaseId, lease.leaseEpoch)
+    }))
+    const remaining = (await this.checkpoints.all()).filter((lease) => lease.releasedAt === undefined)
+    const failures = [...preparation, ...releases].filter((result) => result.status === 'rejected')
+    if (failures.length > 0 || remaining.length > 0) {
+      throw new Error(`External Chrome quiesce could not prove release of ${remaining.length} lease(s)`)
+    }
   }
 
   accept(socket: Socket): void {
@@ -470,6 +534,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   async listCandidates(extensionInstanceId: string, sessionAgentId: string): Promise<ExternalChromeResultByMethod['forge.browser.listCandidates']> {
+    this.assertAcceptingOperations()
     return this.connection(extensionInstanceId).request('forge.browser.listCandidates', { protocolVersion: 1, sessionAgentId })
   }
 
@@ -477,6 +542,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     extensionInstanceId: string; sessionAgentId: string; profileId: string; leaseId: string; leaseEpoch: number;
     tabIds: number[]; groupId?: number; childPolicy: ExternalChromeChildPolicy
   }): Promise<ExternalChromeResultByMethod['forge.browser.claim']> {
+    this.assertAcceptingOperations()
     const result = await this.connection(input.extensionInstanceId).request('forge.browser.claim', {
       protocolVersion: 1, sessionAgentId: input.sessionAgentId, leaseId: input.leaseId, leaseEpoch: input.leaseEpoch,
       tabIds: input.tabIds, ...(input.groupId === undefined ? {} : { groupId: input.groupId }), childPolicy: input.childPolicy,
@@ -537,7 +603,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       canonical([...result.handoffTabs].sort((a, b) => a - b)) !== canonical([...input.handoffTabs].sort((a, b) => a - b))) {
       throw new Error('extension turn response changed authorized dispositions')
     }
-    if (input.handoffTabs.length === 0) await this.checkpoints.remove(input.leaseId, input.leaseEpoch)
+    if (input.handoffTabs.length === 0) await this.checkpoints.remove(input.extensionInstanceId, input.leaseId, input.leaseEpoch)
     else await this.checkpoints.put({
       ...checkpoint, tabIds: [...input.handoffTabs].sort((a, b) => a - b),
       handoffTurnId: input.turnId, expiresAt: Math.min(checkpoint.expiresAt, this.now() + 2 * 60_000),
@@ -554,7 +620,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         if (result.leaseId !== leaseId || result.leaseEpoch !== leaseEpoch) throw new Error('extension release response changed lease routing')
       }
       if (checkpoint?.lifecycleReleaseId) await this.checkpoints.put({ ...checkpoint, releasedAt: checkpoint.releasedAt ?? this.now() })
-      else await this.checkpoints.remove(leaseId, leaseEpoch)
+      else await this.checkpoints.remove(extensionInstanceId, leaseId, leaseEpoch)
     })
   }
 
@@ -629,6 +695,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   }
 
   async execute(request: BrowserAutomationRequest): Promise<ExternalChromeTransportResult> {
+    if (!this.acceptingOperations && request.operation !== 'status') return failure('extension-update-required', 'External Chrome is updating or reconnecting.', true)
     if (request.operation === 'status') return this.statusResult(request)
     if (request.operation === 'open') return this.openResult(request)
     if (request.operation === 'navigate') return this.navigateResult(request)
@@ -824,7 +891,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           const current = (await this.checkpoints.all()).find((candidate) => candidate.extensionInstanceId === lease.extensionInstanceId
             && candidate.leaseId === lease.leaseId && candidate.leaseEpoch === lease.leaseEpoch) ?? lease
           if (current.sessionAgentId === '__local_pending__' || current.profileId === '__local_pending__') {
-            await this.checkpoints.remove(current.leaseId, current.leaseEpoch)
+            await this.checkpoints.remove(current.extensionInstanceId, current.leaseId, current.leaseEpoch)
           } else {
             // Merge the latest durable transaction fields: expiry and an explicit
             // lifecycle prepare may race, but neither may erase the other's authority.
@@ -838,7 +905,43 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
   private connection(extensionInstanceId: string): RuntimeConnection {
     const connection = this.connections.get(extensionInstanceId)
     if (!connection) throw new Error('requested extension instance is disconnected')
+    if (!this.runtimeMatchesExpected(connection.inventory)) throw new Error('extension-update-required')
     return connection
+  }
+
+  private assertAcceptingOperations(): void {
+    if (!this.acceptingOperations) throw new Error('extension-update-required')
+  }
+
+  private runtimeMatchesExpected(inventory: ExternalChromeRuntimeInventory | null): boolean {
+    if (inventory === null) return false
+    return this.expectedRuntime === null || (
+      inventory.payloadVersion === this.expectedRuntime.payloadVersion && inventory.payloadSha256 === this.expectedRuntime.sha256
+    )
+  }
+
+  private beginRuntimeUpdate(connection: RuntimeConnection): void {
+    if (this.updateAttempt !== null || this.expectedRuntime === null) return
+    this.recovery = 'updating'
+    const expected = this.expectedRuntime
+    const attempt = (async () => {
+      const prepared = await connection.request('forge.runtime.prepareUpdate', {
+        protocolVersion: 1, payloadVersion: expected.payloadVersion, sha256: expected.sha256,
+        deadlineAt: new Date(Date.now() + 10_000).toISOString(),
+      })
+      if (prepared.payloadVersion !== expected.payloadVersion || prepared.quiesced !== true) throw new Error('prepareUpdate acknowledgement changed payload identity')
+      const reloaded = await connection.request('forge.runtime.reload', {
+        protocolVersion: 1, payloadVersion: expected.payloadVersion, sha256: expected.sha256,
+      })
+      if (reloaded.payloadVersion !== expected.payloadVersion || reloaded.accepted !== true) throw new Error('runtime.reload acknowledgement changed payload identity')
+      this.recovery = 'reconnecting'
+    })().catch(() => {
+      this.recovery = 'manual-extension-reload'
+      this.acceptingOperations = false
+    }).finally(() => {
+      if (this.updateAttempt === attempt) this.updateAttempt = null
+    })
+    this.updateAttempt = attempt
   }
 
   private async handshake(peer: FramedSocketPeer, context: RelayContext): Promise<void> {
@@ -878,20 +981,41 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
           const previous = this.connections.get(runtimeHello.extensionInstanceId)
           if (previous && previous !== connection) previous.close()
           this.connections.set(runtimeHello.extensionInstanceId, connection)
-          const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(runtimeHello.extensionInstanceId) }, 0)
-          reconciliation.unref?.()
+          if (this.runtimeMatchesExpected(connection.inventory)) {
+            this.acceptingOperations = true
+            this.recovery = 'ready'
+            const reconciliation = setTimeout(() => { void this.reconcileExpiredLeases(runtimeHello.extensionInstanceId) }, 0)
+            reconciliation.unref?.()
+          } else {
+            this.acceptingOperations = false
+            this.beginRuntimeUpdate(connection)
+          }
         },
         async (connection, change) => {
           const extensionInstanceId = connection.inventory?.extensionInstanceId
           if (!extensionInstanceId) return
           const existing = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === extensionInstanceId && lease.leaseId === change.leaseId && lease.leaseEpoch === change.leaseEpoch)
+          const firstReport = connection.consumeFirstLeaseReport()
+          if (firstReport && existing && (
+            canonical(existing.tabIds) !== canonical([...change.tabIds].sort((a, b) => a - b)) ||
+            existing.groupId !== change.groupId || existing.childPolicy !== change.childPolicy
+          )) {
+            throw new Error('reconnect lease proof attempted to expand or change durable scope')
+          }
           if (change.state === 'released') {
             if (!existing || existing.sessionAgentId === '__local_pending__' || existing.profileId === '__local_pending__') {
-              await this.checkpoints.remove(change.leaseId, change.leaseEpoch)
+              await this.checkpoints.remove(extensionInstanceId, change.leaseId, change.leaseEpoch)
             } else {
               await this.checkpoints.put({ ...existing, expiresAt: Math.min(existing.expiresAt, this.now()), releasedAt: this.now() })
             }
             return
+          }
+          if (existing && change.state === 'claimed') {
+            const oldTabs = new Set(existing.tabIds)
+            const added = change.tabIds.filter((tabId) => !oldTabs.has(tabId))
+            if (added.length > 0 && (existing.childPolicy !== 'include-opened-by-leased-tabs' || existing.groupId !== change.groupId)) {
+              throw new Error('lease notification attempted unauthorized scope expansion')
+            }
           }
           await this.checkpoints.put({
             extensionInstanceId, sessionAgentId: existing?.sessionAgentId ?? '__local_pending__', profileId: existing?.profileId ?? '__local_pending__',

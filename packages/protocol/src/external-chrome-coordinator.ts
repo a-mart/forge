@@ -13,6 +13,14 @@ export const EXTERNAL_CHROME_COORDINATOR_OPERATIONS = [
 
 export type ExternalChromeCoordinatorOperation = (typeof EXTERNAL_CHROME_COORDINATOR_OPERATIONS)[number]
 export type ExternalChromeCoordinatorState = 'disabled' | 'online' | 'offline' | 'quiesced' | 'other-instance'
+export type ExternalChromeRecoveryState =
+  | 'ready'
+  | 'updating'
+  | 'reconnecting'
+  | 'rolled-back'
+  | 'manual-extension-reload'
+  | 'incompatible-payload'
+  | 'authority-owned-by-other-data-dir'
 export type ExternalChromeAuthorityState = 'none' | 'owned' | 'other-live' | 'stale'
 export type ExternalChromeAuthState = 'missing' | 'secure' | 'insecure' | 'invalid'
 export type ExternalChromeRegistrationState = 'not-registered' | 'owned' | 'needs-repair' | 'conflict'
@@ -61,6 +69,10 @@ export interface ExternalChromeCoordinatorStatus {
   canRemove: boolean
   canTakeover: boolean
   canReveal: boolean
+  /** Opaque update/reconnect state; never includes browser metadata. */
+  recovery: ExternalChromeRecoveryState
+  /** Truncated SHA-256 only, used to identify a conflicting Forge data-dir authority. */
+  ownerDataDirHash?: string
   setup: ExternalChromeSetupStatus
   detail?: string
 }

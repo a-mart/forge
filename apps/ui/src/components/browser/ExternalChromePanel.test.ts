@@ -13,7 +13,7 @@ let root: Root | null = null
 const coordinator = {
   state: 'online' as const, authority: 'owned' as const, auth: 'secure' as const, registration: 'owned' as const,
   trust: 'trusted' as const, platform: 'darwin' as const, canEnable: false, canDisable: true, canRepair: true,
-  canRollback: false, canRemove: true, canTakeover: false, canReveal: true,
+  canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready' as const,
   setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' as const, pathState: 'ready' as const, loadUnpackedPath: '/private' },
 }
 const instances = [

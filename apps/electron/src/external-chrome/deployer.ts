@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import * as nodeFs from 'node:fs/promises'
 import path from 'node:path'
 import type { FileHandle } from 'node:fs/promises'
+import { EXTERNAL_CHROME_PROTOCOL_MAX_VERSION, EXTERNAL_CHROME_PROTOCOL_MIN_VERSION } from '@forge/protocol'
 import { assertPathInside, resolveExternalChromeDataPaths, type ExternalChromeDataPaths } from './data-paths.js'
 import {
   EXTERNAL_CHROME_EXTENSION_ID,
@@ -35,6 +36,7 @@ export interface ExternalChromeInstallRecord {
   payloadFiles: Record<string, string>
   nativeVersion: string
   nativeSha256: string
+  nativeProtocolCompatibility: { min: number; max: number }
   platform: string
   architecture: string
   desktopCompatibility: { min: string; max: string }
@@ -47,6 +49,7 @@ export type ExternalChromeDeploymentVerification =
 
 export interface ExternalChromeDeploymentVerifier {
   verifyDeployment(): Promise<ExternalChromeDeploymentVerification>
+  recoveryState?(): 'manual-extension-reload' | null
 }
 
 export interface ExternalChromeSelector {
@@ -190,6 +193,7 @@ export class ExternalChromeDeployer {
   private readonly platform: NodeJS.Platform
   private readonly architecture: string
   private readonly lock: DeploymentLock
+  private manualRetry = false
 
   constructor(private readonly options: ExternalChromeDeployerOptions) {
     this.fs = options.fs ?? nodeFs
@@ -247,11 +251,16 @@ export class ExternalChromeDeployer {
       await this.atomicJson(this.paths.installState, record)
       await this.retainCurrentAndPrevious(selector)
       await this.phase('complete', manifest)
+      this.manualRetry = false
       await this.fs.rm(this.paths.journal, { force: true })
       return record
     } finally {
       await release()
     }
+  }
+
+  recoveryState(): 'manual-extension-reload' | null {
+    return this.manualRetry ? 'manual-extension-reload' : null
   }
 
   async canRollback(): Promise<boolean> {
@@ -530,7 +539,18 @@ export class ExternalChromeDeployer {
       } catch (error) {
         const info = await this.fs.lstat(destination)
         if (info.isSymbolicLink()) throw error
-        await this.fs.rm(destination, { recursive: true, force: true })
+        // Never overwrite files inside an immutable payload. Move the entire corrupt
+        // directory aside, install the fully fsynced sibling, then remove quarantine.
+        const quarantine = `${destination}.corrupt-${randomUUID()}`
+        await this.renameWithRetry(destination, quarantine)
+        try {
+          await this.renameWithRetry(stagingPayload, destination)
+          await this.fs.rm(quarantine, { recursive: true, force: true })
+          return
+        } catch (replaceError) {
+          if (!(await exists(this.fs, destination))) await this.renameWithRetry(quarantine, destination)
+          throw replaceError
+        }
       }
     }
     await this.renameWithRetry(stagingPayload, destination)
@@ -723,7 +743,9 @@ export class ExternalChromeDeployer {
     try {
       await this.renameWithRetry(source, destination)
     } catch (error) {
-      if (this.platform !== 'win32' || !['EEXIST', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+      // EPERM/EACCES/EBUSY are sharing/AV locks, not replace collisions. Moving
+      // the selected file aside after such an error would violate fail-safe rollback.
+      if (this.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
       const backup = `${destination}.replace-${randomUUID()}`
       if (await exists(this.fs, destination)) await this.renameWithRetry(destination, backup)
       try {
@@ -743,7 +765,9 @@ export class ExternalChromeDeployer {
         return
       } catch (error) {
         const fsError = error as NodeJS.ErrnoException
-        if (!this.options.sharingRetry || !['EACCES', 'EPERM', 'EBUSY'].includes(fsError.code ?? '')) throw error
+        if (!['EACCES', 'EPERM', 'EBUSY'].includes(fsError.code ?? '')) throw error
+        if (this.platform === 'win32') this.manualRetry = true
+        if (!this.options.sharingRetry) throw error
         if (await this.options.sharingRetry(() => this.fs.rename(source, destination), fsError, attempt)) return
         throw error
       }
@@ -845,6 +869,9 @@ export class ExternalChromeDeployer {
     if (install.shellAbi < install.shellAbiCompatibility.min || install.shellAbi > install.shellAbiCompatibility.max) {
       throw new Error('External Chrome deployed shell ABI is incompatible')
     }
+    if (install.nativeProtocolCompatibility.max < EXTERNAL_CHROME_PROTOCOL_MIN_VERSION || install.nativeProtocolCompatibility.min > EXTERNAL_CHROME_PROTOCOL_MAX_VERSION) {
+      throw new Error('External Chrome deployed native protocol is incompatible')
+    }
   }
 
   private assertCompatible(manifest: ExternalChromePackageManifest): void {
@@ -856,6 +883,9 @@ export class ExternalChromeDeployer {
     }
     if (manifest.extension.shellAbi < manifest.compatibility.shellAbi.min || manifest.extension.shellAbi > manifest.compatibility.shellAbi.max) {
       throw new Error('External Chrome shell ABI is outside its declared compatibility range')
+    }
+    if (manifest.nativeHost.protocol.max < EXTERNAL_CHROME_PROTOCOL_MIN_VERSION || manifest.nativeHost.protocol.min > EXTERNAL_CHROME_PROTOCOL_MAX_VERSION) {
+      throw new Error('External Chrome native host protocol is incompatible with this Desktop')
     }
   }
 }
@@ -886,6 +916,7 @@ function installRecordFromManifest(manifest: ExternalChromePackageManifest): Ext
     payloadFiles: manifest.extension.payloadFiles,
     nativeVersion: manifest.nativeHost.version,
     nativeSha256: manifest.nativeHost.sha256,
+    nativeProtocolCompatibility: { min: manifest.nativeHost.protocol.min, max: manifest.nativeHost.protocol.max },
     platform: manifest.nativeHost.platform,
     architecture: manifest.nativeHost.architecture,
     desktopCompatibility: { ...manifest.compatibility.desktop },
@@ -930,7 +961,7 @@ function parseSelector(value: unknown): ExternalChromeSelector {
 function parseInstallRecord(value: unknown): ExternalChromeInstallRecord {
   if (!isExactObject(value, [
     'schemaVersion', 'packageVersion', 'extensionId', 'publicKeySha256', 'shellAbi', 'shellSha256', 'shellFiles',
-    'payloadVersion', 'payloadSha256', 'payloadDirectory', 'payloadFiles', 'nativeVersion', 'nativeSha256',
+    'payloadVersion', 'payloadSha256', 'payloadDirectory', 'payloadFiles', 'nativeVersion', 'nativeSha256', 'nativeProtocolCompatibility',
     'platform', 'architecture', 'desktopCompatibility', 'shellAbiCompatibility',
   ])) throw new PersistedStateError('External Chrome install fields are invalid')
   if (value.schemaVersion !== 1) throw new PersistedStateError('External Chrome install schema is invalid')
@@ -947,6 +978,7 @@ function parseInstallRecord(value: unknown): ExternalChromeInstallRecord {
   const payloadFiles = persistedInventory(value.payloadFiles, 'install.payloadFiles')
   const nativeVersion = safeVersion(value.nativeVersion, 'install.nativeVersion')
   const nativeSha256 = persistedHash(value.nativeSha256, 'install.nativeSha256')
+  const nativeProtocolCompatibility = parseIntegerRange(value.nativeProtocolCompatibility, 'install.nativeProtocolCompatibility')
   if (value.platform !== 'darwin' && value.platform !== 'linux' && value.platform !== 'win32') throw new PersistedStateError('install.platform is invalid')
   const platform = value.platform
   const architecture = safeVersion(value.architecture, 'install.architecture')
@@ -954,7 +986,7 @@ function parseInstallRecord(value: unknown): ExternalChromeInstallRecord {
   const shellAbiCompatibility = parseIntegerRange(value.shellAbiCompatibility, 'install.shellAbiCompatibility')
   return {
     schemaVersion: 1, packageVersion, extensionId, publicKeySha256, shellAbi, shellSha256, shellFiles,
-    payloadVersion, payloadSha256, payloadDirectory, payloadFiles, nativeVersion, nativeSha256,
+    payloadVersion, payloadSha256, payloadDirectory, payloadFiles, nativeVersion, nativeSha256, nativeProtocolCompatibility,
     platform, architecture, desktopCompatibility, shellAbiCompatibility,
   }
 }

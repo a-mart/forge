@@ -185,7 +185,7 @@ describe('BrowserAutomationHost main-owned view controller', () => {
   it('acknowledges correlated lifecycle release only after the exact local lease release succeeds', async () => {
     installBridge()
     const releaseStatus = {
-      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
       instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
     } as const
     const releaseForLifecycle = vi.fn(async () => ({ ok: true as const, status: releaseStatus }))
@@ -193,7 +193,7 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     window.electronBridge!.externalChrome = {
       releaseForLifecycle, turnEnded,
       localStatus: vi.fn(async () => ({ ok: true as const, status: {
-        coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+        coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
         instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: 'm4', connectedAt: now, supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'] }], attachment: null,
       } })),
     } as never
@@ -230,7 +230,7 @@ describe('BrowserAutomationHost main-owned view controller', () => {
   it('does not advertise External Chrome when coordinator setup exists but no extension runtime is ready', async () => {
     installBridge()
     window.electronBridge!.externalChrome = { localStatus: vi.fn(async () => ({ ok: true as const, status: {
-      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
       instances: [], attachment: null,
     } })) } as never
     const state = createInitialManagerWsState('session-1')

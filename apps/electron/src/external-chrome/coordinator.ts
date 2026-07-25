@@ -13,6 +13,7 @@ import {
   createCurrentUserAccessController,
   createDesktopInstanceId,
   createRendezvousEpoch,
+  dataDirectoryHash,
   externalChromeUserScope,
   ExternalChromeAuthStore,
   ExternalChromeAuthorityStore,
@@ -75,6 +76,7 @@ export class ExternalChromeHostCoordinator {
   private readonly pid: number
   private readonly instanceId: string
   private readonly userScope: string
+  private readonly dataDirHash: string
   private readonly now: () => number
   private readonly ttlMs: number
   private readonly refreshIntervalMs: number
@@ -92,6 +94,7 @@ export class ExternalChromeHostCoordinator {
   private readonly deploymentVerifier?: ExternalChromeDeploymentVerifier
   private readonly enabledStatePath: string
   private readonly runDirectory: string
+  private readonly recoveryMarkerPath: string
   private readonly schedule: typeof setInterval
   private readonly unschedule: typeof clearInterval
   private endpoint: ExternalChromeEndpointHandle | null = null
@@ -99,6 +102,8 @@ export class ExternalChromeHostCoordinator {
   private keyId: string | null = null
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private quiesced = false
+  private recoveryOverride: ExternalChromeCoordinatorStatus['recovery'] | null = null
+  private takeoverRequiredFromHash: string | null = null
   private transitionTail: Promise<void> = Promise.resolve()
 
   constructor(options: ExternalChromeHostCoordinatorOptions) {
@@ -107,6 +112,7 @@ export class ExternalChromeHostCoordinator {
     this.instanceId = options.instanceId ?? createDesktopInstanceId()
     const username = options.username ?? os.userInfo().username
     this.userScope = externalChromeUserScope(this.platform, username, options.uid ?? process.getuid?.())
+    this.dataDirHash = dataDirectoryHash(options.dataRoot)
     this.now = options.now ?? Date.now
     this.ttlMs = options.rendezvousTtlMs ?? DEFAULT_RENDEZVOUS_TTL_MS
     this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS
@@ -122,6 +128,7 @@ export class ExternalChromeHostCoordinator {
       this.access,
       options.isProcessAlive,
       this.now,
+      path.join(os.tmpdir(), 'forge-external-chrome-authority', `${this.userScope}.json`),
     )
     this.paths = resolveExternalChromeDataPaths(options.dataRoot, this.platform)
     this.relay = new ExternalChromeRelayRuntime(path.join(this.paths.state, 'leases.json'), this.now)
@@ -137,6 +144,7 @@ export class ExternalChromeHostCoordinator {
     this.deploymentVerifier = options.deploymentVerifier
     this.enabledStatePath = path.join(this.paths.state, 'enabled.json')
     this.runDirectory = this.paths.run
+    this.recoveryMarkerPath = path.join(this.paths.state, 'recovery-marker.json')
   }
 
   status(): Promise<ExternalChromeCoordinatorStatus> {
@@ -150,7 +158,7 @@ export class ExternalChromeHostCoordinator {
 
   resumeIfEnabled(): Promise<void> {
     return this.serialize(async () => {
-      if (await this.readDesiredEnabled()) await this.enableUnlocked(true)
+      if (await this.readDesiredEnabled()) await this.enableUnlocked(false)
     })
   }
 
@@ -160,10 +168,14 @@ export class ExternalChromeHostCoordinator {
 
   takeover(): Promise<ExternalChromeCoordinatorStatus> {
     return this.serialize(async () => {
-      if ((await this.authority.inspect()).state !== 'stale') {
-        throw new Error('External Chrome takeover is available only for stale ownership')
+      const authority = await this.authority.inspect()
+      if (authority.state === 'other-live') throw new Error('Current External Chrome authority must be quiesced before takeover')
+      if (!this.takeoverRequiredFromHash || (authority.state !== 'none' && authority.state !== 'stale')) {
+        throw new Error('External Chrome takeover requires an observed conflicting data-dir authority')
       }
-      return this.enableUnlocked(true)
+      const status = await this.enableUnlocked(true)
+      this.takeoverRequiredFromHash = null
+      return status
     })
   }
 
@@ -202,8 +214,10 @@ export class ExternalChromeHostCoordinator {
         throw new Error('No validated External Chrome rollback is available')
       }
       const wasEnabled = await this.readDesiredEnabled()
-      await this.stopRuntime(false)
+      if (this.endpoint) await this.quiesceRuntimeUnlocked('desktop-update')
+      else await this.stopRuntime(false)
       await this.rollbackController.rollback()
+      this.recoveryOverride = 'rolled-back'
       if (wasEnabled) return this.enableUnlocked(true)
       return this.statusUnlocked()
     })
@@ -237,11 +251,26 @@ export class ExternalChromeHostCoordinator {
     })
   }
 
-  async quiesce(_reason: 'desktop-update' | 'desktop-quit' = 'desktop-quit'): Promise<void> {
-    await this.serialize(async () => {
-      await this.stopRuntime(true)
-      this.quiesced = true
+  async quiesce(reason: 'desktop-update' | 'desktop-quit' = 'desktop-quit'): Promise<void> {
+    await this.serialize(() => this.quiesceRuntimeUnlocked(reason))
+  }
+
+  private async quiesceRuntimeUnlocked(reason: 'desktop-update' | 'desktop-quit'): Promise<void> {
+    const deadlineAt = this.now() + 4_000
+    let failure: unknown = null
+    try {
+      await this.relay.quiesce(reason, deadlineAt)
+    } catch (error) {
+      failure = error
+    }
+    // Capability stays detached even when exact release could not be proven.
+    await this.stopRuntime(true)
+    this.quiesced = true
+    await this.writeRecoveryMarker({
+      schemaVersion: 1, reason, status: failure === null ? 'quiesced' : 'release-unproven',
+      at: new Date(this.now()).toISOString(),
     })
+    if (failure !== null) throw failure instanceof Error ? failure : new Error(String(failure))
   }
 
   private async enableUnlocked(allowTakeover: boolean): Promise<ExternalChromeCoordinatorStatus> {
@@ -251,7 +280,10 @@ export class ExternalChromeHostCoordinator {
       return this.statusUnlocked()
     }
     const before = await this.authority.inspect()
-    if (before.state === 'other-live' || (before.state === 'stale' && !allowTakeover)) return this.statusUnlocked()
+    const beforeOwner = 'owner' in before ? before.owner : undefined
+    const crossDataDirOwner = beforeOwner?.dataDirHash !== undefined && beforeOwner.dataDirHash !== this.dataDirHash
+    if (crossDataDirOwner) this.takeoverRequiredFromHash = beforeOwner.dataDirHash
+    if (before.state === 'other-live' || (crossDataDirOwner && !allowTakeover) || (before.state === 'stale' && !allowTakeover)) return this.statusUnlocked()
     if ((await this.inspectSetup()).pathState !== 'ready') {
       throw new Error('External Chrome unpacked extension deployment is missing or invalid')
     }
@@ -270,6 +302,12 @@ export class ExternalChromeHostCoordinator {
       // Durable lease authority is loaded before the endpoint can accept native hello.
       // Host registration/replacement and IPC recovery therefore cannot bypass checkpoints.
       await this.relay.ready()
+      const deployment = await this.deploymentVerifier?.verifyDeployment()
+      this.relay.configureExpectedRuntime(deployment?.state === 'ready' ? {
+        payloadVersion: deployment.install.payloadVersion,
+        sha256: deployment.install.payloadSha256,
+        shellAbi: deployment.install.shellAbi,
+      } : null)
       const epoch = createRendezvousEpoch()
       this.relay.activate({ epoch, desktopInstanceId: this.instanceId, keyId: keyRecord.keyId, secret: keyRecord.key })
       const endpoint = await this.endpoints.listen({
@@ -310,12 +348,22 @@ export class ExternalChromeHostCoordinator {
     else if (this.quiesced) state = 'quiesced'
     else state = desiredEnabled ? 'offline' : 'disabled'
 
+    const authorityOwner = 'owner' in authority ? authority.owner : undefined
+    const crossDataDirOwner = authorityOwner?.dataDirHash !== undefined && authorityOwner.dataDirHash !== this.dataDirHash
+    if (crossDataDirOwner) this.takeoverRequiredFromHash = authorityOwner.dataDirHash
     const platform = this.platform === 'darwin' || this.platform === 'linux' || this.platform === 'win32'
       ? this.platform
       : 'unsupported'
     const trustAllowsEnable = registration.trust === 'trusted' || registration.trust === 'unsupported'
-    const authorityAvailable = authority.state !== 'other-live' && authority.state !== 'stale'
+    const authorityAvailable = authority.state !== 'other-live' && authority.state !== 'stale' && this.takeoverRequiredFromHash === null
     const hasInstalledState = auth !== 'missing' || registration.registration !== 'not-registered' || state !== 'disabled'
+    const markerRecovery = await this.readMarkerRecovery()
+    const runtimeRecovery = this.relay.recoveryStatus()
+    const deploymentRecovery = this.deploymentVerifier?.recoveryState?.() ?? null
+    const compatibilityRecovery = setup.pathState === 'mismatch' && !canRollback ? 'incompatible-payload' : null
+    const recovery = crossDataDirOwner
+      ? 'authority-owned-by-other-data-dir'
+      : deploymentRecovery ?? compatibilityRecovery ?? this.recoveryOverride ?? (state === 'online' ? runtimeRecovery : markerRecovery)
     return {
       state,
       authority: authority.state,
@@ -328,8 +376,10 @@ export class ExternalChromeHostCoordinator {
       canRepair: platform !== 'unsupported' && authorityAvailable && registration.registration !== 'conflict' && (trustAllowsEnable || this.repairDeployment !== undefined),
       canRollback: authorityAvailable && canRollback,
       canRemove: authority.state !== 'other-live' && hasInstalledState,
-      canTakeover: platform !== 'unsupported' && authority.state === 'stale' && setup.pathState === 'ready' && registration.registration !== 'conflict' && trustAllowsEnable,
+      canTakeover: platform !== 'unsupported' && this.takeoverRequiredFromHash !== null && authority.state !== 'owned' && setup.pathState === 'ready' && registration.registration !== 'conflict' && trustAllowsEnable,
       canReveal: setup.pathState === 'ready',
+      recovery,
+      ...(crossDataDirOwner && authorityOwner?.dataDirHash ? { ownerDataDirHash: authorityOwner.dataDirHash } : {}),
       setup,
       ...(registration.detail ? { detail: registration.detail.slice(0, 256) } : {}),
     }
@@ -427,6 +477,35 @@ export class ExternalChromeHostCoordinator {
       return value.enabled === true
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return false
+      throw error
+    }
+  }
+
+  private async readMarkerRecovery(): Promise<ExternalChromeCoordinatorStatus['recovery']> {
+    try {
+      const raw = await fs.readFile(this.recoveryMarkerPath, 'utf8')
+      if (Buffer.byteLength(raw) > 2_048) return 'manual-extension-reload'
+      const marker = JSON.parse(raw) as { status?: unknown }
+      return marker.status === 'release-unproven' ? 'manual-extension-reload' : 'reconnecting'
+    } catch {
+      return 'ready'
+    }
+  }
+
+  private async writeRecoveryMarker(value: {
+    schemaVersion: 1
+    reason: 'desktop-update' | 'desktop-quit'
+    status: 'quiesced' | 'release-unproven'
+    at: string
+  }): Promise<void> {
+    await this.access.preparePrivateDirectory(path.dirname(this.recoveryMarkerPath))
+    const temporary = `${this.recoveryMarkerPath}.new-${process.pid}-${Date.now()}`
+    await fs.writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: 'wx' })
+    try {
+      await fs.rename(temporary, this.recoveryMarkerPath)
+      await this.access.securePrivateFile(this.recoveryMarkerPath)
+    } catch (error) {
+      await fs.rm(temporary, { force: true })
       throw error
     }
   }

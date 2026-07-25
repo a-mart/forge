@@ -44,6 +44,7 @@ function coordinatorStatus(overrides: Partial<ExternalChromeCoordinatorStatus> =
     canRemove: true,
     canTakeover: false,
     canReveal: true,
+    recovery: 'ready',
     setup: {
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd',
       pathState: 'ready',
@@ -153,7 +154,7 @@ describe('SettingsExternalChrome', () => {
       ['Disable', 'Disable', bridge.disable],
       ['Repair native host', 'Repair', bridge.repair],
       ['Roll back', 'Roll back', bridge.rollback],
-      ['Take over stale owner', 'Take over', bridge.takeover],
+      ['Take over stale owner', 'Confirm takeover', bridge.takeover],
       ['Remove integration', 'Remove integration', bridge.remove],
     ] as const
 
@@ -198,6 +199,19 @@ describe('SettingsExternalChrome', () => {
     await render(bridge)
     expect((screen.getByRole('button', { name: 'Enable' }) as HTMLButtonElement).disabled).toBe(true)
     expect(document.body.textContent).not.toContain('Validated Load unpacked folder')
+  })
+
+  it.each([
+    ['updating', 'New claims and browser operations are paused.'],
+    ['reconnecting', 'requires a new authenticated hello'],
+    ['rolled-back', 'last verified compatible payload'],
+    ['manual-extension-reload', 'open chrome://extensions'],
+    ['incompatible-payload', 'Managed Browser is still available'],
+    ['authority-owned-by-other-data-dir', 'explicitly confirm takeover'],
+  ] as const)('renders truthful %s recovery guidance', async (recovery, guidance) => {
+    await render(createBridge(coordinatorStatus({ recovery })))
+    expect(screen.getByTestId('external-chrome-recovery').textContent).toContain(recovery)
+    expect(screen.getByTestId('external-chrome-recovery').textContent).toContain(guidance)
   })
 
   it('does not expose coordinator actions outside Forge Desktop', async () => {

@@ -332,7 +332,18 @@ describe('ExternalChromeDeployer', () => {
     })
     await deployer.deploy()
     expect(sharingRetry).toHaveBeenCalledOnce()
+    expect(deployer.recoveryState()).toBeNull()
     expect(JSON.parse(await fs.readFile(path.join(deployer.paths.extension, 'current.json'), 'utf8')).schemaVersion).toBe(1)
+
+    const update = await fixture('1.1.0', 'updated-payload', 'win32')
+    blocked = true
+    const manual = new ExternalChromeDeployer({
+      dataRoot: path.resolve(input.dataRoot), resourcesRoot: update.resourcesRoot, desktopVersion: '0.22.5',
+      platform: 'win32', fs: injected, sharingRetry: async () => false,
+    })
+    await expect(manual.deploy()).rejects.toMatchObject({ code: 'EPERM' })
+    expect(manual.recoveryState()).toBe('manual-extension-reload')
+    expect(JSON.parse(await fs.readFile(path.join(manual.paths.extension, 'current.json'), 'utf8'))).toMatchObject({ payloadVersion: '1.0.0' })
   })
 
   it('supports a compatible app downgrade and blocks an incompatible one', async () => {

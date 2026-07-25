@@ -166,7 +166,7 @@ describe('BrowserPanel', () => {
 
   it('defaults to Managed Browser and switches to the session-scoped External Chrome host without projecting a view', async () => {
     const localStatus = vi.fn(async () => ({ ok: true as const, status: {
-      coordinator: { state: 'disabled', authority: 'none', auth: 'missing', registration: 'not-registered', trust: 'missing', platform: 'darwin', canEnable: true, canDisable: false, canRepair: true, canRollback: false, canRemove: false, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
+      coordinator: { state: 'disabled', authority: 'none', auth: 'missing', registration: 'not-registered', trust: 'missing', platform: 'darwin', canEnable: true, canDisable: false, canRepair: true, canRollback: false, canRemove: false, canTakeover: false, canReveal: true, recovery: 'ready', setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
       instances: [], attachment: null,
     } }))
     window.electronBridge = { windowRole: 'main', backendWsUrl: 'ws://localhost', platform: 'darwin', externalChrome: { localStatus } as never }

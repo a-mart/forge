@@ -15,21 +15,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function connectedRuntime(instanceId = 'instance_profile_a', now: () => number = () => 1_000): Promise<{
-  runtime: ExternalChromeRelayRuntime
-  client: AuthenticatedRelayClient
-  root: string
-}> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'forge-relay-runtime-'))
-  roots.push(root)
-  const endpoint = path.join(root, 'relay.sock')
+async function connectRelayClient(endpoint: string): Promise<AuthenticatedRelayClient> {
   const key = Buffer.alloc(32, 0x44)
-  const runtime = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'), now)
-  runtime.activate({ epoch: 'epoch_1234567890abcdef', desktopInstanceId: 'desktop_1234567890abcdef', keyId: 'key-test', secret: key })
-  const server = createServer((socket) => runtime.accept(socket))
-  servers.push(server)
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve) })
-  const client = await AuthenticatedRelayClient.connect({
+  return AuthenticatedRelayClient.connect({
     rendezvous: { read: async () => ({
       schemaVersion: 1, endpoint, epoch: 'epoch_1234567890abcdef', expiresAt: '2030-01-01T00:00:00.000Z',
       keyId: 'key-test', userScope: 'test-user', desktopInstanceId: 'desktop_1234567890abcdef', desktopPid: 42,
@@ -40,9 +28,17 @@ async function connectedRuntime(instanceId = 'instance_profile_a', now: () => nu
     platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
     now: () => Date.parse('2029-01-01T00:00:00.000Z'), maxAttempts: 1,
   })
+}
+
+async function sendRuntimeHello(
+  client: AuthenticatedRelayClient,
+  instanceId: string,
+  payloadVersion = 'm4-runtime.1',
+  payloadSha256 = 'a'.repeat(64),
+): Promise<void> {
   await client.send({
     jsonrpc: '2.0', id: 'hello', method: 'forge.runtime.hello', params: {
-      protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion: 'm4-runtime.1',
+      protocol: { min: 1, max: 1 }, shellAbi: 1, payloadVersion, payloadSha256,
       extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', extensionInstanceId: instanceId, chromeVersion: '125.0.0.0',
       methods: ['forge.runtime.hello', 'forge.runtime.ping', 'forge.browser.listCandidates', 'forge.browser.claim', 'forge.browser.create', 'forge.browser.release', 'forge.browser.execute', 'forge.browser.turnEnded', 'forge.runtime.prepareUpdate', 'forge.runtime.reload', 'browser.cdpEvent', 'browser.detached', 'browser.userControl', 'browser.tabChanged', 'browser.downloadChanged', 'browser.leaseChanged', 'runtime.goodbye'],
       maxMessageBytes: 262144,
@@ -53,6 +49,29 @@ async function connectedRuntime(instanceId = 'instance_profile_a', now: () => nu
     },
   })
   await expect(client.receive()).resolves.toMatchObject({ id: 'hello', result: { protocolVersion: 1, requiredShellAbi: 1 } })
+}
+
+async function connectedRuntime(
+  instanceId = 'instance_profile_a',
+  now: () => number = () => 1_000,
+  expected?: { payloadVersion: string; sha256: string; shellAbi: number },
+): Promise<{
+  runtime: ExternalChromeRelayRuntime
+  client: AuthenticatedRelayClient
+  root: string
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'forge-relay-runtime-'))
+  roots.push(root)
+  const endpoint = path.join(root, 'relay.sock')
+  const key = Buffer.alloc(32, 0x44)
+  const runtime = new ExternalChromeRelayRuntime(path.join(root, 'state', 'leases.json'), now)
+  if (expected) runtime.configureExpectedRuntime(expected)
+  runtime.activate({ epoch: 'epoch_1234567890abcdef', desktopInstanceId: 'desktop_1234567890abcdef', keyId: 'key-test', secret: key })
+  const server = createServer((socket) => runtime.accept(socket))
+  servers.push(server)
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve) })
+  const client = await connectRelayClient(endpoint)
+  await sendRuntimeHello(client, instanceId)
   expect(runtime.inventory()).toEqual([expect.objectContaining({ extensionInstanceId: instanceId, chromeVersion: '125.0.0.0' })])
   return { runtime, client, root }
 }
@@ -65,23 +84,31 @@ function request(operation: BrowserAutomationRequest['operation'], tabId: string
   } as BrowserAutomationRequest
 }
 
-async function fakeExtensionLoop(client: AuthenticatedRelayClient, requests: Array<{ method: string; params: Record<string, unknown> }> = []): Promise<void> {
+async function fakeExtensionLoop(
+  client: AuthenticatedRelayClient,
+  requests: Array<{ method: string; params: Record<string, unknown> }> = [],
+  instanceId = 'instance_profile_a',
+): Promise<void> {
   while (true) {
     const message = await client.receive()
     if (!message) return
     if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
     const params = message.params as Record<string, unknown>
     requests.push({ method: message.method, params })
-    if (message.method === 'forge.browser.claim') {
+    if (message.method === 'forge.browser.listCandidates') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, extensionInstanceId: instanceId, windows: [],
+      } })
+    } else if (message.method === 'forge.browser.claim') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
-        extensionInstanceId: 'instance_profile_a', groupId: 9, childPolicy: params.childPolicy,
+        extensionInstanceId: instanceId, groupId: 9, childPolicy: params.childPolicy,
         tabs: [{ windowId: 2, tabId: 40, groupId: 9, title: 'Selected', url: 'https://selected.invalid/private', origin: 'https://selected.invalid', active: true }],
       } })
     } else if (message.method === 'forge.browser.create') {
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
-        extensionInstanceId: 'instance_profile_a', groupId: 9,
+        extensionInstanceId: instanceId, groupId: 9,
         tab: { windowId: 2, tabId: 41, groupId: 9, title: 'Created', url: 'https://fixture.invalid/', origin: 'https://fixture.invalid', active: true },
       } })
     } else if (message.method === 'forge.browser.release') {
@@ -118,6 +145,14 @@ async function fakeExtensionLoop(client: AuthenticatedRelayClient, requests: Arr
       await client.send({ jsonrpc: '2.0', id: message.id, result: {
         protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, turnId: params.turnId,
         releasedTabs: params.finalTabs, handoffTabs: params.handoffTabs,
+      } })
+    } else if (message.method === 'forge.runtime.prepareUpdate') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, payloadVersion: params.payloadVersion, quiesced: true,
+      } })
+    } else if (message.method === 'forge.runtime.reload') {
+      await client.send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: 1, payloadVersion: params.payloadVersion, accepted: true,
       } })
     }
   }
@@ -301,6 +336,129 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     runtime.deactivate()
     client.close()
     await loop
+  })
+
+  it('rejects reconnect lease proof that expands exact durable tab membership', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const loop = fakeExtensionLoop(client)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-reconnect', leaseEpoch: 14, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    client.close()
+    await loop
+    const reconnected = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reconnected, 'instance_profile_a')
+    await reconnected.send({ jsonrpc: '2.0', method: 'browser.leaseChanged', params: {
+      protocolVersion: 1, leaseId: 'lease-reconnect', leaseEpoch: 14, state: 'claimed',
+      tabIds: [40, 41], groupId: 9, childPolicy: 'manual',
+    } })
+    for (let attempt = 0; attempt < 20 && runtime.inventory().length > 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(await runtime.leaseCheckpoints()).toEqual([expect.objectContaining({ leaseId: 'lease-reconnect', tabIds: [40] })])
+    expect(runtime.inventory()).toEqual([])
+    runtime.deactivate(); reconnected.close()
+  })
+
+  it('routes two Chrome profiles concurrently with isolated namespaced tab authority', async () => {
+    const { runtime, client: profileA, root } = await connectedRuntime('instance_profile_a')
+    const profileB = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(profileB, 'instance_profile_b')
+    const loopA = fakeExtensionLoop(profileA, [], 'instance_profile_a')
+    const loopB = fakeExtensionLoop(profileB, [], 'instance_profile_b')
+    await Promise.all([
+      runtime.claim({ extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'forge-a', leaseId: 'lease-a', leaseEpoch: 1, tabIds: [40], groupId: 9, childPolicy: 'manual' }),
+      runtime.claim({ extensionInstanceId: 'instance_profile_b', sessionAgentId: 'session-b', profileId: 'forge-b', leaseId: 'lease-b', leaseEpoch: 1, tabIds: [40], groupId: 9, childPolicy: 'manual' }),
+    ])
+    expect(runtime.inventory().map((entry) => entry.extensionInstanceId)).toEqual(['instance_profile_a', 'instance_profile_b'])
+    const checkpoints = await runtime.leaseCheckpoints()
+    expect(checkpoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'forge-a', tabIds: [40] }),
+      expect.objectContaining({ extensionInstanceId: 'instance_profile_b', sessionAgentId: 'session-b', profileId: 'forge-b', tabIds: [40] }),
+    ]))
+    await expect(runtime.execute({
+      ...request('evaluate', 'ext.instance_profile_a.40', { expression: '1', awaitPromise: true, returnByValue: true }),
+      sessionAgentId: 'session-b', profileId: 'forge-b',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'lease-lost' } })
+    runtime.deactivate(); profileA.close(); profileB.close(); await Promise.all([loopA, loopB])
+  })
+
+  it('quiesces through prepareUpdate and exact release before closing capability authority', async () => {
+    const { runtime, client, root } = await connectedRuntime()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-update', leaseEpoch: 21, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    await expect(runtime.quiesce('desktop-update', Date.now() + 2_000)).resolves.toBeUndefined()
+    expect(requests.map((entry) => entry.method)).toEqual([
+      'forge.browser.claim', 'forge.runtime.prepareUpdate', 'forge.browser.release',
+    ])
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    await expect(runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'new-session', profileId: 'new-profile',
+      leaseId: 'lease-after-update', leaseEpoch: 22, tabIds: [41], groupId: 9, childPolicy: 'manual',
+    })).rejects.toThrow('extension-update-required')
+    const marker = await readFile(path.join(root, 'state', 'leases.json'), 'utf8')
+    expect(marker).not.toContain('selected.invalid')
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('fails closed on a dropped prepare acknowledgement even when exact release later settles', async () => {
+    const { runtime, client } = await connectedRuntime()
+    let dropPrepare = false
+    const loop = (async () => {
+      while (true) {
+        const message = await client.receive()
+        if (!message) return
+        if (typeof message.id !== 'string' || typeof message.method !== 'string') continue
+        const params = message.params as Record<string, unknown>
+        if (message.method === 'forge.browser.claim') {
+          await client.send({ jsonrpc: '2.0', id: message.id, result: {
+            protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, sessionAgentId: params.sessionAgentId,
+            extensionInstanceId: 'instance_profile_a', groupId: 9, childPolicy: params.childPolicy,
+            tabs: [{ windowId: 1, tabId: 40, groupId: 9, title: '', url: 'https://fixture.invalid/', origin: 'https://fixture.invalid', active: true }],
+          } })
+        } else if (message.method === 'forge.runtime.prepareUpdate') {
+          dropPrepare = true
+          // Deliberately drop the acknowledgement; the release request still follows the bounded timeout.
+        } else if (message.method === 'forge.browser.release') {
+          await client.send({ jsonrpc: '2.0', id: message.id, result: {
+            protocolVersion: 1, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, releasedTabIds: [40],
+          } })
+        }
+      }
+    })()
+    await runtime.claim({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a',
+      leaseId: 'lease-dropped-ack', leaseEpoch: 31, tabIds: [40], groupId: 9, childPolicy: 'manual',
+    })
+    await expect(runtime.quiesce('desktop-update', 1_025)).rejects.toThrow(/could not prove release/u)
+    expect(dropPrepare).toBe(true)
+    expect(await runtime.leaseCheckpoints()).toEqual([])
+    await expect(runtime.listCandidates('instance_profile_a', 'session-a')).rejects.toThrow('extension-update-required')
+    runtime.deactivate(); client.close(); await loop
+  })
+
+  it('keeps operations detached until prepare/reload is followed by a new authenticated hello', async () => {
+    const expected = { payloadVersion: 'm5-runtime.1', sha256: 'b'.repeat(64), shellAbi: 1 }
+    const { runtime, client, root } = await connectedRuntime('instance_profile_a', () => 1_000, expected)
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    const loop = fakeExtensionLoop(client, requests)
+    for (let attempt = 0; attempt < 50 && requests.length < 2; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(requests.map((entry) => entry.method)).toEqual(['forge.runtime.prepareUpdate', 'forge.runtime.reload'])
+    expect(requests[0]?.params).toMatchObject({ payloadVersion: expected.payloadVersion, sha256: expected.sha256 })
+    expect(runtime.recoveryStatus()).toBe('reconnecting')
+    await expect(runtime.listCandidates('instance_profile_a', 'session-a')).rejects.toThrow('extension-update-required')
+    client.close()
+    await loop
+
+    const reloaded = await connectRelayClient(path.join(root, 'relay.sock'))
+    await sendRuntimeHello(reloaded, 'instance_profile_a', expected.payloadVersion, expected.sha256)
+    expect(runtime.recoveryStatus()).toBe('ready')
+    const reloadedLoop = fakeExtensionLoop(reloaded)
+    await expect(runtime.listCandidates('instance_profile_a', 'session-a')).resolves.toMatchObject({ extensionInstanceId: 'instance_profile_a' })
+    runtime.deactivate(); reloaded.close(); await reloadedLoop
   })
 
   it('accepts explicit instance-scoped claims but never arbitrary pre-existing tabs', async () => {

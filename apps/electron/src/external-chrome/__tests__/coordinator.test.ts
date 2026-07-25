@@ -144,6 +144,33 @@ describe('ExternalChromeHostCoordinator', () => {
     await second.disable()
   })
 
+  it('requires explicit takeover after a different data-dir authority is quiesced', async () => {
+    const firstRoot = await root()
+    const secondRoot = await root()
+    const registration = new FakeRegistration()
+    const alive = (pid: number): boolean => pid === 811 || pid === 812
+    const first = new ExternalChromeHostCoordinator({
+      dataRoot: firstRoot.dataRoot, platform: 'linux', pid: 811, username: 'takeover-user', uid: 902,
+      instanceId: 'desktop_takeover_first', access, endpoints: new FakeEndpoints(), registration,
+      isProcessAlive: alive, deploymentVerifier: firstRoot.deployer,
+    })
+    const second = new ExternalChromeHostCoordinator({
+      dataRoot: secondRoot.dataRoot, platform: 'linux', pid: 812, username: 'takeover-user', uid: 902,
+      instanceId: 'desktop_takeover_second', access, endpoints: new FakeEndpoints(), registration,
+      isProcessAlive: alive, deploymentVerifier: secondRoot.deployer,
+    })
+    await first.enable()
+    expect(await second.status()).toMatchObject({
+      state: 'other-instance', authority: 'other-live', recovery: 'authority-owned-by-other-data-dir',
+      canEnable: false, canTakeover: true, ownerDataDirHash: expect.stringMatching(/^[a-f0-9]{16}$/u),
+    })
+    await expect(second.takeover()).rejects.toThrow(/must be quiesced/u)
+    await first.quiesce('desktop-update')
+    expect(await second.status()).toMatchObject({ authority: 'none', canEnable: false, canTakeover: true })
+    expect(await second.takeover()).toMatchObject({ state: 'online', authority: 'owned' })
+    await second.disable()
+  })
+
   it('repairs insecure authentication state and removal keeps foreign files untouched by facade policy', async () => {
     const { dataRoot, deployer } = await root()
     const registration = new FakeRegistration()
@@ -161,6 +188,34 @@ describe('ExternalChromeHostCoordinator', () => {
     expect(await coordinator.remove()).toMatchObject({ state: 'disabled', auth: 'missing', registration: 'not-registered' })
     expect(registration.removes).toBe(1)
     expect(endpoints.handles[0]?.closed).toBe(true)
+  })
+
+  it('fails update quiesce closed and writes only an opaque recovery marker when release is unproven', async () => {
+    const { dataRoot, deployer } = await root()
+    const registration = new FakeRegistration()
+    const endpoints = new FakeEndpoints()
+    const paths = resolveExternalChromeDataPaths(dataRoot, 'linux')
+    await mkdir(paths.state, { recursive: true })
+    await writeFile(path.join(paths.state, 'leases.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      leases: [{
+        extensionInstanceId: 'profile_opaque', sessionAgentId: 'session_opaque', profileId: 'profile_opaque',
+        leaseId: 'lease_opaque', leaseEpoch: 4, tabIds: [17], groupId: 3, childPolicy: 'manual', expiresAt: Date.now() + 60_000,
+      }],
+    })}\n`)
+    const coordinator = new ExternalChromeHostCoordinator({
+      dataRoot, platform: 'linux', pid: 515, username: 'marker-user', uid: 516,
+      instanceId: 'desktop_marker_test', access, endpoints, registration, isProcessAlive: () => false, deploymentVerifier: deployer,
+    })
+    await coordinator.enable()
+    await expect(coordinator.quiesce('desktop-update')).rejects.toThrow(/could not prove release/u)
+    expect(endpoints.handles[0]?.closed).toBe(true)
+    expect(await coordinator.status()).toMatchObject({ state: 'quiesced', recovery: 'manual-extension-reload' })
+    const marker = await readFile(path.join(paths.state, 'recovery-marker.json'), 'utf8')
+    expect(JSON.parse(marker)).toEqual(expect.objectContaining({
+      schemaVersion: 1, reason: 'desktop-update', status: 'release-unproven', at: expect.any(String),
+    }))
+    expect(marker).not.toMatch(/https?:|title|content|evaluate|screenshot|secret/iu)
   })
 
   it('queues updater quiesce behind an in-progress enable and closes the newly opened endpoint', async () => {

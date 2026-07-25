@@ -16,6 +16,7 @@ interface AuthorityDocument {
   schemaVersion: 1
   desktopInstanceId: string
   desktopPid: number
+  dataDirHash: string
   expiresAt: string
 }
 
@@ -180,6 +181,7 @@ export interface AuthorityClaim {
 export class ExternalChromeAuthorityStore {
   readonly authorityPath: string
   readonly rendezvousPath: string
+  private readonly dataDirHash: string
 
   constructor(
     dataRoot: string,
@@ -189,10 +191,12 @@ export class ExternalChromeAuthorityStore {
     private readonly access: CurrentUserAccessController,
     private readonly isProcessAlive: (pid: number) => boolean = defaultIsProcessAlive,
     private readonly now: () => number = Date.now,
+    authorityPath?: string,
   ) {
     const paths = resolveExternalChromeDataPaths(dataRoot, platform)
-    this.authorityPath = path.join(paths.run, 'authority.json')
+    this.authorityPath = authorityPath ?? path.join(paths.run, 'authority.json')
     this.rendezvousPath = paths.rendezvous
+    this.dataDirHash = dataDirectoryHash(dataRoot)
   }
 
   async inspect(): Promise<AuthorityClaim | { state: 'none' }> {
@@ -209,6 +213,7 @@ export class ExternalChromeAuthorityStore {
       schemaVersion: 1,
       desktopInstanceId: this.instanceId,
       desktopPid: this.pid,
+      dataDirHash: this.dataDirHash,
       expiresAt,
     }
     let tookOver = false
@@ -241,6 +246,7 @@ export class ExternalChromeAuthorityStore {
       schemaVersion: 1,
       desktopInstanceId: this.instanceId,
       desktopPid: this.pid,
+      dataDirHash: this.dataDirHash,
       expiresAt,
     } satisfies AuthorityDocument)}\n`, POSIX_PRIVATE_FILE_MODE)
     await this.access.securePrivateFile(this.authorityPath)
@@ -325,7 +331,12 @@ function isValidAuthority(value: AuthorityDocument): boolean {
     && /^[A-Za-z0-9_-]{16,128}$/u.test(value.desktopInstanceId)
     && Number.isSafeInteger(value.desktopPid)
     && value.desktopPid > 0
+    && /^[a-f0-9]{16}$/u.test(value.dataDirHash)
     && Number.isFinite(Date.parse(value.expiresAt))
+}
+
+export function dataDirectoryHash(dataRoot: string): string {
+  return createHash('sha256').update(path.resolve(dataRoot)).digest('hex').slice(0, 16)
 }
 
 function defaultIsProcessAlive(pid: number): boolean {

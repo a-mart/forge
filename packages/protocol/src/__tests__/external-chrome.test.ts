@@ -46,6 +46,7 @@ const hello = {
     protocol: { min: 1, max: 1 },
     shellAbi: 1,
     payloadVersion: '1.0.0',
+    payloadSha256: 'f'.repeat(64),
     extensionId: EXTERNAL_CHROME_EXTENSION_ID,
     extensionInstanceId: 'extension-instance-1',
     profileAlias: 'Chrome profile 1',

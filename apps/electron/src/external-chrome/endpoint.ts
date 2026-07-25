@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import type { CurrentUserAccessController } from './auth-rendezvous.js'
 
@@ -88,7 +89,7 @@ export function endpointName(input: {
   // Darwin sockaddr_un permits 104 bytes including the NUL terminator. Use a current-user private
   // /tmp subdirectory when a custom Forge data root would exceed that bound; never truncate.
   if (Buffer.byteLength(endpoint) <= 103) return endpoint
-  const fallback = path.join('/tmp', `forge-external-chrome-${input.userScope.slice(-16)}`, `relay-${input.epoch.slice(0, 20)}.sock`)
+  const fallback = path.join(os.tmpdir(), `fxc-${input.userScope.slice(-8)}`, `r-${input.epoch.slice(0, 12)}.sock`)
   if (Buffer.byteLength(fallback) > 103) throw new Error('External Chrome endpoint cannot fit the Unix-domain socket bound')
   return fallback
 }

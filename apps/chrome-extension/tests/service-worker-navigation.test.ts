@@ -199,6 +199,34 @@ describe('leased-frame navigation observer recovery', () => {
     expect(second.result.actionTimeline).toHaveLength(1)
   })
 
+  it('prepareUpdate blocks new work, settles commands, and releases every debugger lease', async () => {
+    const chrome = fakeChrome({ tabs: [
+      { id: 9, windowId: 1, groupId: 2, url: 'https://fixture.invalid/' },
+      { id: 10, windowId: 1, groupId: 2, url: 'https://fixture.invalid/other' },
+    ] })
+    ;(globalThis as Record<string, unknown>).chrome = chrome
+    const runtime = new Runtime()
+    const internals = runtime as unknown as {
+      leases: LeaseManager
+      debuggers: DebuggerController
+      attachTab(tabId: number): Promise<void>
+      handleDesktopRequest(request: Record<string, unknown>): Promise<any>
+    }
+    await internals.leases.claim({ leaseId: 'lease-update', leaseEpoch: 8, sessionAgentId: 'session-a', tabIds: [9, 10], childPolicy: 'manual' })
+    await Promise.all([internals.attachTab(9), internals.attachTab(10)])
+    expect(chrome.attached.size).toBe(2)
+    await expect(internals.handleDesktopRequest({
+      jsonrpc: '2.0', id: 'prepare', method: 'forge.runtime.prepareUpdate',
+      params: { protocolVersion: 1, payloadVersion: 'm5-runtime.1', sha256: 'a'.repeat(64), deadlineAt: new Date(Date.now() + 1_000).toISOString() },
+    })).resolves.toEqual({ protocolVersion: 1, payloadVersion: 'm5-runtime.1', quiesced: true })
+    expect(chrome.attached.size).toBe(0)
+    expect(internals.leases.current()).toBeNull()
+    await expect(internals.handleDesktopRequest({
+      jsonrpc: '2.0', id: 'claim', method: 'forge.browser.claim',
+      params: { protocolVersion: 1, sessionAgentId: 'session-a', leaseId: 'new', leaseEpoch: 9, tabIds: [9], childPolicy: 'manual' },
+    })).rejects.toThrow(/quiesced/u)
+  })
+
   it('does not overwrite a newer human interruption while cancelling navigation', async () => {
     const chrome = fakeChrome({ tabs: [{ id: 9, windowId: 1, groupId: 2, url: 'https://fixture.invalid/' }] })
     ;(globalThis as Record<string, unknown>).chrome = chrome

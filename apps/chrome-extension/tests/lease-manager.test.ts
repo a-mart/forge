@@ -207,6 +207,16 @@ describe('candidate picker and one-session leases', () => {
     expect(await skewed.recover()).toBeNull()
   })
 
+  it('requires explicit reselection after a full Chrome restart loses storage.session', async () => {
+    const beforeRestart = fakeChrome({ tabs: structuredClone(normalTabs), session: new FakeStorage() })
+    const claimed = new LeaseManager(beforeRestart, 'm5-runtime.1')
+    await claimed.claim({ leaseId: 'lease-before-restart', leaseEpoch: 7, sessionAgentId: 'session-a', tabIds: [3], childPolicy: 'manual' })
+    const afterRestart = fakeChrome({ tabs: structuredClone(normalTabs), session: new FakeStorage() })
+    const recovered = new LeaseManager(afterRestart, 'm5-runtime.1')
+    expect(await recovered.recover()).toBeNull()
+    expect(recovered.current()).toBeNull()
+  })
+
   it('interrupts only active synthetic work on trusted human input', async () => {
     const chrome = fakeChrome({ tabs: structuredClone(normalTabs) })
     const manager = new LeaseManager(chrome, 'm1-spike.1')

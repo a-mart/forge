@@ -53,9 +53,9 @@ const CONFIRMATIONS = {
     action: 'Remove integration',
   },
   takeover: {
-    title: 'Take over stale ownership?',
-    description: 'Use this only when the previous Forge Desktop instance is no longer running. Forge will rotate local authentication and claim the stale coordinator record.',
-    action: 'Take over',
+    title: 'Take over External Chrome authority?',
+    description: 'First quiesce External Chrome in the currently owning Forge Desktop/data directory. This explicit confirmation never interrupts a live authority and rotates local authentication only after release is proven.',
+    action: 'Confirm takeover',
   },
 } as const
 
@@ -135,7 +135,7 @@ export function SettingsExternalChrome() {
             <div className="space-y-1">
               <p className="font-semibold">Unpacked extension — not from the Chrome Web Store</p>
               <p className="text-muted-foreground">
-                This Local Beta is intentionally loaded from a Forge-managed folder. Chrome does not update it through the Web Store; after Forge updates, reload it manually in every Chrome profile where you loaded it.
+                This Local Beta is intentionally loaded from a Forge-managed folder. Chrome does not update it through the Web Store. Forge requests an authenticated automatic reload after updates; if Chrome blocks it, this page shows the required manual reload state.
               </p>
             </div>
           </div>
@@ -162,6 +162,7 @@ export function SettingsExternalChrome() {
         ) : status ? (
           <>
             <StatusSummary status={status} />
+            <RecoveryStatus status={status} />
 
             <div className="space-y-3 rounded-md border border-border/70 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -207,7 +208,7 @@ export function SettingsExternalChrome() {
           <li>Turn on <strong className="text-foreground">Developer mode</strong> in the top-right corner.</li>
           <li>Click <strong className="text-foreground">Load unpacked</strong> and choose the exact validated folder shown above. Do not choose its parent or a payload subfolder.</li>
           <li>Confirm Chrome shows extension ID <code className="select-all break-all text-foreground">fcchfcnadajoejfbiclihglkmbcfhajd</code>. If the ID differs, remove that extension and do not enable the integration.</li>
-          <li>After every Forge Desktop update, return to this page, compare the versions/hashes, then click <strong className="text-foreground">Reload</strong> on the extension card in each Chrome profile.</li>
+          <li>If Forge reports <strong className="text-foreground">Manual extension reload required</strong>, return here, compare versions/hashes, then click <strong className="text-foreground">Reload</strong> on the extension card in each Chrome profile.</li>
         </ol>
         <p className="rounded-md border border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
           Removing or repairing the Forge native integration does not remove the unpacked extension from Chrome. Do that manually in each profile. Forge never scans Chrome profiles for this setup.
@@ -248,7 +249,25 @@ function StatusSummary({ status }: { status: ExternalChromeCoordinatorStatus }) 
       <StatusItem label="Native host" value={nativeMessage} />
       <StatusItem label="Local authentication" value={status.auth} />
       {status.detail ? <p className="sm:col-span-2 text-xs text-muted-foreground">{status.detail}</p> : null}
-      {status.state === 'other-instance' ? <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">Another live Forge Desktop instance owns the coordinator. Actions are disabled; close that instance first.</p> : null}
+      {status.state === 'other-instance' ? <p className="sm:col-span-2 text-xs text-amber-600 dark:text-amber-400">Another live Forge Desktop instance owns the coordinator. Quiesce it before confirming takeover.{status.ownerDataDirHash ? ` Owner data-dir hash: ${status.ownerDataDirHash}` : ''}</p> : null}
+    </div>
+  )
+}
+
+function RecoveryStatus({ status }: { status: ExternalChromeCoordinatorStatus }) {
+  const messages: Record<ExternalChromeCoordinatorStatus['recovery'], string> = {
+    ready: 'External Chrome payload identity is authenticated and ready.',
+    updating: 'Updating External Chrome. New claims and browser operations are paused.',
+    reconnecting: 'Reconnecting. Forge requires a new authenticated hello before re-enabling operations.',
+    'rolled-back': 'Rolled back to the last verified compatible payload.',
+    'manual-extension-reload': 'Manual extension reload required: open chrome://extensions and click Reload for Forge External Chrome.',
+    'incompatible-payload': 'The current and previous payloads are incompatible. External Chrome remains detached; Managed Browser is still available.',
+    'authority-owned-by-other-data-dir': 'Another Forge data directory owns External Chrome. Quiesce that authority, then explicitly confirm takeover.',
+  }
+  return (
+    <div data-testid="external-chrome-recovery" className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+      <p className="font-semibold">{status.recovery}</p>
+      <p className="text-xs text-muted-foreground">{messages[status.recovery]}</p>
     </div>
   )
 }
