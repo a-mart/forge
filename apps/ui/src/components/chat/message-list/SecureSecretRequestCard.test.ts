@@ -19,6 +19,8 @@ let root: Root
 
 const request: SecureAccessRequestView = {
   requestId: 'request-1',
+  sessionAgentId: 'worker-1',
+  principalLabel: 'Deploy worker',
   requestedByAgentId: 'worker-1',
   requestedByLabel: 'Deploy worker',
   secretId: 'secret-1',
@@ -78,7 +80,9 @@ describe('SecureSecretRequestCard', () => {
     expect(container.textContent).toContain('Publish the verified release')
     expect(container.textContent).toContain('Environment variable DEPLOY_TOKEN')
     expect(container.textContent).toContain('Next Secure Bash command')
-    expect(container.textContent).toContain('requesting worker does not receive')
+    expect(container.textContent).toContain(
+      "Approval applies only to Deploy worker's isolated Secure Bash",
+    )
 
     flushSync(() => {
       fireEvent.click(getByRole(container, 'button', { name: 'Approve' }))

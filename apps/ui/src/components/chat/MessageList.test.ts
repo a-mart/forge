@@ -410,11 +410,14 @@ describe('MessageList paged activity', () => {
 
 describe('MessageList Secure Session attention', () => {
   it('renders pending secret requests outside persisted transcript rows', () => {
+    const onGrant = vi.fn()
     render([], {
       secureSessionRequests: {
         availability: { state: 'available' },
         requests: [{
           requestId: 'secure-request-1',
+          sessionAgentId: 'worker-1',
+          principalLabel: 'Deploy worker',
           requestedByAgentId: 'worker-1',
           secretId: 'secret-1',
           secretAlias: 'deploy-token',
@@ -429,21 +432,31 @@ describe('MessageList Secure Session attention', () => {
           available: true,
           bindings: [{ kind: 'env', variable: 'DEPLOY_TOKEN' }],
         }],
-        onGrant: vi.fn(),
+        onGrant,
         onDeny: vi.fn(),
       },
     })
 
-    const attention = container.querySelector('[data-testid="secure-session-attention"]')
+    const attention = container.querySelector<HTMLElement>(
+      '[data-testid="secure-session-attention"]',
+    )
     expect(attention).not.toBeNull()
     expect(attention?.querySelector('[data-secure-secret-request="secure-request-1"]')).not.toBeNull()
     expect(container.querySelector('[data-row-id]')).toBeNull()
+    flushSync(() => {
+      fireEvent.click(getByRole(attention!, 'button', { name: 'Approve' }))
+    })
+    expect(onGrant).toHaveBeenCalledWith(
+      'worker-1',
+      expect.objectContaining({ requestId: 'secure-request-1' }),
+    )
   })
 
   it('renders redacted output outside the transcript with dismiss and optional stop actions', () => {
     const onRevoke = vi.fn()
     render([], {
       secureSessionRequests: {
+        sessionAgentId: 'manager-1',
         availability: { state: 'available' },
         requests: [],
         secrets: [],

@@ -130,6 +130,7 @@ function renderSidebar({
   onDeleteAgent = vi.fn(),
   onDeleteManager = vi.fn(),
   onOpenSettings = vi.fn(),
+  onOpenProjectSecrets,
   onOpenArchive,
   onArchiveSession,
   onArchiveProfile,
@@ -149,6 +150,7 @@ function renderSidebar({
   onDeleteAgent?: (agentId: string) => void
   onDeleteManager?: (managerId: string) => void
   onOpenSettings?: () => void
+  onOpenProjectSecrets?: (profileId: string) => void
   onOpenArchive?: () => void
   onArchiveSession?: (agentId: string) => void
   onArchiveProfile?: (profileId: string) => void
@@ -186,6 +188,7 @@ function renderSidebar({
           onDeleteAgent,
           onDeleteManager,
           onOpenSettings,
+          onOpenProjectSecrets,
           onOpenArchive,
           onArchiveSession,
           onArchiveProfile,
@@ -398,6 +401,29 @@ describe('AgentSidebar', () => {
     const bottomSettingsBtn = settingsButtons[settingsButtons.length - 1]
     click(bottomSettingsBtn)
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes a project-header secrets action without selecting a session', async () => {
+    const onOpenProjectSecrets = vi.fn()
+    const onSelectAgent = vi.fn()
+    const mgr = sessionManager('manager-alpha', 'project-alpha')
+
+    renderSidebar({
+      agents: [mgr],
+      profiles: [{ ...profileFor(mgr), profileId: 'project-alpha' }],
+      onOpenProjectSecrets,
+      onSelectAgent,
+    })
+
+    const sidebar = getDesktopSidebar()
+    fireEvent.contextMenu(
+      getByRole(sidebar, 'button', { name: 'Collapse project manager-alpha' }),
+    )
+    const menuItem = await waitFor(() => getByText(document.body, 'Project Secrets'))
+    click(menuItem)
+
+    expect(onOpenProjectSecrets).toHaveBeenCalledWith('project-alpha')
+    expect(onSelectAgent).not.toHaveBeenCalled()
   })
 
   it('renders multiple profiles sorted by createdAt', () => {

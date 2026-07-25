@@ -107,6 +107,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onDeleteAgent,
   onDeleteManager,
   onOpenSettings,
+  onOpenProjectSecrets,
   onOpenStats,
   onOpenArchive,
   onCreateSession,
@@ -457,6 +458,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onMobileClose?.()
   }, [onOpenSettings, onMobileClose])
 
+  const handleOpenProjectSecrets = useCallback((profileId: string) => {
+    onOpenProjectSecrets?.(profileId)
+    onMobileClose?.()
+  }, [onMobileClose, onOpenProjectSecrets])
+
   // A project view is a screen-share boundary, not just a cosmetic list filter.
   // If the current surface is outside that boundary, move to an allowed session
   // before the user continues. With no available session, Settings is the safest
@@ -791,6 +797,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onDeleteAgent={onDeleteAgent}
       onDeleteManager={onDeleteManager}
       onOpenSettings={handleOpenSettings}
+      onOpenProjectSecrets={onOpenProjectSecrets ? handleOpenProjectSecrets : undefined}
       onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
       onStopSession={onStopSession}
       onResumeSession={onResumeSession}
@@ -832,6 +839,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     collapsedProfileIds, expandedSessionIds, expandedWorkerListSessionIds,
     toggleProfileCollapsed, toggleSessionCollapsed, showMoreSessions, showLessSessions,
     toggleWorkerListExpanded, handleSelectAgent, onDeleteAgent, onDeleteManager, handleOpenSettings,
+    onOpenProjectSecrets, handleOpenProjectSecrets,
     onCreateSession, handleRequestCreateSession, onStopSession, onResumeSession, handleRequestDelete,
     onArchiveSession, onArchiveProfile,
     handleRequestRename, onRenameProfile, handleRequestRenameProfile, onForkSession, handleForkSetTarget,

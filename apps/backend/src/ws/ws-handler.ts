@@ -198,6 +198,12 @@ export class WsHandler {
     this.subscriptionManager.broadcastToSession(sessionAgentId, event);
   }
 
+  broadcastSecureSessionSnapshot(
+    event: Extract<ServerEvent, { type: "secure_session_snapshot" }>,
+  ): void {
+    this.subscriptionManager.broadcastSecureSessionSnapshot(event);
+  }
+
   broadcastToExactSubscription(agentId: string, event: ServerEvent): void {
     this.subscriptionManager.broadcastToExactSubscription(agentId, event);
   }

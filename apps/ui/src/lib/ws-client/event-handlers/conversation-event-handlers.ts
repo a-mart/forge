@@ -43,7 +43,14 @@ export function applySecureSessionSnapshot(
   snapshot: SecureSessionSnapshot,
   context: ManagerWsConversationEventContext,
 ): void {
-  if (snapshot.sessionAgentId !== context.state.targetAgentId) return
+  const targetAgentId = context.state.targetAgentId
+  const ownerManagerAgentId =
+    snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId
+  const appliesToTarget = snapshot.principalKind === 'worker'
+    ? targetAgentId === snapshot.sessionAgentId
+      || targetAgentId === ownerManagerAgentId
+    : targetAgentId === snapshot.sessionAgentId
+  if (!appliesToTarget) return
 
   const current = context.state.secureSessionSnapshots[snapshot.sessionAgentId]
   if (current && snapshot.revision < current.revision) return

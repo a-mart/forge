@@ -309,6 +309,10 @@ export function toSecureSessionSnapshotView(
 ): SecureSessionSnapshotView {
   return {
     sessionAgentId: snapshot.sessionAgentId,
+    principalKind: snapshot.principalKind,
+    ...(snapshot.ownerManagerAgentId
+      ? { ownerManagerAgentId: snapshot.ownerManagerAgentId }
+      : {}),
     revision: snapshot.revision,
     executionMode: snapshot.executionMode,
     environmentStatus: snapshot.environmentStatus,
@@ -330,6 +334,7 @@ export function toSecureSessionSnapshotView(
     })),
     pendingRequests: snapshot.pendingRequests.map((request) => ({
       requestId: request.requestId,
+      sessionAgentId: snapshot.sessionAgentId,
       requestedByAgentId: request.requestedByAgentId,
       ...(request.requestedByDisplayName
         ? { requestedByLabel: request.requestedByDisplayName }

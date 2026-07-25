@@ -182,6 +182,7 @@ export function SecureSessionPicker({
     () => config.snapshot?.leases.filter((lease) => lease.status === 'active') ?? [],
     [config.snapshot?.leases],
   )
+  const teamMembers = config.teamMembers ?? []
   const grantableSecrets = useMemo(
     () => config.secrets.filter((secret) =>
       !activeLeases.some((lease) => lease.secretId === secret.secretId)),
@@ -192,23 +193,30 @@ export function SecureSessionPicker({
     config.snapshot?.projectDefaults,
   )
   const canGrant =
-    config.availability.state === 'available'
+    !config.readOnly
+    && Boolean(config.onGrant)
+    && config.availability.state === 'available'
     && config.snapshot?.executionMode === 'secure'
     && config.snapshot.environmentStatus === 'ready'
     && grantableSecrets.some((secret) => secret.available && secret.bindings.length > 0)
   const shouldOfferStart =
-    config.availability.state === 'available'
+    !config.readOnly
+    && config.availability.state === 'available'
     && (
       !config.snapshot
       || config.snapshot.executionMode === 'standard'
       || config.snapshot.environmentStatus === 'stopped'
     )
   const shouldOfferStop =
-    config.outputState === 'quarantined'
-    || activeLeases.length > 0
-    || (
-      config.snapshot?.executionMode === 'secure'
-      && config.snapshot.environmentStatus !== 'stopped'
+    !config.readOnly
+    && Boolean(config.onRevoke)
+    && (
+      config.outputState === 'quarantined'
+      || activeLeases.length > 0
+      || (
+        config.snapshot?.executionMode === 'secure'
+        && config.snapshot.environmentStatus !== 'stopped'
+      )
     )
 
   const startAndOpenGrant = async () => {
@@ -264,11 +272,12 @@ export function SecureSessionPicker({
           <PopoverHeader>
             <PopoverTitle className="flex items-center gap-2">
               <Shield className="size-4" aria-hidden="true" />
-              Secure Session
+              {config.readOnly ? 'Worker Secure Status' : 'Team Secure Mode'}
             </PopoverTitle>
             <PopoverDescription>
-              Secure Bash runs in a task-owned Linux container. Active grants are
-              injected into every command process while their scope remains valid.
+              {config.readOnly
+                ? 'This worker has an isolated Secure Bash container. Only its own approved grants are available here.'
+                : 'Each agent runs Secure Bash in its own isolated container with independent grants.'}
             </PopoverDescription>
           </PopoverHeader>
 
@@ -304,6 +313,102 @@ export function SecureSessionPicker({
             </div>
           ) : null}
 
+          {teamMembers.length > 0 ? (
+            <section className="space-y-2" aria-label="Team secure status">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Team agents
+              </h3>
+              <div className="space-y-2">
+                {teamMembers.map((member) => {
+                  const memberLeases = member.snapshot.leases.filter(
+                    (lease) => lease.status === 'active',
+                  )
+                  const ready =
+                    member.snapshot.executionMode === 'secure'
+                    && member.snapshot.environmentStatus === 'ready'
+                  const quarantined = member.snapshot.outputState === 'quarantined'
+                  return (
+                    <div
+                      key={member.sessionAgentId}
+                      className="rounded-md border border-border/70 p-2.5"
+                      data-secure-team-member={member.sessionAgentId}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="min-w-0 truncate text-sm font-medium">
+                          {member.displayName}
+                        </p>
+                        <span className={cn(
+                          'shrink-0 text-xs',
+                          quarantined ? 'text-destructive' : 'text-muted-foreground',
+                        )}>
+                          {quarantined
+                            ? 'Output redacted'
+                            : ready
+                              ? 'Secure'
+                              : member.snapshot.environmentStatus}
+                          {' · '}
+                          {memberLeases.length} {memberLeases.length === 1 ? 'grant' : 'grants'}
+                        </span>
+                      </div>
+                      {quarantined ? (
+                        <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                          <span className="text-destructive">
+                            Protected output was redacted for {member.displayName}.
+                          </span>
+                          {config.onRevoke ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="destructive"
+                              className="h-7 shrink-0 px-2 text-xs"
+                              disabled={config.disabled}
+                              onClick={() => void config.onRevoke?.(
+                                member.sessionAgentId,
+                                undefined,
+                                { stopProcesses: true },
+                              )}
+                            >
+                              Stop secure processes
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {memberLeases.length > 0 ? (
+                        <div className="mt-2 space-y-1.5">
+                          {memberLeases.map((lease) => (
+                            <div
+                              key={lease.leaseId}
+                              className="flex items-center justify-between gap-2 text-xs"
+                            >
+                              <span className="min-w-0 truncate text-muted-foreground">
+                                {lease.displayAlias}
+                              </span>
+                              {config.onRevoke ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 shrink-0 px-2 text-xs"
+                                  disabled={config.disabled}
+                                  onClick={() => void config.onRevoke?.(
+                                    member.sessionAgentId,
+                                    lease.leaseId,
+                                  )}
+                                >
+                                  Revoke
+                                </Button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ) : null}
+
           {activeLeases.length > 0 ? (
             <section className="space-y-2" aria-label="Active secure leases">
               <div className="flex items-center justify-between">
@@ -326,16 +431,21 @@ export function SecureSessionPicker({
                         {leaseDescription(lease)}
                       </p>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 shrink-0 px-2 text-xs"
-                      disabled={config.disabled}
-                      onClick={() => void config.onRevoke(lease.leaseId)}
-                    >
-                      Revoke
-                    </Button>
+                    {!config.readOnly && config.onRevoke && sessionAgentId ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        disabled={config.disabled}
+                        onClick={() => void config.onRevoke?.(
+                          sessionAgentId,
+                          lease.leaseId,
+                        )}
+                      >
+                        Revoke
+                      </Button>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -363,7 +473,9 @@ export function SecureSessionPicker({
                 ) : 'Start secure session'}
               </Button>
             ) : null}
-            {config.availability.state === 'available' && !shouldOfferStart ? (
+            {!config.readOnly
+            && config.availability.state === 'available'
+            && !shouldOfferStart ? (
               <Button
                 type="button"
                 size="sm"
@@ -395,10 +507,10 @@ export function SecureSessionPicker({
         </PopoverContent>
       </Popover>
 
-      {grantOpen ? (
+      {grantOpen && config.onGrant && sessionAgentId ? (
         <SecureGrantDialog
           secrets={grantableSecrets}
-          onGrant={config.onGrant}
+          onGrant={(grants) => config.onGrant?.(sessionAgentId, grants)}
           onClose={() => setGrantOpen(false)}
         />
       ) : null}
@@ -406,7 +518,11 @@ export function SecureSessionPicker({
       <StopProcessesAndRevokeDialog
         open={stopOpen}
         onOpenChange={setStopOpen}
-        onConfirm={() => config.onRevoke(undefined, { stopProcesses: true })}
+        onConfirm={() => {
+          if (config.onRevoke && sessionAgentId) {
+            return config.onRevoke(sessionAgentId, undefined, { stopProcesses: true })
+          }
+        }}
       />
     </>
   )

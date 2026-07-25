@@ -610,6 +610,7 @@ describe('MessageInput', () => {
           availability: { state: 'available' },
           snapshot: {
             sessionAgentId: 'manager-1',
+            principalKind: 'manager',
             revision: 1,
             executionMode: 'standard',
             environmentStatus: 'stopped',
@@ -637,6 +638,7 @@ describe('MessageInput', () => {
           availability: { state: 'available' },
           snapshot: {
             sessionAgentId: 'manager-1',
+            principalKind: 'manager',
             revision: 2,
             executionMode: 'secure',
             environmentStatus: 'ready',

@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   Terminal,
   Trash2,
@@ -43,6 +44,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   onSelect,
   onDeleteAgent,
   onDeleteManager,
+  onOpenProjectSecrets,
   onCreateSession,
   onStopSession,
   onResumeSession,
@@ -201,6 +203,12 @@ export const ProfileGroup = React.memo(function ProfileGroup({
             <ContextMenuItem onClick={() => onChangeCwd(profile.profileId)}>
               <FolderOpen className="mr-2 size-3.5" />
               Change Working Directory
+            </ContextMenuItem>
+          ) : null}
+          {onOpenProjectSecrets && !isCortexProfile(treeRow) ? (
+            <ContextMenuItem onClick={() => onOpenProjectSecrets(profile.profileId)}>
+              <ShieldCheck className="mr-2 size-3.5" />
+              Project Secrets
             </ContextMenuItem>
           ) : null}
           {onCreateAgentCreator ? (

@@ -42,6 +42,8 @@ interface SettingsPanelProps {
     agentId: string
     profileId: string
   } | null
+  /** Exact project selected by contextual Settings navigation. */
+  contextProfileId?: string
   /** Optional target for target-aware Settings shell. When omitted, Builder target is created from wsUrl. */
   target?: SettingsBackendTarget
   /**
@@ -79,6 +81,7 @@ export function SettingsPanel({
   modelConfigChangeKey,
   onBack,
   previewSession,
+  contextProfileId,
   target: externalTarget,
   repositoryCloneAvailable,
   initialTab,
@@ -158,7 +161,7 @@ export function SettingsPanel({
         <SettingsSecrets
           apiClient={apiClient}
           profiles={profiles}
-          currentProfileId={previewSession?.profileId}
+          currentProfileId={contextProfileId ?? previewSession?.profileId}
         />
       )}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}

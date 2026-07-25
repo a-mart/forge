@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, getByText, waitFor } from '@testing-library/dom'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import type { ProfileTreeRow, SessionRow } from '@/lib/agent-hierarchy'
 import { ProfileGroup } from './ProfileGroup'
@@ -143,6 +144,19 @@ describe('ProfileGroup project row expand/collapse', () => {
     flushSync(() => plus.click())
     expect(onCreateSession).toHaveBeenCalledWith('project-alpha')
     expect(onToggleProfileCollapsed).not.toHaveBeenCalled()
+  })
+
+  it('opens Project Secrets for the exact project without selecting a task', async () => {
+    const onOpenProjectSecrets = vi.fn()
+    const onSelect = vi.fn()
+    renderGroup({ onOpenProjectSecrets, onSelect })
+
+    fireEvent.contextMenu(projectHeaderButton())
+    const menuItem = await waitFor(() => getByText(document.body, 'Project Secrets'))
+    fireEvent.click(menuItem)
+
+    expect(onOpenProjectSecrets).toHaveBeenCalledWith('project-alpha')
+    expect(onSelect).not.toHaveBeenCalled()
   })
 
   it('keeps session worker expand controls', () => {

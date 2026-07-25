@@ -1319,8 +1319,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             <SecureOutputQuarantineNotice
               reason={secureSessionRequests.outputStateReason}
               onStopProcessesAndRevoke={
-                secureSessionRequests.onRevoke
-                  ? () => secureSessionRequests.onRevoke?.(undefined, { stopProcesses: true })
+                secureSessionRequests.onRevoke && secureSessionRequests.sessionAgentId
+                  ? () => secureSessionRequests.onRevoke?.(
+                      secureSessionRequests.sessionAgentId!,
+                      undefined,
+                      { stopProcesses: true },
+                    )
                   : undefined
               }
             />
@@ -1333,9 +1337,17 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               secrets={secureSessionRequests.secrets}
               project={secureSessionRequests.project}
               disabled={secureSessionRequests.disabled}
-              onGrant={secureSessionRequests.onGrant}
-              onDeny={secureSessionRequests.onDeny}
-              onPrivateFulfill={secureSessionRequests.onPrivateFulfill}
+              onGrant={(grant) =>
+                secureSessionRequests.onGrant(request.sessionAgentId, grant)}
+              onDeny={(requestId) =>
+                secureSessionRequests.onDeny(request.sessionAgentId, requestId)}
+              onPrivateFulfill={secureSessionRequests.onPrivateFulfill
+                ? (requestId, input) => secureSessionRequests.onPrivateFulfill?.(
+                    request.sessionAgentId,
+                    requestId,
+                    input,
+                  )
+                : undefined}
             />
           ))}
         </section>

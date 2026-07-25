@@ -286,6 +286,33 @@ export class WsSubscriptions {
     }
   }
 
+  broadcastSecureSessionSnapshot(
+    event: Extract<ServerEvent, { type: "secure_session_snapshot" }>,
+  ): void {
+    const wss = this.getServer();
+    if (!wss) {
+      return;
+    }
+
+    const ownerManagerAgentId =
+      event.ownerManagerAgentId ?? event.sessionAgentId;
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      const subscribedAgentId = this.subscriptions.get(client);
+      if (
+        subscribedAgentId !== event.sessionAgentId
+        && subscribedAgentId !== ownerManagerAgentId
+      ) {
+        continue;
+      }
+
+      this.send(client, event);
+    }
+  }
+
   broadcastToExactSubscription(agentId: string, event: ServerEvent): void {
     const wss = this.getServer();
     if (!wss) {

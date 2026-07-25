@@ -348,7 +348,7 @@ export class SwarmWebSocketServer {
 
   private readonly onSecureSessionSnapshot = (event: ServerEvent): void => {
     if (event.type !== "secure_session_snapshot") return;
-    this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
+    this.wsHandler.broadcastSecureSessionSnapshot(event);
   };
 
   private readonly onSecureSecretCatalogChanged = (event: ServerEvent): void => {

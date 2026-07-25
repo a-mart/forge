@@ -144,7 +144,7 @@ type BuilderNavigationState =
       /** Target origin; omitted = stay on the currently active origin. */
       origin?: OriginId
     }
-  | { view: 'settings'; surface: ActiveSurface }
+  | Extract<AppRouteState, { view: 'settings' }>
   | { view: 'stats'; statsTab?: StatsTab }
   | { view: 'archive'; surface: ActiveSurface }
 
@@ -389,11 +389,19 @@ export function BuilderSurface({
     ? state.goalSnapshots[activeAgentId] ?? null
     : null
   const secureSessionSnapshot =
-    isActiveManager
-    && activeAgentId
+    activeAgentId
     && state.secureSessionSnapshotLoadingSessionId !== activeAgentId
       ? state.secureSessionSnapshots[activeAgentId] ?? null
       : null
+  const secureTeamSnapshots = useMemo(
+    () => !isActiveManager || !activeAgentId
+      ? []
+      : Object.values(state.secureSessionSnapshots)
+        .filter((snapshot) =>
+          (snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId) === activeAgentId)
+        .sort((left, right) => left.sessionAgentId.localeCompare(right.sessionAgentId)),
+    [activeAgentId, isActiveManager, state.secureSessionSnapshots],
+  )
 
   useEffect(() => {
     if (isRemoteOriginActive || !state.connected) {
@@ -426,6 +434,7 @@ export function BuilderSurface({
       cancelled = true
     }
   }, [
+    activeAgentId,
     activeOriginId,
     httpClientRef,
     isRemoteOriginActive,
@@ -437,7 +446,6 @@ export function BuilderSurface({
     if (
       isRemoteOriginActive
       || !state.connected
-      || !isActiveManager
       || !activeAgentId
       || !isSecureSessionRuntimeSupported(activeAgent)
     ) {
@@ -473,7 +481,6 @@ export function BuilderSurface({
     activeOriginId,
     clientRef,
     httpClientRef,
-    isActiveManager,
     isRemoteOriginActive,
     state.connected,
   ])
@@ -516,6 +523,41 @@ export function BuilderSurface({
       : null,
     [secureSessionSnapshot],
   )
+  const secureTeamMemberViews = useMemo(
+    () => secureTeamSnapshots
+      .filter((snapshot) => snapshot.sessionAgentId !== activeAgentId)
+      .map((snapshot) => ({
+        sessionAgentId: snapshot.sessionAgentId,
+        displayName:
+          state.agents.find((agent) => agent.agentId === snapshot.sessionAgentId)
+            ?.displayName
+          ?? snapshot.sessionAgentId,
+        snapshot: toSecureSessionSnapshotView(snapshot),
+      })),
+    [activeAgentId, secureTeamSnapshots, state.agents],
+  )
+  const securePendingRequestViews = useMemo(() => {
+    const snapshots = isActiveManager
+      ? secureTeamSnapshots
+      : secureSessionSnapshot
+        ? [secureSessionSnapshot]
+        : []
+    return snapshots.flatMap((snapshot) => {
+      const principalLabel =
+        state.agents.find((agent) => agent.agentId === snapshot.sessionAgentId)
+          ?.displayName
+        ?? snapshot.sessionAgentId
+      return toSecureSessionSnapshotView(snapshot).pendingRequests.map((request) => ({
+        ...request,
+        principalLabel,
+      }))
+    })
+  }, [
+    isActiveManager,
+    secureSessionSnapshot,
+    secureTeamSnapshots,
+    state.agents,
+  ])
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager
@@ -725,6 +767,23 @@ export function BuilderSurface({
     }
     return manager.displayName ?? manager.agentId
   }, [activeAgent, state.agents, state.profiles])
+  const workerSecureStatus = useMemo(() => {
+    if (activeAgent?.role !== 'worker' || !secureSessionSnapshotView) return undefined
+    const activeGrantCount = secureSessionSnapshotView.leases.filter(
+      (lease) => lease.status === 'active',
+    ).length
+    const active =
+      secureSessionSnapshotView.executionMode === 'secure'
+      && secureSessionSnapshotView.environmentStatus === 'ready'
+    return {
+      active,
+      label: secureSessionSnapshotView.outputState === 'quarantined'
+        ? 'Protected output redacted'
+        : active
+          ? `Isolated Secure Bash · ${activeGrantCount} ${activeGrantCount === 1 ? 'grant' : 'grants'}`
+          : `Secure Bash ${secureSessionSnapshotView.environmentStatus}`,
+    }
+  }, [activeAgent?.role, secureSessionSnapshotView])
 
   // For settings, only show profile-level managers (default sessions or legacy managers without profileId)
   const settingsManagers = useMemo(() => {
@@ -883,9 +942,15 @@ export function BuilderSurface({
     client: ManagerWsClient,
     snapshot: SecureSessionSnapshot,
   ) => {
+    const targetAgentId = client.getState().targetAgentId
+    const ownerManagerAgentId =
+      snapshot.ownerManagerAgentId ?? snapshot.sessionAgentId
     if (
       clientRef.current !== client
-      || client.getState().targetAgentId !== snapshot.sessionAgentId
+      || (
+        targetAgentId !== snapshot.sessionAgentId
+        && targetAgentId !== ownerManagerAgentId
+      )
     ) return
     client.applySecureSessionSnapshot(snapshot)
     setState((current) => current.lastError
@@ -898,9 +963,19 @@ export function BuilderSurface({
     sessionAgentId: string,
     error: unknown,
   ) => {
+    const clientState = client.getState()
+    const targetDescriptor = clientState.agents.find(
+      (agent) => agent.agentId === sessionAgentId,
+    )
+    const ownerManagerAgentId = targetDescriptor?.role === 'worker'
+      ? targetDescriptor.managerId
+      : sessionAgentId
     if (
       clientRef.current !== client
-      || client.getState().targetAgentId !== sessionAgentId
+      || (
+        clientState.targetAgentId !== sessionAgentId
+        && clientState.targetAgentId !== ownerManagerAgentId
+      )
     ) return
     const message = secureSessionUiErrorMessage(error)
     setState((current) => ({ ...current, lastError: message }))
@@ -931,23 +1006,27 @@ export function BuilderSurface({
     secureSessionSnapshot?.revision,
   ])
 
-  const handleGrantSecureSession = useCallback(async (grant: SecureGrantInput) => {
+  const handleGrantSecureSession = useCallback(async (
+    sessionAgentId: string,
+    grant: SecureGrantInput,
+  ) => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
+    const principalSnapshot =
+      client?.getState().secureSessionSnapshots[sessionAgentId] ?? null
     if (
       !apiClient
       || !client
-      || !activeAgentId
-      || !secureSessionSnapshot
+      || !principalSnapshot
       || isRemoteOriginActive
     ) return false
     try {
-      let baseRevision = secureSessionSnapshot.revision
+      let baseRevision = principalSnapshot.revision
       let nextSnapshot
       try {
         nextSnapshot = await grantSecureSessionLease(
           apiClient,
-          activeAgentId,
+          sessionAgentId,
           baseRevision,
           grant,
         )
@@ -957,7 +1036,7 @@ export function BuilderSurface({
           error.code !== 'SECURE_STALE_REVISION'
           && error.code !== 'SECURE_REQUEST_INVALID'
         ) throw error
-        const refreshed = await fetchSecureSessionSnapshot(apiClient, activeAgentId)
+        const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
         applySecureMutationResult(client, refreshed)
         if (error.code === 'SECURE_REQUEST_INVALID') throw error
         if (
@@ -971,7 +1050,7 @@ export function BuilderSurface({
         baseRevision = refreshed.revision
         nextSnapshot = await grantSecureSessionLease(
           apiClient,
-          activeAgentId,
+          sessionAgentId,
           baseRevision,
           grant,
         )
@@ -979,29 +1058,29 @@ export function BuilderSurface({
       applySecureMutationResult(client, nextSnapshot)
       return true
     } catch (error) {
-      reportSecureMutationError(client, activeAgentId, error)
+      reportSecureMutationError(client, sessionAgentId, error)
       return false
     }
   }, [
-    activeAgentId,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
-    secureSessionSnapshot,
   ])
 
   const handleGrantSecureSessions = useCallback(async (
+    sessionAgentId: string,
     grants: SecureGrantInput[],
   ) => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
+    const principalSnapshot =
+      client?.getState().secureSessionSnapshots[sessionAgentId] ?? null
     if (
       !apiClient
       || !client
-      || !activeAgentId
-      || !secureSessionSnapshot
+      || !principalSnapshot
       || isRemoteOriginActive
       || grants.length === 0
     ) return false
@@ -1009,8 +1088,8 @@ export function BuilderSurface({
     try {
       const nextSnapshot = await grantSecureSessionLeases(
         apiClient,
-        activeAgentId,
-        secureSessionSnapshot.revision,
+        sessionAgentId,
+        principalSnapshot.revision,
         grants,
       )
       applySecureMutationResult(client, nextSnapshot)
@@ -1020,72 +1099,74 @@ export function BuilderSurface({
       const reconciliation = await reconcileSecureBatchGrantFailure(
         error,
         grants,
-        () => fetchSecureSessionSnapshot(apiClient, activeAgentId),
+        () => fetchSecureSessionSnapshot(apiClient, sessionAgentId),
       )
       if (reconciliation) {
         applySecureMutationResult(client, reconciliation.snapshot)
         if (reconciliation.confirmed) return true
         reportedError = new SecureSessionUiError('SECURE_STALE_REVISION')
       }
-      reportSecureMutationError(client, activeAgentId, reportedError)
+      reportSecureMutationError(client, sessionAgentId, reportedError)
       return false
     }
   }, [
-    activeAgentId,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
-    secureSessionSnapshot,
   ])
 
   const handleRevokeSecureSession = useCallback(async (
+    sessionAgentId: string,
     leaseId?: string,
     options?: { stopProcesses?: boolean },
   ) => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
+    const principalSnapshot =
+      client?.getState().secureSessionSnapshots[sessionAgentId] ?? null
     if (
       !apiClient
       || !client
-      || !activeAgentId
-      || !secureSessionSnapshot
+      || !principalSnapshot
       || isRemoteOriginActive
     ) return
     try {
       const nextSnapshot = options?.stopProcesses
-        ? await stopSecureSession(apiClient, activeAgentId, secureSessionSnapshot.revision)
+        ? await stopSecureSession(apiClient, sessionAgentId, principalSnapshot.revision)
         : leaseId
           ? await revokeSecureSessionLease(
               apiClient,
-              activeAgentId,
+              sessionAgentId,
               leaseId,
-              secureSessionSnapshot.revision,
+              principalSnapshot.revision,
             )
           : null
       if (nextSnapshot) applySecureMutationResult(client, nextSnapshot)
     } catch (error) {
-      reportSecureMutationError(client, activeAgentId, error)
+      reportSecureMutationError(client, sessionAgentId, error)
     }
   }, [
-    activeAgentId,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
-    secureSessionSnapshot,
   ])
 
-  const handleDenySecureRequest = useCallback(async (requestId: string) => {
+  const handleDenySecureRequest = useCallback(async (
+    sessionAgentId: string,
+    requestId: string,
+  ) => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
+    const principalSnapshot =
+      client?.getState().secureSessionSnapshots[sessionAgentId] ?? null
     if (
       !apiClient
       || !client
-      || !activeAgentId
-      || !secureSessionSnapshot
+      || !principalSnapshot
       || isRemoteOriginActive
     ) return
     try {
@@ -1093,9 +1174,9 @@ export function BuilderSurface({
       try {
         nextSnapshot = await denySecureAccessRequest(
           apiClient,
-          activeAgentId,
+          sessionAgentId,
           requestId,
-          secureSessionSnapshot.revision,
+          principalSnapshot.revision,
         )
       } catch (error) {
         if (!(error instanceof SecureSessionUiError)) throw error
@@ -1103,7 +1184,7 @@ export function BuilderSurface({
           error.code !== 'SECURE_STALE_REVISION'
           && error.code !== 'SECURE_REQUEST_INVALID'
         ) throw error
-        const refreshed = await fetchSecureSessionSnapshot(apiClient, activeAgentId)
+        const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
         applySecureMutationResult(client, refreshed)
         if (
           error.code === 'SECURE_REQUEST_INVALID'
@@ -1113,39 +1194,39 @@ export function BuilderSurface({
         ) throw new SecureSessionUiError('SECURE_REQUEST_INVALID')
         nextSnapshot = await denySecureAccessRequest(
           apiClient,
-          activeAgentId,
+          sessionAgentId,
           requestId,
           refreshed.revision,
         )
       }
       applySecureMutationResult(client, nextSnapshot)
     } catch (error) {
-      reportSecureMutationError(client, activeAgentId, error)
+      reportSecureMutationError(client, sessionAgentId, error)
     }
   }, [
-    activeAgentId,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
-    secureSessionSnapshot,
   ])
 
   const handlePrivateSecureFulfillment = useCallback(async (
+    sessionAgentId: string,
     requestId: string,
     input: SecurePrivateFulfillmentInput,
   ) => {
     const apiClient = httpClientRef.current
     const client = clientRef.current
-    const request = secureSessionSnapshot?.pendingRequests.find(
+    const principalSnapshot =
+      client?.getState().secureSessionSnapshots[sessionAgentId] ?? null
+    const request = principalSnapshot?.pendingRequests.find(
       (candidate) => candidate.requestId === requestId,
     )
     if (
       !apiClient
       || !client
-      || !activeAgentId
-      || !secureSessionSnapshot
+      || !principalSnapshot
       || !request
       || isRemoteOriginActive
     ) {
@@ -1156,9 +1237,9 @@ export function BuilderSurface({
       try {
         nextSnapshot = await fulfillSecureAccessRequestPrivately(
           apiClient,
-          activeAgentId,
+          sessionAgentId,
           request,
-          secureSessionSnapshot.revision,
+          principalSnapshot.revision,
           input,
         )
       } catch (error) {
@@ -1166,7 +1247,7 @@ export function BuilderSurface({
           !(error instanceof SecureSessionUiError)
           || error.code !== 'SECURE_STALE_REVISION'
         ) throw error
-        const refreshed = await fetchSecureSessionSnapshot(apiClient, activeAgentId)
+        const refreshed = await fetchSecureSessionSnapshot(apiClient, sessionAgentId)
         applySecureMutationResult(client, refreshed)
         const refreshedRequest = refreshed.pendingRequests.find(
           (candidate) =>
@@ -1178,7 +1259,7 @@ export function BuilderSurface({
         }
         nextSnapshot = await fulfillSecureAccessRequestPrivately(
           apiClient,
-          activeAgentId,
+          sessionAgentId,
           refreshedRequest,
           refreshed.revision,
           input,
@@ -1186,25 +1267,27 @@ export function BuilderSurface({
       }
       applySecureMutationResult(client, nextSnapshot)
     } catch (error) {
-      reportSecureMutationError(client, activeAgentId, error)
+      reportSecureMutationError(client, sessionAgentId, error)
       throw error
     }
   }, [
-    activeAgentId,
     applySecureMutationResult,
     clientRef,
     httpClientRef,
     isRemoteOriginActive,
     reportSecureMutationError,
-    secureSessionSnapshot,
   ])
 
   const secureSessionPicker = useMemo<SecureSessionPickerConfig | undefined>(() => {
-    if (!isActiveManager) return undefined
+    if (!activeAgentId) return undefined
     return {
       originId: activeOriginId,
       availability: secureSessionAvailability,
       snapshot: isRemoteOriginActive ? null : secureSessionSnapshotView,
+      ...(isActiveManager && !isRemoteOriginActive
+        ? { teamMembers: secureTeamMemberViews }
+        : {}),
+      ...(!isActiveManager ? { readOnly: true } : {}),
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(isRemoteOriginActive || !secureSessionSnapshotView
         ? {}
@@ -1223,9 +1306,13 @@ export function BuilderSurface({
           secureCatalogLoading
           || state.secureSessionSnapshotLoadingSessionId === activeAgentId
         )),
-      ...(isRemoteOriginActive ? {} : { onStart: handleStartSecureSession }),
-      onGrant: handleGrantSecureSessions,
-      onRevoke: handleRevokeSecureSession,
+      ...(isRemoteOriginActive || !isActiveManager
+        ? {}
+        : {
+            onStart: handleStartSecureSession,
+            onGrant: handleGrantSecureSessions,
+            onRevoke: handleRevokeSecureSession,
+          }),
     }
   }, [
     activeAgentId,
@@ -1239,18 +1326,22 @@ export function BuilderSurface({
     secureSecretOptions,
     secureSessionAvailability,
     secureSessionSnapshotView,
+    secureTeamMemberViews,
     state.connected,
     state.secureSessionSnapshotLoadingSessionId,
   ])
 
   const secureSessionRequests = useMemo<SecureSessionRequestConfig | undefined>(() => {
-    if (!isActiveManager) return undefined
+    if (!activeAgentId) return undefined
     return {
       originId: activeOriginId,
+      ...(secureSessionSnapshotView
+        ? { sessionAgentId: secureSessionSnapshotView.sessionAgentId }
+        : {}),
       availability: secureSessionAvailability,
       requests: isRemoteOriginActive
         ? []
-        : secureSessionSnapshotView?.pendingRequests ?? [],
+        : securePendingRequestViews,
       secrets: isRemoteOriginActive ? [] : secureSecretOptions,
       ...(!isRemoteOriginActive && secureSessionSnapshot
         ? {
@@ -1282,12 +1373,13 @@ export function BuilderSurface({
       disabled: !state.connected || secureCatalogLoading,
       onGrant: handleGrantSecureSession,
       onDeny: handleDenySecureRequest,
-      onRevoke: handleRevokeSecureSession,
+      ...(isActiveManager ? { onRevoke: handleRevokeSecureSession } : {}),
       ...(!isRemoteOriginActive && isPrivateSecureFulfillmentAvailable()
         ? { onPrivateFulfill: handlePrivateSecureFulfillment }
         : {}),
     }
   }, [
+    activeAgentId,
     activeOriginId,
     handleDenySecureRequest,
     handleGrantSecureSession,
@@ -1298,6 +1390,7 @@ export function BuilderSurface({
     secureCatalogLoading,
     secureCatalog?.projectDefaults,
     secureSecretOptions,
+    securePendingRequestViews,
     secureSessionAvailability,
     secureSessionSnapshot,
     secureSessionSnapshotView,
@@ -1481,6 +1574,14 @@ export function BuilderSurface({
         onOpenSettings={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
           navigateToRoute({ view: 'settings', surface: 'builder' })
         })}
+        onOpenProjectSecrets={(profileId) => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'settings' }, () => {
+          navigateToRoute({
+            view: 'settings',
+            surface: 'builder',
+            settingsTab: 'secrets',
+            settingsProfileId: profileId,
+          })
+        })}
         onOpenStats={() => panels.fileEditorCoordinator.requestFileEditorTransition({ type: 'navigate-route', nextView: 'stats' }, () => {
           navigateToRoute({ view: 'stats' })
         })}
@@ -1639,6 +1740,7 @@ export function BuilderSurface({
                   })
                 }
                 previewSession={previewSession}
+                contextProfileId={routeState.view === 'settings' ? routeState.settingsProfileId : undefined}
                 initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
                 initialCollabApiBaseUrl={routeState.view === 'settings' ? routeState.collabApiBaseUrl : undefined}
                 initialSkillImportUrl={routeState.view === 'settings' ? routeState.skillImportUrl : undefined}
@@ -1866,6 +1968,7 @@ export function BuilderSurface({
                     ? {
                         managerLabel: parentManagerLabel,
                         onNavigateBack: () => panels.handleSelectAgent(activeAgent.managerId),
+                        ...(workerSecureStatus ? { secureStatus: workerSecureStatus } : {}),
                       }
                     : undefined
                 }

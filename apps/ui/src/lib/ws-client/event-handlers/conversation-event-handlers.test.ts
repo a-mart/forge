@@ -369,6 +369,9 @@ describe('handleConversationEvent secure session snapshots', () => {
       type: 'secure_session_snapshot',
       sessionAgentId: 'manager',
       profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
       revision: 3,
       executionMode: 'secure',
       environmentStatus: 'ready',
@@ -384,6 +387,9 @@ describe('handleConversationEvent secure session snapshots', () => {
       type: 'secure_session_snapshot',
       sessionAgentId: 'manager',
       profileId: 'profile-1',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
       revision: 2,
       executionMode: 'standard',
       environmentStatus: 'stopped',
@@ -397,6 +403,9 @@ describe('handleConversationEvent secure session snapshots', () => {
       type: 'secure_session_snapshot',
       sessionAgentId: 'other-manager',
       profileId: 'profile-2',
+      principalKind: 'manager',
+      ownerManagerAgentId: null,
+      workerAssignmentId: null,
       revision: 9,
       executionMode: 'secure',
       environmentStatus: 'ready',
@@ -405,6 +414,35 @@ describe('handleConversationEvent secure session snapshots', () => {
       updatedAt: '2026-07-23T12:00:09.000Z',
     })
     expect(wrongSession.secureSessionSnapshots['other-manager']).toBeUndefined()
+  })
+
+  it('lets a manager aggregate owned workers while workers receive only themselves', () => {
+    const workerSnapshot = {
+      type: 'secure_session_snapshot' as const,
+      sessionAgentId: 'worker-1',
+      profileId: 'profile-1',
+      principalKind: 'worker' as const,
+      ownerManagerAgentId: 'manager',
+      workerAssignmentId: 'assignment-1',
+      revision: 4,
+      executionMode: 'secure' as const,
+      environmentStatus: 'ready' as const,
+      leases: [],
+      pendingRequests: [],
+      updatedAt: '2026-07-23T12:00:04.000Z',
+    }
+
+    const manager = runHandler(createInitialManagerWsState('manager'), workerSnapshot)
+    expect(manager.secureSessionSnapshots['worker-1']?.revision).toBe(4)
+
+    const worker = runHandler(createInitialManagerWsState('worker-1'), workerSnapshot)
+    expect(worker.secureSessionSnapshots['worker-1']?.revision).toBe(4)
+
+    const sibling = runHandler(createInitialManagerWsState('worker-2'), workerSnapshot)
+    expect(sibling.secureSessionSnapshots['worker-1']).toBeUndefined()
+
+    const unrelated = runHandler(createInitialManagerWsState('other-manager'), workerSnapshot)
+    expect(unrelated.secureSessionSnapshots['worker-1']).toBeUndefined()
   })
 })
 

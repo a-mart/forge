@@ -10,7 +10,7 @@ export type ActiveSurface = 'builder' | 'collab'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
   | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string; origin?: string }
-  | { view: 'settings'; surface: ActiveSurface; settingsTab?: string; collabApiBaseUrl?: string; skillImportUrl?: string }
+  | { view: 'settings'; surface: ActiveSurface; settingsTab?: string; settingsProfileId?: string; collabApiBaseUrl?: string; skillImportUrl?: string }
   | { view: 'stats'; statsTab?: StatsTab }
   | { view: 'archive'; surface: ActiveSurface }
 
@@ -24,6 +24,8 @@ type AppRouteSearch = {
   origin?: string
   statsTab?: string
   settingsTab?: string
+  /** Project context for Settings pages that support project-scoped defaults. */
+  settingsProfileId?: string
   /** Collab backend API base URL hint for sign-in recovery deep-link. */
   collabApiBaseUrl?: string
   /** Forge skill-share HTTPS URL handed off by web route or Electron deep-link. */
@@ -91,11 +93,15 @@ export function parseRouteStateFromLocation(
   if (view === 'settings') {
     const skillImportUrl = typeof routeSearch.skillImportUrl === 'string' ? routeSearch.skillImportUrl : undefined
     const settingsTab = skillImportUrl ? 'skills' : typeof routeSearch.settingsTab === 'string' ? routeSearch.settingsTab : undefined
+    const settingsProfileId = typeof routeSearch.settingsProfileId === 'string'
+      ? routeSearch.settingsProfileId.trim() || undefined
+      : undefined
     const collabApiBaseUrl = typeof routeSearch.collabApiBaseUrl === 'string' ? routeSearch.collabApiBaseUrl : undefined
     return {
       view: 'settings',
       surface: skillImportUrl ? 'builder' : parseSurface(surface, defaultSurface),
       settingsTab,
+      settingsProfileId,
       collabApiBaseUrl,
       skillImportUrl,
     }
@@ -145,7 +151,14 @@ export function parseRouteStateFromLocation(
  */
 function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   if (routeState.view === 'settings') {
-    return { view: 'settings', surface: routeState.surface, settingsTab: routeState.settingsTab, collabApiBaseUrl: routeState.collabApiBaseUrl, skillImportUrl: routeState.skillImportUrl }
+    return {
+      view: 'settings',
+      surface: routeState.surface,
+      settingsTab: routeState.settingsTab,
+      settingsProfileId: routeState.settingsProfileId?.trim() || undefined,
+      collabApiBaseUrl: routeState.collabApiBaseUrl,
+      skillImportUrl: routeState.skillImportUrl,
+    }
   }
 
   if (routeState.view === 'stats') {
@@ -176,6 +189,7 @@ export function toRouteSearch(
     const search: AppRouteSearch = { view: 'settings' }
     if (routeState.surface !== defaultSurface) search.surface = routeState.surface
     if (routeState.settingsTab) search.settingsTab = routeState.settingsTab
+    if (routeState.settingsProfileId) search.settingsProfileId = routeState.settingsProfileId
     if (routeState.collabApiBaseUrl) search.collabApiBaseUrl = routeState.collabApiBaseUrl
     if (routeState.skillImportUrl) search.skillImportUrl = routeState.skillImportUrl
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
@@ -231,7 +245,11 @@ export function toRouteSearch(
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   if (left.view === 'settings' && right.view === 'settings') {
-    return left.surface === right.surface && left.settingsTab === right.settingsTab && left.collabApiBaseUrl === right.collabApiBaseUrl && left.skillImportUrl === right.skillImportUrl
+    return left.surface === right.surface
+      && left.settingsTab === right.settingsTab
+      && left.settingsProfileId === right.settingsProfileId
+      && left.collabApiBaseUrl === right.collabApiBaseUrl
+      && left.skillImportUrl === right.skillImportUrl
   }
 
   if (left.view === 'stats' && right.view === 'stats') {

@@ -127,6 +127,79 @@ describe('useRouteState — settings surface', () => {
     expect(captured.current?.activeSurface).toBe('collab')
   })
 
+  it('preserves an exact contextual project without changing the sticky task', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { agent: 'session-with-draft', surface: 'builder' },
+      navigate,
+    })
+
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'secrets',
+        settingsProfileId: 'project-beta',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/',
+      search: {
+        view: 'settings',
+        settingsTab: 'secrets',
+        settingsProfileId: 'project-beta',
+        agent: 'session-with-draft',
+      },
+      replace: false,
+      resetScroll: false,
+    })
+    expect(parseRouteStateFromLocation('/', {
+      view: 'settings',
+      settingsTab: 'secrets',
+      settingsProfileId: 'project-beta',
+      agent: 'session-with-draft',
+    })).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'secrets',
+      settingsProfileId: 'project-beta',
+    })
+  })
+
+  it('treats different contextual projects as different Settings states', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: {
+        view: 'settings',
+        settingsTab: 'secrets',
+        settingsProfileId: 'project-alpha',
+        agent: 'session-with-draft',
+      },
+      navigate,
+    })
+
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'secrets',
+        settingsProfileId: 'project-beta',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({
+          settingsProfileId: 'project-beta',
+          agent: 'session-with-draft',
+        }),
+      }),
+    )
+  })
+
   it('routes skill import URLs to the skills settings tab on the Builder surface', () => {
     const parsed = parseRouteStateFromLocation('/', {
       view: 'settings',

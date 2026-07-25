@@ -213,29 +213,36 @@ export async function sendSubscriptionBootstrap(options: {
     await sendMeasured("remoteUpdateAwareness", remoteUpdateAwarenessEvent);
   }
 
-  const secureSessionAgentId = resolvePlanSnapshotSessionAgentId(targetAgentId);
   const secureSnapshotProvider = swarmManager as unknown as {
     getSecureSessionSnapshot?: (
       sessionAgentId: string,
     ) => SecureSessionSnapshot | Promise<SecureSessionSnapshot>;
+    listSecureSessionTeamSnapshots?: (
+      managerAgentId: string,
+    ) => SecureSessionSnapshot[] | Promise<SecureSessionSnapshot[]>;
   };
+  const secureTarget = swarmManager.getAgent(targetAgentId);
   if (
-    secureSessionAgentId
-    && typeof secureSnapshotProvider.getSecureSessionSnapshot === "function"
+    secureTarget
     && isBuilderRuntimeTarget(swarmManager.getConfig().runtimeTarget)
   ) {
     try {
-      const snapshot = await secureSnapshotProvider.getSecureSessionSnapshot(
-        secureSessionAgentId,
-      );
-      await sendMeasured("secureSessionSnapshot", {
-        ...snapshot,
-        type: "secure_session_snapshot",
-      });
+      const snapshots = secureTarget.role === "manager"
+        && typeof secureSnapshotProvider.listSecureSessionTeamSnapshots === "function"
+        ? await secureSnapshotProvider.listSecureSessionTeamSnapshots(secureTarget.agentId)
+        : typeof secureSnapshotProvider.getSecureSessionSnapshot === "function"
+          ? [await secureSnapshotProvider.getSecureSessionSnapshot(secureTarget.agentId)]
+          : [];
+      for (const snapshot of snapshots) {
+        await sendMeasured("secureSessionSnapshot", {
+          ...snapshot,
+          type: "secure_session_snapshot",
+        });
+      }
     } catch {
-      // This snapshot is metadata-only and must never surface a vault/provider
-      // exception through bootstrap logs. The HTTP endpoint remains available
-      // for a fixed-code retry.
+      // These snapshots are metadata-only and must never surface a
+      // vault/provider exception through bootstrap logs. The HTTP endpoint
+      // remains available for a fixed-code retry.
       metricFields.secureSessionSnapshotUnavailable = true;
     }
   }

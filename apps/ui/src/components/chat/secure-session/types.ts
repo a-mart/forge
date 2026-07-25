@@ -59,6 +59,8 @@ export interface SecureProjectDefaultStatusView {
 
 export interface SecureAccessRequestView {
   requestId: string
+  sessionAgentId: string
+  principalLabel?: string
   requestedByAgentId: string
   requestedByLabel?: string
   secretId?: string
@@ -71,6 +73,8 @@ export interface SecureAccessRequestView {
 
 export interface SecureSessionSnapshotView {
   sessionAgentId: string
+  principalKind: 'manager' | 'worker'
+  ownerManagerAgentId?: string
   revision: number
   executionMode: 'standard' | 'secure'
   environmentStatus: 'stopped' | 'starting' | 'ready' | 'degraded' | 'failed'
@@ -80,6 +84,12 @@ export interface SecureSessionSnapshotView {
   pendingRequests: SecureAccessRequestView[]
   projectDefaults?: SecureProjectDefaultStatusView[]
   updatedAt: string
+}
+
+export interface SecureSessionTeamMemberView {
+  sessionAgentId: string
+  displayName: string
+  snapshot: SecureSessionSnapshotView
 }
 
 export interface SecureGrantInput {
@@ -120,15 +130,19 @@ export interface SecureSessionPickerConfig {
   originId?: string
   availability: SecureSessionAvailability
   snapshot?: SecureSessionSnapshotView | null
+  teamMembers?: SecureSessionTeamMemberView[]
+  readOnly?: boolean
   secrets: SecureSecretOption[]
   disabled?: boolean
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
   onStart?: () => boolean | void | Promise<boolean | void>
-  onGrant: (
+  onGrant?: (
+    sessionAgentId: string,
     grants: SecureGrantInput[],
   ) => boolean | void | Promise<boolean | void>
-  onRevoke: (
+  onRevoke?: (
+    sessionAgentId: string,
     leaseId?: string,
     options?: SecureRevokeOptions,
   ) => void | Promise<void>
@@ -136,6 +150,7 @@ export interface SecureSessionPickerConfig {
 
 export interface SecureSessionRequestConfig {
   originId?: string
+  sessionAgentId?: string
   availability: SecureSessionAvailability
   requests: SecureAccessRequestView[]
   secrets: SecureSecretOption[]
@@ -144,14 +159,17 @@ export interface SecureSessionRequestConfig {
   outputState?: 'clear' | 'quarantined'
   outputStateReason?: string
   onGrant: (
+    sessionAgentId: string,
     grant: SecureGrantInput,
   ) => boolean | void | Promise<boolean | void>
-  onDeny: (requestId: string) => void | Promise<void>
+  onDeny: (sessionAgentId: string, requestId: string) => void | Promise<void>
   onRevoke?: (
+    sessionAgentId: string,
     leaseId?: string,
     options?: SecureRevokeOptions,
   ) => void | Promise<void>
   onPrivateFulfill?: (
+    sessionAgentId: string,
     requestId: string,
     input: SecurePrivateFulfillmentInput,
   ) => void | Promise<void>

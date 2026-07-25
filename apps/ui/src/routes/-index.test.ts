@@ -736,6 +736,18 @@ describe('parseWindowRouteSearch', () => {
     })
   })
 
+  it('parses contextual project settings without changing the sticky task', () => {
+    const result = parseWindowRouteSearch(
+      '?view=settings&agent=session-with-draft&settingsTab=secrets&settingsProfileId=project-beta',
+    )
+    expect(result).toEqual({
+      view: 'settings',
+      agent: 'session-with-draft',
+      settingsTab: 'secrets',
+      settingsProfileId: 'project-beta',
+    })
+  })
+
   it('returns undefined settingsTab when not present', () => {
     const result = parseWindowRouteSearch('?view=settings&surface=builder')
     expect(result.settingsTab).toBeUndefined()

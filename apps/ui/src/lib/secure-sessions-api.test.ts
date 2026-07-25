@@ -38,6 +38,9 @@ function snapshot(revision = 4): SecureSessionSnapshot {
   return {
     sessionAgentId: 'manager-1',
     profileId: 'profile-1',
+    principalKind: 'manager',
+    ownerManagerAgentId: null,
+    workerAssignmentId: null,
     revision,
     executionMode: 'secure',
     environmentStatus: 'ready',
@@ -280,6 +283,7 @@ describe('Secure Sessions API', () => {
       purposeSummary: 'Publish release',
       requestedByAgentId: 'worker-1',
       requestedByDisplayName: 'Deploy worker',
+      workerAssignmentId: 'assignment-1',
       createdAt: '2026-07-23T12:00:00.000Z',
       expiresAt: null,
     }
@@ -338,6 +342,7 @@ describe('Secure Sessions API', () => {
       purposeSummary: 'Connect to the release host',
       requestedByAgentId: 'manager-1',
       requestedByDisplayName: 'Release manager',
+      workerAssignmentId: null,
       createdAt: '2026-07-23T12:00:00.000Z',
       expiresAt: null,
     }
@@ -396,6 +401,7 @@ describe('Secure Sessions API', () => {
       purposeSummary: 'Publish release',
       requestedByAgentId: 'manager-1',
       requestedByDisplayName: 'Release manager',
+      workerAssignmentId: null,
       createdAt: '2026-07-23T12:00:00.000Z',
       expiresAt: null,
     }
@@ -442,6 +448,7 @@ describe('Secure Sessions API', () => {
       purposeSummary: 'Authenticate once',
       requestedByAgentId: 'manager-1',
       requestedByDisplayName: 'Release manager',
+      workerAssignmentId: null,
       createdAt: '2026-07-23T12:00:00.000Z',
       expiresAt: null,
     }
@@ -477,6 +484,7 @@ describe('Secure Sessions API', () => {
       purposeSummary: 'Publish release',
       requestedByAgentId: 'worker-1',
       requestedByDisplayName: 'Deploy worker',
+      workerAssignmentId: 'assignment-1',
       createdAt: '2026-07-23T12:00:00.000Z',
       expiresAt: null,
     }]

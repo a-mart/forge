@@ -9,6 +9,7 @@ import type { SettingsTab, SettingsBackendTarget } from '@/components/settings/s
 let capturedActiveTab: SettingsTab | undefined
 let capturedContentWidthClassName: string | undefined
 let capturedGeneralProps: Record<string, unknown> | undefined
+let capturedSecretsProps: Record<string, unknown> | undefined
 
 vi.mock('@/components/settings/SettingsLayout', () => ({
   SettingsLayout: (props: { activeTab: SettingsTab; onTabChange: (tab: SettingsTab) => void; contentWidthClassName?: string; children: React.ReactNode }) => {
@@ -31,6 +32,12 @@ vi.mock('@/components/settings/SettingsGeneral', () => ({
 vi.mock('@/components/settings/SettingsAppearance', () => ({ SettingsAppearance: () => createElement('div', null, 'Appearance') }))
 vi.mock('@/components/settings/SettingsNotifications', () => ({ SettingsNotifications: () => createElement('div', null, 'Notifications') }))
 vi.mock('@/components/settings/SettingsAuth', () => ({ SettingsAuth: () => createElement('div', null, 'Auth') }))
+vi.mock('@/components/settings/SettingsSecrets', () => ({
+  SettingsSecrets: (props: Record<string, unknown>) => {
+    capturedSecretsProps = props
+    return createElement('div', null, 'Secrets')
+  },
+}))
 vi.mock('@/components/settings/SettingsModels', () => ({ SettingsModels: () => createElement('div', null, 'Models') }))
 vi.mock('@/components/settings/SettingsSkills', () => ({ SettingsSkills: () => createElement('div', null, 'Skills') }))
 vi.mock('@/components/settings/SettingsPrompts', () => ({ SettingsPrompts: () => createElement('div', null, 'Prompts') }))
@@ -51,7 +58,7 @@ const BUILDER_TARGET: SettingsBackendTarget = {
   fetchCredentials: 'same-origin',
   requiresAdmin: false,
   availableTabs: [
-    'general', 'appearance', 'notifications', 'auth', 'models',
+    'general', 'appearance', 'notifications', 'auth', 'secrets', 'models',
     'skills', 'prompts', 'specialists', 'slash-commands', 'extensions',
     'collaboration', 'about',
   ],
@@ -79,6 +86,7 @@ beforeEach(() => {
   capturedActiveTab = undefined
   capturedContentWidthClassName = undefined
   capturedGeneralProps = undefined
+  capturedSecretsProps = undefined
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -95,6 +103,8 @@ function makeProps(overrides: {
   initialTab?: string
   target?: SettingsBackendTarget
   repositoryCloneAvailable?: boolean
+  contextProfileId?: string
+  previewSession?: { agentId: string; profileId: string } | null
 }) {
   return {
     wsUrl: 'ws://localhost:47187',
@@ -105,6 +115,8 @@ function makeProps(overrides: {
     modelConfigChangeKey: 0,
     target: overrides.target ?? BUILDER_TARGET,
     initialTab: overrides.initialTab,
+    contextProfileId: overrides.contextProfileId,
+    previewSession: overrides.previewSession,
     ...(overrides.repositoryCloneAvailable !== undefined
       ? { repositoryCloneAvailable: overrides.repositoryCloneAvailable }
       : {}),
@@ -115,6 +127,8 @@ function renderPanel(props: {
   initialTab?: string
   target?: SettingsBackendTarget
   repositoryCloneAvailable?: boolean
+  contextProfileId?: string
+  previewSession?: { agentId: string; profileId: string } | null
 }) {
   act(() => {
     root = createRoot(container)
@@ -126,6 +140,8 @@ function rerenderPanel(props: {
   initialTab?: string
   target?: SettingsBackendTarget
   repositoryCloneAvailable?: boolean
+  contextProfileId?: string
+  previewSession?: { agentId: string; profileId: string } | null
 }) {
   act(() => {
     root?.render(createElement(SettingsPanel, makeProps(props)))
@@ -142,6 +158,20 @@ describe('SettingsPanel initialTab', () => {
   it('uses initialTab on mount when it is a valid tab', () => {
     renderPanel({ initialTab: 'collaboration' })
     expect(capturedActiveTab).toBe('collaboration')
+  })
+
+  it('uses contextual project identity for Secrets without replacing task preview context', () => {
+    renderPanel({
+      initialTab: 'secrets',
+      contextProfileId: 'project-beta',
+      previewSession: {
+        agentId: 'session-with-draft',
+        profileId: 'project-alpha',
+      },
+    })
+
+    expect(capturedActiveTab).toBe('secrets')
+    expect(capturedSecretsProps?.currentProfileId).toBe('project-beta')
   })
 
   it('uses a wider content width for the appearance tab', () => {

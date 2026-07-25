@@ -14,6 +14,9 @@ function snapshot(
   return {
     sessionAgentId: 'manager-1',
     profileId: 'profile-1',
+    principalKind: 'manager',
+    ownerManagerAgentId: null,
+    workerAssignmentId: null,
     revision: 8,
     executionMode: 'secure',
     environmentStatus: 'ready',

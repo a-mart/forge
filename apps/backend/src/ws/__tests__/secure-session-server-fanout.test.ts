@@ -11,11 +11,13 @@ import {
 import { SwarmWebSocketServer } from "../server.js";
 
 describe("secure session server transport", () => {
-  it("registers private routes and fans snapshots only to the exact session", async () => {
+  it("fans worker snapshots only to the worker and owning manager", async () => {
     const port = await getAvailablePort();
     const config = await makeWsServerTempConfig(port, true);
     const manager = new WsServerTestSwarmManager(config);
     await bootWsServerTestManager(manager, config);
+    const worker = await manager.spawnAgent("manager", { agentId: "worker-1" });
+    const sibling = await manager.spawnAgent("manager", { agentId: "worker-2" });
     const { sessionAgent: otherSession } = await manager.createSession("manager", {
       label: "Other",
     });
@@ -61,18 +63,33 @@ describe("secure session server transport", () => {
     expect(hostileWebSocketStatus).toBe(403);
 
     const managerClient = new WebSocket(`ws://${config.host}:${config.port}`);
+    const workerClient = new WebSocket(`ws://${config.host}:${config.port}`);
+    const siblingClient = new WebSocket(`ws://${config.host}:${config.port}`);
     const otherClient = new WebSocket(`ws://${config.host}:${config.port}`);
     const managerEvents: ServerEvent[] = [];
+    const workerEvents: ServerEvent[] = [];
+    const siblingEvents: ServerEvent[] = [];
     const otherEvents: ServerEvent[] = [];
     managerClient.on("message", (raw) => {
       managerEvents.push(JSON.parse(raw.toString()) as ServerEvent);
+    });
+    workerClient.on("message", (raw) => {
+      workerEvents.push(JSON.parse(raw.toString()) as ServerEvent);
+    });
+    siblingClient.on("message", (raw) => {
+      siblingEvents.push(JSON.parse(raw.toString()) as ServerEvent);
     });
     otherClient.on("message", (raw) => {
       otherEvents.push(JSON.parse(raw.toString()) as ServerEvent);
     });
 
     try {
-      await Promise.all([once(managerClient, "open"), once(otherClient, "open")]);
+      await Promise.all([
+        once(managerClient, "open"),
+        once(workerClient, "open"),
+        once(siblingClient, "open"),
+        once(otherClient, "open"),
+      ]);
       managerClient.send(JSON.stringify({
         type: "subscribe",
         agentId: "manager",
@@ -80,6 +97,14 @@ describe("secure session server transport", () => {
       otherClient.send(JSON.stringify({
         type: "subscribe",
         agentId: otherSession.agentId,
+      }));
+      workerClient.send(JSON.stringify({
+        type: "subscribe",
+        agentId: worker.agentId,
+      }));
+      siblingClient.send(JSON.stringify({
+        type: "subscribe",
+        agentId: sibling.agentId,
       }));
       await Promise.all([
         waitForEvent(managerEvents, (event) =>
@@ -89,14 +114,27 @@ describe("secure session server transport", () => {
           event.type === "ready"
           && event.subscribedAgentId === otherSession.agentId
         ),
+        waitForEvent(workerEvents, (event) =>
+          event.type === "ready"
+          && event.subscribedAgentId === worker.agentId
+        ),
+        waitForEvent(siblingEvents, (event) =>
+          event.type === "ready"
+          && event.subscribedAgentId === sibling.agentId
+        ),
       ]);
       managerEvents.length = 0;
+      workerEvents.length = 0;
+      siblingEvents.length = 0;
       otherEvents.length = 0;
 
       manager.emit("secure_session_snapshot", {
         type: "secure_session_snapshot",
-        sessionAgentId: "manager",
+        sessionAgentId: worker.agentId,
         profileId: "manager",
+        principalKind: "worker",
+        ownerManagerAgentId: "manager",
+        workerAssignmentId: "assignment-1",
         revision: 2,
         executionMode: "secure",
         environmentStatus: "ready",
@@ -127,6 +165,9 @@ describe("secure session server transport", () => {
       await waitForEvent(managerEvents, (event) =>
         event.type === "secure_session_snapshot" && event.revision === 2
       );
+      await waitForEvent(workerEvents, (event) =>
+        event.type === "secure_session_snapshot" && event.revision === 2
+      );
       expect(managerEvents).toContainEqual(expect.objectContaining({
         type: "secure_session_snapshot",
         leases: [expect.objectContaining({
@@ -143,7 +184,12 @@ describe("secure session server transport", () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(otherEvents.some((event) =>
         event.type === "secure_session_snapshot"
-        && event.sessionAgentId === "manager"
+        && event.sessionAgentId === worker.agentId
+        && event.revision === 2
+      )).toBe(false);
+      expect(siblingEvents.some((event) =>
+        event.type === "secure_session_snapshot"
+        && event.sessionAgentId === worker.agentId
         && event.revision === 2
       )).toBe(false);
 
@@ -160,9 +206,20 @@ describe("secure session server transport", () => {
         waitForEvent(otherEvents, (event) =>
           event.type === "secure_secret_catalog_changed" && event.revision === 9
         ),
+        waitForEvent(workerEvents, (event) =>
+          event.type === "secure_secret_catalog_changed" && event.revision === 9
+        ),
+        waitForEvent(siblingEvents, (event) =>
+          event.type === "secure_secret_catalog_changed" && event.revision === 9
+        ),
       ]);
     } finally {
-      for (const client of [managerClient, otherClient]) {
+      for (const client of [
+        managerClient,
+        workerClient,
+        siblingClient,
+        otherClient,
+      ]) {
         if (client.readyState === WebSocket.OPEN) {
           client.close();
           await once(client, "close");
