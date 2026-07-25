@@ -283,6 +283,26 @@ describe("SwarmRuntimeController", () => {
     expect(controller.getRuntimeToken("agent-a")).toBeUndefined();
   });
 
+  it("forwards an accepted terminal agent turn with its pre-consumption turn authority", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const handoff = vi.fn(async () => undefined);
+    host.getActiveTurnId = vi.fn(() => "turn-production-9");
+    host.handoffExternalChromeAtTurnEnd = handoff;
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({
+      agentId: "manager-turn-boundary", role: "manager", managerId: "manager-turn-boundary",
+      status: "streaming", profileId: "profile-1",
+    });
+    descriptors.set(manager.agentId, manager);
+    const token = controller.allocateRuntimeToken(manager.agentId);
+
+    await expect(controller.handleRuntimeSessionEvent(token, manager.agentId, { type: "agent_end" })).resolves.toBe(true);
+    expect(handoff).toHaveBeenCalledOnce();
+    expect(handoff).toHaveBeenCalledWith("profile-1", manager.agentId, "turn-production-9");
+  });
+
   it("projects manager assistant output from message_end without waiting for agent_end", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

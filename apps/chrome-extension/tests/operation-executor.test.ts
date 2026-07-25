@@ -5,7 +5,7 @@ import { ExternalChromeOperationExecutor } from '../src/runtime/operation-execut
 import { fakeChrome } from './fakes.js'
 
 function authority(controller: DebuggerController, tabId = 7) {
-  return { navigationGeneration: controller.navigationGeneration(tabId), isCurrent: () => true, wasHumanInterrupted: () => false }
+  return { navigationGeneration: controller.navigationGeneration(tabId), isCurrent: () => true, wasHumanInterrupted: () => false, cancelOutstanding: async () => undefined }
 }
 
 function request(operation: string, input: Record<string, unknown>, timeoutMs = 1_000): ExternalChromeExecuteParams {
@@ -141,6 +141,7 @@ describe('ExternalChromeOperationExecutor', () => {
         url: 'https://fixture.test/page', title: 'Fixture', loading: false, visibleText: 'Visible fixture text',
         interactiveElements: [{ tag: 'button', role: 'button', name: 'Save', selector: '#save', x: 1, y: 2, width: 20, height: 10 }],
       })
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(2)
       if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 900, clientHeight: 700, pageX: 0, pageY: 0, scale: 1.25 } }
       if (method === 'Page.captureScreenshot') return { data: png }
       if (method === 'Accessibility.getFullAXTree') return { nodes: [{ role: { value: 'button' }, name: { value: 'Save' } }] }
@@ -149,7 +150,7 @@ describe('ExternalChromeOperationExecutor', () => {
     executor.onCdpEvent(7, { targetId: 'target-tab-7' }, 'Runtime.consoleAPICalled', { type: 'log', args: [{ value: 'diagnostic' }], timestamp: Date.now() })
     const result = await executor.execute(request('snapshot', {}), authority(controller))
     expect(result).toMatchObject({ ok: true, result: {
-      viewport: { width: 900, height: 700, deviceScaleFactor: 1.25 }, visibleText: 'Visible fixture text',
+      viewport: { width: 900, height: 700, deviceScaleFactor: 2 }, visibleText: 'Visible fixture text',
       interactiveElements: [{ role: 'button', name: 'Save' }], consoleEntries: [{ text: 'diagnostic' }],
       screenshot: { mimeType: 'image/png', data: png, width: 4, height: 3 },
     } })
@@ -158,6 +159,8 @@ describe('ExternalChromeOperationExecutor', () => {
   it('routes a cross-origin OOPIF only after leased-root ancestry proof', async () => {
     const { chrome, controller, executor } = await harness((target, method, params) => {
       if (method === 'Runtime.evaluate') return locatorResult(String(params?.expression), target)
+      if (method === 'DOM.getFrameOwner') return { backendNodeId: 55 }
+      if (method === 'DOM.getBoxModel') return { model: { content: [100, 200, 500, 200, 500, 500, 100, 500] } }
       return PASS
     })
     await controller.onEvent({ tabId: 7 }, 'Page.frameAttached', { frameId: 'target-oopif', parentFrameId: 'frame-tab-7' })
@@ -165,9 +168,9 @@ describe('ExternalChromeOperationExecutor', () => {
       sessionId: 'session-oopif', targetInfo: { targetId: 'target-oopif', type: 'iframe', attached: true },
     })
     const result = await executor.execute(request('click', { locator: 'text=Cross frame', timeoutMs: 100 }), authority(controller))
-    expect(result).toMatchObject({ ok: true, result: { point: { x: 21, y: 22 } } })
+    expect(result).toMatchObject({ ok: true, result: { point: { x: 121, y: 222 } } })
     expect(chrome.commands.filter(({ method }) => method === 'Input.dispatchMouseEvent')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ target: { tabId: 7, sessionId: 'session-oopif' } }),
+      expect.objectContaining({ target: { tabId: 7 } }),
     ]))
 
     await controller.onEvent({ tabId: 7, sessionId: 'session-oopif' }, 'Target.targetInfoChanged', {
@@ -176,13 +179,153 @@ describe('ExternalChromeOperationExecutor', () => {
     expect(controller.routes(7)).toEqual([{ targetId: 'target-tab-7' }])
   })
 
+  it('settles a stalled snapshot command by debugger reset before the tab queue recovers', async () => {
+    let stalled = true
+    let releaseStalled!: () => void
+    let activeSnapshotCommands = 0
+    let maximumActive = 0
+    const { chrome, controller, executor } = await harness(async (_target, method, params) => {
+      if (method === 'Runtime.evaluate' && String(params?.expression).includes('interactiveElements')) {
+        activeSnapshotCommands += 1
+        maximumActive = Math.max(maximumActive, activeSnapshotCommands)
+        if (stalled) await new Promise<void>((resolve) => { releaseStalled = resolve })
+        activeSnapshotCommands -= 1
+        return value({ url: 'https://fixture.test/', title: 'Fixture', loading: false, visibleText: '', interactiveElements: [] })
+      }
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(1)
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 400, clientHeight: 300, pageX: 0, pageY: 0, scale: 1 } }
+      if (method === 'Page.captureScreenshot') return { data: pngBase64(2, 2) }
+      if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
+      return PASS
+    })
+    const originalDetach = chrome.debugger.detach
+    chrome.debugger.detach = async (target) => {
+      stalled = false
+      releaseStalled?.()
+      await originalDetach(target)
+    }
+    const cancellingAuthority = {
+      ...authority(controller),
+      cancelOutstanding: () => controller.reset(7),
+    }
+    await expect(executor.execute(request('snapshot', {}, 5), cancellingAuthority))
+      .resolves.toMatchObject({ ok: false, error: { code: 'timeout' } })
+    expect(activeSnapshotCommands).toBe(0)
+    await controller.attach(7)
+    await expect(executor.execute(request('snapshot', {}), authority(controller)))
+      .resolves.toMatchObject({ ok: true })
+    expect(maximumActive).toBe(1)
+  })
+
+  it('does not let a stalled Runtime.terminateExecution delay debugger cancellation', async () => {
+    let releaseEvaluate!: () => void
+    let releaseTermination!: () => void
+    let terminationStarted = false
+    const { chrome, controller, executor } = await harness(async (_target, method, params) => {
+      if (method === 'Runtime.evaluate' && params?.expression === 'never') {
+        await new Promise<void>((resolve) => { releaseEvaluate = resolve })
+        return value('late')
+      }
+      if (method === 'Runtime.terminateExecution') {
+        terminationStarted = true
+        await new Promise<void>((resolve) => { releaseTermination = resolve })
+        return {}
+      }
+      return PASS
+    })
+    const originalDetach = chrome.debugger.detach
+    chrome.debugger.detach = async (target) => {
+      releaseEvaluate?.()
+      releaseTermination?.()
+      await originalDetach(target)
+    }
+
+    await expect(executor.execute(request('evaluate', {
+      expression: 'never', awaitPromise: true, returnByValue: true,
+    }, 5), {
+      ...authority(controller),
+      cancelOutstanding: () => controller.reset(7),
+    })).resolves.toMatchObject({ ok: false, error: { code: 'timeout' } })
+    expect(terminationStarted).toBe(true)
+    expect(controller.state(7)).toBe('UNATTACHED')
+  })
+
+  it('maps nested OOPIF snapshots, locator clicks, and focused typing to the proven top-level route', async () => {
+    const { chrome, controller, executor } = await harness((target, method, params) => {
+      const expression = String(params?.expression ?? '')
+      if (method === 'Runtime.evaluate' && expression.includes('interactiveElements')) {
+        const deep = target.sessionId === 'session-deep'
+        return value({
+          url: 'https://fixture.test/', title: 'Fixture', loading: false, visibleText: deep ? 'Deep frame' : '',
+          interactiveElements: deep ? [{ tag: 'input', role: 'textbox', name: 'Deep', selector: '#deep', x: 5, y: 6, width: 20, height: 10 }] : [],
+        })
+      }
+      if (method === 'Runtime.evaluate' && expression.includes('const spec=')) {
+        return value(target.sessionId === 'session-deep'
+          ? { kind: 'match', count: 1, x: 5, y: 6, editable: true }
+          : { kind: 'match', count: 0 })
+      }
+      if (method === 'Runtime.evaluate' && expression.includes('document.activeElement')) {
+        return value(target.sessionId === 'session-deep' ? { found: true, editable: true } : { found: true, editable: false })
+      }
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(2)
+      if (method === 'DOM.getFrameOwner') return { backendNodeId: params?.frameId === 'target-deep' ? 2 : 1 }
+      if (method === 'DOM.getBoxModel') return { model: { content: params?.backendNodeId === 2
+        ? [30, 40, 230, 40, 230, 140, 30, 140]
+        : [100, 200, 500, 200, 500, 500, 100, 500] } }
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 0, pageY: 0, scale: 1.25 } }
+      if (method === 'Page.captureScreenshot') return { data: pngBase64(2, 2) }
+      if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
+      return PASS
+    })
+    await controller.onEvent({ tabId: 7 }, 'Page.frameAttached', { frameId: 'target-parent', parentFrameId: 'frame-tab-7' })
+    await controller.onEvent({ tabId: 7 }, 'Target.attachedToTarget', {
+      sessionId: 'session-parent', targetInfo: { targetId: 'target-parent', type: 'iframe', attached: true },
+    })
+    await controller.onEvent({ tabId: 7, sessionId: 'session-parent' }, 'Page.frameAttached', { frameId: 'target-deep', parentFrameId: 'target-parent' })
+    await controller.onEvent({ tabId: 7, sessionId: 'session-parent' }, 'Target.attachedToTarget', {
+      sessionId: 'session-deep', targetInfo: { targetId: 'target-deep', type: 'iframe', attached: true },
+    })
+
+    await expect(executor.execute(request('snapshot', {}), authority(controller))).resolves.toMatchObject({
+      ok: true, result: { viewport: { deviceScaleFactor: 2 }, interactiveElements: [{ name: 'Deep', x: 135, y: 246 }] },
+    })
+    await expect(executor.execute(request('click', { locator: 'css=#deep', timeoutMs: 100 }), authority(controller)))
+      .resolves.toMatchObject({ ok: true, result: { point: { x: 135, y: 246 } } })
+    await expect(executor.execute(request('type', { text: 'typed', clear: false, timeoutMs: 100 }), authority(controller)))
+      .resolves.toMatchObject({ ok: true, result: { characters: 5 } })
+    expect(chrome.commands.filter(({ method }) => method === 'Input.dispatchMouseEvent' || method === 'Input.insertText'))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ target: { tabId: 7 } })]))
+  })
+
+  it('clears diagnostic and action caches before the same tab is used by a new lease', async () => {
+    const png = pngBase64(2, 2)
+    const { controller, executor } = await harness((_target, method, params) => {
+      if (method === 'Runtime.evaluate' && String(params?.expression).includes('interactiveElements')) return value({
+        url: 'https://fixture.test/', title: 'Fixture', loading: false, visibleText: '', interactiveElements: [],
+      })
+      if (method === 'Runtime.evaluate' && params?.expression === 'window.devicePixelRatio') return value(1)
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 400, clientHeight: 300, pageX: 0, pageY: 0, scale: 1 } }
+      if (method === 'Page.captureScreenshot') return { data: png }
+      if (method === 'Accessibility.getFullAXTree') return { nodes: [] }
+      return PASS
+    })
+    executor.onCdpEvent(7, { targetId: 'target-tab-7' }, 'Runtime.consoleAPICalled', { type: 'log', args: [{ value: 'lease-one-secret' }] })
+    await expect(executor.execute({ ...request('snapshot', {}), leaseId: 'lease-one' }, authority(controller)))
+      .resolves.toMatchObject({ ok: true, result: { consoleEntries: [{ text: 'lease-one-secret' }] } })
+    executor.clear(7)
+    const second = await executor.execute({ ...request('snapshot', {}), leaseId: 'lease-two', leaseEpoch: 2 }, authority(controller))
+    expect(second).toMatchObject({ ok: true, result: { consoleEntries: [], networkEntries: [] } })
+    expect(second.ok && 'actionTimeline' in second.result ? second.result.actionTimeline : []).toHaveLength(1)
+  })
+
   it('cancels stale work after navigation or trusted-human authority change', async () => {
     const { controller, executor } = await harness((_target, method) => method === 'Runtime.evaluate' ? value(true) : PASS)
     const stale = authority(controller)
     await controller.onEvent({ tabId: 7 }, 'Page.frameNavigated', { frame: { id: 'frame-tab-7', url: 'https://fixture.test/redirect' } })
     await expect(executor.execute(request('evaluate', { expression: '1', awaitPromise: true, returnByValue: true }), stale))
       .resolves.toMatchObject({ ok: false, error: { code: 'request-cancelled', details: { reason: 'navigation' } } })
-    const interrupted = { navigationGeneration: controller.navigationGeneration(7), isCurrent: () => false, wasHumanInterrupted: () => true }
+    const interrupted = { navigationGeneration: controller.navigationGeneration(7), isCurrent: () => false, wasHumanInterrupted: () => true, cancelOutstanding: async () => undefined }
     await expect(executor.execute(request('evaluate', { expression: '1', awaitPromise: true, returnByValue: true }), interrupted))
       .resolves.toMatchObject({ ok: false, error: { code: 'control-interrupted' } })
   })

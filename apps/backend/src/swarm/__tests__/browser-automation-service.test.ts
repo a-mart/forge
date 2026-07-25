@@ -110,6 +110,7 @@ function response(request: BrowserAutomationRequest): BrowserAutomationResponse 
         phase: request.input.externalChromeLifecycleRelease.phase,
         releaseId: request.input.externalChromeLifecycleRelease.releaseId,
       } } : {}),
+      ...(request.input.externalChromeTurnDisposition ? { externalChromeTurnDisposition: request.input.externalChromeTurnDisposition } : {}),
       host: {
         connected: true,
         hostId: request.hostId,
@@ -173,6 +174,79 @@ afterEach(async () => {
 });
 
 describe("BrowserAutomationService", () => {
+  it("persists and compare-and-set acknowledges terminal-turn handoff through the production host broker", async () => {
+    const { dataDir, service } = await createService();
+    await seedExternalSession(service);
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest(request) {
+        requests.push(request);
+        queueMicrotask(() => service.acceptHostResponse("external-socket", response(request)));
+      },
+    });
+
+    await service.handoffExternalChromeAtTurnEnd("profile-1", "manager-1", "turn-17");
+    expect(requests).toEqual([expect.objectContaining({
+      hostKind: "external-chrome", operation: "status", tabId: "ext.instance.41",
+      input: { hostKind: "external-chrome", tabId: "ext.instance.41", externalChromeTurnDisposition: { turnId: "turn-17", disposition: "handoff" } },
+    })]);
+    await service.handoffExternalChromeAtTurnEnd("profile-1", "manager-1", "turn-17");
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(await readFile(service.store.getStatePath("profile-1", "manager-1"), "utf8")))
+      .toMatchObject({ externalChromeTurnDisposition: { turnId: "turn-17", disposition: "handoff", phase: "completed" } });
+
+    const restarted = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    await restarted.getSessionSnapshot("profile-1", "manager-1");
+    await expect(restarted.handoffExternalChromeAtTurnEnd("profile-1", "manager-1", "turn-17")).resolves.toBeUndefined();
+
+    const pending = await restarted.getSessionSnapshot("profile-1", "manager-1");
+    pending.externalChromeTurnDisposition = { turnId: "turn-after-restart", tabId: "ext.instance.41", disposition: "handoff", phase: "pending" };
+    await restarted.store.save(pending);
+    const recovered = new BrowserAutomationService({ dataDir, now: () => timestamp });
+    await recovered.getSessionSnapshot("profile-1", "manager-1");
+    const recoveredRequests: BrowserAutomationRequest[] = [];
+    recovered.registerHost({
+      connectionId: "external-recovered", registration: externalRegistration(), sendRequest(request) {
+        recoveredRequests.push(request);
+        queueMicrotask(() => recovered.acceptHostResponse("external-recovered", response(request)));
+      },
+    });
+    await recovered.retryPendingExternalChromeTurnDispositions();
+    expect(recoveredRequests).toHaveLength(1);
+    expect((await recovered.getSessionSnapshot("profile-1", "manager-1")).externalChromeTurnDisposition)
+      .toMatchObject({ turnId: "turn-after-restart", phase: "completed" });
+  });
+
+  it("does not admit a new browser operation across an in-progress terminal-turn lease boundary", async () => {
+    const { service } = await createService();
+    await seedExternalSession(service);
+    const requests: BrowserAutomationRequest[] = [];
+    service.registerHost({
+      connectionId: "external-socket",
+      registration: externalRegistration(),
+      sendRequest(request) {
+        requests.push(request);
+        if (!request.input.externalChromeTurnDisposition) {
+          queueMicrotask(() => service.acceptHostResponse("external-socket", response(request)));
+        }
+      },
+    });
+
+    const handoff = service.handoffExternalChromeAtTurnEnd("profile-1", "manager-1", "turn-boundary");
+    await waitForPendingRequest(service);
+    const nextOperation = service.invoke("manager-1", "profile-1", "status", { hostKind: "external-chrome" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(requests).toHaveLength(1);
+
+    service.acceptHostResponse("external-socket", response(requests[0]!));
+    await expect(handoff).resolves.toBeUndefined();
+    await expect(nextOperation).resolves.toMatchObject({ ok: true, operation: "status" });
+    expect(requests).toHaveLength(2);
+    expect((await service.getSessionSnapshot("profile-1", "manager-1")).externalChromeTurnDisposition).toBeUndefined();
+  });
+
   it("returns unavailable status, then owns default-tab affinity across calls and restart", async () => {
     const { dataDir, service } = await createService();
     await expect(service.invoke("manager-1", "profile-1", "status", {})).resolves.toMatchObject({

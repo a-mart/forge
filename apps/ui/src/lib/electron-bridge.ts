@@ -45,6 +45,7 @@ export interface ExternalChromeBridge {
   attach?(input: { sessionAgentId: string; profileId: string; extensionInstanceId: string; tabIds: number[]; groupId?: number; childPolicy: ExternalChromeChildPolicy; confirmed: true }): Promise<ExternalChromeAttachResult>
   detach?(sessionAgentId: string, profileId: string): Promise<ExternalChromeAttachResult>
   releaseForLifecycle?(input: { requestId: string; hostId: string; hostGeneration: number; sessionAgentId: string; profileId: string; tabId: string; phase: 'prepare' | 'finalize'; releaseId: string; reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced'; originalHostId: string; originalHostGeneration: number }): Promise<ExternalChromeAttachResult>
+  turnEnded?(input: { requestId: string; hostId: string; hostGeneration: number; sessionAgentId: string; profileId: string; tabId: string; turnId: string; disposition: 'handoff' }): Promise<ExternalChromeAttachResult>
 }
 
 export type ElectronWindowRole = 'main' | 'managed-browser-popout'

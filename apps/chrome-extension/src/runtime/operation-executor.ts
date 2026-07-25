@@ -31,6 +31,8 @@ interface OperationAuthority {
   isCurrent(): boolean
   wasHumanInterrupted(): boolean
   navigationGeneration: number
+  /** Revokes lease authority, detaches, and settles all outstanding CDP work. */
+  cancelOutstanding(): Promise<void>
 }
 
 interface LocatedPoint {
@@ -69,14 +71,21 @@ export class ExternalChromeOperationExecutor {
     private readonly now: () => number = Date.now,
   ) {}
 
-  execute(params: ExternalChromeExecuteParams, authority: OperationAuthority): Promise<ExternalChromeOperationOutcome> {
-    const previous = this.queues.get(params.tabId) ?? Promise.resolve()
-    const work = previous.then(
-      () => this.executeUnlocked(params, authority),
-      () => this.executeUnlocked(params, authority),
-    )
-    this.queues.set(params.tabId, work.then(() => undefined, () => undefined))
+  runExclusive<Value>(tabId: number, operation: () => Promise<Value>): Promise<Value> {
+    const previous = this.queues.get(tabId) ?? Promise.resolve()
+    const work = previous.then(operation, operation)
+    const tail = work.then(() => undefined, () => undefined)
+    this.queues.set(tabId, tail)
+    void tail.finally(() => { if (this.queues.get(tabId) === tail) this.queues.delete(tabId) })
     return work
+  }
+
+  execute(params: ExternalChromeExecuteParams, authority: OperationAuthority): Promise<ExternalChromeOperationOutcome> {
+    return this.runExclusive(params.tabId, () => this.executeNow(params, authority))
+  }
+
+  executeNow(params: ExternalChromeExecuteParams, authority: OperationAuthority): Promise<ExternalChromeOperationOutcome> {
+    return this.executeUnlocked(params, authority)
   }
 
   onCdpEvent(tabId: number, route: DebuggerRoute, method: string, raw: unknown): void {
@@ -122,7 +131,8 @@ export class ExternalChromeOperationExecutor {
   }
 
   clear(tabId: number): void {
-    this.queues.delete(tabId)
+    // Never delete the serialization tail here: release/loss may race an active command,
+    // and a new claim must not bypass that command before debugger reset settles it.
     this.consoleByTab.delete(tabId)
     this.networkByTab.delete(tabId)
     this.requestsByTab.delete(tabId)
@@ -179,7 +189,8 @@ export class ExternalChromeOperationExecutor {
     ])
     const pages = await Promise.all(routes.map(async (route) => {
       const response = await this.evaluateValue(params, authority, route, snapshotExpression())
-      return { route, ...objectValue(response, 'Snapshot DOM result') as SnapshotPage }
+      const transform = await this.topLevelTransform(params, authority, route)
+      return { route, transform, ...objectValue(response, 'Snapshot DOM result') as SnapshotPage }
     }))
     const root = pages[0]
     if (!root || typeof root.url !== 'string' || typeof root.title !== 'string') {
@@ -194,7 +205,11 @@ export class ExternalChromeOperationExecutor {
         limitation: 'external-chrome-viewport-dimension-bound', viewportWidth: width, viewportHeight: height, maximumDimension: BROWSER_VIEWPORT_MAX_DIMENSION,
       })
     }
-    const deviceScaleFactor = positiveNumber(visual.scale, 1)
+    const rawDeviceScaleFactor = await this.evaluateValue(params, authority, routes[0]!, 'window.devicePixelRatio')
+    if (typeof rawDeviceScaleFactor !== 'number' || !Number.isFinite(rawDeviceScaleFactor) || rawDeviceScaleFactor < 0.1 || rawDeviceScaleFactor > 16) {
+      throw new ExternalChromeOperationError('execution-failed', 'Chrome returned an invalid root document device pixel ratio.', true)
+    }
+    const deviceScaleFactor = rawDeviceScaleFactor
     const scale = Math.min(1, BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH / width)
     const capture = record(await this.command(params, authority, routes[0]!, 'Page.captureScreenshot', {
       format: 'png', fromSurface: true, captureBeyondViewport: false,
@@ -215,8 +230,11 @@ export class ExternalChromeOperationExecutor {
       })).slice(0, routes.length),
     }
     const visibleText = pages.map((page) => typeof page.visibleText === 'string' ? page.visibleText : '').filter(Boolean).join('\n').slice(0, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_LENGTH)
-    const interactiveElements = pages.flatMap((page) => Array.isArray(page.interactiveElements) ? page.interactiveElements : [])
-      .filter(validSnapshotElement).slice(0, BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS)
+    const interactiveElements = pages.flatMap((page) => Array.isArray(page.interactiveElements)
+      ? page.interactiveElements.filter(validSnapshotElement).map((element) => ({
+        ...element, x: element.x + page.transform.x, y: element.y + page.transform.y,
+      }))
+      : []).slice(0, BROWSER_AUTOMATION_MAX_INTERACTIVE_ELEMENTS)
     return {
       tabId: String(params.tabId), url: root.url.slice(0, 2_048), title: root.title.slice(0, 512), loading: root.loading === true,
       viewportSetting: { mode: 'fill' }, viewport: { width, height, deviceScaleFactor }, visibleText, interactiveElements,
@@ -258,9 +276,18 @@ export class ExternalChromeOperationExecutor {
       route = point.route
       if (!point.editable) throw new ExternalChromeOperationError('target-not-editable', 'Type target is disabled, read-only, or not editable.')
     } else {
-      const focused = objectValue(await this.evaluateValue(params, authority, route, focusedEditableExpression(input.clear)), 'Focused target result') as { found?: boolean; editable?: boolean }
-      if (!focused.found) throw new ExternalChromeOperationError('target-not-found', 'No focused type target was found.', true)
-      if (!focused.editable) throw new ExternalChromeOperationError('target-not-editable', 'The focused target is not editable.')
+      const routes = this.debuggers.routes(params.tabId)
+      const probes = await Promise.all(routes.map(async (candidate) => ({
+        route: candidate,
+        focused: objectValue(await this.evaluateValue(params, authority, candidate, focusedEditableExpression(input.clear)), 'Focused target result') as { found?: boolean; editable?: boolean },
+      })))
+      const editable = probes.find((probe) => probe.focused.editable === true)
+      if (!editable) {
+        if (!probes.some((probe) => probe.focused.found)) throw new ExternalChromeOperationError('target-not-found', 'No focused type target was found.', true)
+        throw new ExternalChromeOperationError('target-not-editable', 'The focused target is not editable.')
+      }
+      // Prove the focused child still belongs to the root immediately before input.
+      route = (await this.topLevelTransform(params, authority, editable.route)).route
     }
     if (input.text.length > 0) await this.command(params, authority, route, 'Input.insertText', { text: input.text })
     return { tabId: String(params.tabId), characters: [...input.text].length, cleared: input.clear }
@@ -389,7 +416,13 @@ export class ExternalChromeOperationExecutor {
     const routes = this.debuggers.routes(params.tabId)
     const results = await Promise.all(routes.map(async (route) => {
       const value = objectValue(await this.evaluateValue(params, authority, route, locatorExpression(spec, mode, clear, deltaX, deltaY)), 'Locator result') as LocatorResult
-      return { route, ...value }
+      if ((value.count ?? 0) <= 0) return { route, ...value }
+      const transform = await this.topLevelTransform(params, authority, route)
+      return {
+        route: transform.route, ...value,
+        ...(typeof value.x === 'number' ? { x: value.x + transform.x } : {}),
+        ...(typeof value.y === 'number' ? { y: value.y + transform.y } : {}),
+      }
     }))
     const invalid = results.find((entry) => entry.kind === 'invalid-selector')
     if (invalid) return invalid
@@ -404,6 +437,40 @@ export class ExternalChromeOperationExecutor {
     }))
     if (response.exceptionDetails !== undefined) throw new ExternalChromeOperationError('execution-failed', safeException(response.exceptionDetails), true)
     return record(response.result).value
+  }
+
+  private async topLevelTransform(
+    params: ExternalChromeExecuteParams,
+    authority: OperationAuthority,
+    route: DebuggerRoute,
+  ): Promise<{ route: DebuggerRoute; x: number; y: number }> {
+    const chain = this.debuggers.routeChain(params.tabId, route)
+    if (chain.length === 0 || chain[0]?.targetId !== route.targetId) {
+      throw new ExternalChromeOperationError('request-cancelled', 'Frame ancestry changed before coordinates could be proven.', true, { reason: 'frame-migrated' })
+    }
+    let x = 0
+    let y = 0
+    for (let index = 0; index < chain.length - 1; index += 1) {
+      const child = chain[index]!
+      const parent = chain[index + 1]!
+      const owner = record(await this.command(params, authority, parent, 'DOM.getFrameOwner', { frameId: child.targetId }))
+      const backendNodeId = owner.backendNodeId
+      if (!Number.isSafeInteger(backendNodeId)) {
+        throw new ExternalChromeOperationError('request-cancelled', 'Chrome could not prove the child frame owner.', true, { reason: 'unknown-frame-ancestry' })
+      }
+      const model = record(await this.command(params, authority, parent, 'DOM.getBoxModel', { backendNodeId }))
+      const content = record(model.model).content
+      if (!Array.isArray(content) || content.length < 8 || content.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+        throw new ExternalChromeOperationError('request-cancelled', 'Chrome returned an invalid frame-owner transform.', true, { reason: 'unknown-frame-transform' })
+      }
+      x += content[0] as number
+      y += content[1] as number
+    }
+    const root = chain.at(-1)
+    if (!root || root.sessionId !== undefined) {
+      throw new ExternalChromeOperationError('request-cancelled', 'Frame route did not terminate at the leased root.', true, { reason: 'unknown-frame-ancestry' })
+    }
+    return { route: root, x, y }
   }
 
   private async routeViewport(params: ExternalChromeExecuteParams, authority: OperationAuthority, route: DebuggerRoute): Promise<{ width: number; height: number }> {
@@ -440,10 +507,15 @@ export class ExternalChromeOperationExecutor {
       this.assertCurrent(params, authority)
       return result
     } catch (error) {
-      if (error instanceof ExternalChromeOperationError && terminateOnTimeout &&
+      if (error instanceof ExternalChromeOperationError &&
         (error.code === 'timeout' || error.code === 'control-interrupted' || error.code === 'request-cancelled')) {
-        await this.debuggers.sendCommand(params.tabId, 'Runtime.terminateExecution', {}, route.sessionId).catch(() => undefined)
-        await Promise.race([command.catch(() => undefined), delay(100)])
+        // Termination is advisory; it must not delay the authoritative debugger
+        // detach if Chrome also stalls the termination command itself.
+        if (terminateOnTimeout) void this.debuggers.sendCommand(params.tabId, 'Runtime.terminateExecution', {}, route.sessionId).catch(() => undefined)
+        await authority.cancelOutstanding()
+        // Debugger detach is the cancellation acknowledgement. Do not release the
+        // per-tab queue until Chrome has settled the original command callback.
+        await command.catch(() => undefined)
       }
       throw error
     } finally {

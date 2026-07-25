@@ -94,6 +94,15 @@ describe('browser automation operation contract', () => {
     expect(() => parseBrowserAutomationInput('status', {
       hostKind: 'external-chrome', externalChromeLifecycleRelease: { ...lifecycle, token: 'leak' },
     })).toThrow(BrowserAutomationContractError)
+    const turn = { turnId: 'turn-9', disposition: 'handoff' as const }
+    expect(parseBrowserAutomationInput('status', { hostKind: 'external-chrome', externalChromeTurnDisposition: turn }))
+      .toEqual({ hostKind: 'external-chrome', externalChromeTurnDisposition: turn })
+    expect(() => parseBrowserAutomationInput('status', {
+      externalChromeLifecycleRelease: lifecycle, externalChromeTurnDisposition: turn,
+    })).toThrow(BrowserAutomationContractError)
+    expect(() => parseBrowserAutomationInput('status', {
+      externalChromeTurnDisposition: { ...turn, disposition: 'final' },
+    })).toThrow(BrowserAutomationContractError)
   })
 
   it('applies T3-compatible defaults', () => {

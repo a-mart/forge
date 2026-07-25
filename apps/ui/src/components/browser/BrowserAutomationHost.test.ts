@@ -184,12 +184,14 @@ describe('BrowserAutomationHost main-owned view controller', () => {
 
   it('acknowledges correlated lifecycle release only after the exact local lease release succeeds', async () => {
     installBridge()
-    const releaseForLifecycle = vi.fn(async () => ({ ok: true as const, status: {
+    const releaseStatus = {
       coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
       instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: '1', connectedAt: now }], attachment: null,
-    } }))
+    } as const
+    const releaseForLifecycle = vi.fn(async () => ({ ok: true as const, status: releaseStatus }))
+    const turnEnded = vi.fn(async () => ({ ok: true as const, status: releaseStatus }))
     window.electronBridge!.externalChrome = {
-      releaseForLifecycle,
+      releaseForLifecycle, turnEnded,
       localStatus: vi.fn(async () => ({ ok: true as const, status: {
         coordinator: { state: 'online', authority: 'owned', auth: 'secure', registration: 'owned', trust: 'trusted', platform: 'darwin', canEnable: false, canDisable: true, canRepair: true, canRollback: false, canRemove: true, canTakeover: false, canReveal: true, setup: { extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd', pathState: 'ready' } },
         instances: [{ extensionInstanceId: 'profile_a', chromeVersion: '125', payloadVersion: 'm4', connectedAt: now, supportedOperations: ['status', 'open', 'navigate', 'snapshot', 'click', 'type', 'press', 'scroll', 'evaluate', 'waitFor'] }], attachment: null,
@@ -213,6 +215,16 @@ describe('BrowserAutomationHost main-owned view controller', () => {
     const response = await executeSecondary!(request)
     expect(releaseForLifecycle).toHaveBeenCalledWith(expect.objectContaining({ requestId: request.requestId, hostGeneration: 5, phase: 'prepare', releaseId: 'release-1', reason: 'archive', tabId: 'ext.profile_a.7' }))
     expect(response).toMatchObject({ requestId: request.requestId, hostGeneration: 5, operation: 'status', ok: true, result: { externalChromeLifecycleRelease: { phase: 'prepare', releaseId: 'release-1' } } })
+
+    const turnRequest = {
+      ...request, requestId: 'external-chrome-turn-ended:correlation-2',
+      input: { hostKind: 'external-chrome', tabId: 'ext.profile_a.7', externalChromeTurnDisposition: { turnId: 'turn-9', disposition: 'handoff' } },
+    } as BrowserAutomationRequest
+    const turnResponse = await executeSecondary!(turnRequest)
+    expect(turnEnded).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: turnRequest.requestId, hostGeneration: 5, tabId: 'ext.profile_a.7', turnId: 'turn-9', disposition: 'handoff',
+    }))
+    expect(turnResponse).toMatchObject({ ok: true, result: { externalChromeTurnDisposition: { turnId: 'turn-9', disposition: 'handoff' } } })
   })
 
   it('does not advertise External Chrome when coordinator setup exists but no extension runtime is ready', async () => {

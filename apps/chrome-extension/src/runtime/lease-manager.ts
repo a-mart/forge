@@ -334,9 +334,12 @@ export class LeaseManager {
     })
   }
 
-  beginAgentControl(leaseId: string, leaseEpoch: number, tabId: number): Promise<number> {
+  beginAgentControl(leaseId: string, leaseEpoch: number, tabId: number, expectedControlEpoch?: number): Promise<number> {
     return this.mutate(async () => {
       const lease = this.assertScope(leaseId, leaseEpoch, tabId)
+      if (expectedControlEpoch !== undefined && lease.controlEpoch !== expectedControlEpoch) {
+        throw new LeaseError('lease-lost', 'trusted input changed queued operation authority before it started')
+      }
       this.active = { ...lease, state: 'CONTROLLING_AGENT' }
       await this.persist()
       return lease.controlEpoch

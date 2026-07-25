@@ -58,6 +58,18 @@ export interface TrustedExternalChromeBridge {
   attach(input: ExternalChromeAttachInput): Promise<ExternalChromeAttachResult>
   detach(sessionAgentId: string, profileId: string): Promise<ExternalChromeAttachResult>
   releaseForLifecycle(input: ExternalChromeLifecycleReleaseInput): Promise<ExternalChromeAttachResult>
+  turnEnded(input: ExternalChromeTurnEndedInput): Promise<ExternalChromeAttachResult>
+}
+
+export interface ExternalChromeTurnEndedInput {
+  requestId: string
+  hostId: string
+  hostGeneration: number
+  sessionAgentId: string
+  profileId: string
+  tabId: string
+  turnId: string
+  disposition: 'handoff'
 }
 
 export interface ExternalChromeLifecycleReleaseInput {
@@ -216,7 +228,7 @@ export function installExternalChromeIpc(options: {
         return { ok: true, status: await status(request.sessionAgentId, request.profileId), windows: result.windows }
       }
       const attachmentKey = key(request.sessionAgentId, request.profileId)
-      if (request.operation === 'detach' || request.operation === 'lifecycle-release') {
+      if (request.operation === 'detach' || request.operation === 'lifecycle-release' || request.operation === 'turn-ended') {
         const existing = leases.get(attachmentKey)
         if (request.operation === 'detach') {
           if (!existing) return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
@@ -224,16 +236,23 @@ export function installExternalChromeIpc(options: {
         } else {
           const tab = decodeOpaqueExternalTabId(request.tabId)
           if (!tab) return { ok: false, error: 'stale-or-lost' }
-          const transaction = {
-            extensionInstanceId: tab.extensionInstanceId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
-            tabId: tab.tabId, lifecycleReleaseId: request.releaseId, originalHostId: request.originalHostId,
-            originalHostGeneration: request.originalHostGeneration,
+          if (request.operation === 'turn-ended') {
+            await boundedRelease(transport.handoffSessionAtTurnEnd({
+              extensionInstanceId: tab.extensionInstanceId, sessionAgentId: request.sessionAgentId,
+              profileId: request.profileId, tabId: tab.tabId, turnId: request.turnId,
+            }))
+          } else {
+            const transaction = {
+              extensionInstanceId: tab.extensionInstanceId, sessionAgentId: request.sessionAgentId, profileId: request.profileId,
+              tabId: tab.tabId, lifecycleReleaseId: request.releaseId, originalHostId: request.originalHostId,
+              originalHostGeneration: request.originalHostGeneration,
+            }
+            await boundedRelease(request.phase === 'prepare'
+              ? transport.prepareLifecycleRelease({ ...transaction, reason: `lifecycle-${request.reason}` })
+              : transport.finalizeLifecycleRelease(transaction))
           }
-          await boundedRelease(request.phase === 'prepare'
-            ? transport.prepareLifecycleRelease({ ...transaction, reason: `lifecycle-${request.reason}` })
-            : transport.finalizeLifecycleRelease(transaction))
         }
-        leases.delete(attachmentKey)
+        if (request.operation !== 'turn-ended') leases.delete(attachmentKey)
         return { ok: true, status: await status(request.sessionAgentId, request.profileId) }
       }
       const existing = leases.get(attachmentKey)
@@ -296,6 +315,7 @@ export function createTrustedExternalChromeBridge(ipcRenderer: IpcRenderer): Tru
     attach: (input) => attachInvoke({ operation: 'attach', ...input }),
     detach: (sessionAgentId, profileId) => attachInvoke({ operation: 'detach', sessionAgentId, profileId }),
     releaseForLifecycle: (input) => attachInvoke({ operation: 'lifecycle-release', ...input }),
+    turnEnded: (input) => attachInvoke({ operation: 'turn-ended', ...input }),
   }
 }
 
@@ -305,6 +325,7 @@ type ParsedAttachRequest =
   | { operation: 'candidates'; sessionAgentId: string; profileId: string; extensionInstanceId: string }
   | ({ operation: 'attach' } & ExternalChromeAttachInput)
   | ({ operation: 'lifecycle-release' } & ExternalChromeLifecycleReleaseInput)
+  | ({ operation: 'turn-ended' } & ExternalChromeTurnEndedInput)
 
 function parseAttachRequest(value: unknown): ParsedAttachRequest | null {
   if (!record(value) || !identifier(value.operation)) return null
@@ -317,6 +338,19 @@ function parseAttachRequest(value: unknown): ParsedAttachRequest | null {
     return exactKeys(value, [...baseKeys, 'extensionInstanceId']) && identifier(value.extensionInstanceId)
       ? { operation: 'candidates', sessionAgentId: value.sessionAgentId, profileId: value.profileId, extensionInstanceId: value.extensionInstanceId }
       : null
+  }
+  if (value.operation === 'turn-ended') {
+    const keys = [...baseKeys, 'requestId', 'hostId', 'hostGeneration', 'tabId', 'turnId', 'disposition']
+    if (!exactKeys(value, keys) || !identifier(value.requestId) || !identifier(value.hostId) ||
+      !Number.isSafeInteger(value.hostGeneration) || (value.hostGeneration as number) < 1 ||
+      typeof value.tabId !== 'string' || decodeOpaqueExternalTabId(value.tabId) === null ||
+      !identifier(value.turnId) || value.disposition !== 'handoff' ||
+      !value.requestId.startsWith('external-chrome-turn-ended:')) return null
+    return {
+      operation: 'turn-ended', requestId: value.requestId, hostId: value.hostId,
+      hostGeneration: value.hostGeneration as number, sessionAgentId: value.sessionAgentId,
+      profileId: value.profileId, tabId: value.tabId, turnId: value.turnId, disposition: 'handoff',
+    }
   }
   if (value.operation === 'lifecycle-release') {
     const keys = [...baseKeys, 'requestId', 'hostId', 'hostGeneration', 'tabId', 'phase', 'releaseId', 'reason', 'originalHostId', 'originalHostGeneration']

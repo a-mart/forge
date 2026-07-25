@@ -164,6 +164,11 @@ export class BrowserAutomationService {
     input: BrowserAutomationInputByOperation[Operation],
   ): Promise<BrowserAutomationInvocationResult<Operation>> {
     const key = sessionKey(profileId, sessionAgentId);
+    // A terminal disposition or lifecycle release owns the lease boundary. Calls
+    // admitted after that boundary starts must wait; calls already tracked are
+    // drained by the boundary before it snapshots exact authority.
+    const lifecycleBarrier = this.lifecycleReleaseChains.get(key);
+    if (lifecycleBarrier) await lifecycleBarrier.catch(() => undefined);
     const generation = this.getGeneration(key);
     return this.trackInFlight(key, async () => {
       if (!this.isGenerationCurrent(key, generation)) {
@@ -307,6 +312,7 @@ export class BrowserAutomationService {
           snapshot.defaultTabId = target.tab?.tabId ?? null;
         }
         snapshot.hostKind = hostKind;
+        if (hostKind === "external-chrome") delete snapshot.externalChromeTurnDisposition;
         this.applySuccessfulResult(snapshot, operation, response.result as BrowserAutomationResultByOperation[BrowserAutomationOperation], hostKind);
         if (operation === "status" && response.ok) {
           const statusResult = response.result as BrowserAutomationResultByOperation["status"];
@@ -671,6 +677,91 @@ export class BrowserAutomationService {
     return this.broker.cancelSession(sessionAgentId);
   }
 
+  async retryPendingExternalChromeTurnDispositions(): Promise<void> {
+    for (const snapshot of this.getLoadedSessionSnapshots()) {
+      const pending = snapshot.externalChromeTurnDisposition;
+      if (pending?.phase !== "pending") continue;
+      try {
+        await this.handoffExternalChromeAtTurnEnd(snapshot.profileId, snapshot.sessionAgentId, pending.turnId);
+      } catch (error) {
+        this.logDebug("external-chrome:turn-disposition-retry-pending", {
+          sessionAgentId: snapshot.sessionAgentId, turnId: pending.turnId, error: String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Terminal agent-turn policy: surviving active External Chrome tabs enter a bounded
+   * same-lease HANDOFF. Stop/archive/delete/detach remain final lifecycle releases.
+   * The opaque pending receipt is persisted before transport so renderer/backend
+   * reconnect retries cannot widen or change the lease scope.
+   */
+  async handoffExternalChromeAtTurnEnd(profileId: string, sessionAgentId: string, turnId: string): Promise<void> {
+    const key = sessionKey(profileId, sessionAgentId);
+    return this.withLifecycleRelease(key, async () => {
+      await this.awaitInFlight(key);
+      const generation = this.getGeneration(key);
+      const snapshot = await this.getSessionSnapshot(profileId, sessionAgentId);
+      this.assertMutable(key, generation);
+      const previous = snapshot.externalChromeTurnDisposition;
+      if (previous?.turnId === turnId && previous.phase === "completed") return;
+      if (previous?.phase === "completed") {
+        // No successful External Chrome operation resumed this handoff since the
+        // prior terminal boundary. The retained disposition already covers the
+        // same surviving lease, so advance only the opaque backend receipt.
+        snapshot.externalChromeTurnDisposition = { ...previous, turnId };
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          await this.persistChanged(snapshot, "lifecycle", generation);
+        });
+        return;
+      }
+      if (previous?.phase === "pending" && previous.turnId !== turnId) {
+        throw new Error("An older External Chrome turn disposition is still pending.");
+      }
+      const externalTabs = snapshot.tabs.filter((tab) => resolveBrowserHostKind(tab.hostKind) === "external-chrome" && tab.lifecycle !== "closed");
+      if (externalTabs.length === 0) return;
+      const selectedTab = externalTabs.find((tab) => tab.tabId === snapshot.activeTabId)
+        ?? externalTabs.slice().sort((left, right) => left.tabId.localeCompare(right.tabId))[0];
+      if (!selectedTab || !isOpaqueExternalTabId(selectedTab.tabId)) throw new Error("External Chrome turn authority is malformed.");
+      const transaction = previous?.turnId === turnId ? previous : {
+        turnId, tabId: selectedTab.tabId, disposition: "handoff" as const, phase: "pending" as const,
+      };
+      if (previous !== transaction) {
+        snapshot.externalChromeTurnDisposition = transaction;
+        await this.withSessionMutation(key, async () => {
+          this.assertMutable(key, generation);
+          await this.persistChanged(snapshot, "lifecycle", generation);
+        });
+      }
+      const authority = currentExternalChromeAuthority(this.broker);
+      let response: BrowserAutomationResponse;
+      try {
+        response = await this.broker.request({
+          hostKind: "external-chrome", sessionAgentId, profileId, tabId: transaction.tabId, operation: "status",
+          input: { hostKind: "external-chrome", tabId: transaction.tabId, externalChromeTurnDisposition: { turnId, disposition: "handoff" } },
+          timeoutMs: EXTERNAL_CHROME_RELEASE_TIMEOUT_MS, artifactDirectory: null,
+          requestId: `external-chrome-turn-ended:${crypto.randomUUID()}`,
+          expectedHost: { hostId: authority.hostId, hostGeneration: authority.hostGeneration },
+        });
+      } catch (error) {
+        if (error instanceof BrowserAutomationBrokerError) throw new BrowserLifecycleReleaseError(error.failure);
+        throw error;
+      }
+      if (!response.ok || response.operation !== "status" || response.result.externalChromeTurnDisposition?.turnId !== turnId
+        || response.result.externalChromeTurnDisposition.disposition !== "handoff") {
+        throw new Error("External Chrome turn acknowledgement did not match the terminal turn.");
+      }
+      await this.withSessionMutation(key, async () => {
+        this.assertMutable(key, generation);
+        if (snapshot.externalChromeTurnDisposition?.turnId !== turnId) throw new Error("External Chrome turn authority changed before commit.");
+        snapshot.externalChromeTurnDisposition = { ...transaction, phase: "completed" };
+        await this.persistChanged(snapshot, "lifecycle", generation);
+      });
+    });
+  }
+
   async releaseSessionForLifecycle(
     profileId: string,
     sessionAgentId: string,
@@ -730,6 +821,7 @@ export class BrowserAutomationService {
           }
           transaction = { ...transaction!, phase: "prepared" };
           snapshot.externalChromeLifecycleRelease = transaction;
+          delete snapshot.externalChromeTurnDisposition;
           await this.persistChanged(snapshot, "lifecycle", generation);
           this.cancelledExternalLeaseRisk.delete(sessionAgentId);
         });
@@ -1183,6 +1275,10 @@ function privacyBoundExternalResult(operation: unknown, result: Record<string, u
       ...(isRecord(result.externalChromeLifecycleRelease) ? { externalChromeLifecycleRelease: {
         phase: result.externalChromeLifecycleRelease.phase,
         releaseId: result.externalChromeLifecycleRelease.releaseId,
+      } } : {}),
+      ...(isRecord(result.externalChromeTurnDisposition) ? { externalChromeTurnDisposition: {
+        turnId: result.externalChromeTurnDisposition.turnId,
+        disposition: result.externalChromeTurnDisposition.disposition,
       } } : {}),
       host: result.host,
       panelVisible: result.panelVisible,

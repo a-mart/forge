@@ -196,6 +196,30 @@ export const BrowserAutomationHost = forwardRef<BrowserAutomationHostHandle, Bro
     const scheduleReport = useCallback(() => scheduleReportTimer(flushReports, reportTimer), [flushReports])
 
     const executeRequest = useCallback(async (request: BrowserAutomationRequest): Promise<BrowserAutomationResponse> => {
+      const turnDisposition = externalTurnDisposition(request)
+      if (turnDisposition) {
+        const externalBridge = typeof window !== 'undefined' ? window.electronBridge?.externalChrome : undefined
+        if (!externalBridge?.turnEnded || !request.tabId) return hostFailureResponse(request, new BrowserRendererError('host-disconnected', 'External Chrome turn bridge is unavailable'))
+        const handedOff = await externalBridge.turnEnded({
+          requestId: request.requestId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          sessionAgentId: request.sessionAgentId, profileId: request.profileId, tabId: request.tabId, ...turnDisposition,
+        })
+        if (!handedOff.ok) {
+          const code: BrowserAutomationErrorCode = handedOff.error === 'stale-or-lost' ? 'lease-lost'
+            : handedOff.error === 'invalid-request' ? 'invalid-input' : 'execution-failed'
+          return hostFailureResponse(request, new BrowserRendererError(code, `External Chrome turn disposition failed: ${handedOff.error}`))
+        }
+        return {
+          requestId: request.requestId, hostKind: request.hostKind, sessionAgentId: request.sessionAgentId,
+          profileId: request.profileId, tabId: request.tabId, hostId: request.hostId, hostGeneration: request.hostGeneration,
+          operation: 'status', ok: true, result: {
+            available: handedOff.status.instances.length > 0,
+            externalChromeTurnDisposition: turnDisposition,
+            host: { hostKind: 'external-chrome', connected: handedOff.status.instances.length > 0, hostId: request.hostId, hostGeneration: request.hostGeneration, focused: false, capabilities: null, connectedAt: handedOff.status.instances[0]?.connectedAt ?? null },
+            panelVisible: false, panelRevealRequested: false, physicalTabVisible: false, selectedTab: null,
+          }, elapsedMs: 0,
+        }
+      }
       const lifecycleRelease = externalLifecycleRelease(request)
       if (lifecycleRelease) {
         const externalBridge = typeof window !== 'undefined' ? window.electronBridge?.externalChrome : undefined
@@ -639,6 +663,12 @@ function hostFailureResponse(request: BrowserAutomationRequest, error: unknown):
       ...(failure?.details && typeof failure.details === 'object' ? { details: failure.details as Record<string, string | number | boolean | null> } : {}),
     }, elapsedMs: 0,
   }
+}
+function externalTurnDisposition(request: BrowserAutomationRequest): { turnId: string; disposition: 'handoff' } | null {
+  if (request.hostKind !== 'external-chrome' || request.operation !== 'status' || request.tabId === null) return null
+  const turn = request.input.externalChromeTurnDisposition
+  if (!turn || turn.disposition !== 'handoff' || !request.requestId.startsWith('external-chrome-turn-ended:')) return null
+  return turn
 }
 function externalLifecycleRelease(request: BrowserAutomationRequest): {
   phase: 'prepare' | 'finalize'; releaseId: string; reason: 'stop' | 'archive' | 'delete' | 'detach' | 'host-replaced';

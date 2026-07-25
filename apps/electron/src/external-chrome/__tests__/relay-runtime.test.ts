@@ -169,12 +169,22 @@ describe('authenticated External Chrome Desktop relay runtime', () => {
     await expect(runtime.execute(request('evaluate', 'ext.instance_profile_a.40', {
       expression: 'Promise.resolve({answer: 42})', awaitPromise: true, returnByValue: true,
     }))).resolves.toMatchObject({ ok: true, result: { tabId: 'ext.instance_profile_a.40', value: { answer: 42 } } })
+    await expect(runtime.handoffSessionAtTurnEnd({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 40, turnId: 'turn-12',
+    })).resolves.toBeUndefined()
+    await expect(runtime.handoffSessionAtTurnEnd({
+      extensionInstanceId: 'instance_profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 40, turnId: 'turn-12',
+    })).resolves.toBeUndefined()
     await expect(runtime.turnEnded({
-      extensionInstanceId: 'instance_profile_a', leaseId: 'lease-m4', leaseEpoch: 12, turnId: 'turn-12', finalTabs: [], handoffTabs: [40],
-    })).resolves.toMatchObject({ turnId: 'turn-12', releasedTabs: [], handoffTabs: [40] })
+      extensionInstanceId: 'instance_profile_a', leaseId: 'lease-m4', leaseEpoch: 12, turnId: 'stale-turn', finalTabs: [], handoffTabs: [40],
+    })).rejects.toThrow(/stale|out of order/u)
     const checkpoint = await readFile(path.join(root, 'state', 'leases.json'), 'utf8')
     expect(checkpoint).not.toContain('Promise.resolve')
-    expect(JSON.parse(checkpoint).leases[0]).toMatchObject({ tabIds: [40], leaseId: 'lease-m4' })
+    expect(JSON.parse(checkpoint).leases[0]).toMatchObject({ tabIds: [40], leaseId: 'lease-m4', handoffTurnId: 'turn-12' })
+    // The next exact-lease execute resumes HANDOFF and permits a newer disposition.
+    await expect(runtime.execute(request('evaluate', 'ext.instance_profile_a.40', {
+      expression: '1', awaitPromise: true, returnByValue: true,
+    }))).resolves.toMatchObject({ ok: true })
     await expect(runtime.turnEnded({
       extensionInstanceId: 'instance_profile_a', leaseId: 'lease-m4', leaseEpoch: 12, turnId: 'turn-final', finalTabs: [40], handoffTabs: [],
     })).resolves.toMatchObject({ releasedTabs: [40], handoffTabs: [] })

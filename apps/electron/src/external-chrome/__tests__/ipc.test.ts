@@ -94,6 +94,7 @@ describe('trusted External Chrome IPC', () => {
       listCandidates: vi.fn(async (instance: string) => candidate(instance)),
       claim: vi.fn(async (input: any) => ({ protocolVersion: 1, leaseId: input.leaseId, leaseEpoch: input.leaseEpoch, sessionAgentId: input.sessionAgentId, extensionInstanceId: input.extensionInstanceId, groupId: null, childPolicy: input.childPolicy, tabs: [{ windowId: 1, tabId: input.tabIds[0], groupId: null, title: `${input.extensionInstanceId} title`, url: 'https://example.test/private', origin: 'https://example.test', active: true }] })),
       release: vi.fn(async () => undefined),
+      handoffSessionAtTurnEnd: vi.fn(async () => undefined),
       prepareLifecycleRelease: vi.fn(async (input: any) => {
         if (input.extensionInstanceId !== 'profile_a') throw new Error('stale lifecycle release authority')
       }),
@@ -115,6 +116,12 @@ describe('trusted External Chrome IPC', () => {
     const attached = await invoke(event, attachment)
     expect(attached.status.attachment).toMatchObject({ extensionInstanceId: 'profile_a', tabs: [{ tabId: 7 }], childPolicy: 'manual', state: 'attached' })
     expect(JSON.stringify(attached)).not.toContain('/private')
+    const turn = { operation: 'turn-ended', requestId: 'external-chrome-turn-ended:correlation-turn', hostId: 'external-host', hostGeneration: 4, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', turnId: 'turn-4', disposition: 'handoff' }
+    await expect(invoke(event, turn)).resolves.toMatchObject({ ok: true, status: { attachment: { tabs: [{ tabId: 7 }] } } })
+    expect(transport.handoffSessionAtTurnEnd).toHaveBeenCalledWith({
+      extensionInstanceId: 'profile_a', sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 7, turnId: 'turn-4',
+    })
+    await expect(invoke(event, { ...turn, disposition: 'final' })).resolves.toEqual({ ok: false, error: 'invalid-request' })
     const release = { operation: 'lifecycle-release', requestId: 'external-chrome-release:prepare:stop:correlation-1', hostId: 'external-host', hostGeneration: 4, sessionAgentId: 'session-a', profileId: 'profile-a', tabId: 'ext.profile_a.7', phase: 'prepare', releaseId: 'release-1', reason: 'stop', originalHostId: 'external-host', originalHostGeneration: 4 }
     await expect(invoke(event, { ...release, requestId: 'wrong-correlation' })).resolves.toEqual({ ok: false, error: 'invalid-request' })
     await expect(invoke(event, { ...release, tabId: 'ext.profile_b.7' })).resolves.toEqual({ ok: false, error: 'stale-or-lost' })

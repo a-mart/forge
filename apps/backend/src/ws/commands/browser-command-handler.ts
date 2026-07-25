@@ -78,6 +78,12 @@ export async function handleBrowserCommand(options: BrowserCommandHandlerOptions
         });
         if (sent === null) return true;
       }
+      if (command.hostKind === "external-chrome") {
+        // WebSocket ordering guarantees the renderer consumes its final hydration
+        // chunk before this retry request. Pending opaque turn authority therefore
+        // survives backend/renderer/Desktop reconnect without broadening scope.
+        void service.retryPendingExternalChromeTurnDispositions();
+      }
       return true;
     }
     case "browser_host_focus":

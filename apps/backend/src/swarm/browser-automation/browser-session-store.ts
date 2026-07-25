@@ -200,11 +200,16 @@ function normalizeSnapshot(value: unknown, profileId: string, sessionAgentId: st
   if (externalChromeLifecycleRelease?.phase === "preparing" && !tabs.some((tab) => (
     tab.hostKind === "external-chrome" && tab.tabId === externalChromeLifecycleRelease.tabId
   ))) throw new Error("Preparing External Chrome release tab is missing");
+  const externalChromeTurnDisposition = normalizeExternalChromeTurnDisposition(record.externalChromeTurnDisposition);
+  if (externalChromeTurnDisposition?.phase === "pending" && !tabs.some((tab) => (
+    tab.hostKind === "external-chrome" && tab.tabId === externalChromeTurnDisposition.tabId
+  ))) throw new Error("Pending External Chrome turn disposition tab is missing");
 
   return {
     schemaVersion: 1,
     hostKind,
     ...(externalChromeLifecycleRelease ? { externalChromeLifecycleRelease } : {}),
+    ...(externalChromeTurnDisposition ? { externalChromeTurnDisposition } : {}),
     profileId,
     sessionAgentId,
     hostingState: normalizeHostingState(record.hostingState),
@@ -238,6 +243,20 @@ function normalizeExternalChromeLifecycleRelease(value: unknown): BrowserSession
     releaseId, reason: release.reason, tabId, hostId,
     hostGeneration: positiveInteger(release.hostGeneration, "hostGeneration"), phase: release.phase,
   };
+}
+
+function normalizeExternalChromeTurnDisposition(value: unknown): BrowserSessionSnapshot["externalChromeTurnDisposition"] {
+  if (value === undefined || value === null) return undefined;
+  const turn = requiredRecord(value, "External Chrome turn disposition");
+  if (turn.disposition !== "handoff" || (turn.phase !== "pending" && turn.phase !== "completed")) {
+    throw new Error("Invalid External Chrome turn disposition");
+  }
+  const turnId = requiredId(turn.turnId, "turnId");
+  const tabId = requiredId(turn.tabId, "tabId");
+  if (!/^[A-Za-z0-9._:@/-]+$/u.test(turnId) || !/^ext\.[A-Za-z0-9_-]{1,96}\.[0-9]+$/u.test(tabId)) {
+    throw new Error("Invalid External Chrome turn disposition authority");
+  }
+  return { turnId, tabId, disposition: "handoff", phase: turn.phase };
 }
 
 function normalizePanelReveal(value: unknown): NonNullable<BrowserSessionSnapshot["panelReveal"]> {

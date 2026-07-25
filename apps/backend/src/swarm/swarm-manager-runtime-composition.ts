@@ -491,6 +491,7 @@ export class SwarmManagerRuntimeComposition {
       maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
         this.requireServices().configuration.maybeRecordModelCapacityBlock(agentId, descriptor, error),
       ...createRuntimeLifecycleControllerHostCallbacks(() => this.requireRuntimeLifecycle()),
+      handoffExternalChromeAtTurnEnd: (profileId, sessionAgentId, turnId) => this.options.browserAutomation.handoffExternalChromeAtTurnEnd(profileId, sessionAgentId, turnId),
       incrementSessionCompactionCount: (profileId, sessionId, failureLogKey) =>
         this.requireServices().knowledge.incrementSessionCompactionCount(
           profileId,
@@ -1003,7 +1004,6 @@ export class SwarmManagerRuntimeComposition {
     if (!this.completed?.runtimeLifecycle) throw new Error("Runtime composition is not complete");
     return this.completed.runtimeLifecycle;
   }
-
   private requireProjectExecutableTrust(): ProjectExecutableTrustCoordinator {
     if (!this.completed?.projectExecutableTrust) throw new Error("Runtime composition is not complete");
     return this.completed.projectExecutableTrust;

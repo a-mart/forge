@@ -140,6 +140,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   isRuntimeRecoveryActive(agentId: string): boolean;
   beforeRuntimeEventProjection?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   getActiveTurnId?(agentId: string, runtimeToken?: number): string | undefined;
+  handoffExternalChromeAtTurnEnd?(profileId: string, sessionAgentId: string, turnId: string): Promise<void>;
   recordManagerTurnWatchdogStatus?(
     agentId: string,
     runtimeToken: number | undefined,
@@ -788,11 +789,24 @@ export class SwarmRuntimeController {
 
     this.host.recordManagerTurnWatchdogEvent?.(agentId, runtimeToken, event);
     this.host.beforeRuntimeEventProjection?.(agentId, runtimeToken, event);
+    // Capture exact terminal-turn authority before TurnContext consumes it during
+    // after-projection. Raw provider retry events never reach this accepted boundary.
+    const terminalTurnId = event.type === "agent_end" ? this.host.getActiveTurnId?.(agentId, runtimeToken) : undefined;
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
     if (this.host.afterRuntimeEventProjection) {
       this.host.afterRuntimeEventProjection(agentId, runtimeToken, event);
     } else {
       this.host.onAcceptedRuntimeSessionEvent?.(agentId, runtimeToken, event);
+    }
+    const descriptor = terminalTurnId ? this.descriptors.get(agentId) : undefined;
+    if (terminalTurnId && descriptor?.profileId) {
+      try {
+        await this.host.handoffExternalChromeAtTurnEnd?.(descriptor.profileId, agentId, terminalTurnId);
+      } catch (error) {
+        // The browser service persisted opaque pending authority before transport.
+        // Runtime settlement must remain available while reconnect/retry completes it.
+        this.host.logDebug("external-chrome:turn-disposition-pending", { agentId, turnId: terminalTurnId, error: String(error) });
+      }
     }
     return true;
   }

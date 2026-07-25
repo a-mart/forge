@@ -198,12 +198,24 @@ export interface ExternalChromeLifecycleReleaseTransaction {
   phase: 'preparing' | 'prepared'
 }
 
+export interface ExternalChromeTurnDispositionTransaction {
+  /** Canonical backend turn identity; page data is never included. */
+  turnId: string
+  /** One opaque member proving which Desktop checkpoint must be dispositioned. */
+  tabId: string
+  /** M4 policy is bounded handoff for every surviving active External Chrome tab. */
+  disposition: 'handoff'
+  phase: 'pending' | 'completed'
+}
+
 export interface BrowserSessionSnapshot {
   schemaVersion: 1
   /** Session-selected host. Absent legacy/replayed snapshots default to managed Electron. */
   hostKind?: BrowserHostKind
   /** Durable two-phase detach state. Opaque and safe to replay after restart. */
   externalChromeLifecycleRelease?: ExternalChromeLifecycleReleaseTransaction
+  /** Durable terminal-turn disposition, retried with the same exact lease authority. */
+  externalChromeTurnDisposition?: ExternalChromeTurnDispositionTransaction
   sessionAgentId: string
   profileId: string
   /** Controls whether the desktop host may mount physical webviews for this session. */
@@ -377,9 +389,16 @@ export interface ExternalChromeLifecycleReleaseInput {
   originalHostGeneration: number
 }
 
+export interface ExternalChromeTurnDispositionInput {
+  turnId: string
+  disposition: 'handoff'
+}
+
 export type BrowserStatusInput = BrowserTabTargetInput & {
   /** Internal exact-authority lifecycle transaction carried over the existing host broker. */
   externalChromeLifecycleRelease?: ExternalChromeLifecycleReleaseInput
+  /** Internal terminal-turn transaction; mutually exclusive with lifecycle release. */
+  externalChromeTurnDisposition?: ExternalChromeTurnDispositionInput
 }
 
 export interface BrowserOpenInput extends BrowserTabTargetInput {
@@ -458,6 +477,8 @@ export interface BrowserAutomationStatusResult {
   available: boolean
   /** Exact opaque lifecycle acknowledgement, present only for internal prepare/finalize requests. */
   externalChromeLifecycleRelease?: Pick<ExternalChromeLifecycleReleaseInput, 'phase' | 'releaseId'>
+  /** Exact terminal-turn acknowledgement; contains no selected page content. */
+  externalChromeTurnDisposition?: ExternalChromeTurnDispositionInput
   host: BrowserHostConnectionSnapshot
   /** Legacy alias for physicalTabVisible. It is never canonical reveal intent. */
   panelVisible: boolean
@@ -1047,7 +1068,17 @@ export function parseBrowserAutomationInput<Operation extends BrowserAutomationO
 
   switch (operation) {
     case 'status': {
-      knownKeys(operation, input, ['tabId', 'hostKind', 'externalChromeLifecycleRelease'])
+      knownKeys(operation, input, ['tabId', 'hostKind', 'externalChromeLifecycleRelease', 'externalChromeTurnDisposition'])
+      if (input.externalChromeLifecycleRelease !== undefined && input.externalChromeTurnDisposition !== undefined) {
+        throw new BrowserAutomationContractError(operation, 'lifecycle release and turn disposition are mutually exclusive')
+      }
+      if (input.externalChromeTurnDisposition !== undefined) {
+        const turn = recordInput(operation, input.externalChromeTurnDisposition)
+        knownKeys(operation, turn, ['turnId', 'disposition'])
+        const turnId = optionalId(operation, turn.turnId, 'turnId')
+        if (!turnId || turn.disposition !== 'handoff') throw new BrowserAutomationContractError(operation, 'invalid External Chrome turn disposition')
+        return { ...target, externalChromeTurnDisposition: { turnId, disposition: 'handoff' } } as BrowserAutomationInputByOperation[Operation]
+      }
       if (input.externalChromeLifecycleRelease === undefined) return target as BrowserAutomationInputByOperation[Operation]
       const lifecycle = recordInput(operation, input.externalChromeLifecycleRelease)
       knownKeys(operation, lifecycle, ['phase', 'releaseId', 'reason', 'originalHostId', 'originalHostGeneration'])

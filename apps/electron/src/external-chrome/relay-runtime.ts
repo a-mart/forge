@@ -63,6 +63,8 @@ export interface ExternalChromeLeaseCheckpoint {
   lifecycleReleaseId?: string
   originalHostId?: string
   originalHostGeneration?: number
+  /** Idempotency marker while Extension retains a detached same-lease HANDOFF. */
+  handoffTurnId?: string
 }
 
 interface PersistedCheckpoints {
@@ -192,7 +194,8 @@ function validCheckpoint(value: unknown): value is ExternalChromeLeaseCheckpoint
     ((record.lifecycleReleaseId === undefined && record.originalHostId === undefined && record.originalHostGeneration === undefined) ||
       (validLifecycleReleaseId(record.lifecycleReleaseId) &&
         typeof record.originalHostId === 'string' && record.originalHostId.length > 0 && record.originalHostId.length <= 128 &&
-        Number.isSafeInteger(record.originalHostGeneration) && (record.originalHostGeneration as number) > 0))
+        Number.isSafeInteger(record.originalHostGeneration) && (record.originalHostGeneration as number) > 0)) &&
+    (record.handoffTurnId === undefined || validLifecycleReleaseId(record.handoffTurnId))
 }
 
 class FramedSocketPeer {
@@ -493,12 +496,34 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
     return result
   }
 
+  async handoffSessionAtTurnEnd(input: {
+    extensionInstanceId: string; sessionAgentId: string; profileId: string; tabId: number; turnId: string
+  }): Promise<void> {
+    const checkpoint = (await this.checkpoints.all()).find((lease) => lease.releasedAt === undefined &&
+      lease.extensionInstanceId === input.extensionInstanceId && lease.sessionAgentId === input.sessionAgentId &&
+      lease.profileId === input.profileId && lease.tabIds.includes(input.tabId))
+    if (!checkpoint) throw new Error('turn disposition used stale lease authority')
+    await this.turnEnded({
+      extensionInstanceId: checkpoint.extensionInstanceId, leaseId: checkpoint.leaseId, leaseEpoch: checkpoint.leaseEpoch,
+      turnId: input.turnId, finalTabs: [], handoffTabs: checkpoint.tabIds,
+    })
+  }
+
   async turnEnded(input: {
     extensionInstanceId: string; leaseId: string; leaseEpoch: number; turnId: string; finalTabs: number[]; handoffTabs: number[]
   }): Promise<ExternalChromeResultByMethod['forge.browser.turnEnded']> {
     const checkpoint = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === input.extensionInstanceId &&
       lease.leaseId === input.leaseId && lease.leaseEpoch === input.leaseEpoch && lease.releasedAt === undefined)
     if (!checkpoint) throw new Error('turn disposition used stale lease authority')
+    if (checkpoint.handoffTurnId !== undefined) {
+      if (checkpoint.handoffTurnId !== input.turnId || input.finalTabs.length !== 0 || canonical(input.handoffTabs) !== canonical(checkpoint.tabIds)) {
+        throw new Error('turn disposition is stale or out of order for the retained handoff')
+      }
+      return {
+        protocolVersion: 1, leaseId: input.leaseId, leaseEpoch: input.leaseEpoch, turnId: input.turnId,
+        releasedTabs: [], handoffTabs: [...checkpoint.tabIds],
+      }
+    }
     const requested = [...input.finalTabs, ...input.handoffTabs].sort((a, b) => a - b)
     if (new Set(requested).size !== requested.length || canonical(requested) !== canonical(checkpoint.tabIds)) {
       throw new Error('turn disposition changed the compare-and-set lease scope')
@@ -513,7 +538,10 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       throw new Error('extension turn response changed authorized dispositions')
     }
     if (input.handoffTabs.length === 0) await this.checkpoints.remove(input.leaseId, input.leaseEpoch)
-    else await this.checkpoints.put({ ...checkpoint, tabIds: [...input.handoffTabs].sort((a, b) => a - b), expiresAt: Math.min(checkpoint.expiresAt, this.now() + 2 * 60_000) })
+    else await this.checkpoints.put({
+      ...checkpoint, tabIds: [...input.handoffTabs].sort((a, b) => a - b),
+      handoffTurnId: input.turnId, expiresAt: Math.min(checkpoint.expiresAt, this.now() + 2 * 60_000),
+    })
     return result
   }
 
@@ -623,6 +651,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
         })
         if (response.requestId !== request.requestId || response.leaseId !== checkpoint.leaseId || response.leaseEpoch !== checkpoint.leaseEpoch ||
           response.tabId !== decoded.tabId || response.operation !== 'status') return failure('lease-lost', 'Extension status changed authorized lease routing.', false)
+        await this.markCheckpointResumed(checkpoint)
         if (!response.ok) return { ok: false, error: response.error }
         const reported = response.result.selectedTab
         selectedTab = reported ? {
@@ -725,6 +754,7 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       response.leaseEpoch !== checkpoint.leaseEpoch || response.tabId !== decoded.tabId || response.operation !== 'navigate') {
       return failure('lease-lost', 'Extension response changed authorized lease routing.', false)
     }
+    await this.markCheckpointResumed(checkpoint)
     if (!response.ok) return { ok: false, error: response.error }
     const raw = response.result as BrowserAutomationResultByOperation['navigate']
     const tab = { ...raw.tab, hostKind: 'external-chrome' as const, tabId: request.tabId, sessionAgentId: request.sessionAgentId, profileId: request.profileId }
@@ -750,9 +780,20 @@ export class ExternalChromeRelayRuntime implements ExternalChromeTransport {
       response.tabId !== decoded.tabId || response.operation !== request.operation) {
       return failure('lease-lost', 'Extension response changed authorized lease routing.', false)
     }
+    await this.markCheckpointResumed(checkpoint)
     if (!response.ok) return { ok: false, error: response.error }
     const result = { ...(response.result as unknown as Record<string, unknown>), tabId: request.tabId } as BrowserAutomationResultByOperation[BrowserAutomationOperation]
     return { ok: true, result }
+  }
+
+  private async markCheckpointResumed(checkpoint: ExternalChromeLeaseCheckpoint): Promise<void> {
+    if (checkpoint.handoffTurnId === undefined) return
+    const latest = (await this.checkpoints.all()).find((lease) => lease.extensionInstanceId === checkpoint.extensionInstanceId &&
+      lease.leaseId === checkpoint.leaseId && lease.leaseEpoch === checkpoint.leaseEpoch)
+    if (latest?.handoffTurnId !== checkpoint.handoffTurnId) return
+    const { handoffTurnId: _handoffTurnId, ...resumed } = latest
+    void _handoffTurnId
+    await this.checkpoints.put(resumed)
   }
 
   private async activeCheckpoints(): Promise<ExternalChromeLeaseCheckpoint[]> {

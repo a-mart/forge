@@ -95,6 +95,15 @@ export class OopifAncestryTracker {
       .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
   }
 
+  /** Child-to-root route chain. Every edge was proven by the frame tree and flat Target session. */
+  routeChain(targetId: string): Array<{ targetId: string; sessionId?: string; parentTargetId: string | null; frameId?: string }> {
+    if (!this.isDescendantOrRoot(targetId)) return []
+    return this.ancestry(targetId).flatMap((id) => {
+      const node = this.nodes.get(id)
+      return node === undefined ? [] : [{ ...node }]
+    })
+  }
+
   rootId(): string | null {
     return this.rootTargetId
   }
@@ -165,6 +174,8 @@ export class DebuggerController {
   private readonly trackers = new Map<number, OopifAncestryTracker>()
   private readonly navigationSignals = new Map<number, Set<(method: string) => void>>()
   private readonly navigationGenerations = new Map<number, number>()
+  private readonly pendingCommands = new Map<number, Set<Promise<unknown>>>()
+  private readonly resetTasks = new Map<number, Promise<void>>()
 
   constructor(private readonly debuggerApi: ChromeDebuggerApi) {}
 
@@ -231,7 +242,7 @@ export class DebuggerController {
     if (sessionId !== undefined && this.trackers.get(tabId)?.acceptsSession(sessionId) !== true) {
       throw new Error('debugger child session is outside the proven leased-root ancestry')
     }
-    return this.debuggerApi.sendCommand({ tabId, ...(sessionId === undefined ? {} : { sessionId }) }, method, params)
+    return this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId, ...(sessionId === undefined ? {} : { sessionId }) }, method, params))
   }
 
   routes(tabId: number): DebuggerRoute[] {
@@ -248,6 +259,29 @@ export class DebuggerController {
     return this.navigationGenerations.get(tabId) ?? 0
   }
 
+  routeChain(tabId: number, route: DebuggerRoute): DebuggerRoute[] {
+    const tracker = this.trackers.get(tabId)
+    if (this.state(tabId) !== 'ATTACHED' || tracker === undefined) return []
+    return tracker.routeChain(route.targetId).map(({ targetId, sessionId }) => ({ targetId, ...(sessionId === undefined ? {} : { sessionId }) }))
+  }
+
+  /**
+   * Fail-closed cancellation primitive. Chrome settles outstanding debugger commands when the
+   * owning debugger detaches; waiting for those settlements prevents a stale command from
+   * escaping the tab queue. Callers must revoke the lease before invoking this method.
+   */
+  async reset(tabId: number): Promise<void> {
+    const existing = this.resetTasks.get(tabId)
+    if (existing !== undefined) return existing
+    const reset = this.resetNow(tabId)
+    this.resetTasks.set(tabId, reset)
+    try {
+      await reset
+    } finally {
+      if (this.resetTasks.get(tabId) === reset) this.resetTasks.delete(tabId)
+    }
+  }
+
   async navigateAndWait(
     tabId: number,
     url: string,
@@ -258,7 +292,7 @@ export class DebuggerController {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger target is not attached')
     if (!isAuthorized()) throw new Error('lease authority was interrupted')
     if (readiness === 'none') {
-      await this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url })
+      await this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url }))
       if (!isAuthorized()) throw new Error('lease authority was interrupted')
       return
     }
@@ -286,7 +320,7 @@ export class DebuggerController {
       const remaining = Math.max(0, deadlineAt - Date.now())
       const deadlineTimer = setTimeout(() => finish(new Error(`navigation readiness ${readiness} timed out`)), remaining)
       const authorityTimer = setInterval(() => { if (!isAuthorized()) finish(new Error('lease authority was interrupted')) }, Math.min(25, Math.max(1, remaining)))
-      void this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url }).then(() => {
+      void this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, 'Page.navigate', { url })).then(() => {
         if (!isAuthorized()) finish(new Error('lease authority was interrupted'))
       }, (error) => finish(error instanceof Error ? error : new Error(String(error))))
     })
@@ -294,7 +328,7 @@ export class DebuggerController {
 
   async sendInput(tabId: number, method: 'Input.dispatchMouseEvent' | 'Input.dispatchKeyEvent' | 'Input.insertText' | 'Input.dispatchTouchEvent', params: Record<string, unknown>): Promise<unknown> {
     if (this.state(tabId) !== 'ATTACHED') throw new Error('debugger input target is not attached')
-    return this.debuggerApi.sendCommand({ tabId }, method, params)
+    return this.trackCommand(tabId, this.debuggerApi.sendCommand({ tabId }, method, params))
   }
 
   async detach(tabId: number): Promise<void> {
@@ -312,6 +346,26 @@ export class DebuggerController {
     this.states.set(tabId, 'UNATTACHED')
     this.trackers.delete(tabId)
     this.navigationGenerations.delete(tabId)
+  }
+
+  private async resetNow(tabId: number): Promise<void> {
+    const pending = [...(this.pendingCommands.get(tabId) ?? [])]
+    await this.detach(tabId)
+    await Promise.allSettled(pending)
+  }
+
+  private trackCommand(tabId: number, command: Promise<unknown>): Promise<unknown> {
+    const pending = this.pendingCommands.get(tabId) ?? new Set<Promise<unknown>>()
+    pending.add(command)
+    this.pendingCommands.set(tabId, pending)
+    void command.then(() => this.forgetCommand(tabId, command), () => this.forgetCommand(tabId, command))
+    return command
+  }
+
+  private forgetCommand(tabId: number, command: Promise<unknown>): void {
+    const pending = this.pendingCommands.get(tabId)
+    pending?.delete(command)
+    if (pending?.size === 0) this.pendingCommands.delete(tabId)
   }
 
   async detachAll(): Promise<void> {

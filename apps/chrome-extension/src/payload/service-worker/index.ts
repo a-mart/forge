@@ -171,6 +171,11 @@ export class Runtime implements ServiceWorkerPayload {
 
   shutdown(): void {
     this.native?.stop()
+    const lease = this.leases.current()
+    if (lease !== null) {
+      this.clearOperationState(lease.tabIds)
+      void this.leases.markLost()
+    }
     void this.debuggers.detachAll()
   }
 
@@ -203,6 +208,7 @@ export class Runtime implements ServiceWorkerPayload {
         await this.attachTab(created.tab.id as number)
         this.leases.assertScope(created.lease.leaseId, created.lease.leaseEpoch, created.tab.id as number)
       } catch (error) {
+        this.clearOperationState([created.tab.id as number])
         await this.debuggers.detach(created.tab.id as number).catch(() => undefined)
         await this.leases.rollbackCreatedTab(created.tab.id as number, created.lease.leaseId, created.lease.leaseEpoch)
         throw error
@@ -230,6 +236,7 @@ export class Runtime implements ServiceWorkerPayload {
           this.leases.assertScope(claimed.lease.leaseId, claimed.lease.leaseEpoch, tabId)
         }
       } catch (error) {
+        this.clearOperationState(claimed.lease.tabIds)
         await this.debuggers.detachAll()
         await this.leases.release(claimed.lease.leaseId, claimed.lease.leaseEpoch)
         throw new LeaseError('lease-lost', error instanceof Error ? error.message : 'debugger attach failed')
@@ -277,6 +284,7 @@ export class Runtime implements ServiceWorkerPayload {
             this.leases.assertScope(claimed.lease.leaseId, claimed.lease.leaseEpoch, tabId)
           }
         } catch (error) {
+          this.clearOperationState(claimed.lease.tabIds)
           await this.debuggers.detachAll()
           await this.leases.release(claimed.lease.leaseId, claimed.lease.leaseEpoch)
           throw new LeaseError('lease-lost', error instanceof Error ? error.message : 'debugger attach failed')
@@ -293,6 +301,7 @@ export class Runtime implements ServiceWorkerPayload {
           await this.attachTab(created.tab.id as number)
           this.leases.assertScope(created.lease.leaseId, created.lease.leaseEpoch, created.tab.id as number)
         } catch (error) {
+          this.clearOperationState([created.tab.id as number])
           await this.debuggers.detach(created.tab.id as number).catch(() => undefined)
           await this.leases.rollbackCreatedTab(created.tab.id as number, created.lease.leaseId, created.lease.leaseEpoch)
           throw new LeaseError('lease-lost', error instanceof Error ? error.message : 'debugger attach failed')
@@ -323,11 +332,15 @@ export class Runtime implements ServiceWorkerPayload {
         const detachResults = await Promise.allSettled(current.tabIds.map((tabId) => this.debuggers.detach(tabId)))
         if (detachResults.some((result) => result.status === 'rejected')) {
           await this.leases.markLost()
+          this.clearOperationState(current.tabIds)
           throw new LeaseError('lease-lost', 'Chrome did not acknowledge every debugger detach at turn end')
         }
         const result = await this.leases.turnEnded(
           request.params.leaseId, request.params.leaseEpoch, request.params.finalTabs, request.params.handoffTabs, HANDOFF_TTL_MS,
         )
+        // HANDOFF is the sole cache-preserving disposition. Final tabs can be
+        // reclaimed by another lease immediately and must start diagnostically empty.
+        this.clearOperationState(result.releasedTabs)
         this.broadcastStatus(result.releasedTabs, 'detached')
         this.broadcastStatus(result.handoffTabs, 'handoff')
         return {
@@ -351,6 +364,7 @@ export class Runtime implements ServiceWorkerPayload {
         lease = await this.leases.resumeHandoff(params.leaseId, params.leaseEpoch, params.tabId)
       } catch (error) {
         await this.leases.markLost()
+        this.clearOperationState(handoffTabs)
         await this.debuggers.detachAll()
         this.broadcastStatus(handoffTabs, 'detached')
         throw error
@@ -359,6 +373,7 @@ export class Runtime implements ServiceWorkerPayload {
     } else {
       lease = this.leases.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
     }
+    const expectedControlEpoch = lease.controlEpoch
     if (params.operation === 'status') {
       const tab = await this.chrome.tabs.get(params.tabId)
       const selectedTab = this.browserTabSnapshot(tab, lease.sessionAgentId)
@@ -398,94 +413,140 @@ export class Runtime implements ServiceWorkerPayload {
         error: { code: input.url || input.environmentPort ? 'restricted-target' : 'invalid-url', message: 'External Chrome navigation target is missing or restricted.', retryable: false },
       }
     }
-    const controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId)
-    try {
-      this.broadcastStatus([params.tabId], 'agent')
-      const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + input.timeoutMs)
+    return this.operations.runExclusive(params.tabId, async () => {
+      let controlEpoch: number
       try {
-        await this.debuggers.navigateAndWait(
-          params.tabId,
-          targetUrl,
-          input.readiness,
-          deadline,
-          () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
-        )
+        controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedControlEpoch)
       } catch (error) {
-        const interrupted = !this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)
-        const timedOut = Date.now() >= deadline || /timed out/u.test(error instanceof Error ? error.message : String(error))
+        return this.controlStartFailure(params, expectedControlEpoch, error)
+      }
+      try {
+        this.broadcastStatus([params.tabId], 'agent')
+        const deadline = Math.min(Date.parse(params.deadlineAt), Date.now() + input.timeoutMs)
+        try {
+          await this.debuggers.navigateAndWait(
+            params.tabId,
+            targetUrl,
+            input.readiness,
+            deadline,
+            () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
+          )
+        } catch (error) {
+          const interrupted = !this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)
+          const timedOut = Date.now() >= deadline || /timed out/u.test(error instanceof Error ? error.message : String(error))
+          await this.cancelOutstandingAndLoseLease(params.tabId)
+          return {
+            protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+            tabId: params.tabId, operation: 'navigate', ok: false,
+            error: interrupted
+              ? { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true }
+              : timedOut
+                ? { code: 'timeout', message: `Navigation did not reach ${input.readiness} readiness.`, retryable: true }
+                : { code: 'navigation-failed', message: 'Chrome navigation failed.', retryable: true },
+          }
+        }
+        if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
+          await this.cancelOutstandingAndLoseLease(params.tabId)
+          return {
+            protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+            tabId: params.tabId, operation: 'navigate', ok: false,
+            error: { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true },
+          }
+        }
+        const tab = await this.chrome.tabs.get(params.tabId)
+        if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
+          await this.cancelOutstandingAndLoseLease(params.tabId)
+          return {
+            protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+            tabId: params.tabId, operation: 'navigate', ok: false,
+            error: { code: 'control-interrupted', message: 'Lease authority changed before navigation completed.', retryable: true },
+          }
+        }
+        const result: BrowserAutomationResultByOperation['navigate'] = {
+          tab: this.browserTabSnapshot(tab, lease.sessionAgentId), readiness: input.readiness,
+        }
         return {
           protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-          tabId: params.tabId, operation: 'navigate', ok: false,
-          error: interrupted
-            ? { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true }
-            : timedOut
-              ? { code: 'timeout', message: `Navigation did not reach ${input.readiness} readiness.`, retryable: true }
-              : { code: 'navigation-failed', message: 'Chrome navigation failed.', retryable: true },
+          tabId: params.tabId, operation: 'navigate', ok: true, result,
+        }
+      } finally {
+        if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) {
+          this.broadcastStatus([params.tabId], 'human')
         }
       }
-      if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
-        return {
-          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-          tabId: params.tabId, operation: 'navigate', ok: false,
-          error: { code: 'control-interrupted', message: 'Trusted human input interrupted navigation.', retryable: true },
-        }
-      }
-      const tab = await this.chrome.tabs.get(params.tabId)
-      if (!this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch)) {
-        return {
-          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-          tabId: params.tabId, operation: 'navigate', ok: false,
-          error: { code: 'control-interrupted', message: 'Lease authority changed before navigation completed.', retryable: true },
-        }
-      }
-      const result: BrowserAutomationResultByOperation['navigate'] = {
-        tab: this.browserTabSnapshot(tab, lease.sessionAgentId), readiness: input.readiness,
-      }
-      return {
-        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: 'navigate', ok: true, result,
-      }
-    } finally {
-      if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) {
-        this.broadcastStatus([params.tabId], 'human')
-      }
-    }
+    })
   }
 
   private async executeFunctionalOperation(params: Extract<ExternalChromeRequest, { method: 'forge.browser.execute' }>['params']): Promise<unknown> {
-    const controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId)
-    const navigationGeneration = this.debuggers.navigationGeneration(params.tabId)
-    const protectedInput = params.operation === 'click' || params.operation === 'type' || params.operation === 'press'
-    const operationId = protectedInput ? crypto.randomUUID() : null
-    try {
-      this.broadcastStatus([params.tabId], 'agent')
-      if (operationId !== null) await this.signalSyntheticStart(params.tabId, operationId, controlEpoch)
-      const outcome = await this.operations.execute(params, {
-        navigationGeneration,
-        isCurrent: () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
-        wasHumanInterrupted: () => {
-          const current = this.leases.current()
-          return current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > controlEpoch
-        },
-      })
-      return {
-        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: params.operation, ...outcome,
+    const expectedControlEpoch = this.leases.assertScope(params.leaseId, params.leaseEpoch, params.tabId).controlEpoch
+    return this.operations.runExclusive(params.tabId, async () => {
+      let controlEpoch: number
+      try {
+        controlEpoch = await this.leases.beginAgentControl(params.leaseId, params.leaseEpoch, params.tabId, expectedControlEpoch)
+      } catch (error) {
+        return this.controlStartFailure(params, expectedControlEpoch, error)
       }
-    } catch (error) {
-      const current = this.leases.current()
-      const humanInterrupted = current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > controlEpoch
-      return {
-        protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
-        tabId: params.tabId, operation: params.operation, ok: false,
-        error: humanInterrupted
-          ? { code: 'control-interrupted', message: 'Trusted human input interrupted the operation.', retryable: true }
-          : { code: 'execution-failed', message: error instanceof Error ? error.message.slice(0, 1_024) : 'External Chrome operation failed.', retryable: true },
+      const navigationGeneration = this.debuggers.navigationGeneration(params.tabId)
+      const protectedInput = params.operation === 'click' || params.operation === 'type' || params.operation === 'press'
+      const operationId = protectedInput ? crypto.randomUUID() : null
+      try {
+        this.broadcastStatus([params.tabId], 'agent')
+        if (operationId !== null) await this.signalSyntheticStart(params.tabId, operationId, controlEpoch)
+        const outcome = await this.operations.executeNow(params, {
+          navigationGeneration,
+          isCurrent: () => this.leases.isOperationCurrent(params.leaseId, params.leaseEpoch, controlEpoch),
+          wasHumanInterrupted: () => {
+            const current = this.leases.current()
+            return current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > controlEpoch
+          },
+          cancelOutstanding: () => this.cancelOutstandingAndLoseLease(params.tabId),
+        })
+        return {
+          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+          tabId: params.tabId, operation: params.operation, ...outcome,
+        }
+      } catch (error) {
+        const current = this.leases.current()
+        const humanInterrupted = current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > controlEpoch
+        return {
+          protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+          tabId: params.tabId, operation: params.operation, ok: false,
+          error: humanInterrupted
+            ? { code: 'control-interrupted', message: 'Trusted human input interrupted the operation.', retryable: true }
+            : { code: 'execution-failed', message: error instanceof Error ? error.message.slice(0, 1_024) : 'External Chrome operation failed.', retryable: true },
+        }
+      } finally {
+        if (operationId !== null) this.signalSyntheticEnd(params.tabId, operationId, controlEpoch)
+        if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) this.broadcastStatus([params.tabId], 'human')
       }
-    } finally {
-      if (operationId !== null) this.signalSyntheticEnd(params.tabId, operationId, controlEpoch)
-      if (await this.leases.finishAgentControl(params.leaseId, params.leaseEpoch, controlEpoch)) this.broadcastStatus([params.tabId], 'human')
+    })
+  }
+
+  private controlStartFailure(
+    params: Extract<ExternalChromeRequest, { method: 'forge.browser.execute' }>['params'],
+    expectedControlEpoch: number,
+    error: unknown,
+  ): Record<string, unknown> {
+    const current = this.leases.current()
+    const humanInterrupted = current?.leaseId === params.leaseId && current.leaseEpoch === params.leaseEpoch && current.controlEpoch > expectedControlEpoch
+    return {
+      protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch,
+      tabId: params.tabId, operation: params.operation, ok: false,
+      error: humanInterrupted
+        ? { code: 'control-interrupted', message: 'Trusted human input cancelled queued work before it started.', retryable: true }
+        : { code: 'lease-lost', message: error instanceof Error ? error.message.slice(0, 1_024) : 'Lease authority changed before queued work started.', retryable: true },
     }
+  }
+
+  private async cancelOutstandingAndLoseLease(tabId: number): Promise<void> {
+    await this.leases.markLost()
+    const lease = this.leases.current()
+    const tabIds = lease?.tabIds ?? [tabId]
+    this.clearOperationState(tabIds)
+    // A LOST lease revokes its entire tab scope. Settle every tab's outstanding
+    // CDP callbacks before any per-tab queue can admit work from a later lease.
+    await Promise.all(tabIds.map((leasedTabId) => this.debuggers.reset(leasedTabId)))
+    if (lease !== null) this.broadcastStatus(tabIds, 'detached')
   }
 
   private browserTabSnapshot(tab: ChromeTab, sessionAgentId: string): BrowserTabSnapshot {
@@ -635,7 +696,7 @@ export class Runtime implements ServiceWorkerPayload {
     const lease = this.leases.current()
     if (notice === null || lease === null || !lease.tabIds.includes(notice.tabId)) return
     await this.leases.markLost()
-    this.operations.clear(notice.tabId)
+    this.clearOperationState(lease.tabIds)
     await this.debuggers.detachAll()
     this.broadcastStatus(lease.tabIds, 'detached')
     this.native?.sendNotification('browser.detached', {
@@ -698,6 +759,7 @@ export class Runtime implements ServiceWorkerPayload {
       const current = this.leases.current()
       if (current?.leaseId === lease.leaseId && current.leaseEpoch === lease.leaseEpoch && current.tabIds.includes(tabId)) {
         await this.leases.markLost()
+        this.clearOperationState(current.tabIds)
         await this.debuggers.detachAll()
       } else {
         await this.debuggers.detach(tabId).catch(() => undefined)
@@ -717,6 +779,7 @@ export class Runtime implements ServiceWorkerPayload {
     const lease = this.leases.current()
     if (lease?.tabIds.includes(tabId as number) !== true) return
     await this.leases.markLost()
+    this.clearOperationState(lease.tabIds)
     await this.debuggers.detachAll()
     this.broadcastStatus(lease.tabIds, 'detached')
   }
@@ -730,6 +793,7 @@ export class Runtime implements ServiceWorkerPayload {
   private async expireLeaseIfNeeded(): Promise<void> {
     const lease = await this.leases.expireIfNeeded()
     if (lease === null) return
+    this.clearOperationState(lease.tabIds)
     try {
       await this.releaseDebuggerAuthority(lease.leaseId, lease.leaseEpoch)
     } catch {
@@ -741,14 +805,21 @@ export class Runtime implements ServiceWorkerPayload {
     this.notifyLocalLease(lease, 'released')
   }
 
-  private releaseDebuggerAuthority(leaseId: string, leaseEpoch: number): Promise<number[]> {
+  private async releaseDebuggerAuthority(leaseId: string, leaseEpoch: number): Promise<number[]> {
+    const current = this.leases.current()
+    if (current?.leaseId === leaseId && current.leaseEpoch === leaseEpoch) this.clearOperationState(current.tabIds)
     return releaseLeaseDebuggerAuthority(this.leases, this.debuggers, leaseId, leaseEpoch)
+  }
+
+  private clearOperationState(tabIds: number[]): void {
+    for (const tabId of tabIds) this.operations.clear(tabId)
   }
 
   private async handleTransportLoss(): Promise<void> {
     const lease = this.leases.current()
     if (lease === null) return
     await this.leases.markLost()
+    this.clearOperationState(lease.tabIds)
     await this.debuggers.detachAll()
     this.broadcastStatus(lease.tabIds, 'detached')
   }
