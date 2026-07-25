@@ -77,6 +77,9 @@ export interface SwarmSpecialistFallbackManagerOptions {
   getRuntimeToken(agentId: string): number | undefined;
   clearRuntimeToken(agentId: string, runtimeToken?: number): void;
   restoreRuntimeTokenForFallbackRollback(agentId: string, runtimeToken: number): void;
+  hasSecureRuntimeBinding(runtime: SwarmAgentRuntime): boolean;
+  isSecureRuntimeBindingValid(runtime: SwarmAgentRuntime): boolean;
+  isSecureRuntimeBindingUsable(agentId: string, runtime: SwarmAgentRuntime): boolean;
   getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined;
   setRuntimeCreationPromise(agentId: string, promise: Promise<SwarmAgentRuntime>): void;
   clearRuntimeCreationPromiseIfCurrent(agentId: string, promise: Promise<SwarmAgentRuntime>): boolean;
@@ -171,6 +174,7 @@ export class SwarmSpecialistFallbackManager {
     if (!currentRuntime) {
       return false;
     }
+    const secureRuntimeRequired = this.options.hasSecureRuntimeBinding(currentRuntime);
 
     const previousModel = { ...descriptor.model };
     const previousStatus = descriptor.status;
@@ -258,7 +262,14 @@ export class SwarmSpecialistFallbackManager {
 
       const baseSystemPrompt = await this.options.resolveSystemPromptForDescriptor(fallbackDescriptor);
       runtimeSystemPrompt = this.options.injectWorkerIdentityContext(fallbackDescriptor, baseSystemPrompt);
-      replacementRuntime = await this.options.createRuntimeForDescriptor(fallbackDescriptor, runtimeSystemPrompt);
+      replacementRuntime = secureRuntimeRequired
+        ? await this.options.createRuntimeForDescriptor(
+            fallbackDescriptor,
+            runtimeSystemPrompt,
+            undefined,
+            { secureRuntimeRequired: true },
+          )
+        : await this.options.createRuntimeForDescriptor(fallbackDescriptor, runtimeSystemPrompt);
       replacementRuntimeToken = this.getRuntimeToken(input.agentId);
 
       if (!this.isSpecialistFallbackHandoffStillValid(input.agentId, currentRuntime)) {
@@ -269,6 +280,15 @@ export class SwarmSpecialistFallbackManager {
         }
         recovered = true;
         return true;
+      }
+      if (
+        secureRuntimeRequired
+        && (
+          !this.options.isSecureRuntimeBindingUsable(input.agentId, currentRuntime)
+          || !this.options.isSecureRuntimeBindingValid(replacementRuntime)
+        )
+      ) {
+        throw new Error(`Secure specialist fallback handoff was revoked for ${input.agentId}`);
       }
 
       const reroutedDescriptor = await this.persistSpecialistFallbackReroute(
@@ -302,6 +322,12 @@ export class SwarmSpecialistFallbackManager {
         recovered = true;
         return true;
       }
+      if (
+        secureRuntimeRequired
+        && !this.options.isSecureRuntimeBindingUsable(input.agentId, replacementRuntime)
+      ) {
+        throw new Error(`Secure specialist fallback replay was revoked for ${input.agentId}`);
+      }
 
       this.options.logDebug("worker:specialist_fallback:rerouted", {
         agentId: input.agentId,
@@ -314,7 +340,12 @@ export class SwarmSpecialistFallbackManager {
         replayMessageCount: replaySnapshot.messages.length
       });
 
-      await this.replaySpecialistFallbackSnapshot(replacementRuntime, replaySnapshot);
+      await this.replaySpecialistFallbackSnapshot(
+        input.agentId,
+        replacementRuntime,
+        replaySnapshot,
+        secureRuntimeRequired,
+      );
       resolveWaiters(replacementRuntime);
       if (suppressedRuntimeToken !== undefined) {
         this.endSpecialistFallbackHandoff(input.agentId, suppressedRuntimeToken);
@@ -335,7 +366,8 @@ export class SwarmSpecialistFallbackManager {
         input.agentId,
         currentRuntime,
         replacementRuntime,
-        suppressedRuntimeToken
+        suppressedRuntimeToken,
+        secureRuntimeRequired,
       );
       await this.discardSpecialistFallbackReplacementRuntime(input.agentId, replacementRuntime, replacementRuntimeToken);
       let rollbackError: unknown;
@@ -530,10 +562,18 @@ export class SwarmSpecialistFallbackManager {
   }
 
   private async replaySpecialistFallbackSnapshot(
+    agentId: string,
     runtime: SwarmAgentRuntime,
-    replaySnapshot: SpecialistFallbackReplaySnapshot
+    replaySnapshot: SpecialistFallbackReplaySnapshot,
+    secureRuntimeRequired: boolean,
   ): Promise<void> {
     for (const [index, replayMessage] of replaySnapshot.messages.entries()) {
+      if (
+        secureRuntimeRequired
+        && !this.options.isSecureRuntimeBindingUsable(agentId, runtime)
+      ) {
+        throw new Error(`Secure specialist fallback replay was revoked for ${agentId}`);
+      }
       await runtime.sendMessage(replayMessage, index === 0 ? "auto" : "steer");
     }
   }
@@ -604,7 +644,8 @@ export class SwarmSpecialistFallbackManager {
     agentId: string,
     currentRuntime: SwarmAgentRuntime,
     replacementRuntime: SwarmAgentRuntime | undefined,
-    suppressedRuntimeToken: number | undefined
+    suppressedRuntimeToken: number | undefined,
+    secureRuntimeRequired: boolean,
   ): "restore_original_runtime" | "interrupted" | "original_runtime_unavailable" {
     const latestDescriptor = this.options.descriptors.get(agentId);
     if (!latestDescriptor || latestDescriptor.role !== "worker") {
@@ -616,6 +657,17 @@ export class SwarmSpecialistFallbackManager {
     }
 
     if (replacementRuntime && !this.isRuntime(agentId, replacementRuntime) && !this.isRuntime(agentId, currentRuntime)) {
+      return "interrupted";
+    }
+
+    if (
+      secureRuntimeRequired
+      && !this.options.isSecureRuntimeBindingValid(currentRuntime)
+      && (
+        !replacementRuntime
+        || !this.options.isSecureRuntimeBindingValid(replacementRuntime)
+      )
+    ) {
       return "interrupted";
     }
 

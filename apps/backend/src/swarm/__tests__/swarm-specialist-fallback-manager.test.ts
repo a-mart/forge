@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { getProfileMemoryPath } from "../data-paths.js";
-import type { SwarmAgentRuntime } from "../runtime-contracts.js";
+import type { RuntimeCreationOptions, SwarmAgentRuntime } from "../runtime-contracts.js";
 import { RuntimeCallbackGate } from "../runtime/runtime-callback-gate.js";
 import { SwarmSpecialistFallbackManager } from "../swarm-specialist-fallback-manager.js";
 import { SwarmWorkerHealthService } from "../swarm-worker-health-service.js";
@@ -134,6 +134,9 @@ function runtimeBindingOptionHelpers(
     restoreRuntimeTokenForFallbackRollback: (agentId: string, runtimeToken: number) => {
       runtimeTokensByAgentId.set(agentId, runtimeToken);
     },
+    hasSecureRuntimeBinding: () => false,
+    isSecureRuntimeBindingValid: () => false,
+    isSecureRuntimeBindingUsable: () => false,
     getRuntimeCreationPromise: (agentId: string) => runtimeCreationPromisesByAgentId.get(agentId),
     setRuntimeCreationPromise: (agentId: string, promise: Promise<SwarmAgentRuntime>) => {
       runtimeCreationPromisesByAgentId.set(agentId, promise);
@@ -753,6 +756,124 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(current.terminateCalls.length).toBeGreaterThan(0);
     expect(patchDescriptor).toHaveBeenCalledTimes(1);
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("openai-codex");
+  });
+
+  it("stops secure specialist fallback when authority is revoked during the handoff", async () => {
+    const config = await makeTempConfig();
+    const descriptors = new Map<string, AgentDescriptor>();
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+
+    const worker = buildWorkerDescriptor(config, { agentId: "w-secure-handoff" });
+    descriptors.set(worker.agentId, worker);
+
+    const current = new FakeRuntime(worker, "secure-system");
+    current.specialistFallbackReplayMessage = { text: "must-stay-secure" };
+    const replacement = new FakeRuntime(worker, "secure-fallback");
+    runtimes.set(worker.agentId, current);
+    runtimeTokensByAgentId.set(worker.agentId, 31);
+
+    let secureAuthorityActive = true;
+    const secureRuntimes = new Set<SwarmAgentRuntime>([current]);
+    const hasSecureRuntimeBinding = (runtime: SwarmAgentRuntime) =>
+      secureRuntimes.has(runtime);
+    const isSecureRuntimeBindingValid = (runtime: SwarmAgentRuntime) =>
+      secureRuntimes.has(runtime) && secureAuthorityActive;
+    const isSecureRuntimeBindingUsable = (
+      agentId: string,
+      runtime: SwarmAgentRuntime,
+    ) => runtimes.get(agentId) === runtime && isSecureRuntimeBindingValid(runtime);
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const createRuntimeForDescriptor = vi.fn(async (
+      descriptor: AgentDescriptor,
+      _systemPrompt: string,
+      _runtimeToken?: number,
+      options?: RuntimeCreationOptions,
+    ) => {
+      expect(options).toEqual({ secureRuntimeRequired: true });
+      secureRuntimes.add(replacement);
+      runtimeTokensByAgentId.set(descriptor.agentId, 32);
+      return replacement;
+    });
+    const attachRuntime = vi.fn((agentId: string, runtime: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtime);
+    });
+    const patchDescriptor = vi.fn(async (
+      agentId: string,
+      patch: (descriptor: AgentDescriptor) => AgentDescriptor,
+    ) => {
+      const descriptor = descriptors.get(agentId);
+      if (!descriptor) return undefined;
+      const updated = patch(structuredClone(descriptor));
+      descriptors.set(agentId, updated);
+      secureAuthorityActive = false;
+      return updated;
+    });
+
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
+      hasSecureRuntimeBinding,
+      isSecureRuntimeBindingValid,
+      isSecureRuntimeBindingUsable,
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+      ]),
+      resolveSpawnModelWithCapacityFallback: (model) => model,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "fallback-system"),
+      injectWorkerIdentityContext: vi.fn((_descriptor, prompt) => prompt),
+      createRuntimeForDescriptor,
+      attachRuntime,
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      patchDescriptor,
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    await expect(manager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId: worker.agentId,
+      errorMessage: "rate limit exceeded",
+      sourcePhase: "prompt_start",
+      runtimeToken: 31,
+      handleRuntimeStatus: vi.fn(),
+      handleRuntimeAgentEnd: vi.fn()
+    })).resolves.toBe(true);
+
+    expect(createRuntimeForDescriptor).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: worker.agentId }),
+      "fallback-system",
+      undefined,
+      { secureRuntimeRequired: true },
+    );
+    expect(replacement.sendCalls).toHaveLength(0);
+    expect(replacement.terminateCalls.length).toBeGreaterThan(0);
+    expect(current.terminateCalls.length).toBeGreaterThan(0);
+    expect(runtimes.has(worker.agentId)).toBe(false);
   });
 
   it("rolls back to the previous runtime when replacement creation fails", async () => {

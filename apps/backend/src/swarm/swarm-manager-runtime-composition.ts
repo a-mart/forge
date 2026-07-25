@@ -580,13 +580,13 @@ export class SwarmManagerRuntimeComposition {
       isRuntime: (agentId, runtime) => this.runtimeController.isRuntime(agentId, runtime),
       getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
       clearRuntimeToken: (agentId, token) => this.requireRuntimeLifecycle().clearRuntimeToken(agentId, token),
-      restoreRuntimeTokenForFallbackRollback: (agentId, token) =>
-        this.runtimeController.restoreRuntimeTokenForFallbackRollback(agentId, token),
+      restoreRuntimeTokenForFallbackRollback: (agentId, token) => this.runtimeController.restoreRuntimeTokenForFallbackRollback(agentId, token),
+      hasSecureRuntimeBinding: (runtime) => this.runtimeController.hasSecureRuntimeBinding(runtime),
+      isSecureRuntimeBindingValid: (runtime) => this.runtimeController.isSecureRuntimeBindingValid(runtime),
+      isSecureRuntimeBindingUsable: (agentId, runtime) => this.runtimeController.isSecureRuntimeBindingUsable(agentId, runtime),
       getRuntimeCreationPromise: (agentId) => this.runtimeController.getRuntimeCreationPromise(agentId),
-      setRuntimeCreationPromise: (agentId, promise) =>
-        this.runtimeController.setRuntimeCreationPromise(agentId, promise),
-      clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
-        this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
+      setRuntimeCreationPromise: (agentId, promise) => this.runtimeController.setRuntimeCreationPromise(agentId, promise),
+      clearRuntimeCreationPromiseIfCurrent: (agentId, promise) => this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
       workerHealthService: this.workerHealth,
       now: state.now,
       resolveSpecialistRosterForProfile: resolution.resolveSpecialistRosterForProfile,

@@ -548,10 +548,13 @@ describe("SwarmRuntimeController", () => {
       worker.agentId,
       ordinaryRuntime,
     )).toBe(false);
+    expect(controller.hasSecureRuntimeBinding(ordinaryRuntime)).toBe(false);
     expect(controller.isSecureRuntimeBindingUsable(
       worker.agentId,
       secureReplacement,
     )).toBe(false);
+    expect(controller.hasSecureRuntimeBinding(secureReplacement)).toBe(true);
+    expect(controller.isSecureRuntimeBindingValid(secureReplacement)).toBe(true);
 
     controller.attachRuntime(worker.agentId, secureReplacement);
     expect(controller.isSecureRuntimeBindingUsable(
@@ -560,6 +563,8 @@ describe("SwarmRuntimeController", () => {
     )).toBe(true);
 
     replacementBinding.invalidate?.();
+    expect(controller.hasSecureRuntimeBinding(secureReplacement)).toBe(true);
+    expect(controller.isSecureRuntimeBindingValid(secureReplacement)).toBe(false);
     expect(controller.isSecureRuntimeBindingUsable(
       worker.agentId,
       secureReplacement,

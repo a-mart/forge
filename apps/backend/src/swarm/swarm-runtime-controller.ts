@@ -989,6 +989,14 @@ export class SwarmRuntimeController {
     runtime: SwarmAgentRuntime,
   ): boolean {
     if (this.runtimes.get(agentId) !== runtime) return false;
+    return this.isSecureRuntimeBindingValid(runtime);
+  }
+
+  hasSecureRuntimeBinding(runtime: SwarmAgentRuntime): boolean {
+    return this.secureRuntimeBindingsByRuntimeObject.has(runtime);
+  }
+
+  isSecureRuntimeBindingValid(runtime: SwarmAgentRuntime): boolean {
     const binding = this.secureRuntimeBindingsByRuntimeObject.get(runtime);
     if (!binding) return false;
     try {
