@@ -24,7 +24,7 @@ import { ProjectExecutableTrustCoordinator } from "./project-executable-trust-co
 import { RestartRecoveryCoordinator } from "./restart-recovery-coordinator.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
-import type { RuntimeCreationOptions, SwarmAgentRuntime } from "./runtime-contracts.js";
+import type { RuntimeAcquisitionRequirements, RuntimeCreationOptions, SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { SecretsEnvService } from "./secrets-env-service.js";
 import { type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
 import type { SecureSessionCoordinatorPort } from "./secure-sessions/secure-session-lifecycle-port.js";
@@ -164,7 +164,7 @@ export interface RuntimeCompositionRuntimeResources {
   reloadModelCatalog(): Promise<void>;
   preloadSessionPlanStates(): Promise<void>;
   deleteManagerSchedulesFile(profileId: string): Promise<void>;
-  getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime>;
+  getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor, requirements?: RuntimeAcquisitionRequirements): Promise<SwarmAgentRuntime>;
 }
 
 export interface RuntimeCompositionRuntimeFactory {
@@ -705,6 +705,7 @@ export class SwarmManagerRuntimeComposition {
       allocateRuntimeToken: (agentId) => runtimeLifecycle.allocateRuntimeToken(agentId),
       clearRuntimeToken: (agentId, token) => runtimeLifecycle.clearRuntimeToken(agentId, token),
       getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
+      isSecureRuntimeBindingUsable: (agentId, runtime) => this.runtimeController.isSecureRuntimeBindingUsable(agentId, runtime),
       ensureSessionFileParentDirectory: runtimeResources.ensureSessionFileParentDirectory,
       updateSessionMetaForWorkerDescriptor: (descriptor, prompt) =>
         services.knowledge.updateSessionMetaForWorkerDescriptor(descriptor, prompt),

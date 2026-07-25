@@ -3,6 +3,7 @@ import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import type {
+  RuntimeAcquisitionRequirements,
   RuntimeCreationOptions,
   RuntimeShutdownOptions,
   SetPinnedContentOptions,
@@ -33,6 +34,7 @@ import {
   formatWorkerStopTimeoutNotice,
   MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
 } from "./manual-stop-notice.js";
+import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "./secure-sessions/runtime/secure-runtime-binding.js";
 import {
   buildModelCapacityBlockKey,
   cloneDescriptor,
@@ -192,6 +194,10 @@ export interface SwarmAgentLifecycleServiceOptions {
   allocateRuntimeToken: (agentId: string) => number;
   clearRuntimeToken: (agentId: string, runtimeToken?: number) => void;
   getRuntimeToken: (agentId: string) => number | undefined;
+  isSecureRuntimeBindingUsable(
+    agentId: string,
+    runtime: SwarmAgentRuntime,
+  ): boolean;
   ensureSessionFileParentDirectory: (sessionFile: string) => Promise<void>;
   updateSessionMetaForWorkerDescriptor: (
     descriptor: AgentDescriptor,
@@ -1596,18 +1602,29 @@ export class SwarmAgentLifecycleService {
     return descriptor.status === "streaming";
   }
 
-  async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
+  async getOrCreateRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    requirements?: RuntimeAcquisitionRequirements,
+  ): Promise<SwarmAgentRuntime> {
     assertForgeRuntimeEligibleDescriptor(descriptor, "get or create runtime");
     this.options.assertRuntimeCreationAllowed(descriptor.agentId);
 
     const inFlightCreation = this.getRuntimeCreationPromise(descriptor.agentId);
     if (inFlightCreation) {
-      return inFlightCreation;
+      return this.assertRuntimeMeetsCreationRequirements(
+        descriptor.agentId,
+        await inFlightCreation,
+        requirements,
+      );
     }
 
     const existingRuntime = this.getRuntime(descriptor.agentId);
     if (existingRuntime) {
-      return existingRuntime;
+      return this.assertRuntimeMeetsCreationRequirements(
+        descriptor.agentId,
+        existingRuntime,
+        requirements,
+      );
     }
 
     const creationPromise = (async () => {
@@ -1616,12 +1633,16 @@ export class SwarmAgentLifecycleService {
           descriptor.agentId,
         );
       }
-      return this.createAndAttachRuntimeForDescriptor(descriptor);
+      return this.createAndAttachRuntimeForDescriptor(descriptor, requirements);
     })();
     this.setRuntimeCreationPromise(descriptor.agentId, creationPromise);
 
     try {
-      return await creationPromise;
+      return this.assertRuntimeMeetsCreationRequirements(
+        descriptor.agentId,
+        await creationPromise,
+        requirements,
+      );
     } finally {
       this.clearRuntimeCreationPromiseIfCurrent(descriptor.agentId, creationPromise);
     }
@@ -2172,7 +2193,10 @@ export class SwarmAgentLifecycleService {
     this.options.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(agentId);
   }
 
-  private async createAndAttachRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
+  private async createAndAttachRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    requirements?: RuntimeAcquisitionRequirements,
+  ): Promise<SwarmAgentRuntime> {
     await this.options.ensureSessionFileParentDirectory(descriptor.sessionFile);
 
     const existingRuntime = this.options.runtimes.get(descriptor.agentId);
@@ -2206,7 +2230,7 @@ export class SwarmAgentLifecycleService {
     const deferredContinuityRequest = managerRuntimeCreation?.continuityRequest;
     const runtimeToken = this.options.allocateRuntimeToken(descriptor.agentId);
     const deferredRecoveryRuntimeRef: { current?: SwarmAgentRuntime } = {};
-    const runtimeCreationOptions =
+    const managerRuntimeCreationOptions =
       shouldDeferCursorStartupRecoveryAppliedMarker && deferredContinuityRequest
         ? {
             ...managerRuntimeCreation?.runtimeCreationOptions,
@@ -2241,6 +2265,16 @@ export class SwarmAgentLifecycleService {
             }
           }
         : managerRuntimeCreation?.runtimeCreationOptions;
+    const requestedCreationOptions: RuntimeCreationOptions | undefined =
+      requirements?.secureRuntimeRequired
+        ? { secureRuntimeRequired: true }
+        : undefined;
+    const runtimeCreationOptions = requestedCreationOptions
+      ? {
+          ...managerRuntimeCreationOptions,
+          ...requestedCreationOptions,
+        }
+      : managerRuntimeCreationOptions;
 
     const runtime = await this.options.createRuntimeForDescriptor(
       descriptor,
@@ -2399,6 +2433,20 @@ export class SwarmAgentLifecycleService {
     }
 
     this.options.emitStatus(descriptor.agentId, attachDescriptor.status, runtime.getPendingCount(), contextUsage);
+    return runtime;
+  }
+
+  private assertRuntimeMeetsCreationRequirements(
+    agentId: string,
+    runtime: SwarmAgentRuntime,
+    requirements?: RuntimeAcquisitionRequirements,
+  ): SwarmAgentRuntime {
+    if (
+      requirements?.secureRuntimeRequired
+      && !this.options.isSecureRuntimeBindingUsable(agentId, runtime)
+    ) {
+      throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+    }
     return runtime;
   }
 

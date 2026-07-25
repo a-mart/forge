@@ -176,7 +176,10 @@ import { RuntimeFactory } from "../runtime-factory.js";
 import { resetCursorSdkLoaderForTests, setCursorSdkImporterForTests } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
-import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-runtime-binding.js";
+import {
+  SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
+  type SecureRuntimeBinding,
+} from "../secure-sessions/runtime/secure-runtime-binding.js";
 
 function createConfig(rootDir: string): SwarmConfig {
   const dataDir = join(rootDir, "data");
@@ -684,6 +687,8 @@ describe("RuntimeFactory", () => {
     await factory.createRuntimeForDescriptor(
       createDescriptor(rootDir),
       "system prompt",
+      18,
+      { secureRuntimeRequired: true },
     );
 
     const sessionOptions = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0] as {
@@ -716,6 +721,25 @@ describe("RuntimeFactory", () => {
     expect(JSON.stringify(observability)).not.toContain(
       secureRuntimeBinding.debugSerializationCanary,
     );
+  });
+
+  it("does not create an ordinary runtime when a secure binding is required", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const factory = createFactory(rootDir, {
+      getSecureRuntimeBinding: () => undefined,
+    });
+
+    await expect(
+      factory.createRuntimeForDescriptor(
+        createDescriptor(rootDir),
+        "system prompt",
+        17,
+        { secureRuntimeRequired: true },
+      ),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
   it("records Pi runtime prompt and creation observability metadata", async () => {

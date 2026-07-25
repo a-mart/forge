@@ -97,10 +97,17 @@ export interface RuntimeCodexTransportDebugDiagnostics {
   websocketStats?: RuntimeCodexTransportDebugStats;
 }
 
+export interface RuntimeAcquisitionRequirements {
+  /** The returned runtime must be backed by the current Secure Session. */
+  secureRuntimeRequired?: boolean;
+}
+
 export interface RuntimeCreationOptions {
   startupRecoveryContext?: RuntimeStartupRecoveryContext;
   /** Invoked after startup recovery context is committed on the first accepted prompt dispatch. */
   onStartupRecoveryConsumed?: () => void | Promise<void>;
+  /** Fail closed unless this runtime is backed by the current Secure Session. */
+  secureRuntimeRequired?: boolean;
   /**
    * Backend-process-only capability resolved by RuntimeFactory. It must never
    * be copied into runtime descriptors, protocol records, or session history.

@@ -12,7 +12,12 @@ import type {
   SendMessageReceipt,
   WorkerParentContext,
 } from "../types.js";
-import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
+import type {
+  RuntimeAcquisitionRequirements,
+  RuntimeUserMessage,
+  SwarmAgentRuntime,
+} from "../runtime-contracts.js";
+import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "../secure-sessions/runtime/secure-runtime-binding.js";
 
 type TestGate = { allowed: boolean };
 
@@ -88,6 +93,7 @@ function createHarness() {
     targetAgentId: string;
     input: string | RuntimeUserMessage;
   }> = [];
+  const runtimeCreationOptions: Array<RuntimeAcquisitionRequirements | undefined> = [];
   const queuedTurns: Array<{
     agentId: string;
     context: InboundTurnContextInput<TestGate>;
@@ -113,6 +119,8 @@ function createHarness() {
   let runtimeCreationGate: Promise<void> | undefined;
   let ledgerPendingGate: Promise<void> | undefined;
   let secureWorkerPrepared = false;
+  let secureRuntimeAvailable = true;
+  let secureAssignmentAdvanceHook: (() => void) | undefined;
   let secureAssignmentAdvanceError: Error | undefined;
   let secureAssignmentAbortError: Error | undefined;
   let activeParent: ReturnType<
@@ -233,6 +241,7 @@ function createHarness() {
         if (secureAssignmentAdvanceError) {
           throw secureAssignmentAdvanceError;
         }
+        secureAssignmentAdvanceHook?.();
       },
       abortWorkerSecureAssignment: async (
         workerAgentId,
@@ -254,10 +263,14 @@ function createHarness() {
         });
       },
     },
-    getOrCreateRuntime: async (target) => {
+    getOrCreateRuntime: async (target, creationOptions) => {
       order.push("runtime:create");
+      runtimeCreationOptions.push(creationOptions);
       await runtimeCreationGate;
       if (runtimeCreationError) throw runtimeCreationError;
+      if (creationOptions?.secureRuntimeRequired && !secureRuntimeAvailable) {
+        throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+      }
       return {
         descriptor: target,
         sendMessage: vi.fn(async (input: string | RuntimeUserMessage) => {
@@ -290,6 +303,7 @@ function createHarness() {
     worker,
     order,
     runtimeInputs,
+    runtimeCreationOptions,
     queuedTurns,
     ledgerPending,
     ledgerAcked,
@@ -308,6 +322,10 @@ function createHarness() {
     setLedgerPendingGate: (value: Promise<void> | undefined) => { ledgerPendingGate = value; },
     setSaveError: (value: Error | undefined) => { saveError = value; },
     setSecureWorkerPrepared: (value: boolean) => { secureWorkerPrepared = value; },
+    setSecureRuntimeAvailable: (value: boolean) => { secureRuntimeAvailable = value; },
+    setSecureAssignmentAdvanceHook: (value: (() => void) | undefined) => {
+      secureAssignmentAdvanceHook = value;
+    },
     setSecureAssignmentAdvanceError: (value: Error | undefined) => {
       secureAssignmentAdvanceError = value;
     },
@@ -366,7 +384,36 @@ describe("AgentMessageDispatcher worker assignments and results", () => {
     expect(harness.order.indexOf("runtime:create")).toBeLessThan(
       harness.order.indexOf("runtime:send"),
     );
+    expect(harness.runtimeCreationOptions).toEqual([
+      { secureRuntimeRequired: true },
+    ]);
     expect(harness.runtimeInputs).toHaveLength(1);
+  });
+
+  it("fails closed when secure team authority ends before runtime creation", async () => {
+    const harness = createHarness();
+    harness.setSecureWorkerPrepared(true);
+    harness.setSecureAssignmentAdvanceHook(() => {
+      harness.setSecureRuntimeAvailable(false);
+    });
+
+    await expect(
+      harness.dispatcher.sendMessage(
+        "manager-1",
+        "worker-1",
+        "Do secure work",
+      ),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(harness.runtimeCreationOptions).toEqual([
+      { secureRuntimeRequired: true },
+    ]);
+    expect(harness.runtimeInputs).toHaveLength(0);
+    expect(harness.secureWorkerCalls).toContainEqual({
+      operation: "abort",
+      workerAgentId: "worker-1",
+      assignmentId: "assignment:worker-1:nonce-1",
+    });
   });
 
   it("aborts a newly prepared secure assignment when runtime creation fails", async () => {

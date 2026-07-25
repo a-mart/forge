@@ -22,6 +22,7 @@ import type { ExternalProjectAgentDeliveryAuthorization } from "./project-agent-
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";
 import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import type {
+  RuntimeAcquisitionRequirements,
   RuntimeImageAttachment,
   RuntimeUserMessage,
   SwarmAgentRuntime,
@@ -223,7 +224,10 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
   projectAgents: AgentMessageProjectAgentPort;
   codex: AgentMessageCodexPort<TCodexGate>;
   secureWorkers: SecureWorkerLifecyclePort;
-  getOrCreateRuntime(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime>;
+  getOrCreateRuntime(
+    descriptor: AgentDescriptor,
+    requirements?: RuntimeAcquisitionRequirements,
+  ): Promise<SwarmAgentRuntime>;
   appendProjectAgentConversation(
     target: AgentDescriptor,
     payload: {
@@ -709,7 +713,10 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
 
     let runtime: SwarmAgentRuntime;
     try {
-      runtime = await this.options.getOrCreateRuntime(input.target);
+      runtime = await this.options.getOrCreateRuntime(
+        input.target,
+        secureWorkerPrepared ? { secureRuntimeRequired: true } : undefined,
+      );
     } catch (error) {
       rollback();
       this.options.observability.cancelRuntimeInput(

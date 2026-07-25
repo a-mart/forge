@@ -8,7 +8,10 @@ import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
-import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-runtime-binding.js";
+import {
+  SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
+  type SecureRuntimeBinding,
+} from "../secure-sessions/runtime/secure-runtime-binding.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
 import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { SwarmWorkerHealthService, TRANSIENT_WORKER_TERMINATED_GRACE_MS } from "../swarm-worker-health-service.js";
@@ -465,6 +468,87 @@ describe("SwarmRuntimeController", () => {
 
     expect(factory.createRuntimeForDescriptor).toHaveBeenCalledWith(worker, "prompt", token, undefined);
     expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
+  });
+
+  it("rejects required secure runtime creation before invoking an ordinary factory", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const worker = baseDescriptor({
+      agentId: "w-secure-required",
+      role: "worker",
+      managerId: "m1",
+      status: "idle",
+    });
+    descriptors.set(worker.agentId, worker);
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    const factory = (controller as unknown as {
+      runtimeFactory: {
+        createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
+      };
+    }).runtimeFactory;
+    factory.createRuntimeForDescriptor = vi.fn();
+
+    await expect(
+      controller.createRuntimeForDescriptor(
+        worker,
+        "prompt",
+        token,
+        { secureRuntimeRequired: true },
+      ),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(factory.createRuntimeForDescriptor).not.toHaveBeenCalled();
+    expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
+  });
+
+  it("ties secure runtime usability to the exact attached runtime", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const worker = baseDescriptor({
+      agentId: "w-secure-identity",
+      role: "worker",
+      managerId: "m1",
+      status: "idle",
+    });
+    descriptors.set(worker.agentId, worker);
+    const binding = retainedSecureRuntimeBinding();
+    host.getSecureRuntimeBinding = () => binding;
+    const secureRuntime = { descriptor: worker } as unknown as SwarmAgentRuntime;
+    const otherRuntime = { descriptor: worker } as unknown as SwarmAgentRuntime;
+    const factory = (controller as unknown as {
+      runtimeFactory: {
+        createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
+      };
+    }).runtimeFactory;
+    factory.createRuntimeForDescriptor = vi.fn(async () => secureRuntime);
+    const token = controller.allocateRuntimeToken(worker.agentId);
+
+    await controller.createRuntimeForDescriptor(
+      worker,
+      "prompt",
+      token,
+      { secureRuntimeRequired: true },
+    );
+    controller.attachRuntime(worker.agentId, secureRuntime);
+
+    expect(controller.isSecureRuntimeBindingUsable(
+      worker.agentId,
+      otherRuntime,
+    )).toBe(false);
+    expect(controller.isSecureRuntimeBindingUsable(
+      worker.agentId,
+      secureRuntime,
+    )).toBe(true);
+
+    binding.invalidate?.();
+    expect(controller.isSecureRuntimeBindingUsable(
+      worker.agentId,
+      secureRuntime,
+    )).toBe(false);
   });
 
   it.each(["detach", "clear"] as const)(

@@ -92,7 +92,7 @@ import {
 } from "./user-message-coordinator.js";
 import { AssistantOutputRouter } from "./assistant-output-router.js";
 import type {
-  RuntimeCreationOptions,
+  RuntimeAcquisitionRequirements, RuntimeCreationOptions,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
@@ -1228,7 +1228,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       secureWorkers: createSecureSessionLifecyclePort(
         this.secureSessionsService,
       ),
-      getOrCreateRuntime: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
+      getOrCreateRuntime: (descriptor, options) => this.getOrCreateRuntimeForDescriptor(descriptor, options),
       appendProjectAgentConversation: (target, payload) =>
         this.inboundConversationAppender.appendProjectAgentConversation(target, payload),
       emitAgentMessage: (event) => this.eventCoordinator.emitAgentMessage(event),
@@ -1316,7 +1316,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
     if (details === undefined) console.log(prefix);
     else console.log(prefix, details);
   }
-  private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
+  private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor, requirements?: RuntimeAcquisitionRequirements): Promise<SwarmAgentRuntime> {
     this.agentDirectory.assertDescriptorNotEffectivelyArchived(descriptor);
     if (descriptor.role === "manager") {
       await this.applyFacadePendingManagerRuntimeRecycleBeforeRuntimeUse(
@@ -1324,7 +1324,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       );
     }
     await this.projectAgentCoordinator.preflightRuntime(descriptor);
-    return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
+    return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor, requirements);
   }
   private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor {
     return this.lifecycleService.resolveSpawnModelWithCapacityFallback(model);

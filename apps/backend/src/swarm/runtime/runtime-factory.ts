@@ -108,6 +108,9 @@ export class RuntimeFactory {
     const secureRuntimeBinding =
       options?.secureRuntimeBinding ??
       await this.resolveSecureRuntimeBinding(descriptor, runtimeToken);
+    if (options?.secureRuntimeRequired && !secureRuntimeBinding) {
+      throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+    }
     const creationOptions = secureRuntimeBinding
       ? { ...options, secureRuntimeBinding }
       : options;

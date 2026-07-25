@@ -9,13 +9,17 @@ import {
 } from "../swarm-agent-lifecycle-service.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { SessionProvisioner } from "../session-provisioner.js";
-import type { SwarmAgentRuntime } from "../runtime-contracts.js";
+import type {
+  RuntimeCreationOptions,
+  SwarmAgentRuntime,
+} from "../runtime-contracts.js";
 import type { AgentDescriptor, ManagerProfile, SpawnAgentInput } from "../types.js";
 import { buildModelCapacityBlockKey } from "../swarm-manager-utils.js";
 import {
   formatWorkerStopTimeoutNotice,
   MANUAL_MANAGER_STOP_TIMEOUT_NOTICE,
 } from "../manual-stop-notice.js";
+import { SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE } from "../secure-sessions/runtime/secure-runtime-binding.js";
 
 const NOW = "2026-04-20T12:00:00.000Z";
 
@@ -138,6 +142,8 @@ function baseLifecycleOptions(
     allocateRuntimeToken: overrides.allocateRuntimeToken ?? vi.fn(() => 1),
     clearRuntimeToken: overrides.clearRuntimeToken ?? vi.fn(),
     getRuntimeToken: overrides.getRuntimeToken ?? vi.fn(() => 1),
+    isSecureRuntimeBindingUsable:
+      overrides.isSecureRuntimeBindingUsable ?? vi.fn(() => false),
     ensureSessionFileParentDirectory: overrides.ensureSessionFileParentDirectory ?? vi.fn(async () => {}),
     updateSessionMetaForWorkerDescriptor: overrides.updateSessionMetaForWorkerDescriptor ?? vi.fn(async () => {}),
     refreshSessionMetaStatsBySessionId: overrides.refreshSessionMetaStatsBySessionId ?? vi.fn(async () => {}),
@@ -1058,6 +1064,102 @@ describe("SwarmAgentLifecycleService", () => {
     expect(runtimeCreationPromisesByAgentId.get(worker.agentId)).toBe(newerCreation);
   });
 
+  it("rejects an existing ordinary runtime when secure execution is required", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-existing-ordinary",
+      status: "idle",
+    });
+    const existingRuntime = makeRuntimeStub({ descriptor: worker });
+    const runtimes = new Map([[worker.agentId, existingRuntime]]);
+    const createRuntimeForDescriptor = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimes,
+        createRuntimeForDescriptor,
+        isSecureRuntimeBindingUsable: vi.fn(() => false),
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
+    expect(runtimes.get(worker.agentId)).toBe(existingRuntime);
+  });
+
+  it("rechecks an in-flight runtime before satisfying a secure request", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-inflight-ordinary",
+      status: "idle",
+    });
+    const inFlightRuntime = makeRuntimeStub({ descriptor: worker });
+    const runtimeCreationPromisesByAgentId = new Map([
+      [worker.agentId, Promise.resolve(inFlightRuntime)],
+    ]);
+    const isSecureRuntimeBindingUsable = vi.fn(() => false);
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors: new Map([[worker.agentId, worker]]),
+        runtimeCreationPromisesByAgentId,
+        isSecureRuntimeBindingUsable,
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(isSecureRuntimeBindingUsable).toHaveBeenCalledWith(
+      worker.agentId,
+      inFlightRuntime,
+    );
+  });
+
+  it("forwards the secure requirement through fresh runtime creation", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-fresh-secure",
+      status: "idle",
+    });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({ descriptor: worker });
+    const createRuntimeForDescriptor = vi.fn(async (
+      _descriptor: AgentDescriptor,
+      _prompt: string,
+      _token: number | undefined,
+      options: RuntimeCreationOptions | undefined,
+    ) => {
+      expect(options).toMatchObject({ secureRuntimeRequired: true });
+      return runtime;
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        createRuntimeForDescriptor,
+        attachRuntime: (agentId, runtimeToAttach) => {
+          runtimes.set(agentId, runtimeToAttach);
+        },
+        isSecureRuntimeBindingUsable: (_agentId, candidate) =>
+          runtimes.get(worker.agentId) === candidate,
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).resolves.toBe(runtime);
+
+    expect(createRuntimeForDescriptor).toHaveBeenCalledTimes(1);
+  });
+
   it("terminates and clears a replacement runtime when the descriptor disappears before attach", async () => {
     const worker = createWorkerDescriptor("/p", "m1", { agentId: "w-gone", status: "idle" });
     const descriptors = new Map([[worker.agentId, worker]]);
@@ -1140,6 +1242,45 @@ describe("SwarmAgentLifecycleService", () => {
     expect(refreshSessionMetaStatsBySessionId).not.toHaveBeenCalled();
     expect(emitStatus).not.toHaveBeenCalled();
     expect(runtimes.get(worker.agentId)).toBe(existingRuntime);
+  });
+
+  it("rejects an ordinary concurrent winner when secure execution is required", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w-concurrent-ordinary",
+      status: "idle",
+    });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const replacementRuntime = makeRuntimeStub({ descriptor: worker });
+    const ordinaryWinner = makeRuntimeStub({ descriptor: worker });
+    const clearRuntimeToken = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        allocateRuntimeToken: vi.fn(() => 29),
+        clearRuntimeToken,
+        createRuntimeForDescriptor: vi.fn(async () => {
+          runtimes.set(worker.agentId, ordinaryWinner);
+          return replacementRuntime;
+        }),
+        isSecureRuntimeBindingUsable: vi.fn(() => false),
+      }),
+    );
+
+    await expect(
+      svc.getOrCreateRuntimeForDescriptor(worker, {
+        secureRuntimeRequired: true,
+      }),
+    ).rejects.toThrow(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+
+    expect(replacementRuntime.terminate).toHaveBeenCalledWith({
+      abort: true,
+      shutdownTimeoutMs: 1_500,
+      drainTimeoutMs: 500,
+    });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(worker.agentId, 29);
+    expect(runtimes.get(worker.agentId)).toBe(ordinaryWinner);
   });
 
   it("resumeSession throws when a runtime is already attached", async () => {

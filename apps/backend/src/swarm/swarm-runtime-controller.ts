@@ -421,6 +421,10 @@ export class SwarmRuntimeController {
         throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
       }
     }
+    if (options?.secureRuntimeRequired && !secureRuntimeBinding) {
+      this.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
+    }
 
     if (secureRuntimeBinding) {
       this.secureRuntimeBindingsByRuntime.set(
@@ -969,6 +973,20 @@ export class SwarmRuntimeController {
     return this.secureRuntimeBindingsByRuntime.get(
       secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
     );
+  }
+
+  isSecureRuntimeBindingUsable(
+    agentId: string,
+    runtime: SwarmAgentRuntime,
+  ): boolean {
+    if (this.runtimes.get(agentId) !== runtime) return false;
+    const binding = this.getSecureRuntimeBindingForCallback(agentId, undefined);
+    if (!binding) return false;
+    try {
+      return binding.guardValue(true) === true;
+    } catch {
+      return false;
+    }
   }
 
   async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
