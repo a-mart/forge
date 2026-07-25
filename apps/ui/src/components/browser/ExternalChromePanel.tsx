@@ -155,8 +155,8 @@ function CapabilityNotice() {
       <p className="mt-1">
         External tabs stay in Chrome and are never rendered as Electron views. After attachment, status, create/open,
         navigation, snapshot, and interactions (click, type, press, scroll, evaluate, waitFor) are available.
-        Resize, recording, download artifacts, opening downloaded files, physical page capture/export, and dock/pop-out
-        are not available.
+        Snapshots return transient screenshot data, but External Chrome has no standalone screenshot toolbar/export workflow.
+        Resize, recordings, download handling or saved artifacts, opening downloaded files, and dock/pop-out are not available.
       </p>
     </div>
   )
