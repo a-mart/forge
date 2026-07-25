@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { createInitialManagerWsState } from '../ws-state'
 import type { ModelCacheObservationEntry } from '../ws-state'
 import { reduceAgentsSnapshot, reduceSessionWorkersSnapshot, reduceAgentStatus } from './snapshot-reducers'
-import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
+import type {
+  AgentDescriptor,
+  ManagerProfile,
+  SecureSessionSnapshot,
+} from '@forge/protocol'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,6 +59,31 @@ function makeProfile(profileId: string, overrides: Partial<ManagerProfile> = {})
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
+  }
+}
+
+function makeSecureWorkerSnapshot(
+  sessionAgentId: string,
+  ownerManagerAgentId: string,
+): SecureSessionSnapshot {
+  return {
+    sessionAgentId,
+    profileId: 'profile-1',
+    principalKind: 'worker',
+    ownerManagerAgentId,
+    workerAssignmentId: 'assignment-1',
+    revision: 1,
+    executionMode: 'secure',
+    environmentStatus: 'ready',
+    leases: [],
+    pendingRequests: [],
+    projectDefaults: [{
+      secretId: 'secret-1',
+      displayAlias: 'DEPLOY_TOKEN',
+      state: 'configured',
+      statusCode: 'ok',
+    }],
+    updatedAt: '2026-07-24T00:00:00.000Z',
   }
 }
 
@@ -275,6 +304,33 @@ describe('reduceSessionWorkersSnapshot', () => {
 
     expect(result.patch.statuses!['w-old']).toBeUndefined()
     expect(result.patch.statuses!['w-new']?.status).toBe('streaming')
+  })
+
+  it('removes a retired worker secure snapshot from the authoritative roster', () => {
+    const manager = makeManager({ workerCount: 1 })
+    const retiredWorker = makeWorker('w-retired', 'manager-1')
+    const retainedWorker = makeWorker('w-retained', 'manager-1')
+    const unrelatedWorker = makeWorker('w-other', 'manager-2')
+    const state = {
+      ...createInitialManagerWsState('manager-1'),
+      agents: [manager, retiredWorker, retainedWorker, unrelatedWorker],
+      secureSessionSnapshots: {
+        'w-retired': makeSecureWorkerSnapshot('w-retired', 'manager-1'),
+        'w-retained': makeSecureWorkerSnapshot('w-retained', 'manager-1'),
+        'w-other': makeSecureWorkerSnapshot('w-other', 'manager-2'),
+      },
+    }
+
+    const result = reduceSessionWorkersSnapshot({
+      state,
+      sessionAgentId: 'manager-1',
+      workers: [retainedWorker],
+    })
+
+    expect(result.patch.secureSessionSnapshots).toEqual({
+      'w-retained': state.secureSessionSnapshots['w-retained'],
+      'w-other': state.secureSessionSnapshots['w-other'],
+    })
   })
 
   it('preserves workers from other manager sessions', () => {

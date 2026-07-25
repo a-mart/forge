@@ -218,9 +218,15 @@ export function reduceSessionWorkersSnapshot(input: {
 
   // Clean up statuses for removed workers, then upsert snapshot workers
   const nextStatuses = { ...state.statuses }
+  const nextSecureSessionSnapshots = { ...state.secureSessionSnapshots }
+  let removedSecureSessionSnapshot = false
   for (const agent of state.agents) {
     if (isWorkerAgent(agent) && agent.managerId === sessionAgentId && !incomingWorkerIds.has(agent.agentId)) {
       delete nextStatuses[agent.agentId]
+      if (nextSecureSessionSnapshots[agent.agentId]) {
+        delete nextSecureSessionSnapshots[agent.agentId]
+        removedSecureSessionSnapshot = true
+      }
     }
   }
 
@@ -239,6 +245,9 @@ export function reduceSessionWorkersSnapshot(input: {
       agents: nextAgents,
       statuses: nextStatuses,
       loadedSessionIds: nextLoadedSessionIds,
+      ...(removedSecureSessionSnapshot
+        ? { secureSessionSnapshots: nextSecureSessionSnapshots }
+        : {}),
     },
   }
 }
