@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
 import { prepareElectronBetterSqlite3Binding } from './prepare-dev-native.mjs'
 import { stageExternalChromeResources } from './stage-external-chrome.mjs'
+import { assertReleaseEnvironment } from '../../native-messaging-host/scripts/release-signing.mjs'
 
 gracefulFs.gracefulify(fs)
 
@@ -140,6 +141,7 @@ export async function cleanReleaseDir(targetDir = releaseDir) {
 }
 
 async function main() {
+  const externalChromeRelease = await assertReleaseEnvironment()
   await cleanReleaseDir()
   await rm(stageDir, { recursive: true, force: true })
   await mkdir(stageDir, { recursive: true })
@@ -150,7 +152,8 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/ui', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/cli', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/chrome-extension', 'build'])
-  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/external-chrome-native-host', 'package:current'])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/external-chrome-native-host', 'build'])
+  await run(externalChromeRelease.seaNode, [path.join(repoRoot, 'apps', 'native-messaging-host', 'scripts', 'package-current.mjs')])
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
 
   await stageBundledBackend()

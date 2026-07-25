@@ -25,7 +25,7 @@ Managed Browser partitions are persistent and profile-scoped. The main process o
 - **Cursor SDK runtime assets** — required and staged for native manager and specialist support via `@cursor/sdk`, together with `sqlite3` and the required platform-native SDK assets; packaging and its packaged-runtime preflight fail if any of these assets are missing
 - **SQLite runtime** — `better-sqlite3` remains external to the backend bundle so its Electron-specific native binding can be staged and exercised with Electron-as-Node before packaging
 - **Managed Browser runtime** — main/trusted-preload/guest-preload bundles in `app.asar`, plus `.stage/browser-runtime/playwright-core/` and an exact staged copy of root `THIRD_PARTY_NOTICES.md` under packaged `resources/browser-runtime/`
-- **External Chrome deployment resources** — deterministic extension shell/payload, platform/architecture SEA native host, and their strict combined manifest under `.stage/external-chrome/`, packaged as `resources/external-chrome/`; release staging fails if the required SEA executable is absent
+- **External Chrome deployment resources** — deterministic extension shell/payload and a platform/architecture SEA native host under `.stage/external-chrome/`, packaged as `resources/external-chrome/`; release builds require the official pinned SEA Node plus platform signing before the native-host hash/manifest is created
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
@@ -122,10 +122,10 @@ The packaging pipeline:
 6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
 7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
 8. Stages pinned `playwright-core` and the byte-identical root `THIRD_PARTY_NOTICES.md` into `.stage/browser-runtime/`, validating the injected-runtime markers before packaging
-9. Builds and validates the deterministic External Chrome shell/payload and the current platform/architecture native host, then stages their combined hash/identity/compatibility manifest into `.stage/external-chrome/`; unsupported SEA toolchains fail this packaged-release step rather than shipping a bundle-only host
+9. Builds the External Chrome shell/payload and current platform/architecture native host with official Node 25.6.1; release mode signs and signer-verifies the native host before calculating its hash, while explicit validation mode produces a non-publishable unverified manifest
 10. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, including an Electron-as-Node SQLite query, ensuring they do not silently fall back to repo-level `node_modules`
 11. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
-12. Runs `electron-builder --publish never`
+12. Runs `electron-builder --publish never`; the Windows `afterPack` hook restores the pre-signed host after electron-builder's recursive extra-resource signer, macOS excludes that nested host with `mac.signIgnore`, and `afterSign` rechecks the packaged host hash plus platform signature before installers are produced
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
 
@@ -161,17 +161,25 @@ Add signing variables to `.env` before packaging signed builds.
 | `APPLE_ID` | Your Apple ID email |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from appleid.apple.com |
 | `APPLE_TEAM_ID` | Your Apple Developer Team ID |
+| `FORGE_MACOS_SIGNING_IDENTITY` | Exact `Developer ID Application: … (TEAMID)` common name expected on the native host |
+| `FORGE_SEA_NODE` | Absolute path to the official Node 25.6.1 executable (not a vendor build missing `NODE_SEA_FUSE`) |
 
-With these set, macOS packaging signs and notarizes automatically via `electron-builder`.
+Release packaging also requires `FORGE_EXTERNAL_CHROME_BUILD_MODE=release`. The native host is signed first and its observed identity/team must match the two expected values; electron-builder then signs/notarizes the outer app.
 
-### Windows signing (optional)
+### Windows signing
 
 | Variable | Description |
 |----------|-------------|
 | `CSC_LINK` or `WIN_CSC_LINK` | Base64 or file path for the Windows code-signing certificate |
 | `CSC_KEY_PASSWORD` or `WIN_CSC_KEY_PASSWORD` | Password for that certificate |
+| `FORGE_WINDOWS_SIGNER_SUBJECT` | Exact Authenticode signer certificate subject expected on the native host |
+| `FORGE_SEA_NODE` | Official Node 25.6.1 executable installed by `actions/setup-node` |
 
-If Windows signing credentials are absent, Windows installers are still buildable but remain unsigned.
+`workflow_dispatch` is release mode and fails before packaging when credentials or the expected signer are absent. `electron/*` pushes set `FORGE_EXTERNAL_CHROME_BUILD_MODE=validation`; they remain credential-free, but their native-host manifest is explicitly unverified and cannot be deployed or published as a release. For a local non-publishable package smoke, set validation mode explicitly.
+
+```bash
+FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm package:electron
+```
 
 ## Releasing
 
@@ -194,7 +202,7 @@ If Windows signing credentials are absent, Windows installers are still buildabl
    - Do not rely on a tag-first flow
 
 2. **Build and validate macOS locally**
-   - Run `pnpm package:electron` on a macOS machine with signing credentials in `.env`
+   - Install the official Node 25.6.1 distribution, then run `FORGE_EXTERNAL_CHROME_BUILD_MODE=release FORGE_SEA_NODE=/absolute/path/to/official/node pnpm package:electron` on a macOS machine with the signing, expected-identity, and notarization credentials in `.env`
    - This build clears `apps/electron/release/` first; copy/archive older artifacts elsewhere if you need to keep them
    - Confirm the expected macOS assets exist in `apps/electron/release/`
 
@@ -223,8 +231,8 @@ Forge uses `electron-updater` against GitHub Releases. Auto-update clients need 
 
 ### Windows CI notes
 
-- `workflow_dispatch` is the release build path
-- `electron/*` branch pushes are the release-branch validation path
+- `workflow_dispatch` is the fail-closed signed release build path and requires the Windows certificate/password plus `FORGE_WINDOWS_SIGNER_SUBJECT`
+- `electron/*` branch pushes are unsigned validation-only builds; their External Chrome package is deliberately non-deployable
 - The workflow does not publish a GitHub Release on its own
 - Download the Windows artifact from the workflow run, then upload those files into the draft release alongside the locally built macOS assets
 - The release operator is still responsible for choosing the correct GitHub release channel: beta builds stay prerelease, stable builds are published later as stable

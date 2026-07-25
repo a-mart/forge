@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { stageExternalChromeResources } from '../stage-external-chrome.mjs'
+import { verifyPackagedExternalChromeResources } from '../external-chrome-package-content-smoke.mjs'
+import { restorePreSignedWindowsResources } from '../electron-builder-external-chrome.mjs'
 
 const roots = []
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -39,7 +41,10 @@ async function fixture() {
   await writeFile(path.join(nativePackageRoot, 'package-manifest.json'), JSON.stringify({
     version: '1.0.0', nativeProtocol: { min: 1, max: 1, maxMessageBytes: 1048576 },
     platform: process.platform, architecture: process.arch,
-    executable: { file: `dist/${executable}`, sha256: hash(native) },
+    executable: {
+      file: `dist/${executable}`, sha256: hash(native),
+      signature: { scheme: process.platform === 'darwin' ? 'developer-id' : process.platform === 'win32' ? 'authenticode' : 'packaged-resource-hash', mode: 'validation', verified: false, signer: null, teamId: null },
+    },
   }))
   const electronManifestPath = path.join(root, 'electron-package.json')
   await writeFile(electronManifestPath, JSON.stringify({ version: '0.22.0-beta.4' }))
@@ -52,7 +57,7 @@ describe('External Chrome packaged staging', () => {
   it('is deterministic and passes complete platform inventory smoke', async () => {
     const input = await fixture()
     const outputRoot = path.join(input.root, 'output')
-    const options = { ...input, outputRoot, verifyExecutable: async () => undefined }
+    const options = { ...input, outputRoot, buildMode: 'validation', verifyExecutable: async () => undefined }
     const first = await stageExternalChromeResources(options)
     const firstBytes = await readFile(path.join(outputRoot, 'package-manifest.json'))
     const second = await stageExternalChromeResources(options)
@@ -60,7 +65,29 @@ describe('External Chrome packaged staging', () => {
     expect(first.sha256).toBe(second.sha256)
     expect(firstBytes).toEqual(secondBytes)
     expect(first.manifest.nativeHost).toMatchObject({ platform: process.platform, architecture: process.arch, required: true })
-    execFileSync(process.execPath, [path.resolve(import.meta.dirname, '..', 'external-chrome-package-content-smoke.mjs'), outputRoot])
+    execFileSync(process.execPath, [path.resolve(import.meta.dirname, '..', 'external-chrome-package-content-smoke.mjs'), outputRoot], {
+      env: { ...process.env, FORGE_EXTERNAL_CHROME_BUILD_MODE: 'validation' },
+    })
+  })
+
+  it('fails post-package smoke on mutation and restores the pre-signed Windows resource tree', async () => {
+    const input = await fixture()
+    const outputRoot = path.join(input.root, 'output')
+    await stageExternalChromeResources({ ...input, outputRoot, buildMode: 'validation', verifyExecutable: async () => undefined })
+    const manifest = JSON.parse(await readFile(path.join(outputRoot, 'package-manifest.json'), 'utf8'))
+    const executable = path.join(outputRoot, 'native-host', `${process.platform}-${process.arch}`, manifest.nativeHost.executable)
+    await writeFile(executable, 'electron-builder mutated fixture')
+    const smokeOptions = {
+      platform: process.platform, architecture: process.arch, allowValidation: true,
+      verifySignature: async () => undefined,
+    }
+    await expect(verifyPackagedExternalChromeResources({ root: outputRoot, ...smokeOptions })).rejects.toThrow('hash mismatch')
+
+    // Use a fresh deterministic stage as the pristine afterPack source fixture.
+    const pristineRoot = path.join(input.root, 'pristine')
+    await stageExternalChromeResources({ ...input, outputRoot: pristineRoot, buildMode: 'validation', verifyExecutable: async () => undefined })
+    await restorePreSignedWindowsResources({ sourceRoot: pristineRoot, packagedRoot: outputRoot })
+    await expect(verifyPackagedExternalChromeResources({ root: outputRoot, ...smokeOptions })).resolves.toMatchObject({ schemaVersion: 1 })
   })
 
   it('fails release staging when the required SEA executable is absent', async () => {
@@ -69,9 +96,9 @@ describe('External Chrome packaged staging', () => {
       platform: process.platform, architecture: process.arch,
       sea: { status: 'unsupported-toolchain', reason: 'NODE_SEA_FUSE is absent' },
     }))
-    await expect(stageExternalChromeResources({ ...input, outputRoot: path.join(input.root, 'output'), verifyExecutable: async () => undefined }))
+    await expect(stageExternalChromeResources({ ...input, outputRoot: path.join(input.root, 'output'), buildMode: 'validation', verifyExecutable: async () => undefined }))
       .rejects.toThrow('requires a SEA executable')
-    await expect(stageExternalChromeResources({ ...input, outputRoot: path.join(input.root, 'output'), requireExecutable: false, verifyExecutable: async () => undefined }))
+    await expect(stageExternalChromeResources({ ...input, outputRoot: path.join(input.root, 'output'), requireExecutable: false, buildMode: 'validation', verifyExecutable: async () => undefined }))
       .resolves.toMatchObject({ staged: false, reason: 'NODE_SEA_FUSE is absent' })
   })
 })

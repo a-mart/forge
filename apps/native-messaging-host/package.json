@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@electron/windows-sign": "1.2.2",
     "@forge/protocol": "workspace:*",
     "@types/node": "^24.3.0",
     "esbuild": "0.25.12",

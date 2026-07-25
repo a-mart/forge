@@ -4,16 +4,11 @@ import { endianness } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { assertSeaToolchain, prepareReleaseExecutable } from './release-signing.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const configPath = path.join(root, 'sea-config.json')
-const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 const nativeProtocol = { min: 1, max: 1, maxMessageBytes: 1_048_576 }
-const executableName = process.platform === 'win32'
-  ? 'forge-external-chrome-native-host.exe'
-  : 'forge-external-chrome-native-host'
-const executablePath = path.join(root, 'dist', executableName)
-const currentConfigPath = path.join(root, 'dist', 'sea-config.current.json')
 const origin = 'chrome-extension://fcchfcnadajoejfbiclihglkmbcfhajd/'
 
 function stable(value) {
@@ -40,18 +35,57 @@ function smoke(executable, arguments_) {
   if (message?.type !== 'desktop-unavailable') throw new Error('host smoke emitted an unexpected response')
 }
 
-const platformArguments = [origin, ...(process.platform === 'win32' ? ['--parent-window=0'] : [])]
-smoke(process.execPath, [path.join(root, 'dist', 'host.cjs'), ...platformArguments])
-const seaConfig = JSON.parse(await readFile(configPath, 'utf8'))
-seaConfig.output = `dist/${executableName}`
-await writeFile(currentConfigPath, `${stable(seaConfig)}\n`, { mode: 0o644 })
-const result = spawnSync(process.execPath, [`--build-sea=${currentConfigPath}`], {
-  cwd: root,
-  encoding: 'utf8',
-})
-if (result.status !== 0) {
-  const detail = result.stderr.trim() || result.stdout.trim()
-  if (!detail.includes('NODE_SEA_FUSE')) throw new Error(`SEA build failed: ${detail}`)
+export async function packageCurrent() {
+  assertSeaToolchain()
+  const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+  const executableName = process.platform === 'win32'
+    ? 'forge-external-chrome-native-host.exe'
+    : 'forge-external-chrome-native-host'
+  const executablePath = path.join(root, 'dist', executableName)
+  const currentConfigPath = path.join(root, 'dist', 'sea-config.current.json')
+  const platformArguments = [origin, ...(process.platform === 'win32' ? ['--parent-window=0'] : [])]
+
+  smoke(process.execPath, [path.join(root, 'dist', 'host.cjs'), ...platformArguments])
+  const seaConfig = JSON.parse(await readFile(configPath, 'utf8'))
+  seaConfig.output = `dist/${executableName}`
+  await writeFile(currentConfigPath, `${stable(seaConfig)}\n`, { mode: 0o644 })
+  const result = spawnSync(process.execPath, [`--build-sea=${currentConfigPath}`], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+  if (result.status !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim()
+    const reason = detail.includes('NODE_SEA_FUSE')
+      ? `Node ${process.versions.node} executable lacks the NODE_SEA_FUSE sentinel required by --build-sea`
+      : `SEA build failed: ${detail}`
+    const manifest = {
+      schemaVersion: 1,
+      package: '@forge/external-chrome-native-host',
+      version: packageMetadata.version,
+      nativeProtocol,
+      platform: process.platform,
+      architecture: process.arch,
+      nodeVersion: process.versions.node,
+      bundle: { file: 'dist/host.cjs', sha256: await sha256(path.join(root, 'dist', 'host.cjs')) },
+      bundleSmoke: 'desktop-unavailable',
+      sea: {
+        status: 'unsupported-toolchain',
+        reason,
+        config: 'dist/sea-config.current.json',
+        configSha256: await sha256(currentConfigPath),
+      },
+    }
+    await writeFile(path.join(root, 'dist', 'package-manifest.json'), `${stable(manifest)}\n`, { mode: 0o644 })
+    throw new Error(`${reason}; use the official Node ${process.versions.node} distribution with SEA support`)
+  }
+  if (process.platform !== 'win32') await chmod(executablePath, 0o755)
+
+  // Prove the generated host before signing, then sign before calculating the
+  // authoritative package hash. The second smoke proves signing preserved SEA startup.
+  smoke(executablePath, platformArguments)
+  const signature = await prepareReleaseExecutable(executablePath)
+  smoke(executablePath, platformArguments)
+
   const manifest = {
     schemaVersion: 1,
     package: '@forge/external-chrome-native-host',
@@ -60,48 +94,28 @@ if (result.status !== 0) {
     platform: process.platform,
     architecture: process.arch,
     nodeVersion: process.versions.node,
+    executable: {
+      file: `dist/${executableName}`,
+      sha256: await sha256(executablePath),
+      signature,
+    },
     bundle: {
       file: 'dist/host.cjs',
       sha256: await sha256(path.join(root, 'dist', 'host.cjs')),
     },
-    bundleSmoke: 'desktop-unavailable',
-    sea: {
-      status: 'unsupported-toolchain',
-      reason: `Node ${process.versions.node} executable lacks the NODE_SEA_FUSE sentinel required by --build-sea`,
-      config: 'dist/sea-config.current.json',
-      configSha256: await sha256(currentConfigPath),
+    seaConfig: {
+      file: 'dist/sea-config.current.json',
+      sha256: await sha256(currentConfigPath),
     },
+    smoke: 'desktop-unavailable',
   }
   await writeFile(path.join(root, 'dist', 'package-manifest.json'), `${stable(manifest)}\n`, { mode: 0o644 })
-  process.stderr.write(`${manifest.sea.reason}; use an official Node distribution with SEA support\n`)
-  process.stdout.write(`${manifest.bundle.sha256}\n`)
-  process.exit(0)
+  process.stdout.write(`${manifest.executable.sha256}\n`)
 }
-if (process.platform !== 'win32') await chmod(executablePath, 0o755)
 
-smoke(executablePath, platformArguments)
-
-const manifest = {
-  schemaVersion: 1,
-  package: '@forge/external-chrome-native-host',
-  version: packageMetadata.version,
-  nativeProtocol,
-  platform: process.platform,
-  architecture: process.arch,
-  nodeVersion: process.versions.node,
-  executable: {
-    file: `dist/${executableName}`,
-    sha256: await sha256(executablePath),
-  },
-  bundle: {
-    file: 'dist/host.cjs',
-    sha256: await sha256(path.join(root, 'dist', 'host.cjs')),
-  },
-  seaConfig: {
-    file: 'dist/sea-config.current.json',
-    sha256: await sha256(currentConfigPath),
-  },
-  smoke: 'desktop-unavailable',
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  packageCurrent().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
 }
-await writeFile(path.join(root, 'dist', 'package-manifest.json'), `${stable(manifest)}\n`, { mode: 0o644 })
-process.stdout.write(`${manifest.executable.sha256}\n`)

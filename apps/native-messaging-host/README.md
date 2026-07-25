@@ -18,9 +18,11 @@ It deliberately contains **no browser automation or browser-control policy**, lo
 pnpm --filter @forge/external-chrome-native-host test
 pnpm --filter @forge/external-chrome-native-host typecheck
 pnpm --filter @forge/external-chrome-native-host build
-pnpm --filter @forge/external-chrome-native-host package:current
+FORGE_EXTERNAL_CHROME_BUILD_MODE=validation pnpm --filter @forge/external-chrome-native-host package:current
 ```
 
-`package:current` requires a Node release with direct `--build-sea` support (Node 25+ in the current development toolchain). It writes ignored `dist/` artifacts and a deterministic package manifest for the running platform/architecture. `sea-config.json` disables code cache and startup snapshots so generated inputs are stable. If a vendor Node binary advertises `--build-sea` but was built without `NODE_SEA_FUSE` (the current Homebrew Node 25.6.1 arm64 binary has this exact gap), the manifest records `sea.status: "unsupported-toolchain"`; use an official Node distribution containing the SEA fuse to produce and smoke the executable. macOS signing/notarization, Windows launcher `_setmode` integration and signing, Linux packaging, Chrome native-host manifests, registry/filesystem registration, repair, and uninstall are intentionally outside this spike.
+`package:current` is pinned to the official Node 25.6.1 distribution and its direct `--build-sea` path. Release mode additionally requires `FORGE_SEA_NODE` to name that exact executable; a vendor build without `NODE_SEA_FUSE` fails rather than producing a publishable package. `sea-config.json` disables code cache and startup snapshots so generated inputs are stable.
 
-Windows remains byte-stream safe through an explicit binary-mode integration seam; Node/libuv pipe streams are binary by default in this spike. Windows and Linux package artifacts were not produced on macOS.
+The generated executable is smoked, platform-signed, signature-verified against the expected signer, smoked again, and only then hashed into `dist/package-manifest.json`. macOS requires an exact `Developer ID Application` identity and Apple team. Windows uses Authenticode and an exact expected certificate subject. Explicit validation mode (`FORGE_EXTERNAL_CHROME_BUILD_MODE=validation`) is credential-free, but its manifest is marked unverified and the Desktop runtime rejects it as a release package.
+
+Windows remains byte-stream safe through an explicit binary-mode integration seam; Node/libuv pipe streams are binary by default.

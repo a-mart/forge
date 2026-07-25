@@ -56,7 +56,7 @@ async function root(): Promise<{ dataRoot: string; deployer: ExternalChromeDeplo
     nativeHost: {
       protocol: { min: 1, max: 1, maxMessageBytes: 1_048_576 }, version: '1', platform: 'linux', architecture: 'x64',
       executable: 'forge-external-chrome-native-host', sha256: sha256(native), required: true,
-      signature: { scheme: 'packaged-resource-hash', verified: true },
+      signature: { scheme: 'packaged-resource-hash', mode: 'release', verified: true, signer: null, teamId: null },
     },
     compatibility: { desktop: { min: '0.22.0', max: '0.22.999' }, shellAbi: { min: 1, max: 1 } },
   }

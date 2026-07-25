@@ -1,14 +1,12 @@
 import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { externalChromeBuildMode, verifyReleaseSignature } from '../../native-messaging-host/scripts/release-signing.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const electronDir = path.resolve(scriptDir, '..')
 const repoRoot = path.resolve(electronDir, '..', '..')
-const execFileAsync = promisify(execFile)
 
 export async function stageExternalChromeResources({
   outputRoot = path.join(electronDir, '.stage', 'external-chrome'),
@@ -19,6 +17,7 @@ export async function stageExternalChromeResources({
   nativePackageRoot = path.join(repoRoot, 'apps', 'native-messaging-host', 'dist'),
   electronManifestPath = path.join(electronDir, 'package.json'),
   verifyExecutable = verifyReleaseExecutable,
+  buildMode = externalChromeBuildMode(),
 } = {}) {
   const extensionRoot = path.join(extensionPackageRoot, 'extension')
   const extensionManifest = JSON.parse(await readFile(path.join(extensionPackageRoot, 'package-manifest.json'), 'utf8'))
@@ -53,7 +52,12 @@ export async function stageExternalChromeResources({
 
   const executableSource = path.resolve(nativePackageRoot, '..', nativeManifest.executable.file)
   const executableName = path.basename(nativeManifest.executable.file)
-  await verifyExecutable(executableSource, platform)
+  const executableBytes = await readFile(executableSource)
+  if (sha256(executableBytes) !== nativeManifest.executable.sha256) {
+    throw new Error('External Chrome signed native executable hash does not match its package manifest')
+  }
+  const signature = nativeManifest.executable.signature
+  await verifyExecutable(executableSource, platform, signature, { allowValidation: buildMode === 'validation' })
   const nextRoot = `${outputRoot}.tmp`
   await rm(nextRoot, { recursive: true, force: true })
   const shellRoot = path.join(nextRoot, 'extension-shell')
@@ -89,10 +93,7 @@ export async function stageExternalChromeResources({
       executable: executableName,
       sha256: nativeManifest.executable.sha256,
       required: true,
-      signature: {
-        scheme: platform === 'darwin' ? 'developer-id' : platform === 'win32' ? 'authenticode' : 'packaged-resource-hash',
-        verified: true,
-      },
+      signature,
     },
     compatibility: {
       desktop: { min: '0.22.0', max: '0.22.999' },
@@ -105,19 +106,8 @@ export async function stageExternalChromeResources({
   return { staged: true, manifest: packageManifest, sha256: sha256(Buffer.from(stableJson(packageManifest))) }
 }
 
-export async function verifyReleaseExecutable(executable, platform) {
-  if (platform === 'darwin') {
-    await execFileAsync('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', executable])
-    return
-  }
-  if (platform === 'win32') {
-    const command = `(Get-AuthenticodeSignature -LiteralPath '${executable.replaceAll("'", "''")}').Status`
-    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command])
-    if (stdout.trim() !== 'Valid') throw new Error('External Chrome native host Authenticode signature is not valid')
-    return
-  }
-  const info = await stat(executable)
-  if ((info.mode & 0o111) === 0) throw new Error('External Chrome Linux native host is not executable')
+export async function verifyReleaseExecutable(executable, platform, signature, { allowValidation = false } = {}) {
+  return verifyReleaseSignature(executable, signature, { platform, allowValidation })
 }
 
 async function copyInventory(sourceRoot, targetRoot, inventory) {

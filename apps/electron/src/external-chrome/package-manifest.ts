@@ -28,7 +28,13 @@ export interface ExternalChromePackageManifest {
     executable: string
     sha256: string
     required: true
-    signature: { scheme: string; verified: true }
+    signature: {
+      scheme: string
+      mode: 'release'
+      verified: true
+      signer: string | null
+      teamId: string | null
+    }
   }
   compatibility: {
     desktop: { min: string; max: string }
@@ -78,9 +84,21 @@ export function parseExternalChromePackageManifest(value: unknown): ExternalChro
   safeFile(nativeHost.executable, 'nativeHost.executable')
   hash(nativeHost.sha256, 'nativeHost.sha256')
   const signature = object(nativeHost.signature, 'nativeHost.signature')
-  exactKeys(signature, ['scheme', 'verified'], 'nativeHost.signature')
+  exactKeys(signature, ['scheme', 'mode', 'verified', 'signer', 'teamId'], 'nativeHost.signature')
   string(signature.scheme, 'nativeHost.signature.scheme')
-  if (signature.verified !== true) throw new Error('External Chrome native executable signature was not verified at packaging')
+  if (signature.mode !== 'release' || signature.verified !== true) {
+    throw new Error('External Chrome native executable signature was not release-verified at packaging')
+  }
+  nullableString(signature.signer, 'nativeHost.signature.signer')
+  nullableString(signature.teamId, 'nativeHost.signature.teamId')
+  if (nativeHost.platform === 'darwin') {
+    if (!(signature.signer as string | null)?.startsWith('Developer ID Application: ') || signature.teamId === null) {
+      throw new Error('External Chrome macOS native executable is missing its Developer ID identity/team')
+    }
+  }
+  if (nativeHost.platform === 'win32' && signature.signer === null) {
+    throw new Error('External Chrome Windows native executable is missing its Authenticode signer')
+  }
   const protocol = object(nativeHost.protocol, 'nativeHost.protocol')
   exactKeys(protocol, ['min', 'max', 'maxMessageBytes'], 'nativeHost.protocol')
   positiveInteger(protocol.min, 'nativeHost.protocol.min')
@@ -119,6 +137,10 @@ function exactKeys(value: Record<string, unknown>, expected: string[], label: st
 
 function string(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${label} must be a non-empty string`)
+}
+
+function nullableString(value: unknown, label: string): asserts value is string | null {
+  if (value !== null && (typeof value !== 'string' || value.length === 0)) throw new Error(`${label} must be a non-empty string or null`)
 }
 
 function positiveInteger(value: unknown, label: string): asserts value is number {

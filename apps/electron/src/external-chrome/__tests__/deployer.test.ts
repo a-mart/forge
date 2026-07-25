@@ -63,7 +63,12 @@ async function fixture(
     nativeHost: {
       protocol: { min: 1, max: 1, maxMessageBytes: 1_048_576 }, version: '1', platform, architecture: arch,
       executable, sha256: sha256(native), required: true,
-      signature: { scheme: platform === 'darwin' ? 'developer-id' : platform === 'win32' ? 'authenticode' : 'packaged-resource-hash', verified: true },
+      signature: {
+        scheme: platform === 'darwin' ? 'developer-id' : platform === 'win32' ? 'authenticode' : 'packaged-resource-hash',
+        mode: 'release', verified: true,
+        signer: platform === 'darwin' ? 'Developer ID Application: Fixture (TEAM123456)' : platform === 'win32' ? 'CN=Forge Fixture' : null,
+        teamId: platform === 'darwin' ? 'TEAM123456' : null,
+      },
     },
     compatibility: { desktop: { min: '0.22.0', max: '0.22.999' }, shellAbi: { min: 1, max: 1 } },
   }

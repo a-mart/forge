@@ -2,23 +2,35 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { verifyReleaseSignature } from '../../native-messaging-host/scripts/release-signing.mjs'
 
 const electronDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const root = path.resolve(process.argv[2] ?? path.join(electronDir, '.stage', 'external-chrome'))
-const manifest = JSON.parse(await readFile(path.join(root, 'package-manifest.json'), 'utf8'))
 
-if (manifest.schemaVersion !== 1 || manifest.nativeHost?.required !== true) fail('native executable is not marked required')
-if (manifest.nativeHost.signature?.verified !== true) fail('native executable signature is not marked verified')
-if (manifest.nativeHost.platform !== process.platform || manifest.nativeHost.architecture !== process.arch) {
-  fail(`metadata targets ${manifest.nativeHost.platform}/${manifest.nativeHost.architecture}, expected ${process.platform}/${process.arch}`)
+export async function verifyPackagedExternalChromeResources({
+  root = path.join(electronDir, '.stage', 'external-chrome'),
+  platform = process.platform,
+  architecture = process.arch,
+  allowValidation = process.env.FORGE_EXTERNAL_CHROME_BUILD_MODE === 'validation',
+  verifySignature = verifyReleaseSignature,
+} = {}) {
+  const manifest = JSON.parse(await readFile(path.join(root, 'package-manifest.json'), 'utf8'))
+
+  if (manifest.schemaVersion !== 1 || manifest.nativeHost?.required !== true) fail('native executable is not marked required')
+  if (manifest.nativeHost.platform !== platform || manifest.nativeHost.architecture !== architecture) {
+    fail(`metadata targets ${manifest.nativeHost.platform}/${manifest.nativeHost.architecture}, expected ${platform}/${architecture}`)
+  }
+
+  await verifyInventory(path.join(root, 'extension-shell'), manifest.extension.shellFiles)
+  await verifyInventory(path.join(root, 'payload', manifest.extension.payloadDirectory), manifest.extension.payloadFiles)
+  const nativeRoot = path.join(root, 'native-host', `${manifest.nativeHost.platform}-${manifest.nativeHost.architecture}`)
+  await verifyInventory(nativeRoot, { [manifest.nativeHost.executable]: manifest.nativeHost.sha256 })
+  await verifySignature(path.join(nativeRoot, manifest.nativeHost.executable), manifest.nativeHost.signature, {
+    platform,
+    allowValidation,
+  })
+  process.stdout.write(`[external-chrome-package] verified ${manifest.packageVersion} for ${manifest.nativeHost.platform}/${manifest.nativeHost.architecture} (${manifest.nativeHost.signature.mode})\n`)
+  return manifest
 }
-
-await verifyInventory(path.join(root, 'extension-shell'), manifest.extension.shellFiles)
-await verifyInventory(path.join(root, 'payload', manifest.extension.payloadDirectory), manifest.extension.payloadFiles)
-await verifyInventory(path.join(root, 'native-host', `${manifest.nativeHost.platform}-${manifest.nativeHost.architecture}`), {
-  [manifest.nativeHost.executable]: manifest.nativeHost.sha256,
-})
-process.stdout.write(`[external-chrome-package] verified ${manifest.packageVersion} for ${manifest.nativeHost.platform}/${manifest.nativeHost.architecture}\n`)
 
 async function verifyInventory(directory, inventory) {
   const files = await walk(directory)
@@ -45,4 +57,12 @@ async function walk(directory, root = directory) {
 
 function fail(message) {
   throw new Error(`[external-chrome-package] ${message}`)
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const root = path.resolve(process.argv[2] ?? path.join(electronDir, '.stage', 'external-chrome'))
+  verifyPackagedExternalChromeResources({ root }).catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
 }
