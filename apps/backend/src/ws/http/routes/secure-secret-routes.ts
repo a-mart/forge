@@ -6,6 +6,7 @@ import {
   parseSecureSecretScope,
   type SecureSecretBinding,
   type SecureSecretProviderSummary,
+  type SecureSecretProviderTestResult,
   type SecureSecretProjectDefaultSummary,
   type SecureSecretRetention,
   type SecureSecretScope,
@@ -72,12 +73,20 @@ export interface ImportBitwardenSecureSecretInput {
   retention?: SecureSecretRetention;
 }
 
+export interface UpdateBitwardenSecureSecretProviderCredentialInput {
+  encryptedAccessToken: string;
+}
+
 export interface SecureSecretTransportService {
   listSecureSecretProviders(): Promise<SecureSecretProviderSummary[]> | SecureSecretProviderSummary[];
   connectBitwardenSecureSecretProvider(
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary>;
-  testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderSummary>;
+  testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderTestResult>;
+  updateBitwardenSecureSecretProviderCredential(
+    providerId: string,
+    input: UpdateBitwardenSecureSecretProviderCredentialInput,
+  ): Promise<SecureSecretProviderSummary>;
   deleteSecureSecretProvider(providerId: string): Promise<void>;
   importBitwardenSecureSecret(
     providerId: string,
@@ -190,6 +199,25 @@ export function createSecureSecretRoutes(options: {
             response,
             200,
             await options.service.testSecureSecretProvider(providerId),
+          );
+          return;
+        }
+
+        const providerCredentialMatch = requestUrl.pathname.match(
+          /^\/api\/secure-secrets\/providers\/([^/]+)\/credential$/,
+        );
+        if (request.method === "PATCH" && providerCredentialMatch) {
+          const providerId = parsePathId(providerCredentialMatch[1], "providerId");
+          const input = parseUpdateBitwardenCredentialInput(
+            await readSecureJsonBody(request, MAX_SECURE_REQUEST_BYTES),
+          );
+          sendSecureJson(
+            response,
+            200,
+            await options.service.updateBitwardenSecureSecretProviderCredential(
+              providerId,
+              input,
+            ),
           );
           return;
         }
@@ -485,6 +513,19 @@ function parseConnectBitwardenInput(
     ...(input.projectId === undefined
       ? {}
       : { projectId: parseLabel(input.projectId, "projectId") }),
+    encryptedAccessToken: parseEncryptedPayload(
+      input.encryptedAccessToken,
+      "encryptedAccessToken",
+    ),
+  };
+}
+
+function parseUpdateBitwardenCredentialInput(
+  value: unknown,
+): UpdateBitwardenSecureSecretProviderCredentialInput {
+  const input = requireObject(value);
+  assertKnownKeys(input, ["encryptedAccessToken"]);
+  return {
     encryptedAccessToken: parseEncryptedPayload(
       input.encryptedAccessToken,
       "encryptedAccessToken",

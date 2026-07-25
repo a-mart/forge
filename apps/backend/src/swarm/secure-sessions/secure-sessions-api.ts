@@ -18,6 +18,11 @@ export interface ConnectBitwardenSecureSecretProviderInput {
   encryptedAccessToken: string;
 }
 
+export interface UpdateBitwardenSecureSecretProviderCredentialInput {
+  /** Electron safeStorage ciphertext encoded as canonical base64. */
+  encryptedAccessToken: string;
+}
+
 export interface CreateLocalSecureSecretInput {
   displayAlias: string;
   displayName?: string;

@@ -107,7 +107,7 @@ export class RuntimeFactory {
     assertForgeRuntimeEligibleDescriptor(descriptor, "create runtime");
     const secureRuntimeBinding =
       options?.secureRuntimeBinding ??
-      await this.resolveSecureRuntimeBinding(descriptor);
+      await this.resolveSecureRuntimeBinding(descriptor, runtimeToken);
     const creationOptions = secureRuntimeBinding
       ? { ...options, secureRuntimeBinding }
       : options;
@@ -170,13 +170,14 @@ export class RuntimeFactory {
 
   private async resolveSecureRuntimeBinding(
     descriptor: AgentDescriptor,
+    runtimeToken: number,
   ) {
     if (!this.deps.getSecureRuntimeBinding) {
       return undefined;
     }
 
     try {
-      return await this.deps.getSecureRuntimeBinding(descriptor);
+      return await this.deps.getSecureRuntimeBinding(descriptor, runtimeToken);
     } catch {
       throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
     }

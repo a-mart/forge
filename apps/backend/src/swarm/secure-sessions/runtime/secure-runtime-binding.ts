@@ -36,6 +36,11 @@ export interface SecureRuntimeBashExecutionResult {
  * replacing or quarantining secret-bearing content.
  */
 export interface SecureRuntimeBinding {
+  /**
+   * Backend lifecycle capability. Runtime ownership calls this before detach;
+   * it is never exposed as an agent tool.
+   */
+  invalidate?(): void;
   executeBash(
     request: SecureRuntimeBashExecutionRequest,
   ): Promise<SecureRuntimeBashExecutionResult>;
@@ -44,6 +49,7 @@ export interface SecureRuntimeBinding {
 
 export type GetSecureRuntimeBinding = (
   descriptor: AgentDescriptor,
+  runtimeToken?: number,
 ) =>
   | SecureRuntimeBinding
   | undefined

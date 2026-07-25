@@ -16,6 +16,7 @@ import {
   type SecureSecretLeaseKind,
   type SecureSecretRetention,
   type SecureSecretScope,
+  type SecureSessionReadiness,
   type SecureSessionSnapshot,
 } from "@forge/protocol";
 import type { HttpRoute } from "../shared/http-route.js";
@@ -59,6 +60,7 @@ export type FulfillSecureAccessRequestInput = {
 );
 
 export interface SecureSessionsTransportService {
+  getSecureSessionReadiness(): Promise<SecureSessionReadiness> | SecureSessionReadiness;
   getSecureSessionSnapshot(
     sessionAgentId: string,
   ): Promise<SecureSessionSnapshot> | SecureSessionSnapshot;
@@ -118,6 +120,18 @@ export function createSecureSessionRoutes(options: {
       }
 
       try {
+        if (
+          request.method === "GET"
+          && requestUrl.pathname === `${SECURE_SESSIONS_PATH}/readiness`
+        ) {
+          sendSecureJson(
+            response,
+            200,
+            await options.service.getSecureSessionReadiness(),
+          );
+          return;
+        }
+
         const sessionRootMatch = requestUrl.pathname.match(
           /^\/api\/secure-sessions\/([^/]+)$/,
         );

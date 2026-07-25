@@ -8,6 +8,7 @@ import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
+import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-runtime-binding.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
 import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { SwarmWorkerHealthService, TRANSIENT_WORKER_TERMINATED_GRACE_MS } from "../swarm-worker-health-service.js";
@@ -264,6 +265,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function retainedSecureRuntimeBinding(
+  guardMarker = "[guarded-by-retained-binding]",
+): SecureRuntimeBinding & { isActive(): boolean } {
+  let active = true;
+  return {
+    isActive: () => active,
+    invalidate: () => {
+      active = false;
+    },
+    async executeBash() {
+      if (!active) throw new Error("binding invalidated");
+      return { exitCode: 0 };
+    },
+    guardValue<T>(value: T): T {
+      if (!active) throw new Error("binding invalidated");
+      if (typeof value === "string") return guardMarker as T;
+      return JSON.parse(
+        JSON.stringify(value).replaceAll(
+          "retained-binding-secret",
+          guardMarker,
+        ),
+      ) as T;
+    },
+  };
+}
+
 describe("SwarmRuntimeController", () => {
   it("guards Secure Session events before watchdogs, projection, and observability hooks", async () => {
     const config = await makeTempConfig();
@@ -438,6 +465,151 @@ describe("SwarmRuntimeController", () => {
 
     expect(factory.createRuntimeForDescriptor).toHaveBeenCalledWith(worker, "prompt", token, undefined);
     expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
+  });
+
+  it.each(["detach", "clear"] as const)(
+    "%s permanently invalidates a retained secure binding without an assignment change",
+    async (lifecycleAction) => {
+      const config = await makeTempConfig();
+      await writeFile(
+        join(config.paths.sharedCacheDir, "pi-models.json"),
+        "{}",
+        "utf8",
+      );
+      const { host, descriptors } = createRuntimeControllerHarness(config);
+      const controller = new SwarmRuntimeController(host);
+      const worker = baseDescriptor({
+        agentId: `secure-${lifecycleAction}-worker`,
+        role: "worker",
+        managerId: "manager",
+        status: "idle",
+        workerParentContext: {
+          schemaVersion: 1,
+          assignmentId: "unchanged-assignment",
+          managerId: "manager",
+          assignedAt: "2026-07-24T00:00:00.000Z",
+          outputTarget: { kind: "manager" },
+        },
+      });
+      descriptors.set(worker.agentId, worker);
+      const retainedBinding = retainedSecureRuntimeBinding();
+      host.getSecureRuntimeBinding = () => retainedBinding;
+      const runtime = { terminate: vi.fn() } as unknown as SwarmAgentRuntime;
+      const factory = (controller as unknown as {
+        runtimeFactory: {
+          createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
+        };
+      }).runtimeFactory;
+      factory.createRuntimeForDescriptor = vi.fn(async () => runtime);
+      const token = controller.allocateRuntimeToken(worker.agentId);
+
+      await controller.createRuntimeForDescriptor(worker, "prompt", token);
+      controller.attachRuntime(worker.agentId, runtime);
+      await expect(retainedBinding.executeBash({
+        command: "safe-before-lifecycle-change",
+        cwd: worker.cwd,
+        onData: () => undefined,
+      })).resolves.toEqual({ exitCode: 0 });
+
+      if (lifecycleAction === "detach") {
+        expect(controller.detachRuntime(worker.agentId, token)).toBe(true);
+      } else {
+        controller.clearRuntimeToken(worker.agentId, token);
+      }
+
+      expect(worker.workerParentContext?.assignmentId).toBe(
+        "unchanged-assignment",
+      );
+      expect(retainedBinding.isActive()).toBe(false);
+      await expect(retainedBinding.executeBash({
+        command: "must-not-run-after-lifecycle-change",
+        cwd: worker.cwd,
+        onData: () => undefined,
+      })).rejects.toThrow("binding invalidated");
+    },
+  );
+
+  it("failed runtime replacement invalidates only the new binding and preserves the restored fallback binding", async () => {
+    const config = await makeTempConfig();
+    await writeFile(
+      join(config.paths.sharedCacheDir, "pi-models.json"),
+      "{}",
+      "utf8",
+    );
+    const {
+      host,
+      descriptors,
+      captureConversationEventFromRuntime,
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const worker = baseDescriptor({
+      agentId: "secure-fallback-worker",
+      role: "worker",
+      managerId: "manager",
+      status: "streaming",
+      workerParentContext: {
+        schemaVersion: 1,
+        assignmentId: "fallback-assignment",
+        managerId: "manager",
+        assignedAt: "2026-07-24T00:00:00.000Z",
+        outputTarget: { kind: "manager" },
+      },
+    });
+    descriptors.set(worker.agentId, worker);
+    const oldBinding = retainedSecureRuntimeBinding("[guarded-by-old-binding]");
+    const replacementBinding = retainedSecureRuntimeBinding(
+      "[guarded-by-failed-replacement]",
+    );
+    const oldToken = controller.allocateRuntimeToken(worker.agentId);
+    host.getSecureRuntimeBinding = (_descriptor, runtimeToken) =>
+      runtimeToken === oldToken ? oldBinding : replacementBinding;
+    const oldRuntime = { terminate: vi.fn() } as unknown as SwarmAgentRuntime;
+    const factory = (controller as unknown as {
+      runtimeFactory: {
+        createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
+      };
+    }).runtimeFactory;
+    factory.createRuntimeForDescriptor = vi.fn(async () => oldRuntime);
+    await controller.createRuntimeForDescriptor(worker, "old prompt", oldToken);
+    controller.attachRuntime(worker.agentId, oldRuntime);
+
+    const replacementToken = controller.allocateRuntimeToken(worker.agentId);
+    factory.createRuntimeForDescriptor = vi.fn(async () => {
+      throw new Error("replacement factory failed");
+    });
+    await expect(controller.createRuntimeForDescriptor(
+      worker,
+      "replacement prompt",
+      replacementToken,
+    )).rejects.toThrow("replacement factory failed");
+
+    expect(replacementBinding.isActive()).toBe(false);
+    expect(oldBinding.isActive()).toBe(true);
+    expect(controller.runtimes.get(worker.agentId)).toBe(oldRuntime);
+    expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
+
+    controller.restoreRuntimeTokenForFallbackRollback(
+      worker.agentId,
+      oldToken,
+    );
+    expect(controller.getRuntimeToken(worker.agentId)).toBe(oldToken);
+    await expect(oldBinding.executeBash({
+      command: "fallback-binding-still-usable",
+      cwd: worker.cwd,
+      onData: () => undefined,
+    })).resolves.toEqual({ exitCode: 0 });
+
+    await controller.handleRuntimeSessionEvent(oldToken, worker.agentId, {
+      type: "tool_execution_end",
+      toolName: "bash",
+      toolCallId: "fallback-tool-call",
+      result: { content: "retained-binding-secret" },
+      isError: false,
+    });
+    expect(JSON.stringify(captureConversationEventFromRuntime.mock.calls))
+      .not.toContain("retained-binding-secret");
+    expect(JSON.stringify(captureConversationEventFromRuntime.mock.calls))
+      .toContain("[guarded-by-old-binding]");
   });
 
   it("keeps manager idle status projection independent from runtime replacement", async () => {

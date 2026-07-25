@@ -4,9 +4,11 @@ import type {
   GrantSecureSecretLeasesRequest,
   ResolveSecureSecretAccessRequest,
   SecureSecretProviderSummary,
+  SecureSecretProviderTestResult,
   SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
   SecureSessionSnapshot,
+  SecureSessionReadiness,
 } from "@forge/protocol";
 import type { SwarmManagerFacadeServices } from "../swarm-manager-facade-services.js";
 import { SwarmManagerGoalFacade } from "../swarm-manager-goal-facade.js";
@@ -23,6 +25,7 @@ import type {
   StartSecureSessionInput,
   StopSecureSessionInput,
   TeardownWorkerSecurePrincipalOptions,
+  UpdateBitwardenSecureSecretProviderCredentialInput,
   UpdateSecureSecretInput,
 } from "./secure-sessions-api.js";
 
@@ -39,14 +42,28 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     return this.secureSessions.listSecureSecretProviders();
   }
 
+  getSecureSessionReadiness(): Promise<SecureSessionReadiness> {
+    return this.secureSessions.getSecureSessionReadiness();
+  }
+
   connectBitwardenSecureSecretProvider(
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary> {
     return this.secureSessions.connectBitwardenSecureSecretProvider(input);
   }
 
-  testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderSummary> {
+  testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderTestResult> {
     return this.secureSessions.testSecureSecretProvider(providerId);
+  }
+
+  updateBitwardenSecureSecretProviderCredential(
+    providerId: string,
+    input: UpdateBitwardenSecureSecretProviderCredentialInput,
+  ): Promise<SecureSecretProviderSummary> {
+    return this.secureSessions.updateBitwardenSecureSecretProviderCredential(
+      providerId,
+      input,
+    );
   }
 
   deleteSecureSecretProvider(providerId: string): Promise<void> {
@@ -213,8 +230,11 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     return this.secureSessions.requestSecureSecretAccess(callerAgentId, toolCallId, input);
   }
 
-  getSecureRuntimeBinding(descriptor: AgentDescriptor): SecureRuntimeBinding | undefined {
-    return this.secureSessions.getSecureRuntimeBinding(descriptor);
+  getSecureRuntimeBinding(
+    descriptor: AgentDescriptor,
+    runtimeToken?: number,
+  ): SecureRuntimeBinding | undefined {
+    return this.secureSessions.getSecureRuntimeBinding(descriptor, runtimeToken);
   }
 
   initializeSecureSessions(): Promise<SecureOrphanRecoveryResult> {

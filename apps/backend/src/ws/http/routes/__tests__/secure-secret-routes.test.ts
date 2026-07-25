@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type {
   SecureSecretProviderSummary,
+  SecureSecretProviderTestResult,
   SecureSecretProjectDefaultSummary,
   SecureSecretSummary,
 } from "@forge/protocol";
@@ -27,6 +28,12 @@ const provider: SecureSecretProviderSummary = {
   lastStatusCode: "ok",
 };
 
+const providerTestResult: SecureSecretProviderTestResult = {
+  provider,
+  code: "ok",
+  affectedSecrets: [],
+};
+
 const secret: SecureSecretSummary = {
   secretId: "secret-1",
   providerId: "provider-1",
@@ -50,7 +57,8 @@ function fakeService(): SecureSecretTransportService {
   return {
     listSecureSecretProviders: vi.fn(() => [provider]),
     connectBitwardenSecureSecretProvider: vi.fn(async () => provider),
-    testSecureSecretProvider: vi.fn(async () => provider),
+    testSecureSecretProvider: vi.fn(async () => providerTestResult),
+    updateBitwardenSecureSecretProviderCredential: vi.fn(async () => provider),
     deleteSecureSecretProvider: vi.fn(async () => undefined),
     importBitwardenSecureSecret: vi.fn(async () => secret),
     listSecureSecrets: vi.fn(() => [secret]),
@@ -152,6 +160,26 @@ describe("secure secret routes", () => {
       `${server.baseUrl}/api/secure-secrets/providers/provider-1/test`,
       {},
     );
+    const encryptedAccessToken = Buffer.from("rotated-ciphertext").toString("base64");
+    const credentialUpdated = await fetch(
+      `${server.baseUrl}/api/secure-secrets/providers/provider-1/credential`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ encryptedAccessToken }),
+      },
+    );
+    const credentialRejected = await fetch(
+      `${server.baseUrl}/api/secure-secrets/providers/provider-1/credential`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          encryptedAccessToken,
+          plaintextToken: "MUST-NOT-BE-ACCEPTED",
+        }),
+      },
+    );
     const updated = await fetch(`${server.baseUrl}/api/secure-secrets/secret-1`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -162,9 +190,17 @@ describe("secure secret routes", () => {
     });
 
     expect(tested.status).toBe(200);
+    expect(await tested.json()).toEqual(providerTestResult);
+    expect(credentialUpdated.status).toBe(200);
+    expect(credentialRejected.status).toBe(400);
     expect(updated.status).toBe(200);
     expect(deleted.status).toBe(204);
     expect(service.testSecureSecretProvider).toHaveBeenCalledWith("provider-1");
+    expect(
+      service.updateBitwardenSecureSecretProviderCredential,
+    ).toHaveBeenCalledExactlyOnceWith("provider-1", {
+      encryptedAccessToken,
+    });
     expect(service.updateSecureSecret).toHaveBeenCalledWith("secret-1", {
       displayAlias: "NEW_ALIAS",
     });

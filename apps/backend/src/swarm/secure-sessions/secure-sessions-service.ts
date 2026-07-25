@@ -9,7 +9,9 @@ import type {
   SecureSecretCatalogChangedEvent,
   SecureSecretProjectDefaultSummary,
   SecureSecretProviderSummary,
+  SecureSecretProviderTestResult,
   SecureSecretSummary,
+  SecureSessionReadiness,
   SecureSessionProjectDefaultStatus,
   SecureSessionSnapshot as PublicSecureSessionSnapshot,
   SecureSessionSnapshotEvent,
@@ -41,6 +43,7 @@ import type {
   StartSecureSessionInput,
   StopSecureSessionInput,
   TeardownWorkerSecurePrincipalOptions,
+  UpdateBitwardenSecureSecretProviderCredentialInput,
   UpdateSecureSecretInput,
 } from "./secure-sessions-api.js";
 import {
@@ -111,6 +114,13 @@ interface ActiveSession {
   guard: SecureValueGuard | null;
   guardRequired: boolean;
   closed: boolean;
+}
+
+interface SecureRuntimeBindingIdentity {
+  active: ActiveSession;
+  workerAssignmentId: string | null;
+  runtimeToken?: number;
+  revoked: boolean;
 }
 
 interface SecureOutputState {
@@ -676,6 +686,26 @@ export class SecureSessionsService {
     return store.listProviders().map(toProviderSummary);
   }
 
+  async getSecureSessionReadiness(): Promise<SecureSessionReadiness> {
+    try {
+      const result = await this.options.execution.probe();
+      switch (result.code) {
+        case "available":
+          return result.available
+            ? { available: true, code: "available" }
+            : { available: false, code: "backend_unavailable" };
+        case "backend_unavailable":
+        case "image_unavailable":
+        case "unsupported_platform":
+          return { available: false, code: result.code };
+        default:
+          return { available: false, code: "backend_unavailable" };
+      }
+    } catch {
+      return { available: false, code: "backend_unavailable" };
+    }
+  }
+
   async connectBitwardenSecureSecretProvider(
     input: ConnectBitwardenSecureSecretProviderInput,
   ): Promise<SecureSecretProviderSummary> {
@@ -698,13 +728,14 @@ export class SecureSessionsService {
           lastStatusCode: "ok",
         });
         try {
-          store.upsertProviderBackendConfig({
+          const config = store.upsertProviderBackendConfig({
             providerId,
             serverOrigin,
             organizationId: optionalBounded(input.organizationId, 256),
             projectId: optionalBounded(input.projectId, 256),
             encryptedAccessToken,
           });
+          config.encryptedAccessToken.fill(0);
         } catch (error) {
           store.deleteProvider(providerId);
           throw error;
@@ -719,29 +750,62 @@ export class SecureSessionsService {
     }
   }
 
-  async testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderSummary> {
+  async testSecureSecretProvider(providerId: string): Promise<SecureSecretProviderTestResult> {
     return await this.withAuthorityMutation(async () => {
       const store = await this.store();
       const provider = store.getProvider(providerId);
       if (!provider) throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+      const providerSecrets = store.listSecrets(providerId);
       this.assertSecretMutationLifecycleAvailable(
         store,
-        store.listSecrets(providerId).map((secret) => secret.secretId),
+        providerSecrets.map((secret) => secret.secretId),
       );
       let status: SecureSessionProvider["status"] = "available";
       let lastStatusCode: SecureSessionProvider["lastStatusCode"] = "ok";
+      let code: SecureSecretProviderTestResult["code"] = "ok";
+      const affectedSecrets: SecureSecretProviderTestResult["affectedSecrets"] = [];
       try {
         if (provider.kind === "local_keychain") {
           await this.options.cipher.status();
+          let firstError: unknown;
+          for (const secret of providerSecrets) {
+            if (secret.retention !== "saved") continue;
+            const encrypted = store.getEncryptedSecret(secret.secretId);
+            try {
+              if (!encrypted) throw new SecureSourceError("SECURE_SOURCE_NOT_FOUND");
+              const resolution = await this.options.localSource.resolve({
+                sourceLocator: encrypted.sourceLocator,
+                encryptedMaterial: encrypted.encryptedMaterial ?? undefined,
+              });
+              resolution.material.release();
+            } catch (error) {
+              firstError ??= error;
+              affectedSecrets.push({
+                secretId: secret.secretId,
+                displayAlias: secret.displayAlias,
+              });
+            } finally {
+              encrypted?.encryptedMaterial?.fill(0);
+            }
+          }
+          if (firstError) {
+            code = "local_secret_decrypt_failed";
+            ({ status, lastStatusCode } = providerStatusForError(firstError));
+          }
         } else {
           const config = store.getProviderBackendConfig(providerId);
           if (!config) throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
-          await this.options.bitwardenSource.testConnection({
-            encryptedCredential: config.encryptedAccessToken,
-            endpointOrigin: config.serverOrigin,
-          });
+          try {
+            await this.options.bitwardenSource.testConnection({
+              encryptedCredential: config.encryptedAccessToken,
+              endpointOrigin: config.serverOrigin,
+            });
+          } finally {
+            config.encryptedAccessToken.fill(0);
+          }
         }
       } catch (error) {
+        code = "provider_unavailable";
         ({ status, lastStatusCode } = providerStatusForError(error));
       }
       const tested = store.updateProviderStatus({
@@ -752,8 +816,58 @@ export class SecureSessionsService {
       });
       if (!tested) throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
       this.emitCatalog(store);
-      return toProviderSummary(tested);
+      return {
+        provider: toProviderSummary(tested),
+        code,
+        affectedSecrets,
+      };
     });
+  }
+
+  async updateBitwardenSecureSecretProviderCredential(
+    providerId: string,
+    input: UpdateBitwardenSecureSecretProviderCredentialInput,
+  ): Promise<SecureSecretProviderSummary> {
+    const encryptedAccessToken = decodeCiphertext(input.encryptedAccessToken);
+    try {
+      return await this.withAuthorityMutation(async () => {
+        const store = await this.store();
+        const provider = store.getProvider(providerId);
+        if (!provider) throw new SecureSessionsServiceError("SECURE_SECRET_NOT_FOUND");
+        if (provider.kind !== "bitwarden_secrets_manager") {
+          throw new SecureSessionsServiceError("SECURE_REQUEST_INVALID");
+        }
+        const config = store.getProviderBackendConfig(providerId);
+        if (!config) throw new SecureSessionsServiceError("SECURE_PROVIDER_AUTH_REQUIRED");
+        config.encryptedAccessToken.fill(0);
+
+        await this.options.bitwardenSource.testConnection({
+          encryptedCredential: encryptedAccessToken,
+          endpointOrigin: config.serverOrigin,
+        });
+
+        const secretIds = store.listSecrets(providerId).map((secret) => secret.secretId);
+        this.assertSecretMutationLifecycleAvailable(store, secretIds);
+        const initiallyAffected = this.captureAffectedLeases(store, secretIds);
+        return await this.withSessionMutations(initiallyAffected.sessionIds, async () => {
+          const affected = this.captureAffectedLeases(store, secretIds);
+          const updated = store.replaceProviderBackendCredential({
+            providerId,
+            encryptedAccessToken,
+            lastVerifiedAt: this.now(),
+          });
+          this.releaseLeases(affected.leaseIds);
+          await this.reconcileAfterLeaseLoss(store, affected.sessionIds);
+          this.emitCatalog(store);
+          this.emitSessionSnapshots(store, affected.sessionIds);
+          return toProviderSummary(updated);
+        });
+      });
+    } catch (error) {
+      throw this.publicError(error);
+    } finally {
+      encryptedAccessToken.fill(0);
+    }
   }
 
   async deleteSecureSecretProvider(providerId: string): Promise<void> {
@@ -2411,7 +2525,10 @@ export class SecureSessionsService {
     }
   }
 
-  getSecureRuntimeBinding(descriptor: AgentDescriptor): SecureRuntimeBinding | undefined {
+  getSecureRuntimeBinding(
+    descriptor: AgentDescriptor,
+    runtimeToken?: number,
+  ): SecureRuntimeBinding | undefined {
     let principal: SecurePrincipal;
     try {
       principal = this.resolveSecurePrincipal(descriptor.agentId);
@@ -2429,14 +2546,41 @@ export class SecureSessionsService {
     ) {
       return undefined;
     }
+    const identity: SecureRuntimeBindingIdentity = {
+      active,
+      workerAssignmentId: principal.workerAssignmentId,
+      runtimeToken,
+      revoked: false,
+    };
+    const assertCurrentBinding = (): ActiveSession => {
+      const current = this.activeSessions.get(descriptor.agentId);
+      const currentDescriptor = this.options.getDescriptor(descriptor.agentId);
+      const currentAssignmentId = currentDescriptor
+        ? descriptorWorkerAssignmentId(currentDescriptor)
+        : null;
+      if (
+        identity.revoked
+        || !current
+        || current !== identity.active
+        || current.closed
+        || currentAssignmentId !== identity.workerAssignmentId
+      ) {
+        throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
+      }
+      return current;
+    };
     return {
-      executeBash: (request) => this.executeSecureBash(descriptor, request),
+      invalidate: () => {
+        identity.revoked = true;
+      },
+      executeBash: (request) => {
+        assertCurrentBinding();
+        return this.executeSecureBash(descriptor, request, identity);
+      },
       guardValue: <T>(value: T): T => {
-        const current = this.activeSessions.get(descriptor.agentId);
+        const current = assertCurrentBinding();
         if (
-          !current
-          || current.closed
-          || (current.guardRequired && !current.guard)
+          current.guardRequired && !current.guard
         ) {
           throw new SecureSessionsServiceError("SECURE_OPERATION_FAILED");
         }
@@ -2503,6 +2647,7 @@ export class SecureSessionsService {
   private async executeSecureBash(
     descriptor: AgentDescriptor,
     request: Parameters<SecureRuntimeBinding["executeBash"]>[0],
+    identity: SecureRuntimeBindingIdentity,
   ): Promise<{ exitCode: number | null }> {
     return await this.withSessionBashExecution(descriptor.agentId, async () => {
       let executionStarted = false;
@@ -2511,7 +2656,11 @@ export class SecureSessionsService {
           await this.withSessionMutation(
             descriptor.agentId,
             async () => {
-              const result = await this.prepareSecureBashExecution(descriptor, request);
+              const result = await this.prepareSecureBashExecution(
+                descriptor,
+                request,
+                identity,
+              );
               this.beginSessionExecution(descriptor.agentId);
               executionStarted = true;
               return result;
@@ -2530,6 +2679,7 @@ export class SecureSessionsService {
   private async prepareSecureBashExecution(
     descriptor: AgentDescriptor,
     request: Parameters<SecureRuntimeBinding["executeBash"]>[0],
+    identity: SecureRuntimeBindingIdentity,
   ): Promise<PreparedSecureBashExecution> {
     const sessionAgentId = descriptor.agentId;
     const principal = this.resolveSecurePrincipal(sessionAgentId);
@@ -2542,7 +2692,10 @@ export class SecureSessionsService {
       stored.state.executionMode !== "secure"
       || stored.state.environmentStatus !== "ready"
       || !active
+      || active !== identity.active
+      || identity.revoked
       || active.closed
+      || principal.workerAssignmentId !== identity.workerAssignmentId
       || (
         principal.principalKind === "worker"
         && active.task.taskId !== workerTaskId(
@@ -2936,6 +3089,7 @@ export class SecureSessionsService {
     if (!provider || !provider.enabled) {
       throw new SecureSessionsServiceError("SECURE_SOURCE_UNAVAILABLE");
     }
+    let providerCredential: Buffer | null = null;
     try {
       if (provider.kind === "local_keychain") {
         const resolution = await this.options.localSource.resolve({
@@ -2946,6 +3100,7 @@ export class SecureSessionsService {
       }
       const config = store.getProviderBackendConfig(provider.providerId);
       if (!config) throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
+      providerCredential = config.encryptedAccessToken;
       const resolution = await this.options.bitwardenSource.resolve({
         sourceLocator: secret.sourceLocator,
         encryptedCredential: config.encryptedAccessToken,
@@ -2964,6 +3119,7 @@ export class SecureSessionsService {
       throw this.publicError(error);
     } finally {
       secret.encryptedMaterial?.fill(0);
+      providerCredential?.fill(0);
     }
   }
 

@@ -32,6 +32,7 @@ import {
   type PutSecureSessionProjectDefaultInput,
   type PutSecureSessionSecretWithBindingsInput,
   type PutSecureSessionBindingInput,
+  type ReplaceSecureSessionProviderBackendCredentialInput,
   type ReserveSecureSessionLeaseUseInput,
   type ReserveSecureSessionLeaseUseResult,
   type ResolveSecureSessionRequestInput,
@@ -197,37 +198,86 @@ export class SecureSessionStore {
       input.encryptedAccessToken,
       "encrypted access token"
     );
-    return this.database.transaction(() => {
-      const provider = this.requireProvider(input.providerId);
-      if (provider.kind !== "bitwarden_secrets_manager") {
-        throw new Error("Only Bitwarden providers accept backend configuration");
-      }
-      const now = this.timestamp();
-      this.revokeCatalogLeases("provider", input.providerId, "policy_changed", now);
-      this.database.prepare(`
-        UPDATE secure_session_provider
-        SET server_origin = ?, organization_id = ?, project_id = ?,
-          encrypted_access_token = ?, updated_at = ?
-        WHERE provider_id = ?
-      `).run(
-        serverOrigin,
-        organizationId,
-        projectId,
-        encryptedAccessToken,
-        now,
-        input.providerId
-      );
-      this.bumpCatalog(now);
-      this.audit({
-        eventType: "provider_backend_updated",
-        providerId: input.providerId,
-        outcome: "updated",
-        occurredAt: now
-      });
-      const record = this.getProviderBackendConfig(input.providerId);
-      if (!record) throw new SecureSessionNotFoundError("provider backend configuration");
-      return record;
-    })();
+    try {
+      return this.database.transaction(() => {
+        const provider = this.requireProvider(input.providerId);
+        if (provider.kind !== "bitwarden_secrets_manager") {
+          throw new Error("Only Bitwarden providers accept backend configuration");
+        }
+        const now = this.timestamp();
+        this.revokeCatalogLeases("provider", input.providerId, "policy_changed", now);
+        this.database.prepare(`
+          UPDATE secure_session_provider
+          SET server_origin = ?, organization_id = ?, project_id = ?,
+            encrypted_access_token = ?, updated_at = ?
+          WHERE provider_id = ?
+        `).run(
+          serverOrigin,
+          organizationId,
+          projectId,
+          encryptedAccessToken,
+          now,
+          input.providerId
+        );
+        this.bumpCatalog(now);
+        this.audit({
+          eventType: "provider_backend_updated",
+          providerId: input.providerId,
+          outcome: "updated",
+          occurredAt: now
+        });
+        const record = this.getProviderBackendConfig(input.providerId);
+        if (!record) throw new SecureSessionNotFoundError("provider backend configuration");
+        return record;
+      })();
+    } finally {
+      encryptedAccessToken.fill(0);
+    }
+  }
+
+  replaceProviderBackendCredential(
+    input: ReplaceSecureSessionProviderBackendCredentialInput
+  ): SecureSessionProvider {
+    assertId(input.providerId, "provider ID");
+    const encryptedAccessToken = normalizeEncryptedBuffer(
+      input.encryptedAccessToken,
+      "encrypted access token"
+    );
+    const lastVerifiedAt = normalizeOptionalTimestamp(
+      input.lastVerifiedAt,
+      "provider verification time"
+    );
+    try {
+      return this.database.transaction(() => {
+        const provider = this.requireProvider(input.providerId);
+        if (provider.kind !== "bitwarden_secrets_manager") {
+          throw new Error("Only Bitwarden providers accept backend credentials");
+        }
+        const existingConfig = this.getProviderBackendConfig(input.providerId);
+        if (!existingConfig) {
+          throw new SecureSessionNotFoundError("provider backend configuration");
+        }
+        existingConfig.encryptedAccessToken.fill(0);
+        const now = this.timestamp();
+        this.revokeCatalogLeases("provider", input.providerId, "policy_changed", now);
+        this.database.prepare(`
+          UPDATE secure_session_provider
+          SET encrypted_access_token = ?, status = 'available',
+            last_status_code = 'ok', last_verified_at = ?, updated_at = ?
+          WHERE provider_id = ?
+        `).run(encryptedAccessToken, lastVerifiedAt, now, input.providerId);
+        this.bumpCatalog(now);
+        this.audit({
+          eventType: "provider_backend_updated",
+          providerId: input.providerId,
+          outcome: "updated",
+          occurredAt: now
+        });
+        return this.requireProvider(input.providerId);
+      })();
+    } finally {
+      encryptedAccessToken.fill(0);
+    }
   }
 
   upsertProvider(input: UpsertSecureSessionProviderInput): SecureSessionProvider {

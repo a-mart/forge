@@ -412,7 +412,10 @@ export class SwarmRuntimeController {
     let secureRuntimeBinding = options?.secureRuntimeBinding;
     if (!secureRuntimeBinding && this.host.getSecureRuntimeBinding) {
       try {
-        secureRuntimeBinding = await this.host.getSecureRuntimeBinding(descriptor);
+        secureRuntimeBinding = await this.host.getSecureRuntimeBinding(
+          descriptor,
+          runtimeToken,
+        );
       } catch {
         this.clearRuntimeToken(descriptor.agentId, runtimeToken);
         throw new Error(SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE);
@@ -436,9 +439,7 @@ export class SwarmRuntimeController {
           : options,
       );
     } catch (error) {
-      this.secureRuntimeBindingsByRuntime.delete(
-        secureRuntimeBindingKey(descriptor.agentId, runtimeToken),
-      );
+      this.invalidateSecureRuntimeBinding(descriptor.agentId, runtimeToken);
       this.clearRuntimeToken(descriptor.agentId, runtimeToken);
       throw error;
     }
@@ -456,9 +457,7 @@ export class SwarmRuntimeController {
     const resolvedRuntimeToken =
       runtimeToken ?? this.runtimeBinding.getRuntimeToken(agentId);
     if (resolvedRuntimeToken !== undefined) {
-      this.secureRuntimeBindingsByRuntime.delete(
-        secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
-      );
+      this.invalidateSecureRuntimeBinding(agentId, resolvedRuntimeToken);
     }
     this.runtimeBinding.clearRuntimeToken(agentId, runtimeToken);
   }
@@ -472,9 +471,7 @@ export class SwarmRuntimeController {
       runtimeToken ?? this.runtimeBinding.getRuntimeToken(agentId);
     const detached = this.runtimeBinding.detachRuntime(agentId, runtimeToken);
     if (detached && resolvedRuntimeToken !== undefined) {
-      this.secureRuntimeBindingsByRuntime.delete(
-        secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
-      );
+      this.invalidateSecureRuntimeBinding(agentId, resolvedRuntimeToken);
     }
     return detached;
   }
@@ -492,11 +489,19 @@ export class SwarmRuntimeController {
       runtimeToken,
     );
     if (detached && resolvedRuntimeToken !== undefined) {
-      this.secureRuntimeBindingsByRuntime.delete(
-        secureRuntimeBindingKey(agentId, resolvedRuntimeToken),
-      );
+      this.invalidateSecureRuntimeBinding(agentId, resolvedRuntimeToken);
     }
     return detached;
+  }
+
+  private invalidateSecureRuntimeBinding(agentId: string, runtimeToken: number): void {
+    const key = secureRuntimeBindingKey(agentId, runtimeToken);
+    const binding = this.secureRuntimeBindingsByRuntime.get(key);
+    try {
+      binding?.invalidate?.();
+    } finally {
+      this.secureRuntimeBindingsByRuntime.delete(key);
+    }
   }
 
   getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined {

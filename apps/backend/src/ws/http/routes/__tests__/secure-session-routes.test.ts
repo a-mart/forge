@@ -26,6 +26,10 @@ const snapshot: SecureSessionSnapshot = {
 
 function fakeService(): SecureSessionsTransportService {
   return {
+    getSecureSessionReadiness: vi.fn(() => ({
+      available: true,
+      code: "available",
+    })),
     getSecureSessionSnapshot: vi.fn(() => snapshot),
     startSecureSession: vi.fn(async () => snapshot),
     stopSecureSession: vi.fn(async () => snapshot),
@@ -39,6 +43,22 @@ function fakeService(): SecureSessionsTransportService {
 }
 
 describe("secure session routes", () => {
+  it("serves only fixed readiness metadata before the session-id route", async () => {
+    const service = fakeService();
+    const server = await createRouteServer(createSecureSessionRoutes({ service }));
+
+    const response = await fetch(`${server.baseUrl}/api/secure-sessions/readiness`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      available: true,
+      code: "available",
+    });
+    expect(service.getSecureSessionReadiness).toHaveBeenCalledOnce();
+    expect(service.getSecureSessionSnapshot).not.toHaveBeenCalled();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("gets, starts, and explicitly stops a secure session", async () => {
     const service = fakeService();
     const server = await createRouteServer(createSecureSessionRoutes({ service }));

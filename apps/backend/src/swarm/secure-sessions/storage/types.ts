@@ -108,6 +108,13 @@ export interface SecureSessionProviderBackendConfig {
 
 export type UpsertSecureSessionProviderBackendConfigInput = SecureSessionProviderBackendConfig;
 
+export interface ReplaceSecureSessionProviderBackendCredentialInput {
+  providerId: string;
+  /** Electron safeStorage ciphertext only. */
+  encryptedAccessToken: Buffer;
+  lastVerifiedAt: string;
+}
+
 export interface SecureSessionCatalogState {
   revision: number;
   updatedAt: string;

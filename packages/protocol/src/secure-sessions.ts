@@ -49,6 +49,43 @@ export interface SecureSecretProviderSummary {
   lastStatusCode: SecureSecretSourceStatusCode | null
 }
 
+export const SECURE_SECRET_PROVIDER_TEST_CODES = [
+  'ok',
+  'local_secret_decrypt_failed',
+  'provider_unavailable',
+] as const
+
+export type SecureSecretProviderTestCode =
+  (typeof SECURE_SECRET_PROVIDER_TEST_CODES)[number]
+
+export interface SecureSecretProviderTestResult {
+  provider: SecureSecretProviderSummary
+  code: SecureSecretProviderTestCode
+  /**
+   * Safe catalog identifiers for saved local values that could not be
+   * decrypted. Secret material and provider exception text are never exposed.
+   */
+  affectedSecrets: Array<{
+    secretId: string
+    displayAlias: string
+  }>
+}
+
+export const SECURE_SESSION_READINESS_CODES = [
+  'available',
+  'backend_unavailable',
+  'image_unavailable',
+  'unsupported_platform',
+] as const
+
+export type SecureSessionReadinessCode =
+  (typeof SECURE_SESSION_READINESS_CODES)[number]
+
+export interface SecureSessionReadiness {
+  available: boolean
+  code: SecureSessionReadinessCode
+}
+
 export const SECURE_SECRET_DELIVERY_KINDS = [
   'environment',
   'stdin',

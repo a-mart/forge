@@ -496,8 +496,12 @@ describe("SecureSessionsService", () => {
     await expect(
       harness.service.testSecureSecretProvider("forge-local-keychain"),
     ).resolves.toEqual(expect.objectContaining({
-      providerId: "forge-local-keychain",
-      status: "available",
+      code: "ok",
+      affectedSecrets: [],
+      provider: expect.objectContaining({
+        providerId: "forge-local-keychain",
+        status: "available",
+      }),
     }));
 
     const after = await harness.service.getSecureSessionSnapshot("manager-a");
@@ -509,6 +513,188 @@ describe("SecureSessionsService", () => {
     ]);
     expect(after.environmentStatus).toBe("ready");
     expect(harness.execution.destroyed).toHaveLength(destroysBefore);
+    await harness.close();
+  });
+
+  it("reports secure execution readiness with fixed codes and sanitizes probe failures", async () => {
+    const unavailable = createHarness({
+      probeAvailability: {
+        available: false,
+        code: "image_unavailable",
+      },
+    });
+    await expect(unavailable.service.getSecureSessionReadiness()).resolves.toEqual({
+      available: false,
+      code: "image_unavailable",
+    });
+    await unavailable.close();
+
+    const failed = createHarness({ probeThrows: true });
+    await expect(failed.service.getSecureSessionReadiness()).resolves.toEqual({
+      available: false,
+      code: "backend_unavailable",
+    });
+    await failed.close();
+  });
+
+  it("tests every saved local ciphertext, releases successful plaintexts, and reports safe failures", async () => {
+    const harness = createHarness({
+      failSourceMaterials: [BETA, "session-only"],
+    });
+    const first = await harness.service.createLocalSecureSecret({
+      displayAlias: "saved-alpha",
+      encryptedMaterial: Buffer.from(ALPHA).toString("base64"),
+    });
+    const failed = await harness.service.createLocalSecureSecret({
+      displayAlias: "saved-beta",
+      encryptedMaterial: Buffer.from(BETA).toString("base64"),
+    });
+    const last = await harness.service.createLocalSecureSecret({
+      displayAlias: "saved-gamma",
+      encryptedMaterial: Buffer.from("gamma").toString("base64"),
+    });
+    await harness.service.createLocalSecureSecret({
+      displayAlias: "session-only",
+      encryptedMaterial: Buffer.from("session-only").toString("base64"),
+      retention: "session",
+      scope: { kind: "profile", profileId: "profile-a" },
+    });
+
+    await expect(
+      harness.service.testSecureSecretProvider("forge-local-keychain"),
+    ).resolves.toEqual({
+      provider: expect.objectContaining({
+        providerId: "forge-local-keychain",
+        status: "unreachable",
+        lastStatusCode: "source_unreachable",
+      }),
+      code: "local_secret_decrypt_failed",
+      affectedSecrets: [{
+        secretId: failed.secretId,
+        displayAlias: "saved-beta",
+      }],
+    });
+    expect(harness.sourceResolutions.get(ALPHA)).toBe(1);
+    expect(harness.sourceResolutions.get("gamma")).toBe(1);
+    expect(harness.sourceResolutions.has("session-only")).toBe(false);
+    expect(harness.resolvedMaterials).toHaveLength(2);
+    expect(harness.resolvedMaterials.every((material) => material.released)).toBe(true);
+    expect([first.secretId, last.secretId]).not.toContain(failed.secretId);
+    await harness.close();
+  });
+
+  it("validates Bitwarden credentials before atomic replacement and revokes active authority", async () => {
+    const harness = createHarness({
+      rejectedBitwardenCredentials: ["invalid-ciphertext"],
+    });
+    const originalCiphertext = Buffer.from("original-ciphertext").toString("base64");
+    const connected = await harness.service.connectBitwardenSecureSecretProvider({
+      displayName: "Bitwarden test",
+      serverOrigin: "https://vault.example.test",
+      organizationId: "organization-1",
+      projectId: "project-1",
+      encryptedAccessToken: originalCiphertext,
+    });
+    const secret = await harness.service.importBitwardenSecureSecret(
+      connected.providerId,
+      {
+        sourceLocator: "11111111-1111-1111-1111-111111111111",
+        displayAlias: "remote-token",
+        bindings: [{
+          deliveryKind: "environment",
+          targetName: "REMOTE_TOKEN",
+        }],
+        scope: { kind: "profile", profileId: "profile-a" },
+      },
+    );
+    const started = await harness.service.startSecureSession("manager-a");
+    const granted = await harness.service.grantSecureSessionLease("manager-a", {
+      baseRevision: started.revision,
+      secretId: secret.secretId,
+      exposures: [{
+        deliveryKind: "environment",
+        targetName: "REMOTE_TOKEN",
+      }],
+      leaseKind: "task",
+    });
+    const projectDefault = await harness.service.setSecureSecretProjectDefault(
+      secret.secretId,
+      { profileId: "profile-a", enabled: true },
+    );
+
+    await expect(
+      harness.service.updateBitwardenSecureSecretProviderCredential(
+        connected.providerId,
+        {
+          encryptedAccessToken: Buffer.from("invalid-ciphertext").toString("base64"),
+        },
+      ),
+    ).rejects.toThrow("SECURE_PROVIDER_AUTH_REQUIRED");
+    const afterRejected = harness.store.getProviderBackendConfig(connected.providerId)!;
+    expect(afterRejected.encryptedAccessToken.toString("utf8")).toBe(
+      "original-ciphertext",
+    );
+    expect(
+      (await harness.service.getSecureSessionSnapshot("manager-a")).leases,
+    ).toEqual([
+      expect.objectContaining({
+        leaseId: granted.leases[0]!.leaseId,
+        status: "active",
+      }),
+    ]);
+    afterRejected.encryptedAccessToken.fill(0);
+
+    const rotated = await harness.service.updateBitwardenSecureSecretProviderCredential(
+      connected.providerId,
+      {
+        encryptedAccessToken: Buffer.from("replacement-ciphertext").toString("base64"),
+      },
+    );
+    const afterRotation = harness.store.getProviderBackendConfig(connected.providerId)!;
+    expect(rotated).toEqual(expect.objectContaining({
+      providerId: connected.providerId,
+      status: "available",
+      lastStatusCode: "ok",
+    }));
+    expect(afterRotation).toEqual(expect.objectContaining({
+      providerId: connected.providerId,
+      serverOrigin: "https://vault.example.test",
+      organizationId: "organization-1",
+      projectId: "project-1",
+    }));
+    expect(afterRotation.encryptedAccessToken.toString("utf8")).toBe(
+      "replacement-ciphertext",
+    );
+    afterRotation.encryptedAccessToken.fill(0);
+    expect(await harness.service.listSecureSecrets()).toEqual([
+      expect.objectContaining({ secretId: secret.secretId }),
+    ]);
+    expect(await harness.service.listSecureSecretProjectDefaults("profile-a")).toEqual([
+      projectDefault,
+    ]);
+    expect(await harness.service.getSecureSessionSnapshot("manager-a")).toEqual(
+      expect.objectContaining({
+        environmentStatus: "stopped",
+        leases: [expect.objectContaining({
+          leaseId: granted.leases[0]!.leaseId,
+          status: "revoked",
+        })],
+      }),
+    );
+    expect(harness.bitwardenTests).toEqual([
+      {
+        credential: "original-ciphertext",
+        endpointOrigin: "https://vault.example.test",
+      },
+      {
+        credential: "invalid-ciphertext",
+        endpointOrigin: "https://vault.example.test",
+      },
+      {
+        credential: "replacement-ciphertext",
+        endpointOrigin: "https://vault.example.test",
+      },
+    ]);
     await harness.close();
   });
 
@@ -561,7 +747,10 @@ describe("SecureSessionsService", () => {
 
     harness.releaseBlockedProviderStatus();
     await expect(testing).resolves.toEqual(expect.objectContaining({
-      status: "available",
+      code: "ok",
+      provider: expect.objectContaining({
+        status: "available",
+      }),
     }));
     await expect(deleting).resolves.toBeUndefined();
     expect(
@@ -954,7 +1143,9 @@ describe("SecureSessionsService", () => {
       bindings: [{ deliveryKind: "environment", targetName: "ALPHA_TOKEN" }],
     });
     await grant(harness, "manager-a", secret.secretId, "alpha");
-    await binding.executeBash({
+    await harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!.executeBash({
       command: "safe-alpha",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -1023,10 +1214,14 @@ describe("SecureSessionsService", () => {
     expect(harness.execution.destroyed).toContain("manager-a");
     expect(harness.execution.ensured).toEqual(["manager-a", "manager-a"]);
     expect(granted.environmentStatus).toBe("ready");
-    expect(retainedBinding.guardValue(ALPHA)).toBe(SECURE_OUTPUT_QUARANTINE);
-    expect(harness.service.getSecureRuntimeBinding(
+    expect(() => retainedBinding.guardValue(ALPHA)).toThrow(
+      "SECURE_OPERATION_FAILED",
+    );
+    const currentBinding = harness.service.getSecureRuntimeBinding(
       harness.descriptors.get("manager-a")!,
-    )).toBeDefined();
+    );
+    expect(currentBinding).toBeDefined();
+    expect(currentBinding!.guardValue(ALPHA)).toBe(SECURE_OUTPUT_QUARANTINE);
     await harness.service.stopSecureSession("manager-a", {
       baseRevision: granted.revision,
       stopProcesses: true,
@@ -1231,7 +1426,9 @@ describe("SecureSessionsService", () => {
       }),
     ]));
     expect(harness.recycles).toHaveLength(recycleCountBeforeUse);
-    await expect(binding.executeBash({
+    await expect(harness.service.getSecureRuntimeBinding(
+      harness.descriptors.get("manager-a")!,
+    )!.executeBash({
       command: "safe-again",
       cwd: "/workspace-a",
       onData: () => undefined,
@@ -3432,6 +3629,13 @@ function createHarness(options: {
   blockEnsures?: readonly string[];
   destroyFailures?: readonly string[];
   failSourceResolutionAfter?: number;
+  failSourceMaterials?: readonly string[];
+  rejectedBitwardenCredentials?: readonly string[];
+  probeAvailability?: {
+    available: boolean;
+    code: "available" | "backend_unavailable" | "image_unavailable" | "unsupported_platform";
+  };
+  probeThrows?: boolean;
   guardFailures?: number;
   archivedProfiles?: readonly string[];
   archivedSessions?: readonly string[];
@@ -3455,6 +3659,7 @@ function createHarness(options: {
   const execution = new FakeExecutionBackend(options);
   const sourceResolutions = new Map<string, number>();
   const resolvedMaterials: HostOnlySecret[] = [];
+  const bitwardenTests: Array<{ credential: string; endpointOrigin: string | null }> = [];
   let sourceResolutionStarted!: () => void;
   let sourceResolutionRelease!: () => void;
   const sourceResolutionStartedPromise = new Promise<void>((resolve) => {
@@ -3484,8 +3689,39 @@ function createHarness(options: {
         bytes.fill(0);
         throw new SecureSourceError("SECURE_SOURCE_UNAVAILABLE");
       }
+      if (options.failSourceMaterials?.includes(key)) {
+        bytes.fill(0);
+        throw new SecureSourceError("SECURE_SOURCE_UNAVAILABLE");
+      }
       sourceResolutions.set(key, (sourceResolutions.get(key) ?? 0) + 1);
       const material = new HostOnlySecret(bytes);
+      resolvedMaterials.push(material);
+      return {
+        material,
+        sourceVersion: null,
+        resolvedAt: NOW,
+      };
+    },
+  };
+  const bitwardenSource: SecureSecretSource & {
+    testConnection(input: {
+      encryptedCredential?: Uint8Array;
+      endpointOrigin?: string | null;
+    }): Promise<void>;
+  } = {
+    kind: "bitwarden_secrets_manager",
+    async testConnection(input) {
+      const credential = Buffer.from(input.encryptedCredential ?? []).toString("utf8");
+      bitwardenTests.push({
+        credential,
+        endpointOrigin: input.endpointOrigin ?? null,
+      });
+      if (options.rejectedBitwardenCredentials?.includes(credential)) {
+        throw new SecureSourceError("SECURE_SOURCE_AUTH_REQUIRED");
+      }
+    },
+    async resolve() {
+      const material = new HostOnlySecret(Buffer.from("bitwarden-resolved"));
       resolvedMaterials.push(material);
       return {
         material,
@@ -3523,7 +3759,7 @@ function createHarness(options: {
     storeFactory: async () => store,
     cipher,
     localSource,
-    bitwardenSource: localSource,
+    bitwardenSource,
     probeBitwarden: async () => true,
     execution,
     getDescriptor: (agentId) => descriptors.get(agentId),
@@ -3564,6 +3800,7 @@ function createHarness(options: {
     execution,
     sourceResolutions,
     resolvedMaterials,
+    bitwardenTests,
     snapshots,
     recycles,
     setRecycleDisposition(value: "recycled" | "deferred" | "none") {
@@ -3612,12 +3849,19 @@ class FakeExecutionBackend implements SecureExecutionBackend {
     recoveredSandboxIds?: readonly string[];
     recoveryFailures?: number;
     blockEnsures?: readonly string[];
+    probeAvailability?: {
+      available: boolean;
+      code: "available" | "backend_unavailable" | "image_unavailable" | "unsupported_platform";
+    };
+    probeThrows?: boolean;
   } = {}) {
     this.recoveryFailures = options.recoveryFailures ?? 0;
   }
 
   async probe() {
-    return { available: true, code: "available" as const };
+    if (this.options.probeThrows) throw new Error("RAW-PROBE-FAILURE");
+    return this.options.probeAvailability
+      ?? { available: true, code: "available" as const };
   }
 
   async ensureTask(task: SecureExecutionTask) {

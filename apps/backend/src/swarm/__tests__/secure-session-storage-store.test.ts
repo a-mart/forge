@@ -125,6 +125,85 @@ describe("SecureSessionStore", () => {
     database.close();
   });
 
+  it("atomically replaces only a Bitwarden credential while revoking its leases", () => {
+    const { database, store } = createMemoryStore();
+    store.upsertProvider({
+      providerId: "bws",
+      kind: "bitwarden_secrets_manager",
+      displayName: "Bitwarden",
+      status: "auth_required",
+      lastStatusCode: "provider_auth_required",
+    });
+    const initialConfig = store.upsertProviderBackendConfig({
+      providerId: "bws",
+      serverOrigin: "https://vault.example.test",
+      organizationId: "org-1",
+      projectId: "project-1",
+      encryptedAccessToken: Buffer.from("old-ciphertext"),
+    });
+    initialConfig.encryptedAccessToken.fill(0);
+    store.createSecretWithBindings({
+      secret: {
+        secretId: "remote-secret",
+        providerId: "bws",
+        displayAlias: "remote-token",
+        scopeKind: "instance",
+        retention: "saved",
+        sourceLocator: "11111111-1111-1111-1111-111111111111",
+      },
+      bindings: [{
+        bindingId: "remote-binding",
+        deliveryKind: "environment",
+        targetName: "REMOTE_TOKEN",
+      }],
+    });
+    store.getOrCreateSessionState("session", {
+      profileId: "profile",
+      executionMode: "secure",
+      environmentStatus: "ready",
+    });
+    store.createLease({
+      leaseId: "remote-lease",
+      sessionAgentId: "session",
+      secretId: "remote-secret",
+      bindingIds: ["remote-binding"],
+      leaseKind: "task",
+      baseRevision: 0,
+    });
+
+    const provider = store.replaceProviderBackendCredential({
+      providerId: "bws",
+      encryptedAccessToken: Buffer.from("new-ciphertext"),
+      lastVerifiedAt: NOW,
+    });
+    const config = store.getProviderBackendConfig("bws")!;
+
+    expect(provider).toEqual(expect.objectContaining({
+      providerId: "bws",
+      status: "available",
+      lastStatusCode: "ok",
+      lastVerifiedAt: NOW,
+    }));
+    expect(config).toEqual(expect.objectContaining({
+      serverOrigin: "https://vault.example.test",
+      organizationId: "org-1",
+      projectId: "project-1",
+    }));
+    expect(config.encryptedAccessToken.toString("utf8")).toBe("new-ciphertext");
+    config.encryptedAccessToken.fill(0);
+    expect(store.getSnapshot("session").leases).toEqual([
+      expect.objectContaining({
+        leaseId: "remote-lease",
+        state: "revoked",
+        revocationReason: "policy_changed",
+      }),
+    ]);
+    expect(store.getSecret("remote-secret")).toEqual(
+      expect.objectContaining({ secretId: "remote-secret" }),
+    );
+    database.close();
+  });
+
   it("uses revision CAS and exactly-once one-use operation reservations", () => {
     const { database, store } = createMemoryStore();
     seedLocalCatalog(store);
