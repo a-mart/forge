@@ -758,7 +758,14 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("openai-codex");
   });
 
-  it("stops secure specialist fallback when authority is revoked during the handoff", async () => {
+  it.each([
+    ["before replacement creation", "before_creation", 0],
+    ["between replacement creation and attach", "during_handoff", 0],
+    ["immediately after replacement attach", "after_attach", 0],
+    ["between replayed messages", "between_replay_messages", 1],
+  ] as const)(
+    "stops secure specialist fallback when authority is revoked %s",
+    async (_label, revokeAt, expectedSendCount) => {
     const config = await makeTempConfig();
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -769,8 +776,20 @@ describe("SwarmSpecialistFallbackManager", () => {
     descriptors.set(worker.agentId, worker);
 
     const current = new FakeRuntime(worker, "secure-system");
-    current.specialistFallbackReplayMessage = { text: "must-stay-secure" };
+    current.specialistFallbackReplaySnapshot = {
+      messages: revokeAt === "between_replay_messages"
+        ? [{ text: "secure-first" }, { text: "must-not-send" }]
+        : [{ text: "must-stay-secure" }],
+    };
     const replacement = new FakeRuntime(worker, "secure-fallback");
+    replacement.onSendMessage = () => {
+      if (
+        revokeAt === "between_replay_messages"
+        && replacement.sendCalls.length === 1
+      ) {
+        secureAuthorityActive = false;
+      }
+    };
     runtimes.set(worker.agentId, current);
     runtimeTokensByAgentId.set(worker.agentId, 31);
 
@@ -808,10 +827,17 @@ describe("SwarmSpecialistFallbackManager", () => {
       expect(options).toEqual({ secureRuntimeRequired: true });
       secureRuntimes.add(replacement);
       runtimeTokensByAgentId.set(descriptor.agentId, 32);
+      if (revokeAt === "before_creation") {
+        secureAuthorityActive = false;
+        throw new Error("secure runtime binding unavailable");
+      }
       return replacement;
     });
     const attachRuntime = vi.fn((agentId: string, runtime: SwarmAgentRuntime) => {
       runtimes.set(agentId, runtime);
+      if (revokeAt === "after_attach") {
+        secureAuthorityActive = false;
+      }
     });
     const patchDescriptor = vi.fn(async (
       agentId: string,
@@ -821,7 +847,9 @@ describe("SwarmSpecialistFallbackManager", () => {
       if (!descriptor) return undefined;
       const updated = patch(structuredClone(descriptor));
       descriptors.set(agentId, updated);
-      secureAuthorityActive = false;
+      if (revokeAt === "during_handoff") {
+        secureAuthorityActive = false;
+      }
       return updated;
     });
 
@@ -870,11 +898,22 @@ describe("SwarmSpecialistFallbackManager", () => {
       undefined,
       { secureRuntimeRequired: true },
     );
-    expect(replacement.sendCalls).toHaveLength(0);
-    expect(replacement.terminateCalls.length).toBeGreaterThan(0);
+    expect(replacement.sendCalls).toHaveLength(expectedSendCount);
+    if (revokeAt === "before_creation") {
+      expect(replacement.terminateCalls).toHaveLength(0);
+      expect(patchDescriptor).not.toHaveBeenCalled();
+    } else {
+      expect(replacement.terminateCalls.length).toBeGreaterThan(0);
+      expect(patchDescriptor).toHaveBeenCalledTimes(1);
+    }
     expect(current.terminateCalls.length).toBeGreaterThan(0);
-    expect(runtimes.has(worker.agentId)).toBe(false);
-  });
+    if (revokeAt === "before_creation") {
+      expect(runtimes.get(worker.agentId)).toBe(current);
+    } else {
+      expect(runtimes.has(worker.agentId)).toBe(false);
+    }
+    },
+  );
 
   it("rolls back to the previous runtime when replacement creation fails", async () => {
     const config = await makeTempConfig();
